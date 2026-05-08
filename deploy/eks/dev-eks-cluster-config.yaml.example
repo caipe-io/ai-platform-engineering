@@ -5,18 +5,11 @@ metadata:
   name: dev-eks-cluster
   region: us-east-2
 
-nodeGroups:
-  - name: worker-nodes
-    instanceType: t3.medium
-    desiredCapacity: 3
-    minSize: 3
-    maxSize: 6
-    volumeSize: 20
-    iam:
-      withAddonPolicies:
-        autoScaler: true                # Cluster autoscaling capability
-        ebs: true                       # EBS CSI driver for persistent volumes
-        cloudWatch: true                # CloudWatch logging and monitoring
-        awsLoadBalancerController: true # AWS Load Balancer Controller for ALB/NLB
-        externalDNS: true               # External-DNS for Route53 management
-        certManager: true               # Cert-Manager for SSL certificates
+# EKS Auto Mode manages all node provisioning via the built-in Karpenter controller.
+# After creating the cluster, optionally apply the NodePool manifests in
+# deploy/eks/nodepools/ to configure right-sized agent and RAG workload tiers.
+autoModeConfig:
+  enabled: true
+
+addons:
+  - name: metrics-server

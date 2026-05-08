@@ -61,13 +61,13 @@ Use the same region in the next step when you create the cluster.
 
 ## Step 4: Create the EKS cluster
 
-The repo includes an example cluster config. Copy it and adjust the region or other settings if needed.
+The repo includes a cluster config using EKS Auto Mode, which manages node provisioning via the built-in Karpenter controller. No additional autoscaler setup is required.
 
 ```bash
 # From the repo root
 cp deploy/eks/dev-eks-cluster-config.yaml.example dev-eks-cluster-config.yaml
 
-# Edit if you need to change region, node type, or node count
+# Edit if you need to change region
 # (optional) cat dev-eks-cluster-config.yaml
 ```
 
@@ -77,13 +77,13 @@ Create the cluster. This usually takes **10–15 minutes**:
 eksctl create cluster -f dev-eks-cluster-config.yaml
 ```
 
+If you see a "CloudFormation stack already exists" error, see [Troubleshooting](#cloudformation-stack-already-exists).
+
 eksctl will:
 
 - Create a VPC and subnets
 - Set up the EKS control plane
-- Launch EC2 worker nodes
-- Configure your `kubectl` context to use the new cluster
-- Install common add-ons
+- Run `aws eks update-kubeconfig --region us-east-1 --name dev-eks-cluster` to configure your `kubectl` context to use the new cluster
 
 ### Verify the cluster
 
@@ -102,11 +102,34 @@ eksctl get addons --cluster dev-eks-cluster
 kubectl get pods -n kube-system
 ```
 
-Once `kubectl get nodes` shows nodes in `Ready` state, you can deploy CAIPE.
+Once `kubectl get nodes` shows nodes in `Ready` state, continue to the next step.
 
 ---
 
-## Step 5: Deploy CAIPE on EKS
+## Step 5 (Optional): Configure node tiers with NodePools
+
+By default, Auto Mode places all workloads on its built-in `general-purpose` pool. Apply the custom NodePools to right-size nodes per workload tier (Spot compute-optimised instances for agents, on-demand memory-optimised instances for RAG), and allow idle agent and RAG nodes to scale to zero.
+
+| NodePool | Workloads | Instance strategy |
+| -------- | --------- | ----------------- |
+| `agents` | All `agent-*` subcharts | Spot-preferred, compute-optimised (`c5`/`m5`/`m6i`) |
+| `rag` | `rag-server`, `agent-ontology`, `neo4j`, `milvus` | On-demand, memory-optimised (`r5`/`r6i`) |
+
+```bash
+kubectl apply -f deploy/eks/karpenter/
+```
+
+Verify the NodePools are created and the built-in Auto Mode pools are present:
+
+```bash
+kubectl get nodepool
+```
+
+When deploying CAIPE in the next step, add the Karpenter values overlay (see Step 6).
+
+---
+
+## Step 6: Deploy CAIPE on EKS
 
 You have two main options:
 
@@ -222,6 +245,15 @@ aws configure get region
   `aws cloudformation describe-stack-events --stack-name eksctl-dev-cluster-nodegroup-worker-nodes`
 - Check EC2 limits:  
   `aws ec2 describe-account-attributes --attribute-names supported-platforms`
+
+### CloudFormation stack already exists
+
+A previous cluster creation attempt failed and left a partial stack behind. Delete it before retrying:
+
+```bash
+aws cloudformation delete-stack --stack-name eksctl-dev-eks-cluster-cluster
+aws cloudformation wait stack-delete-complete --stack-name eksctl-dev-eks-cluster-cluster
+```
 
 ### kubectl can’t reach the cluster
 

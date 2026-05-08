@@ -1,0 +1,207 @@
+# Karpenter values overlay for ai-platform-engineering
+#
+# Apply on top of your base values to route agent workloads to Karpenter-managed nodes:
+#
+#   helm upgrade --install ai-platform-engineering \
+#     oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \
+#     -f charts/ai-platform-engineering/values.yaml \
+#     -f charts/ai-platform-engineering/values-karpenter.yaml
+#
+# Prerequisites: deploy/eks/karpenter/ manifests must be applied first.
+# See deploy/eks/karpenter/README.md for full setup steps.
+
+# ---------------------------------------------------------------------------
+# Agent tier: Karpenter `agents` NodePool (spot-preferred, compute-optimised)
+# Taint: workload-type=agent:NoSchedule
+# ---------------------------------------------------------------------------
+
+agent-argocd:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-aws:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-backstage:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-confluence:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-github:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-gitlab:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-jira:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-komodor:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-pagerduty:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-slack:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-splunk:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-victorops:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-webex:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-netutils:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-weather:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+agent-petstore:
+  nodeSelector:
+    workload-type: agent
+  tolerations:
+    - key: workload-type
+      operator: Equal
+      value: agent
+      effect: NoSchedule
+
+# ---------------------------------------------------------------------------
+# RAG tier: Karpenter `rag` NodePool (on-demand, memory-optimised)
+# Taint: workload-type=rag:NoSchedule
+# ---------------------------------------------------------------------------
+
+rag-stack:
+  rag-server:
+    nodeSelector:
+      workload-type: rag
+    tolerations:
+      - key: workload-type
+        operator: Equal
+        value: rag
+        effect: NoSchedule
+
+  agent-ontology:
+    nodeSelector:
+      workload-type: rag
+    tolerations:
+      - key: workload-type
+        operator: Equal
+        value: rag
+        effect: NoSchedule
+
+  rag-redis:
+    nodeSelector:
+      workload-type: rag
+    tolerations:
+      - key: workload-type
+        operator: Equal
+        value: rag
+        effect: NoSchedule
+
+  neo4j:
+    nodeSelector:
+      workload-type: rag
+    tolerations:
+      - key: workload-type
+        operator: Equal
+        value: rag
+        effect: NoSchedule
+
+# ---------------------------------------------------------------------------
+# System tier: no overrides; lands on Auto Mode general-purpose pool by default.
+# supervisor-agent, caipe-ui, langgraph-redis, slack-bot, dynamic-agents.
+# ---------------------------------------------------------------------------

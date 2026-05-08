@@ -1,0 +1,52 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: agents
+spec:
+  template:
+    metadata:
+      labels:
+        workload-type: agent
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+
+      # Only pods tolerating this taint will land on agent nodes
+      # Set via deploy/eks/values-karpenter.yaml for all agent-* subcharts
+      taints:
+        - key: workload-type
+          value: agent
+          effect: NoSchedule
+
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot", "on-demand"]   # spot preferred; falls back to on-demand
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+        - key: eks.amazonaws.com/instance-category
+          operator: In
+          values: ["c", "m"]   # compute-optimized and general-purpose families
+        - key: eks.amazonaws.com/instance-generation
+          operator: Gt
+          values: ["4"]
+        - key: eks.amazonaws.com/instance-size
+          operator: NotIn
+          values: ["nano", "micro", "small", "medium"]   # bootstrap guard until VPA populates requests
+
+  # Safety ceiling: prevents runaway scaling from exhausting account limits
+  limits:
+    cpu: "80"
+    memory: 64Gi
+
+  disruption:
+    # Consolidate nodes when empty or when bin-packing can reduce node count
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 30s
+    expireAfter: 720h   # rotate nodes every 30 days to pick up patched AMIs

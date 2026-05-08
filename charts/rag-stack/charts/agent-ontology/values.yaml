@@ -176,6 +176,15 @@ volumeMounts: []
 #   mountPath: "/etc/foo"
 #   readOnly: true
 
+# Karpenter: to target the `rag` NodePool, set these values or use deploy/eks/values-karpenter.yaml.
+# nodeSelector:
+#   workload-type: rag
+# tolerations:
+#   - key: workload-type
+#     operator: Equal
+#     value: rag
+#     effect: NoSchedule
+
 nodeSelector: {}
 
 tolerations: []
