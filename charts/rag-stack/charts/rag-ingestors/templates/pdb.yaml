@@ -1,0 +1,28 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- range $ingestor := .Values.ingestors }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "rag-ingestors.fullname" $ }}-{{ $ingestor.name }}
+  labels:
+    {{- include "rag-ingestors.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: ingestor
+    app.kubernetes.io/ingestor-name: {{ $ingestor.name }}
+  {{- with $.Values.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if $.Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ $.Values.podDisruptionBudget.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ $.Values.podDisruptionBudget.maxUnavailable | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "rag-ingestors.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: ingestor
+      app.kubernetes.io/ingestor-name: {{ $ingestor.name }}
+{{- end }}
+{{- end }}

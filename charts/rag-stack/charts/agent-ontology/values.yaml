@@ -191,6 +191,14 @@ tolerations: []
 
 affinity: {}
 
+# PodDisruptionBudget: prevents simultaneous eviction of all replicas during voluntary disruptions.
+# Enable in production; leave disabled for local/single-node environments.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+# maxUnavailable: 1  # alternative: allow 1 disruption at a time regardless of replica count
+  annotations: {}
+
 # Secrets configuration for LLM providers
 secrets:
   # if set, use this secret for the LLM provider API keys; if not set, the keys will be provided directly below

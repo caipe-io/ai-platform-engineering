@@ -2,9 +2,9 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "slack-bot.fullname" . }}
+  name: {{ include "dynamic-agents.fullname" . }}
   labels:
-    {{- include "slack-bot.labels" . | nindent 4 }}
+    {{- include "dynamic-agents.labels" . | nindent 4 }}
   {{- with .Values.podDisruptionBudget.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -17,5 +17,5 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "slack-bot.selectorLabels" . | nindent 6 }}
+      {{- include "dynamic-agents.selectorLabels" . | nindent 6 }}
 {{- end }}

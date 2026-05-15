@@ -369,6 +369,14 @@ tolerations: []
 # Affinity
 affinity: {}
 
+# PodDisruptionBudget: prevents simultaneous eviction of all replicas during voluntary disruptions.
+# Enable in production; leave disabled for local/single-node environments.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+# maxUnavailable: 1  # alternative: allow 1 disruption at a time regardless of replica count
+  annotations: {}
+
 # VPA configuration. Requires VPA to be installed in the cluster.
 # Creates one VPA per ingestor Deployment. Applies the same config to all ingestors.
 # Inherits global.vpa defaults; override any field here to customise for rag-ingestors.

@@ -23,6 +23,8 @@ agent-argocd:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-aws:
   nodeSelector:
@@ -32,6 +34,8 @@ agent-aws:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-backstage:
   nodeSelector:
@@ -41,6 +45,8 @@ agent-backstage:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-confluence:
   nodeSelector:
@@ -50,6 +56,8 @@ agent-confluence:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-github:
   nodeSelector:
@@ -59,6 +67,8 @@ agent-github:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-gitlab:
   nodeSelector:
@@ -68,6 +78,8 @@ agent-gitlab:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-jira:
   nodeSelector:
@@ -77,6 +89,8 @@ agent-jira:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-komodor:
   nodeSelector:
@@ -86,6 +100,8 @@ agent-komodor:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-pagerduty:
   nodeSelector:
@@ -95,6 +111,8 @@ agent-pagerduty:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-slack:
   nodeSelector:
@@ -104,6 +122,8 @@ agent-slack:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-splunk:
   nodeSelector:
@@ -113,6 +133,8 @@ agent-splunk:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-victorops:
   nodeSelector:
@@ -122,6 +144,8 @@ agent-victorops:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-webex:
   nodeSelector:
@@ -131,6 +155,8 @@ agent-webex:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-netutils:
   nodeSelector:
@@ -140,6 +166,8 @@ agent-netutils:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-weather:
   nodeSelector:
@@ -149,6 +177,8 @@ agent-weather:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 agent-petstore:
   nodeSelector:
@@ -158,6 +188,8 @@ agent-petstore:
       operator: Equal
       value: agent
       effect: NoSchedule
+  podDisruptionBudget:
+    enabled: true
 
 # ---------------------------------------------------------------------------
 # RAG tier: Karpenter `rag` NodePool (on-demand, memory-optimised)
@@ -173,6 +205,8 @@ rag-stack:
         operator: Equal
         value: rag
         effect: NoSchedule
+    podDisruptionBudget:
+      enabled: true
 
   agent-ontology:
     nodeSelector:
@@ -182,6 +216,8 @@ rag-stack:
         operator: Equal
         value: rag
         effect: NoSchedule
+    podDisruptionBudget:
+      enabled: true
 
   rag-redis:
     nodeSelector:
@@ -191,6 +227,8 @@ rag-stack:
         operator: Equal
         value: rag
         effect: NoSchedule
+    podDisruptionBudget:
+      enabled: true
 
   neo4j:
     nodeSelector:
@@ -202,6 +240,35 @@ rag-stack:
         effect: NoSchedule
 
 # ---------------------------------------------------------------------------
-# System tier: no overrides; lands on Auto Mode general-purpose pool by default.
-# supervisor-agent, caipe-ui, langgraph-redis, slack-bot, dynamic-agents.
+# System tier: no nodeSelector/tolerations needed, lands on Auto Mode
+# general-purpose pool by default. PDBs are still enabled because Auto Mode
+# consolidates nodes and will evict pods without a PDB in place.
 # ---------------------------------------------------------------------------
+
+supervisor-agent:
+  podDisruptionBudget:
+    enabled: true
+
+caipe-ui:
+  podDisruptionBudget:
+    enabled: true
+
+caipe-ui-mongodb:
+  podDisruptionBudget:
+    enabled: true
+
+langgraph-redis:
+  podDisruptionBudget:
+    enabled: true
+
+slack-bot:
+  podDisruptionBudget:
+    enabled: true
+
+dynamic-agents:
+  podDisruptionBudget:
+    enabled: true
+
+skill-scanner:
+  podDisruptionBudget:
+    enabled: true
