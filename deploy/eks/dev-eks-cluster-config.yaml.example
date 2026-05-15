@@ -10,6 +10,42 @@ metadata:
 # deploy/eks/nodepools/ to configure right-sized agent and RAG workload tiers.
 autoModeConfig:
   enabled: true
+  nodePools: ["general-purpose", "system"]
 
-addons:
-  - name: metrics-server
+# Use IAM access entries (API auth mode) instead of aws-auth ConfigMap.
+accessConfig:
+  authenticationMode: API
+
+vpc:
+  # Enable private endpoint so in-cluster traffic stays off the public internet.
+  # Restrict public access to known CIDRs (replace with your VPN/office CIDR).
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: true
+  publicAccessCIDRs:
+    - "0.0.0.0/0"  # TODO: replace with your VPN/office CIDR
+
+# Encrypt Kubernetes secrets at rest with a customer-managed KMS key.
+secretsEncryption:
+  keyARN: arn:aws:kms:us-east-2:ACCOUNT_ID:key/KEY_ID  # TODO: replace with your KMS key ARN
+
+# Audit and authenticator logs are needed for security posture; API logs add
+# visibility into control-plane calls without significant cost impact.
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["audit", "authenticator", "api"]
+
+# OIDC is required for IRSA.
+iam:
+  withOIDC: true
+  serviceAccounts:
+  - metadata:
+      name: external-dns
+      namespace: external-dns
+    wellKnownPolicies:
+      externalDNS: true
+  - metadata:
+      name: cert-manager
+      namespace: cert-manager
+    wellKnownPolicies:
+      certManager: true
