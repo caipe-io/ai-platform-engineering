@@ -1,0 +1,31 @@
+[project]
+name = "mcp_cloudability"
+version = "0.1.0"
+description = "Cloudability MCP Server"
+readme = "README.md"
+authors = [
+    { name = "CNOE Contributors" },
+]
+license = "Apache-2.0"
+requires-python = ">=3.13,<4.0"
+dependencies = [
+  "httpx==0.28.1",
+  "python-dotenv==1.2.1",
+  "pydantic==2.12.5",
+  "mcp==1.21.0",
+  "fastmcp==2.13.3",
+  "typing-extensions==4.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black",
+  "isort",
+  "mypy",
+  "pytest",
+  "ruff",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
