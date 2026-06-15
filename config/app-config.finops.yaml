@@ -29,14 +29,14 @@ mcp_servers:
     name: "LiteLLM"
     description: "LiteLLM usage, token, model inventory, and spend reporting"
     transport: "http"
-    endpoint: "${LITELLM_MCP_URL:-http://mcp-litellm:8000/mcp/}"
+    endpoint: "${LITELLM_MCP_URL:-http://mcp-litellm:8000/mcp}"
     enabled: true
 
   - id: "cloudability"
     name: "Cloudability"
     description: "Apptio Cloudability budgets, views, portfolio, and cloud cost data"
     transport: "http"
-    endpoint: "${CLOUDABILITY_MCP_URL:-http://mcp-cloudability:8000/mcp/}"
+    endpoint: "${CLOUDABILITY_MCP_URL:-http://mcp-cloudability:8000/mcp}"
     enabled: true
 
 agents:

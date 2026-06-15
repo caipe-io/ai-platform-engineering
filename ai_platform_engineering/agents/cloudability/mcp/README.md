@@ -60,6 +60,6 @@ caipe-ui:
         name: Cloudability
         description: Apptio Cloudability budgets, views, portfolio, and cloud cost data
         transport: http
-        endpoint: http://ai-platform-engineering-cloudability-mcp:8000/mcp/
+        endpoint: http://ai-platform-engineering-cloudability-mcp:8000/mcp
         enabled: true
 ```

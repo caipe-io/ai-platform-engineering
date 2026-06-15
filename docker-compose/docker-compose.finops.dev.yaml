@@ -12,12 +12,12 @@
 #     --profile caipe-ui up --build
 #
 # MCP endpoints from containers:
-#   http://mcp-litellm:8000/mcp/
-#   http://mcp-cloudability:8000/mcp/
+#   http://mcp-litellm:8000/mcp
+#   http://mcp-cloudability:8000/mcp
 #
 # MCP endpoints from the host:
-#   http://localhost:18080/mcp/
-#   http://localhost:18085/mcp/
+#   http://localhost:18080/mcp
+#   http://localhost:18085/mcp
 # ============================================================================
 
 services:

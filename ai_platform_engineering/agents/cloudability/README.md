@@ -31,4 +31,4 @@ cd mcp
 MCP_MODE=http MCP_HOST=0.0.0.0 MCP_PORT=8000 uv run python -m mcp_cloudability
 ```
 
-The HTTP MCP endpoint is available at `/mcp/`.
+The HTTP MCP endpoint is available at `/mcp`.
