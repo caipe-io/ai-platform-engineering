@@ -1,0 +1,78 @@
+# Grid FinOps app-config seed.
+#
+# Usage:
+#   Local compose:
+#     CAIPE_APP_CONFIG_FILE=./config/app-config.finops.yaml \
+#       docker compose -f docker-compose.dev.yaml \
+#       -f docker-compose/docker-compose.finops.dev.yaml \
+#       --profile caipe-ui up --build
+#
+#   Host-running UI:
+#     set APP_CONFIG_PATH=../config/app-config.finops.yaml in ui/.env.local
+#
+# The LiteLLM and Cloudability MCP endpoints below assume the companion compose
+# file or Helm MCP services are running. Override *_MCP_URL when your services
+# live elsewhere.
+
+models:
+  - model_id: "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    name: "Claude Haiku 4.5 (Bedrock)"
+    provider: "aws-bedrock"
+    description: "Fast, efficient Claude 4.5 Haiku via AWS Bedrock"
+  - model_id: "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    name: "Claude Sonnet 4.5 (Bedrock)"
+    provider: "aws-bedrock"
+    description: "Latest Claude Sonnet 4.5 via AWS Bedrock"
+
+mcp_servers:
+  - id: "litellm"
+    name: "LiteLLM"
+    description: "LiteLLM usage, token, model inventory, and spend reporting"
+    transport: "http"
+    endpoint: "${LITELLM_MCP_URL:-http://mcp-litellm:8000/mcp/}"
+    enabled: true
+
+  - id: "cloudability"
+    name: "Cloudability"
+    description: "Apptio Cloudability budgets, views, portfolio, and cloud cost data"
+    transport: "http"
+    endpoint: "${CLOUDABILITY_MCP_URL:-http://mcp-cloudability:8000/mcp/}"
+    enabled: true
+
+agents:
+  - id: "grid-finops-agent"
+    name: "Grid FinOps"
+    description: "FinOps analyst for LLM usage and Cloudability cloud cost management"
+    system_prompt: |-
+      You are Grid FinOps, a focused FinOps analyst for CAIPE/Grid.
+
+      Use the LiteLLM MCP tools for LLM usage, token, model, user, budget, and spend analysis.
+      Use the Cloudability MCP tools for cloud provider spend, budgets, views, portfolio resources, allocation, and broader cloud-cost investigations.
+
+      Routing guidance:
+      - For LLM, model, token, LiteLLM user/team, or AI gateway spend questions, use LiteLLM tools.
+      - For cloud provider cost, Cloudability budget, view, portfolio, allocation, or Apptio Cloudability API questions, use Cloudability tools.
+      - For blended FinOps questions, call both toolsets and clearly separate LLM platform spend from broader cloud infrastructure spend.
+
+      Reporting guidance:
+      - For LiteLLM reports, prefer curated report tools such as get_llm_token_usage_report, get_llm_spend_by_model_report, and get_llm_usage_and_spend_by_user_report.
+      - When a tool returns files_to_write, write every file with write_file before saying the report is available in Grid Files.
+      - Include concise caveats for missing credentials, empty data, partial windows, or unavailable MCP servers.
+      - Do not expose raw JSON unless the user explicitly asks for it.
+    model:
+      id: "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+      provider: "aws-bedrock"
+    visibility: "global"
+    allowed_tools:
+      litellm: true
+      cloudability: true
+    builtin_tools:
+      current_datetime:
+        enabled: true
+      user_info:
+        enabled: true
+    ui:
+      gradient_theme: "professional"
+    enabled: true
+
+workflow_configs: []

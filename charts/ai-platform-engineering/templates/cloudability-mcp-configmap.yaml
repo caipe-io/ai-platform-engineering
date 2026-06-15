@@ -1,0 +1,15 @@
+{{- if .Values.cloudabilityMcp.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ai-platform-engineering.cloudabilityMcp.fullname" . }}
+  labels:
+    {{- include "ai-platform-engineering.cloudabilityMcp.labels" . | nindent 4 }}
+data:
+  MCP_MODE: "http"
+  MCP_HOST: "0.0.0.0"
+  MCP_PORT: {{ .Values.cloudabilityMcp.service.port | quote }}
+  {{- range $key, $value := .Values.cloudabilityMcp.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}

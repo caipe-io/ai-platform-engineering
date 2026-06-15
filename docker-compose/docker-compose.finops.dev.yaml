@@ -1,0 +1,65 @@
+# ============================================================================
+# Grid FinOps local development compose
+# ============================================================================
+#
+# Starts the LiteLLM and Cloudability MCP servers used by the Grid FinOps
+# dynamic agent seed in config/app-config.finops.yaml.
+#
+# Usage:
+#   CAIPE_APP_CONFIG_FILE=./config/app-config.finops.yaml \
+#     docker compose -f docker-compose.dev.yaml \
+#     -f docker-compose/docker-compose.finops.dev.yaml \
+#     --profile caipe-ui up --build
+#
+# MCP endpoints from containers:
+#   http://mcp-litellm:8000/mcp/
+#   http://mcp-cloudability:8000/mcp/
+#
+# MCP endpoints from the host:
+#   http://localhost:18080/mcp/
+#   http://localhost:18085/mcp/
+# ============================================================================
+
+services:
+  mcp-litellm:
+    container_name: mcp-litellm
+    ports:
+      - 18080:8000
+    environment:
+      - MCP_MODE=http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - LITELLM_API_URL=${LITELLM_API_URL:-https://litellm.prod.outshift.ai}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:?Set LITELLM_API_KEY in your shell or repo-root .env}
+      - LITELLM_API_TIMEOUT=${LITELLM_API_TIMEOUT:-120}
+      - LITELLM_VERIFY_SSL=${LITELLM_VERIFY_SSL:-true}
+      - SERVER_NAME=${SERVER_NAME:-LITELLM}
+    volumes:
+      - ./ai_platform_engineering/agents/litellm/mcp/mcp_litellm:/app/mcp_litellm
+    build:
+      context: .
+      dockerfile: build/agents/Dockerfile.mcp
+      args:
+        - AGENT_NAME=litellm
+
+  mcp-cloudability:
+    container_name: mcp-cloudability
+    ports:
+      - 18085:8000
+    environment:
+      - MCP_MODE=http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - CLOUDABILITY_API_URL=${CLOUDABILITY_API_URL:-https://api.cloudability.com/v3}
+      - CLOUDABILITY_REGION=${CLOUDABILITY_REGION:-}
+      - CLOUDABILITY_API_KEY=${CLOUDABILITY_API_KEY:-}
+      - APPTIO_OPENTOKEN=${APPTIO_OPENTOKEN:-}
+      - APPTIO_ENVIRONMENT_ID=${APPTIO_ENVIRONMENT_ID:-}
+      - SERVER_NAME=${CLOUDABILITY_SERVER_NAME:-Cloudability}
+    volumes:
+      - ./ai_platform_engineering/agents/cloudability/mcp/mcp_cloudability:/app/mcp_cloudability
+    build:
+      context: .
+      dockerfile: build/agents/Dockerfile.mcp
+      args:
+        - AGENT_NAME=cloudability

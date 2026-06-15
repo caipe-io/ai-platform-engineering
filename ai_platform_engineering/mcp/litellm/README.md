@@ -156,15 +156,24 @@ Recommended FinOps agent prompt rules:
 
 - When asked "what can you do?", mention LiteLLM token reports, spend per
   LLM/model, user-level usage and spend, top model usage, available model
-  inventory, downloadable HTML reports with visualization charts, and CSV
-  exports. Mention supported fiscal periods such as `FY26Q1`.
+  inventory, downloadable HTML reports with visualization charts, CSV exports,
+  and, when the Cloudability MCP server is configured, broader cloud budgets,
+  views, portfolio resources, allocation, and Apptio Cloudability API data.
+  Mention supported fiscal periods such as `FY26Q1`.
 - For every report request, call the relevant curated LiteLLM report tool with
   `report_format: "all"` unless the user explicitly asks for a single format.
+- For blended FinOps questions, use LiteLLM for AI gateway/model spend and
+  Cloudability for broader cloud infrastructure spend. Keep those categories
+  separate in the answer before drawing combined conclusions.
 - After the report tool returns, call `write_file` for every item in
   `files_to_write` so the HTML chart report and CSV export appear in Grid Files
   by default.
 - Only say the reports are available in Files after every `write_file` call
   succeeds.
+
+The ready-made `config/app-config.finops.yaml` seed creates a Grid FinOps
+dynamic agent wired to both the `litellm` and `cloudability` MCP servers. For
+local development, run it with `docker-compose/docker-compose.finops.dev.yaml`.
 
 The generated server registers 110 read-only tools, including:
 

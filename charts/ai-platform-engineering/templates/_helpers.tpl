@@ -274,3 +274,82 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- default (include "ai-platform-engineering.litellmMcp.fullname" .) $secret.name -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.name" -}}
+{{- $values := .Values.cloudabilityMcp | default dict -}}
+{{- default "cloudability-mcp" $values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.fullname" -}}
+{{- $values := .Values.cloudabilityMcp | default dict -}}
+{{- if $values.fullnameOverride -}}
+{{- $values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- $name := default "cloudability-mcp" $values.nameOverride -}}
+{{- if contains $name .Release.Name -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "ai-platform-engineering.cloudabilityMcp.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: mcp
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.labels" -}}
+helm.sh/chart: {{ include "ai-platform-engineering.chart" . }}
+{{ include "ai-platform-engineering.cloudabilityMcp.selectorLabels" . }}
+app.kubernetes.io/part-of: {{ include "ai-platform-engineering.name" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.secretName" -}}
+{{- $values := .Values.cloudabilityMcp | default dict -}}
+{{- if $values.existingSecret -}}
+{{- $values.existingSecret -}}
+{{- else -}}
+{{- $secret := $values.secret | default dict -}}
+{{- default (include "ai-platform-engineering.cloudabilityMcp.fullname" .) $secret.name -}}
+{{- end -}}
+{{- end -}}
+
+{/*
+Resolve maintained CAIPE image repositories for release vs pre-release channels.
+
+Usage:
+  include "ai-platform-engineering.imageRepository" (dict "root" . "repository" .Values.image.repository)
+
+The default channel is derived from .Chart.AppVersion: rc/hotfix/dev versions use
+`ghcr.io/cnoe-io/pre-release/*`, final versions use `ghcr.io/cnoe-io/*`.
+Operators may force either channel with global.image.channel=pre-release|release.
+Explicit non-CAIPE repositories are left unchanged.
+*/}
+{{- define "ai-platform-engineering.imageRepository" -}}
+{{- $root := index . "root" -}}
+{{- $repository := index . "repository" | default "" -}}
+{{- $global := $root.Values.global | default dict -}}
+{{- $image := $global.image | default dict -}}
+{{- $channel := $image.channel | default "" -}}
+{{- $appVersion := $root.Chart.AppVersion | default "" -}}
+{{- if or (eq $channel "") (eq $channel "auto") -}}
+{{- if or (contains "-rc." $appVersion) (contains "-hotfix." $appVersion) (contains "-dev." $appVersion) -}}
+{{- $channel = "pre-release" -}}
+{{- else -}}
+{{- $channel = "release" -}}
+{{- end -}}
+{{- end -}}
+{{- if and (eq $channel "pre-release") (hasPrefix "ghcr.io/cnoe-io/" $repository) (not (hasPrefix "ghcr.io/cnoe-io/pre-release/" $repository)) -}}
+{{- printf "ghcr.io/cnoe-io/pre-release/%s" (trimPrefix "ghcr.io/cnoe-io/" $repository) -}}
+{{- else if and (eq $channel "release") (hasPrefix "ghcr.io/cnoe-io/pre-release/" $repository) -}}
+{{- printf "ghcr.io/cnoe-io/%s" (trimPrefix "ghcr.io/cnoe-io/pre-release/" $repository) -}}
+{{- else -}}
+{{- $repository -}}
+{{- end -}}
+{{- end -}}

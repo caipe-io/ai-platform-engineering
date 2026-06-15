@@ -1154,6 +1154,91 @@ litellmMcp:
   tolerations: []
   affinity: {}
 
+######### Cloudability MCP configuration #########
+# Standalone MCP server for Cloudability FinOps reporting.
+# Enable this with litellmMcp when the Grid FinOps agent should answer both
+# LLM spend and broader cloud cost questions.
+cloudabilityMcp:
+  enabled: false
+  nameOverride: "cloudability-mcp"
+  fullnameOverride: ""
+  replicaCount: 1
+  revisionHistoryLimit: 3
+  image:
+    repository: "ghcr.io/cnoe-io/mcp-cloudability"
+    # tag defaults to .Chart.AppVersion when not specified
+    tag: ""
+    pullPolicy: "IfNotPresent"
+  imagePullSecrets: []
+  service:
+    type: ClusterIP
+    port: 8000
+  # Non-sensitive environment variables.
+  config:
+    SERVER_NAME: "Cloudability"
+    CLOUDABILITY_API_URL: "https://api.cloudability.com/v3"
+    CLOUDABILITY_REGION: ""
+  # Existing Secret containing either CLOUDABILITY_API_KEY or
+  # APPTIO_OPENTOKEN/APPTIO_ENVIRONMENT_ID. Takes precedence over secret.name.
+  existingSecret: ""
+  # Simple Secret creation for local/dev installs. Prefer existingSecret or
+  # externalSecrets in shared clusters.
+  secret:
+    create: false
+    name: ""
+    data: {}
+      # CLOUDABILITY_API_KEY: ""
+      # APPTIO_OPENTOKEN: ""
+      # APPTIO_ENVIRONMENT_ID: ""
+  externalSecrets:
+    enabled: false
+    apiVersion: "v1beta1"
+    refreshInterval: "1h"
+    secretStoreRef:
+      name: "vault"
+      kind: "ClusterSecretStore"
+    data: []
+      # - secretKey: CLOUDABILITY_API_KEY
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: CLOUDABILITY_API_KEY
+      # - secretKey: APPTIO_OPENTOKEN
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: APPTIO_OPENTOKEN
+      # - secretKey: APPTIO_ENVIRONMENT_ID
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: APPTIO_ENVIRONMENT_ID
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext: {}
+  securityContext: {}
+  resources: {}
+    # requests:
+    #   cpu: 100m
+    #   memory: 256Mi
+    # limits:
+    #   cpu: 500m
+    #   memory: 512Mi
+  livenessProbe:
+    tcpSocket:
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    tcpSocket:
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
 ######### Dynamic Agents configuration #########
 # Dynamic Agents service for custom agent creation and management
 # Enable with: tags.dynamic-agents=true
