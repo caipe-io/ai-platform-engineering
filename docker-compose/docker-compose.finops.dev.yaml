@@ -29,8 +29,8 @@ services:
       - MCP_MODE=http
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8000
-      - LITELLM_API_URL=${LITELLM_API_URL:-https://litellm.prod.outshift.ai}
-      - LITELLM_API_KEY=${LITELLM_API_KEY:?Set LITELLM_API_KEY in your shell or repo-root .env}
+      - LITELLM_API_URL=${LITELLM_API_URL:-${LITELLM_PROXY_URL:-https://litellm.prod.outshift.ai}}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-${LITELLM_MASTER_KEY:?Set LITELLM_API_KEY or LITELLM_MASTER_KEY in your shell or repo-root .env}}
       - LITELLM_API_TIMEOUT=${LITELLM_API_TIMEOUT:-120}
       - LITELLM_VERIFY_SSL=${LITELLM_VERIFY_SSL:-true}
       - SERVER_NAME=${SERVER_NAME:-LITELLM}
