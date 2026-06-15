@@ -27,6 +27,15 @@ services:
       # no-SSO dev principal so chat APIs can create conversations.
       - ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED=${ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED:-true}
       - CAIPE_UNSAFE_RBAC_BYPASS=${CAIPE_UNSAFE_RBAC_BYPASS:-true}
+      # Show the Agents tab and route chat through the Dynamic Agents backend.
+      - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-true}
+
+  dynamic-agents:
+    environment:
+      # The dev UI service is caipe-ui, not caipe-ui-prod.
+      - AUTHZ_SERVICE_URL=${AUTHZ_SERVICE_URL:-http://caipe-ui:3000}
+      # Local no-SSO dev auth sends X-User-Context without a bearer token.
+      - DA_REQUIRE_BEARER=${DA_REQUIRE_BEARER:-false}
 
   mcp-litellm:
     container_name: mcp-litellm
