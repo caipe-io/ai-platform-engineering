@@ -21,6 +21,13 @@
 # ============================================================================
 
 services:
+  caipe-ui:
+    environment:
+      # Local FinOps testing runs without the RBAC stack. Enable the explicit
+      # no-SSO dev principal so chat APIs can create conversations.
+      - ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED=${ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED:-true}
+      - CAIPE_UNSAFE_RBAC_BYPASS=${CAIPE_UNSAFE_RBAC_BYPASS:-true}
+
   mcp-litellm:
     container_name: mcp-litellm
     ports:
