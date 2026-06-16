@@ -44,17 +44,40 @@ def _base_url_from_env() -> str:
     return base_url
 
 
+def _first_env(*names: str) -> Optional[str]:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return None
+
+
 def _auth_headers() -> Tuple[Dict[str, str], Optional[httpx.BasicAuth], Optional[str]]:
     headers = {"Accept": "application/json"}
     api_key = os.getenv("CLOUDABILITY_API_KEY")
-    open_token = os.getenv("APPTIO_OPENTOKEN") or os.getenv("CLOUDABILITY_APPTIO_OPENTOKEN")
-    environment_id = os.getenv("APPTIO_ENVIRONMENT_ID") or os.getenv("CLOUDABILITY_ENVIRONMENT_ID")
+    api_public_key = _first_env(
+        "CLOUDABILITY_API_PUBLIC_KEY",
+        "CLOUDABILITY_PUBLIC_KEY",
+        "CLOUDABILITY_API_KEY_PUBLIC_KEY",
+        "CLOUDABILITY_API_KEY_ID",
+    )
+    api_private_key = _first_env(
+        "CLOUDABILITY_API_PRIVATE_KEY",
+        "CLOUDABILITY_PRIVATE_KEY",
+        "CLOUDABILITY_API_KEY_PRIVATE_KEY",
+        "CLOUDABILITY_API_KEY_SECRET",
+    )
+    open_token = _first_env("APPTIO_OPENTOKEN", "CLOUDABILITY_APPTIO_OPENTOKEN")
+    environment_id = _first_env("APPTIO_ENVIRONMENT_ID", "CLOUDABILITY_ENVIRONMENT_ID")
 
     if open_token:
         headers["apptio-opentoken"] = open_token
         if environment_id:
             headers["apptio-environmentid"] = environment_id
         return headers, None, "apptio-opentoken"
+
+    if api_public_key and api_private_key:
+        return headers, httpx.BasicAuth(api_public_key, api_private_key), "api-key-pair"
 
     if api_key:
         return headers, httpx.BasicAuth(api_key, ""), "api-key"
@@ -98,7 +121,8 @@ async def make_api_request(
             {
                 "error": (
                     "Cloudability authentication is not configured. Set "
-                    "CLOUDABILITY_API_KEY or APPTIO_OPENTOKEN."
+                    "CLOUDABILITY_API_PUBLIC_KEY/CLOUDABILITY_API_PRIVATE_KEY, "
+                    "CLOUDABILITY_API_KEY, or APPTIO_OPENTOKEN."
                 )
             },
         )

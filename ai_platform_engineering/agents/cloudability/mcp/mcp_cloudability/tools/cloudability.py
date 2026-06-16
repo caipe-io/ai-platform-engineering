@@ -125,7 +125,8 @@ async def get_cloudability_api_help() -> Dict[str, Any]:
     """Describe supported Cloudability MCP tools and API request patterns."""
     return {
         "auth": [
-            "CLOUDABILITY_API_KEY for Cloudability API key basic authentication",
+            "CLOUDABILITY_API_PUBLIC_KEY and CLOUDABILITY_API_PRIVATE_KEY for Cloudability API key basic authentication",
+            "CLOUDABILITY_API_KEY for legacy single-value Cloudability API key basic authentication",
             "APPTIO_OPENTOKEN and APPTIO_ENVIRONMENT_ID for Apptio OpenToken authentication",
         ],
         "regions": {

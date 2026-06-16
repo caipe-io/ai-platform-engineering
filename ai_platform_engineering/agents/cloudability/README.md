@@ -7,6 +7,13 @@ Cloudability A2A agent backed by a Cloudability MCP server.
 Set one of the supported authentication modes:
 
 ```bash
+CLOUDABILITY_API_PUBLIC_KEY=...
+CLOUDABILITY_API_PRIVATE_KEY=...
+```
+
+or a legacy single-value API key:
+
+```bash
 CLOUDABILITY_API_KEY=...
 ```
 

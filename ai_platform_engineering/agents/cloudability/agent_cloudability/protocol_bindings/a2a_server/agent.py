@@ -51,6 +51,20 @@ class CloudabilityAgent(BaseLangGraphAgent):
             ),
             "CLOUDABILITY_REGION": os.getenv("CLOUDABILITY_REGION", ""),
             "CLOUDABILITY_API_KEY": os.getenv("CLOUDABILITY_API_KEY", ""),
+            "CLOUDABILITY_API_PUBLIC_KEY": (
+                os.getenv("CLOUDABILITY_API_PUBLIC_KEY")
+                or os.getenv("CLOUDABILITY_PUBLIC_KEY")
+                or os.getenv("CLOUDABILITY_API_KEY_PUBLIC_KEY")
+                or os.getenv("CLOUDABILITY_API_KEY_ID")
+                or ""
+            ),
+            "CLOUDABILITY_API_PRIVATE_KEY": (
+                os.getenv("CLOUDABILITY_API_PRIVATE_KEY")
+                or os.getenv("CLOUDABILITY_PRIVATE_KEY")
+                or os.getenv("CLOUDABILITY_API_KEY_PRIVATE_KEY")
+                or os.getenv("CLOUDABILITY_API_KEY_SECRET")
+                or ""
+            ),
             "APPTIO_OPENTOKEN": (
                 os.getenv("APPTIO_OPENTOKEN")
                 or os.getenv("CLOUDABILITY_APPTIO_OPENTOKEN")
@@ -63,9 +77,11 @@ class CloudabilityAgent(BaseLangGraphAgent):
             ),
         }
 
-        if not env["CLOUDABILITY_API_KEY"] and not env["APPTIO_OPENTOKEN"]:
+        has_api_key_pair = bool(env["CLOUDABILITY_API_PUBLIC_KEY"] and env["CLOUDABILITY_API_PRIVATE_KEY"])
+        if not env["CLOUDABILITY_API_KEY"] and not has_api_key_pair and not env["APPTIO_OPENTOKEN"]:
             raise ValueError(
-                "Set CLOUDABILITY_API_KEY or APPTIO_OPENTOKEN/APPTIO_ENVIRONMENT_ID "
+                "Set CLOUDABILITY_API_PUBLIC_KEY/CLOUDABILITY_API_PRIVATE_KEY, "
+                "CLOUDABILITY_API_KEY, or APPTIO_OPENTOKEN/APPTIO_ENVIRONMENT_ID "
                 "to use the Cloudability MCP server."
             )
 

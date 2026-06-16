@@ -4,7 +4,14 @@ MCP server for the IBM Apptio Cloudability API.
 
 ## Environment
 
-Use either a Cloudability API key:
+Use either a Cloudability API key pair:
+
+```bash
+CLOUDABILITY_API_PUBLIC_KEY=...
+CLOUDABILITY_API_PRIVATE_KEY=...
+```
+
+or a legacy single-value Cloudability API key:
 
 ```bash
 CLOUDABILITY_API_KEY=...

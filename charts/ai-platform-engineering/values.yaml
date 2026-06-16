@@ -1178,7 +1178,8 @@ cloudabilityMcp:
     SERVER_NAME: "Cloudability"
     CLOUDABILITY_API_URL: "https://api.cloudability.com/v3"
     CLOUDABILITY_REGION: ""
-  # Existing Secret containing either CLOUDABILITY_API_KEY or
+  # Existing Secret containing either CLOUDABILITY_API_PUBLIC_KEY/
+  # CLOUDABILITY_API_PRIVATE_KEY, CLOUDABILITY_API_KEY, or
   # APPTIO_OPENTOKEN/APPTIO_ENVIRONMENT_ID. Takes precedence over secret.name.
   existingSecret: ""
   # Simple Secret creation for local/dev installs. Prefer existingSecret or
@@ -1188,6 +1189,8 @@ cloudabilityMcp:
     name: ""
     data: {}
       # CLOUDABILITY_API_KEY: ""
+      # CLOUDABILITY_API_PUBLIC_KEY: ""
+      # CLOUDABILITY_API_PRIVATE_KEY: ""
       # APPTIO_OPENTOKEN: ""
       # APPTIO_ENVIRONMENT_ID: ""
   externalSecrets:
@@ -1202,6 +1205,14 @@ cloudabilityMcp:
       #   remoteRef:
       #     key: dev/cloudability-mcp
       #     property: CLOUDABILITY_API_KEY
+      # - secretKey: CLOUDABILITY_API_PUBLIC_KEY
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: CLOUDABILITY_API_PUBLIC_KEY
+      # - secretKey: CLOUDABILITY_API_PRIVATE_KEY
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: CLOUDABILITY_API_PRIVATE_KEY
       # - secretKey: APPTIO_OPENTOKEN
       #   remoteRef:
       #     key: dev/cloudability-mcp
