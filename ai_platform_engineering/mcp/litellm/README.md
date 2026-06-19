@@ -24,11 +24,34 @@ LITELLM_API_KEY=
 LITELLM_API_TIMEOUT=120
 LITELLM_VERIFY_SSL=true
 SERVER_NAME=LITELLM
+LITELLM_TOKEN_ALERTS_ENABLED=false
+LITELLM_TOKEN_ALERT_THRESHOLD=0.8
+LITELLM_TOKEN_ALERT_LIMITS_JSON={}
 ```
 
 `LITELLM_TOKEN` and `LITELLM_API_TOKEN` are also accepted as compatibility aliases.
 `LITELLM_API_TIMEOUT` is optional and defaults to 30 seconds. Use a larger value
 for slower analytics endpoints such as spend logs.
+
+## Token Usage Alerts
+
+The `evaluate_token_usage_alert` tool checks LiteLLM user daily activity reports
+and returns whether a user or API key has reached the configured token-usage
+threshold. It is disabled by default:
+
+```bash
+LITELLM_TOKEN_ALERTS_ENABLED=false
+LITELLM_TOKEN_ALERT_THRESHOLD=0.8
+```
+
+While disabled, the tool still returns `notification.would_notify=true` when the
+threshold is reached, but it does not send a notification. This is the intended
+mode for local validation. Pass `param_token_limit` directly for one-off tests,
+or configure repeatable limits with a JSON map:
+
+```bash
+LITELLM_TOKEN_ALERT_LIMITS_JSON='{"user@example.com":1000000,"default":500000}'
+```
 
 ## Running
 

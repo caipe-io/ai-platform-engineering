@@ -234,6 +234,8 @@ from tools import audit_id
 
 from tools import user_available_users
 
+from mcp_litellm.tools import token_usage_alerts
+
 
 def main():
   # Load environment variables
@@ -706,6 +708,10 @@ def main():
   # Register user_available_users tools
 
   mcp.tool()(user_available_users.get_available_enterprise_get)
+
+  # Register token_usage_alerts tools
+
+  mcp.tool()(token_usage_alerts.evaluate_token_usage_alert)
 
   # Run the MCP server
   if MCP_MODE.lower() in ["sse", "http"]:
