@@ -112,9 +112,19 @@ def test_evaluate_token_usage_alert_sends_webex_when_enabled_and_allowed():
         )
 
   send_webex.assert_awaited_once()
+  send_args = send_webex.await_args.args
+  assert send_args[0] == "mouledel@example.com"
+  assert send_args[1].startswith("⚠️ **LiteLLM Token Usage Warning**")
+  assert "**User:** `mouledel`" in send_args[1]
+  assert "**Usage:** **85.0%** of the configured token limit" in send_args[1]
+  assert "**Tokens used:** `850 / 1,000`" in send_args[1]
+  assert "**Alert threshold:** `80.0%`" in send_args[1]
+  assert "**Report period:** `2026-06-19 to 2026-06-19`" in send_args[1]
+  assert "**Action:** Please review current usage or request a higher token limit from the platform team" in send_args[1]
   assert result["threshold_reached"] is True
   assert result["notification"] == {"status": "sent", "channel": "webex", "would_notify": True}
   assert result["notification_recipient"] == "mouledel@example.com"
+  assert result["message"] == send_args[1]
 
 
 def test_evaluate_token_usage_alert_suppresses_webex_when_recipient_not_allowed():

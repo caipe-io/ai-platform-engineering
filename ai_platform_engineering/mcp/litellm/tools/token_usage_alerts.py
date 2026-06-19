@@ -108,6 +108,35 @@ def _recipient_allowed(*recipients: str | None) -> bool:
   return any(recipient and recipient.lower() in allowed for recipient in recipients)
 
 
+def _format_token_count(value: int) -> str:
+  return f"{value:,}"
+
+
+def _build_warning_message(
+  *,
+  recipient: str,
+  used_tokens: int,
+  token_limit: int,
+  usage_percent: float,
+  threshold_percent: float,
+  start_date: str,
+  end_date: str,
+) -> str:
+  return "\n".join(
+    [
+      "⚠️ **LiteLLM Token Usage Warning**",
+      "",
+      f"**User:** `{recipient}`",
+      f"**Usage:** **{usage_percent}%** of the configured token limit",
+      f"**Tokens used:** `{_format_token_count(used_tokens)} / {_format_token_count(token_limit)}`",
+      f"**Alert threshold:** `{threshold_percent}%`",
+      f"**Report period:** `{start_date} to {end_date}`",
+      "",
+      "**Action:** Please review current usage or request a higher token limit from the platform team before more requests are affected.",
+    ]
+  )
+
+
 def _extract_numeric_token_value(value: Any) -> int:
   if isinstance(value, bool):
     return 0
@@ -293,9 +322,14 @@ async def evaluate_token_usage_alert(
     channel=channel,
     recipient_allowed=recipient_allowed,
   )
-  message = (
-    f"LiteLLM token usage for {recipient} is at {usage_percent}% "
-    f"({used_tokens}/{token_limit} tokens), threshold {threshold_percent}%."
+  message = _build_warning_message(
+    recipient=recipient,
+    used_tokens=used_tokens,
+    token_limit=token_limit,
+    usage_percent=usage_percent,
+    threshold_percent=threshold_percent,
+    start_date=params["start_date"],
+    end_date=params["end_date"],
   )
 
   if notification["status"] == "pending" and channel == "webex":
