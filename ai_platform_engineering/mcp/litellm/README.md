@@ -27,6 +27,10 @@ SERVER_NAME=LITELLM
 LITELLM_TOKEN_ALERTS_ENABLED=false
 LITELLM_TOKEN_ALERT_THRESHOLD=0.8
 LITELLM_TOKEN_ALERT_LIMITS_JSON={}
+LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=none
+LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=
+LITELLM_TOKEN_ALERT_WEBEX_API_URL=https://webexapis.com/v1
+WEBEX_TOKEN=
 ```
 
 `LITELLM_TOKEN` and `LITELLM_API_TOKEN` are also accepted as compatibility aliases.
@@ -52,6 +56,22 @@ or configure repeatable limits with a JSON map:
 ```bash
 LITELLM_TOKEN_ALERT_LIMITS_JSON='{"user@example.com":1000000,"default":500000}'
 ```
+
+To test real Webex delivery for one user only, enable alerting and Webex, set a
+Webex bot token, and allowlist the target recipient:
+
+```bash
+LITELLM_TOKEN_ALERTS_ENABLED=true
+LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=webex
+LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=mouledel@example.com
+WEBEX_TOKEN=<webex-bot-token>
+```
+
+Then call `evaluate_token_usage_alert` with `param_dry_run=false` and
+`param_notification_recipient="mouledel@example.com"`. The alert will remain
+suppressed for recipients outside `LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS`.
+`WEBEX_ACCESS_TOKEN` and `WEBEX_INTEGRATION_BOT_ACCESS_TOKEN` are accepted as
+token aliases. The allowlist is required for Webex delivery.
 
 ## Running
 

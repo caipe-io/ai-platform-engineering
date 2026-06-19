@@ -57,7 +57,8 @@ def test_evaluate_token_usage_alert_does_not_notify_below_threshold():
 
 
 def test_evaluate_token_usage_alert_requires_token_limit():
-  result = asyncio.run(token_usage_alerts.evaluate_token_usage_alert(param_user_id="user@example.com"))
+  with patch.dict(os.environ, {"LITELLM_TOKEN_ALERT_LIMITS_JSON": ""}, clear=False):
+    result = asyncio.run(token_usage_alerts.evaluate_token_usage_alert(param_user_id="user@example.com"))
 
   assert result["error"] == "token_limit is required"
   assert "LITELLM_TOKEN_ALERT_LIMITS_JSON" in result["hint"]
@@ -79,3 +80,72 @@ def test_evaluate_token_usage_alert_uses_env_limit_map():
   assert result["token_limit"] == 1000
   assert result["usage_percent"] == 80
   assert result["threshold_reached"] is True
+
+
+def test_evaluate_token_usage_alert_sends_webex_when_enabled_and_allowed():
+  mock_report = {"data": [{"date": "2026-06-19", "total_tokens": 850}]}
+
+  with patch.dict(
+    os.environ,
+    {
+      "LITELLM_TOKEN_ALERTS_ENABLED": "true",
+      "LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL": "webex",
+      "LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS": "mouledel@example.com",
+    },
+    clear=False,
+  ):
+    with patch.object(token_usage_alerts, "make_api_request", new=AsyncMock(return_value=(True, mock_report))):
+      with patch.object(
+        token_usage_alerts,
+        "_send_webex_notification",
+        new=AsyncMock(return_value={"status": "sent", "channel": "webex", "would_notify": True}),
+      ) as send_webex:
+        result = asyncio.run(
+          token_usage_alerts.evaluate_token_usage_alert(
+            param_user_id="mouledel",
+            param_token_limit=1000,
+            param_start_date="2026-06-19",
+            param_end_date="2026-06-19",
+            param_dry_run=False,
+            param_notification_recipient="mouledel@example.com",
+          )
+        )
+
+  send_webex.assert_awaited_once()
+  assert result["threshold_reached"] is True
+  assert result["notification"] == {"status": "sent", "channel": "webex", "would_notify": True}
+  assert result["notification_recipient"] == "mouledel@example.com"
+
+
+def test_evaluate_token_usage_alert_suppresses_webex_when_recipient_not_allowed():
+  mock_report = {"data": [{"date": "2026-06-19", "total_tokens": 850}]}
+
+  with patch.dict(
+    os.environ,
+    {
+      "LITELLM_TOKEN_ALERTS_ENABLED": "true",
+      "LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL": "webex",
+      "LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS": "other@example.com",
+    },
+    clear=False,
+  ):
+    with patch.object(token_usage_alerts, "make_api_request", new=AsyncMock(return_value=(True, mock_report))):
+      with patch.object(token_usage_alerts, "_send_webex_notification", new=AsyncMock()) as send_webex:
+        result = asyncio.run(
+          token_usage_alerts.evaluate_token_usage_alert(
+            param_user_id="mouledel",
+            param_token_limit=1000,
+            param_start_date="2026-06-19",
+            param_end_date="2026-06-19",
+            param_dry_run=False,
+            param_notification_recipient="mouledel@example.com",
+          )
+        )
+
+  send_webex.assert_not_awaited()
+  assert result["notification"] == {
+    "status": "suppressed",
+    "reason": "recipient_not_allowed",
+    "channel": "webex",
+    "would_notify": True,
+  }

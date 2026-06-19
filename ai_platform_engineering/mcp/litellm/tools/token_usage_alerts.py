@@ -6,12 +6,15 @@ import os
 from datetime import date, timedelta
 from typing import Any
 
+import httpx
+
 from mcp_litellm.api.client import make_api_request
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mcp_tools")
 
 DEFAULT_THRESHOLD = 0.8
+DEFAULT_WEBEX_API_URL = "https://webexapis.com/v1"
 TOTAL_TOKEN_KEYS = {
   "total_tokens",
   "tokens",
@@ -45,6 +48,14 @@ def _env_float(name: str, default: float) -> float:
   except ValueError:
     logger.warning("Invalid %s=%r; using default %s", name, value, default)
     return default
+
+
+def _first_env(*names: str) -> str | None:
+  for name in names:
+    value = os.getenv(name)
+    if value:
+      return value
+  return None
 
 
 def _load_limit_map() -> dict[str, int]:
@@ -81,6 +92,20 @@ def _resolve_token_limit(user_id: str | None, api_key: str | None, token_limit: 
     if key and key in limits:
       return limits[key]
   return None
+
+
+def _allowed_recipients() -> set[str]:
+  raw = os.getenv("LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS", "").strip()
+  if not raw:
+    return set()
+  return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def _recipient_allowed(*recipients: str | None) -> bool:
+  allowed = _allowed_recipients()
+  if not allowed:
+    return False
+  return any(recipient and recipient.lower() in allowed for recipient in recipients)
 
 
 def _extract_numeric_token_value(value: Any) -> int:
@@ -134,14 +159,73 @@ def _notification_status(
   threshold_reached: bool,
   feature_enabled: bool,
   dry_run: bool,
+  channel: str,
+  recipient_allowed: bool,
 ) -> dict[str, Any]:
   if not threshold_reached:
     return {"status": "not_needed", "would_notify": False}
   if not feature_enabled:
     return {"status": "suppressed", "reason": "feature_disabled", "would_notify": True}
   if dry_run:
-    return {"status": "dry_run", "reason": "dry_run", "would_notify": True}
-  return {"status": "not_sent", "reason": "notifier_not_configured", "would_notify": True}
+    return {"status": "dry_run", "reason": "dry_run", "channel": channel, "would_notify": True}
+  if channel != "webex":
+    return {"status": "not_sent", "reason": "notifier_not_configured", "channel": channel, "would_notify": True}
+  if not recipient_allowed:
+    return {"status": "suppressed", "reason": "recipient_not_allowed", "channel": channel, "would_notify": True}
+  return {"status": "pending", "channel": channel, "would_notify": True}
+
+
+def _webex_token() -> str | None:
+  return _first_env("WEBEX_TOKEN", "WEBEX_ACCESS_TOKEN", "WEBEX_INTEGRATION_BOT_ACCESS_TOKEN")
+
+
+def _webex_api_url() -> str:
+  return os.getenv("LITELLM_TOKEN_ALERT_WEBEX_API_URL", DEFAULT_WEBEX_API_URL).rstrip("/")
+
+
+async def _send_webex_notification(to_person_email: str, markdown: str) -> dict[str, Any]:
+  token = _webex_token()
+  if not token:
+    return {
+      "status": "failed",
+      "reason": "missing_webex_token",
+      "channel": "webex",
+      "would_notify": True,
+    }
+
+  try:
+    async with httpx.AsyncClient(timeout=30) as client:
+      response = await client.post(
+        f"{_webex_api_url()}/messages",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        json={"toPersonEmail": to_person_email, "markdown": markdown},
+      )
+    if response.status_code in {200, 201, 202}:
+      response_data = response.json() if response.content else {}
+      return {
+        "status": "sent",
+        "channel": "webex",
+        "to_person_email": to_person_email,
+        "message_id": response_data.get("id"),
+        "would_notify": True,
+      }
+
+    return {
+      "status": "failed",
+      "reason": f"webex_api_error_{response.status_code}",
+      "channel": "webex",
+      "to_person_email": to_person_email,
+      "would_notify": True,
+    }
+  except httpx.RequestError as exc:
+    return {
+      "status": "failed",
+      "reason": "webex_request_error",
+      "error": str(exc),
+      "channel": "webex",
+      "to_person_email": to_person_email,
+      "would_notify": True,
+    }
 
 
 async def evaluate_token_usage_alert(
@@ -153,6 +237,7 @@ async def evaluate_token_usage_alert(
   param_threshold: float | None = None,
   param_dry_run: bool = True,
   param_timezone: str | None = None,
+  param_notification_recipient: str | None = None,
 ) -> dict[str, Any]:
   """
   Evaluate whether a LiteLLM user has crossed the configured token usage threshold.
@@ -196,13 +281,33 @@ async def evaluate_token_usage_alert(
   threshold_percent = round(threshold * 100, 2)
   threshold_reached = usage_ratio >= threshold
   feature_enabled = _env_bool("LITELLM_TOKEN_ALERTS_ENABLED", False)
+  channel = os.getenv("LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL", "none").strip().lower()
 
   recipient = param_user_id or param_api_key or "unknown"
+  notification_recipient = param_notification_recipient or (param_user_id if param_user_id and "@" in param_user_id else None)
+  recipient_allowed = _recipient_allowed(recipient, notification_recipient)
   notification = _notification_status(
     threshold_reached=threshold_reached,
     feature_enabled=feature_enabled,
     dry_run=param_dry_run,
+    channel=channel,
+    recipient_allowed=recipient_allowed,
   )
+  message = (
+    f"LiteLLM token usage for {recipient} is at {usage_percent}% "
+    f"({used_tokens}/{token_limit} tokens), threshold {threshold_percent}%."
+  )
+
+  if notification["status"] == "pending" and channel == "webex":
+    if not notification_recipient:
+      notification = {
+        "status": "failed",
+        "reason": "missing_webex_recipient",
+        "channel": "webex",
+        "would_notify": True,
+      }
+    else:
+      notification = await _send_webex_notification(notification_recipient, message)
 
   return {
     "user_id": param_user_id,
@@ -220,9 +325,8 @@ async def evaluate_token_usage_alert(
     "dry_run": param_dry_run,
     "notification": notification,
     "recipient": recipient,
+    "notification_recipient": notification_recipient,
+    "notification_channel": channel,
     "dedupe_key": f"litellm-token-usage:{recipient}:{threshold_percent}:{params['start_date']}:{params['end_date']}",
-    "message": (
-      f"LiteLLM token usage for {recipient} is at {usage_percent}% "
-      f"({used_tokens}/{token_limit} tokens), threshold {threshold_percent}%."
-    ),
+    "message": message,
   }
