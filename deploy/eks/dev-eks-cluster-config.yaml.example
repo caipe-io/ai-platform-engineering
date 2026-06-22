@@ -7,7 +7,7 @@ metadata:
 
 # EKS Auto Mode manages all node provisioning via the built-in Karpenter controller.
 # After creating the cluster, optionally apply the NodePool manifests in
-# deploy/eks/nodepools/ to configure right-sized agent and RAG workload tiers.
+# deploy/eks/karpenter/ to configure right-sized agent and RAG workload tiers.
 autoModeConfig:
   enabled: true
   nodePools: ["general-purpose", "system"]

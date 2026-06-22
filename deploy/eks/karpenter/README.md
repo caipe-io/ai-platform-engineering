@@ -14,7 +14,7 @@ Workloads not matching a custom NodePool taint land on the Auto Mode `general-pu
 
 ## Prerequisites
 
-- EKS cluster created with `autoModeConfig: enabled: true` (see `deploy/eks/cluster-config.yaml.example`)
+- EKS cluster created with `autoModeConfig: enabled: true` (see `deploy/eks/dev-eks-cluster-config.yaml.example`)
 - `kubectl` configured to talk to the cluster
 
 ## Apply

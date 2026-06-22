@@ -14,7 +14,7 @@ spec:
         name: default
 
       # Only pods tolerating this taint will land on RAG nodes.
-      # Set via deploy/eks/values-karpenter.yaml for rag-stack subcharts
+      # Set via charts/ai-platform-engineering/values-karpenter.yaml for rag-stack subcharts
       taints:
         - key: workload-type
           value: rag
