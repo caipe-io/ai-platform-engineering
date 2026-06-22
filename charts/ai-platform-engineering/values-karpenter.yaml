@@ -272,3 +272,27 @@ dynamic-agents:
 skill-scanner:
   podDisruptionBudget:
     enabled: true
+
+webex-bot:
+  podDisruptionBudget:
+    enabled: true
+
+agentgateway:
+  podDisruptionBudget:
+    enabled: true
+
+audit-service:
+  podDisruptionBudget:
+    enabled: true
+
+keycloak:
+  podDisruptionBudget:
+    enabled: true
+
+openfga:
+  podDisruptionBudget:
+    enabled: true
+
+openfga-authz-bridge:
+  podDisruptionBudget:
+    enabled: true
