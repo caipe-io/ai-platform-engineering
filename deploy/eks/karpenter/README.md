@@ -7,7 +7,7 @@ These manifests configure custom node tiers on top of an EKS Auto Mode cluster. 
 | NodePool | Taint | Workloads | Instance strategy |
 |----------|-------|-----------|-------------------|
 | `agents` | `workload-type=agent:NoSchedule` | All `agent-*` subcharts | Spot-preferred, compute-optimised (`c5`/`m5`/`m6i`) |
-| `rag` | `workload-type=rag:NoSchedule` | `rag-server`, `agent-ontology`, `neo4j`, `milvus` | On-demand, memory-optimised (`r5`/`r6i`) |
+| `rag` | `workload-type=rag:NoSchedule` | `rag-server`, `agent-ontology`, `rag-redis`, `neo4j` | On-demand, memory-optimised (`r5`/`r6i`) |
 | `general-purpose` *(built-in)* | *(none)* | `supervisor-agent`, `caipe-ui`, `langgraph-redis`, `slack-bot` | Auto Mode managed |
 
 Workloads not matching a custom NodePool taint land on the Auto Mode `general-purpose` pool.
@@ -61,7 +61,7 @@ taints:
     effect: NoSchedule
 ```
 
-This increases node count (bin-packing across tenants is no longer possible) and requires one NodePool per tenant per tier. The RAG tier warrants the most attention: neo4j and Milvus hold ingested knowledge, so node-level isolation is the infrastructure precondition for data separation between tenants.
+This increases node count (bin-packing across tenants is no longer possible) and requires one NodePool per tenant per tier. The RAG tier warrants the most attention: neo4j holds ingested knowledge, so node-level isolation is the infrastructure precondition for data separation between tenants.
 
 ## Testing
 

@@ -44,7 +44,7 @@ spec:
 
   disruption:
     # Conservative: only consolidate when nodes are fully empty to avoid disrupting
-    # stateful RAG services (neo4j, milvus, redis)
+    # stateful RAG services (neo4j, redis)
     consolidationPolicy: WhenEmpty
     consolidateAfter: 60s
     expireAfter: 720h   # rotate nodes every 30 days to pick up patched AMIs
