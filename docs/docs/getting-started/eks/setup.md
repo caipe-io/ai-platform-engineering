@@ -86,7 +86,7 @@ aws kms create-alias \
 sed -i "s|arn:aws:kms:us-east-2:ACCOUNT_ID:key/KEY_ID|$KEY_ARN|" dev-eks-cluster-config.yaml
 ```
 
-Also update `publicAccessCIDRs` in the config to restrict API server access to your VPN or office CIDR before continuing.
+**Required:** update `publicAccessCIDRs` in the config to your VPN or office egress CIDR before continuing. It ships with a non-routable placeholder (`203.0.113.0/24`) that blocks public API access until you replace it, so the example fails closed rather than exposing the control plane. Never set it to `0.0.0.0/0`.
 
 ### Run eksctl
 
@@ -156,7 +156,7 @@ By default, Auto Mode places all workloads on its built-in `general-purpose` poo
 | NodePool | Workloads | Instance strategy |
 | -------- | --------- | ----------------- |
 | `agents` | All `agent-*` subcharts | Spot-preferred, compute-optimised (`c5`/`m5`/`m6i`) |
-| `rag` | `rag-server`, `agent-ontology`, `neo4j`, `milvus` | On-demand, memory-optimised (`r5`/`r6i`) |
+| `rag` | `rag-server`, `agent-ontology`, `rag-redis`, `neo4j` | On-demand, memory-optimised (`r5`/`r6i`) |
 
 ```bash
 kubectl apply -f deploy/eks/karpenter/

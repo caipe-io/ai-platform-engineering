@@ -23,7 +23,11 @@ vpc:
     publicAccess: true
     privateAccess: true
   publicAccessCIDRs:
-    - "0.0.0.0/0"  # TODO: replace with your VPN/office CIDR
+    # TODO: REQUIRED -- restrict to your VPN/office egress CIDR before creating
+    # the cluster. The example below is a non-routable documentation range;
+    # applying as-is blocks public API access until you replace it.
+    # NEVER use 0.0.0.0/0, it exposes the control-plane API to the entire internet.
+    - "203.0.113.0/24"
 
 # Encrypt Kubernetes secrets at rest with a customer-managed KMS key.
 secretsEncryption:
