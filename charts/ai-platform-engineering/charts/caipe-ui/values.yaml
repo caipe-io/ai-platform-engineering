@@ -180,8 +180,8 @@ affinity: {}
 # Enable in production; leave disabled for local/single-node environments.
 podDisruptionBudget:
   enabled: false
-  minAvailable: 1
-# maxUnavailable: 1  # alternative: allow 1 disruption at a time regardless of replica count
+  maxUnavailable: 1
+  # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
   annotations: {}
 
 # Non-sensitive application configuration.
