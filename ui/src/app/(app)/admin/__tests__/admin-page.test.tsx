@@ -779,6 +779,30 @@ describe('Admin Dashboard Page', () => {
       expect(screen.queryByText(/No Admin access is available/i)).not.toBeInTheDocument();
     });
 
+    it('explains an access preview with no visible Admin areas and lets the admin exit', async () => {
+      currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=example-user');
+      setupFetchMock({
+        tabGates: Object.fromEntries(Object.keys(allGatesOpen).map((key) => [key, false])),
+        simulation: {
+          active: true,
+          readonly: true,
+          subject: {
+            type: 'user',
+            id: 'example-user',
+            openfga_user: 'user:example-user',
+          },
+        },
+      });
+
+      render(<AdminPage />);
+
+      expect(await screen.findByText('No Admin access is available to example-user.')).toBeInTheDocument();
+      expect(screen.getByText(/bootstrap or session role/i)).toBeInTheDocument();
+      expect(screen.getByText('user:example-user')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Exit preview' }));
+      expect(replaceMock).toHaveBeenCalledWith('/admin?', { scroll: false });
+    });
+
     it('scopes Teams & Users data requests to the selected preview account', async () => {
       currentPathname = '/admin/people/users';
       currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=kc-user');
