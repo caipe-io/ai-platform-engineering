@@ -320,7 +320,7 @@ tokenExchange:
     # Argo CD hook semantics for the token-exchange init Job.
     argocdHook: PostSync
     argocdSyncWave: "10"
-    argocdHookDeletePolicy: BeforeHookCreation,HookSucceeded
+    argocdHookDeletePolicy: BeforeHookCreation
     # Helm CLI hook semantics.
     helmHook: post-install,post-upgrade
     helmHookWeight: "10"
