@@ -620,7 +620,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
       id: "dynamic-agents-runtime",
       label: "Dynamic Agents Runtime",
       group: "runtime",
-      target: `${dynamicAgentsUrl}/health`,
+      target: `${dynamicAgentsUrl}/healthz`,
       remediation: {
         label: "Dynamic Agents",
         href: "/agents",

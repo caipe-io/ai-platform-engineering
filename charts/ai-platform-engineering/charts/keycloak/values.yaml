@@ -263,8 +263,7 @@ idp:
     argocdHook: PostSync
     argocdSyncWave: "20"
     argocdHookDeletePolicy: BeforeHookCreation
-    # Helm CLI hook semantics. before-hook-creation,hook-succeeded ensures the
-    # old Job is removed on re-creation and cleaned up after success.
+    # Helm CLI hook semantics. Keep the completed Job until the next creation.
     helmHookDeletePolicy: "before-hook-creation"
   externalSecret:
     enabled: false
