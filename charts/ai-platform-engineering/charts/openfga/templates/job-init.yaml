@@ -9,6 +9,8 @@ metadata:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "5"
     helm.sh/hook-delete-policy: {{ .Values.init.helmHookDeletePolicy | default "before-hook-creation" | quote }}
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/sync-wave: "5"
     {{- with .Values.init.argocdHookDeletePolicy }}
     argocd.argoproj.io/hook-delete-policy: {{ . | quote }}
     {{- end }}

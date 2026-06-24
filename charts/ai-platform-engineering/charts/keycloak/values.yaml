@@ -257,16 +257,15 @@ idp:
     enabled: false
     method: "S256"
   hook:
-    # assisted-by Codex Codex-sonnet-4-6
     # Argo CD hook semantics. Native Argo annotations are emitted because this
     # chart also defines native Argo hooks; relying only on Helm hook mapping can
     # leave init Jobs under mixed lifecycle rules during GitOps syncs.
     argocdHook: PostSync
     argocdSyncWave: "20"
-    argocdHookDeletePolicy: BeforeHookCreation,HookSucceeded
+    argocdHookDeletePolicy: BeforeHookCreation
     # Helm CLI hook semantics. before-hook-creation,hook-succeeded ensures the
     # old Job is removed on re-creation and cleaned up after success.
-    helmHookDeletePolicy: "before-hook-creation,hook-succeeded"
+    helmHookDeletePolicy: "before-hook-creation"
   externalSecret:
     enabled: false
     refreshInterval: "1h"
@@ -290,12 +289,15 @@ authReconcile:
     # their sync strategy while keeping the job chart-owned.
     argocdHook: PreSync
     argocdSyncWave: "-10"
-    argocdHookDeletePolicy: BeforeHookCreation,HookSucceeded
+    # BeforeHookCreation only — do NOT add HookSucceeded. HookSucceeded deletes
+    # the Job the moment it succeeds; ArgoCD then reports it "missing" on any
+    # sync retry and enters an infinite retry loop.
+    argocdHookDeletePolicy: BeforeHookCreation
     # Helm CLI hook semantics. `post-install` handles fresh Helm installs after
     # Keycloak exists; `pre-upgrade` restores persisted settings before upgrades.
     helmHook: post-install,pre-upgrade
     helmHookWeight: "-10"
-    helmHookDeletePolicy: before-hook-creation,hook-succeeded
+    helmHookDeletePolicy: before-hook-creation
 
 # ---------- Token exchange (RFC 8693) for the Slack bot ----------
 # The init-token-exchange Job configures Keycloak's authorization service
@@ -324,7 +326,7 @@ tokenExchange:
     # Helm CLI hook semantics.
     helmHook: post-install,post-upgrade
     helmHookWeight: "10"
-    helmHookDeletePolicy: before-hook-creation,hook-succeeded
+    helmHookDeletePolicy: before-hook-creation
   # init-token-exchange.sh seeds each bot service account's OpenFGA grants
   # (e.g. read on `system_config:platform_settings`) so the Slack and Webex
   # bots can make service-to-service reads against the BFF. Without these the
