@@ -1,13 +1,9 @@
 """Token usage alert evaluation tools for LiteLLM reports."""
 
-import asyncio
 import json
 import logging
 import os
-import smtplib
-import ssl
 from datetime import date, timedelta
-from email.message import EmailMessage
 from typing import Any
 
 import httpx
@@ -19,8 +15,6 @@ logger = logging.getLogger("mcp_tools")
 
 DEFAULT_THRESHOLD = 0.8
 DEFAULT_WEBEX_API_URL = "https://webexapis.com/v1"
-DEFAULT_EMAIL_SUBJECT = "⚠️ Your LiteLLM Token Usage Warning"
-SUPPORTED_NOTIFICATION_CHANNELS = {"webex", "email"}
 TOTAL_TOKEN_KEYS = {
   "total_tokens",
   "tokens",
@@ -51,17 +45,6 @@ def _env_float(name: str, default: float) -> float:
     return default
   try:
     return float(value)
-  except ValueError:
-    logger.warning("Invalid %s=%r; using default %s", name, value, default)
-    return default
-
-
-def _env_int(name: str, default: int) -> int:
-  value = os.getenv(name)
-  if value is None or value.strip() == "":
-    return default
-  try:
-    return int(value)
   except ValueError:
     logger.warning("Invalid %s=%r; using default %s", name, value, default)
     return default
@@ -125,21 +108,6 @@ def _recipient_allowed(*recipients: str | None) -> bool:
   return any(recipient and recipient.lower() in allowed for recipient in recipients)
 
 
-def _notification_channels() -> list[str]:
-  raw = os.getenv("LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL", "none").strip().lower()
-  if not raw or raw == "none":
-    return ["none"]
-  if raw == "all":
-    return sorted(SUPPORTED_NOTIFICATION_CHANNELS)
-
-  channels: list[str] = []
-  for item in raw.replace(";", ",").split(","):
-    channel = item.strip()
-    if channel and channel not in channels:
-      channels.append(channel)
-  return channels or ["none"]
-
-
 def _format_token_count(value: int) -> str:
   return f"{value:,}"
 
@@ -158,13 +126,15 @@ def _build_warning_message(
     [
       "⚠️ **Your LiteLLM Token Usage Warning**",
       "",
-      f"**User:** `{recipient}`",
-      f"**Usage:** **{usage_percent}%** of the configured token limit",
-      f"**Tokens used:** `{_format_token_count(used_tokens)} / {_format_token_count(token_limit)}`",
-      f"**Alert threshold:** `{threshold_percent}%`",
-      f"**Report period:** `{start_date} to {end_date}`",
+      f"`{recipient}` has used **{usage_percent}%** of the configured LiteLLM token limit.",
       "",
-      "**Action:** Please review current usage or request a higher token limit from the platform team before more requests are affected.",
+      "**Usage**",
+      f"- Tokens used: **{_format_token_count(used_tokens)} / {_format_token_count(token_limit)}**",
+      f"- Alert threshold: **{threshold_percent}%**",
+      f"- Report period: **{start_date} to {end_date}**",
+      "",
+      "**Action**",
+      "Please review current usage or request a higher token limit from platform team before more requests are affected.",
     ]
   )
 
@@ -229,36 +199,11 @@ def _notification_status(
     return {"status": "suppressed", "reason": "feature_disabled", "would_notify": True}
   if dry_run:
     return {"status": "dry_run", "reason": "dry_run", "channel": channel, "would_notify": True}
-  if channel not in SUPPORTED_NOTIFICATION_CHANNELS:
+  if channel != "webex":
     return {"status": "not_sent", "reason": "notifier_not_configured", "channel": channel, "would_notify": True}
   if not recipient_allowed:
     return {"status": "suppressed", "reason": "recipient_not_allowed", "channel": channel, "would_notify": True}
   return {"status": "pending", "channel": channel, "would_notify": True}
-
-
-def _notification_summary(notifications: list[dict[str, Any]]) -> dict[str, Any]:
-  if len(notifications) == 1:
-    return notifications[0]
-
-  channels = [item.get("channel") for item in notifications if item.get("channel")]
-  statuses = [item.get("status") for item in notifications]
-  if all(status == "sent" for status in statuses):
-    status = "sent"
-  elif any(status == "failed" for status in statuses) and any(status == "sent" for status in statuses):
-    status = "partial_failure"
-  elif any(status == "failed" for status in statuses):
-    status = "failed"
-  elif len(set(statuses)) == 1:
-    status = statuses[0]
-  else:
-    status = "mixed"
-
-  return {
-    "status": status,
-    "channels": channels,
-    "results": notifications,
-    "would_notify": any(item.get("would_notify") for item in notifications),
-  }
 
 
 def _webex_token() -> str | None:
@@ -310,101 +255,6 @@ async def _send_webex_notification(to_person_email: str, markdown: str) -> dict[
       "error": str(exc),
       "channel": "webex",
       "to_person_email": to_person_email,
-      "would_notify": True,
-    }
-
-
-def _email_smtp_host() -> str | None:
-  return _first_env("LITELLM_TOKEN_ALERT_EMAIL_SMTP_HOST", "SMTP_HOST")
-
-
-def _email_smtp_port(use_ssl: bool) -> int:
-  default = 465 if use_ssl else 587
-  return _env_int("LITELLM_TOKEN_ALERT_EMAIL_SMTP_PORT", default)
-
-
-def _email_from_address() -> str | None:
-  return _first_env(
-    "LITELLM_TOKEN_ALERT_EMAIL_FROM",
-    "SMTP_FROM",
-    "EMAIL_FROM",
-    "LITELLM_TOKEN_ALERT_EMAIL_SMTP_USERNAME",
-  )
-
-
-def _email_subject() -> str:
-  return os.getenv("LITELLM_TOKEN_ALERT_EMAIL_SUBJECT", DEFAULT_EMAIL_SUBJECT)
-
-
-def _email_smtp_username() -> str | None:
-  return _first_env("LITELLM_TOKEN_ALERT_EMAIL_SMTP_USERNAME", "SMTP_USERNAME")
-
-
-def _email_smtp_password() -> str | None:
-  return _first_env("LITELLM_TOKEN_ALERT_EMAIL_SMTP_PASSWORD", "SMTP_PASSWORD")
-
-
-def _send_email_notification_sync(to_email: str, body: str) -> None:
-  use_ssl = _env_bool("LITELLM_TOKEN_ALERT_EMAIL_USE_SSL", False)
-  use_tls = _env_bool("LITELLM_TOKEN_ALERT_EMAIL_USE_TLS", not use_ssl)
-  smtp_host = _email_smtp_host()
-  from_email = _email_from_address()
-  if not smtp_host:
-    raise ValueError("missing_email_smtp_host")
-  if not from_email:
-    raise ValueError("missing_email_from")
-
-  message = EmailMessage()
-  message["Subject"] = _email_subject()
-  message["From"] = from_email
-  message["To"] = to_email
-  message.set_content(body)
-
-  username = _email_smtp_username()
-  password = _email_smtp_password() or ""
-  timeout = _env_float("LITELLM_TOKEN_ALERT_EMAIL_SMTP_TIMEOUT", 30)
-  port = _email_smtp_port(use_ssl)
-  context = ssl.create_default_context()
-
-  if use_ssl:
-    with smtplib.SMTP_SSL(smtp_host, port, timeout=timeout, context=context) as server:
-      if username:
-        server.login(username, password)
-      server.send_message(message)
-    return
-
-  with smtplib.SMTP(smtp_host, port, timeout=timeout) as server:
-    if use_tls:
-      server.starttls(context=context)
-    if username:
-      server.login(username, password)
-    server.send_message(message)
-
-
-async def _send_email_notification(to_email: str, body: str) -> dict[str, Any]:
-  try:
-    await asyncio.to_thread(_send_email_notification_sync, to_email, body)
-    return {
-      "status": "sent",
-      "channel": "email",
-      "to_email": to_email,
-      "would_notify": True,
-    }
-  except ValueError as exc:
-    return {
-      "status": "failed",
-      "reason": str(exc),
-      "channel": "email",
-      "to_email": to_email,
-      "would_notify": True,
-    }
-  except (OSError, smtplib.SMTPException) as exc:
-    return {
-      "status": "failed",
-      "reason": "email_smtp_error",
-      "error": str(exc),
-      "channel": "email",
-      "to_email": to_email,
       "would_notify": True,
     }
 
@@ -462,22 +312,18 @@ async def evaluate_token_usage_alert(
   threshold_percent = round(threshold * 100, 2)
   threshold_reached = usage_ratio >= threshold
   feature_enabled = _env_bool("LITELLM_TOKEN_ALERTS_ENABLED", False)
-  channels = _notification_channels()
-  channel = ",".join(channels)
+  channel = os.getenv("LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL", "none").strip().lower()
 
   recipient = param_user_id or param_api_key or "unknown"
   notification_recipient = param_notification_recipient or (param_user_id if param_user_id and "@" in param_user_id else None)
   recipient_allowed = _recipient_allowed(recipient, notification_recipient)
-  notifications = [
-    _notification_status(
-      threshold_reached=threshold_reached,
-      feature_enabled=feature_enabled,
-      dry_run=param_dry_run,
-      channel=item,
-      recipient_allowed=recipient_allowed,
-    )
-    for item in channels
-  ]
+  notification = _notification_status(
+    threshold_reached=threshold_reached,
+    feature_enabled=feature_enabled,
+    dry_run=param_dry_run,
+    channel=channel,
+    recipient_allowed=recipient_allowed,
+  )
   message = _build_warning_message(
     recipient=recipient,
     used_tokens=used_tokens,
@@ -488,24 +334,16 @@ async def evaluate_token_usage_alert(
     end_date=params["end_date"],
   )
 
-  for index, notification in enumerate(notifications):
-    if notification["status"] != "pending":
-      continue
-
-    pending_channel = notification["channel"]
+  if notification["status"] == "pending" and channel == "webex":
     if not notification_recipient:
-      notifications[index] = {
+      notification = {
         "status": "failed",
-        "reason": f"missing_{pending_channel}_recipient",
-        "channel": pending_channel,
+        "reason": "missing_webex_recipient",
+        "channel": "webex",
         "would_notify": True,
       }
-    elif pending_channel == "webex":
-      notifications[index] = await _send_webex_notification(notification_recipient, message)
-    elif pending_channel == "email":
-      notifications[index] = await _send_email_notification(notification_recipient, message)
-
-  notification = _notification_summary(notifications)
+    else:
+      notification = await _send_webex_notification(notification_recipient, message)
 
   return {
     "user_id": param_user_id,
@@ -525,8 +363,6 @@ async def evaluate_token_usage_alert(
     "recipient": recipient,
     "notification_recipient": notification_recipient,
     "notification_channel": channel,
-    "notification_channels": channels,
-    "notifications": notifications,
     "dedupe_key": f"litellm-token-usage:{recipient}:{threshold_percent}:{params['start_date']}:{params['end_date']}",
     "message": message,
   }
