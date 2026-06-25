@@ -9,6 +9,11 @@ data:
   MCP_MODE: "http"
   MCP_HOST: "0.0.0.0"
   MCP_PORT: {{ .Values.litellmMcp.service.port | quote }}
+  LITELLM_TOKEN_ALERT_SCANNER_ENABLED: {{ .Values.litellmMcp.tokenAlertScanner.enabled | quote }}
+  LITELLM_TOKEN_ALERT_SCAN_INTERVAL_SECONDS: {{ .Values.litellmMcp.tokenAlertScanner.intervalSeconds | quote }}
+  LITELLM_TOKEN_ALERT_SCANNER_DRY_RUN: {{ .Values.litellmMcp.tokenAlertScanner.dryRun | quote }}
+  LITELLM_TOKEN_ALERT_DEDUPE_FILE: {{ .Values.litellmMcp.tokenAlertScanner.dedupeFile | quote }}
+  LITELLM_TOKEN_ALERT_DEDUPE_TTL_SECONDS: {{ .Values.litellmMcp.tokenAlertScanner.dedupeTtlSeconds | quote }}
   {{- range $key, $value := .Values.litellmMcp.config }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}

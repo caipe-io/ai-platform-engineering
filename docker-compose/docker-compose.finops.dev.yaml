@@ -11,6 +11,8 @@
 #     -f docker-compose/docker-compose.finops.dev.yaml \
 #     --profile caipe-ui up --build
 #
+# Add --profile litellm-alerts to run the automatic LiteLLM Webex alert scanner.
+#
 # MCP endpoints from containers:
 #   http://mcp-litellm:8000/mcp
 #   http://mcp-cloudability:8000/mcp
@@ -49,9 +51,53 @@ services:
       - LITELLM_API_KEY=${LITELLM_API_KEY:-${LITELLM_MASTER_KEY:?Set LITELLM_API_KEY or LITELLM_MASTER_KEY in your shell or repo-root .env}}
       - LITELLM_API_TIMEOUT=${LITELLM_API_TIMEOUT:-120}
       - LITELLM_VERIFY_SSL=${LITELLM_VERIFY_SSL:-true}
+      - LITELLM_TOKEN_ALERTS_ENABLED=${LITELLM_TOKEN_ALERTS_ENABLED:-false}
+      - LITELLM_TOKEN_ALERT_THRESHOLD=${LITELLM_TOKEN_ALERT_THRESHOLD:-0.8}
+      - LITELLM_TOKEN_ALERT_LIMITS_JSON=${LITELLM_TOKEN_ALERT_LIMITS_JSON:-{}}
+      - LITELLM_TOKEN_ALERT_TARGETS_JSON=${LITELLM_TOKEN_ALERT_TARGETS_JSON:-[]}
+      - LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=${LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL:-none}
+      - LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=${LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS:-}
+      - LITELLM_TOKEN_ALERT_WEBEX_API_URL=${LITELLM_TOKEN_ALERT_WEBEX_API_URL:-https://webexapis.com/v1}
       - SERVER_NAME=${SERVER_NAME:-LITELLM}
     volumes:
-      - ./ai_platform_engineering/agents/litellm/mcp/mcp_litellm:/app/mcp_litellm
+      - ./ai_platform_engineering/mcp/litellm:/app
+    build:
+      context: .
+      dockerfile: build/agents/Dockerfile.mcp
+      args:
+        - AGENT_NAME=litellm
+
+  litellm-token-alert-scanner:
+    container_name: litellm-token-alert-scanner
+    profiles:
+      - litellm-alerts
+    command:
+      - python
+      - -m
+      - token_alert_scanner.py
+    environment:
+      - LITELLM_API_URL=${LITELLM_API_URL:-${LITELLM_PROXY_URL:-https://litellm.prod.outshift.ai}}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-${LITELLM_MASTER_KEY:?Set LITELLM_API_KEY or LITELLM_MASTER_KEY in your shell or repo-root .env}}
+      - LITELLM_API_TIMEOUT=${LITELLM_API_TIMEOUT:-120}
+      - LITELLM_VERIFY_SSL=${LITELLM_VERIFY_SSL:-true}
+      - LITELLM_TOKEN_ALERTS_ENABLED=${LITELLM_TOKEN_ALERTS_ENABLED:-false}
+      - LITELLM_TOKEN_ALERT_THRESHOLD=${LITELLM_TOKEN_ALERT_THRESHOLD:-0.8}
+      - LITELLM_TOKEN_ALERT_LIMITS_JSON=${LITELLM_TOKEN_ALERT_LIMITS_JSON:-{}}
+      - LITELLM_TOKEN_ALERT_TARGETS_JSON=${LITELLM_TOKEN_ALERT_TARGETS_JSON:-[]}
+      - LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=${LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL:-none}
+      - LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=${LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS:-}
+      - LITELLM_TOKEN_ALERT_WEBEX_API_URL=${LITELLM_TOKEN_ALERT_WEBEX_API_URL:-https://webexapis.com/v1}
+      - LITELLM_TOKEN_ALERT_SCANNER_ENABLED=${LITELLM_TOKEN_ALERT_SCANNER_ENABLED:-false}
+      - LITELLM_TOKEN_ALERT_SCAN_INTERVAL_SECONDS=${LITELLM_TOKEN_ALERT_SCAN_INTERVAL_SECONDS:-3600}
+      - LITELLM_TOKEN_ALERT_SCANNER_DRY_RUN=${LITELLM_TOKEN_ALERT_SCANNER_DRY_RUN:-false}
+      - LITELLM_TOKEN_ALERT_DEDUPE_FILE=${LITELLM_TOKEN_ALERT_DEDUPE_FILE:-/tmp/litellm-token-alerts/state.json}
+      - LITELLM_TOKEN_ALERT_DEDUPE_TTL_SECONDS=${LITELLM_TOKEN_ALERT_DEDUPE_TTL_SECONDS:-86400}
+      - WEBEX_TOKEN=${WEBEX_TOKEN:-}
+      - WEBEX_ACCESS_TOKEN=${WEBEX_ACCESS_TOKEN:-}
+      - WEBEX_INTEGRATION_BOT_ACCESS_TOKEN=${WEBEX_INTEGRATION_BOT_ACCESS_TOKEN:-}
+    volumes:
+      - ./ai_platform_engineering/mcp/litellm:/app
+      - litellm-token-alert-state:/tmp/litellm-token-alerts
     build:
       context: .
       dockerfile: build/agents/Dockerfile.mcp
@@ -81,3 +127,6 @@ services:
       dockerfile: build/agents/Dockerfile.mcp
       args:
         - AGENT_NAME=cloudability
+
+volumes:
+  litellm-token-alert-state:

@@ -27,9 +27,15 @@ SERVER_NAME=LITELLM
 LITELLM_TOKEN_ALERTS_ENABLED=false
 LITELLM_TOKEN_ALERT_THRESHOLD=0.8
 LITELLM_TOKEN_ALERT_LIMITS_JSON={}
+LITELLM_TOKEN_ALERT_TARGETS_JSON=[]
 LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=none
 LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=
 LITELLM_TOKEN_ALERT_WEBEX_API_URL=https://webexapis.com/v1
+LITELLM_TOKEN_ALERT_SCANNER_ENABLED=false
+LITELLM_TOKEN_ALERT_SCAN_INTERVAL_SECONDS=3600
+LITELLM_TOKEN_ALERT_SCANNER_DRY_RUN=false
+LITELLM_TOKEN_ALERT_DEDUPE_FILE=/tmp/litellm-token-alerts/state.json
+LITELLM_TOKEN_ALERT_DEDUPE_TTL_SECONDS=86400
 WEBEX_TOKEN=
 ```
 
@@ -72,6 +78,40 @@ Then call `evaluate_token_usage_alert` with `param_dry_run=false` and
 suppressed for recipients outside `LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS`.
 `WEBEX_ACCESS_TOKEN` and `WEBEX_INTEGRATION_BOT_ACCESS_TOKEN` are accepted as
 token aliases. The allowlist is required for Webex delivery.
+
+## Automatic Webex Alerts
+
+Automatic delivery is handled by the token alert scanner. It periodically scans
+configured targets, evaluates usage with `evaluate_token_usage_alert`, and sends
+Webex when a target reaches the threshold. Configure explicit targets with user
+or API-key limits:
+
+```bash
+LITELLM_TOKEN_ALERTS_ENABLED=true
+LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=webex
+LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=mouledel@example.com
+LITELLM_TOKEN_ALERT_TARGETS_JSON='[{"user_id":"mouledel@example.com","token_limit":1000000,"recipient":"mouledel@example.com"}]'
+LITELLM_TOKEN_ALERT_SCANNER_ENABLED=true
+LITELLM_TOKEN_ALERT_SCAN_INTERVAL_SECONDS=3600
+WEBEX_TOKEN=<webex-bot-token>
+```
+
+If `LITELLM_TOKEN_ALERT_TARGETS_JSON` is empty, the scanner falls back to each
+non-`default` key in `LITELLM_TOKEN_ALERT_LIMITS_JSON` as a `user_id`. The
+scanner stores sent alert keys in `LITELLM_TOKEN_ALERT_DEDUPE_FILE` so the same
+target is not notified on every scan; the default dedupe window is 24 hours.
+
+Run one scanner process locally:
+
+```bash
+uv run python token_alert_scanner.py
+```
+
+For Docker Compose local testing, enable the scanner profile:
+
+```bash
+docker compose -f docker-compose/docker-compose.litellm.dev.yaml --profile litellm-alerts up --build
+```
 
 ## Running
 

@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from mcp_litellm.api.client import make_api_request
+from api.client import make_api_request
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mcp_tools")
