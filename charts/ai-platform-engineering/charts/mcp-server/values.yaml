@@ -88,11 +88,13 @@ tolerations: []
 
 affinity: {}
 
-# PodDisruptionBudget for the MCP Deployment. Enable when running multiple
-# replicas (or on Karpenter/Auto Mode, where node consolidation evicts pods)
-# to keep at least one MCP server available during voluntary disruptions.
+# PodDisruptionBudget for the MCP Deployment. Enabled by default: it only
+# renders for http-mode servers (stdio servers have no Deployment), and
+# maxUnavailable=1 never blocks node drains on a single replica while still
+# protecting availability once replicaCount/HPA scales above 1 — relevant on
+# Karpenter/Auto Mode, where node consolidation evicts pods.
 podDisruptionBudget:
-  enabled: false
+  enabled: true
   maxUnavailable: 1
   # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
   annotations: {}

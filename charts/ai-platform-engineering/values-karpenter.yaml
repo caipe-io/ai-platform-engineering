@@ -85,52 +85,10 @@ dynamic-agents:
   podDisruptionBudget:
     enabled: true
 
-# MCP tool servers. Each mcp-* alias is a separate dependency, so PDBs are set
-# per alias. New mcp-* tools you enable should get a matching block here; or set
-# `podDisruptionBudget.enabled: true` in the mcp-server chart defaults to cover
-# every alias automatically.
-mcp-argocd:
-  podDisruptionBudget:
-    enabled: true
-mcp-aws:
-  podDisruptionBudget:
-    enabled: true
-mcp-backstage:
-  podDisruptionBudget:
-    enabled: true
-mcp-confluence:
-  podDisruptionBudget:
-    enabled: true
-mcp-github:
-  podDisruptionBudget:
-    enabled: true
-mcp-gitlab:
-  podDisruptionBudget:
-    enabled: true
-mcp-jira:
-  podDisruptionBudget:
-    enabled: true
-mcp-komodor:
-  podDisruptionBudget:
-    enabled: true
-mcp-pagerduty:
-  podDisruptionBudget:
-    enabled: true
-mcp-slack:
-  podDisruptionBudget:
-    enabled: true
-mcp-splunk:
-  podDisruptionBudget:
-    enabled: true
-mcp-victorops:
-  podDisruptionBudget:
-    enabled: true
-mcp-webex:
-  podDisruptionBudget:
-    enabled: true
-mcp-netutils:
-  podDisruptionBudget:
-    enabled: true
+# MCP tool servers (mcp-argocd, mcp-github, ...) need no entries here: the
+# mcp-server chart enables a PodDisruptionBudget by default, which renders only
+# for http-mode servers (stdio servers have no Deployment). New mcp-* tools are
+# covered automatically.
 
 # Platform services
 caipe-ui:

@@ -1,4 +1,6 @@
-{{- if .Values.podDisruptionBudget.enabled }}
+{{- /* Only create a PDB when an MCP Deployment actually exists (http mode).
+       stdio-mode servers run in-process and have no schedulable pods. */}}
+{{- if and .Values.podDisruptionBudget.enabled (include "agent.createMcpHttpServer" . | eq "true") }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
