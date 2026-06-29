@@ -1,198 +1,30 @@
-# Karpenter values overlay for ai-platform-engineering
+# Karpenter / EKS Auto Mode values overlay for ai-platform-engineering
 #
-# Apply on top of your base values to route agent workloads to Karpenter-managed nodes:
+# Apply on top of your base values:
 #
 #   helm upgrade --install ai-platform-engineering \
 #     oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \
 #     -f charts/ai-platform-engineering/values.yaml \
 #     -f charts/ai-platform-engineering/values-karpenter.yaml
 #
-# Prerequisites: deploy/eks/karpenter/ manifests must be applied first.
-# See deploy/eks/karpenter/README.md for full setup steps.
+# Design
+# ------
+# - RAG workloads are pinned to a dedicated `rag` NodePool (on-demand,
+#   memory-optimised). RAG is memory-bound and stateful, so it warrants its
+#   own instance class; the taint also keeps cheaper pods off the pricey
+#   memory-optimised nodes. Apply deploy/eks/karpenter/nodepool-rag.yaml first.
+# - Everything else — the dynamic-agents runtime, the mcp-* tool servers, and
+#   the platform services — rides the Auto Mode `general-purpose` pool, which
+#   already bin-packs and consolidates. No custom pool or taint is needed for
+#   them, which keeps scheduling out of the per-tool config path.
+# - PodDisruptionBudgets are enabled so Auto Mode node consolidation does not
+#   take a workload fully offline during voluntary disruptions. They take real
+#   effect once a workload runs >1 replica (bump replicaCount or enable HPA).
+#
+# Prerequisite: kubectl apply -f deploy/eks/karpenter/nodepool-rag.yaml
 
 # ---------------------------------------------------------------------------
-# Agent tier: Karpenter `agents` NodePool (spot-preferred, compute-optimised)
-# Taint: workload-type=agent:NoSchedule
-# ---------------------------------------------------------------------------
-
-agent-argocd:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-aws:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-backstage:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-confluence:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-github:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-gitlab:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-jira:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-komodor:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-pagerduty:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-slack:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-splunk:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-victorops:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-webex:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-netutils:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-weather:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-agent-petstore:
-  nodeSelector:
-    workload-type: agent
-  tolerations:
-    - key: workload-type
-      operator: Equal
-      value: agent
-      effect: NoSchedule
-  podDisruptionBudget:
-    enabled: true
-
-# ---------------------------------------------------------------------------
-# RAG tier: Karpenter `rag` NodePool (on-demand, memory-optimised)
+# RAG tier: dedicated `rag` NodePool (on-demand, memory-optimised)
 # Taint: workload-type=rag:NoSchedule
 # ---------------------------------------------------------------------------
 
@@ -230,6 +62,7 @@ rag-stack:
     podDisruptionBudget:
       enabled: true
 
+  # Optional vector/graph backends — only applied when enabled.
   neo4j:
     nodeSelector:
       workload-type: rag
@@ -240,40 +73,73 @@ rag-stack:
         effect: NoSchedule
 
 # ---------------------------------------------------------------------------
-# System tier: no nodeSelector/tolerations needed, lands on Auto Mode
-# general-purpose pool by default. PDBs are still enabled because Auto Mode
-# consolidates nodes and will evict pods without a PDB in place.
+# General-purpose tier: Auto Mode `general-purpose` pool.
+# No nodeSelector / tolerations — these workloads are bin-packed and
+# consolidated by Auto Mode. PDBs only, to survive node consolidation.
 # ---------------------------------------------------------------------------
 
-supervisor-agent:
-  podDisruptionBudget:
-    enabled: true
-
-caipe-ui:
-  podDisruptionBudget:
-    enabled: true
-
-caipe-ui-mongodb:
-  podDisruptionBudget:
-    enabled: true
-
-langgraph-redis:
-  podDisruptionBudget:
-    enabled: true
-
-slack-bot:
-  podDisruptionBudget:
-    enabled: true
-
+# Agent runtime + orchestrator. The default agents (e.g. SRE) and any
+# runtime-created agents all run inside this single deployment, so it stays on
+# the stable general-purpose pool rather than spot.
 dynamic-agents:
   podDisruptionBudget:
     enabled: true
 
-skill-scanner:
+# MCP tool servers. Each mcp-* alias is a separate dependency, so PDBs are set
+# per alias. New mcp-* tools you enable should get a matching block here; or set
+# `podDisruptionBudget.enabled: true` in the mcp-server chart defaults to cover
+# every alias automatically.
+mcp-argocd:
+  podDisruptionBudget:
+    enabled: true
+mcp-aws:
+  podDisruptionBudget:
+    enabled: true
+mcp-backstage:
+  podDisruptionBudget:
+    enabled: true
+mcp-confluence:
+  podDisruptionBudget:
+    enabled: true
+mcp-github:
+  podDisruptionBudget:
+    enabled: true
+mcp-gitlab:
+  podDisruptionBudget:
+    enabled: true
+mcp-jira:
+  podDisruptionBudget:
+    enabled: true
+mcp-komodor:
+  podDisruptionBudget:
+    enabled: true
+mcp-pagerduty:
+  podDisruptionBudget:
+    enabled: true
+mcp-slack:
+  podDisruptionBudget:
+    enabled: true
+mcp-splunk:
+  podDisruptionBudget:
+    enabled: true
+mcp-victorops:
+  podDisruptionBudget:
+    enabled: true
+mcp-webex:
+  podDisruptionBudget:
+    enabled: true
+mcp-netutils:
   podDisruptionBudget:
     enabled: true
 
-webex-bot:
+# Platform services
+caipe-ui:
+  podDisruptionBudget:
+    enabled: true
+
+# caipe-ui-mongodb is pulled in under the `mongodb` dependency alias
+# (condition: caipe-ui.mongodb.enabled), so its values live under `mongodb`.
+mongodb:
   podDisruptionBudget:
     enabled: true
 
@@ -282,6 +148,18 @@ agentgateway:
     enabled: true
 
 audit-service:
+  podDisruptionBudget:
+    enabled: true
+
+skill-scanner:
+  podDisruptionBudget:
+    enabled: true
+
+slack-bot:
+  podDisruptionBudget:
+    enabled: true
+
+webex-bot:
   podDisruptionBudget:
     enabled: true
 

@@ -2,9 +2,10 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "langgraph-redis.fullname" . }}
+  name: {{ include "agent.fullname" . }}
   labels:
-    {{- include "langgraph-redis.labels" . | nindent 4 }}
+    {{- include "agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
   {{- with .Values.podDisruptionBudget.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -17,5 +18,6 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "langgraph-redis.selectorLabels" . | nindent 6 }}
+      {{- include "agent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mcp
 {{- end }}

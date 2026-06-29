@@ -1,16 +1,17 @@
 # NodePool Configuration
 
-These manifests configure custom node tiers on top of an EKS Auto Mode cluster. Auto Mode runs Karpenter as a managed service and provides a `default` NodeClass automatically, no separate Karpenter install is required.
+This manifest configures a custom RAG node tier on top of an EKS Auto Mode cluster. Auto Mode runs Karpenter as a managed service and provides a `default` NodeClass automatically, no separate Karpenter install is required.
+
+Only the memory-bound RAG stack gets a dedicated pool. The Dynamic Agents runtime, the `mcp-*` tool servers, and the platform services stay on the Auto Mode `general-purpose` pool, which already bin-packs and consolidates them, so they need no taint or per-workload scheduling config.
 
 ## Workload tiers
 
 | NodePool | Taint | Workloads | Instance strategy |
 |----------|-------|-----------|-------------------|
-| `agents` | `workload-type=agent:NoSchedule` | All `agent-*` subcharts | Spot-preferred, compute-optimised (`c5`/`m5`/`m6i`) |
 | `rag` | `workload-type=rag:NoSchedule` | `rag-server`, `agent-ontology`, `rag-redis`, `neo4j` | On-demand, memory-optimised (`r5`/`r6i`) |
-| `general-purpose` *(built-in)* | *(none)* | `supervisor-agent`, `caipe-ui`, `langgraph-redis`, `slack-bot` | Auto Mode managed |
+| `general-purpose` *(built-in)* | *(none)* | `dynamic-agents`, `mcp-*`, `caipe-ui`, `keycloak`, `openfga`, `slack-bot`, … | Auto Mode managed |
 
-Workloads not matching a custom NodePool taint land on the Auto Mode `general-purpose` pool.
+Workloads without the `workload-type=rag` toleration land on the Auto Mode `general-purpose` pool. The values overlay (`charts/ai-platform-engineering/values-karpenter.yaml`) applies the RAG nodeSelector/toleration and enables PodDisruptionBudgets on the general-purpose workloads so consolidation doesn't take them fully offline.
 
 ## Prerequisites
 
@@ -23,20 +24,19 @@ Workloads not matching a custom NodePool taint land on the Auto Mode `general-pu
 kubectl apply -f deploy/eks/karpenter/
 ```
 
-Verify the NodePools are created and the built-in Auto Mode pools are present:
+Verify the NodePool is created and the built-in Auto Mode pools are present:
 
 ```bash
 kubectl get nodepool
 ```
 
-You should see `agents` and `rag` alongside the built-in `general-purpose` and `system` pools. Both custom pools should show `READY=True` even at zero nodes. Confirm their status conditions:
+You should see `rag` alongside the built-in `general-purpose` and `system` pools. The `rag` pool should show `READY=True` even at zero nodes. Confirm its status conditions:
 
 ```bash
-kubectl get nodepool agents -o jsonpath='{.status.conditions}' | jq .
 kubectl get nodepool rag -o jsonpath='{.status.conditions}' | jq .
 ```
 
-The custom pools will show no nodes until workloads are scheduled.
+The `rag` pool will show no nodes until RAG workloads are scheduled.
 
 Then deploy the platform with the Karpenter values overlay:
 
@@ -54,7 +54,7 @@ The `workload-type` taint is a **single-tenant design**. Taints and tolerations 
 ```yaml
 taints:
   - key: workload-type
-    value: agent
+    value: rag
     effect: NoSchedule
   - key: tenant
     value: acme
@@ -68,33 +68,20 @@ This increases node count (bin-packing across tenants is no longer possible) and
 ### Verify nodes
 
 ```bash
-# List nodes provisioned by each custom NodePool
-kubectl get nodes -l karpenter.sh/nodepool=agents
+# List nodes provisioned by the rag NodePool (after rag-stack is deployed)
 kubectl get nodes -l karpenter.sh/nodepool=rag
 
 # Show instance type, NodePool, and capacity type for all nodes
 kubectl get nodes -o custom-columns="NAME:.metadata.name,INSTANCE-TYPE:.metadata.labels.node\.kubernetes\.io/instance-type,NODEPOOL:.metadata.labels.karpenter\.sh/nodepool,CAPACITY:.metadata.labels.karpenter\.sh/capacity-type"
 ```
 
-### Trigger HPA to scale-out
-
-```bash
-# Generate CPU load on an agent pod
-kubectl exec -it <agent-pod> -- sh -c "timeout 120 yes > /dev/null"
-
-# Watch HPA scale replicas
-kubectl get hpa -w
-
-# Watch Karpenter provision new nodes
-kubectl get nodeclaim -w
-```
-
 ### Test consolidation (scale-in)
 
-Remove load and wait for HPA to scale replicas down. Karpenter will consolidate under-utilised nodes within ~30 seconds for the `agents` pool and ~60 seconds for `rag`.
+Scale the RAG workloads down (or disable optional backends) and watch Karpenter consolidate under-utilised `rag` nodes within ~60 seconds:
 
 ```bash
-kubectl get nodes -l karpenter.sh/nodepool=agents -w
+kubectl get nodes -l karpenter.sh/nodepool=rag -w
+kubectl get nodeclaim -w
 ```
 
 ## Troubleshooting
@@ -103,7 +90,7 @@ kubectl get nodes -l karpenter.sh/nodepool=agents -w
 
 A healthy NodePool shows `READY=True` even at zero nodes. An empty READY column means Karpenter has rejected the NodePool spec, this is most commonly due to a bad `nodeClassRef` being used.
 
-EKS Auto Mode uses its own `NodeClass` API, rather than the standalone Karpenter `EC2NodeClass`. Ensure the `nodeClassRef` in each NodePool is:
+EKS Auto Mode uses its own `NodeClass` API, rather than the standalone Karpenter `EC2NodeClass`. Ensure the `nodeClassRef` in the NodePool is:
 
 ```yaml
 nodeClassRef:
@@ -117,18 +104,10 @@ Similarly, the instance selector keys must use the `eks.amazonaws.com` prefix, a
 ```yaml
 - key: eks.amazonaws.com/instance-category
   operator: In
-  values: ["c", "m"]
+  values: ["r"]
 - key: eks.amazonaws.com/instance-generation
   operator: Gt
   values: ["4"]
 ```
 
-Inspect the failure reason directly with `kubectl get nodepool agents -o jsonpath='{.status.conditions}' | jq .`
-
-### Test spot interruption (agents NodePool)
-
-```bash
-kubectl cordon <karpenter-spot-node>
-kubectl drain <karpenter-spot-node> --ignore-daemonsets --delete-emptydir-data
-# Karpenter automatically replaces the node
-```
+Inspect the failure reason directly with `kubectl get nodepool rag -o jsonpath='{.status.conditions}' | jq .`

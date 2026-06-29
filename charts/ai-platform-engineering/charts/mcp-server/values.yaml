@@ -88,6 +88,15 @@ tolerations: []
 
 affinity: {}
 
+# PodDisruptionBudget for the MCP Deployment. Enable when running multiple
+# replicas (or on Karpenter/Auto Mode, where node consolidation evicts pods)
+# to keep at least one MCP server available during voluntary disruptions.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
+  annotations: {}
+
 # Secrets configuration for LLM providers.
 # When used as a subchart, parent global values can override these.
 llmSecrets:

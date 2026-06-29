@@ -151,12 +151,12 @@ Do not edit the `aws-auth` ConfigMap directly, as it has no effect in API auth m
 
 ## Step 5 (Optional): Configure node tiers with NodePools
 
-By default, Auto Mode places all workloads on its built-in `general-purpose` pool. Apply the custom NodePools to right-size nodes per workload tier (Spot compute-optimised instances for agents, on-demand memory-optimised instances for RAG), and allow idle agent and RAG nodes to scale to zero.
+By default, Auto Mode places all workloads on its built-in `general-purpose` pool. The memory-bound RAG stack benefits from a dedicated tier, so apply the `rag` NodePool to give it on-demand memory-optimised nodes that scale to zero when idle. Everything else stays on the Auto Mode `general-purpose` pool.
 
 | NodePool | Workloads | Instance strategy |
 | -------- | --------- | ----------------- |
-| `agents` | All `agent-*` subcharts | Spot-preferred, compute-optimised (`c5`/`m5`/`m6i`) |
 | `rag` | `rag-server`, `agent-ontology`, `rag-redis`, `neo4j` | On-demand, memory-optimised (`r5`/`r6i`) |
+| `general-purpose` *(built-in)* | Dynamic Agents, MCP servers (`mcp-*`), UI, Keycloak, OpenFGA, … | Auto Mode managed |
 
 ```bash
 kubectl apply -f deploy/eks/karpenter/
