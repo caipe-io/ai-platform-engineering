@@ -302,25 +302,38 @@ class DirectoryAgentSource:
                 # Unknown media type with data — try to parse as OASF
                 return {"agent": data, "cid": entry.get("identifier", "")}
 
-        # Case: CatalogEntry with URL reference — need to export
-        cid = entry.get("identifier", entry.get("cid", ""))
-        if cid:
-            return self._fetch_export(cid)
-
-        # Case: Entry has a url field pointing to the artifact
+        # Case: CatalogEntry with URL reference — try url first, then cid export
+        identifier = entry.get("identifier", entry.get("cid", ""))
         url = entry.get("url")
+
+        # Prefer the explicit artifact URL when present
         if url:
             try:
                 with httpx.Client(timeout=self._timeout) as client:
                     resp = client.get(url)
                     resp.raise_for_status()
                     data = resp.json()
-                    return {"agent": data, "cid": entry.get("identifier", "")}
+                    return {"agent": data, "cid": identifier}
             except Exception as exc:
                 logger.debug("Failed to fetch artifact URL %s: %s", url, exc)
 
-        logger.debug("CatalogEntry skipped: no resolvable data (entry=%s)", entry.get("identifier", "<unknown>"))
+        # Fall back to /v1/agents/{cid}/export only if identifier looks like a CID
+        # (CIDs are base32/base58 encoded, typically starting with 'ba' or 'Qm')
+        if identifier and self._looks_like_cid(identifier):
+            result = self._fetch_export(identifier)
+            if result:
+                return result
+
+        logger.debug("CatalogEntry skipped: no resolvable data (entry=%s)", identifier or "<unknown>")
         return None
+
+    @staticmethod
+    def _looks_like_cid(identifier: str) -> bool:
+        """Heuristic check: CIDs are base32/base58 strings (ba*, Qm*) without URI schemes."""
+        if "://" in identifier or identifier.startswith("urn:"):
+            return False
+        # IPFS/IPLD CIDs start with 'ba' (base32) or 'Qm' (base58 v0)
+        return identifier.startswith(("ba", "Qm")) and len(identifier) > 10
 
     def _fetch_export(self, cid: str) -> Optional[dict]:
         """Fetch the full OASF record via /v1/agents/{cid}/export."""

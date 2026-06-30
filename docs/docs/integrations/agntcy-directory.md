@@ -65,9 +65,9 @@ All configuration is via environment variables on the `dynamic-agents` service:
 | `DIRECTORY_REGISTER_LABELS` | _(empty)_ | Comma-separated `key=value` labels to attach |
 | `DIRECTORY_REGISTER_MODE` | `file` | `file` (export JSON) or `dirctl` (push via CLI) |
 | `DIRECTORY_REGISTER_DIR` | `/tmp/caipe-dir-records` | Output directory for exported OASF record files |
-| `DIRECTORY_REGISTER_INTERVAL` | `0` | Reconcile interval (seconds). 0 = one-shot on startup |
+| `DIRECTORY_REGISTER_INTERVAL` | `300` | Reconcile interval (seconds). 0 = one-shot on startup |
 
-Self-registration generates OASF record JSON files. In `file` mode, a sidecar or init-container runs `dirctl import --dir /path/to/records/` to push them to the Directory Store (gRPC). In `dirctl` mode, the service invokes `dirctl import` directly (requires `dirctl` binary in PATH).
+Self-registration generates OASF record JSON files. In `file` mode, a sidecar or init-container pushes them to the Directory Store using `dirctl push <file> --server-addr <address>` (one push per record). In `dirctl` mode, the service invokes `dirctl push` directly (requires `dirctl` binary in PATH).
 
 ## Local Development
 

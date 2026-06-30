@@ -188,18 +188,19 @@ class DirectorySyncService:
                 added += 1
                 logger.info("Directory sync: added new agent '%s' (%s)", record.name, server_id)
             else:
-                # Existing agent — update mutable fields only.
-                # IMPORTANT: Do NOT overwrite 'enabled' or 'transport' — admin
-                # may have activated or reconfigured this record. Directory sync
-                # only refreshes discovery metadata, not runtime config.
+                # Existing agent — update discovery metadata only.
+                # IMPORTANT: Do NOT overwrite 'enabled', 'transport', 'endpoint',
+                # or 'description' — admin may have activated or customized this
+                # record. Directory sync only refreshes directory-prefixed fields
+                # (discovery metadata), not runtime config.
                 update_fields = {
-                    "endpoint": doc["endpoint"],
-                    "description": doc["description"],
                     "directory_protocol": doc["directory_protocol"],
                     "directory_cid": doc["directory_cid"],
                     "directory_capabilities": doc["directory_capabilities"],
                     "directory_metadata": doc["directory_metadata"],
                     "directory_last_seen": doc["directory_last_seen"],
+                    "directory_endpoint": doc["endpoint"],
+                    "directory_description": doc["description"],
                     "updated_at": doc["updated_at"],
                 }
                 # Conditionally include optional fields

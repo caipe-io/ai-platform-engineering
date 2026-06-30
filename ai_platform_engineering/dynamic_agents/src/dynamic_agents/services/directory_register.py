@@ -9,12 +9,13 @@ The Directory's write path is the Store gRPC service (Push RPC), not a REST
 POST to AI Finder. This module supports two modes:
 
 1. **dirctl mode** (recommended for production): Generates OASF record JSON
-   files and invokes `dirctl import` to push them through the Store service.
-   Requires `dirctl` binary available in PATH and a configured Directory endpoint.
+   files and invokes `dirctl push <file> --server-addr <address>` to push
+   them through the Store service. Requires `dirctl` binary available in PATH
+   and a configured Directory endpoint.
 
 2. **File-only mode** (local dev / init-container): Generates OASF record
-   files to a directory. A sidecar or init-container can then import them
-   with `dirctl import --dir /path/to/records/`.
+   files to a directory. A sidecar or init-container can then push them
+   with `dirctl push <file> --server-addr <address>` per record.
 
 The service reconciles periodically (not one-shot) to handle MCP servers that
 become available after initial startup (e.g., AgentGateway discovery).
@@ -261,36 +262,52 @@ class DirectoryRegisterService:
             return False
 
     def _run_dirctl_import(self) -> None:
-        """Run `dirctl import` to push exported records to the Directory Store."""
-        try:
-            cmd = [
-                "dirctl", "import",
-                "--dir", str(self._output_dir),
-                "--server", self._base_url,
-            ]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode == 0:
-                logger.info("dirctl import succeeded: %s", result.stdout.strip()[:200])
-            else:
-                logger.warning(
-                    "dirctl import failed (exit %d): %s",
-                    result.returncode,
-                    result.stderr.strip()[:200],
+        """Run `dirctl push` for each exported record to push them to the Directory Store."""
+        import glob as glob_mod
+
+        record_files = list(glob_mod.glob(str(self._output_dir / "*.json")))
+        if not record_files:
+            logger.debug("No record files to push in %s", self._output_dir)
+            return
+
+        pushed = 0
+        failed = 0
+        for filepath in record_files:
+            try:
+                cmd = [
+                    "dirctl", "push", filepath,
+                    "--server-addr", self._base_url,
+                ]
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
                 )
-        except FileNotFoundError:
-            logger.warning(
-                "dirctl binary not found. Records exported to %s — "
-                "run `dirctl import --dir %s` manually or via sidecar.",
-                self._output_dir,
-                self._output_dir,
-            )
-        except Exception as exc:
-            logger.warning("dirctl import error: %s", exc)
+                if result.returncode == 0:
+                    pushed += 1
+                    logger.debug("dirctl push succeeded for %s: %s", filepath, result.stdout.strip()[:100])
+                else:
+                    failed += 1
+                    logger.warning(
+                        "dirctl push failed for %s (exit %d): %s",
+                        filepath,
+                        result.returncode,
+                        result.stderr.strip()[:200],
+                    )
+            except FileNotFoundError:
+                logger.warning(
+                    "dirctl binary not found. Records exported to %s — "
+                    "run `dirctl push <file> --server-addr %s` manually or via sidecar.",
+                    self._output_dir,
+                    self._base_url,
+                )
+                return
+            except Exception as exc:
+                failed += 1
+                logger.warning("dirctl push error for %s: %s", filepath, exc)
+
+        logger.info("dirctl push complete: %d pushed, %d failed", pushed, failed)
 
     @property
     def status(self) -> dict:
