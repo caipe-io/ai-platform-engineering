@@ -63,14 +63,24 @@ Use the same region in the next step when you create the cluster.
 
 The repo includes a cluster config using EKS Auto Mode, which manages node provisioning via the built-in Karpenter controller. No additional autoscaler setup is required.
 
-### Create a KMS key for secrets encryption
+### Prepare the cluster config
 
-The cluster config encrypts Kubernetes secrets at rest using a customer-managed KMS key. Run this block in full each time you create the cluster. It always starts from the example file (with a fresh placeholder), and creates a new key, so it is safe to re-run after a previous cluster has been torn down:
+Start from the example file so the KMS ARN placeholder is fresh. Run this each time you create the cluster, so it is safe to re-run after a previous cluster has been torn down:
 
 ```bash
 # Always start from the example so the ARN placeholder is fresh
 cp deploy/eks/dev-eks-cluster-config.yaml.example dev-eks-cluster-config.yaml
+```
 
+**Required:** update `publicAccessCIDRs` in `dev-eks-cluster-config.yaml` to your VPN or office egress CIDR before continuing. It ships with a non-routable placeholder (`203.0.113.0/24`) that blocks public API access until you replace it, so the example fails closed rather than exposing the control plane.
+
+As a last resort you can set it to `0.0.0.0/0`, which opens the Kubernetes API to all public access. Avoid this for anything beyond a throwaway dev cluster, and never use it in production.
+
+### Create a KMS key for secrets encryption
+
+The cluster config encrypts Kubernetes secrets at rest using a customer-managed KMS key. Run this block in full each time you create the cluster. It creates a new key and writes its ARN into the config, so it is safe to re-run after a previous cluster has been torn down:
+
+```bash
 # Create a new key and capture its ARN
 KEY_ARN=$(aws kms create-key \
   --description "dev-eks-cluster secrets encryption" \
@@ -85,8 +95,6 @@ aws kms create-alias \
 # Write the new ARN into the config
 sed -i "s|arn:aws:kms:us-east-2:ACCOUNT_ID:key/KEY_ID|$KEY_ARN|" dev-eks-cluster-config.yaml
 ```
-
-**Required:** update `publicAccessCIDRs` in the config to your VPN or office egress CIDR before continuing. It ships with a non-routable placeholder (`203.0.113.0/24`) that blocks public API access until you replace it, so the example fails closed rather than exposing the control plane. Never set it to `0.0.0.0/0`.
 
 ### Run eksctl
 
