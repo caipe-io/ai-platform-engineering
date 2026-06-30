@@ -36,6 +36,41 @@ def _extract_a2a_card(record: dict) -> Optional[dict]:
     return None
 
 
+def _extract_mcp_module(record: dict) -> Optional[dict]:
+    """Return the MCP module data from modules[name="integration/mcp"], or None.
+
+    OASF MCP module structure (schema v1.0.0):
+      module.data = {
+        "name": "server-name",
+        "description": "...",
+        "connections": [{"type": "streamable-http"|"sse"|"stdio", "url": "...", "command": "...", "args": [...]}],
+        "tools": [...],
+        "resources": [...],
+        "prompts": [...]
+      }
+    """
+    agent = record.get("agent", record)
+    for mod in agent.get("modules", []):
+        if mod.get("name") == "integration/mcp":
+            return mod.get("data")
+    return None
+
+
+def _extract_mcp_endpoint(mcp_data: dict) -> Optional[tuple[str, str]]:
+    """Extract (url, transport_type) from MCP module data.
+
+    Returns the first HTTP-based connection (streamable-http or sse).
+    Returns None if only stdio connections are available (not remotely callable).
+    """
+    connections = mcp_data.get("connections", [])
+    for conn in connections:
+        conn_type = conn.get("type", "")
+        url = conn.get("url")
+        if url and conn_type in ("streamable-http", "sse"):
+            return (url, conn_type)
+    return None
+
+
 def _extract_a2a_url(card: dict) -> Optional[str]:
     """
     Extract the A2A endpoint URL from an A2A card dict.
@@ -106,20 +141,31 @@ class DirectoryAgentRecord:
         self,
         name: str,
         url: str,
-        a2a_card: dict,
+        a2a_card: Optional[dict],
         capabilities: list[str],
         metadata: dict,
+        protocol: str = "a2a",
+        transport: str = "http",
+        mcp_tools: Optional[list[dict]] = None,
     ) -> None:
         self.name = name
         self.url = url
         self.a2a_card = a2a_card
         self.capabilities = capabilities
         self.metadata = metadata
+        self.protocol = protocol  # "mcp" or "a2a"
+        self.transport = transport  # "streamable-http", "sse", or "http" (a2a fallback)
+        self.mcp_tools = mcp_tools  # Pre-declared tools from MCP module (optional)
 
     @property
     def directory_id(self) -> str:
         """Stable ID for this record, derived from CID or name."""
         return self.metadata.get("directory_cid", f"dir-{self.name}")
+
+    @property
+    def is_mcp(self) -> bool:
+        """Whether this record speaks MCP protocol (can be auto-enabled)."""
+        return self.protocol == "mcp"
 
 
 class DirectoryAgentSource:
@@ -156,7 +202,10 @@ class DirectoryAgentSource:
         Fetch agent records from Directory.
 
         Returns a list of DirectoryAgentRecord instances containing the parsed
-        agent data with capabilities and metadata.
+        agent data with capabilities and metadata. Records are typed by protocol:
+        - Records with an integration/mcp module → protocol="mcp", auto-enableable
+        - Records with only integration/a2a module → protocol="a2a", catalog-only
+        - Records with both → treated as MCP (preferred for direct invocation)
         """
         try:
             params: dict = {}
@@ -175,38 +224,76 @@ class DirectoryAgentSource:
         for record in items:
             agent = record.get("agent", record)
             name: Optional[str] = agent.get("name")
+
+            if not name:
+                logger.debug(
+                    "Directory record '%s' skipped: no name",
+                    record.get("cid", "<unknown>"),
+                )
+                continue
+
+            # Check for MCP module first (preferred — directly callable)
+            mcp_data = _extract_mcp_module(record)
             card = _extract_a2a_card(record)
 
-            if not card:
-                logger.debug(
-                    "Directory record '%s' skipped: no integration/a2a module",
-                    record.get("cid", "<unknown>"),
+            if mcp_data:
+                # MCP-typed agent — extract endpoint from connections
+                endpoint_info = _extract_mcp_endpoint(mcp_data)
+                if endpoint_info:
+                    url, transport = endpoint_info
+                    mcp_tools = mcp_data.get("tools", [])
+                    results.append(
+                        DirectoryAgentRecord(
+                            name=name,
+                            url=url,
+                            a2a_card=card,  # May be None if only MCP module
+                            capabilities=_extract_capabilities(record),
+                            metadata=_extract_metadata(record),
+                            protocol="mcp",
+                            transport=transport,
+                            mcp_tools=mcp_tools if mcp_tools else None,
+                        )
+                    )
+                    continue
+                else:
+                    logger.debug(
+                        "Directory record '%s': MCP module present but no HTTP connection, falling through to A2A",
+                        name,
+                    )
+
+            # Fall back to A2A module
+            if card:
+                url = _extract_a2a_url(card)
+                if not url:
+                    logger.debug(
+                        "Directory record '%s' skipped: A2A card but no URL",
+                        name,
+                    )
+                    continue
+                results.append(
+                    DirectoryAgentRecord(
+                        name=name,
+                        url=url,
+                        a2a_card={**card, "url": url},
+                        capabilities=_extract_capabilities(record),
+                        metadata=_extract_metadata(record),
+                        protocol="a2a",
+                        transport="http",
+                    )
                 )
                 continue
 
-            url = _extract_a2a_url(card)
-            if not name or not url:
-                logger.debug(
-                    "Directory record '%s' skipped: name=%s url=%s",
-                    record.get("cid", "<unknown>"),
-                    name,
-                    url,
-                )
-                continue
-
-            results.append(
-                DirectoryAgentRecord(
-                    name=name,
-                    url=url,
-                    a2a_card={**card, "url": url},
-                    capabilities=_extract_capabilities(record),
-                    metadata=_extract_metadata(record),
-                )
+            # Neither MCP nor A2A — skip
+            logger.debug(
+                "Directory record '%s' skipped: no integration/mcp or integration/a2a module",
+                record.get("cid", "<unknown>"),
             )
 
         logger.info(
-            "Directory discovery: %d agents with A2A integration from %s",
+            "Directory discovery: %d agents (%d MCP, %d A2A) from %s",
             len(results),
+            sum(1 for r in results if r.is_mcp),
+            sum(1 for r in results if not r.is_mcp),
             self._base_url,
         )
         return results

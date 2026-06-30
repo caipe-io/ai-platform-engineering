@@ -37,32 +37,57 @@ DIRECTORY_MCP_PREFIX = "directory-"
 def _agent_record_to_mcp_document(record: DirectoryAgentRecord) -> dict:
     """Convert a DirectoryAgentRecord to an MCP server MongoDB document.
 
-    Directory agents are stored as MCP server records for catalog/discovery
-    purposes. They are marked enabled=False because their endpoints speak
-    A2A protocol, not MCP — the runtime MCP client should not attempt to
-    connect to them directly. A future A2A-to-MCP adapter or dedicated
-    routing path will handle actual communication.
+    Protocol-aware behavior:
+    - MCP records (protocol="mcp"): stored as enabled=True, with proper transport
+      type mapped from OASF connection type. These are directly callable by the
+      MCP runtime client.
+    - A2A records (protocol="a2a"): stored as enabled=False, catalog-only.
+      The runtime MCP client should not attempt to connect. A future A2A routing
+      path will handle communication.
     """
     server_id = f"{DIRECTORY_MCP_PREFIX}{record.name}"
     now = datetime.now(timezone.utc)
-    return {
+
+    # Map OASF transport type to CAIPE transport field
+    if record.is_mcp:
+        transport_map = {
+            "streamable-http": "http",
+            "sse": "sse",
+        }
+        transport = transport_map.get(record.transport, "http")
+        enabled = True
+    else:
+        transport = "http"
+        enabled = False
+
+    doc = {
         "_id": server_id,
         "name": f"[Directory] {record.name}",
         "description": record.metadata.get("description", f"Agent discovered from AGNTCY Directory: {record.name}"),
-        "transport": "http",
+        "transport": transport,
         "endpoint": record.url,
-        "enabled": False,
+        "enabled": enabled,
         "source": "directory",
         "directory_agent": True,
+        "directory_protocol": record.protocol,
         "config_driven": False,
         "agentgateway_discovered": False,
         "directory_cid": record.metadata.get("directory_cid"),
         "directory_capabilities": record.capabilities,
         "directory_metadata": record.metadata,
-        "directory_a2a_card": record.a2a_card,
         "directory_last_seen": now,
         "updated_at": now,
     }
+
+    # Include A2A card if present
+    if record.a2a_card:
+        doc["directory_a2a_card"] = record.a2a_card
+
+    # Include MCP tools manifest if available (for UI display before probing)
+    if record.mcp_tools:
+        doc["directory_mcp_tools"] = record.mcp_tools
+
+    return doc
 
 
 class DirectorySyncService:
@@ -169,13 +194,20 @@ class DirectorySyncService:
                 update_fields = {
                     "endpoint": doc["endpoint"],
                     "description": doc["description"],
+                    "transport": doc["transport"],
+                    "enabled": doc["enabled"],
+                    "directory_protocol": doc["directory_protocol"],
                     "directory_cid": doc["directory_cid"],
                     "directory_capabilities": doc["directory_capabilities"],
                     "directory_metadata": doc["directory_metadata"],
-                    "directory_a2a_card": doc["directory_a2a_card"],
                     "directory_last_seen": doc["directory_last_seen"],
                     "updated_at": doc["updated_at"],
                 }
+                # Conditionally include optional fields
+                if "directory_a2a_card" in doc:
+                    update_fields["directory_a2a_card"] = doc["directory_a2a_card"]
+                if "directory_mcp_tools" in doc:
+                    update_fields["directory_mcp_tools"] = doc["directory_mcp_tools"]
                 collection.update_one({"_id": server_id}, {"$set": update_fields})
                 updated += 1
 

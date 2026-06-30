@@ -15,6 +15,8 @@ from dynamic_agents.services.directory_source import (
     _extract_a2a_card,
     _extract_a2a_url,
     _extract_capabilities,
+    _extract_mcp_endpoint,
+    _extract_mcp_module,
     _extract_metadata,
 )
 from dynamic_agents.services.directory_sync import (
@@ -78,6 +80,112 @@ OASF_RECORD_NO_A2A = {
     },
 }
 
+OASF_RECORD_MCP = {
+    "cid": "bafybei_mcp_001",
+    "agent": {
+        "name": "github-mcp-server",
+        "description": "GitHub MCP server for code management",
+        "version": "2.0.0",
+        "labels": {"platform": "caipe", "type": "mcp"},
+        "modules": [
+            {
+                "name": "integration/mcp",
+                "data": {
+                    "name": "github-mcp-server",
+                    "description": "GitHub MCP server",
+                    "connections": [
+                        {
+                            "type": "streamable-http",
+                            "url": "http://github-mcp:3000/mcp",
+                        }
+                    ],
+                    "tools": [
+                        {"name": "list_repos", "description": "List repositories"},
+                        {"name": "create_pr", "description": "Create pull request"},
+                    ],
+                },
+            }
+        ],
+    },
+}
+
+OASF_RECORD_MCP_SSE = {
+    "cid": "bafybei_mcp_002",
+    "agent": {
+        "name": "confluence-mcp-server",
+        "description": "Confluence MCP server",
+        "version": "1.0.0",
+        "modules": [
+            {
+                "name": "integration/mcp",
+                "data": {
+                    "name": "confluence-mcp",
+                    "connections": [
+                        {
+                            "type": "sse",
+                            "url": "http://confluence-mcp:3000/sse",
+                        }
+                    ],
+                    "tools": [{"name": "search_pages"}],
+                },
+            }
+        ],
+    },
+}
+
+OASF_RECORD_MCP_STDIO_ONLY = {
+    "cid": "bafybei_mcp_003",
+    "agent": {
+        "name": "local-only-server",
+        "description": "Only has stdio transport — not remotely callable",
+        "modules": [
+            {
+                "name": "integration/mcp",
+                "data": {
+                    "name": "local-server",
+                    "connections": [
+                        {
+                            "type": "stdio",
+                            "command": "npx",
+                            "args": ["-y", "@modelcontextprotocol/server-local"],
+                        }
+                    ],
+                },
+            }
+        ],
+    },
+}
+
+OASF_RECORD_BOTH_MCP_AND_A2A = {
+    "cid": "bafybei_both_001",
+    "agent": {
+        "name": "dual-protocol-agent",
+        "description": "Agent with both MCP and A2A modules",
+        "version": "3.0.0",
+        "modules": [
+            {
+                "name": "integration/mcp",
+                "data": {
+                    "name": "dual-agent-mcp",
+                    "connections": [
+                        {"type": "streamable-http", "url": "http://dual:3000/mcp"}
+                    ],
+                    "tools": [{"name": "do_stuff"}],
+                },
+            },
+            {
+                "name": "integration/a2a",
+                "data": {
+                    "card_data": {
+                        "name": "dual-protocol-agent",
+                        "url": "http://dual:8080/a2a",
+                    }
+                },
+            },
+        ],
+    },
+}
+
 
 # =============================================================================
 # DirectoryAgentSource tests
@@ -117,6 +225,143 @@ def test_extract_metadata():
     assert meta["directory_labels"] == {"platform": "caipe", "team": "infra"}
     assert meta["description"] == "ArgoCD deployment agent"
     assert meta["version"] == "1.2.0"
+
+
+# =============================================================================
+# MCP module extraction tests
+# =============================================================================
+
+
+def test_extract_mcp_module_present():
+    mcp = _extract_mcp_module(OASF_RECORD_MCP)
+    assert mcp is not None
+    assert mcp["name"] == "github-mcp-server"
+    assert len(mcp["connections"]) == 1
+    assert mcp["connections"][0]["type"] == "streamable-http"
+
+
+def test_extract_mcp_module_missing():
+    assert _extract_mcp_module(OASF_RECORD) is None  # Only has A2A
+    assert _extract_mcp_module(OASF_RECORD_NO_A2A) is None
+
+
+def test_extract_mcp_endpoint_streamable_http():
+    mcp = _extract_mcp_module(OASF_RECORD_MCP)
+    result = _extract_mcp_endpoint(mcp)
+    assert result == ("http://github-mcp:3000/mcp", "streamable-http")
+
+
+def test_extract_mcp_endpoint_sse():
+    mcp = _extract_mcp_module(OASF_RECORD_MCP_SSE)
+    result = _extract_mcp_endpoint(mcp)
+    assert result == ("http://confluence-mcp:3000/sse", "sse")
+
+
+def test_extract_mcp_endpoint_stdio_only_returns_none():
+    mcp = _extract_mcp_module(OASF_RECORD_MCP_STDIO_ONLY)
+    result = _extract_mcp_endpoint(mcp)
+    assert result is None  # Not remotely callable
+
+
+# =============================================================================
+# Protocol-aware fetch_agents tests
+# =============================================================================
+
+
+def test_fetch_agents_mcp_record_returns_mcp_protocol():
+    src = DirectoryAgentSource("http://dir:9999")
+    with _patch_httpx([OASF_RECORD_MCP]):
+        results = src.fetch_agents()
+    assert len(results) == 1
+    record = results[0]
+    assert record.is_mcp is True
+    assert record.protocol == "mcp"
+    assert record.transport == "streamable-http"
+    assert record.url == "http://github-mcp:3000/mcp"
+    assert record.mcp_tools is not None
+    assert len(record.mcp_tools) == 2
+
+
+def test_fetch_agents_a2a_record_returns_a2a_protocol():
+    src = DirectoryAgentSource("http://dir:9999")
+    with _patch_httpx([OASF_RECORD]):
+        results = src.fetch_agents()
+    assert len(results) == 1
+    record = results[0]
+    assert record.is_mcp is False
+    assert record.protocol == "a2a"
+    assert record.transport == "http"
+
+
+def test_fetch_agents_dual_protocol_prefers_mcp():
+    """Records with both MCP and A2A modules should be treated as MCP."""
+    src = DirectoryAgentSource("http://dir:9999")
+    with _patch_httpx([OASF_RECORD_BOTH_MCP_AND_A2A]):
+        results = src.fetch_agents()
+    assert len(results) == 1
+    record = results[0]
+    assert record.is_mcp is True
+    assert record.url == "http://dual:3000/mcp"  # MCP endpoint, not A2A
+    assert record.a2a_card is not None  # A2A card still captured
+
+
+def test_fetch_agents_stdio_only_falls_through_to_a2a():
+    """MCP records with only stdio transport fall back to A2A if available."""
+    # Combine stdio-only MCP with A2A module
+    record_with_both = {
+        "cid": "bafybei_fallback",
+        "agent": {
+            "name": "fallback-agent",
+            "modules": [
+                {
+                    "name": "integration/mcp",
+                    "data": {
+                        "name": "fallback",
+                        "connections": [
+                            {"type": "stdio", "command": "node", "args": ["server.js"]}
+                        ],
+                    },
+                },
+                {
+                    "name": "integration/a2a",
+                    "data": {
+                        "card_data": {
+                            "name": "fallback-agent",
+                            "url": "http://fallback:8080",
+                        }
+                    },
+                },
+            ],
+        },
+    }
+    src = DirectoryAgentSource("http://dir:9999")
+    with _patch_httpx([record_with_both]):
+        results = src.fetch_agents()
+    assert len(results) == 1
+    record = results[0]
+    assert record.is_mcp is False  # Fell through to A2A
+    assert record.protocol == "a2a"
+    assert record.url == "http://fallback:8080"
+
+
+def test_fetch_agents_stdio_only_no_a2a_skipped():
+    """MCP records with only stdio and no A2A module are skipped entirely."""
+    src = DirectoryAgentSource("http://dir:9999")
+    with _patch_httpx([OASF_RECORD_MCP_STDIO_ONLY]):
+        results = src.fetch_agents()
+    assert len(results) == 0
+
+
+def test_fetch_agents_mixed_protocols():
+    """Multiple records with different protocols are all discovered."""
+    src = DirectoryAgentSource("http://dir:9999")
+    with _patch_httpx([OASF_RECORD_MCP, OASF_RECORD, OASF_RECORD_MCP_SSE]):
+        results = src.fetch_agents()
+    assert len(results) == 3
+    mcp_records = [r for r in results if r.is_mcp]
+    a2a_records = [r for r in results if not r.is_mcp]
+    assert len(mcp_records) == 2
+    assert len(a2a_records) == 1
 
 
 def test_from_env_disabled(monkeypatch):
@@ -215,6 +460,8 @@ def test_agent_record_to_mcp_document():
         a2a_card={"name": "test-agent", "url": "http://test:8080"},
         capabilities=["kubernetes"],
         metadata={"directory_cid": "bafytest123", "description": "Test agent"},
+        protocol="a2a",
+        transport="http",
     )
     doc = _agent_record_to_mcp_document(record)
     assert doc["_id"] == "directory-test-agent"
@@ -224,8 +471,47 @@ def test_agent_record_to_mcp_document():
     assert doc["enabled"] is False
     assert doc["source"] == "directory"
     assert doc["directory_agent"] is True
+    assert doc["directory_protocol"] == "a2a"
     assert doc["directory_cid"] == "bafytest123"
     assert doc["directory_capabilities"] == ["kubernetes"]
+    assert "directory_a2a_card" in doc
+
+
+def test_agent_record_to_mcp_document_mcp_protocol():
+    """MCP-typed records should be enabled=True with correct transport mapping."""
+    record = DirectoryAgentRecord(
+        name="mcp-server",
+        url="http://mcp:3000/mcp",
+        a2a_card=None,
+        capabilities=["code_management"],
+        metadata={"directory_cid": "bafymcp001", "description": "MCP server"},
+        protocol="mcp",
+        transport="streamable-http",
+        mcp_tools=[{"name": "list_repos"}, {"name": "create_pr"}],
+    )
+    doc = _agent_record_to_mcp_document(record)
+    assert doc["_id"] == "directory-mcp-server"
+    assert doc["enabled"] is True  # MCP records are auto-enabled
+    assert doc["transport"] == "http"  # streamable-http maps to "http" in CAIPE
+    assert doc["directory_protocol"] == "mcp"
+    assert "directory_a2a_card" not in doc  # No A2A card
+    assert doc["directory_mcp_tools"] == [{"name": "list_repos"}, {"name": "create_pr"}]
+
+
+def test_agent_record_to_mcp_document_sse_transport():
+    """SSE transport should map correctly."""
+    record = DirectoryAgentRecord(
+        name="sse-server",
+        url="http://sse:3000/sse",
+        a2a_card=None,
+        capabilities=[],
+        metadata={},
+        protocol="mcp",
+        transport="sse",
+    )
+    doc = _agent_record_to_mcp_document(record)
+    assert doc["enabled"] is True
+    assert doc["transport"] == "sse"
 
 
 def test_sync_service_from_env_disabled(monkeypatch):
