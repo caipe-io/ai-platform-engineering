@@ -69,24 +69,71 @@ All configuration is via environment variables on the `dynamic-agents` service:
 
 Self-registration uses the `agntcy-dir` Python SDK to push OASF records directly via gRPC to the Directory Store service. No `dirctl` binary is required. Optionally, records are published to the routing layer for network-wide discovery by other Directory peers.
 
+## Deployment
+
+### Docker Compose (via deploy.sh)
+
+Add the following to your `.env` file:
+
+```bash
+# Start the dir-apiserver container
+ENABLE_DIRECTORY=true
+
+# Enable DA ↔ Directory integration
+DIRECTORY_ENABLED=true
+DIRECTORY_SELF_REGISTER=true
+```
+
+Then deploy as usual:
+
+```bash
+./deploy.sh
+```
+
+The `deploy.sh` script reads `ENABLE_DIRECTORY` and adds the `directory` profile automatically.
+
+### Helm (Kubernetes)
+
+Enable the Directory subchart and configure the dynamic-agents service:
+
+```bash
+helm install caipe . \
+  --set directory.enabled=true \
+  --set dynamic-agents.config.DIRECTORY_ENABLED=true \
+  --set dynamic-agents.config.DIRECTORY_SELF_REGISTER=true \
+  --set dynamic-agents.config.DIRECTORY_BASE_URL=http://caipe-directory:8888 \
+  --set dynamic-agents.config.DIRECTORY_SERVER_ADDRESS=caipe-directory:8888
+```
+
+Or in your `values.yaml`:
+
+```yaml
+directory:
+  enabled: true
+
+dynamic-agents:
+  config:
+    DIRECTORY_ENABLED: "true"
+    DIRECTORY_SELF_REGISTER: "true"
+    DIRECTORY_BASE_URL: "http://caipe-directory:8888"
+    DIRECTORY_SERVER_ADDRESS: "caipe-directory:8888"
+```
+
 ## Local Development
 
-Directory is **optional** for local development. It runs behind a Docker Compose profile:
+Directory is **optional** for local development. Without `ENABLE_DIRECTORY=true`, it is not started:
 
 ```bash
 # Default local dev — no Directory needed
-docker compose up
+./deploy.sh
 
-# With Directory for testing federation/discovery
-docker compose --profile directory up
+# With Directory — add to .env: ENABLE_DIRECTORY=true, DIRECTORY_ENABLED=true
+./deploy.sh
 ```
 
 To test Directory sync locally:
 
 ```bash
-# Start the Directory API server
-docker compose --profile directory up dir-apiserver
-
 # Enable sync on the dynamic-agents service
 export DIRECTORY_ENABLED=true
 export DIRECTORY_BASE_URL=http://localhost:8888
