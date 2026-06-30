@@ -160,7 +160,7 @@ class DirectoryRegisterService:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
+                pass  # Expected: we just called cancel() above during shutdown
 
     async def _reconcile_loop(self) -> None:
         """Periodic reconcile: re-checks MongoDB for new enabled MCP servers."""
@@ -174,8 +174,8 @@ class DirectoryRegisterService:
 
     async def _reconcile_once(self) -> None:
         """Single reconcile cycle: read MCP servers from MongoDB and register."""
-        from dynamic_agents.services.mongo import get_mongo_service
         from dynamic_agents.config import get_settings
+        from dynamic_agents.services.mongo import get_mongo_service
 
         mongo = get_mongo_service()
         if mongo._db is None:
@@ -301,15 +301,14 @@ class DirectoryRegisterService:
         }
 
 
-# Module-level singleton
-_register_service: DirectoryRegisterService | None = None
-_initialized = False
+# Module-level singleton; sentinel distinguishes "not yet initialized" from "disabled (None)"
+_UNSET = object()
+_register_service: DirectoryRegisterService | None | object = _UNSET
 
 
 def get_directory_register() -> DirectoryRegisterService | None:
     """Get the directory register service singleton (None if disabled)."""
-    global _register_service, _initialized
-    if not _initialized:
-        _initialized = True
+    global _register_service
+    if _register_service is _UNSET:
         _register_service = DirectoryRegisterService.from_env()
-    return _register_service
+    return _register_service  # type: ignore[return-value]

@@ -26,7 +26,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from dynamic_agents.services.directory_source import DirectoryAgentSource, DirectoryAgentRecord
+from dynamic_agents.services.directory_source import DirectoryAgentRecord, DirectoryAgentSource
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ class DirectorySyncService:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
+                pass  # Expected: we just called cancel() above during shutdown
         logger.info("Directory sync stopped")
 
     async def _sync_loop(self) -> None:
@@ -162,8 +162,8 @@ class DirectorySyncService:
             return {"synced": 0, "added": 0, "updated": 0}
 
         # Perform upserts into MongoDB
-        from dynamic_agents.services.mongo import get_mongo_service
         from dynamic_agents.config import get_settings
+        from dynamic_agents.services.mongo import get_mongo_service
 
         mongo = get_mongo_service()
         if mongo._db is None:
@@ -235,15 +235,14 @@ class DirectorySyncService:
         }
 
 
-# Module-level singleton
-_directory_sync: DirectorySyncService | None = None
-_initialized = False
+# Module-level singleton; sentinel distinguishes "not yet initialized" from "disabled (None)"
+_UNSET = object()
+_directory_sync: DirectorySyncService | None | object = _UNSET
 
 
 def get_directory_sync() -> DirectorySyncService | None:
     """Get the directory sync service singleton (None if disabled)."""
-    global _directory_sync, _initialized
-    if not _initialized:
-        _initialized = True
+    global _directory_sync
+    if _directory_sync is _UNSET:
         _directory_sync = DirectorySyncService.from_env()
-    return _directory_sync
+    return _directory_sync  # type: ignore[return-value]

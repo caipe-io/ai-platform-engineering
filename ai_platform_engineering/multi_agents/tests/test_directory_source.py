@@ -4,7 +4,6 @@
 """Tests for DirectoryAgentSource."""
 
 import unittest.mock as mock
-import pytest
 
 from ai_platform_engineering.multi_agents.directory_source import (
     DirectoryAgentSource,

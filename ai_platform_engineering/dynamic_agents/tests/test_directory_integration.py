@@ -3,9 +3,7 @@
 
 """Tests for DirectoryAgentSource and DirectorySyncService."""
 
-import asyncio
 import unittest.mock as mock
-from datetime import datetime, timezone
 
 import pytest
 
@@ -20,11 +18,9 @@ from dynamic_agents.services.directory_source import (
     _extract_metadata,
 )
 from dynamic_agents.services.directory_sync import (
-    DIRECTORY_MCP_PREFIX,
     DirectorySyncService,
     _agent_record_to_mcp_document,
 )
-
 
 # =============================================================================
 # Test data
@@ -774,7 +770,7 @@ def test_sync_service_status():
 # DirectoryRegisterService tests
 # =============================================================================
 
-from dynamic_agents.services.directory_register import (
+from dynamic_agents.services.directory_register import (  # noqa: E402
     DirectoryRegisterService,
     _server_to_oasf_record_dict,
 )
@@ -858,6 +854,7 @@ def test_register_servers_pushes_via_sdk(monkeypatch):
 
     # Mock the SDK client
     from unittest.mock import MagicMock
+
     from agntcy.dir.core.v1 import record_pb2
 
     mock_ref = record_pb2.RecordRef(cid="bafake123cid")
@@ -894,6 +891,7 @@ def test_register_servers_publishes_to_routing(monkeypatch):
     svc = DirectoryRegisterService("dir:8888", publish_to_routing=True)
 
     from unittest.mock import MagicMock
+
     from agntcy.dir.core.v1 import record_pb2
 
     mock_ref = record_pb2.RecordRef(cid="bafake456cid")
