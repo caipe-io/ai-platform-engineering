@@ -776,7 +776,7 @@ def test_sync_service_status():
 
 from dynamic_agents.services.directory_register import (
     DirectoryRegisterService,
-    _server_to_oasf_record,
+    _server_to_oasf_record_dict,
 )
 
 
@@ -790,13 +790,13 @@ def test_server_to_oasf_record_basic():
         "endpoint": "http://github-mcp:8082/mcp",
         "enabled": True,
     }
-    record = _server_to_oasf_record(server, {"platform": "caipe"})
+    record = _server_to_oasf_record_dict(server, {"platform": "caipe"})
     assert record["name"] == "GitHub"
     assert record["description"] == "GitHub repositories and pull requests"
     assert record["schema_version"] == "1.0.0"
-    assert record["labels"]["source"] == "caipe"
-    assert record["labels"]["platform"] == "caipe"
-    assert record["labels"]["server_id"] == "github"
+    assert record["annotations"]["source"] == "caipe"
+    assert record["annotations"]["platform"] == "caipe"
+    assert record["annotations"]["server_id"] == "github"
     # Check MCP module
     assert len(record["modules"]) == 1
     mcp_mod = record["modules"][0]
@@ -809,7 +809,7 @@ def test_server_to_oasf_record_basic():
 def test_server_to_oasf_record_sse_transport():
     """SSE transport maps correctly."""
     server = {"_id": "sse-server", "name": "SSE", "transport": "sse", "endpoint": "http://sse:3000/sse"}
-    record = _server_to_oasf_record(server, {})
+    record = _server_to_oasf_record_dict(server, {})
     assert record["modules"][0]["data"]["connections"][0]["type"] == "sse"
 
 
@@ -820,18 +820,19 @@ def test_register_service_from_env_disabled(monkeypatch):
 
 def test_register_service_from_env_enabled(monkeypatch):
     monkeypatch.setenv("DIRECTORY_SELF_REGISTER", "true")
-    monkeypatch.setenv("DIRECTORY_BASE_URL", "http://dir:8888")
+    monkeypatch.setenv("DIRECTORY_SERVER_ADDRESS", "dir:8888")
     monkeypatch.setenv("DIRECTORY_REGISTER_LABELS", "platform=caipe,env=prod")
-    monkeypatch.setenv("DIRECTORY_REGISTER_MODE", "dirctl")
+    monkeypatch.setenv("DIRECTORY_REGISTER_PUBLISH", "false")
     svc = DirectoryRegisterService.from_env()
     assert svc is not None
     assert svc._labels == {"platform": "caipe", "env": "prod"}
-    assert svc._mode == "dirctl"
+    assert svc._server_address == "dir:8888"
+    assert svc._publish_to_routing is False
 
 
 def test_register_servers_skips_directory_source():
     """Servers with source='directory' should not be re-registered."""
-    svc = DirectoryRegisterService("http://dir:8888")
+    svc = DirectoryRegisterService("dir:8888")
     servers = [
         {"_id": "dir-agent", "enabled": True, "source": "directory", "directory_agent": True},
     ]
@@ -842,7 +843,7 @@ def test_register_servers_skips_directory_source():
 
 def test_register_servers_skips_disabled():
     """Disabled servers should not be registered."""
-    svc = DirectoryRegisterService("http://dir:8888")
+    svc = DirectoryRegisterService("dir:8888")
     servers = [
         {"_id": "disabled-server", "enabled": False, "source": "config"},
     ]
@@ -851,9 +852,18 @@ def test_register_servers_skips_disabled():
     assert result["skipped"] == 1
 
 
-def test_register_servers_exports_to_file(tmp_path):
-    """Enabled non-directory servers should be exported as JSON files."""
-    svc = DirectoryRegisterService("http://dir:8888", output_dir=str(tmp_path))
+def test_register_servers_pushes_via_sdk(monkeypatch):
+    """Enabled non-directory servers should be pushed via SDK client."""
+    svc = DirectoryRegisterService("dir:8888", publish_to_routing=False)
+
+    # Mock the SDK client
+    from unittest.mock import MagicMock
+    from agntcy.dir.core.v1 import record_pb2
+
+    mock_ref = record_pb2.RecordRef(cid="bafake123cid")
+    mock_client = MagicMock()
+    mock_client.push.return_value = [mock_ref]
+    svc._client = mock_client
 
     servers = [
         {
@@ -871,18 +881,48 @@ def test_register_servers_exports_to_file(tmp_path):
 
     assert result["registered"] == 1
     assert "github" in svc._registered_ids
-    # Verify file was written
-    record_file = tmp_path / "github.json"
-    assert record_file.exists()
-    import json
-    data = json.loads(record_file.read_text())
-    assert data["name"] == "GitHub"
-    assert data["modules"][0]["name"] == "integration/mcp"
+    assert svc._registered_cids["github"] == "bafake123cid"
+    # Verify SDK push was called with a Record
+    mock_client.push.assert_called_once()
+    pushed_records = mock_client.push.call_args[0][0]
+    assert len(pushed_records) == 1
+    assert pushed_records[0].data["name"] == "GitHub"
 
 
-def test_register_servers_skips_already_registered(tmp_path):
+def test_register_servers_publishes_to_routing(monkeypatch):
+    """When publish_to_routing=True, records are published for network discovery."""
+    svc = DirectoryRegisterService("dir:8888", publish_to_routing=True)
+
+    from unittest.mock import MagicMock
+    from agntcy.dir.core.v1 import record_pb2
+
+    mock_ref = record_pb2.RecordRef(cid="bafake456cid")
+    mock_client = MagicMock()
+    mock_client.push.return_value = [mock_ref]
+    svc._client = mock_client
+
+    servers = [
+        {
+            "_id": "argocd",
+            "name": "ArgoCD",
+            "description": "ArgoCD MCP",
+            "transport": "http",
+            "endpoint": "http://argocd:8080/mcp",
+            "enabled": True,
+            "source": "config",
+        },
+    ]
+
+    result = svc.register_servers(servers)
+
+    assert result["registered"] == 1
+    # Verify publish was called
+    mock_client.publish.assert_called_once()
+
+
+def test_register_servers_skips_already_registered():
     """Servers already registered in this session are skipped."""
-    svc = DirectoryRegisterService("http://dir:8888", output_dir=str(tmp_path))
+    svc = DirectoryRegisterService("dir:8888")
     svc._registered_ids.add("github")
 
     servers = [
@@ -897,11 +937,13 @@ def test_register_servers_skips_already_registered(tmp_path):
 
 def test_register_service_status():
     """Test status reporting."""
-    svc = DirectoryRegisterService("http://dir:8888", mode="dirctl")
+    svc = DirectoryRegisterService("dir:8888")
     svc._registered_ids = {"github", "argocd"}
+    svc._registered_cids = {"github": "bafcid1", "argocd": "bafcid2"}
 
     status = svc.status
     assert status["enabled"] is True
-    assert status["mode"] == "dirctl"
+    assert status["server_address"] == "dir:8888"
     assert status["registered_count"] == 2
     assert "github" in status["registered_ids"]
+    assert status["registered_cids"]["github"] == "bafcid1"

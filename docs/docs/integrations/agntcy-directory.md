@@ -62,12 +62,12 @@ All configuration is via environment variables on the `dynamic-agents` service:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DIRECTORY_SELF_REGISTER` | `false` | Publish built-in MCP servers to Directory on startup |
+| `DIRECTORY_SERVER_ADDRESS` | `dir-apiserver:8888` | Directory gRPC server address |
 | `DIRECTORY_REGISTER_LABELS` | _(empty)_ | Comma-separated `key=value` labels to attach |
-| `DIRECTORY_REGISTER_MODE` | `file` | `file` (export JSON) or `dirctl` (push via CLI) |
-| `DIRECTORY_REGISTER_DIR` | `/tmp/caipe-dir-records` | Output directory for exported OASF record files |
 | `DIRECTORY_REGISTER_INTERVAL` | `300` | Reconcile interval (seconds). 0 = one-shot on startup |
+| `DIRECTORY_REGISTER_PUBLISH` | `true` | Also publish records for network routing |
 
-Self-registration generates OASF record JSON files. In `file` mode, a sidecar or init-container pushes them to the Directory Store using `dirctl push <file> --server-addr <address>` (one push per record). In `dirctl` mode, the service invokes `dirctl push` directly (requires `dirctl` binary in PATH).
+Self-registration uses the `agntcy-dir` Python SDK to push OASF records directly via gRPC to the Directory Store service. No `dirctl` binary is required. Optionally, records are published to the routing layer for network-wide discovery by other Directory peers.
 
 ## Local Development
 
