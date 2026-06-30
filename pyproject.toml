@@ -41,6 +41,10 @@ dependencies = [
     "boto3==1.43.16",
     # Parquet writer for columnar audit log files (S3 backend)
     "pyarrow==23.0.1",
+    # AGNTCY Directory integration uses the REST/httpx adapter in
+    # ai_platform_engineering/multi_agents/directory_source.py (no gRPC SDK
+    # needed — the agntcy-dir package depends on private sub-packages not
+    # published to PyPI).  httpx is already a dependency above.
 ]
 
 [tool.pytest.ini_options]

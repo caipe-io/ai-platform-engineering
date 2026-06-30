@@ -28,8 +28,15 @@ dependencies = [
     "pydantic==2.13.4",
     "pydantic-settings==2.15.0",
 
+<<<<<<< HEAD
     "requests==2.34.2",
     "beautifulsoup4==4.15.0",
+    "httpx>=0.28.1",
+=======
+    "requests==2.33.0",
+    "beautifulsoup4==4.13.4",
+    "httpx>=0.28.1",
+>>>>>>> 1d9623966 (feat(directory): integrate AGNTCY Directory sync into dynamic-agents service)
     "jinja2==3.1.6",
     "jsonschema==4.26.0",
     "referencing==0.37.0",
