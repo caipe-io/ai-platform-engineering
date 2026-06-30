@@ -1,0 +1,28 @@
+# Default StorageClass for EKS Auto Mode.
+#
+# Based on the AWS reference:
+# https://docs.aws.amazon.com/eks/latest/userguide/create-storage-class.html
+#
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: auto-ebs-sc
+  annotations:
+    # Make this the cluster default so PVCs without an explicit class bind here.
+    storageclass.kubernetes.io/is-default-class: "true"
+# Pods needing an auto-provisioned volume are kept off non-Auto nodes.
+allowedTopologies:
+  - matchLabelExpressions:
+      - key: eks.amazonaws.com/compute-type
+        values:
+          - auto
+provisioner: ebs.csi.eks.amazonaws.com
+# Delay volume creation until a pod is scheduled (zone-aware binding).
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  # Encrypt with the default aws/ebs KMS key. To use a customer-managed key,
+  # add `kmsKeyId: <arn>` and grant the EKS cluster role access to it.
+  encrypted: "true"

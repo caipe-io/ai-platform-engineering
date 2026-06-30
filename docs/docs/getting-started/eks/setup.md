@@ -149,7 +149,19 @@ Do not edit the `aws-auth` ConfigMap directly, as it has no effect in API auth m
 
 ---
 
-## Step 5 (Optional): Configure node tiers with NodePools
+## Step 5: Create the default StorageClass
+
+EKS Auto Mode ships the EBS CSI driver (`ebs.csi.eks.amazonaws.com`) but, by AWS design, **creates no StorageClass**. Apply the repo's default `gp3` class once, right after the cluster is up:
+
+```bash
+kubectl apply -f deploy/eks/storage/
+```
+
+Verify it is registered as the cluster default (`(default)` appears next to the name):
+
+```bash
+kubectl get storageclass
+```
 
 By default, Auto Mode places all workloads on its built-in `general-purpose` pool. The memory-bound RAG stack benefits from a dedicated tier, so apply the `rag` NodePool to give it on-demand memory-optimised nodes that scale to zero when idle. Everything else stays on the Auto Mode `general-purpose` pool.
 
