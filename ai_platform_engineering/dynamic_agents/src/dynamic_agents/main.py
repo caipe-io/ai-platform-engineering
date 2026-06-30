@@ -119,6 +119,19 @@ async def lifespan(app: FastAPI):
     if directory_sync is not None:
         directory_sync.start()
 
+    # Self-register enabled MCP servers only when the opt-in flag is set.
+    from dynamic_agents.services.directory_register import get_directory_register
+
+    directory_register = get_directory_register()
+    if directory_register is not None and mongo._db is not None:
+        try:
+            collection = mongo._db[settings.mcp_servers_collection]
+            servers = list(collection.find({"enabled": True, "source": {"$ne": "directory"}}))
+            if servers:
+                await asyncio.to_thread(directory_register.register_servers, servers)
+        except Exception as exc:  # noqa: BLE001 — registration is an optional startup integration
+            logger.warning("Directory self-registration failed: %s", exc)
+
     copy_cleanup = asyncio.create_task(run_copy_cleanup(mongo))
     try:
         yield

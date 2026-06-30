@@ -643,3 +643,174 @@ def test_sync_service_status():
     assert status["last_sync"] is None
     assert status["sync_interval_seconds"] == 120
     assert status["base_url"] == "http://dir:9999"
+
+
+# =============================================================================
+# DirectoryRegisterService tests
+# =============================================================================
+
+from dynamic_agents.services.directory_register import (
+    DirectoryRegisterService,
+    _server_to_oasf_record,
+)
+
+
+def test_server_to_oasf_record_basic():
+    """Test conversion of MCP server doc to OASF record."""
+    server = {
+        "_id": "github",
+        "name": "GitHub",
+        "description": "GitHub repositories and pull requests",
+        "transport": "http",
+        "endpoint": "http://github-mcp:8082/mcp",
+        "enabled": True,
+    }
+    record = _server_to_oasf_record(server, {"platform": "caipe"})
+    assert record["name"] == "GitHub"
+    assert record["description"] == "GitHub repositories and pull requests"
+    assert record["schema_version"] == "1.0.0"
+    assert record["labels"]["source"] == "caipe"
+    assert record["labels"]["platform"] == "caipe"
+    assert record["labels"]["server_id"] == "github"
+    # Check MCP module
+    assert len(record["modules"]) == 1
+    mcp_mod = record["modules"][0]
+    assert mcp_mod["name"] == "integration/mcp"
+    assert mcp_mod["id"] == 202
+    assert mcp_mod["data"]["connections"][0]["type"] == "streamable-http"
+    assert mcp_mod["data"]["connections"][0]["url"] == "http://github-mcp:8082/mcp"
+
+
+def test_server_to_oasf_record_sse_transport():
+    """SSE transport maps correctly."""
+    server = {"_id": "sse-server", "name": "SSE", "transport": "sse", "endpoint": "http://sse:3000/sse"}
+    record = _server_to_oasf_record(server, {})
+    assert record["modules"][0]["data"]["connections"][0]["type"] == "sse"
+
+
+def test_register_service_from_env_disabled(monkeypatch):
+    monkeypatch.delenv("DIRECTORY_SELF_REGISTER", raising=False)
+    assert DirectoryRegisterService.from_env() is None
+
+
+def test_register_service_from_env_enabled(monkeypatch):
+    monkeypatch.setenv("DIRECTORY_SELF_REGISTER", "true")
+    monkeypatch.setenv("DIRECTORY_BASE_URL", "http://dir:8888")
+    monkeypatch.setenv("DIRECTORY_REGISTER_LABELS", "platform=caipe,env=prod")
+    svc = DirectoryRegisterService.from_env()
+    assert svc is not None
+    assert svc._labels == {"platform": "caipe", "env": "prod"}
+
+
+def test_register_servers_skips_directory_source():
+    """Servers with source='directory' should not be re-registered."""
+    svc = DirectoryRegisterService("http://dir:8888")
+    servers = [
+        {"_id": "dir-agent", "enabled": True, "source": "directory", "directory_agent": True},
+    ]
+    result = svc.register_servers(servers)
+    assert result["registered"] == 0
+    assert result["skipped"] == 1
+
+
+def test_register_servers_skips_disabled():
+    """Disabled servers should not be registered."""
+    svc = DirectoryRegisterService("http://dir:8888")
+    servers = [
+        {"_id": "disabled-server", "enabled": False, "source": "config"},
+    ]
+    result = svc.register_servers(servers)
+    assert result["registered"] == 0
+    assert result["skipped"] == 1
+
+
+def test_register_servers_publishes_enabled_server():
+    """Enabled non-directory servers should be published."""
+    svc = DirectoryRegisterService("http://dir:8888")
+
+    # Mock httpx to simulate successful registration
+    mock_get_resp = mock.MagicMock()
+    mock_get_resp.status_code = 200
+    mock_get_resp.json.return_value = {"results": []}  # Not already registered
+
+    mock_post_resp = mock.MagicMock()
+    mock_post_resp.status_code = 201
+
+    client = mock.MagicMock()
+    client.get.return_value = mock_get_resp
+    client.post.return_value = mock_post_resp
+    ctx = mock.MagicMock()
+    ctx.__enter__ = mock.MagicMock(return_value=client)
+    ctx.__exit__ = mock.MagicMock(return_value=False)
+
+    servers = [
+        {
+            "_id": "github",
+            "name": "GitHub",
+            "description": "GitHub MCP",
+            "transport": "http",
+            "endpoint": "http://github:8082/mcp",
+            "enabled": True,
+            "source": "config",
+        },
+    ]
+
+    with mock.patch("dynamic_agents.services.directory_register.httpx.Client", return_value=ctx):
+        result = svc.register_servers(servers)
+
+    assert result["registered"] == 1
+    assert "github" in svc._registered_ids
+    client.post.assert_called_once()
+
+
+def test_register_servers_skips_already_in_directory():
+    """Servers already in the Directory should be skipped gracefully."""
+    svc = DirectoryRegisterService("http://dir:8888")
+
+    # Mock httpx — already exists in Directory
+    mock_get_resp = mock.MagicMock()
+    mock_get_resp.status_code = 200
+    mock_get_resp.json.return_value = {"results": [{"cid": "existing"}]}
+
+    client = mock.MagicMock()
+    client.get.return_value = mock_get_resp
+    ctx = mock.MagicMock()
+    ctx.__enter__ = mock.MagicMock(return_value=client)
+    ctx.__exit__ = mock.MagicMock(return_value=False)
+
+    servers = [
+        {"_id": "github", "name": "GitHub", "enabled": True, "source": "config",
+         "transport": "http", "endpoint": "http://github:8082/mcp"},
+    ]
+
+    with mock.patch("dynamic_agents.services.directory_register.httpx.Client", return_value=ctx):
+        result = svc.register_servers(servers)
+
+    assert result["registered"] == 1  # Still counted as success (already present)
+    client.post.assert_not_called()  # No POST needed
+
+
+def test_register_servers_handles_failure():
+    """HTTP failures should be counted and not crash."""
+    svc = DirectoryRegisterService("http://dir:8888")
+
+    # Mock httpx — connection error
+    with mock.patch("dynamic_agents.services.directory_register.httpx.Client", side_effect=Exception("connection refused")):
+        result = svc.register_servers([
+            {"_id": "github", "name": "GitHub", "enabled": True, "source": "config",
+             "transport": "http", "endpoint": "http://github:8082/mcp"},
+        ])
+
+    assert result["failed"] == 1
+    assert result["registered"] == 0
+
+
+def test_register_service_status():
+    """Test status reporting."""
+    svc = DirectoryRegisterService("http://dir:8888")
+    svc._registered_ids = {"github", "argocd"}
+
+    status = svc.status
+    assert status["enabled"] is True
+    assert status["registered_count"] == 2
+    assert "github" in status["registered_ids"]
