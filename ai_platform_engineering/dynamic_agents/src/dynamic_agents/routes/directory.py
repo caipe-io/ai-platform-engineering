@@ -10,7 +10,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 
-from dynamic_agents.auth.auth import UserContext, get_user_context
+from dynamic_agents.auth.auth import UserContext, get_user_context, require_admin
 from dynamic_agents.services.directory_sync import get_directory_sync
 
 logger = logging.getLogger(__name__)
@@ -28,8 +28,8 @@ async def directory_status(_user: UserContext = Depends(get_user_context)):
 
 
 @router.post("/sync")
-async def directory_sync_now(_user: UserContext = Depends(get_user_context)):
-    """Trigger an immediate Directory sync.
+async def directory_sync_now(_user: UserContext = Depends(require_admin)):
+    """Trigger an immediate Directory sync. Requires admin role.
 
     Returns a summary of what was synced.
     """

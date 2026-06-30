@@ -161,7 +161,7 @@ class DirectoryAgentSource:
         try:
             params: dict = {}
             if self._label_filter:
-                params["labels"] = self._label_filter
+                params["filter"] = self._label_filter
             with httpx.Client(timeout=self._timeout) as client:
                 resp = client.get(f"{self._base_url}/v1/agents", params=params)
                 resp.raise_for_status()
@@ -170,7 +170,7 @@ class DirectoryAgentSource:
             logger.warning("Directory fetch failed (%s): %s", self._base_url, exc)
             return []
 
-        items = payload if isinstance(payload, list) else payload.get("agents", [])
+        items = payload if isinstance(payload, list) else payload.get("results", [])
         results: list[DirectoryAgentRecord] = []
         for record in items:
             agent = record.get("agent", record)

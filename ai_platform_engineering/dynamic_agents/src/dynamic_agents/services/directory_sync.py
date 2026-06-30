@@ -37,9 +37,11 @@ DIRECTORY_MCP_PREFIX = "directory-"
 def _agent_record_to_mcp_document(record: DirectoryAgentRecord) -> dict:
     """Convert a DirectoryAgentRecord to an MCP server MongoDB document.
 
-    Directory agents are stored as MCP servers with transport=http and the
-    A2A endpoint URL. This allows the existing runtime to route to them
-    like any other MCP server exposed via AgentGateway.
+    Directory agents are stored as MCP server records for catalog/discovery
+    purposes. They are marked enabled=False because their endpoints speak
+    A2A protocol, not MCP — the runtime MCP client should not attempt to
+    connect to them directly. A future A2A-to-MCP adapter or dedicated
+    routing path will handle actual communication.
     """
     server_id = f"{DIRECTORY_MCP_PREFIX}{record.name}"
     now = datetime.now(timezone.utc)
@@ -49,8 +51,9 @@ def _agent_record_to_mcp_document(record: DirectoryAgentRecord) -> dict:
         "description": record.metadata.get("description", f"Agent discovered from AGNTCY Directory: {record.name}"),
         "transport": "http",
         "endpoint": record.url,
-        "enabled": True,
+        "enabled": False,
         "source": "directory",
+        "directory_agent": True,
         "config_driven": False,
         "agentgateway_discovered": False,
         "directory_cid": record.metadata.get("directory_cid"),
@@ -72,6 +75,7 @@ class DirectorySyncService:
         self._last_sync: datetime | None = None
         self._last_sync_count: int = 0
         self._running = False
+        self._sync_lock = asyncio.Lock()
 
     @classmethod
     def from_env(cls) -> "DirectorySyncService | None":
@@ -120,7 +124,13 @@ class DirectorySyncService:
         """Run a single sync cycle. Returns a summary dict.
 
         This runs the HTTP fetch in a thread to avoid blocking the event loop.
+        Uses an asyncio.Lock to prevent races between manual and background sync.
         """
+        async with self._sync_lock:
+            return await self._do_sync()
+
+    async def _do_sync(self) -> dict:
+        """Internal sync implementation (must be called under _sync_lock)."""
         loop = asyncio.get_event_loop()
         records = await loop.run_in_executor(None, self._source.fetch_agents)
 
@@ -130,13 +140,15 @@ class DirectorySyncService:
 
         # Perform upserts into MongoDB
         from dynamic_agents.services.mongo import get_mongo_service
+        from dynamic_agents.config import get_settings
 
         mongo = get_mongo_service()
         if mongo._db is None:
             logger.warning("Directory sync skipped: MongoDB not connected")
             return {"synced": 0, "added": 0, "updated": 0, "error": "mongodb_not_connected"}
 
-        collection = mongo._db["mcp_servers"]
+        settings = get_settings()
+        collection = mongo._db[settings.mcp_servers_collection]
 
         added = 0
         updated = 0

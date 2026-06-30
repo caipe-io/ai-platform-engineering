@@ -174,7 +174,7 @@ def test_fetch_agents_skips_record_without_a2a():
 
 def test_fetch_agents_accepts_agents_wrapper():
     src = DirectoryAgentSource("http://dir:9999")
-    with _patch_httpx({"agents": [OASF_RECORD]}):
+    with _patch_httpx({"results": [OASF_RECORD]}):
         results = src.fetch_agents()
     assert len(results) == 1
 
@@ -199,7 +199,7 @@ def test_fetch_agents_with_label_filter():
     # Verify the label filter was passed as a query param
     client.get.assert_called_once_with(
         "http://dir:9999/v1/agents",
-        params={"labels": "platform=caipe"},
+        params={"filter": "platform=caipe"},
     )
 
 
@@ -221,8 +221,9 @@ def test_agent_record_to_mcp_document():
     assert doc["name"] == "[Directory] test-agent"
     assert doc["transport"] == "http"
     assert doc["endpoint"] == "http://test:8080"
-    assert doc["enabled"] is True
+    assert doc["enabled"] is False
     assert doc["source"] == "directory"
+    assert doc["directory_agent"] is True
     assert doc["directory_cid"] == "bafytest123"
     assert doc["directory_capabilities"] == ["kubernetes"]
 
