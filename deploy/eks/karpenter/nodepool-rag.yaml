@@ -37,6 +37,11 @@ spec:
           operator: Gt
           values: ["4"]
 
+      # rotate nodes to pick up patched AMIs.
+      # Capped at 20d: v1 requires expireAfter + terminationGracePeriod <= 21d,
+      # and EKS Auto Mode defaults terminationGracePeriod to 24h.
+      expireAfter: 480h
+
   # Safety ceiling
   limits:
     cpu: "20"
@@ -47,4 +52,3 @@ spec:
     # stateful RAG services (neo4j, redis)
     consolidationPolicy: WhenEmpty
     consolidateAfter: 60s
-    expireAfter: 720h   # rotate nodes every 30 days to pick up patched AMIs
