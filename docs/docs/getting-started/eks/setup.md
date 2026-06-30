@@ -252,11 +252,14 @@ helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n kube-system \
   --set clusterName=dev-eks-cluster \
   --set serviceAccount.create=false \
-  --set serviceAccount.name=aws-load-balancer-controller
-
-# Verify
-kubectl get deployment -n kube-system aws-load-balancer-controller
+  --set serviceAccount.name=aws-load-balancer-controller \
+  --set 'nodeSelector.karpenter\.sh/nodepool=system' \
+  --set 'tolerations[0].key=CriticalAddonsOnly' \
+  --set 'tolerations[0].operator=Exists' \
+  --set 'tolerations[0].effect=NoSchedule'
 ```
+
+The `nodeSelector` + toleration pin the controller to the built-in `system` NodePool, keeping platform add-ons off your workload nodes. This matches AWS's guidance for running critical add-ons on the system pool.
 
 Use your actual cluster name if it’s not `dev-eks-cluster` (match the name in `dev-eks-cluster-config.yaml`).
 
