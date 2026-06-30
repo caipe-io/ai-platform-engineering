@@ -8,10 +8,10 @@ Only the memory-bound RAG stack gets a dedicated pool. The Dynamic Agents runtim
 
 | NodePool | Taint | Workloads | Instance strategy |
 |----------|-------|-----------|-------------------|
-| `rag` | `workload-type=rag:NoSchedule` | `rag-server`, `agent-ontology`, `rag-redis`, `neo4j` | On-demand, memory-optimised (`r5`/`r6i`) |
+| `rag` | `workload-type=rag:NoSchedule` | `rag-server`, `agent-ontology`, `rag-redis`, `neo4j`, `milvus` | On-demand, memory-optimised (`r5`/`r6i`) |
 | `general-purpose` *(built-in)* | *(none)* | `dynamic-agents`, `mcp-*`, `caipe-ui`, `keycloak`, `openfga`, `slack-bot`, … | Auto Mode managed |
 
-Workloads without the `workload-type=rag` toleration land on the Auto Mode `general-purpose` pool. The values overlay (`charts/ai-platform-engineering/values-karpenter.yaml`) applies the RAG nodeSelector/toleration and enables PodDisruptionBudgets on the general-purpose workloads so consolidation doesn't take them fully offline.
+The `milvus` vector backend pulls in its own `etcd` and `minio` StatefulSets, which are pinned to the `rag` pool too. Workloads without the `workload-type=rag` toleration land on the Auto Mode `general-purpose` pool. The values overlay (`charts/ai-platform-engineering/values-karpenter.yaml`) applies the RAG nodeSelector/toleration and enables PodDisruptionBudgets on the general-purpose workloads so consolidation doesn't take them fully offline.
 
 ## Prerequisites
 

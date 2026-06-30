@@ -155,7 +155,7 @@ By default, Auto Mode places all workloads on its built-in `general-purpose` poo
 
 | NodePool | Workloads | Instance strategy |
 | -------- | --------- | ----------------- |
-| `rag` | `rag-server`, `agent-ontology`, `rag-redis`, `neo4j` | On-demand, memory-optimised (`r5`/`r6i`) |
+| `rag` | `rag-server`, `agent-ontology`, `rag-redis`, `neo4j`, `milvus` (+ its `etcd`/`minio`) | On-demand, memory-optimised (`r5`/`r6i`) |
 | `general-purpose` *(built-in)* | Dynamic Agents, MCP servers (`mcp-*`), UI, Keycloak, OpenFGA, … | Auto Mode managed |
 
 ```bash

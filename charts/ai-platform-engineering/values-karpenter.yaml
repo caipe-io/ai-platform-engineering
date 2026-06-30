@@ -62,8 +62,25 @@ rag-stack:
     podDisruptionBudget:
       enabled: true
 
-  # Optional vector/graph backends — only applied when enabled.
+  # Optional graph backend (external chart). neo4j reads `nodeSelector` at the
+  # top level but `tolerations` under `podSpec.tolerations`, so the rag taint
+  # toleration must be set there. A top-level `tolerations:` is silently ignored
+  # and would leave neo4j Pending on the tainted rag nodes.
   neo4j:
+    nodeSelector:
+      workload-type: rag
+    podSpec:
+      tolerations:
+        - key: workload-type
+          operator: Equal
+          value: rag
+          effect: NoSchedule
+
+  # Vector backend (external chart). milvus's own components (proxy, datanode,
+  # querynode, mixcoord, streamingnode) inherit the chart-global nodeSelector/
+  # tolerations below. Its bundled stateful deps (etcd, minio) are separate
+  # subcharts and need their own blocks.
+  milvus:
     nodeSelector:
       workload-type: rag
     tolerations:
@@ -71,6 +88,22 @@ rag-stack:
         operator: Equal
         value: rag
         effect: NoSchedule
+    etcd:
+      nodeSelector:
+        workload-type: rag
+      tolerations:
+        - key: workload-type
+          operator: Equal
+          value: rag
+          effect: NoSchedule
+    minio:
+      nodeSelector:
+        workload-type: rag
+      tolerations:
+        - key: workload-type
+          operator: Equal
+          value: rag
+          effect: NoSchedule
 
 # ---------------------------------------------------------------------------
 # General-purpose tier: Auto Mode `general-purpose` pool.
