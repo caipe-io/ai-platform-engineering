@@ -119,7 +119,9 @@ async def lifespan(app: FastAPI):
     if directory_sync is not None:
         directory_sync.start()
 
-    # Self-register enabled MCP servers only when the opt-in flag is set.
+    # Self-register built-in MCP servers to Directory if enabled.
+    # Uses reconcile loop (if DIRECTORY_REGISTER_INTERVAL > 0) to handle
+    # servers that appear after startup (e.g., from AgentGateway discovery).
     from dynamic_agents.services.directory_register import get_directory_register
 
     directory_register = get_directory_register()
@@ -129,6 +131,7 @@ async def lifespan(app: FastAPI):
             servers = list(collection.find({"enabled": True, "source": {"$ne": "directory"}}))
             if servers:
                 await asyncio.to_thread(directory_register.register_servers, servers)
+            directory_register.start()
         except Exception as exc:  # noqa: BLE001 — registration is an optional startup integration
             logger.warning("Directory self-registration failed: %s", exc)
 
@@ -142,18 +145,22 @@ async def lifespan(app: FastAPI):
                 await directory_sync.stop()
         finally:
             try:
-                copy_cleanup.cancel()
-                try:
-                    _ = await copy_cleanup
-                except asyncio.CancelledError:
-                    pass
-                except Exception:  # noqa: BLE001 — an already-failed worker must not skip shutdown
-                    logger.exception("Follow-up recovery worker failed before shutdown")
+                if directory_register is not None:
+                    await directory_register.stop()
             finally:
                 try:
-                    await cache.stop()
+                    copy_cleanup.cancel()
+                    try:
+                        _ = await copy_cleanup
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:  # noqa: BLE001 — an already-failed worker must not skip shutdown
+                        logger.exception("Follow-up recovery worker failed before shutdown")
                 finally:
-                    mongo.disconnect()
+                    try:
+                        await cache.stop()
+                    finally:
+                        mongo.disconnect()
 
 
 def create_app() -> FastAPI:

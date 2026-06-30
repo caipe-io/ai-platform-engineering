@@ -199,13 +199,25 @@ class DirectoryAgentSource:
 
     def fetch_agents(self) -> list[DirectoryAgentRecord]:
         """
-        Fetch agent records from Directory.
+        Fetch agent records from the Directory AI Finder catalog endpoint.
 
-        Returns a list of DirectoryAgentRecord instances containing the parsed
-        agent data with capabilities and metadata. Records are typed by protocol:
-        - Records with an integration/mcp module → protocol="mcp", auto-enableable
-        - Records with only integration/a2a module → protocol="a2a", catalog-only
+        The AI Finder returns CatalogEntry objects (not raw OASF records).
+        Each CatalogEntry has:
+          - identifier: stable unique ID (URI/URN)
+          - display_name: human-readable name
+          - media_type: content type (e.g., "application/oasf-agent-record+json",
+            "application/a2a-agent-card+json", "application/mcp-server-card+json")
+          - url OR data: reference to artifact or inline content
+
+        For entries with inline OASF data, we parse modules directly.
+        For entries with only a URL, we call /v1/agents/{cid}/export?format=oasf
+        to get the full record.
+
+        Records are typed by protocol:
+        - Records with an integration/mcp module → protocol="mcp"
+        - Records with only integration/a2a module → protocol="a2a"
         - Records with both → treated as MCP (preferred for direct invocation)
+        All are stored as enabled=False (catalog-only until admin activates).
         """
         try:
             params: dict = {}
@@ -221,73 +233,13 @@ class DirectoryAgentSource:
 
         items = payload if isinstance(payload, list) else payload.get("results", [])
         results: list[DirectoryAgentRecord] = []
-        for record in items:
-            agent = record.get("agent", record)
-            name: Optional[str] = agent.get("name")
-
-            if not name:
-                logger.debug(
-                    "Directory record '%s' skipped: no name",
-                    record.get("cid", "<unknown>"),
-                )
+        for entry in items:
+            record = self._resolve_catalog_entry(entry)
+            if record is None:
                 continue
-
-            # Check for MCP module first (preferred — directly callable)
-            mcp_data = _extract_mcp_module(record)
-            card = _extract_a2a_card(record)
-
-            if mcp_data:
-                # MCP-typed agent — extract endpoint from connections
-                endpoint_info = _extract_mcp_endpoint(mcp_data)
-                if endpoint_info:
-                    url, transport = endpoint_info
-                    mcp_tools = mcp_data.get("tools", [])
-                    results.append(
-                        DirectoryAgentRecord(
-                            name=name,
-                            url=url,
-                            a2a_card=card,  # May be None if only MCP module
-                            capabilities=_extract_capabilities(record),
-                            metadata=_extract_metadata(record),
-                            protocol="mcp",
-                            transport=transport,
-                            mcp_tools=mcp_tools if mcp_tools else None,
-                        )
-                    )
-                    continue
-                else:
-                    logger.debug(
-                        "Directory record '%s': MCP module present but no HTTP connection, falling through to A2A",
-                        name,
-                    )
-
-            # Fall back to A2A module
-            if card:
-                url = _extract_a2a_url(card)
-                if not url:
-                    logger.debug(
-                        "Directory record '%s' skipped: A2A card but no URL",
-                        name,
-                    )
-                    continue
-                results.append(
-                    DirectoryAgentRecord(
-                        name=name,
-                        url=url,
-                        a2a_card={**card, "url": url},
-                        capabilities=_extract_capabilities(record),
-                        metadata=_extract_metadata(record),
-                        protocol="a2a",
-                        transport="http",
-                    )
-                )
-                continue
-
-            # Neither MCP nor A2A — skip
-            logger.debug(
-                "Directory record '%s' skipped: no integration/mcp or integration/a2a module",
-                record.get("cid", "<unknown>"),
-            )
+            parsed = self._parse_oasf_record(record, entry)
+            if parsed:
+                results.append(parsed)
 
         logger.info(
             "Directory discovery: %d agents (%d MCP, %d A2A) from %s",
@@ -297,3 +249,157 @@ class DirectoryAgentSource:
             self._base_url,
         )
         return results
+
+    def _resolve_catalog_entry(self, entry: dict) -> Optional[dict]:
+        """Resolve a CatalogEntry to its full OASF record dict.
+
+        Handles three cases:
+        1. Entry has inline 'data' with OASF content → use directly
+        2. Entry has 'agent' field (raw OASF-style response) → use as-is
+        3. Entry has only a 'url' → fetch the export endpoint for OASF
+        4. Entry has 'identifier'/'cid' → call /v1/agents/{cid}/export
+        """
+        # Case: raw OASF record (for test compatibility and older API versions)
+        if "agent" in entry:
+            return entry
+
+        # Case: CatalogEntry with inline data
+        data = entry.get("data")
+        if data and isinstance(data, dict):
+            # The inline data IS the OASF record (or A2A card, depending on media_type)
+            media_type = entry.get("media_type", "")
+            if "oasf" in media_type or "modules" in data:
+                # OASF record embedded inline
+                return {"agent": data, "cid": entry.get("identifier", "")}
+            elif "a2a" in media_type:
+                # A2A card embedded inline — wrap as OASF-like structure
+                return {
+                    "agent": {
+                        "name": entry.get("display_name", data.get("name", "")),
+                        "description": data.get("description", ""),
+                        "modules": [{
+                            "name": "integration/a2a",
+                            "data": {"card_data": data},
+                        }],
+                    },
+                    "cid": entry.get("identifier", ""),
+                }
+            elif "mcp" in media_type:
+                # MCP server card embedded inline
+                return {
+                    "agent": {
+                        "name": entry.get("display_name", data.get("name", "")),
+                        "description": data.get("description", ""),
+                        "modules": [{
+                            "name": "integration/mcp",
+                            "id": 202,
+                            "data": data,
+                        }],
+                    },
+                    "cid": entry.get("identifier", ""),
+                }
+            else:
+                # Unknown media type with data — try to parse as OASF
+                return {"agent": data, "cid": entry.get("identifier", "")}
+
+        # Case: CatalogEntry with URL reference — need to export
+        cid = entry.get("identifier", entry.get("cid", ""))
+        if cid:
+            return self._fetch_export(cid)
+
+        # Case: Entry has a url field pointing to the artifact
+        url = entry.get("url")
+        if url:
+            try:
+                with httpx.Client(timeout=self._timeout) as client:
+                    resp = client.get(url)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return {"agent": data, "cid": entry.get("identifier", "")}
+            except Exception as exc:
+                logger.debug("Failed to fetch artifact URL %s: %s", url, exc)
+
+        logger.debug("CatalogEntry skipped: no resolvable data (entry=%s)", entry.get("identifier", "<unknown>"))
+        return None
+
+    def _fetch_export(self, cid: str) -> Optional[dict]:
+        """Fetch the full OASF record via /v1/agents/{cid}/export."""
+        try:
+            with httpx.Client(timeout=self._timeout) as client:
+                resp = client.get(
+                    f"{self._base_url}/v1/agents/{cid}/export",
+                    params={"format": "oasf"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                # Export returns the bare OASF record
+                if "agent" in data:
+                    return {**data, "cid": cid}
+                return {"agent": data, "cid": cid}
+        except Exception as exc:
+            logger.debug("Failed to export CID %s: %s", cid, exc)
+            return None
+
+    def _parse_oasf_record(self, record: dict, entry: dict) -> Optional[DirectoryAgentRecord]:
+        """Parse a resolved OASF record into a DirectoryAgentRecord."""
+        agent = record.get("agent", record)
+        name: Optional[str] = agent.get("name") or entry.get("display_name")
+
+        if not name:
+            logger.debug(
+                "Directory record '%s' skipped: no name",
+                record.get("cid", entry.get("identifier", "<unknown>")),
+            )
+            return None
+
+        # Check for MCP module first (preferred — directly callable)
+        mcp_data = _extract_mcp_module(record)
+        card = _extract_a2a_card(record)
+
+        if mcp_data:
+            # MCP-typed agent — extract endpoint from connections
+            endpoint_info = _extract_mcp_endpoint(mcp_data)
+            if endpoint_info:
+                url, transport = endpoint_info
+                mcp_tools = mcp_data.get("tools", [])
+                return DirectoryAgentRecord(
+                    name=name,
+                    url=url,
+                    a2a_card=card,  # May be None if only MCP module
+                    capabilities=_extract_capabilities(record),
+                    metadata=_extract_metadata(record),
+                    protocol="mcp",
+                    transport=transport,
+                    mcp_tools=mcp_tools if mcp_tools else None,
+                )
+            else:
+                logger.debug(
+                    "Directory record '%s': MCP module present but no HTTP connection, falling through to A2A",
+                    name,
+                )
+
+        # Fall back to A2A module
+        if card:
+            url = _extract_a2a_url(card)
+            if not url:
+                logger.debug(
+                    "Directory record '%s' skipped: A2A card but no URL",
+                    name,
+                )
+                return None
+            return DirectoryAgentRecord(
+                name=name,
+                url=url,
+                a2a_card={**card, "url": url},
+                capabilities=_extract_capabilities(record),
+                metadata=_extract_metadata(record),
+                protocol="a2a",
+                transport="http",
+            )
+
+        # Neither MCP nor A2A — skip
+        logger.debug(
+            "Directory record '%s' skipped: no integration/mcp or integration/a2a module",
+            record.get("cid", entry.get("identifier", "<unknown>")),
+        )
+        return None

@@ -364,6 +364,131 @@ def test_fetch_agents_mixed_protocols():
     assert len(a2a_records) == 1
 
 
+# =============================================================================
+# CatalogEntry format tests (real AI Finder response shape)
+# =============================================================================
+
+
+def test_fetch_agents_catalog_entry_inline_oasf():
+    """CatalogEntry with inline OASF data should be parsed correctly."""
+    catalog_entry = {
+        "identifier": "urn:agntcy:github-mcp",
+        "display_name": "GitHub MCP Server",
+        "media_type": "application/oasf-agent-record+json",
+        "data": {
+            "name": "github-mcp-server",
+            "description": "GitHub MCP server",
+            "modules": [
+                {
+                    "name": "integration/mcp",
+                    "id": 202,
+                    "data": {
+                        "name": "github-mcp",
+                        "connections": [{"type": "streamable-http", "url": "http://github:3000/mcp"}],
+                        "tools": [{"name": "list_repos"}],
+                    },
+                }
+            ],
+        },
+    }
+    src = DirectoryAgentSource("http://dir:9999")
+    with _patch_httpx({"results": [catalog_entry]}):
+        results = src.fetch_agents()
+    assert len(results) == 1
+    record = results[0]
+    assert record.name == "github-mcp-server"
+    assert record.is_mcp is True
+    assert record.url == "http://github:3000/mcp"
+
+
+def test_fetch_agents_catalog_entry_inline_a2a():
+    """CatalogEntry with inline A2A card should be parsed correctly."""
+    catalog_entry = {
+        "identifier": "urn:agntcy:some-a2a-agent",
+        "display_name": "Some A2A Agent",
+        "media_type": "application/a2a-agent-card+json",
+        "data": {
+            "name": "some-a2a-agent",
+            "description": "An A2A agent",
+            "url": "http://a2a-agent:8080",
+        },
+    }
+    src = DirectoryAgentSource("http://dir:9999")
+    with _patch_httpx({"results": [catalog_entry]}):
+        results = src.fetch_agents()
+    assert len(results) == 1
+    record = results[0]
+    assert record.name == "Some A2A Agent"
+    assert record.is_mcp is False
+    assert record.url == "http://a2a-agent:8080"
+
+
+def test_fetch_agents_catalog_entry_inline_mcp_card():
+    """CatalogEntry with inline MCP server card should be parsed correctly."""
+    catalog_entry = {
+        "identifier": "urn:agntcy:confluence-mcp",
+        "display_name": "Confluence MCP",
+        "media_type": "application/mcp-server-card+json",
+        "data": {
+            "name": "confluence-mcp",
+            "description": "Confluence MCP server",
+            "connections": [{"type": "sse", "url": "http://confluence:3000/sse"}],
+            "tools": [{"name": "search_pages"}],
+        },
+    }
+    src = DirectoryAgentSource("http://dir:9999")
+    with _patch_httpx({"results": [catalog_entry]}):
+        results = src.fetch_agents()
+    assert len(results) == 1
+    record = results[0]
+    assert record.name == "Confluence MCP"
+    assert record.is_mcp is True
+    assert record.transport == "sse"
+
+
+def test_fetch_agents_catalog_entry_with_url_reference():
+    """CatalogEntry with URL reference calls export endpoint."""
+    catalog_entry = {
+        "identifier": "bafybeiabc123",
+        "display_name": "Remote Agent",
+        "media_type": "application/oasf-agent-record+json",
+        "url": "https://example.com/agents/remote",
+    }
+    # The source will try to call /v1/agents/{cid}/export
+    src = DirectoryAgentSource("http://dir:9999")
+
+    export_resp = mock.MagicMock()
+    export_resp.status_code = 200
+    export_resp.json.return_value = {
+        "name": "remote-agent",
+        "modules": [
+            {
+                "name": "integration/a2a",
+                "data": {"card_data": {"name": "remote-agent", "url": "http://remote:8080"}},
+            }
+        ],
+    }
+    export_resp.raise_for_status = mock.MagicMock()
+
+    list_resp = mock.MagicMock()
+    list_resp.json.return_value = {"results": [catalog_entry]}
+    list_resp.raise_for_status = mock.MagicMock()
+
+    client = mock.MagicMock()
+    # First call is listing, second is export
+    client.get.side_effect = [list_resp, export_resp]
+    ctx = mock.MagicMock()
+    ctx.__enter__ = mock.MagicMock(return_value=client)
+    ctx.__exit__ = mock.MagicMock(return_value=False)
+
+    with mock.patch("dynamic_agents.services.directory_source.httpx.Client", return_value=ctx):
+        results = src.fetch_agents()
+
+    assert len(results) == 1
+    assert results[0].name == "remote-agent"
+    assert results[0].protocol == "a2a"
+
+
 def test_from_env_disabled(monkeypatch):
     monkeypatch.delenv("DIRECTORY_ENABLED", raising=False)
     assert DirectoryAgentSource.from_env() is None
@@ -478,7 +603,7 @@ def test_agent_record_to_mcp_document():
 
 
 def test_agent_record_to_mcp_document_mcp_protocol():
-    """MCP-typed records should be enabled=True with correct transport mapping."""
+    """MCP-typed records should be enabled=False (catalog-only) with correct transport mapping."""
     record = DirectoryAgentRecord(
         name="mcp-server",
         url="http://mcp:3000/mcp",
@@ -491,7 +616,7 @@ def test_agent_record_to_mcp_document_mcp_protocol():
     )
     doc = _agent_record_to_mcp_document(record)
     assert doc["_id"] == "directory-mcp-server"
-    assert doc["enabled"] is True  # MCP records are auto-enabled
+    assert doc["enabled"] is False  # All directory records are catalog-only
     assert doc["transport"] == "http"  # streamable-http maps to "http" in CAIPE
     assert doc["directory_protocol"] == "mcp"
     assert "directory_a2a_card" not in doc  # No A2A card
@@ -510,7 +635,7 @@ def test_agent_record_to_mcp_document_sse_transport():
         transport="sse",
     )
     doc = _agent_record_to_mcp_document(record)
-    assert doc["enabled"] is True
+    assert doc["enabled"] is False  # Catalog-only until admin activates
     assert doc["transport"] == "sse"
 
 
@@ -697,9 +822,11 @@ def test_register_service_from_env_enabled(monkeypatch):
     monkeypatch.setenv("DIRECTORY_SELF_REGISTER", "true")
     monkeypatch.setenv("DIRECTORY_BASE_URL", "http://dir:8888")
     monkeypatch.setenv("DIRECTORY_REGISTER_LABELS", "platform=caipe,env=prod")
+    monkeypatch.setenv("DIRECTORY_REGISTER_MODE", "dirctl")
     svc = DirectoryRegisterService.from_env()
     assert svc is not None
     assert svc._labels == {"platform": "caipe", "env": "prod"}
+    assert svc._mode == "dirctl"
 
 
 def test_register_servers_skips_directory_source():
@@ -724,24 +851,9 @@ def test_register_servers_skips_disabled():
     assert result["skipped"] == 1
 
 
-def test_register_servers_publishes_enabled_server():
-    """Enabled non-directory servers should be published."""
-    svc = DirectoryRegisterService("http://dir:8888")
-
-    # Mock httpx to simulate successful registration
-    mock_get_resp = mock.MagicMock()
-    mock_get_resp.status_code = 200
-    mock_get_resp.json.return_value = {"results": []}  # Not already registered
-
-    mock_post_resp = mock.MagicMock()
-    mock_post_resp.status_code = 201
-
-    client = mock.MagicMock()
-    client.get.return_value = mock_get_resp
-    client.post.return_value = mock_post_resp
-    ctx = mock.MagicMock()
-    ctx.__enter__ = mock.MagicMock(return_value=client)
-    ctx.__exit__ = mock.MagicMock(return_value=False)
+def test_register_servers_exports_to_file(tmp_path):
+    """Enabled non-directory servers should be exported as JSON files."""
+    svc = DirectoryRegisterService("http://dir:8888", output_dir=str(tmp_path))
 
     servers = [
         {
@@ -755,62 +867,41 @@ def test_register_servers_publishes_enabled_server():
         },
     ]
 
-    with mock.patch("dynamic_agents.services.directory_register.httpx.Client", return_value=ctx):
-        result = svc.register_servers(servers)
+    result = svc.register_servers(servers)
 
     assert result["registered"] == 1
     assert "github" in svc._registered_ids
-    client.post.assert_called_once()
+    # Verify file was written
+    record_file = tmp_path / "github.json"
+    assert record_file.exists()
+    import json
+    data = json.loads(record_file.read_text())
+    assert data["name"] == "GitHub"
+    assert data["modules"][0]["name"] == "integration/mcp"
 
 
-def test_register_servers_skips_already_in_directory():
-    """Servers already in the Directory should be skipped gracefully."""
-    svc = DirectoryRegisterService("http://dir:8888")
-
-    # Mock httpx — already exists in Directory
-    mock_get_resp = mock.MagicMock()
-    mock_get_resp.status_code = 200
-    mock_get_resp.json.return_value = {"results": [{"cid": "existing"}]}
-
-    client = mock.MagicMock()
-    client.get.return_value = mock_get_resp
-    ctx = mock.MagicMock()
-    ctx.__enter__ = mock.MagicMock(return_value=client)
-    ctx.__exit__ = mock.MagicMock(return_value=False)
+def test_register_servers_skips_already_registered(tmp_path):
+    """Servers already registered in this session are skipped."""
+    svc = DirectoryRegisterService("http://dir:8888", output_dir=str(tmp_path))
+    svc._registered_ids.add("github")
 
     servers = [
         {"_id": "github", "name": "GitHub", "enabled": True, "source": "config",
          "transport": "http", "endpoint": "http://github:8082/mcp"},
     ]
 
-    with mock.patch("dynamic_agents.services.directory_register.httpx.Client", return_value=ctx):
-        result = svc.register_servers(servers)
-
-    assert result["registered"] == 1  # Still counted as success (already present)
-    client.post.assert_not_called()  # No POST needed
-
-
-def test_register_servers_handles_failure():
-    """HTTP failures should be counted and not crash."""
-    svc = DirectoryRegisterService("http://dir:8888")
-
-    # Mock httpx — connection error
-    with mock.patch("dynamic_agents.services.directory_register.httpx.Client", side_effect=Exception("connection refused")):
-        result = svc.register_servers([
-            {"_id": "github", "name": "GitHub", "enabled": True, "source": "config",
-             "transport": "http", "endpoint": "http://github:8082/mcp"},
-        ])
-
-    assert result["failed"] == 1
+    result = svc.register_servers(servers)
     assert result["registered"] == 0
+    assert result["skipped"] == 1
 
 
 def test_register_service_status():
     """Test status reporting."""
-    svc = DirectoryRegisterService("http://dir:8888")
+    svc = DirectoryRegisterService("http://dir:8888", mode="dirctl")
     svc._registered_ids = {"github", "argocd"}
 
     status = svc.status
     assert status["enabled"] is True
+    assert status["mode"] == "dirctl"
     assert status["registered_count"] == 2
     assert "github" in status["registered_ids"]

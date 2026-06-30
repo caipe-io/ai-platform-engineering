@@ -5,22 +5,37 @@
 Directory self-registration: publishes CAIPE's built-in MCP servers to the
 AGNTCY Directory so they are discoverable by other platforms.
 
-This runs once on startup (after MongoDB is connected) and registers each
-enabled MCP server as an OASF record with an integration/mcp module.
+The Directory's write path is the Store gRPC service (Push RPC), not a REST
+POST to AI Finder. This module supports two modes:
+
+1. **dirctl mode** (recommended for production): Generates OASF record JSON
+   files and invokes `dirctl import` to push them through the Store service.
+   Requires `dirctl` binary available in PATH and a configured Directory endpoint.
+
+2. **File-only mode** (local dev / init-container): Generates OASF record
+   files to a directory. A sidecar or init-container can then import them
+   with `dirctl import --dir /path/to/records/`.
+
+The service reconciles periodically (not one-shot) to handle MCP servers that
+become available after initial startup (e.g., AgentGateway discovery).
 
 Environment variables:
   DIRECTORY_SELF_REGISTER=true         enable self-registration (default: false)
-  DIRECTORY_BASE_URL=http://...:8888   AI Finder base URL (shared with sync)
+  DIRECTORY_BASE_URL=http://...:8888   Directory server address (for dirctl)
   DIRECTORY_REGISTER_LABELS=key=val    labels to attach to self-registered records
-  DIRECTORY_TIMEOUT=10.0               HTTP request timeout
+  DIRECTORY_REGISTER_DIR=/tmp/dir-records  directory for exported record files
+  DIRECTORY_REGISTER_MODE=file         "file" (default) or "dirctl"
+  DIRECTORY_REGISTER_INTERVAL=0        reconcile interval in seconds (0 = one-shot)
 """
 
+import asyncio
+import json
 import logging
 import os
+import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
-
-import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -78,18 +93,29 @@ def _server_to_oasf_record(
 
 
 class DirectoryRegisterService:
-    """Publishes CAIPE's built-in MCP servers to the AGNTCY Directory."""
+    """Publishes CAIPE's built-in MCP servers to the AGNTCY Directory.
+
+    Supports two modes:
+    - "file": writes OASF record JSON files for external import
+    - "dirctl": invokes `dirctl import` to push records via gRPC Store
+    """
 
     def __init__(
         self,
         base_url: str,
         labels: dict[str, str] | None = None,
-        timeout: float = 10.0,
+        output_dir: str = "/tmp/caipe-dir-records",
+        mode: str = "file",
+        reconcile_interval: float = 0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._labels = labels or {}
-        self._timeout = timeout
+        self._output_dir = Path(output_dir)
+        self._mode = mode  # "file" or "dirctl"
+        self._reconcile_interval = reconcile_interval
         self._registered_ids: set[str] = set()
+        self._task: asyncio.Task | None = None
+        self._running = False
 
     @classmethod
     def from_env(cls) -> Optional["DirectoryRegisterService"]:
@@ -98,7 +124,9 @@ class DirectoryRegisterService:
             return None
 
         base_url = os.getenv("DIRECTORY_BASE_URL", "http://dir-apiserver:8888")
-        timeout = float(os.getenv("DIRECTORY_TIMEOUT", "10.0"))
+        output_dir = os.getenv("DIRECTORY_REGISTER_DIR", "/tmp/caipe-dir-records")
+        mode = os.getenv("DIRECTORY_REGISTER_MODE", "file")
+        reconcile_interval = float(os.getenv("DIRECTORY_REGISTER_INTERVAL", "0"))
 
         # Parse labels from DIRECTORY_REGISTER_LABELS (comma-separated key=value)
         labels: dict[str, str] = {}
@@ -110,7 +138,60 @@ class DirectoryRegisterService:
                     k, v = pair.split("=", 1)
                     labels[k.strip()] = v.strip()
 
-        return cls(base_url=base_url, labels=labels, timeout=timeout)
+        return cls(
+            base_url=base_url,
+            labels=labels,
+            output_dir=output_dir,
+            mode=mode,
+            reconcile_interval=reconcile_interval,
+        )
+
+    def start(self) -> None:
+        """Start the registration reconcile loop (if interval > 0)."""
+        if self._reconcile_interval > 0:
+            self._running = True
+            self._task = asyncio.create_task(self._reconcile_loop())
+            logger.info(
+                "Directory self-registration started (mode=%s, interval=%ds)",
+                self._mode,
+                int(self._reconcile_interval),
+            )
+
+    async def stop(self) -> None:
+        """Stop the reconcile loop."""
+        self._running = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+    async def _reconcile_loop(self) -> None:
+        """Periodic reconcile: re-checks MongoDB for new enabled MCP servers."""
+        await asyncio.sleep(10)  # Initial delay for seed/AgentGateway to populate
+        while self._running:
+            try:
+                await self._reconcile_once()
+            except Exception as exc:
+                logger.error("Directory self-registration failed: %s", exc, exc_info=True)
+            await asyncio.sleep(self._reconcile_interval)
+
+    async def _reconcile_once(self) -> None:
+        """Single reconcile cycle: read MCP servers from MongoDB and register."""
+        from dynamic_agents.services.mongo import get_mongo_service
+        from dynamic_agents.config import get_settings
+
+        mongo = get_mongo_service()
+        if mongo._db is None:
+            return
+
+        settings = get_settings()
+        collection = mongo._db[settings.mcp_servers_collection]
+        servers = list(collection.find({"enabled": True, "source": {"$ne": "directory"}}))
+        if servers:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.register_servers, servers)
 
     def register_servers(self, servers: list[dict]) -> dict:
         """Register a list of MCP server documents with the Directory.
@@ -125,6 +206,9 @@ class DirectoryRegisterService:
         registered = 0
         skipped = 0
         failed = 0
+
+        # Ensure output directory exists
+        self._output_dir.mkdir(parents=True, exist_ok=True)
 
         for server in servers:
             server_id = server.get("_id", "")
@@ -145,64 +229,79 @@ class DirectoryRegisterService:
                 continue
 
             record = _server_to_oasf_record(server, self._labels)
-            success = self._publish_record(server_id, record)
+            success = self._export_record(server_id, record)
             if success:
                 self._registered_ids.add(server_id)
                 registered += 1
             else:
                 failed += 1
 
+        # If in dirctl mode and we have new records, run import
+        if self._mode == "dirctl" and registered > 0:
+            self._run_dirctl_import()
+
         logger.info(
-            "Directory self-registration: registered=%d, skipped=%d, failed=%d",
+            "Directory self-registration: registered=%d, skipped=%d, failed=%d (mode=%s)",
             registered,
             skipped,
             failed,
+            self._mode,
         )
         return {"registered": registered, "skipped": skipped, "failed": failed}
 
-    def _publish_record(self, server_id: str, record: dict) -> bool:
-        """Publish an OASF record to the Directory. Returns True on success."""
+    def _export_record(self, server_id: str, record: dict) -> bool:
+        """Write an OASF record to the output directory as JSON."""
         try:
-            with httpx.Client(timeout=self._timeout) as client:
-                # Check if already registered (by label filter)
-                check_resp = client.get(
-                    f"{self._base_url}/v1/agents",
-                    params={"filter": f"server_id={server_id}"},
-                )
-                if check_resp.status_code == 200:
-                    payload = check_resp.json()
-                    existing = payload if isinstance(payload, list) else payload.get("results", [])
-                    if existing:
-                        logger.debug("Server '%s' already in Directory, skipping", server_id)
-                        return True
-
-                # Register new record
-                resp = client.post(
-                    f"{self._base_url}/v1/agents",
-                    json={"agent": record},
-                )
-                if resp.status_code in (200, 201):
-                    logger.info("Registered server '%s' in Directory", server_id)
-                    return True
-                else:
-                    logger.warning(
-                        "Failed to register '%s': HTTP %d — %s",
-                        server_id,
-                        resp.status_code,
-                        resp.text[:200],
-                    )
-                    return False
+            filepath = self._output_dir / f"{server_id}.json"
+            filepath.write_text(json.dumps(record, indent=2, default=str))
+            logger.debug("Exported OASF record for '%s' to %s", server_id, filepath)
+            return True
         except Exception as exc:
-            logger.warning("Failed to register '%s' in Directory: %s", server_id, exc)
+            logger.warning("Failed to export record for '%s': %s", server_id, exc)
             return False
+
+    def _run_dirctl_import(self) -> None:
+        """Run `dirctl import` to push exported records to the Directory Store."""
+        try:
+            cmd = [
+                "dirctl", "import",
+                "--dir", str(self._output_dir),
+                "--server", self._base_url,
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                logger.info("dirctl import succeeded: %s", result.stdout.strip()[:200])
+            else:
+                logger.warning(
+                    "dirctl import failed (exit %d): %s",
+                    result.returncode,
+                    result.stderr.strip()[:200],
+                )
+        except FileNotFoundError:
+            logger.warning(
+                "dirctl binary not found. Records exported to %s — "
+                "run `dirctl import --dir %s` manually or via sidecar.",
+                self._output_dir,
+                self._output_dir,
+            )
+        except Exception as exc:
+            logger.warning("dirctl import error: %s", exc)
 
     @property
     def status(self) -> dict:
         """Return registration status."""
         return {
             "enabled": True,
+            "mode": self._mode,
+            "output_dir": str(self._output_dir),
             "registered_count": len(self._registered_ids),
             "registered_ids": sorted(self._registered_ids),
+            "reconcile_interval": int(self._reconcile_interval),
             "base_url": self._base_url,
         }
 

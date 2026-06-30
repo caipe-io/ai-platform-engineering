@@ -38,12 +38,12 @@ def _agent_record_to_mcp_document(record: DirectoryAgentRecord) -> dict:
     """Convert a DirectoryAgentRecord to an MCP server MongoDB document.
 
     Protocol-aware behavior:
-    - MCP records (protocol="mcp"): stored as enabled=True, with proper transport
-      type mapped from OASF connection type. These are directly callable by the
-      MCP runtime client.
-    - A2A records (protocol="a2a"): stored as enabled=False, catalog-only.
-      The runtime MCP client should not attempt to connect. A future A2A routing
-      path will handle communication.
+    - ALL Directory-discovered records are stored as enabled=False (catalog-only).
+      This matches the agreed activation model: an admin must review, map
+      credentials, and explicitly enable before any Directory agent becomes callable.
+    - MCP records carry transport type info so the activation flow knows
+      they can be enabled directly (vs A2A which needs an adapter).
+    - A2A records are catalog-only and need a future A2A routing path.
     """
     server_id = f"{DIRECTORY_MCP_PREFIX}{record.name}"
     now = datetime.now(timezone.utc)
@@ -55,10 +55,8 @@ def _agent_record_to_mcp_document(record: DirectoryAgentRecord) -> dict:
             "sse": "sse",
         }
         transport = transport_map.get(record.transport, "http")
-        enabled = True
     else:
         transport = "http"
-        enabled = False
 
     doc = {
         "_id": server_id,
@@ -66,7 +64,7 @@ def _agent_record_to_mcp_document(record: DirectoryAgentRecord) -> dict:
         "description": record.metadata.get("description", f"Agent discovered from AGNTCY Directory: {record.name}"),
         "transport": transport,
         "endpoint": record.url,
-        "enabled": enabled,
+        "enabled": False,  # Always catalog-only until admin activates
         "source": "directory",
         "directory_agent": True,
         "directory_protocol": record.protocol,
@@ -190,12 +188,13 @@ class DirectorySyncService:
                 added += 1
                 logger.info("Directory sync: added new agent '%s' (%s)", record.name, server_id)
             else:
-                # Existing agent — update mutable fields only
+                # Existing agent — update mutable fields only.
+                # IMPORTANT: Do NOT overwrite 'enabled' or 'transport' — admin
+                # may have activated or reconfigured this record. Directory sync
+                # only refreshes discovery metadata, not runtime config.
                 update_fields = {
                     "endpoint": doc["endpoint"],
                     "description": doc["description"],
-                    "transport": doc["transport"],
-                    "enabled": doc["enabled"],
                     "directory_protocol": doc["directory_protocol"],
                     "directory_cid": doc["directory_cid"],
                     "directory_capabilities": doc["directory_capabilities"],

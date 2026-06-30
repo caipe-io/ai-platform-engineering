@@ -36,10 +36,12 @@ Directory records are typed by their OASF modules:
 
 | Module | ID | Behavior in CAIPE |
 |--------|----|--------------------|
-| `integration/mcp` | 202 | Auto-enabled (`enabled=true`). Endpoint is directly callable by the MCP runtime. |
-| `integration/a2a` | 203 | Catalog-only (`enabled=false`). Requires admin activation or future A2A adapter. |
-| Both | — | Prefers MCP. A2A card is retained as metadata. |
+| `integration/mcp` | 202 | Catalog-only (`enabled=false`). Admin can enable directly — MCP endpoint is callable. |
+| `integration/a2a` | 203 | Catalog-only (`enabled=false`). Requires admin activation + future A2A adapter. |
+| Both | — | Prefers MCP metadata. A2A card is retained for reference. |
 | MCP with only `stdio` connections | — | Falls through to A2A (stdio is not remotely callable). |
+
+All Directory-discovered agents are **catalog-only until an admin explicitly activates them**. This ensures credentials are mapped, RBAC is granted, and AgentGateway routing is configured before any external agent becomes callable. Protocol typing helps the UI show admins which records can be enabled directly (MCP) vs which need additional configuration (A2A).
 
 ## Configuration
 
@@ -61,6 +63,11 @@ All configuration is via environment variables on the `dynamic-agents` service:
 |----------|---------|-------------|
 | `DIRECTORY_SELF_REGISTER` | `false` | Publish built-in MCP servers to Directory on startup |
 | `DIRECTORY_REGISTER_LABELS` | _(empty)_ | Comma-separated `key=value` labels to attach |
+| `DIRECTORY_REGISTER_MODE` | `file` | `file` (export JSON) or `dirctl` (push via CLI) |
+| `DIRECTORY_REGISTER_DIR` | `/tmp/caipe-dir-records` | Output directory for exported OASF record files |
+| `DIRECTORY_REGISTER_INTERVAL` | `0` | Reconcile interval (seconds). 0 = one-shot on startup |
+
+Self-registration generates OASF record JSON files. In `file` mode, a sidecar or init-container runs `dirctl import --dir /path/to/records/` to push them to the Directory Store (gRPC). In `dirctl` mode, the service invokes `dirctl import` directly (requires `dirctl` binary in PATH).
 
 ## Local Development
 
