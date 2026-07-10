@@ -41,6 +41,11 @@ jest.mock('@/lib/rbac/oidc-claim-reconciler', () => ({
   reconcileOidcClaimGroupsForUser: (...args: unknown[]) => mockReconcileOidcClaimGroupsForUser(...args),
 }))
 
+const mockReconcileLoginOpenFgaAccess = jest.fn()
+jest.mock('@/lib/rbac/login-openfga-bootstrap', () => ({
+  reconcileLoginOpenFgaAccess: (...args: unknown[]) => mockReconcileLoginOpenFgaAccess(...args),
+}))
+
 import {
   isAdminUser,
   canViewAdminDashboard,
@@ -136,6 +141,8 @@ function makeRefreshFetchMock(opts: {
 describe('auth-config', () => {
   beforeEach(() => {
     mockReconcileOidcClaimGroupsForUser.mockReset()
+    mockReconcileLoginOpenFgaAccess.mockReset()
+    mockReconcileLoginOpenFgaAccess.mockResolvedValue({ status: 'completed', tuple_write_count: 0 })
     _resetServerTokenStore()
   })
 
@@ -843,6 +850,40 @@ describe('auth-config', () => {
       // Note: role promotion (user→admin) requires OIDC_REQUIRED_ADMIN_GROUP to be
       // set at module LOAD time. That constant is evaluated once at import; env changes
       // in beforeEach arrive too late. Role promotion is covered in isAdminUser unit tests.
+    })
+
+    it('should demote a stale admin role and reconcile durable grants from refreshed claims', async () => {
+      const now = Math.floor(Date.now() / 1000)
+
+      mockDecodeJwt.mockReturnValue({
+        sub: 'sub-former-admin',
+        email: 'former-admin@example.com',
+        groups: ['caipe-users'],
+      })
+
+      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+        token: {
+          sub: 'sub-former-admin',
+          email: 'former-admin@example.com',
+          accessToken: 'at',
+          idToken: 'old-idt',
+          refreshToken: 'rt',
+          expiresAt: now + 60,
+          groupsCheckedAt: now - 5 * 60 * 60,
+          isAuthorized: true,
+          role: 'admin',
+        },
+      })
+
+      expect(result.role).toBe('user')
+      expect(mockReconcileLoginOpenFgaAccess).toHaveBeenCalledWith(expect.objectContaining({
+        subject: 'sub-former-admin',
+        email: 'former-admin@example.com',
+        isAuthorized: true,
+        isAdmin: false,
+        isBootstrapAdmin: false,
+        isOidcAdmin: false,
+      }))
     })
 
     it('should NOT re-evaluate groups when less than 4 hours have passed', async () => {

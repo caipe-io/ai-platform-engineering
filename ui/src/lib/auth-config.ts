@@ -258,6 +258,26 @@ async function reconcileLoginGroupsFromClaims(input: {
   }
 }
 
+async function reconcileLoginAdminAccess(input: {
+  subject?: string;
+  email?: string;
+  isAuthorized: boolean;
+  isAdmin: boolean;
+  isBootstrapAdmin: boolean;
+  isOidcAdmin: boolean;
+  oidcProviderId: string;
+}): Promise<void> {
+  try {
+    const { reconcileLoginOpenFgaAccess } = await import("@/lib/rbac/login-openfga-bootstrap");
+    await reconcileLoginOpenFgaAccess({
+      ...input,
+      oidcAdminGroup: REQUIRED_ADMIN_GROUP,
+    });
+  } catch (error) {
+    console.warn("[Auth] Login OpenFGA bootstrap failed:", error);
+  }
+}
+
 function hasConfiguredGroup(groups: string[], requiredGroup: string): boolean {
   if (!requiredGroup) return false;
   const requiredLower = requiredGroup.toLowerCase();
@@ -511,6 +531,7 @@ export const authOptions: NextAuthOptions = {
         const email = profileData.email as string | undefined;
         const adminViaBootstrap = isBootstrapAdmin(email);
         const adminViaGroup = isAdminUser(groups);
+        const providerId = resolveLoginProviderId(profileData);
         token.role = adminViaBootstrap || adminViaGroup ? 'admin' : 'user';
 
         if (adminViaBootstrap) {
@@ -537,25 +558,22 @@ export const authOptions: NextAuthOptions = {
           (profileData.name as string | undefined) ??
           (profileData.preferred_username as string | undefined);
 
-        await import("@/lib/rbac/login-openfga-bootstrap")
-          .then(({ reconcileLoginOpenFgaAccess }) =>
-            reconcileLoginOpenFgaAccess({
-              subject,
-              email,
-              isAuthorized: token.isAuthorized === true,
-              isAdmin: token.role === "admin",
-            })
-          )
-          .catch((error) => {
-            console.warn("[Auth] Login OpenFGA bootstrap failed:", error);
-          });
+        await reconcileLoginAdminAccess({
+          subject,
+          email,
+          isAuthorized: token.isAuthorized === true,
+          isAdmin: token.role === "admin",
+          isBootstrapAdmin: adminViaBootstrap,
+          isOidcAdmin: adminViaGroup,
+          oidcProviderId: providerId,
+        });
 
         await reconcileLoginGroupsFromClaims({
           subject,
           email,
           displayName,
           groups,
-          providerId: resolveLoginProviderId(profileData),
+          providerId,
         });
       }
 
@@ -600,14 +618,49 @@ export const authOptions: NextAuthOptions = {
             if (shouldRecheckGroups) {
               try {
                 const claims = decodeJwt(refreshedToken.idToken as string);
-                const groups = extractGroups(claims as Record<string, unknown>);
-                cacheOidcClaimGroups(token.sub as string | undefined, groups);
+                const claimData = claims as Record<string, unknown>;
+                const groups = extractGroups(claimData);
+                const subject =
+                  (claimData.sub as string | undefined) ??
+                  (refreshedToken.sub as string | undefined) ??
+                  (token.sub as string | undefined);
+                const email =
+                  (claimData.email as string | undefined) ??
+                  (refreshedToken.email as string | undefined) ??
+                  (token.email as string | undefined);
+                const displayName =
+                  (claimData.name as string | undefined) ??
+                  (claimData.preferred_username as string | undefined);
+                const isAuthorized = hasRequiredGroup(groups);
+                const adminViaBootstrap = isBootstrapAdmin(email);
+                const adminViaGroup = isAdminUser(groups);
+                const providerId = resolveLoginProviderId(claimData);
+                cacheOidcClaimGroups(subject, groups);
                 console.log(`[Auth] Re-evaluating groups from refreshed id_token (last checked ${Math.round((now - lastGroupCheck) / 3600)}h ago), count: ${groups.length}`);
+
+                await reconcileLoginAdminAccess({
+                  subject,
+                  email,
+                  isAuthorized,
+                  isAdmin: adminViaBootstrap || adminViaGroup,
+                  isBootstrapAdmin: adminViaBootstrap,
+                  isOidcAdmin: adminViaGroup,
+                  oidcProviderId: providerId,
+                });
+                await reconcileLoginGroupsFromClaims({
+                  subject,
+                  email,
+                  displayName,
+                  groups,
+                  providerId,
+                });
+
                 return {
                   ...refreshedToken,
-                  isAuthorized: hasRequiredGroup(groups),
-                  role: refreshedToken.role === 'admin' ? 'admin' : 'user',
+                  isAuthorized,
+                  role: adminViaBootstrap || adminViaGroup ? 'admin' : 'user',
                   canViewAdmin: canViewAdminDashboard(groups),
+                  canAccessDynamicAgents: canAccessDynamicAgents(groups),
                   groupsCheckedAt: now,
                 };
               } catch (err) {

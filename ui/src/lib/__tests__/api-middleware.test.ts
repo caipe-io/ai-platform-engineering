@@ -1077,6 +1077,7 @@ describe('getAuthenticatedUser', () => {
         $set: expect.objectContaining({
           keycloak_sub: 'test-keycloak-sub',
           'metadata.keycloak_sub': 'test-keycloak-sub',
+          'metadata.role': 'user',
         }),
       }),
       { upsert: true }

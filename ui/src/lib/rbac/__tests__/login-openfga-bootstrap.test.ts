@@ -28,6 +28,7 @@ function stubTeamMembershipSources(rows: Record<string, unknown>[]) {
     find: jest.fn(() => ({
       toArray: jest.fn().mockResolvedValue(rows),
     })),
+    updateMany: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
     updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
     deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
   };
@@ -419,8 +420,16 @@ describe("login OpenFGA bootstrap", () => {
     });
     // Membership source upserted
     expect(mockSources.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({ team_slug: "super-admins", user_subject: "sub-admin" }),
-      expect.objectContaining({ $set: expect.objectContaining({ relationship: "admin", status: "active" }) }),
+      expect.objectContaining({
+        team_slug: "super-admins",
+        user_subject: "sub-admin",
+        source_type: "oidc_claim",
+        provider_id: "oidc-claims",
+        external_group_id: "configured-admin-group",
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({ relationship: "admin", managed: true, status: "active" }),
+      }),
       { upsert: true },
     );
   });
@@ -451,7 +460,157 @@ describe("login OpenFGA bootstrap", () => {
     expect(mockSources.updateOne).not.toHaveBeenCalled();
   });
 
-  it("does not bootstrap users who failed the OIDC admission gate", async () => {
+  it("revokes legacy login-bootstrap membership and direct admin tuples after OIDC demotion", async () => {
+    const mockSources = stubTeamMembershipSources([
+      {
+        team_id: "team-super-admins",
+        team_slug: "super-admins",
+        user_email: "former-admin@example.com",
+        user_subject: "sub-former-admin",
+        relationship: "admin",
+        source_type: "manual",
+        managed: false,
+        status: "active",
+        created_by: "login-bootstrap",
+      },
+    ]);
+    mockGetRbacCollection.mockImplementation(async (key: string) => {
+      if (key === "teamMembershipSources") return mockSources;
+      throw new Error(`unexpected rbac collection ${key}`);
+    });
+
+    const { reconcileLoginOpenFgaAccess } = await import("../login-openfga-bootstrap");
+    const result = await reconcileLoginOpenFgaAccess({
+      subject: "sub-former-admin",
+      email: "former-admin@example.com",
+      isAuthorized: true,
+      isAdmin: false,
+      isBootstrapAdmin: false,
+      isOidcAdmin: false,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(mockSources.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        team_slug: "super-admins",
+        status: "active",
+        created_by: { $in: ["oidc-admin-login-reconciliation", "login-bootstrap"] },
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: "removed",
+          removed_by: "oidc-admin-login-reconciliation",
+        }),
+      }),
+    );
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: [],
+      deletes: expect.arrayContaining([
+        { user: "user:sub-former-admin", relation: "admin", object: "team:super-admins" },
+        { user: "user:sub-former-admin", relation: "member", object: "team:super-admins" },
+      ]),
+    });
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: expect.arrayContaining([
+        { user: "user:sub-former-admin", relation: "member", object: "organization:grid" },
+      ]),
+      deletes: expect.arrayContaining([
+        { user: "user:sub-former-admin", relation: "admin", object: "organization:grid" },
+        { user: "user:sub-former-admin", relation: "manager", object: "admin_surface:rag_datasources" },
+      ]),
+    });
+  });
+
+  it("preserves independently recorded manual super-admin membership after OIDC demotion", async () => {
+    const mockSources = stubTeamMembershipSources([
+      {
+        team_id: "team-super-admins",
+        team_slug: "super-admins",
+        user_email: "manual-admin@example.com",
+        user_subject: "sub-manual-admin",
+        relationship: "admin",
+        source_type: "manual",
+        managed: false,
+        status: "active",
+        created_by: "platform-owner@example.com",
+      },
+    ]);
+    mockGetRbacCollection.mockImplementation(async (key: string) => {
+      if (key === "teamMembershipSources") return mockSources;
+      throw new Error(`unexpected rbac collection ${key}`);
+    });
+
+    const { reconcileLoginOpenFgaAccess } = await import("../login-openfga-bootstrap");
+    await reconcileLoginOpenFgaAccess({
+      subject: "sub-manual-admin",
+      email: "manual-admin@example.com",
+      isAuthorized: true,
+      isAdmin: false,
+      isBootstrapAdmin: false,
+      isOidcAdmin: false,
+    });
+
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalledWith({
+      writes: [],
+      deletes: expect.arrayContaining([
+        expect.objectContaining({ object: "team:super-admins" }),
+      ]),
+    });
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: expect.any(Array),
+      deletes: [],
+    });
+  });
+
+  it("preserves bootstrap-admin access while retiring absent OIDC provenance", async () => {
+    const mockSources = stubTeamMembershipSources([]);
+    mockGetRbacCollection.mockImplementation(async (key: string) => {
+      if (key === "teamMembershipSources") return mockSources;
+      throw new Error(`unexpected rbac collection ${key}`);
+    });
+
+    const { reconcileLoginOpenFgaAccess } = await import("../login-openfga-bootstrap");
+    await reconcileLoginOpenFgaAccess({
+      subject: "sub-bootstrap-admin",
+      email: "bootstrap-admin@example.com",
+      isAuthorized: true,
+      isAdmin: true,
+      isBootstrapAdmin: true,
+      isOidcAdmin: false,
+    });
+
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalledWith({
+      writes: [],
+      deletes: expect.arrayContaining([
+        expect.objectContaining({ object: "team:super-admins" }),
+      ]),
+    });
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: expect.arrayContaining([
+        { user: "user:sub-bootstrap-admin", relation: "admin", object: "organization:grid" },
+      ]),
+      deletes: [],
+    });
+  });
+
+  it("revokes stale admin access even when the OIDC admission gate fails", async () => {
+    const mockSources = stubTeamMembershipSources([
+      {
+        team_id: "team-super-admins",
+        team_slug: "super-admins",
+        user_email: "outsider@example.com",
+        user_subject: "sub-outsider",
+        relationship: "admin",
+        source_type: "manual",
+        managed: false,
+        status: "active",
+        created_by: "login-bootstrap",
+      },
+    ]);
+    mockGetRbacCollection.mockImplementation(async (key: string) => {
+      if (key === "teamMembershipSources") return mockSources;
+      throw new Error(`unexpected rbac collection ${key}`);
+    });
     const { reconcileLoginOpenFgaAccess } = await import("../login-openfga-bootstrap");
 
     const result = await reconcileLoginOpenFgaAccess({
@@ -461,8 +620,13 @@ describe("login OpenFGA bootstrap", () => {
       isAdmin: true,
     });
 
-    expect(result.status).toBe("skipped");
-    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+    expect(result.status).toBe("completed");
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: [],
+      deletes: expect.arrayContaining([
+        { user: "user:sub-outsider", relation: "admin", object: "organization:grid" },
+      ]),
+    });
   });
 
   describe("reconcileSyncedUsersBaselineAccess (directory-sync baseline bootstrap)", () => {

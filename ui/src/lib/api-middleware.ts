@@ -223,7 +223,7 @@ async function persistKeycloakSubMapping(
   const keycloakSub = resolveKeycloakSubFromSession(session);
   if (!keycloakSub) return;
 
-  const cacheKey = `${keycloakSub}:${user.email}`;
+  const cacheKey = `${keycloakSub}:${user.email}:${user.role}`;
   const cached = keycloakSubMappingCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.promise;
@@ -259,6 +259,7 @@ async function runKeycloakSubMappingWrites(
             $set: {
               keycloak_sub: keycloakSub,
               'metadata.keycloak_sub': keycloakSub,
+              'metadata.role': user.role === 'admin' ? 'admin' : 'user',
               updated_at: now,
             },
             $setOnInsert: {
@@ -268,7 +269,6 @@ async function runKeycloakSubMappingWrites(
               last_login: now,
               'metadata.sso_provider': 'keycloak',
               'metadata.sso_id': keycloakSub,
-              'metadata.role': user.role === 'admin' ? 'admin' : 'user',
             },
           },
           { upsert: true }
