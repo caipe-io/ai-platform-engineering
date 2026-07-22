@@ -114,6 +114,9 @@ Routing fails closed. If the proxy is down or misconfigured, agent LLM calls
 error rather than falling back to a direct or unrouted provider call. There is no
 fallback policy that bypasses the endpoint.
 
+The proxy runs as a **single instance** in v1 (HA deferred), so it is a single
+point of failure for agent LLM traffic — an accepted, documented tradeoff.
+
 ## Reversibility
 
 Central routing is opt-in and reversible:
