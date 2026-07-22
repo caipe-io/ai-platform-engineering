@@ -75,12 +75,12 @@ Local dev: `deploy/litellm/`, `docker-compose.yaml`, `docker-compose.dev.yaml`. 
 
 ### Implementation for User Story 2
 
-- [ ] T015 [P] [US2] Add the shared-credential + endpoint wiring to `charts/ai-platform-engineering/values-existing-secrets.yaml` and `charts/ai-platform-engineering/values-external-secrets.yaml` so central routing works under all three secret strategies (FR-011, data-model.md entity 3).
-- [ ] T016 [P] [US2] Add BYO support: document/point `global.OPENAI_ENDPOINT` at an operator's external OpenAI-compatible proxy with the subchart disabled (FR-010, quickstart B); note the BYO proxy must itself do upstream translation.
+- [x] T015 [P] [US2] Add the shared-credential + endpoint wiring to `charts/ai-platform-engineering/values-existing-secrets.yaml` and `charts/ai-platform-engineering/values-external-secrets.yaml` so central routing works under all three secret strategies (FR-011, data-model.md entity 3).
+- [x] T016 [P] [US2] Add BYO support: document/point `global.OPENAI_ENDPOINT` at an operator's external OpenAI-compatible proxy with the subchart disabled (FR-010, quickstart B); note the BYO proxy must itself do upstream translation.
 - [x] T017 [US2] Add an **opt-in Docker Compose profile** for the proxy in `docker-compose.yaml` + `docker-compose.dev.yaml` and a `deploy/litellm/config.yaml` for compose parity — following `.claude/skills/docker-compose-first-install/SKILL.md`; the proxy MUST NOT be in the default minimal profile (`mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor`).
 - [ ] T018 [US2] Verify reversibility (FR-005, SC-004) with a **runtime revert test**: enable routing, exercise an agent, then flag off + restore prior `LLM_PROVIDER`/endpoint and confirm at runtime that every agent returns to direct provider calls and still completes, with no orphaned secrets/config. (Static helm-template diff alone is insufficient — SC-004 requires behavioural verification.)
 - [ ] T019 [US2] Verify upstream-error equivalence (FR-012): induce an upstream 429/5xx and confirm the agent observes the same error class as a direct call (migration correctness).
-- [ ] T020 [US2] Write the integration guide at `docs/docs/development/centralise-llm-routing.md`: proxy setup, upstream-provider config, `provider=openai` routing and its non-OpenAI consequence, shared-credential + network restriction, reversibility, and BYO (FR-009, SC-006).
+- [x] T020 [US2] Write the integration guide at `docs/docs/development/centralise-llm-routing.md`: proxy setup, upstream-provider config, `provider=openai` routing and its non-OpenAI consequence, shared-credential + network restriction, reversibility, and BYO (FR-009, SC-006).
 
 **Checkpoint**: Existing deployments can adopt, revert, and BYO across Helm and Compose.
 
