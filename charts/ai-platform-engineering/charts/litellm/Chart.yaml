@@ -1,0 +1,6 @@
+apiVersion: v2
+name: litellm
+description: Stateless LiteLLM proxy - the default central LLM routing layer for CAIPE agents (default-off; no persisted storage)
+type: application
+version: 0.5.55
+appVersion: v1.92.0

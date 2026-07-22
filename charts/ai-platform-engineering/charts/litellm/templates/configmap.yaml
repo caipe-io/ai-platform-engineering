@@ -1,0 +1,29 @@
+{{/*
+Renders the LiteLLM proxy config.yaml from values.
+
+Transparent error passthrough: litellm_settings.num_retries defaults to 0 and no fallbacks
+are set, so upstream provider errors (5xx/429/timeout) reach the agent unchanged. The
+master_key is read from the LITELLM_MASTER_KEY env var (injected from a Secret by the
+Deployment) - never rendered inline here.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "litellm.fullname" . }}-config
+  labels:
+    {{- include "litellm.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    model_list:
+    {{- if .Values.modelList }}
+      {{- toYaml .Values.modelList | nindent 6 }}
+    {{- else }}
+      []
+    {{- end }}
+    litellm_settings:
+      {{- toYaml .Values.litellmSettings | nindent 6 }}
+    general_settings:
+      master_key: os.environ/LITELLM_MASTER_KEY
+      {{- with .Values.generalSettings }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}

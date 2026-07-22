@@ -1,0 +1,71 @@
+# LiteLLM proxy: the default central LLM routing layer.
+#
+# This subchart is DEFAULT-OFF. It renders only when `llmRouting.litellm.enabled: true`
+# is set in the umbrella values (that is the dependency condition in the parent Chart.yaml).
+#
+# It runs STATELESS: config-file only, no database. Per-agent keys and spend persistence are
+# not handled here; adding them later would move to a database-backed image.
+
+replicaCount: 1  # single instance; high availability is not configured here
+
+image:
+  # The plain (NON-`-database`) LiteLLM image: no Prisma migrations, no DB - stateless proxy.
+  # Pinned to the version validated in the source spike; do not bump without a reason.
+  repository: ghcr.io/berriai/litellm
+  tag: v1.92.0
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 4000
+
+# The shared credential every agent presents. Sourced from the umbrella `global.llmSecrets`
+# secret (key OPENAI_API_KEY) - never inline here. This same value becomes the proxy master_key.
+masterKeySecret:
+  # Defaults to global.llmSecrets.secretName; override only for a proxy-specific secret.
+  name: ""            # empty -> falls back to .Values.global.llmSecrets.secretName
+  key: OPENAI_API_KEY
+
+# Upstream provider config. The operator supplies the real, cost-bearing provider key via
+# the secret framework (extraEnvFrom / a referenced secret) and lists the models the proxy
+# serves. `model_list` maps the model an agent requests to the real upstream + native params.
+# NOTE: keep provider API keys in secrets, never in plaintext values.
+modelList: []
+  # - model_name: gpt-4o                 # what agents request
+  #   litellm_params:
+  #     model: azure/gpt-4o              # real upstream (openai/azure/bedrock/anthropic/...)
+  #     api_base: os.environ/AZURE_API_BASE
+  #     api_key: os.environ/AZURE_API_KEY
+
+# Extra env for the proxy container - the place to inject the real upstream provider key
+# from a Secret (e.g. AZURE_API_KEY, AWS creds, ANTHROPIC_API_KEY).
+extraEnv: []
+extraEnvFrom: []
+
+# LiteLLM general_settings / litellm_settings passthrough. We deliberately DISABLE retries
+# and fallbacks so upstream errors pass through transparently. Do not enable
+# num_retries / fallbacks here without revisiting the transparent-passthrough contract.
+generalSettings: {}
+litellmSettings:
+  # Explicitly no request-level retries at the proxy (transparent error passthrough).
+  num_retries: 0
+
+# Restrict the proxy Service to in-cluster callers so the upstream key it fronts is never
+# reachable off-cluster. Selector is intentionally empty (allow any in-cluster
+# pod in the release namespace); tighten with podSelector labels as needed.
+networkPolicy:
+  enabled: true
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
