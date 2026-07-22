@@ -153,6 +153,13 @@ and `OPENAI_ENDPOINT=http://litellm:4000/v1`. Configure upstreams in
 `deploy/litellm/config.yaml` (`model_list`). Disabling the profile returns agents
 to direct calls.
 
+## Latency
+
+There is no hard SLO (SC-008); the added routing hop is measured and documented.
+On a local `kind` cluster the proxy's own in-cluster overhead (the `/health`
+endpoint, no LLM) was **~1–4 ms**, while a full chat round-trip was ~800 ms —
+i.e. the hop is negligible relative to the upstream LLM call, which dominates.
+
 ## Related
 
 - Subchart reference: `charts/ai-platform-engineering/charts/litellm/README.md`

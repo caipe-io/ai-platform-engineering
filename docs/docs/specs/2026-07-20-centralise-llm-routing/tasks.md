@@ -117,7 +117,7 @@ Local dev: `deploy/litellm/`, `docker-compose.yaml`, `docker-compose.dev.yaml`. 
 
 - [x] T028 Reframe spec/plan to target replacing `deploy_litellm` (this update): spec FR-013/FR-014 + clarifications, plan migration ledger. The routing spec is no longer greenfield.
 - [x] T029 Formalise a proxy-only upstream-provider secret in the subchart (separate from the agent-facing shared secret), matching `litellm-upstream-secret` (ledger c).
-- [ ] T030 Migrate `setup-caipe.sh --litellm` to set `llmRouting.litellm.enabled=true` + the global chat-routing env and delegate to the subchart for the chat path, instead of `kubectl apply`ing its own `litellm-proxy` (ledger d). Guard: only the chat path until e–g land.
+- [ ] T030 [BLOCKED: needs this subchart merged + published] Migrate `setup-caipe.sh --litellm` to set `llmRouting.litellm.enabled=true` + the global chat-routing env and delegate to the subchart, instead of `kubectl apply`ing its own `litellm-proxy` (ledger d). The installer deploys the **published** OCI chart (`CAIPE_OCI_REPO`), so the flag is a no-op until the subchart ships in a release; setting it earlier breaks `--litellm`. Also note `deploy_litellm` is **unified chat+embeddings** (image `main-stable` at 2Gi, `envFrom litellm-upstream-secret`), so a non-regressing cutover must carry embeddings too (folds in ledger f) and reconcile the image/resources — i.e. this depends on e/f parity, not just chat.
 - [ ] T031 [DEFERRED] Provider-aware `model_list` auto-construction for supported upstreams, parity with `_litellm_unified_assets` (ledger e).
 - [ ] T032 [DEFERRED] Embeddings routing + RAG repointing through the subchart, parity with the imperative unified mode (ledger f).
 - [ ] T033 [DEFERRED] Ollama / vLLM fronting parity (ledger g).
