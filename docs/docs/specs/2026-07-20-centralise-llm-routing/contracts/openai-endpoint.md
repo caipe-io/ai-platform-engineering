@@ -9,7 +9,9 @@ upstream. Agents already produce this via `cnoe_agent_utils.LLMFactory` with
 - **Transport:** HTTPS (or in-cluster HTTP behind NetworkPolicy).
 - **Path:** `POST /v1/chat/completions` (plus `/v1/models`, `/v1/embeddings` as used).
 - **Auth:** `Authorization: Bearer <shared credential>` — the value injected as each
-  agent's `OPENAI_API_KEY` (FR-011). Missing/invalid → `401`.
+  agent's `OPENAI_API_KEY` (FR-011). Missing → `401`; a malformed key may return `400`.
+  Either way the request is rejected and the upstream key is never served unauthenticated.
+  (Verified against LiteLLM v1.92.0.)
 - **Body:** OpenAI chat-completions schema (`model`, `messages`, `stream`, `tools`, …).
   The `model` value maps, in central config, to the real upstream + native params.
 

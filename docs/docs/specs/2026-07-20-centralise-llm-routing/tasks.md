@@ -26,9 +26,9 @@ Local dev: `deploy/litellm/`, `docker-compose.yaml`, `docker-compose.dev.yaml`. 
 
 **Purpose**: Scaffold the default-off routing subchart and register it, wired to nothing yet.
 
-- [ ] T001 Scaffold the routing subchart skeleton at `charts/ai-platform-engineering/charts/litellm/` — `Chart.yaml` (name `litellm`, chart version, appVersion), empty `templates/`, stub `values.yaml`, and a `README.md` explaining what it does and how to enable it (Constitution: component READMEs).
-- [ ] T002 [P] Pin the LiteLLM OSS proxy image (the plain, **non-`-database`** stateless tag — no Postgres this slice) in `charts/ai-platform-engineering/charts/litellm/values.yaml`, with a comment recording why the stateless variant is chosen (research.md Decision 1).
-- [ ] T003 Register the subchart as a **condition-gated, default-off** dependency in `charts/ai-platform-engineering/Chart.yaml` (condition = the flag from T004) and refresh `charts/ai-platform-engineering/Chart.lock` via `helm dependency update`.
+- [x] T001 Scaffold the routing subchart skeleton at `charts/ai-platform-engineering/charts/litellm/` — `Chart.yaml` (name `litellm`, chart version, appVersion), empty `templates/`, stub `values.yaml`, and a `README.md` explaining what it does and how to enable it (Constitution: component READMEs).
+- [x] T002 [P] Pin the LiteLLM OSS proxy image (the plain, **non-`-database`** stateless tag — no Postgres this slice) in `charts/ai-platform-engineering/charts/litellm/values.yaml`, with a comment recording why the stateless variant is chosen (research.md Decision 1).
+- [x] T003 Register the subchart as a **condition-gated, default-off** dependency in `charts/ai-platform-engineering/Chart.yaml` (condition = the flag from T004) and refresh `charts/ai-platform-engineering/Chart.lock` via `helm dependency update`.
 
 ---
 
@@ -38,8 +38,8 @@ Local dev: `deploy/litellm/`, `docker-compose.yaml`, `docker-compose.dev.yaml`. 
 
 **⚠️ CRITICAL**: No user story work begins until this phase is complete.
 
-- [ ] T004 Apply the **decided** opt-in flag key `llmRouting.litellm.enabled` (default `false`, superseding the earlier working name `budgetGateway.*`): use it as the `Chart.yaml` dependency condition and the subchart guard, and record it in plan.md and the subchart README. (Aligns spec/plan/quickstart/data-model — analyze finding F1.)
-- [ ] T005 Define the shared-credential convention in `charts/ai-platform-engineering/charts/litellm/values.yaml` and the umbrella `values.yaml`: reuse `global.llmSecrets` (key `OPENAI_API_KEY`) as BOTH each agent's `OPENAI_API_KEY` and the proxy `master_key`, sourced only via secret refs (no plaintext), so the same value works across all three secret strategies (FR-011, Constitution VII).
+- [x] T004 Apply the **decided** opt-in flag key `llmRouting.litellm.enabled` (default `false`, superseding the earlier working name `budgetGateway.*`): use it as the `Chart.yaml` dependency condition and the subchart guard, and record it in plan.md and the subchart README. (Aligns spec/plan/quickstart/data-model — analyze finding F1.)
+- [x] T005 Define the shared-credential convention in `charts/ai-platform-engineering/charts/litellm/values.yaml` and the umbrella `values.yaml`: reuse `global.llmSecrets` (key `OPENAI_API_KEY`) as BOTH each agent's `OPENAI_API_KEY` and the proxy `master_key`, sourced only via secret refs (no plaintext), so the same value works across all three secret strategies (FR-011, Constitution VII).
 
 **Checkpoint**: Naming + secret plumbing fixed — routing stand-up can begin.
 
@@ -53,15 +53,15 @@ Local dev: `deploy/litellm/`, `docker-compose.yaml`, `docker-compose.dev.yaml`. 
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] Author the proxy config as a ConfigMap template in `charts/ai-platform-engineering/charts/litellm/templates/configmap.yaml`: render the LiteLLM `model_list` (request-model → upstream + native params), `general_settings.master_key` from the shared secret, and **disable retries/fallbacks** so upstream errors pass through unchanged (FR-012, contracts/openai-endpoint.md).
-- [ ] T007 [US1] Author the proxy Deployment in `charts/ai-platform-engineering/charts/litellm/templates/deployment.yaml`: single replica (spec Assumption), image from values, config mounted from the ConfigMap, upstream provider key injected from the secret framework, `/health` readiness/liveness probes.
-- [ ] T008 [P] [US1] Author the proxy Service in `charts/ai-platform-engineering/charts/litellm/templates/service.yaml` (ClusterIP, port 4000).
-- [ ] T009 [P] [US1] Author a NetworkPolicy in `charts/ai-platform-engineering/charts/litellm/templates/networkpolicy.yaml` restricting the proxy Service to in-cluster agent callers so the upstream key is never reachable off-cluster (FR-011).
-- [ ] T010 [US1] Wire central routing in the umbrella `charts/ai-platform-engineering/values.yaml`: set `global` `LLM_PROVIDER=openai` and `OPENAI_ENDPOINT` → the proxy Service, and the shared credential via `global.llmSecrets`, so every agent inherits it with no per-agent edits (FR-002, FR-004, SC-001).
-- [ ] T011 [US1] Document configuring the upstream provider once on the proxy (real cost-bearing key + `model_list`) via the secret framework, in the subchart README (FR-011 upstream key, quickstart A step 1).
-- [ ] T012 [US1] `helm lint` + `helm template` the umbrella with the flag ON: assert every agent Deployment inherits `LLM_PROVIDER=openai`, the proxy `OPENAI_ENDPOINT`, and the shared key from `global.llmSecrets`; assert a **newly-added agent template also inherits** the global routing env with no per-agent config (FR-004); assert nothing renders when the flag is OFF (default).
-- [ ] T013 [US1] End-to-end validate (quickstart A steps 2–5): proxy healthy; unauthenticated `/v1/chat/completions` → 401; a GitHub-agent completion succeeds via the proxy; swapping the upstream in `model_list` takes effect for all agents after one change (SC-001).
-- [ ] T014 [US1] Validate **fail-closed** behaviour (FR-007, SC-005): stop / misconfigure the proxy and confirm agent LLM calls fail with an error that identifies the routing layer, with **zero silent fallback** to a direct or unrouted provider call; confirm no fallback/retry policy is configured anywhere that would bypass the endpoint.
+- [x] T006 [US1] Author the proxy config as a ConfigMap template in `charts/ai-platform-engineering/charts/litellm/templates/configmap.yaml`: render the LiteLLM `model_list` (request-model → upstream + native params), `general_settings.master_key` from the shared secret, and **disable retries/fallbacks** so upstream errors pass through unchanged (FR-012, contracts/openai-endpoint.md).
+- [x] T007 [US1] Author the proxy Deployment in `charts/ai-platform-engineering/charts/litellm/templates/deployment.yaml`: single replica (spec Assumption), image from values, config mounted from the ConfigMap, upstream provider key injected from the secret framework, `/health` readiness/liveness probes.
+- [x] T008 [P] [US1] Author the proxy Service in `charts/ai-platform-engineering/charts/litellm/templates/service.yaml` (ClusterIP, port 4000).
+- [x] T009 [P] [US1] Author a NetworkPolicy in `charts/ai-platform-engineering/charts/litellm/templates/networkpolicy.yaml` restricting the proxy Service to in-cluster agent callers so the upstream key is never reachable off-cluster (FR-011).
+- [x] T010 [US1] Wire central routing in the umbrella `charts/ai-platform-engineering/values.yaml`: set `global` `LLM_PROVIDER=openai` and `OPENAI_ENDPOINT` → the proxy Service, and the shared credential via `global.llmSecrets`, so every agent inherits it with no per-agent edits (FR-002, FR-004, SC-001).
+- [x] T011 [US1] Document configuring the upstream provider once on the proxy (real cost-bearing key + `model_list`) via the secret framework, in the subchart README (FR-011 upstream key, quickstart A step 1).
+- [x] T012 [US1] `helm lint` + `helm template` the umbrella with the flag ON: assert every agent Deployment inherits `LLM_PROVIDER=openai`, the proxy `OPENAI_ENDPOINT`, and the shared key from `global.llmSecrets`; assert a **newly-added agent template also inherits** the global routing env with no per-agent config (FR-004); assert nothing renders when the flag is OFF (default).
+- [x] T013 [US1] End-to-end validate (quickstart A steps 2–5): proxy healthy; unauthenticated `/v1/chat/completions` → 401; a GitHub-agent completion succeeds via the proxy; swapping the upstream in `model_list` takes effect for all agents after one change (SC-001).
+- [x] T014 [US1] Validate **fail-closed** behaviour (FR-007, SC-005): stop / misconfigure the proxy and confirm agent LLM calls fail with an error that identifies the routing layer, with **zero silent fallback** to a direct or unrouted provider call; confirm no fallback/retry policy is configured anywhere that would bypass the endpoint.
 
 **Checkpoint**: MVP — central provider selection works, is secured (401 + NetworkPolicy), and fails closed. Deploy/demo-able on Helm.
 
@@ -77,7 +77,7 @@ Local dev: `deploy/litellm/`, `docker-compose.yaml`, `docker-compose.dev.yaml`. 
 
 - [ ] T015 [P] [US2] Add the shared-credential + endpoint wiring to `charts/ai-platform-engineering/values-existing-secrets.yaml` and `charts/ai-platform-engineering/values-external-secrets.yaml` so central routing works under all three secret strategies (FR-011, data-model.md entity 3).
 - [ ] T016 [P] [US2] Add BYO support: document/point `global.OPENAI_ENDPOINT` at an operator's external OpenAI-compatible proxy with the subchart disabled (FR-010, quickstart B); note the BYO proxy must itself do upstream translation.
-- [ ] T017 [US2] Add an **opt-in Docker Compose profile** for the proxy in `docker-compose.yaml` + `docker-compose.dev.yaml` and a `deploy/litellm/config.yaml` for compose parity — following `.claude/skills/docker-compose-first-install/SKILL.md`; the proxy MUST NOT be in the default minimal profile (`mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor`).
+- [x] T017 [US2] Add an **opt-in Docker Compose profile** for the proxy in `docker-compose.yaml` + `docker-compose.dev.yaml` and a `deploy/litellm/config.yaml` for compose parity — following `.claude/skills/docker-compose-first-install/SKILL.md`; the proxy MUST NOT be in the default minimal profile (`mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor`).
 - [ ] T018 [US2] Verify reversibility (FR-005, SC-004) with a **runtime revert test**: enable routing, exercise an agent, then flag off + restore prior `LLM_PROVIDER`/endpoint and confirm at runtime that every agent returns to direct provider calls and still completes, with no orphaned secrets/config. (Static helm-template diff alone is insufficient — SC-004 requires behavioural verification.)
 - [ ] T019 [US2] Verify upstream-error equivalence (FR-012): induce an upstream 429/5xx and confirm the agent observes the same error class as a direct call (migration correctness).
 - [ ] T020 [US2] Write the integration guide at `docs/docs/development/centralise-llm-routing.md`: proxy setup, upstream-provider config, `provider=openai` routing and its non-OpenAI consequence, shared-credential + network restriction, reversibility, and BYO (FR-009, SC-006).
@@ -95,7 +95,7 @@ Local dev: `deploy/litellm/`, `docker-compose.yaml`, `docker-compose.dev.yaml`. 
 ### Implementation for User Story 3
 
 - [ ] T021 [US3] Run the existing integration harness with the flag on across all agent types (GitHub, Jira, ArgoCD, AWS, PagerDuty, Slack, and the rest); assert each returns a correct completion through the proxy and none bypasses the endpoint (SC-002, FR-006); include a freshly-added agent to confirm default inheritance (FR-004).
-- [ ] T022 [P] [US3] Run at least one **non-OpenAI-native** upstream (Bedrock or Anthropic native) through the proxy and confirm correct completions via translation (FR-008, SC-007). Requires a real provider key.
+- [x] T022 [P] [US3] Run at least one **non-OpenAI-native** upstream (Bedrock or Anthropic native) through the proxy and confirm correct completions via translation (FR-008, SC-007). Requires a real provider key.
 - [ ] T023 [P] [US3] Measure and record the added routing-hop latency vs a direct call for at least one agent, and write the figure into the integration guide (SC-008).
 
 **Checkpoint**: All agent types and all supported upstreams verified through the central control point.
