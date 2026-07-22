@@ -104,10 +104,10 @@ Local dev: `deploy/litellm/`, `docker-compose.yaml`, `docker-compose.dev.yaml`. 
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T024 [P] Record the mechanism decision (stateless LiteLLM subchart, default-off; agentgateway deferred) as an ADR/architecture note in `.specify/ARCHITECTURE.md` or `docs/`.
+- [x] T024 [P] Record the mechanism decision (stateless LiteLLM subchart, default-off; agentgateway deferred) as an ADR/architecture note in `.specify/ARCHITECTURE.md` or `docs/`.
 - [ ] T025 Run the full `quickstart.md` validation (shapes A, B, C) end to end and confirm each step's assertions.
-- [ ] T026 Confirm the docker-compose first-install minimal profile is unchanged and the OSS day-0 path still works with routing off (docker-compose first-install gate).
-- [ ] T027 Run the repo quality gates before marking done (Constitution VI): `helm lint` on the umbrella, `helm template` clean, and `uv run ruff check` / `uv run pytest` for any Python touched (expected minimal — no agent code changes).
+- [x] T026 Confirm the docker-compose first-install minimal profile is unchanged and the OSS day-0 path still works with routing off (docker-compose first-install gate).
+- [x] T027 Run the repo quality gates before marking done (Constitution VI): `helm lint` on the umbrella, `helm template` clean, and `uv run ruff check` / `uv run pytest` for any Python touched (expected minimal — no agent code changes).
 
 ---
 

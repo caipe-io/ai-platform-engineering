@@ -119,6 +119,14 @@ The `.specify/` directory is the persistent memory of the project. It is maintai
 
 The architecture is designed to scale from Level 1 (Tab Complete) to Level 7 (Background Agents) without restructuring, following [The 8 Levels of Agentic Engineering](https://www.bassimeledath.com/blog/levels-of-agentic-engineering) by Bassim Eledath and [Harness Engineering](https://openai.com/index/harness-engineering/) by OpenAI.
 
+### 8. Central LLM Routing via a Stateless Proxy (default-off)
+
+Agents choose their LLM provider through one central endpoint, not per-agent config. Every agent already speaks the OpenAI chat-completions protocol via `cnoe_agent_utils.LLMFactory` (`LLM_PROVIDER=openai`); a bundled **stateless LiteLLM proxy** subchart (`charts/ai-platform-engineering/charts/litellm/`) sits behind that endpoint and translates to the real upstream (OpenAI, Azure, Bedrock, Anthropic). It is **default-off**, enabled per deployment with `llmRouting.litellm.enabled: true`, and operators may bring their own OpenAI-compatible proxy instead.
+
+The proxy is **stateless (config-only, no database)** because per-agent keys and spend persistence are out of scope for this slice; those (and a database-backed image) arrive in the downstream budget epic. **agentgateway was deferred**: it is MCP-only today, so putting it on the shared LLM critical path would add blast radius for no routing benefit now.
+
+**Implication**: Provider choice is a single edit at `global` (`LLM_PROVIDER` / `OPENAI_ENDPOINT`) plus the proxy `model_list`; a new agent inherits routing with no per-agent config, and no agent source changes. Do not add retries/fallbacks at the proxy, upstream errors pass through transparently and routing fails closed.
+
 ## Data Flow: Spec to Code
 
 ```text
