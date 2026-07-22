@@ -9,6 +9,8 @@ Centralise every CAIPE agent's LLM traffic onto one endpoint so the "which provi
 
 **Mechanism decision (see [research.md](./research.md)): ship a stateless LiteLLM proxy as a default-off subchart, and support bring-your-own by letting the operator point `OPENAI_ENDPOINT` at any OpenAI-compatible proxy.** For this routing-only slice the proxy needs **no database** — budgets, per-agent keys, and spend persistence (the only things that need Postgres) are out of scope. That keeps the footprint to an isolated, default-off subchart that touches nothing on the existing critical path. Notably this is *not* the budget epic's "LiteLLM-for-dollar-budgets" rationale (irrelevant here); it is that a stateless OpenAI-compatible translation proxy is the smallest thing that satisfies FR-008 translation for Bedrock/Anthropic while staying minimally intrusive. agentgateway is rejected for v1 because it is MCP-only today and adding an LLM data plane to it would enable new behaviour on the shared MCP-critical component.
 
+**Relationship to the shipped imperative proxy (FR-013/FR-014).** CAIPE already provides this imperatively via `setup-caipe.sh --litellm` (`deploy_litellm`), which `kubectl apply`s a `litellm-proxy` and repoints agents (through the `llm-secret` seam) and RAG. This plan converts that into the declarative subchart as the single source of truth and migrates `--litellm` to enable `llmRouting.litellm.enabled` instead of applying its own manifests. Because the imperative path already repoints **agents** through the same `llm-secret` (`LLM_PROVIDER`/`OPENAI_ENDPOINT`) seam the subchart's umbrella auto-injection targets, the **chat path is at parity by construction**. Embeddings/RAG repointing, provider-aware `model_list` auto-construction, and Ollama/vLLM fronting are enumerated parity gaps — deferred; the imperative path is retired only once each reaches parity (see Migration ledger below).
+
 ## Technical Context
 
 **Language/Version**: Primarily Helm/YAML + Docker Compose; Python 3.11+ only for integration tests. No agent source changes (FR-003).  
@@ -84,6 +86,23 @@ docs/docs/                            # integration guide (FR-009): provider=ope
 ## Database migrations
 
 *N/A — no `db-migration.md`.* The routing proxy runs stateless (config-only) for this slice; there is no persisted storage. When the budget epic adds per-agent keys and spend, it introduces Postgres and its own migration doc.
+
+## Migration from the imperative proxy (FR-013/FR-014)
+
+The shipped `deploy_litellm` and this subchart must converge to one implementation. Parity ledger:
+
+| # | Capability of `deploy_litellm` | Subchart status | Slice |
+|---|---|---|---|
+| a | Chat routing (proxy Deployment/Service) | Helm subchart renders it | **In slice** (done) |
+| b | Agents repointed via `llm-secret` (`LLM_PROVIDER`/`OPENAI_ENDPOINT`) | Umbrella auto-injection targets the same seam | **In slice** (done) |
+| c | Upstream-provider creds in a proxy-only secret (`litellm-upstream-secret`) | Subchart has `extraEnvFrom`; formalise a proxy-only secret | **In slice** |
+| d | `--litellm` enables the proxy | Migrate flag to set `llmRouting.litellm.enabled=true` for the chat path | **In slice** |
+| e | Provider-aware `model_list` auto-built from creds (`_litellm_unified_assets`) | Operator-configured `model_list` only | Deferred |
+| f | Embeddings routing + RAG repoint | Not handled | Deferred |
+| g | Ollama / vLLM fronting | Not handled | Deferred |
+| h | Remove imperative `litellm-proxy` manifests | Blocked on e–g | Deferred (gated) |
+
+Cutover rule: the imperative path stays until e–g reach parity, so no capability (notably embeddings/RAG) regresses. Only then is (h) done and a single implementation remains.
 
 ## Complexity Tracking
 

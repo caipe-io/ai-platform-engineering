@@ -13,6 +13,8 @@ This feature **centralises LLM routing and provider selection for all agents**. 
 
 To make one control point work uniformly, every agent addresses a single common endpoint using the OpenAI chat-completions wire protocol, and a central routing layer translates to whichever real upstream the operator selects (including Bedrock and Anthropic native). "OpenAI" names the **wire protocol** every mainstream provider can translate to and from — not a requirement that traffic go to OpenAI. The central routing layer is the *mechanism*, not the goal: its specific form is a plan decision and may be one CAIPE ships or one the operator already runs. The capabilities that build *on* this control point — per-agent budgets, cost attribution, dashboards — are explicitly out of scope and depend on it existing first.
 
+**Relationship to the shipped imperative proxy.** CAIPE already provides this capability imperatively: `setup-caipe.sh --litellm` (the `deploy_litellm` path) `kubectl apply`s an in-cluster `litellm-proxy` and repoints agents (through the `llm-secret` seam) and RAG at it. That implementation works but lives outside Helm — a one-shot applied resource, not a convergent single source of truth. This feature **subsumes it**: the routing layer becomes a declarative Helm subchart that is the one implementation, and the installer's `--litellm` flag is migrated to enable the subchart instead of applying its own manifests. Full parity (notably embeddings routing) is phased; until each deferred item reaches parity the imperative path stays, so nothing regresses (see FR-013/FR-014 and Out of Scope).
+
 ## Clarifications
 
 ### Session 2026-07-20
@@ -22,6 +24,11 @@ To make one control point work uniformly, every agent addresses a single common 
 - Q: How do agents authenticate to the central endpoint before per-agent keys exist? → A: A single shared credential presented by all agents, plus network restriction on the endpoint; per-agent virtual keys are deferred to the budget epic.
 - Q: Is there a latency target for the added routing hop? → A: No hard SLO in v1; the added overhead must be measured and documented, expected negligible relative to LLM call time.
 - Q: How are upstream provider errors (5xx, 429, timeout) surfaced through the routing layer? → A: Passed through transparently, preserving status and semantics, so agents see the same error class as a direct call (no masking, no silent retry).
+
+### Session 2026-07-22
+
+- Q: A shipped imperative proxy (`deploy_litellm` / `--litellm`) already provides in-cluster LiteLLM routing — how does this feature relate? → A: This feature is its Helm-native replacement. The subchart becomes the single implementation and the installer is migrated to enable it; the imperatively-applied `litellm-proxy` is retired once parity holds — no two parallel proxies.
+- Q: Does this slice reach full parity before cutover? → A: No. Chat routing is the slice; embeddings routing + RAG repointing, provider-aware `model_list` auto-construction, and Ollama/vLLM fronting are enumerated parity gaps, explicitly deferred. The imperative path is not removed until each deferred item reaches parity.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -92,9 +99,11 @@ Every agent type (GitHub, Jira, ArgoCD, AWS, PagerDuty, Slack, and the rest) rou
 - **FR-007**: When the configured endpoint is unreachable or misconfigured, agents MUST fail with a clear error that identifies the routing layer as the failure point (not a raw or generic error), and MUST NOT silently use a different provider or an unrouted call.
 - **FR-008**: For upstream providers that are not natively OpenAI-compatible (e.g. Bedrock or Anthropic native protocols), the system MUST translate between the OpenAI wire protocol the agents speak and the provider's native protocol, so that operators on any supported upstream can adopt central routing immediately and receive correct completions.
 - **FR-009**: Documentation MUST cover the migration steps and the consequence for operators currently using non-OpenAI providers.
-- **FR-010**: CAIPE MUST ship a default routing layer that a fresh install can enable (opt-in / default-off) so the feature works out of the box, AND MUST support pointing at an operator's existing routing layer (bring-your-own) as a first-class alternative.
+- **FR-010**: CAIPE MUST ship a default routing layer that a fresh install can enable (opt-in / default-off) so the feature works out of the box, AND MUST support pointing at an operator's existing routing layer (bring-your-own) as a first-class alternative. The shipped routing layer MUST be the declarative Helm subchart; the existing imperative installer path (`setup-caipe.sh --litellm` → `deploy_litellm`) MUST be migrated to enable/delegate to it rather than `kubectl apply` a second parallel proxy.
 - **FR-011**: The central endpoint MUST require a credential — a single shared credential presented by all agents in v1 — and MUST be network-restricted so the upstream provider key it fronts is never reachable unauthenticated. Per-agent credentials replace the shared one in the downstream budget epic; the shared credential MUST be stored and injected through the existing secret strategies, never in plaintext.
 - **FR-012**: When the upstream provider returns an error (e.g. 5xx, rate-limit/429, timeout) while the routing layer is healthy, the routing layer MUST pass the error through transparently, preserving its status and semantics, so agents observe the same error class as a direct provider call — no masking and no silent retry.
+- **FR-013**: The Helm subchart MUST become the single implementation of the shipped routing proxy. The installer's imperative path (`deploy_litellm`, applied via `kubectl`) MUST be migrated to set `llmRouting.litellm.enabled` and reuse the same `llm-secret` chat-routing seam it already repoints agents through; two parallel proxy implementations MUST NOT remain once parity (FR-014) holds.
+- **FR-014**: Parity with the replaced imperative proxy MUST be tracked as a ledger; any item not delivered in this slice is explicitly deferred, and the imperative path MUST remain until that item reaches parity so no capability regresses. Ledger — **in slice**: (a) chat routing via the subchart; (b) the upstream-provider credential held in a proxy-only secret, separate from the agent-facing shared secret; (c) an operator-configured `model_list`; (d) migrating `--litellm` to enable the subchart for the chat path. **Deferred**: (e) provider-aware `model_list` auto-construction; (f) embeddings routing + RAG repointing; (g) Ollama / vLLM fronting; (h) removing the imperative `deploy_litellm` manifests, gated on (e)–(g).
 
 ### Key Entities *(include if feature involves data)*
 
@@ -122,6 +131,7 @@ Every agent type (GitHub, Jira, ArgoCD, AWS, PagerDuty, Slack, and the rest) rou
 - Delivering translation for non-OpenAI-native upstreams (Bedrock, Anthropic native) implies a translating component sits behind the endpoint; whether that is a bundled proxy, an existing in-stack component, or a third-party gateway is a plan-phase decision, not a spec one.
 - The value of this feature is the single-source-of-truth control point plus universal upstream support; the cost/attribution capabilities it unlocks are downstream.
 - v1 runs the routing layer as a single instance; because routing fails closed (FR-007), that instance is a single point of failure for all agent LLM traffic. This is an accepted, documented tradeoff for v1, with high availability deferred (see Out of Scope).
+- An imperative proxy already ships (`setup-caipe.sh --litellm` / `deploy_litellm`): it `kubectl apply`s an in-cluster `litellm-proxy` and repoints agents (via `llm-secret`) and RAG. This feature subsumes it into the Helm subchart; crucially the chat-routing seam it uses (`LLM_PROVIDER` / `OPENAI_ENDPOINT` in `llm-secret`) is the same one this subchart's umbrella auto-injection targets, so the chat path is already at parity.
 
 ## Out of Scope (downstream, depends on this control point)
 
@@ -129,3 +139,4 @@ Every agent type (GitHub, Jira, ArgoCD, AWS, PagerDuty, Slack, and the rest) rou
 - Per-agent virtual keys and their provisioning.
 - High availability / multi-replica of the routing layer (v1 is single-instance; deferred).
 - Central caching or multi-backend routing behind the central control point.
+- Parity items with the imperative `deploy_litellm` that are deferred to a follow-up (FR-014): provider-aware `model_list` auto-construction, embeddings routing + RAG repointing, and Ollama/vLLM fronting. The imperative path remains until these land; this is distinct from the budget epic.
