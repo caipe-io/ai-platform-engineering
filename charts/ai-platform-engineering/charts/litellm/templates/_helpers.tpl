@@ -72,3 +72,16 @@ Falls back to the umbrella global.llmSecrets secret when not overridden.
 {{- "llm-secret" }}
 {{- end }}
 {{- end }}
+
+{{/*
+Name of the proxy-only Secret holding the real upstream provider credentials.
+Separate from the shared/master credential (litellm.masterKeySecretName) - agents never see it.
+Empty when neither a referenced name nor create is set.
+*/}}
+{{- define "litellm.upstreamSecretName" -}}
+{{- if .Values.upstreamSecret.create -}}
+{{- printf "%s-upstream" (include "litellm.fullname" .) -}}
+{{- else -}}
+{{- .Values.upstreamSecret.name -}}
+{{- end -}}
+{{- end }}

@@ -116,7 +116,7 @@ Local dev: `deploy/litellm/`, `docker-compose.yaml`, `docker-compose.dev.yaml`. 
 **Purpose**: Make the subchart the single implementation and retire `deploy_litellm`, without regressing any capability. See plan.md "Migration from the imperative proxy" for the parity ledger.
 
 - [x] T028 Reframe spec/plan to target replacing `deploy_litellm` (this update): spec FR-013/FR-014 + clarifications, plan migration ledger. The routing spec is no longer greenfield.
-- [ ] T029 Formalise a proxy-only upstream-provider secret in the subchart (separate from the agent-facing shared secret), matching `litellm-upstream-secret` (ledger c).
+- [x] T029 Formalise a proxy-only upstream-provider secret in the subchart (separate from the agent-facing shared secret), matching `litellm-upstream-secret` (ledger c).
 - [ ] T030 Migrate `setup-caipe.sh --litellm` to set `llmRouting.litellm.enabled=true` + the global chat-routing env and delegate to the subchart for the chat path, instead of `kubectl apply`ing its own `litellm-proxy` (ledger d). Guard: only the chat path until e–g land.
 - [ ] T031 [DEFERRED] Provider-aware `model_list` auto-construction for supported upstreams, parity with `_litellm_unified_assets` (ledger e).
 - [ ] T032 [DEFERRED] Embeddings routing + RAG repointing through the subchart, parity with the imperative unified mode (ledger f).

@@ -40,9 +40,17 @@ spec:
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.extraEnvFrom }}
+          {{- $upstream := include "litellm.upstreamSecretName" . }}
+          {{- if or $upstream .Values.extraEnvFrom }}
           envFrom:
+            {{- if $upstream }}
+            # Proxy-only upstream provider credentials (never the agent-facing secret).
+            - secretRef:
+                name: {{ $upstream }}
+            {{- end }}
+            {{- with .Values.extraEnvFrom }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           volumeMounts:
             - name: config

@@ -34,19 +34,31 @@ masterKeySecret:
   name: ""            # empty -> falls back to .Values.global.llmSecrets.secretName
   key: OPENAI_API_KEY
 
-# Upstream provider config. The operator supplies the real, cost-bearing provider key via
-# the secret framework (extraEnvFrom / a referenced secret) and lists the models the proxy
-# serves. `model_list` maps the model an agent requests to the real upstream + native params.
+# Upstream provider config. `model_list` maps the model an agent requests to the real upstream +
+# native params; it references the real provider credentials via `os.environ/*` names that resolve
+# from `upstreamSecret` below.
 # NOTE: keep provider API keys in secrets, never in plaintext values.
 modelList: []
   # - model_name: gpt-4o                 # what agents request
   #   litellm_params:
   #     model: azure/gpt-4o              # real upstream (openai/azure/bedrock/anthropic/...)
-  #     api_base: os.environ/AZURE_API_BASE
-  #     api_key: os.environ/AZURE_API_KEY
+  #     api_base: os.environ/AZURE_OPENAI_ENDPOINT
+  #     api_key: os.environ/AZURE_OPENAI_API_KEY
 
-# Extra env for the proxy container - the place to inject the real upstream provider key
-# from a Secret (e.g. AZURE_API_KEY, AWS creds, ANTHROPIC_API_KEY).
+# Proxy-only upstream-provider secret: the real, cost-bearing provider credentials, injected into
+# the proxy via envFrom so the `os.environ/*` refs in modelList resolve. This is SEPARATE from
+# masterKeySecret (the agent-facing shared credential) - agents never see these keys. Key names
+# match the imperative `litellm-upstream-secret`, e.g. ANTHROPIC_API_KEY; AWS_ACCESS_KEY_ID /
+# AWS_SECRET_ACCESS_KEY / AWS_REGION; AZURE_OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT.
+upstreamSecret:
+  # RECOMMENDED: reference an existing / external-secrets (ESO) secret holding the upstream creds.
+  name: ""            # empty and create=false -> no upstream envFrom (use extraEnvFrom instead)
+  # Helm-generated fallback (dev / values-secrets strategy only). Do NOT commit real keys here.
+  create: false
+  data: {}
+  #   ANTHROPIC_API_KEY: sk-ant-...
+
+# Escape hatch for any extra env / envFrom on the proxy beyond upstreamSecret above.
 extraEnv: []
 extraEnvFrom: []
 

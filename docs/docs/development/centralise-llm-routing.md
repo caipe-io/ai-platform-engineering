@@ -62,17 +62,20 @@ Supply the real provider key via the secret framework and map the models agents
 request to a real upstream. Keep provider keys in Secrets, never in plaintext
 values.
 
+The real upstream key lives in a **proxy-only** secret (`upstreamSecret`), separate
+from the agent-facing shared credential, agents never see it. The proxy reads it via
+`os.environ/*` refs in `modelList`.
+
 ```yaml
 litellm:
-  extraEnvFrom:
-    - secretRef:
-        name: my-llm-provider-secret     # e.g. AZURE_API_KEY, ANTHROPIC_API_KEY, AWS creds
+  upstreamSecret:
+    name: my-llm-provider-secret         # existing/ESO secret: ANTHROPIC_API_KEY, AWS_*, AZURE_OPENAI_*
   modelList:
     - model_name: gpt-4o                 # what agents request
       litellm_params:
         model: azure/gpt-4o              # the real upstream + native params
-        api_base: os.environ/AZURE_API_BASE
-        api_key: os.environ/AZURE_API_KEY
+        api_base: os.environ/AZURE_OPENAI_ENDPOINT
+        api_key: os.environ/AZURE_OPENAI_API_KEY
 ```
 
 ### 3. Deploy and verify
