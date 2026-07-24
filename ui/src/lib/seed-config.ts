@@ -1823,6 +1823,36 @@ export async function applySeedConfig(): Promise<void> {
             ? `, ${credBackfillCount} MCP credential_sources backfilled`
             : ""),
       );
+
+      // Immediately re-associate AgentGateway routes after seed so the UI
+      // reflects live route state without waiting for the next config-bridge
+      // poll cycle (~8 min). Seed clears agentgateway_discovered on every
+      // restart; this restores it in the same startup cycle. Best-effort —
+      // an unreachable AgentGateway is logged and skipped (config-bridge
+      // will heal on its next poll).
+      try {
+        const { syncSelectedAgentGatewayMcpServers } = await import(
+          "@/app/api/mcp-servers/agentgateway/_lib"
+        );
+        const syncResult = await syncSelectedAgentGatewayMcpServers();
+        const synced =
+          syncResult.summary.added +
+          syncResult.summary.migrated +
+          syncResult.summary.refreshed;
+        if (synced > 0) {
+          console.log(
+            `[seed-config] AgentGateway sync on startup: ` +
+              `added ${syncResult.summary.added}, ` +
+              `migrated ${syncResult.summary.migrated}, ` +
+              `refreshed ${syncResult.summary.refreshed}`,
+          );
+        }
+      } catch (syncErr) {
+        console.warn(
+          "[seed-config] AgentGateway sync on startup skipped (AgentGateway not yet reachable):",
+          syncErr,
+        );
+      }
     } catch (err) {
       // Log but don't crash — seeding failure shouldn't prevent startup
       console.error("[seed-config] Failed to apply seed config:", err);
