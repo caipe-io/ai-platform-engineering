@@ -341,6 +341,7 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
     }
     void loadSharing();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, server?._id]);
 
   const handleAddArg = () => {
