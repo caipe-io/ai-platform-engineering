@@ -56,6 +56,23 @@ export async function syncSelectedAgentGatewayMcpServers(ids?: string[]) {
   for (const target of discovery.targets) {
     if (!selectedIds.has(target.id)) continue;
     if (target.status === "existing") {
+      // The route is live in AgentGateway's own config right now (that's what
+      // "existing" means — see buildAgentGatewayMcpDiscovery), but seed's
+      // full-document replaceOne wipes agentgateway_discovered back to
+      // undefined on every restart. Persist the confirmation here so the UI
+      // and dynamic-agents tool wiring can trust the field for every
+      // gitops-configured server, not just newly-discovered ones.
+      await collection.updateOne(
+        { _id: target.id } as never,
+        {
+          $set: {
+            agentgateway_discovered: true,
+            agentgateway_endpoint: target.endpoint,
+            agentgateway_target_endpoint: target.target_endpoint,
+            updated_at: new Date().toISOString(),
+          },
+        } as never,
+      );
       await reconcileConfigDrivenMcpServerRelationships({
         serverId: target.id,
         organizationId: caipeOrgKey(),

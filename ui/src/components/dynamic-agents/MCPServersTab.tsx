@@ -138,7 +138,13 @@ function toolHealthStatus(
       title: `${probe.tools.length} tool${probe.tools.length === 1 ? "" : "s"} available`,
     };
   }
-  if (server.source === "agentgateway" && server.agentgateway_discovered !== true) {
+  // Any gitops-configured server declaring agentgateway_target_endpoint is
+  // meant to route through AgentGateway, whether or not it also sets
+  // source: "agentgateway" (that field is only set on auto-discovered rows;
+  // hand-authored gitops entries like a shared-access "*-admin" server often
+  // omit it). Gate on the target endpoint instead so every AgentGateway-routed
+  // server gets the same "pending" treatment until confirmed live.
+  if (server.agentgateway_target_endpoint && server.agentgateway_discovered !== true) {
     return {
       status: "pending",
       label: "Waiting for sync",
@@ -665,7 +671,7 @@ export function MCPServersTab({
                   <div
                     className={`grid grid-cols-12 gap-4 py-3 px-2 rounded-lg hover:bg-muted/50 items-center ${
                       serverCanManage(server) ? "cursor-pointer" : "cursor-default"
-                    }`}
+                    } ${toolHealth.status === "pending" ? "opacity-60" : ""}`}
                     onClick={() => openServer(server)}
                   >
                     <div className="col-span-3">
