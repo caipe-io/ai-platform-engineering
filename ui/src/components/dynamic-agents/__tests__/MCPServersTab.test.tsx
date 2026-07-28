@@ -62,6 +62,18 @@ describe("MCPServersTab", () => {
           json: async () => ({ success: true, data: jiraServer }),
         } as Response);
       }
+      if (url === "/api/mcp-servers/jira/sharing") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ success: true, data: { teamSlugs: [] } }),
+        } as Response);
+      }
+      if (url === "/api/dynamic-agents/teams") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ success: true, data: [] }),
+        } as Response);
+      }
       if (url === "/api/mcp-servers/probe?id=jira" && init?.method === "POST") {
         return Promise.resolve({
           json: async () => ({
@@ -477,6 +489,18 @@ describe("MCPServersTab", () => {
       if (typeof url === "string" && url.startsWith("/api/mcp-servers?id=") && init?.method === "PUT") {
         putCalls.push(url);
       }
+      if (url === "/api/mcp-servers/jira/sharing") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ success: true, data: { teamSlugs: [] } }),
+        } as Response);
+      }
+      if (url === "/api/dynamic-agents/teams") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ success: true, data: [] }),
+        } as Response);
+      }
       throw new Error(`Unexpected fetch: ${url}`);
     }) as unknown as typeof fetch;
 
@@ -502,6 +526,18 @@ describe("MCPServersTab", () => {
               capabilities: listCapabilities,
             },
           }),
+        } as Response);
+      }
+      if (url === "/api/mcp-servers/jira/sharing") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ success: true, data: { teamSlugs: [] } }),
+        } as Response);
+      }
+      if (url === "/api/dynamic-agents/teams") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ success: true, data: [] }),
         } as Response);
       }
       if (typeof url === "string" && url.startsWith("/api/mcp-servers?id=jira") && init?.method === "DELETE") {
