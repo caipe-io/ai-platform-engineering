@@ -378,6 +378,7 @@ export interface SharingAccess {
   granted_at: Date;
   accessed_at?: Date;
   revoked_at?: Date;
+  revoked_by?: string;
 }
 
 // ============================================================================

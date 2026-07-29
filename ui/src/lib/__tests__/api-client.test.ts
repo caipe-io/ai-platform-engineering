@@ -210,6 +210,30 @@ describe('APIClient — Archive methods', () => {
       await expect(apiClient.getTrash()).rejects.toThrow();
     });
   });
+
+  describe('conversation sharing', () => {
+    it('sends DELETE with the recipient when revoking access', async () => {
+      mockFetch.mockResolvedValue(mockSuccessResponse({ _id: 'conv-1', sharing: {} }));
+
+      await apiClient.revokeConversationShare('conv-1', { email: 'viewer@example.com' });
+
+      const [url, options] = mockFetch.mock.calls[0];
+      expect(url).toBe('/api/chat/conversations/conv-1/share');
+      expect(options.method).toBe('DELETE');
+      expect(JSON.parse(options.body)).toEqual({ email: 'viewer@example.com' });
+    });
+
+    it('passes an AbortSignal to user directory search', async () => {
+      mockFetch.mockResolvedValue(mockSuccessResponse([]));
+      const controller = new AbortController();
+
+      await apiClient.searchUsers('shri', controller.signal);
+
+      const [url, options] = mockFetch.mock.calls[0];
+      expect(url).toBe('/api/users/search?q=shri');
+      expect(options.signal).toBe(controller.signal);
+    });
+  });
 });
 
 describe('APIClient — console output', () => {

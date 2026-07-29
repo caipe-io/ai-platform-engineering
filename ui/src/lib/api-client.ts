@@ -334,6 +334,27 @@ class APIClient {
     });
   }
 
+  async updateConversationSharePermission(
+    conversationId: string,
+    target: { email?: string; team_id?: string },
+    permission: 'view' | 'comment',
+  ): Promise<Conversation> {
+    return this.request(`/api/chat/conversations/${conversationId}/share`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...target, permission }),
+    });
+  }
+
+  async revokeConversationShare(
+    conversationId: string,
+    target: { email?: string; team_id?: string },
+  ): Promise<Conversation> {
+    return this.request(`/api/chat/conversations/${conversationId}/share`, {
+      method: 'DELETE',
+      body: JSON.stringify(target),
+    });
+  }
+
   async getSharedConversations(params?: {
     page?: number;
     page_size?: number;
@@ -401,9 +422,9 @@ class APIClient {
     });
   }
 
-  async searchUsers(query: string): Promise<UserPublicInfo[]> {
+  async searchUsers(query: string, signal?: AbortSignal): Promise<UserPublicInfo[]> {
     const searchParams = new URLSearchParams({ q: query });
-    return this.request(`/api/users/search?${searchParams}`);
+    return this.request(`/api/users/search?${searchParams}`, { signal });
   }
 
   async getUserStats(): Promise<UserStats> {

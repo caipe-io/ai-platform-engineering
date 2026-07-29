@@ -46,8 +46,25 @@ function isTeamAlreadyShared(team: Team, sharedTeamRefs: string[]): boolean {
   return teamAliases(team).some((alias) => sharedRefs.has(alias));
 }
 
-async function fetchShareableTeams(): Promise<Team[]> {
-  const teamsResponse = await fetch(TEAM_SHARE_SEARCH_ENDPOINT);
+async function fetchShareableTeams(options: {
+  query?: string;
+  refs?: string[];
+  signal?: AbortSignal;
+} = {}): Promise<Team[]> {
+  const searchParams = new URLSearchParams();
+  if (options.query) {
+    searchParams.set('q', options.query);
+    searchParams.set('limit', '20');
+  }
+  for (const ref of options.refs || []) searchParams.append('ref', ref);
+  if (!options.query && options.refs?.length) {
+    searchParams.set('limit', String(Math.min(options.refs.length, 50)));
+  }
+  const queryString = searchParams.toString();
+  const teamsResponse = await fetch(
+    `${TEAM_SHARE_SEARCH_ENDPOINT}${queryString ? `?${queryString}` : ''}`,
+    { signal: options.signal },
+  );
   if (!teamsResponse.ok) return [];
   const teamsData = await teamsResponse.json();
   if (Array.isArray(teamsData.data)) return teamsData.data;
@@ -116,7 +133,8 @@ export function ShareDialog({
         // Build per-team permission map from sharing.team_permissions
         setTeamPermissions(sharing?.team_permissions || {});
 
-        // Update store with sharing info so Sidebar shows icon immediately
+        // Keep the sidebar snapshot current. initialSharing is intentionally
+        // not a load-effect dependency, so this store update cannot refetch.
         if (sharing) {
           updateConversationSharing(conversationId, {
             is_public: false,
@@ -129,7 +147,7 @@ export function ShareDialog({
         // Load team names for display
         if (teamIds.length > 0) {
           try {
-            const allTeams = await fetchShareableTeams();
+            const allTeams = await fetchShareableTeams({ refs: teamIds });
             const namesMap: Record<string, string> = {};
             allTeams.forEach((team: Team) => {
               for (const alias of teamAliases(team)) {
@@ -164,7 +182,7 @@ export function ShareDialog({
     }
   }, [conversationId, updateConversationSharing]);
 
-  // Load current sharing info
+  // Load current sharing info once when the dialog opens or the conversation changes.
   useEffect(() => {
     if (!open) {
       loadedShareKey.current = null;
@@ -190,6 +208,8 @@ export function ShareDialog({
 
   // Search users and teams as they type
   useEffect(() => {
+    const query = searchInput.trim();
+    const controller = new AbortController();
     const searchPeopleAndTeams = async () => {
       if (!canManageSharing) {
         setUserResults([]);
@@ -198,7 +218,7 @@ export function ShareDialog({
         return;
       }
 
-      if (searchInput.length < 2) {
+      if (query.length < 2) {
         setUserResults([]);
         setTeamResults([]);
         setNoResults(false);
@@ -207,51 +227,44 @@ export function ShareDialog({
 
       setSearching(true);
       setNoResults(false);
-      try {
-        // Search users
-        const users = await apiClient.searchUsers(searchInput);
-        const filteredUsers = users.filter(u => !sharedWith.includes(u.email));
-        setUserResults(filteredUsers);
+      const [usersResult, teamsResult] = await Promise.allSettled([
+        apiClient.searchUsers(query, controller.signal),
+        fetchShareableTeams({ query, signal: controller.signal }),
+      ]);
+      if (controller.signal.aborted) return;
 
-        // Search teams (may require admin access - handle gracefully)
-        try {
-          const allTeams = await fetchShareableTeams();
-          // assisted-by Codex Codex-sonnet-4-6
-          // Team chat sharing uses the member-visible team endpoint, not the admin grid API.
-          const searchLower = searchInput.toLowerCase();
-          const matchingTeams = allTeams.filter((team: Team) => {
-            const nameMatch = team.name.toLowerCase().includes(searchLower);
-            const slugMatch = team.slug?.toLowerCase().includes(searchLower);
-            const descMatch = team.description?.toLowerCase().includes(searchLower);
-            const notAlreadyShared = !isTeamAlreadyShared(team, sharedWithTeams);
-            return (nameMatch || slugMatch || descMatch) && notAlreadyShared;
-          });
-          setTeamResults(matchingTeams);
-
-          // Show no results message if both are empty
-          if (filteredUsers.length === 0 && matchingTeams.length === 0 && searchInput.length >= 2) {
-            setNoResults(true);
-          }
-        } catch (teamErr) {
-          console.error("Team search failed:", teamErr);
-          setTeamResults([]);
-          // If team search fails, still check user results
-          if (filteredUsers.length === 0 && searchInput.length >= 2) {
-            setNoResults(true);
-          }
-        }
-      } catch (err) {
-        console.error("Search failed:", err);
-        setUserResults([]);
-        setTeamResults([]);
-        setNoResults(true);
-      } finally {
-        setSearching(false);
+      const users = usersResult.status === 'fulfilled' ? usersResult.value : [];
+      const teams = teamsResult.status === 'fulfilled' ? teamsResult.value : [];
+      if (usersResult.status === 'rejected') {
+        console.error("User search failed:", usersResult.reason);
       }
+      if (teamsResult.status === 'rejected') {
+        console.error("Team search failed:", teamsResult.reason);
+      }
+
+      const filteredUsers = users.filter(u => !sharedWith.includes(u.email));
+      const matchingTeams = teams.filter((team) => !isTeamAlreadyShared(team, sharedWithTeams));
+      setUserResults(filteredUsers);
+      setTeamResults(matchingTeams);
+      setNoResults(filteredUsers.length === 0 && matchingTeams.length === 0);
+      setSearching(false);
     };
 
-    const timer = setTimeout(searchPeopleAndTeams, 300);
-    return () => clearTimeout(timer);
+    const timer = setTimeout(() => {
+      void searchPeopleAndTeams().catch((err) => {
+        if (!controller.signal.aborted) {
+          console.error("Search failed:", err);
+          setUserResults([]);
+          setTeamResults([]);
+          setNoResults(true);
+          setSearching(false);
+        }
+      });
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [searchInput, sharedWith, sharedWithTeams, canManageSharing]);
 
   const handleShareUser = async (email: string) => {
@@ -299,32 +312,10 @@ export function ShareDialog({
     if (!canManageSharing) return;
     setLoading(true);
     try {
-      // Update conversation to include team in shared_with_teams
-      const response = await fetch(`/api/chat/conversations/${conversationId}/share`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          team_ids: [teamId],
-          permission: defaultPermission,
-        }),
+      const updatedConversation = await apiClient.shareConversation(conversationId, {
+        team_ids: [teamId],
+        permission: defaultPermission,
       });
-
-      if (!response.ok) {
-        // Try to get error message from API response
-        let errorMessage = 'Failed to share with team';
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.error || errorData.message || errorMessage;
-        } catch {
-          // If response is not JSON, use status text
-          errorMessage = response.statusText || errorMessage;
-        }
-        throw new Error(errorMessage);
-      }
-
-      // Parse response to get updated conversation
-      const responseData = await response.json();
-      const updatedConversation = responseData.data;
       
       // Update store with new sharing info so Sidebar shows icon immediately
       if (updatedConversation?.sharing) {
@@ -351,19 +342,6 @@ export function ShareDialog({
     }
   };
 
-  // Handle sharing by email directly (for users not yet in system)
-  const handleShareByEmail = async () => {
-    if (!canManageSharing) return;
-    // Simple email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(searchInput)) {
-      alert("Please enter a valid email address");
-      return;
-    }
-
-    await handleShareUser(searchInput);
-  };
-
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl);
@@ -380,12 +358,7 @@ export function ShareDialog({
   ) => {
     if (!canManageSharing) return;
     try {
-      const response = await fetch(`/api/chat/conversations/${conversationId}/share`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...target, permission: newPermission }),
-      });
-      if (!response.ok) return;
+      await apiClient.updateConversationSharePermission(conversationId, target, newPermission);
       if (target.email) {
         setUserPermissions((prev) => ({ ...prev, [target.email!]: newPermission }));
       }
@@ -394,6 +367,46 @@ export function ShareDialog({
       }
     } catch (err) {
       console.error('Failed to update permission:', err);
+      alert(`Failed to update permission: ${getErrorMessage(err, "") || 'Unknown error'}`);
+    }
+  };
+
+  const handleRemoveAccess = async (target: { email?: string; team_id?: string }) => {
+    if (!canManageSharing) return;
+    setLoading(true);
+    try {
+      const updatedConversation = await apiClient.revokeConversationShare(conversationId, target);
+      if (target.email) {
+        const email = target.email;
+        setSharedWith((current) => current.filter((item) => item !== email));
+        setUserPermissions((current) => {
+          const next = { ...current };
+          delete next[email];
+          return next;
+        });
+      }
+      if (target.team_id) {
+        const teamId = target.team_id;
+        setSharedWithTeams((current) => current.filter((item) => item !== teamId));
+        setTeamPermissions((current) => {
+          const next = { ...current };
+          delete next[teamId];
+          return next;
+        });
+      }
+      if (updatedConversation?.sharing) {
+        updateConversationSharing(conversationId, {
+          is_public: false,
+          shared_with: updatedConversation.sharing.shared_with,
+          shared_with_teams: updatedConversation.sharing.shared_with_teams,
+          share_link_enabled: updatedConversation.sharing.share_link_enabled,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to remove access:', err);
+      alert(`Failed to remove access: ${getErrorMessage(err, "") || 'Unknown error'}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -584,27 +597,12 @@ export function ShareDialog({
                   </div>
                 )}
                 
-                {/* No results - offer to share by email */}
+                {/* Only provisioned Keycloak users are shareable. */}
                 {noResults && !searching && userResults.length === 0 && teamResults.length === 0 && (
                   <div className="px-3 py-4">
-                    <p className="text-sm text-muted-foreground mb-2">
+                    <p className="text-sm text-muted-foreground">
                       No people or teams found
                     </p>
-                    {/* Only show email share if it looks like an email */}
-                    {/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(searchInput) && (
-                      <>
-                        <button
-                          onClick={handleShareByEmail}
-                          disabled={loading}
-                          className="w-full px-3 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 text-sm font-medium"
-                        >
-                          Share with {searchInput}
-                        </button>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          They&apos;ll get access when they log in
-                        </p>
-                      </>
-                    )}
                   </div>
                 )}
               </div>
@@ -650,10 +648,9 @@ export function ShareDialog({
                     </Select>
                     <button
                       className="text-muted-foreground hover:text-destructive"
-                      onClick={() => {
-                        // TODO: Implement remove access
-                        setSharedWith(sharedWith.filter(e => e !== email));
-                      }}
+                      onClick={() => void handleRemoveAccess({ email })}
+                      disabled={loading}
+                      aria-label={`Remove access for ${email}`}
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -691,10 +688,9 @@ export function ShareDialog({
                     </Select>
                     <button
                       className="text-muted-foreground hover:text-destructive"
-                      onClick={() => {
-                        // TODO: Implement remove team access
-                        setSharedWithTeams(sharedWithTeams.filter(t => t !== teamId));
-                      }}
+                      onClick={() => void handleRemoveAccess({ team_id: teamId })}
+                      disabled={loading}
+                      aria-label={`Remove access for ${teamNames[teamId] || teamId}`}
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>

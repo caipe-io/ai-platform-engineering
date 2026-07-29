@@ -7,6 +7,7 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
 }))
 
+const mockShareConversation = jest.fn()
 jest.mock('@/store/chat-store', () => ({
   useChatStore: (selector: unknown) => selector({ updateConversationSharing: mockUpdateConversationSharing }),
 }))
@@ -14,7 +15,9 @@ jest.mock('@/store/chat-store', () => ({
 jest.mock('@/lib/api-client', () => ({
   apiClient: {
     searchUsers: jest.fn().mockResolvedValue([]),
-    shareConversation: jest.fn(),
+    shareConversation: (...args: unknown[]) => mockShareConversation(...args),
+    updateConversationSharePermission: jest.fn(),
+    revokeConversationShare: jest.fn(),
   },
 }))
 
@@ -30,6 +33,7 @@ describe('ShareDialog — public sharing removed', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    mockShareConversation.mockResolvedValue(undefined)
     ;(global.fetch as jest.Mock).mockImplementation((url: string, opts?: unknown) => {
       if (url.includes('/api/dynamic-agents/teams')) {
         return Promise.resolve({
@@ -85,6 +89,10 @@ describe('ShareDialog — public sharing removed', () => {
       shared_with_teams: [] as string[],
       share_link_enabled: false,
     }
+    mockShareConversation.mockImplementation(async (_conversationId, request) => {
+      sharing = { ...sharing, shared_with_teams: request.team_ids }
+      return { sharing }
+    })
 
     ;(global.fetch as jest.Mock).mockImplementation((url: string, opts?: unknown) => {
       if (url.includes('/api/dynamic-agents/teams')) {
@@ -111,14 +119,6 @@ describe('ShareDialog — public sharing removed', () => {
           json: async () => ({ data: { sharing } }),
         })
       }
-      if (url.includes('/share') && opts?.method === 'POST') {
-        sharing = { ...sharing, shared_with_teams: ['platform'] }
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: async () => ({ data: { sharing } }),
-        })
-      }
       return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
     })
 
@@ -139,12 +139,23 @@ describe('ShareDialog — public sharing removed', () => {
     fireEvent.click(screen.getByText('Platform Team'))
 
     await waitFor(() => {
-      const postCalls = (global.fetch as jest.Mock).mock.calls.filter(
-        ([url, opts]: [string, unknown]) => url.includes('/share') && opts?.method === 'POST',
+      expect(mockShareConversation).toHaveBeenCalledWith(
+        'conv-123',
+        { team_ids: ['platform'], permission: 'comment' },
       )
-      expect(postCalls.length).toBeGreaterThan(0)
-      const body = JSON.parse(postCalls[0][1].body)
-      expect(body).toEqual({ team_ids: ['platform'], permission: 'comment' })
     })
+  })
+
+  it('does not offer direct email sharing for an unprovisioned user', async () => {
+    render(<ShareDialog {...defaultProps} />)
+    const search = await screen.findByPlaceholderText('Search by email or team name...')
+
+    fireEvent.change(search, { target: { value: 'not-logged-in@example.com' } })
+
+    await waitFor(() => {
+      expect(screen.getByText('No people or teams found')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Share with not-logged-in@example.com')).not.toBeInTheDocument()
+    expect(screen.queryByText(/get access when they log in/i)).not.toBeInTheDocument()
   })
 })

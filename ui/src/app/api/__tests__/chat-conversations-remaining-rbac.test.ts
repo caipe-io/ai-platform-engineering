@@ -285,9 +285,19 @@ describe("remaining conversation routes use OpenFGA instead of legacy owner/team
   it("share updates accept OpenFGA share permission without legacy owner equality", async () => {
     const conversations = collectionWithItems([conversation()]);
     const sharingAccess = { find: jest.fn(), insertMany: jest.fn(), updateOne: jest.fn() };
+    const users = {
+      find: jest.fn().mockReturnValue({
+        project: jest.fn().mockReturnValue({
+          toArray: jest.fn().mockResolvedValue([
+            { email: "viewer@example.com", keycloak_sub: "viewer-sub" },
+          ]),
+        }),
+      }),
+    };
     mockGetCollection.mockImplementation(async (name: string) => {
       if (name === "conversations") return conversations;
       if (name === "sharing_access") return sharingAccess;
+      if (name === "users") return users;
       throw new Error(`unexpected collection ${name}`);
     });
     const { POST } = await import("../chat/conversations/[id]/share/route");
