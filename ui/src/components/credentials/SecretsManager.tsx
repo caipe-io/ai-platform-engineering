@@ -87,7 +87,9 @@ export function SecretsManager() {
   );
 
   const reportError = React.useCallback((reason: unknown, fallback: string) => {
-    const message = reason instanceof Error && reason.message ? reason.message : fallback;
+    const message = reason instanceof Error && reason.message && !(reason instanceof TypeError)
+      ? reason.message
+      : fallback;
     setError(message);
     toast(message, "error", 8000);
   }, [toast]);
