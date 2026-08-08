@@ -3,6 +3,12 @@ import userEvent from "@testing-library/user-event";
 
 // assisted-by Codex Codex-sonnet-4-6
 
+const mockToast = jest.fn();
+
+jest.mock("@/components/ui/toast", () => ({
+  useToast: () => ({ toast: mockToast }),
+}));
+
 import { SecretsManager } from "../SecretsManager";
 
 describe("SecretsManager", () => {
@@ -183,6 +189,34 @@ describe("SecretsManager", () => {
     });
     expect(screen.queryByLabelText(/secret value/i)).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("new-token-value")).not.toBeInTheDocument();
+  });
+
+  it("shows denied organization-secret creation as a toast and inline error", async () => {
+    const user = userEvent.setup();
+    render(<SecretsManager />);
+
+    await screen.findByText("GitHub token");
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({
+        success: false,
+        error: "Only organization admins can create organization secrets.",
+      }),
+    } as Response);
+
+    await user.click(screen.getByRole("button", { name: /add secret/i }));
+    await user.type(screen.getByLabelText(/name/i), "Organization token");
+    await user.type(screen.getByLabelText("Secret value", { selector: "input" }), "secret-value");
+    await user.click(screen.getByLabelText(/save as organization secret/i));
+    await user.click(screen.getByRole("button", { name: /save secret/i }));
+
+    expect(await screen.findByText("Only organization admins can create organization secrets.")).toBeInTheDocument();
+    expect(mockToast).toHaveBeenCalledWith(
+      "Only organization admins can create organization secrets.",
+      "error",
+      8000,
+    );
+    expect(screen.getByLabelText("Secret value", { selector: "input" })).toHaveValue("secret-value");
   });
 
   it("clears the pre-save peek when the add dialog closes", async () => {
