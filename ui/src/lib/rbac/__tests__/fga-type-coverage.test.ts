@@ -68,7 +68,10 @@ const chartModel = JSON.parse(readFileSync(CHART_JSON, "utf8")) as {
   type_definitions: Array<{
     type: string;
     metadata?: {
-      relations?: Record<string, { directly_related_user_types?: Array<{ type: string }> }>;
+      relations?: Record<
+        string,
+        { directly_related_user_types?: Array<{ type: string; relation?: string }> }
+      >;
     };
   }>;
 };
@@ -111,6 +114,29 @@ describe("fga type coverage", () => {
         ?.directly_related_user_types?.map((subject) => subject.type) ?? [];
       expect(subjectTypes).toContain("webex_bot_installation");
       expect(subjectTypes).not.toContain("webex_space");
+    }
+  });
+
+  it("allows organization usersets generated for organization-owned secrets", () => {
+    const secretRef = chartModel.type_definitions.find(
+      (definition) => definition.type === "secret_ref",
+    );
+    const allowedSubjects = (relation: string) =>
+      secretRef?.metadata?.relations?.[relation]?.directly_related_user_types ?? [];
+
+    for (const relation of ["metadata_reader", "user"]) {
+      expect(allowedSubjects(relation)).toEqual(
+        expect.arrayContaining([
+          { type: "organization", relation: "member" },
+          { type: "organization", relation: "admin" },
+        ]),
+      );
+    }
+    for (const relation of ["manager", "auditor"]) {
+      expect(allowedSubjects(relation)).toContainEqual({
+        type: "organization",
+        relation: "admin",
+      });
     }
   });
 

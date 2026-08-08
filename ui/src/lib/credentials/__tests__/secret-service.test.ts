@@ -206,6 +206,31 @@ describe("SecretService", () => {
     expect(refs.docs[0]).not.toHaveProperty("maskedPreview");
   });
 
+  it("cleans up the encrypted payload and relationships when secret creation fails", async () => {
+    const {
+      refs,
+      payloadStore,
+      reconcileOwnerRelationships,
+      deleteAllRelationships,
+      service,
+    } = createService();
+    reconcileOwnerRelationships.mockRejectedValueOnce(new Error("OpenFGA tuple write failed"));
+
+    await expect(
+      service.createSecret({
+        session: { sub: "alice-sub" },
+        owner: { type: "organization", id: "example-org" },
+        name: "Example token",
+        type: "bearer_token",
+        plaintext: "example-token-value",
+      }),
+    ).rejects.toThrow("OpenFGA tuple write failed");
+
+    expect(deleteAllRelationships).toHaveBeenCalledWith("secret-1");
+    expect(payloadStore.deleteSecret).toHaveBeenCalledWith("secret-1");
+    expect(refs.docs).toEqual([]);
+  });
+
   it("adds usage metadata without loading plaintext", async () => {
     const resolveUsage = jest.fn(async () => [
       {
