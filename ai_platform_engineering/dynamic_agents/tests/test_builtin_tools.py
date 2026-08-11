@@ -1,6 +1,10 @@
 import importlib
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
+
+import pytest
 
 
 def test_self_identity_returns_agent_id() -> None:
@@ -205,3 +209,140 @@ def test_pinned_adapter_preserves_https_server_identity() -> None:
     assert call.kwargs["scheme"] == "https"
     assert call.kwargs["pool_kwargs"]["assert_hostname"] == "docs.example.com"
     assert call.kwargs["pool_kwargs"]["server_hostname"] == "docs.example.com"
+
+
+def test_pinned_request_uses_validated_address_and_original_host_header() -> None:
+    received: dict[str, str] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            received["host"] = self.headers.get("Host", "")
+            received["path"] = self.path
+            payload = b"pinned response"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, _format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        builtin_tools = importlib.import_module("dynamic_agents.services.builtin_tools")
+        port = server.server_address[1]
+        original_getaddrinfo = builtin_tools.socket.getaddrinfo
+        resolved_hosts: list[str] = []
+
+        def recording_getaddrinfo(host: str, *args: object, **kwargs: object):
+            resolved_hosts.append(host)
+            if host == "rebind.example.test":
+                raise AssertionError("the original hostname must not be resolved during the request")
+            return original_getaddrinfo(host, *args, **kwargs)
+
+        with patch(
+            "dynamic_agents.services.builtin_tools.socket.getaddrinfo",
+            side_effect=recording_getaddrinfo,
+        ):
+            response = builtin_tools._request_pinned_url(
+                f"http://rebind.example.test:{port}/report",
+                "127.0.0.1",
+                5,
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert response.text == "pinned response"
+    assert "rebind.example.test" not in resolved_hosts
+    assert received == {
+        "host": f"rebind.example.test:{port}",
+        "path": "/report",
+    }
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://[2001:db8::10]/", "[2001:db8::10]"),
+        ("http://[2001:db8::10]:8080/", "[2001:db8::10]:8080"),
+        ("https://docs.example.com:443/", "docs.example.com"),
+        ("https://docs.example.com:8443/", "docs.example.com:8443"),
+    ],
+)
+def test_host_header_preserves_ipv6_brackets_and_non_default_ports(
+    url: str,
+    expected: str,
+) -> None:
+    builtin_tools = importlib.import_module("dynamic_agents.services.builtin_tools")
+    assert builtin_tools._host_header(url) == expected
+
+
+def test_fetch_url_revalidates_and_repins_every_redirect() -> None:
+    builtin_tools = importlib.import_module("dynamic_agents.services.builtin_tools")
+    redirect = Mock(
+        status_code=302,
+        headers={"location": "https://cdn.example.com/final"},
+    )
+    final = Mock(
+        status_code=200,
+        headers={"content-type": "text/plain"},
+        text="final response",
+    )
+    final.raise_for_status = Mock()
+
+    with patch(
+        "dynamic_agents.services.builtin_tools._validate_and_resolve_fetch_url",
+        side_effect=[
+            (True, "", "docs.example.com", "93.184.216.34"),
+            (True, "", "cdn.example.com", "93.184.216.35"),
+        ],
+    ) as mock_validate, patch(
+        "dynamic_agents.services.builtin_tools._request_pinned_url",
+        side_effect=[redirect, final],
+    ) as mock_request:
+        result = builtin_tools._fetch_url_content(
+            "https://docs.example.com/start",
+            "text",
+            30,
+            "*.example.com",
+        )
+
+    assert result == "final response"
+    assert mock_validate.call_args_list == [
+        call("https://docs.example.com/start", "*.example.com"),
+        call("https://cdn.example.com/final", "*.example.com"),
+    ]
+    assert mock_request.call_args_list == [
+        call("https://docs.example.com/start", "93.184.216.34", 30),
+        call("https://cdn.example.com/final", "93.184.216.35", 30),
+    ]
+
+
+def test_fetch_url_connection_failure_does_not_resolve_or_retry_a_fallback() -> None:
+    builtin_tools = importlib.import_module("dynamic_agents.services.builtin_tools")
+    with patch(
+        "dynamic_agents.services.builtin_tools._resolve_host_addresses",
+        return_value=["93.184.216.34", "93.184.216.35"],
+    ) as mock_resolve, patch(
+        "dynamic_agents.services.builtin_tools._request_pinned_url",
+        side_effect=builtin_tools.requests.exceptions.ConnectionError("connection failed"),
+    ) as mock_request:
+        result = builtin_tools._fetch_url_content(
+            "https://docs.example.com/report",
+            "text",
+            30,
+            "*.example.com",
+        )
+
+    assert result == "ERROR: Network error: connection failed"
+    mock_resolve.assert_called_once_with("docs.example.com")
+    mock_request.assert_called_once_with(
+        "https://docs.example.com/report",
+        "93.184.216.34",
+        30,
+    )
