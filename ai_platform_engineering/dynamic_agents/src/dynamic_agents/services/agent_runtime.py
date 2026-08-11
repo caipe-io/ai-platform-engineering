@@ -88,6 +88,7 @@ from dynamic_agents.services.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
 )
+from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
 from dynamic_agents.services.tracing import TracingManager
 
@@ -961,6 +962,11 @@ class AgentRuntime:
         if builtin_tools:
             tools = tools + builtin_tools
 
+        # 2b. Add remote A2A agents as delegation tools
+        remote_agent_tools = await self._build_remote_agent_tools()
+        if remote_agent_tools:
+            tools = tools + remote_agent_tools
+
         # 3. Wrap all tools with error handling
         #    Exceptions become LLM-visible "ERROR: ..." strings instead of crashing the agent loop.
         if tools:
@@ -1239,6 +1245,26 @@ class AgentRuntime:
             f"[agent] Agent '{self.config.name}' initialized in {init_duration:.2f}s: "
             f"tools={len(tools)}, subagents={len(subagents) if subagents else 0}"
         )
+
+    async def _build_remote_agent_tools(self) -> list:
+        """Build one delegation tool per remote A2A agent in ``REMOTE_AGENT_URLS``.
+
+        Returns:
+            List of LangChain tools, one per configured remote agent URL.
+        """
+        urls = [u.strip() for u in (self.settings.remote_agent_urls or "").split(",") if u.strip()]
+        if not urls:
+            return []
+
+        tools = [
+            await create_remote_agent_tool(a2a_url=url, bearer_token=self._auth_bearer)
+            for url in urls
+        ]
+        logger.info(
+            f"Agent '{self.config.name}': added {len(tools)} remote agent tools: "
+            f"{[t.name for t in tools]}"
+        )
+        return tools
 
     def _build_builtin_tools(
         self,
