@@ -90,7 +90,7 @@ def test_fetch_url_blocks_private_resolved_addresses(monkeypatch) -> None:
 
     fetch_url = builtin_tools.create_fetch_url_tool(allowed_domains="*")
 
-    with patch("dynamic_agents.services.builtin_tools.requests.get") as mock_get:
+    with patch("dynamic_agents.services.builtin_tools._request_pinned_url") as mock_get:
         mock_response = Mock()
         mock_response.text = "metadata"
         mock_response.headers = {"content-type": "text/plain"}
@@ -132,7 +132,7 @@ def test_fetch_url_blocks_redirect_to_private_ip() -> None:
     redirect_response.headers = {"location": "https://redirect.example.com/secret"}
 
     with patch("dynamic_agents.services.builtin_tools.socket.getaddrinfo", side_effect=fake_getaddrinfo), \
-         patch("dynamic_agents.services.builtin_tools.requests.get", return_value=redirect_response):
+         patch("dynamic_agents.services.builtin_tools._request_pinned_url", return_value=redirect_response):
         result = fetch_url.invoke({"url": "https://docs.example.com/"})
 
     assert result.startswith("ERROR:")
@@ -150,8 +150,58 @@ def test_fetch_url_blocks_too_many_redirects() -> None:
 
     with patch("dynamic_agents.services.builtin_tools.socket.getaddrinfo",
                return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]), \
-         patch("dynamic_agents.services.builtin_tools.requests.get", return_value=redirect_response):
+         patch("dynamic_agents.services.builtin_tools._request_pinned_url", return_value=redirect_response):
         result = fetch_url.invoke({"url": "https://docs.example.com/"})
 
     assert result.startswith("ERROR:")
     assert "Too many redirects" in result
+
+
+def test_fetch_url_connects_to_the_validated_address() -> None:
+    builtin_tools = importlib.import_module("dynamic_agents.services.builtin_tools")
+    response = Mock(
+        status_code=200,
+        headers={"content-type": "text/plain"},
+        text="example response",
+    )
+    response.raise_for_status = Mock()
+
+    with patch(
+        "dynamic_agents.services.builtin_tools._resolve_host_addresses",
+        return_value=["93.184.216.34"],
+    ) as mock_resolve, patch(
+        "dynamic_agents.services.builtin_tools._request_pinned_url",
+        return_value=response,
+    ) as mock_request:
+        result = builtin_tools._fetch_url_content(
+            "https://docs.example.com/guide",
+            "text",
+            30,
+            "*.example.com",
+        )
+
+    assert result == "example response"
+    mock_resolve.assert_called_once_with("docs.example.com")
+    mock_request.assert_called_once_with(
+        "https://docs.example.com/guide",
+        "93.184.216.34",
+        30,
+    )
+
+
+def test_pinned_adapter_preserves_https_server_identity() -> None:
+    builtin_tools = importlib.import_module("dynamic_agents.services.builtin_tools")
+    adapter = builtin_tools._PinnedAddressAdapter("docs.example.com", "93.184.216.34")
+    adapter.poolmanager = Mock()
+    prepared_request = builtin_tools.requests.Request(
+        "GET",
+        "https://docs.example.com/guide",
+    ).prepare()
+
+    adapter.get_connection_with_tls_context(prepared_request, True)
+
+    call = adapter.poolmanager.connection_from_host.call_args
+    assert call.kwargs["host"] == "93.184.216.34"
+    assert call.kwargs["scheme"] == "https"
+    assert call.kwargs["pool_kwargs"]["assert_hostname"] == "docs.example.com"
+    assert call.kwargs["pool_kwargs"]["server_hostname"] == "docs.example.com"
