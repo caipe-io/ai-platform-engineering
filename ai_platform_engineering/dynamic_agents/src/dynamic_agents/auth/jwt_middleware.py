@@ -14,17 +14,10 @@ For every request:
    mismatch), respond 401 immediately with a structured JSON body so
    the BFF can render a meaningful UI error. The request never reaches
    route handlers.
-4. If there is **no** ``Authorization`` header at all, this middleware
-   is intentionally lenient: it lets the request through and the
-   existing ``auth.get_user_context`` dependency handles the
-   ``X-User-Context`` legacy path. This is the rollout-safety hatch
-   so the BFF can keep sending the trusted-header form for now;
-   migrating the BFF to send Bearer is the matching change in
-   ``ui/src/lib/da-proxy.ts``.
-
-The two-path lenience MUST be removed once the BFF migration is
-complete — at which point we hard-fail on no-bearer (FR-004 from
-spec 102, Story 6 acceptance scenario 3).
+4. If there is **no** ``Authorization`` header, reject the request by
+   default. Operators may explicitly set ``DA_REQUIRE_BEARER=false``
+   during a controlled rollback; signed user-context verification still
+   applies on that compatibility path.
 """
 
 from __future__ import annotations
@@ -41,11 +34,9 @@ from dynamic_agents.auth.token_context import current_traceparent, current_user_
 
 logger = logging.getLogger(__name__)
 
-# Module-level toggle: when SET (any non-empty string), every request MUST
-# carry a valid Bearer token; X-User-Context becomes invalid. This is the
-# kill-switch we flip after the BFF migration in ui/src/lib/da-proxy.ts.
-# Default OFF (lenient) so this rollout step does not break the live stack.
-DA_REQUIRE_BEARER = os.environ.get("DA_REQUIRE_BEARER", "").strip().lower() in (
+# Module-level toggle: every request carries a valid Bearer token by default.
+# The false value remains available only as an explicit rollback setting.
+DA_REQUIRE_BEARER = os.environ.get("DA_REQUIRE_BEARER", "true").strip().lower() in (
     "1",
     "true",
     "yes",
@@ -78,7 +69,7 @@ def _validate_bearer_or_none(token: str) -> dict | None:
 class JwtAuthMiddleware(BaseHTTPMiddleware):
     """Validate incoming Bearer JWTs and bind ``current_user_token``.
 
-    See module docstring for the rollout-safety lenience policy.
+    See module docstring for the explicit rollback policy.
     """
 
     async def dispatch(self, request: Request, call_next):

@@ -10,6 +10,7 @@ Covers all four branches of ``JwtAuthMiddleware.dispatch``:
    reaches the handler, contextvar reset on the way out.
 4. Invalid Bearer  -> 401 with ``code=bearer_invalid`` (NEVER falls
    through to the legacy header path; this is the security boundary).
+5. The unset ``DA_REQUIRE_BEARER`` variable defaults to strict mode.
 """
 
 from __future__ import annotations
@@ -74,6 +75,21 @@ def test_no_bearer_strict_returns_401(monkeypatch):
     assert body["code"] == "missing_bearer"
     assert body["reason"] == "not_signed_in"
     assert body["action"] == "sign_in"
+
+
+def test_no_bearer_defaults_to_strict(monkeypatch):
+    monkeypatch.delenv("DA_REQUIRE_BEARER", raising=False)
+    from dynamic_agents.auth import jwt_middleware as mw
+
+    importlib.reload(mw)
+    app = Starlette(routes=[Route("/echo", lambda _request: JSONResponse({"ok": True}))])
+    app.add_middleware(mw.JwtAuthMiddleware)
+
+    with TestClient(app) as client:
+        resp = client.get("/echo")
+
+    assert resp.status_code == 401
+    assert resp.json()["code"] == "missing_bearer"
 
 
 def test_healthz_bypasses_strict_bearer_requirement(monkeypatch):

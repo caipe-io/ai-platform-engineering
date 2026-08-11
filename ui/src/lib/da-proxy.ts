@@ -12,6 +12,7 @@
  *   3. Anonymous fallback — only when SSO is disabled (local dev).
  */
 
+import { createHmac } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerConfig } from "@/lib/config";
 import {
@@ -130,6 +131,15 @@ export async function authenticateRequest(
       canAccessDynamicAgents: s?.canAccessDynamicAgents as boolean | undefined,
     });
     const bearerToken = (s?.accessToken as string | undefined) || undefined;
+    if (!bearerToken) {
+      throw new ApiError(
+        "Your session token is unavailable. Please sign in again.",
+        401,
+        "BEARER_REQUIRED",
+        "session_expired",
+        "sign_in",
+      );
+    }
     const subject = (s?.sub as string | undefined) || user.email;
     const tenantId = (s?.org as string | undefined) || "default";
     const isServiceAccount = (s?.isServiceAccount as boolean | undefined) === true;
@@ -222,6 +232,14 @@ export function buildBackendHeaders(
   };
   if (authResult.userContextHeader) {
     headers["X-User-Context"] = authResult.userContextHeader;
+    const secret = process.env.DA_USER_CONTEXT_HMAC_SECRET?.trim();
+    if (!secret) {
+      throw new Error("DA_USER_CONTEXT_HMAC_SECRET is not configured");
+    }
+    const signature = createHmac("sha256", secret)
+      .update(authResult.userContextHeader)
+      .digest("hex");
+    headers["X-User-Context-Signature"] = `v1=${signature}`;
   }
   if (authResult.bearerToken) {
     headers["Authorization"] = `Bearer ${authResult.bearerToken}`;

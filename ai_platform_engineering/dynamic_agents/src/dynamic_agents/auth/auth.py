@@ -1,16 +1,20 @@
-"""Gateway-trusted authentication for Dynamic Agents.
+"""Signed gateway authentication context for Dynamic Agents.
 
 All requests to DA are proxied through the Next.js gateway, which handles
 OIDC authentication and session management.  The gateway injects a trusted
 ``X-User-Context`` header (base64-encoded JSON) containing pre-computed
 authorization flags.
 
-DA never validates JWTs or calls OIDC endpoints directly.
+The JWT middleware validates the caller token independently. This module
+also verifies the gateway signature before accepting display and role fields.
 """
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
+import os
 
 from fastapi import Depends, HTTPException, Request
 
@@ -67,6 +71,24 @@ async def get_user_context(
                 "Check the UI/API server logs for details."
             ),
         )
+
+    secret = os.getenv("DA_USER_CONTEXT_HMAC_SECRET", "").strip()
+    if not secret:
+        logger.error("DA_USER_CONTEXT_HMAC_SECRET is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="User context verification is not configured",
+        )
+
+    signature = request.headers.get("X-User-Context-Signature", "")
+    expected = "v1=" + hmac.new(
+        secret.encode("utf-8"),
+        header.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        logger.warning("Missing or invalid X-User-Context signature")
+        raise HTTPException(status_code=401, detail="Invalid user context signature")
 
     try:
         decoded = base64.b64decode(header)

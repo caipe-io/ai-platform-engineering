@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { createHmac } from "node:crypto";
 
 import { authenticateRequest, buildBackendHeaders, type AuthResult } from "../da-proxy";
 
@@ -42,6 +43,7 @@ function request(path = "/api/v1/chat/invoke"): NextRequest {
 describe("authenticateRequest auth result", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.DA_USER_CONTEXT_HMAC_SECRET = "context-secret";
   });
 
   it("includes stable subject and bearer token for downstream OpenFGA checks", async () => {
@@ -111,9 +113,13 @@ describe("authenticateRequest auth result", () => {
     // The SA JWT is forwarded downstream unchanged.
     const headers = buildBackendHeaders("application/json", result as AuthResult);
     expect(headers["Authorization"]).toBe(`Bearer ${saJwt}`);
+    const expectedSignature = createHmac("sha256", "context-secret")
+      .update(headers["X-User-Context"])
+      .digest("hex");
+    expect(headers["X-User-Context-Signature"]).toBe(`v1=${expectedSignature}`);
   });
 
-  it("allows browser session fallback without a bearer token for DA backend calls", async () => {
+  it("rejects a browser session whose bearer token is unavailable", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({
       user: { email: "alice@example.com", name: "Alice", role: "admin" },
       session: {
@@ -125,12 +131,22 @@ describe("authenticateRequest auth result", () => {
 
     const result = await authenticateRequest(request("/api/dynamic-agents/middleware"));
 
-    expect(result).not.toBeInstanceOf(NextResponse);
-    expect(result).toMatchObject({
-      subject: "alice-sub",
-      email: "alice@example.com",
-      role: "admin",
-      bearerToken: undefined,
+    expect(result).toBeInstanceOf(NextResponse);
+    expect((result as NextResponse).status).toBe(401);
+    await expect((result as NextResponse).json()).resolves.toMatchObject({
+      code: "BEARER_REQUIRED",
+      action: "sign_in",
     });
+  });
+
+  it("fails closed when the user-context signing secret is unavailable", () => {
+    delete process.env.DA_USER_CONTEXT_HMAC_SECRET;
+
+    expect(() =>
+      buildBackendHeaders("application/json", {
+        bearerToken: "access-token",
+        userContextHeader: "encoded-context",
+      }),
+    ).toThrow("DA_USER_CONTEXT_HMAC_SECRET is not configured");
   });
 });
