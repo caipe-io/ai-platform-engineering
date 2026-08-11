@@ -48,9 +48,9 @@ describe("authenticateRequest auth result", () => {
 
   it("includes stable subject and bearer token for downstream OpenFGA checks", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({
-      user: { email: "alice@example.com", name: "Alice", role: "user" },
+      user: { email: "user@example.com", name: "Example User", role: "user" },
       session: {
-        sub: "alice-sub",
+        sub: "user-primary",
         accessToken: "access-token",
         canViewAdmin: false,
         canAccessDynamicAgents: true,
@@ -61,7 +61,7 @@ describe("authenticateRequest auth result", () => {
 
     expect(result).not.toBeInstanceOf(NextResponse);
     expect(result).toMatchObject({
-      subject: "alice-sub",
+      subject: "user-primary",
       bearerToken: "access-token",
       role: "user",
     });
@@ -69,7 +69,7 @@ describe("authenticateRequest auth result", () => {
 
   it("falls back to email as subject only when the session sub is missing", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({
-      user: { email: "alice@example.com", name: "Alice", role: "user" },
+      user: { email: "user@example.com", name: "Example User", role: "user" },
       session: {
         accessToken: "access-token",
         canViewAdmin: false,
@@ -81,7 +81,7 @@ describe("authenticateRequest auth result", () => {
 
     expect(result).not.toBeInstanceOf(NextResponse);
     expect(result).toMatchObject({
-      subject: "alice@example.com",
+      subject: "user@example.com",
       bearerToken: "access-token",
       role: "user",
     });
@@ -93,9 +93,9 @@ describe("authenticateRequest auth result", () => {
     // the AuthResult, and buildBackendHeaders forwards it unchanged so DA's
     // JwtAuthMiddleware can validate the SA identity. No SA-specific code path
     // is required — this test guards that the SA JWT is not dropped/rewritten.
-    const saJwt = "sa-client-credentials-jwt";
+    const saJwt = "service-account-client-credentials-jwt";
     mockGetAuthFromBearerOrSession.mockResolvedValue({
-      user: { email: "service-account-caipe-sa-incident-bot-a1b2c3", name: null, role: "user" },
+      user: { email: "service-account-example-bot", name: null, role: "user" },
       session: {
         sub: "sa-user-sub",
         accessToken: saJwt,
@@ -121,9 +121,9 @@ describe("authenticateRequest auth result", () => {
 
   it("rejects a browser session whose bearer token is unavailable", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({
-      user: { email: "alice@example.com", name: "Alice", role: "admin" },
+      user: { email: "user@example.com", name: "Example User", role: "admin" },
       session: {
-        sub: "alice-sub",
+        sub: "user-primary",
         canViewAdmin: true,
         canAccessDynamicAgents: true,
       },

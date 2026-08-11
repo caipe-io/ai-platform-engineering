@@ -92,7 +92,8 @@ def test_no_bearer_defaults_to_strict(monkeypatch):
     assert resp.json()["code"] == "missing_bearer"
 
 
-def test_healthz_bypasses_strict_bearer_requirement(monkeypatch):
+@pytest.mark.parametrize("path", ["/health", "/healthz", "/readyz", "/metrics"])
+def test_operational_endpoints_bypass_strict_bearer_requirement(monkeypatch, path):
     """Health endpoints must stay probeable without auth."""
     app, seen = _build_app(
         monkeypatch, require_bearer=True, validator=lambda _t: {"sub": "x"}
@@ -102,13 +103,29 @@ def test_healthz_bypasses_strict_bearer_requirement(monkeypatch):
         seen["token"] = None
         return JSONResponse({"status": "healthy"})
 
-    app.router.routes.append(Route("/healthz", health_handler, methods=["GET"]))
+    app.router.routes.append(Route(path, health_handler, methods=["GET"]))
 
     with TestClient(app) as client:
-        resp = client.get("/healthz")
+        resp = client.get(path)
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
+
+
+def test_options_preflight_bypasses_strict_bearer_requirement(monkeypatch):
+    app, _ = _build_app(
+        monkeypatch, require_bearer=True, validator=lambda _t: {"sub": "user-primary"}
+    )
+
+    async def options_handler(request: Request) -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    app.router.routes.append(Route("/resource", options_handler, methods=["OPTIONS"]))
+
+    with TestClient(app) as client:
+        resp = client.options("/resource")
+
+    assert resp.status_code == 200
 
 
 def test_valid_bearer_binds_contextvar(monkeypatch):

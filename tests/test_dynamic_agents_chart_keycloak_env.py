@@ -173,6 +173,48 @@ def test_hmac_secret_omitted_when_agent_context_secret_empty() -> None:
     assert "CAIPE_AGENT_CONTEXT_HMAC_SECRET" not in env_names
 
 
+def test_user_context_secret_and_strict_bearer_are_wired_together() -> None:
+    docs = _helm_template(
+        "userContext.existingSecret.name=example-user-context-secret",
+        "userContext.existingSecret.key=DA_USER_CONTEXT_HMAC_SECRET",
+    )
+    deployment = _find_deployment(docs)
+    env = _container_env(deployment)
+    context_env = next(e for e in env if e.get("name") == "DA_USER_CONTEXT_HMAC_SECRET")
+    assert context_env["valueFrom"]["secretKeyRef"] == {
+        "name": "example-user-context-secret",
+        "key": "DA_USER_CONTEXT_HMAC_SECRET",
+    }
+    assert _find_configmap(docs, "-config")["data"]["DA_REQUIRE_BEARER"] == "true"
+
+
+def test_user_context_secret_is_omitted_when_not_configured() -> None:
+    docs = _helm_template()
+    env_names = {e.get("name") for e in _container_env(_find_deployment(docs))}
+    assert "DA_USER_CONTEXT_HMAC_SECRET" not in env_names
+
+
+def test_network_policy_is_disabled_for_standalone_chart_by_default() -> None:
+    docs = _helm_template()
+    assert not any(doc.get("kind") == "NetworkPolicy" for doc in docs)
+
+
+def test_network_policy_allows_only_selected_bff_and_metrics_pods() -> None:
+    docs = _helm_template("networkPolicy.enabled=true")
+    policy = next(doc for doc in docs if doc.get("kind") == "NetworkPolicy")
+    deployment = _find_deployment(docs)
+    chart_values = yaml.safe_load((CHART_PATH / "values.yaml").read_text())
+
+    assert policy["spec"]["policyTypes"] == ["Ingress"]
+    assert policy["spec"]["podSelector"]["matchLabels"] == deployment["spec"]["selector"]["matchLabels"]
+    ingress = policy["spec"]["ingress"]
+    assert ingress[0]["from"] == [{"podSelector": chart_values["networkPolicy"]["bffPodSelector"]}]
+    assert ingress[0]["ports"] == [
+        {"protocol": "TCP", "port": chart_values["service"]["port"]}
+    ]
+    assert ingress[1]["from"] == [{"podSelector": chart_values["networkPolicy"]["metricsPodSelector"]}]
+
+
 # ---------------------------------------------------------------------------
 # NOTES.txt warning behaviour
 # ---------------------------------------------------------------------------
