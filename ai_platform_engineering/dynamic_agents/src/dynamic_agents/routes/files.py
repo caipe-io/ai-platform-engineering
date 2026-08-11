@@ -1,7 +1,6 @@
 """Generic filesystem endpoint for Dynamic Agents.
 
-Provides access to files stored in GridFS by namespace tuple.
-No conversation or agent coupling — callers provide the namespace directly.
+Provides access to files stored in GridFS by an authorized run namespace.
 
 Endpoints:
   GET    /files/list      — list file paths in a namespace
@@ -18,7 +17,12 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from pymongo.database import Database
 
+from dynamic_agents.auth.access import can_access_conversation
 from dynamic_agents.auth.auth import UserContext, get_user_context
+from dynamic_agents.auth.authz import (
+    current_bearer_principal,
+    require_file_resource_permission,
+)
 from dynamic_agents.config import get_settings
 from dynamic_agents.models import ApiResponse
 from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
@@ -56,6 +60,54 @@ def _get_db(mongo: MongoDBService) -> Database:
     if mongo._client is None or mongo._db is None:
         raise HTTPException(status_code=503, detail="Database not connected")
     return mongo._db
+
+
+async def _authorize_namespace(
+    namespace: tuple[str, str, str],
+    user: UserContext,
+    db: Database,
+    *,
+    write: bool,
+) -> None:
+    """Bind a file namespace to its stored run and the authenticated caller."""
+    resource_id, run_id, marker = namespace
+    if marker != "filesystem" or not resource_id or not run_id:
+        raise HTTPException(status_code=400, detail="Invalid filesystem namespace")
+
+    conversation = db["conversations"].find_one({"_id": run_id})
+    if conversation is not None:
+        agent_id = next(
+            (
+                participant.get("id")
+                for participant in conversation.get("participants", [])
+                if participant.get("type") == "agent"
+            ),
+            None,
+        )
+        if agent_id != resource_id:
+            raise HTTPException(status_code=403, detail="File namespace does not match the conversation")
+        await require_file_resource_permission("agent", resource_id, "can_use")
+        if not can_access_conversation(conversation, user):
+            relation = "can_write" if write else "can_read"
+            await require_file_resource_permission("conversation", run_id, relation)
+        return
+
+    workflow_run = db["workflow_runs"].find_one({"_id": run_id})
+    if workflow_run is None or workflow_run.get("workflow_config_id") != resource_id:
+        raise HTTPException(status_code=404, detail="File namespace was not found")
+
+    owner = workflow_run.get("owner_subject")
+    if owner:
+        principal_type, principal_id = current_bearer_principal()
+        is_owner = owner.get("type") == principal_type and owner.get("id") == principal_id
+        if user.is_admin or is_owner:
+            return
+        if not write and workflow_run.get("shared_with") == "workspace":
+            return
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    relation = "can_write" if write else "can_read"
+    await require_file_resource_permission("task", resource_id, relation)
 
 
 # --- Response models ---
@@ -98,6 +150,7 @@ async def list_files(
     """List files in a GridFS namespace."""
     namespace = _parse_namespace(fs_namespace)
     db = _get_db(mongo)
+    await _authorize_namespace(namespace, user, db, write=False)
 
     store = _get_gridfs_store(db)
     items = store.search(namespace, limit=1000)
@@ -120,6 +173,7 @@ async def get_file_content(
     """Get content of a single file from GridFS."""
     namespace = _parse_namespace(fs_namespace)
     db = _get_db(mongo)
+    await _authorize_namespace(namespace, user, db, write=False)
 
     store = _get_gridfs_store(db)
     item = store.get(namespace, path)
@@ -148,6 +202,7 @@ async def put_file_content(
 
     namespace = (body.fs_namespace[0], body.fs_namespace[1], body.fs_namespace[2])
     db = _get_db(mongo)
+    await _authorize_namespace(namespace, user, db, write=True)
 
     store = _get_gridfs_store(db)
     store.put(namespace, body.path, {"content": body.content})
@@ -169,6 +224,7 @@ async def delete_file_content(
     """Delete a file from GridFS."""
     namespace = _parse_namespace(fs_namespace)
     db = _get_db(mongo)
+    await _authorize_namespace(namespace, user, db, write=True)
 
     store = _get_gridfs_store(db)
     item = store.get(namespace, path)
@@ -194,6 +250,7 @@ async def delete_namespace(
     """Delete all files in a GridFS namespace."""
     namespace = _parse_namespace(fs_namespace)
     db = _get_db(mongo)
+    await _authorize_namespace(namespace, user, db, write=True)
 
     store = _get_gridfs_store(db)
     count = store.delete_by_namespace(namespace)

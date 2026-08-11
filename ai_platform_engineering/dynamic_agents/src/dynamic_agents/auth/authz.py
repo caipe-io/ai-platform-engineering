@@ -269,3 +269,27 @@ async def require_autonomous_permission(delegated_user_sub: str | None = None) -
 async def require_org_admin_permission() -> None:
     """Check the canonical org-manage policy using the caller's bearer."""
     await _require_action("organization", _organization_key(), "manage", "organization#manage")
+
+
+def current_bearer_principal() -> tuple[str, str]:
+    """Return the principal from the bearer verified by the JWT middleware."""
+    token = current_user_token.get()
+    if not token:
+        _raise_authz(401, "Bearer token is required", "missing_bearer", "not_signed_in", "sign_in")
+    principal = _subject_from_token(token)
+    if principal is None or not _is_valid_id(principal[1]):
+        _raise_authz(401, "Bearer token subject could not be verified", "bearer_invalid", "bearer_invalid", "sign_in")
+    return principal
+
+
+async def require_file_resource_permission(resource_type: str, resource_id: str, relation: str) -> None:
+    """Authorize a file resource through the canonical CAS decision adapter."""
+    actions = {
+        "agent": {"can_use": "use"},
+        "conversation": {"can_read": "read", "can_write": "write"},
+        "task": {"can_read": "read", "can_write": "write"},
+    }
+    action = actions.get(resource_type, {}).get(relation)
+    if action is None:
+        _raise_authz(400, "Invalid file resource", "invalid_resource", "invalid_request", "fix_request")
+    await _require_action(resource_type, resource_id, action, "file#access")

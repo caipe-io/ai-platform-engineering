@@ -20,12 +20,15 @@ import {
   requireRbacPermission,
 } from "@/lib/api-middleware";
 import type { RbacResource, RbacScope } from "@/lib/rbac/types";
+import type { ResourceAuthzSession } from "@/lib/rbac/resource-authz";
 
 // ═══════════════════════════════════════════════════════════════
 // Auth helper
 // ═══════════════════════════════════════════════════════════════
 
 export interface AuthResult {
+  /** Authenticated session shape used for server-side object authorization. */
+  authzSession?: ResourceAuthzSession;
   /** Stable caller subject for ReBAC/OpenFGA checks. */
   subject?: string;
   /** Human-readable email for privacy-aware audit display. */
@@ -133,7 +136,16 @@ export async function authenticateRequest(
     const subject = (s?.sub as string | undefined) || user.email;
     const tenantId = (s?.org as string | undefined) || "default";
     const isServiceAccount = (s?.isServiceAccount as boolean | undefined) === true;
-    return { subject, email: user.email, role: user.role, tenantId, userContextHeader: encoded, bearerToken, isServiceAccount };
+    return {
+      authzSession: session,
+      subject,
+      email: user.email,
+      role: user.role,
+      tenantId,
+      userContextHeader: encoded,
+      bearerToken,
+      isServiceAccount,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 

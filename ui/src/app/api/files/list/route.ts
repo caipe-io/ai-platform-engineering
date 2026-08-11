@@ -1,22 +1,13 @@
-/**
- * Generic file list endpoint.
- *
- * GET /api/files/list?fs_namespace=["a","b","c"]
- *
- * Proxies to Dynamic Agents service: GET /api/v1/files/list
- */
+/** Generic file list endpoint backed by an authorized run namespace. */
 
-import {
-authenticateRequest,
-getDynamicAgentsConfig,
-proxyRequest,
-} from "@/lib/da-proxy";
-import { NextRequest,NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET(request: NextRequest): Promise<Response> {
-  const { searchParams } = new URL(request.url);
-  const fsNamespace = searchParams.get("fs_namespace");
+import { withErrorHandler } from "@/lib/api-middleware";
+import { getDynamicAgentsConfig, proxyRequest } from "@/lib/da-proxy";
+import { authorizeFileNamespace } from "@/lib/file-namespace-authorization";
 
+export const GET = withErrorHandler(async (request: NextRequest): Promise<Response> => {
+  const fsNamespace = request.nextUrl.searchParams.get("fs_namespace");
   if (!fsNamespace) {
     return NextResponse.json(
       { success: false, error: "fs_namespace query parameter is required" },
@@ -24,14 +15,17 @@ export async function GET(request: NextRequest): Promise<Response> {
     );
   }
 
-  const authResult = await authenticateRequest(request);
-  if (authResult instanceof NextResponse) return authResult;
+  const authorization = await authorizeFileNamespace(request, fsNamespace, "read");
+  if (authorization instanceof NextResponse) return authorization;
 
   const daConfig = getDynamicAgentsConfig();
   if (daConfig instanceof NextResponse) return daConfig;
-
   const backendUrl = new URL("/api/v1/files/list", daConfig.dynamicAgentsUrl);
-  backendUrl.searchParams.set("fs_namespace", fsNamespace);
-
-  return proxyRequest(backendUrl.toString(), "GET", authResult, "[files/list]");
-}
+  backendUrl.searchParams.set("fs_namespace", JSON.stringify(authorization.namespace));
+  return proxyRequest(
+    backendUrl.toString(),
+    "GET",
+    authorization.authResult,
+    "[files/list]",
+  );
+});
