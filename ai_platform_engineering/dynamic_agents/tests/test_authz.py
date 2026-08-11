@@ -8,6 +8,7 @@ import json
 import pytest
 from fastapi import HTTPException
 
+from dynamic_agents.auth import authz
 from dynamic_agents.auth.token_context import current_traceparent, current_user_token
 
 
@@ -334,3 +335,58 @@ async def test_invalid_agent_id_returns_400_without_calling_cas(monkeypatch):
         current_user_token.reset(token_ref)
     assert exc.value.status_code == 400
     assert exc.value.detail["code"] == "invalid_resource_id"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("resource_type", "relation", "action"), [
+    ("agent", "can_use", "use"),
+    ("conversation", "can_read", "read"),
+    ("conversation", "can_write", "write"),
+    ("task", "can_read", "read"),
+    ("task", "can_write", "write"),
+])
+async def test_file_permission_uses_cas(
+    monkeypatch: pytest.MonkeyPatch, resource_type: str, relation: str, action: str,
+) -> None:
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://authz.example.test")
+    posts = []
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client(posts, _Resp(200, {"decision": "ALLOW"})))
+    token_ref = current_user_token.set(_fake_jwt({"sub": "test-user"}))
+    try:
+        await authz.require_file_resource_permission(resource_type, "test-resource", relation)
+    finally:
+        current_user_token.reset(token_ref)
+    assert posts[0][0] == "http://authz.example.test/api/authz/v1/decisions"
+    assert posts[0][2] == {
+        "subject": {"type": "user", "id": "test-user"},
+        "resource": {"type": resource_type, "id": "test-resource"},
+        "action": action,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "decision", "expected"), [
+    (200, "DENY", 403), (503, "DENY", 503),
+])
+async def test_file_permission_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, status: int, decision: str, expected: int,
+) -> None:
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://authz.example.test")
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client([], _Resp(status, {"decision": decision})))
+    token_ref = current_user_token.set(_fake_jwt({"sub": "test-user"}))
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await authz.require_file_resource_permission("conversation", "test-resource", "can_read")
+    finally:
+        current_user_token.reset(token_ref)
+    assert exc.value.status_code == expected
+
+
+def test_file_run_owner_identifies_service_account() -> None:
+    token_ref = current_user_token.set(_fake_jwt({
+        "sub": "test-service", "preferred_username": "service-account-example",
+    }))
+    try:
+        assert authz.current_bearer_principal() == ("service_account", "test-service")
+    finally:
+        current_user_token.reset(token_ref)

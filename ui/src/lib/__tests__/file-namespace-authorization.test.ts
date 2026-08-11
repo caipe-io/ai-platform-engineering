@@ -127,4 +127,72 @@ describe("authorizeFileNamespace", () => {
       "write",
     );
   });
+
+  it.each([
+    ["invalid JSON", "not-json"],
+    ["an object", {}],
+    ["a short tuple", ["agent-primary", "run-primary"]],
+    ["an empty identifier", ["", "run-primary", "filesystem"]],
+    ["a different marker", ["agent-primary", "run-primary", "cache"]],
+  ])("rejects %s before authentication", async (_label, namespace) => {
+    const { authorizeFileNamespace } = await import("../file-namespace-authorization");
+
+    await expect(authorizeFileNamespace(request, namespace, "read")).rejects.toMatchObject({
+      statusCode: 400,
+      code: "INVALID_NAMESPACE",
+    });
+    expect(mockAuthenticateRequest).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when authenticated identity context is incomplete", async () => {
+    mockAuthenticateRequest.mockResolvedValue({ bearerToken: "token-primary" });
+    const { authorizeFileNamespace } = await import("../file-namespace-authorization");
+
+    await expect(
+      authorizeFileNamespace(
+        request,
+        ["agent-primary", "conversation-primary", "filesystem"],
+        "read",
+      ),
+    ).rejects.toMatchObject({ statusCode: 401, code: "NOT_SIGNED_IN" });
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
+
+  it("does not continue when the conversation PDP denies access", async () => {
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "conversation-primary",
+        participants: [{ type: "agent", id: "agent-primary" }],
+      }),
+    });
+    mockRequireConversationPermission.mockRejectedValue(
+      Object.assign(new Error("denied"), { statusCode: 403 }),
+    );
+    const { authorizeFileNamespace } = await import("../file-namespace-authorization");
+
+    await expect(
+      authorizeFileNamespace(
+        request,
+        ["agent-primary", "conversation-primary", "filesystem"],
+        "write",
+      ),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(mockRequireWorkflowRunAccess).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing workflow run without an authorization probe", async () => {
+    mockGetCollection
+      .mockResolvedValueOnce({ findOne: jest.fn().mockResolvedValue(null) })
+      .mockResolvedValueOnce({ findOne: jest.fn().mockResolvedValue(null) });
+    const { authorizeFileNamespace } = await import("../file-namespace-authorization");
+
+    await expect(
+      authorizeFileNamespace(
+        request,
+        ["workflow-primary", "run-primary", "filesystem"],
+        "read",
+      ),
+    ).rejects.toMatchObject({ statusCode: 404, code: "NAMESPACE_NOT_FOUND" });
+    expect(mockRequireWorkflowRunAccess).not.toHaveBeenCalled();
+  });
 });

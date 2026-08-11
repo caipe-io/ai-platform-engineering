@@ -1446,7 +1446,9 @@ describe('withAuth', () => {
       ['/api/dynamic-agents/models', 'GET', 'can_chat'],
       ['/api/dynamic-agents/available', 'GET', 'can_chat'],
       ['/api/files/list', 'GET', 'can_use_files'],
-      ['/api/files/content', 'POST', 'can_use_files'],
+      ['/api/files/content', 'GET', 'can_use_files'],
+      ['/api/files/content', 'PUT', 'can_use_files'],
+      ['/api/files/content', 'DELETE', 'can_use_files'],
       ['/api/ai/review', 'POST', 'can_use_ai_assist'],
       ['/api/credentials/retrieve', 'POST', 'can_use_credentials'],
     ])('maps %s %s to explicit OpenFGA relation %s', async (path, method, expectedRelation) => {
