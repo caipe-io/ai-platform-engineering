@@ -5,9 +5,12 @@ LangGraph agent can delegate to it with a normal tool call:
 
     dynamic-agents ──tool call──> POST {a2a_url}  (JSON-RPC ``tasks/send``)
 
-No A2A SDK is needed on this side — ``tasks/send`` is a JSON-RPC POST over
-``httpx``. The agent card at ``/.well-known/agent.json`` supplies the tool
-name and description the LLM sees, so a remote agent describes itself.
+No A2A SDK is needed on this side: ``tasks/send`` is a JSON-RPC POST over
+``httpx``. The agent card supplies the tool name and description the LLM sees,
+so a remote agent describes itself. Cards are fetched from
+``/.well-known/agent-card.json``, falling back to the pre-0.3.0
+``/.well-known/agent.json``, and cached by URL so repeated runtime builds do not
+refetch them.
 """
 
 from __future__ import annotations
@@ -26,10 +29,38 @@ from dynamic_agents.auth.token_context import current_user_token
 
 logger = logging.getLogger(__name__)
 
-AGENT_CARD_PATH = "/.well-known/agent.json"
+# A2A publishes the public agent card here. The path changed in a2a-sdk 0.3.0:
+# 0.2.x served `/.well-known/agent.json`, and 0.3.0 moved to
+# `/.well-known/agent-card.json` while keeping the old value as
+# `PREV_AGENT_CARD_WELL_KNOWN_PATH` for the transition. 1.x dropped the old path
+# entirely. We ask for the current path first and fall back to the previous one,
+# so a conforming server and a 0.2.x server both resolve.
+AGENT_CARD_PATH = "/.well-known/agent-card.json"
+LEGACY_AGENT_CARD_PATH = "/.well-known/agent.json"
 AGENT_CARD_TIMEOUT_SECONDS = 10
 
 _UNSAFE_NAME_CHARS = re.compile(r"[^a-zA-Z0-9_-]+")
+
+# Resolved agent cards, keyed by A2A URL. Two reasons this is a cache and not a
+# per-runtime field:
+#
+# 1. Agent runtimes are rebuilt often (AgentRuntimeCache evicts on a 600s idle
+#    TTL and on config change), and refetching every card on every rebuild is
+#    pure latency for data that rarely changes.
+# 2. Keyed by URL, not by agent, so the per-agent selection in #2013's follow-up
+#    only decides *which* tools get built. It does not change how cards are
+#    resolved, and two agents pointing at the same remote share one fetch.
+#
+# Failures are deliberately not cached. A remote agent that is still starting up
+# would otherwise be stuck with a URL-derived name and a generic description for
+# as long as the process lived; not caching the failure means the next runtime
+# build retries and the agent self-heals within the cache TTL.
+_agent_card_cache: dict[str, dict[str, Any]] = {}
+
+
+def clear_agent_card_cache() -> None:
+    """Drop every cached agent card. Intended for tests and config reloads."""
+    _agent_card_cache.clear()
 
 
 def _sanitize_tool_name(raw: str) -> str:
@@ -133,21 +164,55 @@ class RemoteAgentTool(BaseTool):
 
 
 async def _fetch_agent_card(a2a_url: str) -> dict[str, Any] | None:
-    """Fetch ``/.well-known/agent.json`` for a remote agent, or None if unavailable.
+    """Fetch the A2A agent card for a remote agent, or None if unavailable.
+
+    Tries the current well-known path, then the pre-0.3.0 one. Only a 404 is
+    retried against the legacy path: any other status means the server answered
+    and does not want to serve us a card, so asking a second time is noise.
 
     A remote agent that is still starting up must not fail agent
-    initialization, so every failure degrades to ``None``.
+    initialization, so every failure degrades to ``None``. Note that the caller
+    then substitutes a URL-derived name and a generic description, which the LLM
+    cannot route on — so a persistent failure here quietly costs the tool its
+    usefulness rather than raising.
     """
-    card_url = urljoin(a2a_url, AGENT_CARD_PATH)
-    try:
-        async with httpx.AsyncClient(timeout=AGENT_CARD_TIMEOUT_SECONDS) as client:
-            resp = await client.get(card_url)
-            resp.raise_for_status()
-            card = resp.json()
-    except (httpx.HTTPError, ValueError) as e:
-        logger.warning(f"Could not fetch A2A agent card from {card_url}: {e}")
-        return None
-    return card if isinstance(card, dict) else None
+    async with httpx.AsyncClient(timeout=AGENT_CARD_TIMEOUT_SECONDS) as client:
+        for path in (AGENT_CARD_PATH, LEGACY_AGENT_CARD_PATH):
+            card_url = urljoin(a2a_url, path)
+            try:
+                resp = await client.get(card_url)
+                resp.raise_for_status()
+                card = resp.json()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404 and path != LEGACY_AGENT_CARD_PATH:
+                    logger.debug(f"No agent card at {card_url}; trying the legacy path")
+                    continue
+                logger.warning(f"Could not fetch A2A agent card from {card_url}: {e}")
+                return None
+            except (httpx.HTTPError, ValueError) as e:
+                logger.warning(f"Could not fetch A2A agent card from {card_url}: {e}")
+                return None
+            if isinstance(card, dict):
+                return card
+            logger.warning(f"Agent card at {card_url} was not a JSON object")
+            return None
+    return None
+
+
+async def _resolve_agent_card(a2a_url: str) -> dict[str, Any] | None:
+    """Return this agent's card, from cache when we already have it.
+
+    Only successes are remembered, so an agent that was down at the last build
+    is retried at the next one rather than being written off for the lifetime of
+    the process.
+    """
+    cached = _agent_card_cache.get(a2a_url)
+    if cached is not None:
+        return cached
+    card = await _fetch_agent_card(a2a_url)
+    if card is not None:
+        _agent_card_cache[a2a_url] = card
+    return card
 
 
 def _fallback_name(a2a_url: str) -> str:
@@ -180,7 +245,7 @@ async def create_remote_agent_tool(
     resolved_desc = description
 
     if not (resolved_name and resolved_desc):
-        card = await _fetch_agent_card(a2a_url) or {}
+        card = await _resolve_agent_card(a2a_url) or {}
         resolved_name = resolved_name or _sanitize_tool_name(card.get("name") or "")
         resolved_desc = resolved_desc or card.get("description")
 
