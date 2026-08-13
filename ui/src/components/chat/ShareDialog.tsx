@@ -7,7 +7,7 @@ import { apiClient } from "@/lib/api-client";
 import { useChatStore } from "@/store/chat-store";
 import type { UserPublicInfo } from "@/types/mongodb";
 import type { Team } from "@/types/teams";
-import { Check,Copy,Mail,Trash2,Users,X } from "lucide-react";
+import { Check,Copy,Loader2,Mail,Trash2,Users,X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback,useEffect,useRef,useState } from "react";
 import { createPortal } from "react-dom";
@@ -96,7 +96,12 @@ export function ShareDialog({
   const [userPermissions, setUserPermissions] = useState<Record<string, SharePermission>>({});
   const [teamPermissions, setTeamPermissions] = useState<Record<string, SharePermission>>({});
   const [defaultPermission, setDefaultPermission] = useState<SharePermission>('comment');
-  const loadedShareKey = useRef<string | null>(null);
+  const [pendingAccessAction, setPendingAccessAction] = useState<string | null>(null);
+  const [sharingInfoLoading, setSharingInfoLoading] = useState(false);
+  const initialSharingRef = useRef(initialSharing);
+  const permissionsConversationIdRef = useRef(conversationId);
+  const shareableTeamsRef = useRef<Team[] | null>(null);
+  const shareableTeamsRequestRef = useRef<Promise<Team[]> | null>(null);
 
   const shareUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/chat/${conversationId}`;
   const sharedByLabel = sharedBy?.trim();
@@ -105,8 +110,25 @@ export function ShareDialog({
     setSharedWith(sharing?.shared_with || []);
     const teamIds = sharing?.shared_with_teams || [];
     setSharedWithTeams(teamIds);
-    setTeamPermissions(sharing?.team_permissions || {});
-    setUserPermissions({});
+    if (sharing?.team_permissions) {
+      setTeamPermissions(sharing.team_permissions);
+    }
+  }, []);
+
+  const getShareableTeams = useCallback(async (): Promise<Team[]> => {
+    if (shareableTeamsRef.current) return shareableTeamsRef.current;
+    if (shareableTeamsRequestRef.current) return shareableTeamsRequestRef.current;
+
+    const request = fetchShareableTeams()
+      .then((teams) => {
+        shareableTeamsRef.current = teams;
+        return teams;
+      })
+      .finally(() => {
+        shareableTeamsRequestRef.current = null;
+      });
+    shareableTeamsRequestRef.current = request;
+    return request;
   }, []);
 
   const loadSharingInfo = useCallback(async () => {
@@ -140,6 +162,7 @@ export function ShareDialog({
             is_public: false,
             shared_with: sharing.shared_with,
             shared_with_teams: sharing.shared_with_teams,
+            team_permissions: sharing.team_permissions,
             share_link_enabled: sharing.share_link_enabled,
           });
         }
@@ -147,7 +170,7 @@ export function ShareDialog({
         // Load team names for display
         if (teamIds.length > 0) {
           try {
-            const allTeams = await fetchShareableTeams({ refs: teamIds });
+            const allTeams = await getShareableTeams();
             const namesMap: Record<string, string> = {};
             allTeams.forEach((team: Team) => {
               for (const alias of teamAliases(team)) {
@@ -180,92 +203,108 @@ export function ShareDialog({
       // Don't assume legacy on network errors — only on explicit 404 + localStorage mode
       setIsLegacyConversation(false);
     }
-  }, [conversationId, updateConversationSharing]);
+  }, [conversationId, getShareableTeams, updateConversationSharing]);
+
+  useEffect(() => {
+    initialSharingRef.current = initialSharing;
+  }, [initialSharing]);
 
   // Load current sharing info once when the dialog opens or the conversation changes.
   useEffect(() => {
     if (!open) {
-      loadedShareKey.current = null;
+      setSharingInfoLoading(false);
       return;
     }
-    const shareKey = `${conversationId}:${canManageSharing ? "owner" : "viewer"}`;
-    if (loadedShareKey.current === shareKey) return;
-    loadedShareKey.current = shareKey;
-    applySharingSnapshot(initialSharing);
-    void loadSharingInfo();
-    // `initialSharing` is assembled by the chat parent and may be a new
-    // object on every store update. Re-running this effect for that identity
-    // would refetch the sharing endpoint indefinitely while the dialog is
-    // open. The conversation id is the stable boundary for a new snapshot.
-  }, [
-    open,
-    conversationId,
-    canManageSharing,
-    initialSharing,
-    applySharingSnapshot,
-    loadSharingInfo,
-  ]);
+
+    if (permissionsConversationIdRef.current !== conversationId) {
+      permissionsConversationIdRef.current = conversationId;
+      setUserPermissions({});
+      setTeamPermissions({});
+    }
+
+    let active = true;
+    setSharingInfoLoading(true);
+    applySharingSnapshot(initialSharingRef.current);
+    void loadSharingInfo().finally(() => {
+      if (active) setSharingInfoLoading(false);
+    });
+    if (canManageSharing) {
+      void getShareableTeams().catch((err) => {
+        console.error("Failed to load shareable teams:", err);
+      });
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [open, conversationId, canManageSharing, applySharingSnapshot, getShareableTeams, loadSharingInfo]);
+
+  const sharedWithSearchKey = sharedWith.join('\u0000');
+  const sharedWithTeamsSearchKey = sharedWithTeams.join('\u0000');
 
   // Search users and teams as they type
   useEffect(() => {
     const query = searchInput.trim();
-    const controller = new AbortController();
-    const searchPeopleAndTeams = async () => {
-      if (!canManageSharing) {
-        setUserResults([]);
-        setTeamResults([]);
-        setNoResults(false);
-        return;
-      }
-
-      if (query.length < 2) {
-        setUserResults([]);
-        setTeamResults([]);
-        setNoResults(false);
-        return;
-      }
-
-      setSearching(true);
+    if (!canManageSharing || query.length < 2) {
+      setUserResults([]);
+      setTeamResults([]);
       setNoResults(false);
-      const [usersResult, teamsResult] = await Promise.allSettled([
-        apiClient.searchUsers(query, controller.signal),
-        fetchShareableTeams({ query, signal: controller.signal }),
-      ]);
-      if (controller.signal.aborted) return;
-
-      const users = usersResult.status === 'fulfilled' ? usersResult.value : [];
-      const teams = teamsResult.status === 'fulfilled' ? teamsResult.value : [];
-      if (usersResult.status === 'rejected') {
-        console.error("User search failed:", usersResult.reason);
-      }
-      if (teamsResult.status === 'rejected') {
-        console.error("Team search failed:", teamsResult.reason);
-      }
-
-      const filteredUsers = users.filter(u => !sharedWith.includes(u.email));
-      const matchingTeams = teams.filter((team) => !isTeamAlreadyShared(team, sharedWithTeams));
-      setUserResults(filteredUsers);
-      setTeamResults(matchingTeams);
-      setNoResults(filteredUsers.length === 0 && matchingTeams.length === 0);
       setSearching(false);
-    };
+      return;
+    }
+
+    let cancelled = false;
+    setUserResults([]);
+    setTeamResults([]);
+    setNoResults(false);
+    setSearching(true);
 
     const timer = setTimeout(() => {
-      void searchPeopleAndTeams().catch((err) => {
-        if (!controller.signal.aborted) {
-          console.error("Search failed:", err);
-          setUserResults([]);
-          setTeamResults([]);
-          setNoResults(true);
-          setSearching(false);
+      void (async () => {
+        const [usersResult, teamsResult] = await Promise.allSettled([
+          apiClient.searchUsers(query),
+          getShareableTeams(),
+        ]);
+        if (cancelled) return;
+
+        if (usersResult.status === 'rejected') {
+          console.error("User search failed:", usersResult.reason);
         }
-      });
+        if (teamsResult.status === 'rejected') {
+          console.error("Team search failed:", teamsResult.reason);
+        }
+
+        const sharedUserEmails = new Set(sharedWithSearchKey.split('\u0000').filter(Boolean));
+        const sharedTeamRefs = sharedWithTeamsSearchKey.split('\u0000').filter(Boolean);
+        const users = usersResult.status === 'fulfilled' ? usersResult.value : [];
+        const allTeams = teamsResult.status === 'fulfilled' ? teamsResult.value : [];
+        const filteredUsers = users.filter((user) => !sharedUserEmails.has(user.email));
+        const searchLower = query.toLowerCase();
+        const matchingTeams = allTeams.filter((team: Team) => {
+          const nameMatch = team.name.toLowerCase().includes(searchLower);
+          const slugMatch = team.slug?.toLowerCase().includes(searchLower);
+          const descMatch = team.description?.toLowerCase().includes(searchLower);
+          return (nameMatch || slugMatch || descMatch) && !isTeamAlreadyShared(team, sharedTeamRefs);
+        });
+
+        setUserResults(filteredUsers);
+        setTeamResults(matchingTeams);
+        setNoResults(filteredUsers.length === 0 && matchingTeams.length === 0);
+        setSearching(false);
+      })();
     }, 300);
+
     return () => {
+      cancelled = true;
       clearTimeout(timer);
-      controller.abort();
     };
-  }, [searchInput, sharedWith, sharedWithTeams, canManageSharing]);
+  }, [
+    searchInput,
+    sharedWithSearchKey,
+    sharedWithTeamsSearchKey,
+    canManageSharing,
+    getShareableTeams,
+  ]);
 
   const handleShareUser = async (email: string) => {
     if (!canManageSharing) return;
@@ -285,6 +324,7 @@ export function ShareDialog({
           is_public: false,
           shared_with: updatedConversation.sharing.shared_with,
           shared_with_teams: updatedConversation.sharing.shared_with_teams,
+          team_permissions: updatedConversation.sharing.team_permissions,
           share_link_enabled: updatedConversation.sharing.share_link_enabled,
         });
       }
@@ -323,6 +363,7 @@ export function ShareDialog({
           is_public: false,
           shared_with: updatedConversation.sharing.shared_with,
           shared_with_teams: updatedConversation.sharing.shared_with_teams,
+          team_permissions: updatedConversation.sharing.team_permissions,
           share_link_enabled: updatedConversation.sharing.share_link_enabled,
         });
       }
@@ -357,40 +398,85 @@ export function ShareDialog({
     newPermission: SharePermission
   ) => {
     if (!canManageSharing) return;
+    const targetKey = target.email ? `user:${target.email}` : `team:${target.team_id}`;
+    const previousPermission = target.email
+      ? userPermissions[target.email] || 'view'
+      : target.team_id
+        ? teamPermissions[target.team_id] || 'view'
+        : undefined;
+
+    if (target.email) {
+      setUserPermissions((prev) => ({ ...prev, [target.email!]: newPermission }));
+    }
+    if (target.team_id) {
+      setTeamPermissions((prev) => ({ ...prev, [target.team_id!]: newPermission }));
+    }
+    setPendingAccessAction(`permission:${targetKey}`);
     try {
-      await apiClient.updateConversationSharePermission(conversationId, target, newPermission);
-      if (target.email) {
-        setUserPermissions((prev) => ({ ...prev, [target.email!]: newPermission }));
+      const response = await fetch(`/api/chat/conversations/${conversationId}/share`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...target, permission: newPermission }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || errorData?.message || response.statusText || 'Failed to update permission');
       }
-      if (target.team_id) {
-        setTeamPermissions((prev) => ({ ...prev, [target.team_id!]: newPermission }));
+      const responseData = await response.json();
+      const updatedConversation = responseData.data;
+      if (updatedConversation?.sharing) {
+        updateConversationSharing(conversationId, {
+          is_public: false,
+          shared_with: updatedConversation.sharing.shared_with,
+          shared_with_teams: updatedConversation.sharing.shared_with_teams,
+          team_permissions: updatedConversation.sharing.team_permissions,
+          share_link_enabled: updatedConversation.sharing.share_link_enabled,
+        });
       }
     } catch (err) {
+      if (target.email && previousPermission) {
+        setUserPermissions((prev) => ({ ...prev, [target.email!]: previousPermission }));
+      }
+      if (target.team_id && previousPermission) {
+        setTeamPermissions((prev) => ({ ...prev, [target.team_id!]: previousPermission }));
+      }
       console.error('Failed to update permission:', err);
       alert(`Failed to update permission: ${getErrorMessage(err, "") || 'Unknown error'}`);
+    } finally {
+      setPendingAccessAction(null);
     }
   };
 
   const handleRemoveAccess = async (target: { email?: string; team_id?: string }) => {
     if (!canManageSharing) return;
-    setLoading(true);
+    const targetKey = target.email ? `user:${target.email}` : `team:${target.team_id}`;
+    setPendingAccessAction(`remove:${targetKey}`);
     try {
-      const updatedConversation = await apiClient.revokeConversationShare(conversationId, target);
+      const response = await fetch(`/api/chat/conversations/${conversationId}/share`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(target),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || errorData?.message || response.statusText || 'Failed to remove access');
+      }
+
+      const responseData = await response.json();
+      const updatedConversation = responseData.data;
       if (target.email) {
-        const email = target.email;
-        setSharedWith((current) => current.filter((item) => item !== email));
-        setUserPermissions((current) => {
-          const next = { ...current };
-          delete next[email];
+        setSharedWith((prev) => prev.filter((email) => email !== target.email));
+        setUserPermissions((prev) => {
+          const next = { ...prev };
+          delete next[target.email!];
           return next;
         });
       }
       if (target.team_id) {
-        const teamId = target.team_id;
-        setSharedWithTeams((current) => current.filter((item) => item !== teamId));
-        setTeamPermissions((current) => {
-          const next = { ...current };
-          delete next[teamId];
+        setSharedWithTeams((prev) => prev.filter((teamId) => teamId !== target.team_id));
+        setTeamPermissions((prev) => {
+          const next = { ...prev };
+          delete next[target.team_id!];
           return next;
         });
       }
@@ -399,6 +485,7 @@ export function ShareDialog({
           is_public: false,
           shared_with: updatedConversation.sharing.shared_with,
           shared_with_teams: updatedConversation.sharing.shared_with_teams,
+          team_permissions: updatedConversation.sharing.team_permissions,
           share_link_enabled: updatedConversation.sharing.share_link_enabled,
         });
       }
@@ -406,7 +493,7 @@ export function ShareDialog({
       console.error('Failed to remove access:', err);
       alert(`Failed to remove access: ${getErrorMessage(err, "") || 'Unknown error'}`);
     } finally {
-      setLoading(false);
+      setPendingAccessAction(null);
     }
   };
 
@@ -625,7 +712,12 @@ export function ShareDialog({
             </label>
             <div className="space-y-2 max-h-48 overflow-y-auto">
               {/* People */}
-              {sharedWith.map((email) => (
+              {sharedWith.map((email) => {
+                const targetKey = `user:${email}`;
+                const permissionPending = pendingAccessAction === `permission:${targetKey}`;
+                const removalPending = pendingAccessAction === `remove:${targetKey}`;
+                const permissionUnknown = sharingInfoLoading && userPermissions[email] === undefined;
+                return (
                 <div
                   key={email}
                   className="flex items-center justify-between py-2 px-3 bg-muted rounded-md"
@@ -639,20 +731,33 @@ export function ShareDialog({
                   {canManageSharing ? (
                   <div className="flex items-center gap-1.5 shrink-0">
                     <Select
-                      value={userPermissions[email] || 'view'}
+                      value={permissionUnknown ? '' : userPermissions[email] || 'view'}
                       onChange={(e) => handlePermissionChange({ email }, e.target.value as SharePermission)}
-                      className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50"
+                      disabled={loading || pendingAccessAction !== null || permissionUnknown}
+                      aria-label={`Permission for ${email}`}
+                      className="min-w-[5.5rem] text-xs bg-transparent border border-border rounded px-1.5 py-1 text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-100 disabled:text-muted-foreground"
                     >
+                      {permissionUnknown && <option value="">Loading…</option>}
                       <option value="view">Can view</option>
                       <option value="comment">Can edit</option>
                     </Select>
+                    <span
+                      className="inline-flex h-4 w-4 shrink-0 items-center justify-center"
+                      data-testid={`permission-status-${email}`}
+                      role="status"
+                      aria-label={permissionPending ? `Updating permission for ${email}` : undefined}
+                    >
+                      {permissionPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                    </span>
                     <button
                       className="text-muted-foreground hover:text-destructive"
                       onClick={() => void handleRemoveAccess({ email })}
-                      disabled={loading}
+                      disabled={loading || pendingAccessAction !== null}
                       aria-label={`Remove access for ${email}`}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      {removalPending
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <Trash2 className="h-4 w-4" />}
                     </button>
                   </div>
                   ) : (
@@ -661,9 +766,15 @@ export function ShareDialog({
                     </span>
                   )}
                 </div>
-              ))}
+                );
+              })}
               {/* Teams */}
-              {sharedWithTeams.map((teamId) => (
+              {sharedWithTeams.map((teamId) => {
+                const targetKey = `team:${teamId}`;
+                const permissionPending = pendingAccessAction === `permission:${targetKey}`;
+                const removalPending = pendingAccessAction === `remove:${targetKey}`;
+                const permissionUnknown = sharingInfoLoading && teamPermissions[teamId] === undefined;
+                return (
                 <div
                   key={teamId}
                   className="flex items-center justify-between py-2 px-3 bg-muted rounded-md"
@@ -679,20 +790,33 @@ export function ShareDialog({
                   {canManageSharing ? (
                   <div className="flex items-center gap-1.5 shrink-0">
                     <Select
-                      value={teamPermissions[teamId] || 'view'}
+                      value={permissionUnknown ? '' : teamPermissions[teamId] || 'view'}
                       onChange={(e) => handlePermissionChange({ team_id: teamId }, e.target.value as SharePermission)}
-                      className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50"
+                      disabled={loading || pendingAccessAction !== null || permissionUnknown}
+                      aria-label={`Permission for ${teamNames[teamId] || teamId}`}
+                      className="min-w-[5.5rem] text-xs bg-transparent border border-border rounded px-1.5 py-1 text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-100 disabled:text-muted-foreground"
                     >
+                      {permissionUnknown && <option value="">Loading…</option>}
                       <option value="view">Can view</option>
                       <option value="comment">Can edit</option>
                     </Select>
+                    <span
+                      className="inline-flex h-4 w-4 shrink-0 items-center justify-center"
+                      data-testid={`permission-status-${teamId}`}
+                      role="status"
+                      aria-label={permissionPending ? `Updating permission for ${teamNames[teamId] || teamId}` : undefined}
+                    >
+                      {permissionPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                    </span>
                     <button
                       className="text-muted-foreground hover:text-destructive"
                       onClick={() => void handleRemoveAccess({ team_id: teamId })}
-                      disabled={loading}
+                      disabled={loading || pendingAccessAction !== null}
                       aria-label={`Remove access for ${teamNames[teamId] || teamId}`}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      {removalPending
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <Trash2 className="h-4 w-4" />}
                     </button>
                   </div>
                   ) : (
@@ -701,7 +825,8 @@ export function ShareDialog({
                     </span>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

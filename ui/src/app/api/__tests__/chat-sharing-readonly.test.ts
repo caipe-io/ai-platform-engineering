@@ -551,6 +551,52 @@ describe('PATCH /api/chat/conversations/[id]/share — permission updates', () =
       { _id: conv._id },
       { $set: { 'sharing.team_permissions': { [TEAM_ID]: 'comment' } } }
     );
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: expect.arrayContaining([
+        { user: `team:${TEAM_ID}#member`, relation: 'reader', object: `conversation:${conv._id}` },
+        { user: `team:${TEAM_ID}#member`, relation: 'writer', object: `conversation:${conv._id}` },
+      ]),
+      deletes: [],
+    });
+  });
+
+  it('removes the team writer grant when changing permission to view', async () => {
+    const conv = makeConversation({
+      sharing: {
+        shared_with: [],
+        shared_with_teams: [TEAM_ID],
+        team_permissions: { [TEAM_ID]: 'comment' },
+      },
+    });
+    const convsCol = createMockCollection();
+    convsCol.findOne.mockResolvedValueOnce(conv).mockResolvedValue({ ...conv });
+    mockCollections['conversations'] = convsCol;
+    const teamsCol = createMockCollection();
+    teamsCol.findOne.mockResolvedValue({ _id: new ObjectId(TEAM_ID), name: 'Example Team' });
+    mockCollections['teams'] = teamsCol;
+    mockGetServerSession.mockResolvedValue({
+      user: { email: OWNER_EMAIL, name: 'Owner' },
+      sub: 'owner-sub',
+    });
+
+    const { PATCH } = await import('@/app/api/chat/conversations/[id]/share/route');
+    const req = new NextRequest(`http://localhost/api/chat/conversations/${TEST_CONV_ID}/share`, {
+      method: 'PATCH',
+      body: JSON.stringify({ team_id: TEAM_ID, permission: 'view' }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const res = await PATCH(req, { params: Promise.resolve({ id: conv._id }) });
+
+    expect(res.status).toBe(200);
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: [
+        { user: `team:${TEAM_ID}#member`, relation: 'reader', object: `conversation:${conv._id}` },
+      ],
+      deletes: [
+        { user: `team:${TEAM_ID}#member`, relation: 'writer', object: `conversation:${conv._id}` },
+      ],
+    });
   });
 
   it('rejects PATCH with invalid permission value', async () => {

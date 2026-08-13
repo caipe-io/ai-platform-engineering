@@ -1,6 +1,6 @@
 // GET /api/chat/conversations/[id]/share - Get sharing info
 // POST /api/chat/conversations/[id]/share - Share conversation with users
-// PATCH / DELETE /api/chat/conversations/[id]/share - Update or revoke access
+// DELETE /api/chat/conversations/[id]/share - Revoke user or team access
 
 import {
 ApiError,
@@ -193,8 +193,9 @@ function teamConversationGrantDiff(
   const deletes: OpenFgaTupleKey[] = [];
   for (const team of resolvedTeams) {
     const user = `team:${team.subjectRef}#member`;
-    writes.push({ user, relation: 'reader', object: `conversation:${conversationId}` });
-    const writerTuple = { user, relation: 'writer', object: `conversation:${conversationId}` };
+    const object = `conversation:${conversationId}`;
+    writes.push({ user, relation: 'reader', object });
+    const writerTuple = { user, relation: 'writer', object };
     if (permission === 'comment') {
       writes.push(writerTuple);
     } else {
@@ -204,14 +205,18 @@ function teamConversationGrantDiff(
   return { writes, deletes };
 }
 
-async function writeTeamConversationGrantTuples(
+async function writeTeamConversationGrantTuplesBestEffort(
   conversationId: string,
   resolvedTeams: ResolvedTeamShare[],
   permission: SharePermission,
 ): Promise<void> {
   const diff = teamConversationGrantDiff(conversationId, resolvedTeams, permission);
   if (diff.writes.length === 0 && diff.deletes.length === 0) return;
-  await writeOpenFgaTuples(diff);
+  try {
+    await writeOpenFgaTuples(diff);
+  } catch (err) {
+    console.warn('[chat/share] Team conversation grant write failed (best-effort):', err);
+  }
 }
 
 // GET /api/chat/conversations/[id]/share
@@ -381,6 +386,7 @@ export const POST = withErrorHandler(async (
         permission,
       );
 
+      await writeTeamConversationGrantTuplesBestEffort(conversationId, resolvedTeams, permission);
     }
 
     if (disablesPublicSharing) {
@@ -456,20 +462,16 @@ export const PATCH = withErrorHandler(async (
 
     if (team_id) {
       const resolvedTeams = await resolveTeamShares([team_id]);
-      await writeTeamConversationGrantTuples(
-        conversationId,
-        resolvedTeams,
-        permission as SharePermission,
-      );
       const teamPerms = mergeTeamPermissions(
         conversation.sharing?.team_permissions,
         resolvedTeams,
-        permission as SharePermission,
+        permission,
       );
       await conversations.updateOne(
         { _id: conversationId },
         { $set: { 'sharing.team_permissions': teamPerms } }
       );
+      await writeTeamConversationGrantTuplesBestEffort(conversationId, resolvedTeams, permission);
     }
 
     const updated = await conversations.findOne({ _id: conversationId });
