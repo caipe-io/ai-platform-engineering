@@ -165,8 +165,7 @@ test.describe("MCP server credential probe (Test Connection)", () => {
         await fulfillJson(route, {
           success: true,
           data: {
-            ok: true,
-            status: 200,
+            ok: false,
             credentialOrigins: [],
             missingCredentials: ["Authorization"],
           },
@@ -180,12 +179,12 @@ test.describe("MCP server credential probe (Test Connection)", () => {
     await openMcpServerEditor(page, "Jira MCP");
     await page.getByRole("button", { name: /Test Connection/i }).click();
 
-    // "Reachable but credentials not resolved" copy appears. Exact text — a
-    // loose /credential/i regex also matches the "Add Credential" button and
-    // "Credentials" section heading.
-    await expect(
-      page.getByText("Reachable (HTTP 200) — credentials not resolved"),
-    ).toBeVisible({ timeout: 10_000 });
+    // The probe stops before contacting AgentGateway when required credentials
+    // are unresolved, so the UI must show the degraded credential state rather
+    // than claiming that the endpoint was reachable.
+    await expect(page.getByText("Credentials not resolved", { exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
   });
 });
 
