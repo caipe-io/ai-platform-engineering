@@ -318,7 +318,7 @@ test.describe("RBAC e2e — MCP server permission gating", () => {
     await expect(page.getByRole("button", { name: /Probe tools for Argocd/i })).toBeVisible();
   });
 
-  test("does not expose the unsafe AgentGateway repair action", async ({ page }) => {
+  test("never exposes global AgentGateway repair from the MCP list", async ({ page }) => {
     await installMcpPermissionMocks(page, {
       servers: [
         {

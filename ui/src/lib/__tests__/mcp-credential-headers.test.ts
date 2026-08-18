@@ -172,6 +172,31 @@ describe("mcp-credential-headers", () => {
     ]);
   });
 
+  it("preserves non-provider caller-token headers for direct upstreams", async () => {
+    const request = new NextRequest("http://localhost:3000/api/mcp-servers/probe", { method: "POST" });
+    const resolution = await resolveMcpHeaderCredentials({
+      request,
+      session: { sub: "user-sub", accessToken: "user-jwt" },
+      viaAgentGateway: false,
+      server: {
+        _id: "scheduler",
+        id: "scheduler",
+        name: "Scheduler",
+        transport: "http",
+        enabled: true,
+        credential_sources: [
+          {
+            kind: "caller_token",
+            target: "header",
+            name: "X-CAIPE-Caller-Token",
+          },
+        ],
+      },
+    });
+
+    expect(resolution.headers).toEqual({ "X-CAIPE-Caller-Token": "Bearer user-jwt" });
+  });
+
   it("uses caller_token client-credentials fallback when no user JWT is available", async () => {
     process.env.MCP_SERVICE_OIDC_TOKEN_URL = "http://keycloak/token";
     process.env.MCP_SERVICE_OIDC_CLIENT_ID = "caipe-platform";

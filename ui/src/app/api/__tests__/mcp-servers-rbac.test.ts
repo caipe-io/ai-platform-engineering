@@ -208,7 +208,7 @@ describe("MCP server per-resource RBAC", () => {
     expect(toArray).toHaveBeenCalledTimes(1);
   });
 
-  it("self-heals AgentGateway-discovered MCP rows before listing an empty discovered set", async () => {
+  it("keeps MCP list reads side-effect free when no discovered rows exist", async () => {
     const items = [{ _id: "knowledge-base", name: "Knowledge Base" }];
     mockFilterResourcesByPermission.mockResolvedValue(items);
     const toArray = jest.fn().mockResolvedValue(items);
@@ -224,8 +224,8 @@ describe("MCP server per-resource RBAC", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(countDocuments).toHaveBeenCalledWith({ source: "agentgateway" });
-    expect(mockSyncSelectedAgentGatewayMcpServers).toHaveBeenCalledTimes(1);
+    expect(countDocuments).not.toHaveBeenCalled();
+    expect(mockSyncSelectedAgentGatewayMcpServers).not.toHaveBeenCalled();
     expect(body.data.items).toEqual([
       {
         _id: "knowledge-base",
