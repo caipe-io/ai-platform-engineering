@@ -21,6 +21,8 @@ Notes on the wire contract:
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import time
@@ -146,8 +148,21 @@ def _build_user_context_header(owner_email: str, owner_sub: str | None = None) -
 
 def _task_headers(owner_email: str, owner_sub: str | None = None) -> dict[str, str]:
     """Return HTTP headers for an autonomous task invocation."""
+    user_context = _build_user_context_header(owner_email, owner_sub)
+    secret = get_settings().dynamic_agents_user_context_hmac_secret
+    if not secret or not secret.strip():
+        raise DynamicAgentsNotConfiguredError(
+            "DYNAMIC_AGENTS_USER_CONTEXT_HMAC_SECRET is required for signed "
+            "Dynamic Agents calls."
+        )
+    digest = hmac.new(
+        secret.strip().encode("utf-8"),
+        user_context.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
     return {
-        "X-User-Context": _build_user_context_header(owner_email, owner_sub),
+        "X-User-Context": user_context,
+        "X-User-Context-Signature": f"v1={digest}",
         "Content-Type": "application/json",
     }
 

@@ -163,15 +163,19 @@ def test_invalid_bearer_rejects_with_401_and_does_not_fallthrough(monkeypatch):
     assert "token" not in seen
 
 
-def test_empty_bearer_value_is_treated_as_no_bearer(monkeypatch):
-    """``Authorization: Bearer `` with whitespace only must not 401 in lenient mode."""
+@pytest.mark.parametrize("require_bearer", [False, True])
+def test_empty_bearer_value_is_always_rejected(monkeypatch, require_bearer):
+    """An explicit Bearer scheme must never fall through to trusted headers."""
     app, seen = _build_app(
-        monkeypatch, require_bearer=False, validator=lambda _t: {"sub": "x"}
+        monkeypatch,
+        require_bearer=require_bearer,
+        validator=lambda _t: {"sub": "x"},
     )
     with TestClient(app) as client:
         resp = client.get("/echo", headers={"Authorization": "Bearer    "})
-    assert resp.status_code == 200
-    assert seen["token"] is None
+    assert resp.status_code == 401
+    assert resp.json()["code"] == "missing_bearer"
+    assert "token" not in seen
 
 
 @pytest.mark.parametrize("scheme", ["basic", "BEARER", "bearer"])

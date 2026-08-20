@@ -1210,6 +1210,9 @@ dynamic-agents:
       key: DA_USER_CONTEXT_HMAC_SECRET
   networkPolicy:
     enabled: true
+    additionalCallerPodSelectors:
+      - matchLabels:
+          app.kubernetes.io/name: autonomous-agents
     # LLM configuration (override if needed)
     # LLM_PROVIDER: "openai"
     # LLM_MODEL: "gpt-4o"
@@ -1268,6 +1271,11 @@ autonomous-agents:
     clientSecretRef:
       name: ""
       key: "KC_SCHEDULER_CLIENT_SECRET"
+  # Must reference the same Secret key as caipe-ui and dynamic-agents.
+  userContext:
+    existingSecret:
+      name: ""
+      key: DA_USER_CONTEXT_HMAC_SECRET
   # ConfigMap for non-sensitive configuration.
   # DYNAMIC_AGENTS_URL defaults to the in-release dynamic-agents Service in the
   # autonomous-agents subchart helper. Set it here only to override that default.

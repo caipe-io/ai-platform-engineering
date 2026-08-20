@@ -53,8 +53,9 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
-          {{- if .Values.dynamicAgentsAuth.enabled }}
+          {{- if or .Values.dynamicAgentsAuth.enabled .Values.userContext.existingSecret.name }}
           env:
+            {{- if .Values.dynamicAgentsAuth.enabled }}
             - name: DYNAMIC_AGENTS_OAUTH2_TOKEN_URL
               value: {{ include "autonomous-agents.dynamicAgentsTokenUrl" . | quote }}
             - name: DYNAMIC_AGENTS_OAUTH2_CLIENT_ID
@@ -70,6 +71,14 @@ spec:
                 secretKeyRef:
                   name: {{ include "autonomous-agents.dynamicAgentsClientSecretName" . | quote }}
                   key: {{ required "dynamicAgentsAuth.clientSecretRef.key is required when dynamicAgentsAuth.enabled=true" .Values.dynamicAgentsAuth.clientSecretRef.key | quote }}
+            {{- end }}
+            {{- if .Values.userContext.existingSecret.name }}
+            - name: DYNAMIC_AGENTS_USER_CONTEXT_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.userContext.existingSecret.name | quote }}
+                  key: {{ required "userContext.existingSecret.key is required when userContext.existingSecret.name is set" .Values.userContext.existingSecret.key | quote }}
+            {{- end }}
           {{- else }}
           env: []
           {{- end }}

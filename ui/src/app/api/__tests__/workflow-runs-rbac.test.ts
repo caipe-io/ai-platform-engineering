@@ -97,7 +97,12 @@ function cursor(items: unknown[]) {
 }
 
 describe("workflow runs OpenFGA config access", () => {
+  afterEach(() => {
+    delete process.env.DA_USER_CONTEXT_HMAC_SECRET;
+  });
+
   beforeEach(() => {
+    process.env.DA_USER_CONTEXT_HMAC_SECRET = "test-context-secret";
     jest.clearAllMocks();
     mockGetUserTeamIds.mockResolvedValue(["legacy-team"]);
     mockRequireWorkflowAccess.mockResolvedValue(undefined);

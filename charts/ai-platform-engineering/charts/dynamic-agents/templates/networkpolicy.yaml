@@ -18,6 +18,14 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.service.port }}
+    {{- range .Values.networkPolicy.additionalCallerPodSelectors }}
+    - from:
+        - podSelector:
+            {{- toYaml . | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.service.port }}
+    {{- end }}
     - from:
         - podSelector:
             {{- toYaml .Values.networkPolicy.metricsPodSelector | nindent 12 }}

@@ -82,7 +82,19 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
 
         if authorization.lower().startswith("bearer "):
             raw = authorization[7:].strip()
-            if raw:
+            if not raw:
+                body = json.dumps(
+                    {
+                        "error": "Authentication required (Bearer token)",
+                        "code": "missing_bearer",
+                        "reason": "not_signed_in",
+                        "action": "sign_in",
+                    }
+                ).encode("utf-8")
+                return Response(
+                    content=body, status_code=401, media_type="application/json"
+                )
+            else:
                 claims = _validate_bearer_or_none(raw)
                 if claims is None:
                     # Reject hard: the caller sent a Bearer header but it

@@ -254,6 +254,8 @@ networkPolicy:
   bffPodSelector:
     matchLabels:
       app.kubernetes.io/name: caipe-ui
+  # Additional in-namespace services that call the Dynamic Agents API.
+  additionalCallerPodSelectors: []
   metricsPodSelector:
     matchLabels:
       app.kubernetes.io/name: prometheus

@@ -12,7 +12,6 @@
  *   3. Anonymous fallback — only when SSO is disabled (local dev).
  */
 
-import { createHmac } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerConfig } from "@/lib/config";
 import {
@@ -21,6 +20,7 @@ import {
   requireRbacPermission,
 } from "@/lib/api-middleware";
 import type { RbacResource, RbacScope } from "@/lib/rbac/types";
+import { buildSignedUserContextHeaders } from "@/lib/server/user-context-signing";
 
 // ═══════════════════════════════════════════════════════════════
 // Auth helper
@@ -231,15 +231,7 @@ export function buildBackendHeaders(
     "Content-Type": contentType,
   };
   if (authResult.userContextHeader) {
-    headers["X-User-Context"] = authResult.userContextHeader;
-    const secret = process.env.DA_USER_CONTEXT_HMAC_SECRET?.trim();
-    if (!secret) {
-      throw new Error("DA_USER_CONTEXT_HMAC_SECRET is not configured");
-    }
-    const signature = createHmac("sha256", secret)
-      .update(authResult.userContextHeader)
-      .digest("hex");
-    headers["X-User-Context-Signature"] = `v1=${signature}`;
+    Object.assign(headers, buildSignedUserContextHeaders(authResult.userContextHeader));
   }
   if (authResult.bearerToken) {
     headers["Authorization"] = `Bearer ${authResult.bearerToken}`;

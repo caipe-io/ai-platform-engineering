@@ -27,6 +27,7 @@
  */
 
 import { authenticateRequest } from "@/lib/da-proxy";
+import { buildSignedUserContextHeaders } from "@/lib/server/user-context-signing";
 import { consume } from "@/lib/server/ai-assist-rate-limit";
 import { ensureConfig } from "@/lib/server/ai-review/defaults";
 import { computeScoreAndGrade } from "@/lib/server/ai-review/grading";
@@ -201,7 +202,7 @@ export async function POST(request: NextRequest) {
   // failure mode for signed-in admins; pin all three headers explicitly.
   const headers: Record<string, string> = {};
   if (auth.userContextHeader) {
-    headers["X-User-Context"] = auth.userContextHeader;
+    Object.assign(headers, buildSignedUserContextHeaders(auth.userContextHeader));
   }
   if (auth.bearerToken) {
     headers["Authorization"] = `Bearer ${auth.bearerToken}`;
