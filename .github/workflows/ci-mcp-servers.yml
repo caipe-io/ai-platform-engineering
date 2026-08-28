@@ -105,10 +105,29 @@ jobs:
             });
             core.setOutput('filters', filters);
 
+      - name: 🔎 Determine diff base for tag-push change detection
+        id: diffbase
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -euo pipefail
+          # dorny/paths-filter defaults `base` to the repo's default branch
+          # (main). The tagged commit is already on main, so diffing
+          # tag-vs-main is a near-empty no-op — every tag push reported
+          # "no changes" and silently retagged stale images instead of
+          # rebuilding. Diff against the previous tag instead.
+          BASE_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || true)
+          echo "base=$BASE_TAG" >> "$GITHUB_OUTPUT"
+          if [ -n "$BASE_TAG" ]; then
+            echo "📍 Diffing against previous tag: $BASE_TAG"
+          else
+            echo "⚠️ No previous tag found; leaving paths-filter base unset"
+          fi
+
       - name: Detect changed paths (MCP)
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         with:
+          base: ${{ steps.diffbase.outputs.base }}
           filters: ${{ steps.generate-filters.outputs.filters }}
 
       - name: Set matrix based on changes (MCP)
