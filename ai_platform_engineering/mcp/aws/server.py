@@ -69,10 +69,50 @@ _kubectl_semaphore: asyncio.Semaphore
 
 logger = logging.getLogger(__name__)
 
+_SUPPORTED_CREDENTIAL_SOURCES = {
+    "Environment",
+    "EcsContainer",
+    "Ec2InstanceMetadata",
+}
+
 
 # ---------------------------------------------------------------------------
 # AWS profile setup
 # ---------------------------------------------------------------------------
+
+def _credential_source() -> str:
+    """Return the AWS CLI credential source for assume-role profiles.
+
+    EKS Pod Identity exposes credentials through the standard container
+    credential endpoint, which the AWS CLI names ``EcsContainer``.  Preserve
+    ``Environment`` as the fallback for local development and legacy installs.
+    Operators may explicitly select any AWS CLI-supported source through
+    ``AWS_CREDENTIAL_SOURCE``.
+    """
+    configured = os.getenv("AWS_CREDENTIAL_SOURCE", "").strip()
+    if configured:
+        if configured not in _SUPPORTED_CREDENTIAL_SOURCES:
+            supported = ", ".join(sorted(_SUPPORTED_CREDENTIAL_SOURCES))
+            raise ValueError(
+                f"Unsupported AWS_CREDENTIAL_SOURCE '{configured}'. "
+                f"Expected one of: {supported}."
+            )
+        return configured
+
+    if os.getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") or os.getenv(
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+    ):
+        return "EcsContainer"
+
+    return "Environment"
+
+
+def _single_line_env(name: str) -> str:
+    """Read a config value while preventing AWS config-file injection."""
+    value = os.getenv(name, "").strip()
+    if "\n" in value or "\r" in value:
+        raise ValueError(f"{name} must be a single-line value.")
+    return value
 
 def _setup_aws_profiles() -> list[dict]:
     """Read AWS_ACCOUNT_LIST and write ~/.aws/config with assume-role profiles."""
@@ -99,17 +139,41 @@ def _setup_aws_profiles() -> list[dict]:
     os.makedirs(aws_config_dir, exist_ok=True)
 
     sections = ["# AUTO-GENERATED PROFILES FROM AWS_ACCOUNT_LIST\n"]
-    for acc in accounts:
+    web_identity_role = _single_line_env("AWS_ROLE_ARN")
+    web_identity_token_file = _single_line_env("AWS_WEB_IDENTITY_TOKEN_FILE")
+    use_web_identity = bool(web_identity_role and web_identity_token_file)
+
+    if use_web_identity:
         sections.append(
+            "[profile mcp-workload-identity]\n"
+            f"role_arn = {web_identity_role}\n"
+            f"web_identity_token_file = {web_identity_token_file}\n"
+            "role_session_name = mcp-aws\n"
+        )
+    else:
+        credential_source = _credential_source()
+
+    for acc in accounts:
+        profile = (
             f"[profile {acc['name']}]\n"
             f"role_arn = arn:aws:iam::{acc['id']}:role/{cross_account_role}\n"
-            f"credential_source = Environment\n"
         )
+        if use_web_identity:
+            profile += "source_profile = mcp-workload-identity\n"
+        else:
+            profile += f"credential_source = {credential_source}\n"
+        sections.append(profile)
 
     with open(os.path.join(aws_config_dir, "config"), "w") as fh:
         fh.write("\n".join(sections))
 
-    logger.info("Generated AWS profiles for %d accounts: %s", len(accounts), [a["name"] for a in accounts])
+    source_type = "WebIdentity" if use_web_identity else credential_source
+    logger.info(
+        "Generated AWS profiles for %d accounts using %s: %s",
+        len(accounts),
+        source_type,
+        [a["name"] for a in accounts],
+    )
     return accounts
 
 

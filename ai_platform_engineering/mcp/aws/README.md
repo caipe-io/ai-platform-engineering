@@ -19,12 +19,21 @@ AWS MCP Server that exposes `aws_cli_execute` and `eks_kubectl_execute` as
 | `MCP_PORT` | `8000` | Bind port (HTTP/SSE mode) |
 | `AWS_ACCOUNT_LIST` | — | Comma-separated `name:account_id` pairs for cross-account profiles |
 | `CROSS_ACCOUNT_ROLE_NAME` | `caipe-read-only` | IAM role to assume in each account |
+| `AWS_CREDENTIAL_SOURCE` | auto | Optional AWS CLI credential source override: `Environment`, `EcsContainer`, or `Ec2InstanceMetadata` |
 | `AWS_CLI_MAX_EXECUTION_TIME` | `30` | Timeout (seconds) for AWS CLI commands |
 | `KUBECTL_MAX_EXECUTION_TIME` | `45` | Timeout (seconds) for kubectl commands |
 | `AWS_CLI_MAX_OUTPUT_SIZE` | `20000` | Maximum output size (bytes) before truncation |
 | `RESTRICT_KUBECTL_SECRETS` | `true` | Block `kubectl get/describe secret(s)` |
 | `RESTRICT_KUBECTL_PROXY` | `true` | Block `kubectl proxy` |
 | `RESTRICT_KUBECTL_EXEC` | `false` | Block `kubectl exec` |
+
+### Workload identity
+
+The server automatically uses `EcsContainer` when EKS Pod Identity injects a
+container credential endpoint. When IRSA injects both `AWS_ROLE_ARN` and
+`AWS_WEB_IDENTITY_TOKEN_FILE`, the server creates a web-identity source profile
+and chains each cross-account profile through it. Static environment credentials
+remain supported as a local-development fallback, but are not required on EKS.
 
 ## Running locally
 
