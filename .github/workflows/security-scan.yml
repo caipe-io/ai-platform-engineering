@@ -1,14 +1,14 @@
 ---
 name: "Grype Scan"
-description: "Anchore Grype vulnerability scan — filesystem on all events, containers on tags. Blocking gate is GitHub Code Scanning PR diff mode, not fail-build."
+# Anchore Grype vulnerability scan: filesystem on all events and released
+# containers on demand. GitHub Code Scanning PR diff mode is the blocking gate.
 
 # assisted-by Codex Codex-sonnet-4-6
 
 # Trigger matrix:
 #   pull_request / push to main  → filesystem scan only; fail-build: false — GitHub Code Scanning
 #                                  PR diff mode is the gate (only NEW alerts block the PR)
-#   push tag                     → filesystem scan + all container images, fail-build: false (informational)
-#   workflow_dispatch            → both jobs, fail-build: false
+#   workflow_dispatch            → filesystem scan + release container images, fail-build: false
 #
 # Why fail-build: false everywhere?
 #   Grype's fail-build hard-fails on any CVE at or above severity-cutoff, including CVEs in
@@ -167,11 +167,8 @@ jobs:
         env:
           DISPATCH_TAG: ${{ inputs.tag }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            printf 'tag=%s\n' "$DISPATCH_TAG" >> "$GITHUB_OUTPUT"
-          else
-            printf 'tag=%s\n' "${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
+          printf 'tag=%s\n' "$DISPATCH_TAG" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Run Grype scan on container image
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
@@ -188,5 +185,10 @@ jobs:
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
           category: "grype-${{ matrix.image }}"
+          # Container findings describe a released image, not the mutable main
+          # branch. Keeping them on the release tag also prevents GitHub's PR
+          # diff gate from expecting every container configuration on each PR.
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          sha: ${{ steps.tag.outputs.sha }}
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
