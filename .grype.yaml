@@ -1,0 +1,17 @@
+# image-size 2.0.2 is the newest published release. The docs postinstall hook
+# applies bounded forward progress to each affected parser and fails closed if
+# the expected vulnerable code is absent. Remove these exceptions when an
+# upstream fixed release is available.
+ignore:
+  - vulnerability: GHSA-5p2g-fcmc-qvqq
+    reason: Mitigated by docs/scripts/patch-image-size-dos.mjs; no fixed upstream release exists.
+    package:
+      name: image-size
+      version: 2.0.2
+      type: npm
+  - vulnerability: GHSA-w3rx-r6r6-pgpr
+    reason: Mitigated by docs/scripts/patch-image-size-dos.mjs; no fixed upstream release exists.
+    package:
+      name: image-size
+      version: 2.0.2
+      type: npm
