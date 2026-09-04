@@ -356,6 +356,8 @@ services:
       - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-caipe-platform-dev-secret}
       # Workflow runner - set WORKFLOW_RUNNER_ENABLED=true to show Run Workflow button and Multi-Step Workflows
       - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
+      # Projects - set PROJECTS_ENABLED=true to show the Projects workspace
+      - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       # Top-level workflows and schedules are independent, opt-in navigation surfaces.
       - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
