@@ -83,6 +83,11 @@ export const UNIVERSAL_REBAC_RESOURCE_TYPES: readonly UniversalRebacResourceType
       description: "Agent execution and configuration resource.",
     },
     {
+      type: "agentic_app",
+      actions: ["discover", "read", "use", "write", "approve", "manage", "audit"],
+      description: "Hosted External App surface and its authorization scope.",
+    },
+    {
       type: "llm_model",
       actions: [
         "discover",

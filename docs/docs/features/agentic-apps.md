@@ -20,15 +20,20 @@ sequenceDiagram
     participant Browser
     participant Host as CAIPE UI/BFF
     participant IdP as OIDC provider
+    participant CAS as Capability authorization
     participant App as External App
 
     Browser->>Host: Open /apps
     Host->>IdP: Validate the existing session
-    Host-->>Browser: Visible, role-eligible Apps
+    Host->>CAS: Check agentic_app read/use (when configured)
+    CAS-->>Host: Allow or deny
+    Host-->>Browser: Visible, authorized Apps
     Browser->>Host: Open /apps/example-app
     Browser->>Host: Load iframe and assets at /apps/example-app/...
     Host->>Host: Rewrite embedded traffic to the private runtime route
     Host->>Host: Require stable subject and match route policy
+    Host->>CAS: Check the route's agentic_app action
+    CAS-->>Host: Allow or deny
     Host->>Host: Mint short-lived app-bound JWT
     Host->>App: Proxy request with Bearer JWT
     App->>App: Verify signature, issuer, audience, expiry, app_id, sub, and scopes
@@ -86,6 +91,7 @@ AGENTIC_APPS_INSTALL_ENABLED=true
 AGENTIC_APPS_CONFIG_PATH=/etc/caipe-ui/agentic-apps.yaml
 AGENTIC_APP_TOKEN_SECRET=<dedicated-shared-secret>
 AGENTIC_APP_TOKEN_ISSUER=caipe-agentic-apps
+AGENTIC_APPS_CAS_MODE=enforce
 ```
 
 The catalog is deployment-owned. It is not written to MongoDB and contains no
@@ -128,6 +134,10 @@ agentic_apps:
               path: /api/reports
               defaultEffect: allow
               requiredScopes: [example-app:run]
+              casAction: write
+        authorization:
+          resourceType: agentic_app
+          launchAction: use
         health:
           endpoint: /health
         catalog:
@@ -178,6 +188,7 @@ Then start the UI with the committed opt-in catalog:
 AGENTIC_APPS_INSTALL_ENABLED=true \
 AGENTIC_APPS_CONFIG_PATH="$PWD/examples/external-apps/weather/agentic-apps.yaml" \
 AGENTIC_APP_TOKEN_SECRET='paste-the-same-generated-secret-here' \
+AGENTIC_APPS_CAS_MODE=off \
   npm run dev
 ```
 
@@ -231,12 +242,29 @@ publisher trust boundary.
 
 ## Current authorization scope
 
-This first forward-port provides deployment flags, OIDC identity continuity,
-role launch gates, per-route policy, app-bound tokens, and the protected
-runtime proxy. It does not create `agentic_app` objects in OpenFGA and does not
-call an external capability authorization service. A later authorization
-adapter can add that outer launch/discovery decision without changing the
-external application's token-verification contract.
+External Apps can opt into host-level capability authorization by declaring an
+`authorization` block. The host then checks the configured `agentic_app`
+resource before listing, launching, or proxying requests. `launchAction`
+defaults the launch decision; individual route policies can select a narrower
+`casAction` such as `read`, `write`, `approve`, or `manage`.
+
+At startup, visible and enabled opted-in apps receive the deployment-wide
+`user:*` grant for `use` plus the organization-admin management relation. This
+keeps deployment-configured apps globally available while making every access
+decision pass through the shared authorization boundary. Private and team
+sharing require a persistence-backed installation policy and are outside this
+deployment-owned catalog contract.
+
+`AGENTIC_APPS_CAS_MODE` controls enforcement:
+
+- `enforce` (default) fails closed when authorization denies or is unavailable;
+- `shadow` records the decision while allowing the request; and
+- `off` skips the external authorization call, which is useful for the
+  standalone Weather example without OpenFGA.
+
+The external application's JWT verification and domain-specific authorization
+remain mandatory. The host CAS decision is an outer discovery and proxy gate;
+it does not replace authorization inside the application.
 
 The parser accepts existing `health.blockLaunchWhen` and installation
 `health_policy` metadata for catalog compatibility, but this first slice does

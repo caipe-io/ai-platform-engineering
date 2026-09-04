@@ -1,4 +1,5 @@
 export type AgenticAppRuntimeKind = "proxied-next-zone";
+export type AgenticAppCasAction = "read" | "use" | "write" | "approve" | "manage";
 
 export const DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
 export const MAX_AGENTIC_APP_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
@@ -11,6 +12,8 @@ export interface AgenticAppPolicyAction {
   requiredScopes?: string[];
   method?: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
   path?: string;
+  /** CAS capability that must be confirmed before scopes are minted. */
+  casAction?: AgenticAppCasAction;
 }
 
 export interface AgenticAppManifest {
@@ -25,6 +28,11 @@ export interface AgenticAppManifest {
     preserveMountPath?: boolean;
     chrome?: "iframe";
     maxRequestBodyBytes?: number;
+  };
+  /** Optional CAS contract for deployments that authorize app access in OpenFGA. */
+  authorization?: {
+    resourceType: "agentic_app";
+    launchAction: "use";
   };
   surfaces: {
     showInHub: boolean;

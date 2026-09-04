@@ -11,6 +11,7 @@ import { MAX_AGENTIC_APP_REQUEST_BODY_BYTES } from "@/types/agentic-app";
 
 const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const HTTP_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
+const CAS_ACTIONS = new Set(["read", "use", "write", "approve", "manage"]);
 
 type RawPackage = {
   package_id?: unknown;
@@ -243,6 +244,20 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
   const healthRaw = raw.health === undefined
     ? undefined
     : asRecord(raw.health, `${path}.health`);
+  const authorizationRaw = raw.authorization === undefined
+    ? undefined
+    : asRecord(raw.authorization, `${path}.authorization`);
+  if (
+    authorizationRaw
+    && (
+      authorizationRaw.resourceType !== "agentic_app"
+      || authorizationRaw.launchAction !== "use"
+    )
+  ) {
+    throw new Error(
+      `${path}.authorization must declare resourceType "agentic_app" and launchAction "use"`,
+    );
+  }
 
   return {
     id,
@@ -274,6 +289,9 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
           }
         : {}),
     },
+    ...(authorizationRaw
+      ? { authorization: { resourceType: "agentic_app" as const, launchAction: "use" as const } }
+      : {}),
     surfaces: {
       showInHub: optionalBoolean(
         surfacesRaw.showInHub,
@@ -367,6 +385,7 @@ function parsePolicyAction(value: unknown, path: string): AgenticAppPolicyAction
       "requiredScopes",
       "method",
       "path",
+      "casAction",
     ],
     path,
   );
@@ -378,6 +397,9 @@ function parsePolicyAction(value: unknown, path: string): AgenticAppPolicyAction
   }
   if ((raw.method === undefined) !== (raw.path === undefined)) {
     throw new Error(`${path}.method and ${path}.path must be declared together`);
+  }
+  if (raw.casAction !== undefined && !CAS_ACTIONS.has(String(raw.casAction))) {
+    throw new Error(`${path}.casAction is invalid`);
   }
   const defaultEffect = raw.defaultEffect ?? "deny";
   if (defaultEffect !== "allow" && defaultEffect !== "deny") {
@@ -403,6 +425,9 @@ function parsePolicyAction(value: unknown, path: string): AgenticAppPolicyAction
     ...(method ? { method: method as AgenticAppPolicyAction["method"] } : {}),
     ...(raw.path !== undefined
       ? { path: requiredAbsolutePath(raw.path, `${path}.path`) }
+      : {}),
+    ...(raw.casAction !== undefined
+      ? { casAction: raw.casAction as AgenticAppPolicyAction["casAction"] }
       : {}),
   };
 }

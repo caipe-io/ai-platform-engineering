@@ -201,6 +201,23 @@ type mcp_server
     define can_manage: manager or owner
     define can_audit: auditor or can_manage
 
+type agentic_app
+  relations
+    define owner: [user, service_account]
+    define reader: [user, service_account, team#member, team#admin, external_group#member, organization#member]
+    define user: [user, user:*, service_account, team#member, team#admin, external_group#member, organization#member]
+    define writer: [user, service_account, team#member, team#admin]
+    define approver: [user, service_account, team#member, team#admin]
+    define manager: [user, service_account, team#admin, organization#admin]
+    define auditor: [user, service_account, team#admin]
+    define can_discover: can_read
+    define can_read: reader or can_use or can_manage or owner
+    define can_use: user or can_write or can_approve or can_manage or owner
+    define can_write: writer or can_approve or can_manage or owner
+    define can_approve: approver or can_manage or owner
+    define can_manage: manager or owner
+    define can_audit: auditor or can_manage
+
 type llm_model
   relations
     define owner: [user, service_account]
