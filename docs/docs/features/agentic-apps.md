@@ -258,7 +258,7 @@ deployment-owned catalog contract.
 `AGENTIC_APPS_CAS_MODE` controls enforcement:
 
 - `enforce` (default) fails closed when authorization denies or is unavailable;
-- `shadow` records the decision while allowing the request; and
+- `shadow` evaluates CAS while allowing the request; and
 - `off` skips the external authorization call, which is useful for the
   standalone Weather example without OpenFGA.
 

@@ -152,7 +152,6 @@ describe("External App runtime route", () => {
       effectiveEffect: "deny",
     });
     const fetchMock = jest.spyOn(global, "fetch");
->>>>>>> 5c229704e (feat(agentic-apps): authorize configured app access)
 
     const response = await GET(
       new NextRequest("https://host.example/api/agentic-apps/runtime/example-app"),
