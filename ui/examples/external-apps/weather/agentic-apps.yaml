@@ -14,6 +14,9 @@ agentic_apps:
           mountPath: /apps/weather
           preserveMountPath: false
           chrome: iframe
+        authorization:
+          resourceType: agentic_app
+          launchAction: use
         surfaces:
           showInHub: true
           navOrder: 100
@@ -24,14 +27,17 @@ agentic_apps:
             - action: proxy:GET
               defaultEffect: allow
               requiredScopes: [weather:read]
+              casAction: read
             - action: proxy:HEAD
               defaultEffect: allow
               requiredScopes: [weather:read]
+              casAction: read
             - action: update-preferences
               method: POST
               path: /api/preferences
               defaultEffect: allow
               requiredScopes: [weather:write]
+              casAction: write
         health:
           endpoint: /healthz
           timeoutMs: 1500
