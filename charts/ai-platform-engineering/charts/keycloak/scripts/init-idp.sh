@@ -462,6 +462,20 @@ json.dump(client, sys.stdout)
 
 _reconcile_caipe_platform_client_secret
 
+# MCP DCR is optional for deployments that do not expose Tome. Keep this
+# reconcile best-effort so a transient Keycloak Admin API error cannot abort
+# the broader identity/bootstrap job under set -e.
+MCP_DCR_HELPER="${MCP_DCR_HELPER_PATH:-/scripts/mcp-dcr.sh}"
+if [ -r "${MCP_DCR_HELPER}" ]; then
+  # shellcheck source=./mcp-dcr.sh
+  . "${MCP_DCR_HELPER}"
+  if ! _reconcile_mcp_dynamic_client_registration; then
+    echo "${TAG:-[init-idp]} WARNING: MCP DCR reconcile failed; URL-only MCP clients may not work." >&2
+  fi
+else
+  echo "${TAG:-[init-idp]} WARNING: ${MCP_DCR_HELPER} is missing; skipping MCP DCR reconcile." >&2
+fi
+
 # -------------------------------------------------------------------
 # Reconcile the public CLI client (caipe-cli / forge-cli).
 #
@@ -607,6 +621,69 @@ print(json.dumps(existing))
 }
 
 _reconcile_cli_client
+
+# -------------------------------------------------------------------
+# Ensure offline_access is in the realm default-role composite.
+#
+# Keycloak realm import does not reliably set composite memberships on
+# default-roles-<realm> (see realm-config.json's defaultRole.composites),
+# so patch it at runtime to guarantee all users — including plain local-
+# Keycloak logins with no upstream IdP broker configured — receive
+# offline_access automatically. Needed for MCP OAuth/PKCE clients (e.g.
+# Claude Code) that request offline_access; without it, first login fails
+# with "Offline tokens not allowed for the user or client". Must run
+# before the no-upstream-IdP early exit below, since local-Keycloak-only
+# installs never reach the upstream-IdP-broker code path.
+# -------------------------------------------------------------------
+_ensure_default_role_offline_access() {
+  local DEFAULT_REALM_ROLE="default-roles-${REALM}"
+  echo "[init-idp] Ensuring offline_access is in ${DEFAULT_REALM_ROLE} ..."
+  if [ -z "${AUTH:-}" ]; then
+    local _tok
+    _tok=$(curl -sf -X POST "${KC_URL}/realms/master/protocol/openid-connect/token" \
+      -d "grant_type=password&client_id=admin-cli&username=${KEYCLOAK_ADMIN:-admin}&password=${KEYCLOAK_ADMIN_PASSWORD:-admin}" 2>/dev/null \
+      | grep -o '"access_token" *: *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+    if [ -z "${_tok}" ]; then
+      echo "[init-idp]   WARNING: could not acquire admin token — skipping offline_access default-role check."
+      return 0
+    fi
+    AUTH="Authorization: Bearer ${_tok}"
+  fi
+
+  local DEFAULT_ROLE_ID
+  DEFAULT_ROLE_ID=$(curl -sf -H "${AUTH}" \
+    "${KC_URL}/admin/realms/${REALM}/roles" 2>/dev/null \
+    | json_id_by_field "name" "${DEFAULT_REALM_ROLE}")
+  if [ -z "${DEFAULT_ROLE_ID}" ]; then
+    echo "[init-idp]   WARNING: ${DEFAULT_REALM_ROLE} role not found."
+    return 0
+  fi
+
+  local COMPOSITES
+  COMPOSITES=$(curl -sf -H "${AUTH}" \
+    "${KC_URL}/admin/realms/${REALM}/roles-by-id/${DEFAULT_ROLE_ID}/composites" 2>/dev/null || echo "[]")
+  if echo "${COMPOSITES}" | grep -q '"offline_access"'; then
+    echo "[init-idp]   offline_access already in ${DEFAULT_REALM_ROLE}."
+    return 0
+  fi
+
+  local OFFLINE_ROLE_ID
+  OFFLINE_ROLE_ID=$(curl -sf -H "${AUTH}" \
+    "${KC_URL}/admin/realms/${REALM}/roles" 2>/dev/null \
+    | json_id_by_field "name" "offline_access")
+  if [ -z "${OFFLINE_ROLE_ID}" ]; then
+    echo "[init-idp]   WARNING: offline_access role not found in realm."
+    return 0
+  fi
+
+  curl -sf -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+    "${KC_URL}/admin/realms/${REALM}/roles-by-id/${DEFAULT_ROLE_ID}/composites" \
+    -d "[{\"id\":\"${OFFLINE_ROLE_ID}\",\"name\":\"offline_access\"}]" && \
+    echo "[init-idp]   Added offline_access to ${DEFAULT_REALM_ROLE}." || \
+    echo "[init-idp]   WARNING: failed to add offline_access to ${DEFAULT_REALM_ROLE}."
+}
+
+_ensure_default_role_offline_access
 
 # -------------------------------------------------------------------
 # Strict client-secret mode guard (init-idp scope: caipe-ui + caipe-platform).
@@ -1078,39 +1155,6 @@ echo "[init-idp]   jwks:      ${JWKS_EP}"
 if [ -z "${TOKEN_EP}" ] || [ -z "${AUTHZ_EP}" ]; then
   echo "[init-idp] ERROR: failed to parse discovery document" >&2
   exit 1
-fi
-
-# --- ensure offline_access is in the realm default-role composite ---
-# Keycloak realm import does not reliably set composite memberships,
-# so we patch it at runtime to guarantee all users (including SSO-
-# brokered users) receive the offline_access role automatically.
-DEFAULT_REALM_ROLE="default-roles-${REALM}"
-echo "[init-idp] Ensuring offline_access is in ${DEFAULT_REALM_ROLE} ..."
-DEFAULT_ROLE_ID=$(curl -sf -H "${AUTH}" \
-  "${KC_URL}/admin/realms/${REALM}/roles" 2>/dev/null \
-  | json_id_by_field "name" "${DEFAULT_REALM_ROLE}")
-
-if [ -n "${DEFAULT_ROLE_ID}" ]; then
-  COMPOSITES=$(curl -sf -H "${AUTH}" \
-    "${KC_URL}/admin/realms/${REALM}/roles-by-id/${DEFAULT_ROLE_ID}/composites" 2>/dev/null || echo "[]")
-  if echo "${COMPOSITES}" | grep -q '"offline_access"'; then
-    echo "[init-idp]   offline_access already in ${DEFAULT_REALM_ROLE}."
-  else
-    OFFLINE_ROLE_ID=$(curl -sf -H "${AUTH}" \
-      "${KC_URL}/admin/realms/${REALM}/roles" 2>/dev/null \
-      | json_id_by_field "name" "offline_access")
-    if [ -n "${OFFLINE_ROLE_ID}" ]; then
-      curl -sf -X POST -H "${AUTH}" -H "Content-Type: application/json" \
-        "${KC_URL}/admin/realms/${REALM}/roles-by-id/${DEFAULT_ROLE_ID}/composites" \
-        -d "[{\"id\":\"${OFFLINE_ROLE_ID}\",\"name\":\"offline_access\"}]" && \
-        echo "[init-idp]   Added offline_access to ${DEFAULT_REALM_ROLE}." || \
-        echo "[init-idp]   WARNING: failed to add offline_access to ${DEFAULT_REALM_ROLE}."
-    else
-      echo "[init-idp]   WARNING: offline_access role not found in realm."
-    fi
-  fi
-else
-  echo "[init-idp]   WARNING: ${DEFAULT_REALM_ROLE} role not found."
 fi
 
 # CAIPE business authorization is OpenFGA-backed. Do not add application roles

@@ -812,6 +812,20 @@ seed_openfga_service_account_grants() {
 
 seed_openfga_service_account_grants
 
+# MCP DCR is optional for deployments that do not expose Tome. Keep this
+# reconcile best-effort so a transient Keycloak Admin API error cannot abort
+# the broader identity/bootstrap job under set -e.
+MCP_DCR_HELPER="${MCP_DCR_HELPER_PATH:-/scripts/mcp-dcr.sh}"
+if [ -r "${MCP_DCR_HELPER}" ]; then
+  # shellcheck source=./mcp-dcr.sh
+  . "${MCP_DCR_HELPER}"
+  if ! _reconcile_mcp_dynamic_client_registration "${AUTH}"; then
+    echo "${TAG:-[init-idp]} WARNING: MCP DCR reconcile failed; URL-only MCP clients may not work." >&2
+  fi
+else
+  echo "${TAG:-[init-idp]} WARNING: ${MCP_DCR_HELPER} is missing; skipping MCP DCR reconcile." >&2
+fi
+
 # -------------------------------------------------------------------
 # Reconcile the public CLI client (caipe-cli / forge-cli).
 #
