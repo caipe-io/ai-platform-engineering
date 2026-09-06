@@ -86,6 +86,14 @@ ENABLE_AGENTGATEWAY="${ENABLE_AGENTGATEWAY:-true}"
 # ENABLE_AGENTGATEWAY=true. Set ENABLE_RBAC_RUNTIME=false or pass
 # --no-rbac-runtime to skip.
 ENABLE_RBAC_RUNTIME="${ENABLE_RBAC_RUNTIME:-true}"
+# Scheduler + autonomous agents: default ON so a fresh install is full-featured.
+# Scheduler adds caipe-scheduler + cron-runner + scheduler MCP + UI token wiring
+# (global.scheduler.enabled). Autonomous agents add the autonomous-agents
+# deployment (cron / interval / webhook triggers via the admin-gated
+# /api/autonomous proxy). Together ~4-5 extra pods — set ENABLE_SCHEDULER=false
+# / ENABLE_AUTONOMOUS_AGENTS=false on a memory-constrained host.
+ENABLE_SCHEDULER="${ENABLE_SCHEDULER:-true}"
+ENABLE_AUTONOMOUS_AGENTS="${ENABLE_AUTONOMOUS_AGENTS:-true}"
 # Keycloak bootstrap admin password (master realm). The keycloak subchart
 # requires an explicit value — generated admin passwords are disabled because
 # Keycloak persists the bootstrap admin in its database. Resolved/persisted by
@@ -5038,6 +5046,24 @@ subprocess.run(['kubectl','patch','cm','caipe-dynamic-agents-config',
       &>/dev/null || true
   fi
 
+  # scheduler + autonomous-agents subcharts each need a pre-existing Secret
+  # pointing at the shared caipe DB. One Secret serves both:
+  #   - autonomous-agents.existingSecret reads MONGODB_URI + WEBHOOK_SECRET
+  #   - scheduler.mongo.existingSecret reads key "uri"
+  # WEBHOOK_SECRET is generated once and reused on re-runs.
+  if $ENABLE_AUTONOMOUS_AGENTS || $ENABLE_SCHEDULER; then
+    local aa_wh
+    aa_wh=$(kubectl get secret caipe-autonomous-agents -n caipe \
+      -o jsonpath='{.data.WEBHOOK_SECRET}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    [[ -z "$aa_wh" ]] && aa_wh="$(openssl rand -hex 32)"
+    kubectl create secret generic caipe-autonomous-agents -n caipe \
+      --from-literal=MONGODB_URI="${mongo_uri}" \
+      --from-literal=uri="${mongo_uri}" \
+      --from-literal=WEBHOOK_SECRET="${aa_wh}" \
+      --dry-run=client -o yaml | kubectl apply -f - &>/dev/null \
+      && log "caipe-autonomous-agents secret ready (MONGODB_URI + uri + WEBHOOK_SECRET)"
+  fi
+
 }
 
 _wait_for_milvus() {
@@ -6362,6 +6388,29 @@ DAEOF
       --set-string "caipe-ui.ingress.annotations.nginx\.ingress\.kubernetes\.io/proxy-send-timeout=3600"
     )
     log "Ingress configured for https://${CAIPE_DOMAIN}"
+  fi
+
+  # Scheduled Dynamic Agent runs: scheduler service + cron-runner + scheduler
+  # MCP + UI token wiring. The caipe-scheduler-runner Keycloak client is derived
+  # from the bundled Keycloak (schedulerRunnerClient.secretName left empty).
+  if $ENABLE_SCHEDULER; then
+    helm_args+=(
+      --set global.scheduler.enabled=true
+      --set "scheduler.mongo.existingSecret=caipe-autonomous-agents"
+    )
+    log "Scheduler enabled (scheduled runs + cron-runner + scheduler MCP)"
+  fi
+
+  # Autonomous agents: cron / interval / webhook triggers via the admin-gated
+  # /api/autonomous proxy. Reuses the caipe-platform client; MONGODB_URI +
+  # WEBHOOK_SECRET come from the caipe-autonomous-agents Secret provisioned in
+  # _ensure_dynamic_agents_mongodb.
+  if $ENABLE_AUTONOMOUS_AGENTS; then
+    helm_args+=(
+      --set tags.autonomous-agents=true
+      --set "autonomous-agents.existingSecret=caipe-autonomous-agents"
+    )
+    log "Autonomous agents enabled (cron / interval / webhook triggers)"
   fi
 
   # Agent and UI secrets provisioned from --env-file / --ui-env-file
@@ -8026,6 +8075,8 @@ embeddings_model: "${EMBEDDINGS_MODEL:-}"
 enable_rag: "${ENABLE_RAG:-false}"
 enable_graph_rag: "${ENABLE_GRAPH_RAG:-false}"
 enable_tracing: "${ENABLE_TRACING:-false}"
+enable_scheduler: "${ENABLE_SCHEDULER:-true}"
+enable_autonomous_agents: "${ENABLE_AUTONOMOUS_AGENTS:-true}"
 enable_metallb: "${ENABLE_METALLB:-false}"
 enable_ingress: "${ENABLE_INGRESS:-false}"
 domain: "${CAIPE_DOMAIN:-}"
@@ -8613,6 +8664,11 @@ Environment variables (all optional):
                           or set ENABLE_SLACK in --env-file)
   ENABLE_WEBEX_BOT        Deploy the Webex bot surface (default: false; --webex-bot,
                           or set ENABLE_WEBEX in --env-file)
+  ENABLE_SCHEDULER       Scheduled Dynamic Agent runs — scheduler + cron-runner +
+                          scheduler MCP (default: true; ENABLE_SCHEDULER=false to skip)
+  ENABLE_AUTONOMOUS_AGENTS  Autonomous cron/interval/webhook agents
+                          (default: true; ENABLE_AUTONOMOUS_AGENTS=false to skip).
+                          Together these add ~4-5 pods.
   AGENTGATEWAY_VERSION    AgentGateway Helm chart version (default: v2.2.1)
 
 LLM provider credentials are read from (in order):
