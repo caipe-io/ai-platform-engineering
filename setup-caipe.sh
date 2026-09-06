@@ -166,6 +166,7 @@ KEYCLOAK_PORT=7080
 OPENFGA_PORT=18080
 INJECT_CORPORATE_CA=false
 CA_SSL_FIX_PROMPTED=false
+SUDO_CONSENT=""   # "", "yes" or "no" — cached answer for _sudo_consent (ask once)
 RAG_INGESTOR_SECRET_READY=false
 RAG_INGESTOR_OIDC_ISSUER=""
 RAG_INGESTOR_OIDC_CLIENT_ID=""
@@ -318,6 +319,23 @@ ask_yn() {
   [[ "$answer" =~ ^[Yy]$ ]]
 }
 
+# Consent gate for anything that shells out to `sudo`. Returns 0 only after the
+# user explicitly allows it — a working passwordless sudo is NOT treated as
+# permission. The answer is cached for the rest of the run so we prompt once.
+# --yes / AUTO_YES pre-consents (non-interactive convenience).
+_sudo_consent() {
+  local reason="${1:-a system change}"
+  case "$SUDO_CONSENT" in
+    yes) return 0 ;;
+    no)  return 1 ;;
+  esac
+  if $AUTO_YES; then SUDO_CONSENT="yes"; return 0; fi
+  if ask_yn "This step needs sudo (${reason}). Allow this script to run sudo?" "y"; then
+    SUDO_CONSENT="yes"; return 0
+  fi
+  SUDO_CONSENT="no"; return 1
+}
+
 wait_for_pods() {
   local ns="$1" timeout="${2:-300}" exclude_pattern="${3:-}" interval=5 elapsed=0
   local show_interval=10 next_show=10
@@ -455,7 +473,11 @@ _install_kubectl_linux() {
   ver=$(curl -sL https://dl.k8s.io/release/stable.txt)
   curl -sLo /tmp/kubectl "https://dl.k8s.io/release/${ver}/bin/linux/amd64/kubectl"
   chmod +x /tmp/kubectl
-  sudo mv /tmp/kubectl /usr/local/bin/kubectl || mv /tmp/kubectl "$HOME/.local/bin/kubectl"
+  if _sudo_consent "move kubectl into /usr/local/bin"; then
+    sudo mv /tmp/kubectl /usr/local/bin/kubectl || { mkdir -p "$HOME/.local/bin" && mv /tmp/kubectl "$HOME/.local/bin/kubectl"; }
+  else
+    mkdir -p "$HOME/.local/bin" && mv /tmp/kubectl "$HOME/.local/bin/kubectl"
+  fi
   log "kubectl ${ver} installed"
 }
 
@@ -516,7 +538,11 @@ _install_jq_linux() {
       ver=$(curl -sL https://api.github.com/repos/jqlang/jq/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
       curl -sLo /tmp/jq "https://github.com/jqlang/jq/releases/download/${ver}/jq-linux-amd64"
       chmod +x /tmp/jq
-      sudo mv /tmp/jq /usr/local/bin/jq || mv /tmp/jq "$HOME/.local/bin/jq"
+      if _sudo_consent "move jq into /usr/local/bin"; then
+        sudo mv /tmp/jq /usr/local/bin/jq || { mkdir -p "$HOME/.local/bin" && mv /tmp/jq "$HOME/.local/bin/jq"; }
+      else
+        mkdir -p "$HOME/.local/bin" && mv /tmp/jq "$HOME/.local/bin/jq"
+      fi
       ;;
   esac
   log "jq installed"
@@ -528,7 +554,11 @@ _install_kind_linux() {
   ver=$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
   curl -sLo /tmp/kind "https://kind.sigs.k8s.io/dl/${ver}/kind-linux-amd64"
   chmod +x /tmp/kind
-  sudo mv /tmp/kind /usr/local/bin/kind || mv /tmp/kind "$HOME/.local/bin/kind"
+  if _sudo_consent "move kind into /usr/local/bin"; then
+    sudo mv /tmp/kind /usr/local/bin/kind || { mkdir -p "$HOME/.local/bin" && mv /tmp/kind "$HOME/.local/bin/kind"; }
+  else
+    mkdir -p "$HOME/.local/bin" && mv /tmp/kind "$HOME/.local/bin/kind"
+  fi
   log "kind ${ver} installed"
 }
 
@@ -541,7 +571,11 @@ _install_kind_macos() {
     ver=$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
     curl -sLo /tmp/kind "https://kind.sigs.k8s.io/dl/${ver}/kind-darwin-arm64"
     chmod +x /tmp/kind
-    sudo mv /tmp/kind /usr/local/bin/kind || mv /tmp/kind "$HOME/.local/bin/kind"
+    if _sudo_consent "move kind into /usr/local/bin"; then
+      sudo mv /tmp/kind /usr/local/bin/kind || { mkdir -p "$HOME/.local/bin" && mv /tmp/kind "$HOME/.local/bin/kind"; }
+    else
+      mkdir -p "$HOME/.local/bin" && mv /tmp/kind "$HOME/.local/bin/kind"
+    fi
     log "kind ${ver} installed"
   fi
 }
@@ -683,12 +717,11 @@ check_prerequisites() {
         esac
       done
 
-      # If any tools need sudo, check whether sudo is usable and user consents
+      # If any tools need sudo, get explicit consent first (a working
+      # passwordless sudo does not imply permission).
       if [[ ${#needs_sudo[@]} -gt 0 ]]; then
         local sudo_ok=false
-        if sudo -n true 2>/dev/null; then
-          sudo_ok=true
-        elif ask_yn "Installing ${needs_sudo[*]} requires sudo. Allow this script to run sudo?" "y"; then
+        if _sudo_consent "install ${needs_sudo[*]}"; then
           sudo_ok=true
         fi
 
@@ -782,9 +815,7 @@ check_prerequisites() {
   if ! command -v k9s &>/dev/null; then
     if [[ "$(uname -s)" == "Linux" ]]; then
       local _k9s_sudo_ok=false
-      if sudo -n true 2>/dev/null; then
-        _k9s_sudo_ok=true
-      elif ask_yn "Installing k9s (Kubernetes TUI) requires sudo. Allow?" "y"; then
+      if _sudo_consent "install k9s (Kubernetes TUI)"; then
         _k9s_sudo_ok=true
       fi
       if [[ "$_k9s_sudo_ok" == true ]]; then
