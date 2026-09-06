@@ -8280,14 +8280,13 @@ cmd_setup() {
    ╚═════╝╚═╝  ╚═╝╚═╝╚═╝     ╚══════╝
 BANNER
   echo -e "${NC}"
-  echo -e "${BLUE}${BOLD}╔═══════════════════════════════════════════════╗${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${BOLD}Welcome to CAIPE Setup${NC}                       ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  Your 🤖 Agentic AI automation super hero 🦸  ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}                                               ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}Multi-Agent System on Kubernetes${NC}             ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}                                               ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}github.com/caipe-io/ai-platform-engineering${NC}   ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}╚═══════════════════════════════════════════════╝${NC}"
+  echo -e "${BLUE}${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  ${BOLD}Open Source AI Platform for All${NC}                     ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}                                                      ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  CAIPE empowers teams with 🤖 agentic AI automation. ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}                                                      ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}github.com/caipe-io/ai-platform-engineering${NC}         ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
   echo ""
 
   # On hosts where kubectl is a k3s symlink (/usr/local/bin/kubectl -> k3s),
