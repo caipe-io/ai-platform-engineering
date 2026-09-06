@@ -6,5 +6,5 @@ description: |
   for safety analysis. The service is unauthenticated and MUST stay
   cluster-internal (ClusterIP only — no Ingress).
 type: application
-version: 1.0.1-dev.2 # Do NOT bump this. It will be updated automatically using the PR or release workflow
-appVersion: "1.0.1-dev.2" # Do NOT modify. It will be updated automatically using the release workflow
+version: 1.0.1-dev.3 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+appVersion: "1.0.1-dev.3" # Do NOT modify. It will be updated automatically using the release workflow
