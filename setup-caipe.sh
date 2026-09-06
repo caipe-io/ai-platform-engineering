@@ -4280,9 +4280,18 @@ post_deploy_patches() {
       _ningx_ip=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
         -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
       if [[ -n "$_ningx_ip" ]]; then
-        kubectl patch deploy caipe-caipe-ui -n caipe --type=merge \
-          -p "{\"spec\":{\"template\":{\"spec\":{\"hostAliases\":[{\"ip\":\"${_ningx_ip}\",\"hostnames\":[\"${CAIPE_DOMAIN}\"]}]}}}}" &>/dev/null \
-          && log "caipe-ui hostAliases: ${CAIPE_DOMAIN} -> ${_ningx_ip} (in-cluster ingress; fixes SSO callback)"
+        # caipe-ui isn't the only pod that calls the public host server-side:
+        # the RAG server and the web-ingestor fetch OIDC tokens from the issuer
+        # URL Keycloak advertises (KC_HOSTNAME = the public domain). Without this
+        # they resolve the host to a public/loopback IP and never reach the
+        # in-cluster ingress. rag-stack deployments are absent when RAG is off —
+        # patch is best-effort.
+        local _d
+        for _d in caipe-caipe-ui rag-server caipe-rag-ingestors-webloader; do
+          kubectl patch deploy "$_d" -n caipe --type=merge \
+            -p "{\"spec\":{\"template\":{\"spec\":{\"hostAliases\":[{\"ip\":\"${_ningx_ip}\",\"hostnames\":[\"${CAIPE_DOMAIN}\"]}]}}}}" &>/dev/null \
+            && log "${_d} hostAliases: ${CAIPE_DOMAIN} -> ${_ningx_ip} (in-cluster ingress)"
+        done
       fi
     fi
 
