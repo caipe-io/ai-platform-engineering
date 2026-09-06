@@ -4,6 +4,6 @@ description: A Helm chart for Dynamic Agents - Standalone agent builder service 
 # Application chart that can be packaged and deployed
 type: application
 # Chart version - automatically updated by release workflow
-version: 1.0.1-dev.3 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+version: 1.0.1-dev.4 # Do NOT bump this. It will be updated automatically using the PR or release workflow
 # Application version - automatically updated by release workflow
-appVersion: 1.0.1-dev.3 # Do NOT modify. It will be updated automatically using the release workflow
+appVersion: 1.0.1-dev.4 # Do NOT modify. It will be updated automatically using the release workflow
