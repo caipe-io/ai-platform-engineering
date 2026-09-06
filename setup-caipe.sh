@@ -135,12 +135,14 @@ LITELLM_DB_PASSWORD=""
 # LiteLLM unified front: route all chat + embeddings credentials through a single
 # in-cluster LiteLLM proxy (OpenAI-compatible). Set via --litellm.
 LLM_VIA_LITELLM="${LLM_VIA_LITELLM:-false}"
-# Onboard extra models into the proxy without hand-editing the ConfigMap:
-#   LITELLM_EXTRA_MODELS_FILE  YAML with raw model_list entries (each line
-#     `- model_name:` ... authored at column 0); appended to the generated
-#     model_list on every run, so it survives re-runs.
-#   LITELLM_UPSTREAM_ENV_FILE  KEY=VALUE .env merged into litellm-upstream-secret
-#     so `api_key: "os.environ/<KEY>"` refs in the models file resolve.
+# Onboard extra models. These SEED two operator-owned objects that setup never
+# regenerates — a later `kubectl edit` / GitOps on them sticks across re-runs:
+#   LITELLM_EXTRA_MODELS_FILE  -> litellm-extra-models ConfigMap (key models.yaml):
+#     raw model_list entries, each `- model_name:` ... authored at column 0.
+#     Appended to the generated model_list every deploy.
+#   LITELLM_UPSTREAM_ENV_FILE  -> litellm-extra-upstream Secret: KEY=VALUE creds
+#     mounted onto the proxy as an optional envFrom, so `api_key:
+#     "os.environ/<KEY>"` refs in the models file resolve.
 # See deploy/kind/litellm-models.example.yaml. Scan with `setup-caipe.sh models`.
 LITELLM_EXTRA_MODELS_FILE="${LITELLM_EXTRA_MODELS_FILE:-}"
 LITELLM_UPSTREAM_ENV_FILE="${LITELLM_UPSTREAM_ENV_FILE:-}"
@@ -5452,19 +5454,6 @@ _litellm_unified_assets() {
     esac
   fi
 
-  # Merge caller-supplied upstream credentials (KEY=VALUE) so os.environ/* refs in
-  # LITELLM_EXTRA_MODELS_FILE resolve. Stdout is the model_list — log to stderr.
-  if [[ -n "${LITELLM_UPSTREAM_ENV_FILE:-}" && -r "$LITELLM_UPSTREAM_ENV_FILE" ]]; then
-    local _k _v _n=0
-    while IFS='=' read -r _k _v; do
-      [[ "$_k" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-      _v="${_v%\"}"; _v="${_v#\"}"; _v="${_v%\'}"; _v="${_v#\'}"
-      up_args+=(--from-literal="${_k}=${_v}")
-      _n=$((_n + 1))
-    done < <(grep -vE '^[[:space:]]*(#|$)' "$LITELLM_UPSTREAM_ENV_FILE")
-    echo "  ! merged ${_n} upstream key(s) from ${LITELLM_UPSTREAM_ENV_FILE}" >&2
-  fi
-
   kubectl create secret generic litellm-upstream-secret -n caipe \
     "${up_args[@]}" \
     --dry-run=client -o yaml | kubectl apply -f - &>/dev/null
@@ -5485,7 +5474,10 @@ deploy_litellm() {
       master_key: "os.environ/LITELLM_MASTER_KEY"'
     envfrom_yaml='        envFrom:
         - secretRef:
-            name: litellm-upstream-secret'
+            name: litellm-upstream-secret
+        - secretRef:
+            name: litellm-extra-upstream
+            optional: true'
     if $ENABLE_LITELLM_DB; then
       envfrom_yaml+='
         - secretRef:
@@ -5506,16 +5498,39 @@ deploy_litellm() {
           api_key: \"not-needed\""
   fi
 
-  # Append caller-onboarded models (persist across re-runs, unlike a manual
-  # `kubectl edit cm litellm-config`). File entries are authored at column 0
-  # (`- model_name:` ...); re-indent to the 6-space model_list level.
-  if [[ -n "${LITELLM_EXTRA_MODELS_FILE:-}" && -r "$LITELLM_EXTRA_MODELS_FILE" ]]; then
-    local _extra
-    _extra=$(grep -vE '^[[:space:]]*#' "$LITELLM_EXTRA_MODELS_FILE" | sed 's/^/      /')
-    if [[ -n "${_extra//[[:space:]]/}" ]]; then
-      model_list_yaml="${model_list_yaml}"$'\n'"${_extra}"
-      log "LiteLLM: merged $(grep -cE '^[[:space:]]*- model_name:' "$LITELLM_EXTRA_MODELS_FILE") extra model(s) from ${LITELLM_EXTRA_MODELS_FILE}"
+  # Operator-owned extra models. --litellm-models=FILE seeds/replaces the
+  # `litellm-extra-models` ConfigMap; setup never regenerates it, so a later
+  # `kubectl edit cm litellm-extra-models -n caipe` (or GitOps) sticks across
+  # re-runs. Its `models.yaml` is column-0 `- model_name:` entries; re-indent to
+  # the 6-space model_list level and append. Matching credentials live in the
+  # `litellm-extra-upstream` Secret (optional envFrom, added above).
+  if [[ -n "${LITELLM_EXTRA_MODELS_FILE:-}" ]]; then
+    if [[ -r "$LITELLM_EXTRA_MODELS_FILE" ]]; then
+      kubectl create configmap litellm-extra-models -n caipe \
+        --from-file=models.yaml="$LITELLM_EXTRA_MODELS_FILE" \
+        --dry-run=client -o yaml | kubectl apply -f - &>/dev/null \
+        && log "litellm-extra-models ConfigMap seeded from ${LITELLM_EXTRA_MODELS_FILE}"
+    else
+      warn "--litellm-models: file not readable: ${LITELLM_EXTRA_MODELS_FILE}"
     fi
+  fi
+  if [[ -n "${LITELLM_UPSTREAM_ENV_FILE:-}" ]]; then
+    if [[ -r "$LITELLM_UPSTREAM_ENV_FILE" ]]; then
+      kubectl create secret generic litellm-extra-upstream -n caipe \
+        --from-env-file="$LITELLM_UPSTREAM_ENV_FILE" \
+        --dry-run=client -o yaml | kubectl apply -f - &>/dev/null \
+        && log "litellm-extra-upstream Secret seeded from ${LITELLM_UPSTREAM_ENV_FILE}"
+    else
+      warn "--litellm-upstream-env: file not readable: ${LITELLM_UPSTREAM_ENV_FILE}"
+    fi
+  fi
+  local _xtra
+  _xtra=$(kubectl get configmap litellm-extra-models -n caipe \
+    -o jsonpath='{.data.models\.yaml}' 2>/dev/null || true)
+  if [[ -n "${_xtra//[[:space:]]/}" ]]; then
+    _xtra=$(printf '%s\n' "$_xtra" | grep -vE '^[[:space:]]*#' | sed 's/^/      /')
+    model_list_yaml="${model_list_yaml}"$'\n'"${_xtra}"
+    log "LiteLLM: appended $(printf '%s' "$_xtra" | grep -cE '^[[:space:]]*- model_name:') model(s) from the litellm-extra-models ConfigMap"
   fi
 
   kubectl apply -n caipe -f - <<LITELLM_EOF
@@ -8489,7 +8504,15 @@ cmd_litellm_models() {
         /model_name:/ { s=$0; sub(/.*model_name:[[:space:]]*/,"",s); gsub(/["'"'"' ,]/,"",s); a=s }
         /^[[:space:]]*model:[[:space:]]/ { s=$0; sub(/.*model:[[:space:]]*/,"",s); gsub(/["'"'"' ,]/,"",s); printf "    %-30s %s\n", a, s }'
 
-  echo -e "\n  ${DIM}Onboard more models (persist across re-runs):${NC}"
+  local _xtra
+  _xtra=$(kubectl get cm litellm-extra-models -n caipe -o jsonpath='{.data.models\.yaml}' 2>/dev/null || true)
+  if [[ -n "${_xtra//[[:space:]]/}" ]]; then
+    echo -e "\n  ${BOLD}Operator-onboarded${NC} ${DIM}(litellm-extra-models ConfigMap — edit-safe, survives re-runs):${NC}"
+    printf '%s\n' "$_xtra" | grep -E 'model_name:' | sed -E 's/.*model_name:[[:space:]]*/    • /; s/["'"'"',]//g'
+    echo -e "  ${DIM}  kubectl edit configmap litellm-extra-models -n caipe   # then: kubectl rollout restart deploy/litellm-proxy -n caipe${NC}"
+  fi
+
+  echo -e "\n  ${DIM}Onboard more (seeds the ConfigMap + Secret, then persists):${NC}"
   echo -e "  ${DIM}  cp deploy/kind/litellm-models.example.yaml my-models.yaml   # edit${NC}"
   echo -e "  ${DIM}  ./setup-caipe.sh --litellm-models=my-models.yaml --litellm-upstream-env=keys.env${NC}"
 }
@@ -8581,10 +8604,10 @@ Options:
                         Agents talk to one OpenAI-compatible endpoint; upstream provider creds live
                         only in the proxy. Supports anthropic/openai/aws-bedrock/azure-openai. Default OFF.
   --litellm-db          Like --litellm, plus persist LiteLLM virtual keys/spend in the shared Postgres
-  --litellm-models=FILE Onboard extra models: a YAML file of raw model_list entries appended to the
-                        proxy config on every run (implies --litellm). See
+  --litellm-models=FILE Onboard extra models: seeds the litellm-extra-models ConfigMap (never regenerated;
+                        kubectl-editable) whose entries are appended to the proxy config each deploy. See
                         deploy/kind/litellm-models.example.yaml; scan with `setup-caipe.sh models`.
-  --litellm-upstream-env=FILE  KEY=VALUE .env merged into litellm-upstream-secret so
+  --litellm-upstream-env=FILE  KEY=VALUE .env -> litellm-extra-upstream Secret (optional envFrom) so
                         `api_key: "os.environ/<KEY>"` refs in --litellm-models resolve.
   --persistence      Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --no-persistence   Accepted for compatibility; dynamic-agent persistence uses MongoDB
