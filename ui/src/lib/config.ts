@@ -102,7 +102,10 @@ export interface Config {
    * Set WORKFLOWS_ENABLED=true to enable.
    */
   workflowsEnabled: boolean;
-  /** Whether the Projects surface is shown in application navigation. */
+  /**
+   * Whether the Projects surface is shown in application navigation.
+   * Set PROJECTS_ENABLED=true to enable.
+   */
   projectsEnabled: boolean;
   /**
    * Whether Dynamic Agents should be considered enabled by platform health.
