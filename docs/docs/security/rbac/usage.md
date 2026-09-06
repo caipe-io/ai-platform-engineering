@@ -159,7 +159,7 @@ following hold (no flag required):
 
 - the RBAC runtime is enabled (`--rbac-runtime`),
 - a non-IP DNS domain is set (`--domain=<host>`, e.g. the default
-  `caipe.local.me`) so the OIDC issuer is browser-reachable, and
+  `caipe.localtest.me`) so the OIDC issuer is browser-reachable, and
 - **no upstream IdP is brokered** (no `IDP_ISSUER` in a `--ui-env-file`/`--env-file`).
 
 What it wires up automatically (all derived from `--domain`, no `.env` needed):
