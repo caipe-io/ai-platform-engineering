@@ -135,6 +135,15 @@ LITELLM_DB_PASSWORD=""
 # LiteLLM unified front: route all chat + embeddings credentials through a single
 # in-cluster LiteLLM proxy (OpenAI-compatible). Set via --litellm.
 LLM_VIA_LITELLM="${LLM_VIA_LITELLM:-false}"
+# Onboard extra models into the proxy without hand-editing the ConfigMap:
+#   LITELLM_EXTRA_MODELS_FILE  YAML with raw model_list entries (each line
+#     `- model_name:` ... authored at column 0); appended to the generated
+#     model_list on every run, so it survives re-runs.
+#   LITELLM_UPSTREAM_ENV_FILE  KEY=VALUE .env merged into litellm-upstream-secret
+#     so `api_key: "os.environ/<KEY>"` refs in the models file resolve.
+# See deploy/kind/litellm-models.example.yaml. Scan with `setup-caipe.sh models`.
+LITELLM_EXTRA_MODELS_FILE="${LITELLM_EXTRA_MODELS_FILE:-}"
+LITELLM_UPSTREAM_ENV_FILE="${LITELLM_UPSTREAM_ENV_FILE:-}"
 # Persist LiteLLM virtual keys / spend tracking in the shared Postgres (opt-in).
 ENABLE_LITELLM_DB="${ENABLE_LITELLM_DB:-false}"
 # Captured at finalize time so the proxy's model_list can be built from the real
@@ -5443,6 +5452,19 @@ _litellm_unified_assets() {
     esac
   fi
 
+  # Merge caller-supplied upstream credentials (KEY=VALUE) so os.environ/* refs in
+  # LITELLM_EXTRA_MODELS_FILE resolve. Stdout is the model_list — log to stderr.
+  if [[ -n "${LITELLM_UPSTREAM_ENV_FILE:-}" && -r "$LITELLM_UPSTREAM_ENV_FILE" ]]; then
+    local _k _v _n=0
+    while IFS='=' read -r _k _v; do
+      [[ "$_k" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+      _v="${_v%\"}"; _v="${_v#\"}"; _v="${_v%\'}"; _v="${_v#\'}"
+      up_args+=(--from-literal="${_k}=${_v}")
+      _n=$((_n + 1))
+    done < <(grep -vE '^[[:space:]]*(#|$)' "$LITELLM_UPSTREAM_ENV_FILE")
+    echo "  ! merged ${_n} upstream key(s) from ${LITELLM_UPSTREAM_ENV_FILE}" >&2
+  fi
+
   kubectl create secret generic litellm-upstream-secret -n caipe \
     "${up_args[@]}" \
     --dry-run=client -o yaml | kubectl apply -f - &>/dev/null
@@ -5482,6 +5504,18 @@ deploy_litellm() {
           model: \"openai/text-embedding-3-small\"
           api_base: \"${vllm_api_base}\"
           api_key: \"not-needed\""
+  fi
+
+  # Append caller-onboarded models (persist across re-runs, unlike a manual
+  # `kubectl edit cm litellm-config`). File entries are authored at column 0
+  # (`- model_name:` ...); re-indent to the 6-space model_list level.
+  if [[ -n "${LITELLM_EXTRA_MODELS_FILE:-}" && -r "$LITELLM_EXTRA_MODELS_FILE" ]]; then
+    local _extra
+    _extra=$(grep -vE '^[[:space:]]*#' "$LITELLM_EXTRA_MODELS_FILE" | sed 's/^/      /')
+    if [[ -n "${_extra//[[:space:]]/}" ]]; then
+      model_list_yaml="${model_list_yaml}"$'\n'"${_extra}"
+      log "LiteLLM: merged $(grep -cE '^[[:space:]]*- model_name:' "$LITELLM_EXTRA_MODELS_FILE") extra model(s) from ${LITELLM_EXTRA_MODELS_FILE}"
+    fi
   fi
 
   kubectl apply -n caipe -f - <<LITELLM_EOF
@@ -8423,6 +8457,43 @@ BANNER
 # Re-print the default local Keycloak logins from the persisted Secrets. Lets an
 # operator recover credentials any time after install without re-running setup or
 # scrolling back through the install log (caipe-local-admin / caipe-local-user).
+# Scan the in-cluster LiteLLM proxy: what it currently serves (/v1/models) and
+# what the generated ConfigMap declares. Read-only.
+cmd_litellm_models() {
+  step "LiteLLM models"
+  if ! kubectl get deploy litellm-proxy -n caipe &>/dev/null; then
+    warn "litellm-proxy is not deployed (run setup with --litellm)."
+    return 0
+  fi
+
+  local _pf=14411
+  kill_port_on "$_pf" 2>/dev/null || true
+  kubectl port-forward -n caipe svc/litellm-proxy "${_pf}:4000" &>/dev/null &
+  local _pfpid=$!
+  disown "$_pfpid" 2>/dev/null || true
+  sleep 3
+
+  local _mk
+  _mk=$(kubectl get secret litellm-upstream-secret -n caipe \
+    -o jsonpath='{.data.LITELLM_MASTER_KEY}' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+  echo -e "  ${BOLD}Serving now${NC} ${DIM}(proxy /v1/models):${NC}"
+  curl -sf "http://localhost:${_pf}/v1/models" -H "Authorization: Bearer ${_mk}" 2>/dev/null \
+    | python3 -c "import sys,json;[print('    •',m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null \
+    || warn "    (proxy not reachable)"
+  kill "$_pfpid" 2>/dev/null || true
+
+  echo -e "\n  ${BOLD}Declared${NC} ${DIM}(litellm-config model_list — alias → upstream):${NC}"
+  kubectl get cm litellm-config -n caipe -o jsonpath='{.data.config\.yaml}' 2>/dev/null \
+    | awk '
+        /model_name:/ { s=$0; sub(/.*model_name:[[:space:]]*/,"",s); gsub(/["'"'"' ,]/,"",s); a=s }
+        /^[[:space:]]*model:[[:space:]]/ { s=$0; sub(/.*model:[[:space:]]*/,"",s); gsub(/["'"'"' ,]/,"",s); printf "    %-30s %s\n", a, s }'
+
+  echo -e "\n  ${DIM}Onboard more models (persist across re-runs):${NC}"
+  echo -e "  ${DIM}  cp deploy/kind/litellm-models.example.yaml my-models.yaml   # edit${NC}"
+  echo -e "  ${DIM}  ./setup-caipe.sh --litellm-models=my-models.yaml --litellm-upstream-env=keys.env${NC}"
+}
+
 cmd_creds() {
   local ns="caipe"
   local domain admin_email admin_pw user_email user_pw
@@ -8470,6 +8541,8 @@ Commands:
   validate      Run validation and sanity tests (dynamic agents, agents, RAG, tracing)
   creds         Re-print the default local Keycloak logins (admin + standard
                 user) from the persisted Secrets — run any time after install
+  models        Scan the LiteLLM proxy: models it serves now (/v1/models) and
+                the alias -> upstream map from litellm-config
   cleanup       Interactive teardown: uninstall releases, delete secrets,
                 PVCs, namespaces, and optionally the Kind cluster
   nuke          Non-interactive cleanup (same as: cleanup --yes)
@@ -8508,6 +8581,11 @@ Options:
                         Agents talk to one OpenAI-compatible endpoint; upstream provider creds live
                         only in the proxy. Supports anthropic/openai/aws-bedrock/azure-openai. Default OFF.
   --litellm-db          Like --litellm, plus persist LiteLLM virtual keys/spend in the shared Postgres
+  --litellm-models=FILE Onboard extra models: a YAML file of raw model_list entries appended to the
+                        proxy config on every run (implies --litellm). See
+                        deploy/kind/litellm-models.example.yaml; scan with `setup-caipe.sh models`.
+  --litellm-upstream-env=FILE  KEY=VALUE .env merged into litellm-upstream-secret so
+                        `api_key: "os.environ/<KEY>"` refs in --litellm-models resolve.
   --persistence      Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --no-persistence   Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --slack-bot        Deploy the Slack bot surface (slack-bot subchart). Auto-enabled when
@@ -8700,6 +8778,8 @@ for arg in "$@"; do
     --litellm)            LLM_VIA_LITELLM=true ;;
     --no-litellm)         LLM_VIA_LITELLM=false ;;
     --litellm-db)         LLM_VIA_LITELLM=true; ENABLE_LITELLM_DB=true ;;
+    --litellm-models=*)      LITELLM_EXTRA_MODELS_FILE="${1#*=}"; LLM_VIA_LITELLM=true ;;
+    --litellm-upstream-env=*) LITELLM_UPSTREAM_ENV_FILE="${1#*=}" ;;
     --persistence)     ENABLE_PERSISTENCE=true ;;
     --no-persistence)  ENABLE_PERSISTENCE=false ;;
     --metallb)         ENABLE_METALLB=true ;;
@@ -8754,6 +8834,7 @@ case "${args[0]:-setup}" in
   port-forward) cmd_port_forward ;;
   validate)     cmd_validate ;;
   creds)        cmd_creds ;;
+  models|litellm-models) cmd_litellm_models ;;
   cleanup)      cmd_cleanup ;;
   nuke)         AUTO_YES=true; cmd_cleanup ;;
   status)       cmd_status ;;
