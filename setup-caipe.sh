@@ -6397,6 +6397,10 @@ DAEOF
     helm_args+=(
       --set global.scheduler.enabled=true
       --set "scheduler.mongo.existingSecret=caipe-autonomous-agents"
+      # The 1.0.0 caipe-ui chart does not derive SCHEDULER_ENABLED from
+      # global.scheduler.enabled, so the Schedules nav item stays hidden even
+      # with the service running. Set the UI flag explicitly.
+      --set "caipe-ui.config.SCHEDULER_ENABLED=true"
     )
     log "Scheduler enabled (scheduled runs + cron-runner + scheduler MCP)"
   fi
@@ -6409,6 +6413,11 @@ DAEOF
     helm_args+=(
       --set tags.autonomous-agents=true
       --set "autonomous-agents.existingSecret=caipe-autonomous-agents"
+      # ENABLE_AUTONOMOUS_AGENTS gates the admin Autonomous tab + the
+      # /api/autonomous proxy; AUTONOMOUS_AGENTS_URL points the proxy at the
+      # in-cluster service (default is localhost:8002).
+      --set "caipe-ui.config.ENABLE_AUTONOMOUS_AGENTS=true"
+      --set "caipe-ui.config.AUTONOMOUS_AGENTS_URL=http://caipe-autonomous-agents:8002"
     )
     log "Autonomous agents enabled (cron / interval / webhook triggers)"
   fi
