@@ -3,6 +3,12 @@
  */
 import { NextRequest } from "next/server";
 
+const mockGetCollection = jest.fn();
+
+jest.mock("@/lib/mongodb", () => ({
+  getCollection: (...args: unknown[]) => mockGetCollection(...args),
+}));
+
 const RAW_BASE = "https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/docs/releases";
 
 const LISTING = [
@@ -76,7 +82,14 @@ async function callGet(version: string) {
 }
 
 describe("/api/release-notes", () => {
-  afterEach(() => jest.restoreAllMocks());
+  beforeEach(() => jest.clearAllMocks());
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    delete process.env.RELEASE_NOTES_GITHUB_TOKEN;
+    delete process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+  });
 
   it("returns the series notes with frontmatter and truncate marker stripped", async () => {
     const data = await callGet("0.5.0");
@@ -108,6 +121,85 @@ describe("/api/release-notes", () => {
     expect(data.matchedVersion).toBeNull();
     expect(data.body).toBeNull();
     expect(data.source).toBe("none");
+  });
+
+  it("builds release notes from an explicitly configured GitHub commit range", async () => {
+    jest.resetModules();
+    process.env.RELEASE_NOTES_GITHUB_TOKEN = "test-token";
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "platform_settings",
+        release_notes: {
+          repository_url: "https://github.com/example/repository",
+          previous_commit: "1111111",
+          latest_commit: "3333333",
+        },
+      }),
+    });
+    global.fetch = jest.fn(async (_url: string | URL, init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({
+        commits: [
+          {
+            sha: "2222222",
+            commit: {
+              message: "feat(ui): add a useful setting (#42)",
+              committer: { date: "2026-08-14T12:00:00Z" },
+            },
+          },
+          {
+            sha: "3333333",
+            commit: {
+              message: "fix(api): handle invalid input",
+              committer: { date: "2026-08-15T12:00:00Z" },
+            },
+          },
+        ],
+      }),
+      headers: init?.headers,
+    })) as unknown as typeof fetch;
+
+    const { GET } = await import("../route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/release-notes?version=1.0.0-outshift.1&compare=platform"),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toMatchObject({
+      requestedVersion: "1.0.0-outshift.1",
+      matchedVersion: "1.0.0-outshift.1",
+      source: "github-compare",
+      date: "2026-08-15",
+      changelogUrl: "https://github.com/example/repository/compare/1111111...3333333",
+    });
+    expect(data.body).toContain("## What's New");
+    expect(data.body).toContain("add a useful setting");
+    expect(data.body).toContain("## Bug Fixes");
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/repos/example/repository/compare/1111111...3333333"),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer test-token" }),
+      }),
+    );
+  });
+
+  it("rejects an incomplete stored GitHub compare configuration", async () => {
+    jest.resetModules();
+    mockGithub();
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "platform_settings",
+        release_notes: { previous_commit: "1111111" },
+      }),
+    });
+    const { GET } = await import("../route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/release-notes?version=1.0.0-outshift.1&compare=platform"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("returns 400 when no version is provided", async () => {
