@@ -199,6 +199,7 @@ CAIPE_DOMAIN_DEFAULT="${CAIPE_DOMAIN_DEFAULT:-caipe.localtest.me}"
 CAIPE_DOMAIN=""
 TLS_CERT_FILE=""
 TLS_KEY_FILE=""
+TLS_SELF_SIGNED=false   # true when setup generates the cert (no --tls-cert)
 ENV_FILE=""
 UI_ENV_FILE=""
 COMPOSE_ENV_FILE=""
@@ -2187,6 +2188,7 @@ setup_tls() {
       -subj "/CN=${CAIPE_DOMAIN}/O=CAIPE" \
       -addext "subjectAltName=${_san}" \
       2>/dev/null
+    TLS_SELF_SIGNED=true
     log "Self-signed cert generated (valid 365 days)"
   fi
 
@@ -4232,6 +4234,18 @@ post_deploy_patches() {
     kubectl set env deployment/caipe-caipe-ui -n caipe \
       NODE_OPTIONS="--max-http-header-size=65536" &>/dev/null \
       && log "caipe-ui: NODE_OPTIONS set to --max-http-header-size=65536"
+  fi
+
+  # ── 6b. caipe-ui: trust the generated self-signed cert for server-side OIDC ──
+  # NextAuth does the OIDC token exchange / JWKS fetch server-side against the
+  # public HTTPS domain (KC_HOSTNAME). With a setup-generated self-signed cert
+  # Node.js rejects it (DEPTH_ZERO_SELF_SIGNED_CERT -> OAUTH_CALLBACK_ERROR) and
+  # login silently bounces back to the sign-in page. Local dev only — skipped
+  # entirely when a real cert was supplied via --tls-cert.
+  if [[ "${TLS_SELF_SIGNED:-false}" == true ]]; then
+    kubectl set env deployment/caipe-caipe-ui -n caipe \
+      NODE_TLS_REJECT_UNAUTHORIZED=0 &>/dev/null \
+      && log "caipe-ui: NODE_TLS_REJECT_UNAUTHORIZED=0 (self-signed cert, local dev only)"
   fi
 
   # ── 7. MongoDB for dynamic-agents ──
