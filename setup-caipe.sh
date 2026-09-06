@@ -672,24 +672,42 @@ _check_kubeconfig() {
 }
 
 _check_docker_access() {
-  # Docker binary present but socket not accessible without sudo
-  if command -v docker &>/dev/null && ! docker info &>/dev/null 2>&1; then
-    if sudo docker info &>/dev/null 2>&1; then
-      warn "Docker is running but your user (${USER}) cannot reach the socket."
-      if ! groups | grep -qw docker; then
-        if ask_yn "Add ${USER} to the 'docker' group so kind can use Docker?" "y"; then
-          sudo usermod -aG docker "$USER"
-          warn "Done — open a new terminal (or run 'newgrp docker'), then re-run this script."
-        else
-          warn "Skipped — you can run the script with 'sudo' or add yourself manually:"
-          warn "  sudo usermod -aG docker \$USER && newgrp docker"
-        fi
+  # Only relevant when the daemon can't be reached as the current user.
+  command -v docker &>/dev/null || return 0
+  docker info &>/dev/null 2>&1 && return 0
+
+  # macOS/Windows: Docker Desktop is per-user, never root-socket based — a
+  # failing `docker info` means the daemon isn't up, and `sudo docker` cannot
+  # fix it. Never prompt for a password here.
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    err "Docker does not appear to be running (\`docker info\` failed)."
+    err "Start Docker Desktop, wait until \`docker info\` succeeds, then re-run."
+    exit 1
+  fi
+
+  # Linux: the daemon may be up but the socket unreadable by this user. Only
+  # probe with sudo after explicit consent (a working passwordless sudo is not
+  # permission). If the user declines, fall through with a manual hint.
+  if ! _sudo_consent "check whether Docker is reachable via sudo"; then
+    warn "Cannot verify Docker socket access without sudo."
+    warn "If kind fails, add yourself to the 'docker' group: sudo usermod -aG docker \$USER && newgrp docker"
+    return 0
+  fi
+  if sudo docker info &>/dev/null 2>&1; then
+    warn "Docker is running but your user (${USER}) cannot reach the socket."
+    if ! groups | grep -qw docker; then
+      if ask_yn "Add ${USER} to the 'docker' group so kind can use Docker?" "y"; then
+        sudo usermod -aG docker "$USER"
+        warn "Done — open a new terminal (or run 'newgrp docker'), then re-run this script."
       else
-        warn "You are in the 'docker' group but this shell session predates the change."
-        warn "Open a new terminal (or run 'newgrp docker'), then re-run this script."
+        warn "Skipped — you can run the script with 'sudo' or add yourself manually:"
+        warn "  sudo usermod -aG docker \$USER && newgrp docker"
       fi
-      exit 0
+    else
+      warn "You are in the 'docker' group but this shell session predates the change."
+      warn "Open a new terminal (or run 'newgrp docker'), then re-run this script."
     fi
+    exit 0
   fi
 }
 
