@@ -1,6 +1,6 @@
 [project]
 name = "ai-platform-engineering"
-version = "1.0.1-dev.1"
+version = "1.0.1-dev.2"
 description = "Multi-Agent Collaboration & Workflow Automation - AI agents collaborating across tools and teams to deliver high quality results"
 authors = [
   {name = "CAIPE Contributors"}

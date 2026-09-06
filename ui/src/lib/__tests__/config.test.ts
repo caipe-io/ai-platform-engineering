@@ -76,6 +76,7 @@ describe('getServerConfig', () => {
         'DEFAULT_FONT_SIZE', 'DEFAULT_FONT_FAMILY',
         'DEFAULT_THEME', 'DEFAULT_GRADIENT_THEME',
         'AUTONOMOUS_AGENTS_ENABLED', 'ENABLE_AUTONOMOUS_AGENTS',
+        'PROJECTS_ENABLED',
         'PROVIDE_FEEDBACK_ENABLED',
       );
       delete process.env.MONGODB_URI;
@@ -147,7 +148,7 @@ describe('getServerConfig', () => {
         'gradientFrom', 'gradientTo', 'logoStyle', 'spinnerColor',
         'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
         'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
-        'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
+        'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
         'allowBuiltinSkillMutation',
         'auditLogsEnabled',
         'actionAuditEnabled',
@@ -169,6 +170,24 @@ describe('getServerConfig', () => {
         'schedulerEnabled',
       ];
       expect(Object.keys(cfg).sort()).toEqual(expectedKeys.sort());
+    });
+  });
+
+  describe('projectsEnabled', () => {
+    beforeEach(() => clearEnv('PROJECTS_ENABLED'));
+
+    it('should default to false', () => {
+      expect(getServerConfig().projectsEnabled).toBe(false);
+    });
+
+    it('should be true when PROJECTS_ENABLED=true', () => {
+      process.env.PROJECTS_ENABLED = 'true';
+      expect(getServerConfig().projectsEnabled).toBe(true);
+    });
+
+    it('should remain false for non-true values', () => {
+      process.env.PROJECTS_ENABLED = '1';
+      expect(getServerConfig().projectsEnabled).toBe(false);
     });
   });
 
@@ -895,7 +914,7 @@ describe('getClientConfigScript (XSS safety)', () => {
       'gradientFrom', 'gradientTo', 'logoStyle', 'spinnerColor',
       'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
       'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
-      'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
+      'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
       'allowBuiltinSkillMutation',
       'auditLogsEnabled',
       'actionAuditEnabled',

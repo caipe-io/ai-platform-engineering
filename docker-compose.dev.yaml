@@ -568,6 +568,8 @@ services:
       - PREVIEW_MODE=${PREVIEW_MODE:-}
       # Workflow runner - set WORKFLOW_RUNNER_ENABLED=true to show Run Workflow button and Multi-Step Workflows
       - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
+      # Projects - set PROJECTS_ENABLED=true to show the Projects workspace
+      - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       # Workflows tab - set WORKFLOWS_ENABLED=true to show the top-level Workflows UI
       - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
@@ -818,6 +820,7 @@ services:
       - SUPPORT_EMAIL=${SUPPORT_EMAIL:-}
       - PREVIEW_MODE=${PREVIEW_MODE:-}
       - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
+      - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
       - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
