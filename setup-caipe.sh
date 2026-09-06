@@ -8280,15 +8280,16 @@ cmd_setup() {
    ╚═════╝╚═╝  ╚═╝╚═╝╚═╝     ╚══════╝
 BANNER
   echo -e "${NC}"
-  echo -e "${BLUE}${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${BOLD}Open Source AI Platform for All${NC}                     ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}                                                      ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  CAIPE empowers teams with 🤖 agentic AI automation. ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}                                                      ${BLUE}${BOLD}║${NC}"
   # Full https:// URL so terminals auto-linkify it (Cmd/Ctrl-click); avoids OSC 8
   # escapes, which render as visible junk and break this box in terminals that
   # don't support them (tmux w/o passthrough, CI logs, older Terminal.app).
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}https://github.com/caipe-io/ai-platform-engineering${NC}  ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}╔══════════════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  ${BOLD}Open Source AI Platform for All${NC}                                     ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}                                                                      ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  CAIPE empowers individuals and teams with 🤖 agentic AI automation. ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}                                                                      ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}https://github.com/caipe-io/ai-platform-engineering${NC}                 ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}╚══════════════════════════════════════════════════════════════════════╝${NC}"
   echo -e "${BLUE}${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
   echo ""
 
