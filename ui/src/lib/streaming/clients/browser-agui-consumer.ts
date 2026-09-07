@@ -84,6 +84,8 @@ export class AGUIStreamAdapter implements StreamAdapter {
       conversation_id: params.conversationId,
       agent_id: params.agentId,
       protocol: "agui",
+      memory_enabled: params.memoryEnabled ?? true,
+      project_id: params.projectId,
       ...(params.clientContext && { client_context: params.clientContext }),
       ...(params.files?.length && { files: params.files }),
     });
@@ -98,6 +100,8 @@ export class AGUIStreamAdapter implements StreamAdapter {
       agent_id: params.agentId,
       resume_data: params.resumeData,
       protocol: "agui",
+      memory_enabled: params.memoryEnabled ?? true,
+      project_id: params.projectId,
       ...(params.clientContext && { client_context: params.clientContext }),
     });
 

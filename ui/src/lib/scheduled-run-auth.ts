@@ -98,6 +98,7 @@ interface ScheduleRunDoc {
   owner_sub?: string;
   owner_user_id?: string;
   agent_id?: string;
+  project_id?: string | null;
   title?: string | null;
 }
 
@@ -108,6 +109,8 @@ export interface ScheduledRunContext {
   email: string;
   /** Agent persisted on the schedule; runner-supplied agent IDs are ignored. */
   agentId: string;
+  /** Persisted memory context; runner-supplied namespace values are ignored. */
+  projectId: string | null;
   /** Human-readable schedule title persisted at creation time. */
   scheduleTitle: string | null;
 }
@@ -157,6 +160,7 @@ export async function resolveScheduledRunContext(
     sub,
     email,
     agentId,
+    projectId: doc.project_id?.trim() || null,
     scheduleTitle: doc.title?.trim() || null,
   };
 }

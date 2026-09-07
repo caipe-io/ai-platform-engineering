@@ -1,9 +1,9 @@
 """Kubernetes CronJob lifecycle.
 
 Owns the full podTemplate spec - callers can only fill the schedule, timezone,
-and a SCHEDULE_ID env var. Image, command, RBAC, mounts, and resource limits
-are baked in here so dynamic-agents (or any other caller) cannot escalate
-privileges via this path.
+SCHEDULE_ID env var, and HTTP_TIMEOUT env var. Image, command, RBAC, mounts,
+and resource limits are baked in here so dynamic-agents (or any other caller)
+cannot escalate privileges via this path.
 """
 
 from __future__ import annotations
@@ -18,11 +18,13 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 
 from caipe_scheduler.config import Settings
+from caipe_scheduler.models import DEFAULT_HTTP_TIMEOUT_SECONDS
 
 log = logging.getLogger(__name__)
 
 
 _NAME_RE = re.compile(r"[^a-z0-9-]+")
+_UNSET = object()
 
 
 def _sanitize_name(s: str) -> str:
@@ -58,10 +60,17 @@ class CronJobOps:
     schedule_id: str,
     cron: str,
     tz: str,
+    http_timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS,
   ) -> str:
     """Create the CronJob for the given schedule. Returns its name."""
     name = cronjob_name_for(schedule_id)
-    body = self._build_body(name=name, schedule_id=schedule_id, cron=cron, tz=tz)
+    body = self._build_body(
+      name=name,
+      schedule_id=schedule_id,
+      cron=cron,
+      tz=tz,
+      http_timeout_seconds=http_timeout_seconds,
+    )
     try:
       self._batch.create_namespaced_cron_job(namespace=self._settings.namespace, body=body)
     except ApiException as e:
@@ -81,6 +90,7 @@ class CronJobOps:
     cron: str | None = None,
     tz: str | None = None,
     suspend: bool | None = None,
+    http_timeout_seconds: Any = _UNSET,
   ) -> None:
     body: dict = {"spec": {}}
     if cron is not None:
@@ -89,9 +99,13 @@ class CronJobOps:
       body["spec"]["timeZone"] = tz
     if suspend is not None:
       body["spec"]["suspend"] = suspend
-    if not body["spec"]:
-      return
-    self._batch.patch_namespaced_cron_job(name=cronjob_name, namespace=self._settings.namespace, body=body)
+    if body["spec"]:
+      self._batch.patch_namespaced_cron_job(name=cronjob_name, namespace=self._settings.namespace, body=body)
+    if http_timeout_seconds is not _UNSET:
+      self._patch_runner_env(
+        cronjob_name,
+        {"HTTP_TIMEOUT": str(http_timeout_seconds)},
+      )
 
   def delete(self, cronjob_name: str) -> None:
     try:
@@ -242,7 +256,15 @@ class CronJobOps:
     return job_name
 
   # - body builder -
-  def _build_body(self, *, name: str, schedule_id: str, cron: str, tz: str) -> dict:
+  def _build_body(
+    self,
+    *,
+    name: str,
+    schedule_id: str,
+    cron: str,
+    tz: str,
+    http_timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS,
+  ) -> dict:
     s = self._settings
     labels = {
       "app.kubernetes.io/name": "caipe-cron-runner",
@@ -267,7 +289,7 @@ class CronJobOps:
         "jobTemplate": {
           "metadata": {"labels": labels},
           "spec": {
-            "backoffLimit": 2,
+            "backoffLimit": 1,
             "ttlSecondsAfterFinished": 86400,
             "template": {
               "metadata": {"labels": labels},
@@ -289,6 +311,7 @@ class CronJobOps:
                       {"name": "SCHEDULER_INTERNAL_URL", "value": s.scheduler_internal_url},
                       {"name": "CAIPE_API_URL", "value": s.caipe_api_url},
                       {"name": "CAIPE_CHAT_PATH", "value": s.caipe_chat_path},
+                      {"name": "HTTP_TIMEOUT", "value": str(http_timeout_seconds)},
                       {
                         "name": "SCHEDULER_SERVICE_TOKEN",
                         "valueFrom": {
@@ -321,6 +344,52 @@ class CronJobOps:
       },
     }
     return body
+
+  def _patch_runner_env(self, cronjob_name: str, updates: dict[str, str]) -> None:
+    s = self._settings
+    cronjob = self._batch.read_namespaced_cron_job(
+      name=cronjob_name,
+      namespace=s.namespace,
+    )
+
+    containers = cronjob.spec.job_template.spec.template.spec.containers or []
+    if not containers:
+      raise ValueError(f"CronJob {cronjob_name} has no containers.")
+
+    runner_index, runner = next(
+      (
+        (index, container)
+        for index, container in enumerate(containers)
+        if container.name == "runner"
+      ),
+      (0, containers[0]),
+    )
+    api_client = client.ApiClient()
+    update_names = set(updates)
+    env = [
+      api_client.sanitize_for_serialization(item)
+      for item in (runner.env or [])
+      if item.name not in update_names
+    ]
+    for name, value in updates.items():
+      env.append({"name": name, "value": value})
+
+    body = [
+      {
+        "op": "replace" if runner.env is not None else "add",
+        "path": (
+          "/spec/jobTemplate/spec/template/spec/containers/"
+          f"{runner_index}/env"
+        ),
+        "value": env,
+      }
+    ]
+    self._batch.patch_namespaced_cron_job(
+      name=cronjob_name,
+      namespace=s.namespace,
+      body=body,
+      _content_type="application/json-patch+json",
+    )
 
   @staticmethod
   def _set_env(container: client.V1Container, name: str, value: str) -> None:

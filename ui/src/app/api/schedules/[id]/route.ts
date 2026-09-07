@@ -16,6 +16,7 @@ interface RawSchedule {
   schedule_id: string;
   owner_user_id: string;
   agent_id: string;
+  project_id?: string | null;
   edit_agent_id?: string | null;
   title?: string | null;
   message_template: string;
@@ -43,6 +44,7 @@ interface RawScheduleVersion {
   changed_fields?: string[];
   title?: string | null;
   agent_id?: string;
+  project_id?: string | null;
   edit_agent_id?: string | null;
   message_template?: string;
   attributes?: Record<string, unknown> | null;
@@ -67,6 +69,7 @@ interface RawScheduleEvent {
 
 interface SchedulerPatchBody {
   agent_id?: unknown;
+  project_id?: unknown;
   edit_agent_id?: unknown;
   enabled?: unknown;
   action?: unknown;
@@ -123,6 +126,7 @@ function callerToken(session: unknown): string {
 function buildSchedulerPatch(body: SchedulerPatchBody) {
   const patch: {
     agent_id?: string;
+    project_id?: string | null;
     edit_agent_id?: string | null;
     enabled?: boolean;
     cron?: string;
@@ -137,6 +141,19 @@ function buildSchedulerPatch(body: SchedulerPatchBody) {
       throw new ApiError("agent_id must be a non-empty string", 400);
     }
     patch.agent_id = body.agent_id.trim();
+  }
+
+  if (body.project_id !== undefined) {
+    if (body.project_id === null) {
+      patch.project_id = null;
+    } else if (
+      typeof body.project_id !== "string" ||
+      !body.project_id.trim()
+    ) {
+      throw new ApiError("project_id must be a non-empty string or null", 400);
+    } else {
+      patch.project_id = body.project_id.trim();
+    }
   }
 
   if (body.edit_agent_id !== undefined) {
@@ -207,7 +224,7 @@ function buildSchedulerPatch(body: SchedulerPatchBody) {
 
   if (Object.keys(patch).length === 0) {
     throw new ApiError(
-      "Request body must include agent_id, edit_agent_id, enabled/action, cron, tz, message_template, title, or attributes",
+      "Request body must include agent_id, project_id, edit_agent_id, enabled/action, cron, tz, message_template, title, or attributes",
       400
     );
   }
@@ -229,6 +246,7 @@ function mapSchedule(doc: RawSchedule, agentName: string) {
     schedule_id: doc.schedule_id,
     owner_user_id: doc.owner_user_id,
     agent_id: doc.agent_id,
+    project_id: doc.project_id || null,
     edit_agent_id: doc.edit_agent_id || null,
     agent_name: agentName || doc.agent_id,
     title: doc.title || null,
@@ -248,6 +266,7 @@ function mapSchedule(doc: RawSchedule, agentName: string) {
         changed_fields: version.changed_fields || [],
         title: version.title || null,
         agent_id: version.agent_id || doc.agent_id,
+        project_id: version.project_id || null,
         edit_agent_id: version.edit_agent_id || null,
         message_template: version.message_template || "",
         attributes: version.attributes || {},

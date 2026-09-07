@@ -119,7 +119,7 @@ ENABLE_TRACING=false
 # LANGFUSE_HOST=http://langfuse-web:3000
 
 # Runtime
-AGENT_RUNTIME_TTL_SECONDS=3600  # Cache TTL for agent runtimes
+AGENT_RUNTIME_TTL_SECONDS=300  # Cache TTL for agent runtimes
 
 # CORS
 CORS_ORIGINS=["*"]
@@ -153,7 +153,7 @@ The API documentation is available at:
 | `MONGODB_DATABASE` | Database name | `caipe` |
 | `DYNAMIC_AGENTS_COLLECTION` | Agents collection name | `dynamic_agents` |
 | `MCP_SERVERS_COLLECTION` | MCP servers collection name | `mcp_servers` |
-| `AGENT_RUNTIME_TTL_SECONDS` | Cache TTL for agent runtimes | `3600` |
+| `AGENT_RUNTIME_TTL_SECONDS` | Cache TTL for agent runtimes | `300` |
 | `CORS_ORIGINS` | Allowed CORS origins | `["*"]` |
 
 ### Models Configuration

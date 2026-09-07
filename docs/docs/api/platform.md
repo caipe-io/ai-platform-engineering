@@ -91,7 +91,7 @@ Process health and MongoDB connectivity summary for the Dynamic Agents service.
       "dynamic_agents": "dynamic_agents",
       "mcp_servers": "mcp_servers"
     },
-    "agent_runtime_ttl_seconds": 3600
+    "agent_runtime_ttl_seconds": 300
   }
 }
 ```

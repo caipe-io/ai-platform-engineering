@@ -48,6 +48,7 @@ async def get_user_context(
         logger.debug("Debug mode enabled (DEBUG=true), returning dev user")
         return UserContext(
             email="dev@localhost",
+            sub="debug-user",
             name="Dev User",
             is_admin=True,
         )
@@ -71,6 +72,13 @@ async def get_user_context(
     try:
         decoded = base64.b64decode(header)
         data = json.loads(decoded)
+        from dynamic_agents.auth.token_context import current_user_sub
+
+        subject = current_user_sub.get()
+        # A validated bearer claim is authoritative over the compatibility
+        # header, which may come from an older BFF that fell back to email.
+        if subject:
+            data["sub"] = subject
         return UserContext(**data)
     except Exception as e:
         logger.warning(f"Malformed X-User-Context header: {e}")

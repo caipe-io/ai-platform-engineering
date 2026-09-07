@@ -23,13 +23,14 @@ import { requireConversationWriteAccess } from "../_conversation-authz";
 import {
   authenticateRequest,
   getDynamicAgentsConfig,
+  getDynamicAgentsInvokeProxyOptions,
   proxyJSONRequest,
   type AuthResult,
   type DynamicAgentsConfig,
 } from "../_helpers";
 
 export const runtime = "nodejs";
-export const maxDuration = 300; // 5 minutes - invoke runs the full agent loop
+export const maxDuration = 900; // 15 minutes - scheduled invokes can run the full agent loop
 
 type ScheduledConversation = Conversation & { agent_id?: string };
 
@@ -116,6 +117,7 @@ async function ensureScheduledConversation(
     trace_id: traceId,
     owner_user_id: owner.email,
     actor_client_id: schedulerActorClientId(),
+    project_id: stringValue(body.project_id),
   };
 
   const conversationUpdate: UpdateFilter<ScheduledConversation> = {
@@ -361,6 +363,7 @@ async function handleScheduledInvoke(
   body = {
     ...body,
     agent_id: scheduledRun.agentId,
+    project_id: scheduledRun.projectId,
     owner_user_id: scheduledRun.email,
     client_context: {
       ...clientContext,
@@ -419,6 +422,7 @@ async function handleScheduledInvoke(
     JSON.stringify(body),
     authResult,
     "[invoke]",
+    getDynamicAgentsInvokeProxyOptions(),
   );
 
   try {
@@ -494,5 +498,6 @@ export async function POST(request: NextRequest): Promise<Response> {
     JSON.stringify(body),
     authResult,
     "[invoke]",
+    getDynamicAgentsInvokeProxyOptions(),
   );
 }

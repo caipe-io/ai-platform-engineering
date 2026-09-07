@@ -58,6 +58,10 @@ export interface StreamParams {
    * top-level `files` field; the backend maps each to an image/document block.
    */
   files?: Array<{ mime_type: string; data: string; name: string }>;
+  /** Whether memory should be injected and memory tools enabled for this chat run */
+  memoryEnabled?: boolean;
+  /** Immutable Project selected when the conversation was created */
+  projectId?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -112,6 +116,12 @@ export interface StreamCallbacks {
 
   /** Non-fatal warning from the agent */
   onWarning?(message: string, namespace?: string[]): void;
+
+  /** Memory records were injected into model context for this chat run */
+  onMemoryInjected?(memoryIds: string[], namespace?: string[]): void;
+
+  /** Durable memory was changed by a memory file edit */
+  onMemoryUpdate?(memoryIds: string[], action?: string, namespace?: string[]): void;
 
   /** Stream completed successfully */
   onDone?(): void;

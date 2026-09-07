@@ -46,6 +46,7 @@ export interface ToolStartEventData {
  *  When error is set, the UI renders the tool as failed with the error message. */
 export interface ToolEndEventData {
   tool_call_id: string;
+  completed_tool_name?: string;
   error?: string;
   result?: string;
   args?: Record<string, unknown>;
@@ -73,6 +74,17 @@ export interface TodoItem {
 /** Warning data from warning events */
 export interface WarningEventData {
   message: string;
+}
+
+/** Memory update data from memory_update events */
+export interface MemoryUpdateEventData {
+  memory_ids: string[];
+  action?: string;
+}
+
+/** Memory injection data from memory_injected events */
+export interface MemoryInjectedEventData {
+  memory_ids: string[];
 }
 
 /** Input required data from input_required events (HITL forms) */
@@ -144,6 +156,8 @@ export type StreamEventType =
   | "content" // LLM token streaming
   | "tool_start" // Tool invocation started (task tool = subagent invocation)
   | "tool_end" // Tool invocation completed
+  | "memory_injected" // Memory records were injected into model context
+  | "memory_update" // Durable memory changed
   | "input_required" // Agent requests user input via form (HITL)
   | "warning" // Warning event (e.g., missing tools) - rendered inline
   | "error"; // Error event - rendered inline
@@ -185,6 +199,12 @@ export interface StreamEvent {
 
   /** Input required data for input_required events (HITL forms) */
   inputRequiredData?: InputRequiredEventData;
+
+  /** Memory update data for memory_update events */
+  memoryUpdateData?: MemoryUpdateEventData;
+
+  /** Memory injection data for memory_injected events */
+  memoryInjectedData?: MemoryInjectedEventData;
 
   // ─── Content ─────────────────────────────────────────────────
   /** Content text for content events */
@@ -238,6 +258,9 @@ export interface StreamBackendData {
   agent?: string;
   // Warning events
   message?: string;
+  // Memory events
+  memory_ids?: string[];
+  action?: string;
   // Allow other fields
   [key: string]: unknown;
 }
@@ -325,6 +348,40 @@ export function createStreamEvent(
         ...base,
         warningData,
         displayContent: data.message,
+      };
+    }
+
+    case "memory_update": {
+      const memoryUpdateData: MemoryUpdateEventData = {
+        memory_ids: data.memory_ids ?? [],
+        ...(typeof data.action === "string" ? { action: data.action } : {}),
+      };
+      return {
+        ...base,
+        memoryUpdateData,
+      };
+    }
+
+    case "memory_injected": {
+      const memoryInjectedData: MemoryInjectedEventData = {
+        memory_ids: data.memory_ids ?? [],
+      };
+      return {
+        ...base,
+        memoryInjectedData,
+      };
+    }
+
+    case "memory_context_used": {
+      // Legacy transcripts keep this event name. Normalize it into the current
+      // memory-injected shape so no legacy UI surface survives.
+      const memoryInjectedData: MemoryInjectedEventData = {
+        memory_ids: data.memory_ids ?? [],
+      };
+      return {
+        ...base,
+        type: "memory_injected",
+        memoryInjectedData,
       };
     }
 

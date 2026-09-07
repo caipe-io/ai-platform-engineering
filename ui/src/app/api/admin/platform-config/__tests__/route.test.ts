@@ -812,4 +812,48 @@ describe("admin platform-config route", () => {
     expect(body.data.rag_default_search_team_slug).toBeNull();
     expect(updateOne.mock.calls[0][1].$set.rag_default_search_team_slug).toBeNull();
   });
+
+  it("returns the deployment Projects default when no admin override exists", async () => {
+    process.env.PROJECTS_ENABLED = "true";
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({ _id: "platform_settings" }),
+      updateOne: jest.fn(),
+    });
+    const { GET } = await import("../route");
+
+    const body = await (await GET(request("/api/admin/platform-config?projects-default=true"))).json();
+
+    expect(body.data.projects).toEqual({ enabled: true });
+    expect(body.data.projects_source).toBe("env");
+  });
+
+  it("persists the platform-wide Projects switch", async () => {
+    const updateOne = jest.fn().mockResolvedValue({ acknowledged: true });
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({ _id: "platform_settings" }),
+      updateOne,
+    });
+    const { PATCH } = await import("../route");
+
+    const response = await PATCH(
+      request("/api/admin/platform-config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projects: { enabled: true } }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toMatchObject({
+      projects: { enabled: true },
+      projects_source: "db",
+    });
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: "platform_settings" },
+      expect.objectContaining({
+        $set: expect.objectContaining({ projects: { enabled: true } }),
+      }),
+      { upsert: true },
+    );
+  });
 });

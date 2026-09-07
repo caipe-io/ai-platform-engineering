@@ -38,6 +38,8 @@ function callbacks(): Required<StreamCallbacks> {
     onInputRequired: jest.fn(),
     onToolApprovalRequired: jest.fn(),
     onWarning: jest.fn(),
+    onMemoryInjected: jest.fn(),
+    onMemoryUpdate: jest.fn(),
     onDone: jest.fn(),
     onError: jest.fn(),
     onRawEvent: jest.fn(),
@@ -71,6 +73,9 @@ describe("CustomStreamAdapter", () => {
         'event: tool_start\ndata: {"tool_call_id":"call-1","tool_name":"search","args":{"q":"rbac"},"namespace":[]}\n\n',
         'event: tool_end\ndata: {"tool_call_id":"call-1","result":"ok","namespace":[]}\n\n',
         'event: warning\ndata: {"message":"careful","namespace":["agent"]}\n\n',
+        'event: memory_injected\ndata: {"memory_ids":["mem-1"],"namespace":[]}\n\n',
+        'event: memory_context_used\ndata: {"memory_ids":["mem-2"],"namespace":[]}\n\n',
+        'event: memory_update\ndata: {"memory_ids":["mem-3"],"action":"remember","namespace":[]}\n\n',
         "event: unknown\ndata: ignored\n\n",
         "event: done\ndata: {}\n\n",
       ]),
@@ -84,6 +89,8 @@ describe("CustomStreamAdapter", () => {
         conversationId: "conversation-1",
         agentId: "agent-1",
         clientContext: { activeTeam: "platform" },
+        memoryEnabled: false,
+        projectId: "pod-a",
       },
       cb,
     );
@@ -102,6 +109,8 @@ describe("CustomStreamAdapter", () => {
           conversation_id: "conversation-1",
           agent_id: "agent-1",
           protocol: "custom",
+          memory_enabled: false,
+          project_id: "pod-a",
           client_context: { activeTeam: "platform" },
         }),
       }),
@@ -122,6 +131,9 @@ describe("CustomStreamAdapter", () => {
       "ok",
     );
     expect(cb.onWarning).toHaveBeenCalledWith("careful", ["agent"]);
+    expect(cb.onMemoryInjected).toHaveBeenNthCalledWith(1, ["mem-1"], []);
+    expect(cb.onMemoryInjected).toHaveBeenNthCalledWith(2, ["mem-2"], []);
+    expect(cb.onMemoryUpdate).toHaveBeenCalledWith(["mem-3"], "remember", []);
     expect(cb.onDone).toHaveBeenCalledTimes(1);
     expect(cb.onRawEvent).toHaveBeenCalledWith({
       type: "content",
@@ -158,6 +170,7 @@ describe("CustomStreamAdapter", () => {
           agent_id: "agent-1",
           resume_data: '{"repo":"demo"}',
           protocol: "custom",
+          memory_enabled: true,
         }),
       }),
     );

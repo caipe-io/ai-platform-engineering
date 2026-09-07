@@ -6,10 +6,10 @@ patch, and delete schedules.
 
 ## Tools
 
-- `create_schedule(agent_id, title, message_template, cron, tz, attributes?, edit_agent_id?)`
+- `create_schedule(agent_id, title, message_template, cron, tz, project_id?, attributes?, edit_agent_id?, http_timeout_seconds?)`
 - `list_schedules(agent_id?)`
 - `get_schedule(schedule_id)`
-- `update_schedule(schedule_id, [enabled|cron|tz|message_template|title|attributes|edit_agent_id])`
+- `update_schedule(schedule_id, [enabled|cron|tz|message_template|title|attributes|edit_agent_id|http_timeout_seconds])`
 - `pause_schedule(schedule_id)` - set `enabled=false` and suspend the underlying Kubernetes CronJob
 - `resume_schedule(schedule_id)` - set `enabled=true` and unsuspend the underlying Kubernetes CronJob
 - `restart_schedule(schedule_id)` - alias for resume; resumes future fires, does not immediately create a Job

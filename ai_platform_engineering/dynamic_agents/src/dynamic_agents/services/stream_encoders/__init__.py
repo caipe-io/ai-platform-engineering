@@ -66,6 +66,14 @@ class StreamEncoder(ABC):
         """Non-fatal warning (e.g., MCP server unavailable)."""
 
     @abstractmethod
+    def on_memory_injected(self, memory_ids: list[str]) -> list[str]:
+        """Memory records were injected into the model context for this turn."""
+
+    @abstractmethod
+    def on_memory_update(self, memory_ids: list[str], action: str) -> list[str]:
+        """The agent created, updated, or deleted memory records."""
+
+    @abstractmethod
     def on_input_required(
         self,
         interrupt_id: str,

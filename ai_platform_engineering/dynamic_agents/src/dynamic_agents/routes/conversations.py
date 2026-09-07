@@ -255,10 +255,18 @@ async def clear_conversation_checkpoints(
     writes_result = writes_coll.delete_many({"thread_id": conversation_id})
 
     # Delete GridFS files for this conversation
-    agent_id = conversation.get("agent_id", "")
+    agent_id = conversation.get("agent_id", "") or next(
+        (
+            item.get("id", "")
+            for item in conversation.get("participants", [])
+            if isinstance(item, dict) and item.get("type") == "agent"
+        ),
+        "",
+    )
+    project_id = (conversation.get("metadata") or {}).get("project_id")
     store = _get_gridfs_store(db)
     files_deleted = 0
-    if agent_id:
+    if agent_id and not project_id:
         files_deleted = store.delete_by_namespace((agent_id, conversation_id, "filesystem"))
 
     # Log the action for audit

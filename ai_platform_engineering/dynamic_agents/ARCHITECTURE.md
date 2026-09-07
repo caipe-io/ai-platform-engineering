@@ -585,7 +585,7 @@ The `AgentRuntimeCache` maintains agent instances with:
 | Aspect | Behavior |
 |--------|----------|
 | **Cache Key** | `{agent_id}:{session_id}` |
-| **TTL** | Configurable via `AGENT_RUNTIME_TTL_SECONDS` (default: 3600s / 1 hour) |
+| **TTL** | Configurable via `AGENT_RUNTIME_TTL_SECONDS` (default: 300s / 5 minutes) |
 | **Invalidation** | Config change detection via `updated_at` timestamps |
 | **Manual Invalidation** | `POST /api/v1/chat/restart-runtime` endpoint |
 | **Memory Management** | Automatic cleanup of expired runtimes |

@@ -15,7 +15,7 @@ templates for retries and explicit schedule exceptions.
 | `caipe-cron-runner` (per fire) | Read the scheduler service token; POST chat API | Talk to Mongo or k8s API           |
 
 The podTemplate lives in `caipe_scheduler/k8s.py` - only the `schedule`,
-`timeZone`, and `SCHEDULE_ID` env are user-controlled.
+`timeZone`, `SCHEDULE_ID` env, and `HTTP_TIMEOUT` env are user-controlled.
 
 ## Endpoints
 
@@ -23,7 +23,7 @@ The podTemplate lives in `caipe_scheduler/k8s.py` - only the `schedule`,
 POST   /v1/schedules                  - create
 GET    /v1/schedules?agent_id=...       - list for authenticated owner
 GET    /v1/schedules/{id}             - single
-PATCH  /v1/schedules/{id}             - enable/disable, change cron/tz/msg
+PATCH  /v1/schedules/{id}             - enable/disable, change schedule fields
 DELETE /v1/schedules/{id}             - remove (Mongo + CronJob)
 POST   /v1/schedules/{id}/one-off-runs - create delayed one-off fire
 GET    /v1/schedules/{id}/one-off-runs - list delayed one-off fires
@@ -35,8 +35,10 @@ GET    /healthz
 ```
 
 New schedules require a human-readable `title`. They may also include an
-`attributes` JSON object for small UI display labels and an optional
-`edit_agent_id` that tells UIs which agent should handle user-initiated edits.
+`attributes` JSON object for small UI display labels, an optional
+`edit_agent_id` that tells UIs which agent should handle user-initiated edits,
+and an optional `http_timeout_seconds` value for the cron-runner chat invoke
+timeout. `http_timeout_seconds` defaults to `300`.
 Domain-specific display context belongs in `attributes`; the scheduler does
 not interpret it.
 
@@ -57,6 +59,10 @@ cron-runner also checks `enabled` after fetching the schedule and exits without
 posting chat for recurring fires if the schedule is disabled, which protects
 against manual k8s/Mongo drift. Pausing does not kill a Job that is already
 running.
+
+`PATCH /v1/schedules/{id}` can set `http_timeout_seconds` to update the
+underlying CronJob's `HTTP_TIMEOUT` env var for future fires. Set it to `300`
+to use the default.
 
 `POST /v1/schedules/{id}/one-off-runs` stores a UTC `run_at` (or
 `delay_minutes`) in Mongo. The scheduler pod wakes near the due time, claims

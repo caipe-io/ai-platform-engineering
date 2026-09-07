@@ -25,6 +25,10 @@ current_user_token: ContextVar[Optional[str]] = ContextVar(
     "current_user_token", default=None
 )
 
+current_user_sub: ContextVar[Optional[str]] = ContextVar(
+    "current_user_sub", default=None
+)
+
 current_traceparent: ContextVar[Optional[str]] = ContextVar(
     "current_traceparent", default=None
 )

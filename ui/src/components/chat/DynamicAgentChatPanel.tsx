@@ -11,7 +11,6 @@ import { useAgentTimeline } from "@/hooks/useDynamicAgentTimeline";
 import { apiClient,APIClientError } from "@/lib/api-client";
 import { authErrorToastTitle,type AuthError } from "@/lib/auth-error";
 import { getConfig } from "@/lib/config";
-import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
 import { ACCEPT_ATTRIBUTE,fileToInputFile,type InputFile,validateFiles } from "@/lib/file-attachments";
 import { takePendingFirstMessage } from "@/lib/pending-first-message";
 import { createSubagentResumeSeedEvents } from "@/lib/resume-subagent-context";
@@ -23,7 +22,7 @@ import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { AnimatePresence,motion } from "framer-motion";
-import { Activity,ArrowDown,ArrowLeft,Check,ChevronUp,Copy,Loader2,Paperclip,RotateCcw,Send,ShieldCheck,Sparkles,Square,User } from "lucide-react";
+import { Activity,ArrowDown,ArrowLeft,BookOpen,Brain,Check,ChevronUp,Copy,Loader2,Paperclip,RotateCcw,Send,ShieldCheck,Sparkles,Square,User } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
@@ -38,7 +37,10 @@ import { Feedback,FeedbackButton } from "./FeedbackButton";
 import { MetadataInputForm,type InputField,type UserInputMetadata } from "./MetadataInputForm";
 import { AttachmentChips,type PendingAttachment } from "./AttachmentChips";
 import { MessageAttachments } from "./MessageAttachments";
+import { MemoryDialog as FileMemoryDialog } from "./MemoryDialog";
+import { ProjectPicker } from "./ProjectPicker";
 import { getFilteredCommands,SlashCommandMenu,type SlashCommand } from "./SlashCommandMenu";
+import { useProjectsEnabled } from "@/hooks/use-projects-enabled";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import { useSlashCommands } from "./useSlashCommands";
 
@@ -69,6 +71,8 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
   const agentCustomTheme = agent?.ui?.custom_theme_config ?? null;
   const agentName = agent?.name;
   const agentSkills = agent?.skills;
+  const agentAllowsMemory = agent?.builtin_tools?.memory?.enabled === true;
+  const projectsEnabled = useProjectsEnabled();
   const { data: session } = useSession();
   const { toast } = useToast();
   const router = useRouter();
@@ -126,6 +130,9 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [memoryPreferenceEnabled, setMemoryPreferenceEnabled] = useState(true);
+  const [memoryDialogOpen, setMemoryDialogOpen] = useState(false);
+  const [memoryFocusIds, setMemoryFocusIds] = useState<string[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -258,6 +265,30 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
+  const memoryToggleLocked = Boolean(conversation?.messages?.some((message) => message.role === "user"));
+  const memoryToggleDisabled = !agentAllowsMemory || memoryToggleLocked;
+  const memoryEnabled = agentAllowsMemory && memoryPreferenceEnabled;
+  const projectId = typeof conversation?.metadata?.project_id === "string"
+    ? conversation.metadata.project_id
+    : undefined;
+  const [activeProjectName, setActiveProjectName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!projectId) {
+      setActiveProjectName(null);
+      return;
+    }
+    let cancelled = false;
+    void fetch("/api/user/projects", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload) => {
+        const match = Array.isArray(payload.data?.items)
+          ? payload.data.items.find((item: { id?: unknown }) => item.id === projectId)
+          : undefined;
+        if (!cancelled) setActiveProjectName(match?.name || projectId);
+      })
+      .catch(() => { if (!cancelled) setActiveProjectName(projectId); });
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   // Ref to track which conversations we've checked for HITL interrupt state
   const interruptCheckedRef = useRef<Set<string>>(new Set());
@@ -555,9 +586,8 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       try {
         // No Authorization header — session cookie handles auth for same-origin requests.
         // Bearer tokens resolve email from JWT `sub` which may not match conversation owner_id.
-        const fsNamespace = JSON.stringify([agentId, conversationId, "filesystem"]);
         const response = await fetch(
-          `/api/files/list?fs_namespace=${encodeURIComponent(fsNamespace)}`,
+          `/api/dynamic-agents/conversations/${encodeURIComponent(conversationId)}/files/list?agent_id=${encodeURIComponent(agentId)}`,
         );
         if (response.ok) {
           const data = await response.json();
@@ -580,9 +610,8 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       setDownloadingFilePath(path);
 
       try {
-        const fsNamespace = JSON.stringify([agentId, conversationId, "filesystem"]);
         const response = await fetch(
-          `/api/files/content?fs_namespace=${encodeURIComponent(fsNamespace)}&path=${encodeURIComponent(path)}`,
+          `/api/dynamic-agents/conversations/${encodeURIComponent(conversationId)}/files/content?agent_id=${encodeURIComponent(agentId)}&path=${encodeURIComponent(path)}`,
         );
 
         if (response.ok) {
@@ -614,8 +643,12 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
   const handleGetFileContent = useCallback(
     async (path: string): Promise<string | null> => {
       if (!conversationId || !agentId) return null;
-      const fsNamespace = JSON.stringify([agentId, conversationId, "filesystem"]);
-      return fetchEphemeralFileContent(fsNamespace, path);
+      const response = await fetch(
+        `/api/dynamic-agents/conversations/${encodeURIComponent(conversationId)}/files/content?agent_id=${encodeURIComponent(agentId)}&path=${encodeURIComponent(path)}`,
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      return typeof data.content === "string" ? data.content : null;
     },
     [conversationId, agentId],
   );
@@ -629,9 +662,8 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       setDeletingFilePath(path);
 
       try {
-        const fsNamespace = JSON.stringify([agentId, conversationId, "filesystem"]);
         const response = await fetch(
-          `/api/files/content?fs_namespace=${encodeURIComponent(fsNamespace)}&path=${encodeURIComponent(path)}`,
+          `/api/dynamic-agents/conversations/${encodeURIComponent(conversationId)}/files/content?agent_id=${encodeURIComponent(agentId)}&path=${encodeURIComponent(path)}`,
           {
             method: "DELETE",
           }
@@ -734,6 +766,59 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const handleOpenMemory = useCallback((memoryIds: string[] = []) => {
+    setMemoryFocusIds(memoryIds);
+    setMemoryDialogOpen(true);
+  }, []);
+
+  const linkContinuation = useCallback(async (nextConversationId: string) => {
+    if (!activeConversationId) return;
+    try {
+      const response = await fetch(`/api/chat/conversations/${activeConversationId}/metadata`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ metadata: { continued_to: nextConversationId } }),
+      });
+      if (!response.ok) throw new Error("continuation link was not saved");
+      useChatStore.setState((state) => ({
+        conversations: state.conversations.map((item) =>
+          item.id === activeConversationId
+            ? { ...item, metadata: { ...item.metadata, continued_to: nextConversationId } }
+            : item,
+        ),
+      }));
+    } catch {
+      toast("The new chat was created, but its back-link could not be saved.", "warning", 5000);
+    }
+  }, [activeConversationId, toast]);
+
+  const handleProjectChange = useCallback(async (nextProjectId?: string) => {
+    if (nextProjectId === projectId) return;
+    try {
+      const nextConversationId = await createConversation(agentId, {
+        projectId: nextProjectId,
+        ...(activeConversationId && { continuedFrom: activeConversationId }),
+      });
+      await linkContinuation(nextConversationId);
+      router.push(`/chat/${nextConversationId}`);
+    } catch (caught) {
+      toast((caught as Error).message || "Could not start a scoped chat", "error", 6000);
+    }
+  }, [activeConversationId, agentId, createConversation, linkContinuation, projectId, router, toast]);
+
+  const handleStartProjectChat = useCallback(async (nextProjectId: string) => {
+    try {
+      const nextConversationId = await createConversation(agentId, {
+        projectId: nextProjectId,
+        ...(activeConversationId && { continuedFrom: activeConversationId }),
+      });
+      await linkContinuation(nextConversationId);
+      router.push(`/chat/${nextConversationId}`);
+    } catch (caught) {
+      toast((caught as Error).message || "Could not start a scoped chat", "error", 6000);
+    }
+  }, [activeConversationId, agentId, createConversation, linkContinuation, router, toast]);
+
   // ═══════════════════════════════════════════════════════════════
   // Streaming state & helpers
   // ═══════════════════════════════════════════════════════════════
@@ -827,6 +912,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       }
       const streamEvent = createStreamEvent("tool_end", {
         tool_call_id: toolCallId,
+        completed_tool_name: resolvedName,
         error,
         result,
         args: parsedArgs,
@@ -930,6 +1016,23 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     onWarning(message, namespace) {
       const streamEvent = createStreamEvent("warning", {
         message,
+        namespace: namespace ?? [],
+      });
+      addStreamEvent(streamEvent, convId);
+    },
+
+    onMemoryUpdate(memoryIds, action, namespace) {
+      const streamEvent = createStreamEvent("memory_update", {
+        memory_ids: memoryIds,
+        action,
+        namespace: namespace ?? [],
+      });
+      addStreamEvent(streamEvent, convId);
+    },
+
+    onMemoryInjected(memoryIds, namespace) {
+      const streamEvent = createStreamEvent("memory_injected", {
+        memory_ids: memoryIds,
         namespace: namespace ?? [],
       });
       addStreamEvent(streamEvent, convId);
@@ -1096,6 +1199,8 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
           conversationId: convId,
           agentId,
           clientContext,
+          memoryEnabled,
+          projectId,
           ...(filesToSend.length > 0 && { files: filesToSend }),
         },
         callbacks,
@@ -1131,7 +1236,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       });
       setConversationStreaming(convId, null);
     }
-  }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, toast]);
+  }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, toast, memoryEnabled, projectId]);
 
   // The Home page hero composer creates a conversation and navigates here
   // before a message can be sent (this panel only mounts once a conversation
@@ -1481,7 +1586,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
 
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, clientContext, memoryEnabled, projectId },
         callbacks,
       );
 
@@ -1497,7 +1602,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     }
   }, [pendingUserInput, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       appendToMessage, addStreamEvent, setConversationStreaming,
-      clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop]);
+      clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop, memoryEnabled, projectId]);
 
   // Handle tool approval decisions (approve/reject/edit)
   // Shows cards sequentially; only resumes after all tools are decided.
@@ -1599,7 +1704,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     try {
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, clientContext, memoryEnabled, projectId },
         callbacks,
       );
       finalizeStreamLoop(activeConversationId, assistantMsgId, loopState);
@@ -1613,7 +1718,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     }
   }, [pendingToolApproval, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       addStreamEvent, setConversationStreaming, clearStreamEvents, getActiveConversation,
-      buildStreamCallbacks, finalizeStreamLoop]);
+      buildStreamCallbacks, finalizeStreamLoop, memoryEnabled, projectId]);
 
   // Handle slash command detection in input
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -1728,6 +1833,35 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
 
   return (
     <div className="h-full w-full flex flex-col bg-background relative">
+      <FileMemoryDialog
+        open={memoryDialogOpen}
+        onOpenChange={setMemoryDialogOpen}
+        focusIds={memoryFocusIds}
+        agentId={agentId}
+        projectId={typeof conversation?.metadata?.project_id === "string" ? conversation.metadata.project_id : null}
+      />
+
+      {(conversation?.metadata?.continued_from || conversation?.metadata?.continued_to) && (
+        <div className="border-b bg-muted/20 px-4 py-1.5 text-center text-xs text-muted-foreground">
+          {typeof conversation.metadata.continued_from === "string" && (
+            <button className="hover:text-foreground hover:underline" onClick={() => router.push(`/chat/${conversation.metadata?.continued_from}`)}>
+              Continued from {conversation.metadata.continued_from.slice(0, 8)}…
+            </button>
+          )}
+          {typeof conversation.metadata.continued_to === "string" && (
+            <button className="ml-3 hover:text-foreground hover:underline" onClick={() => router.push(`/chat/${conversation.metadata?.continued_to}`)}>
+              Continued in {conversation.metadata.continued_to.slice(0, 8)}…
+            </button>
+          )}
+        </div>
+      )}
+
+      {projectId && (
+        <div className="border-b bg-primary/5 px-4 py-1.5 text-center text-xs font-medium text-primary">
+          Project: {activeProjectName || projectId}
+        </div>
+      )}
+
       {/* Messages Area */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
@@ -1878,6 +2012,16 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
                         );
                       }
 
+                      const memoryUpdateIds = msg.role === "assistant"
+                        ? Array.from(new Set(
+                            turnEvents.flatMap((event) => event.memoryUpdateData?.memory_ids ?? [])
+                          ))
+                        : [];
+                      const memoryInjectedIds = msg.role === "assistant"
+                        ? Array.from(new Set(
+                            turnEvents.flatMap((event) => event.memoryInjectedData?.memory_ids ?? [])
+                          ))
+                        : [];
                       return (
                         <ChatMessage
                           key={msg.id}
@@ -1897,6 +2041,10 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
                           agentCustomTheme={agentCustomTheme}
                           agentName={agentName}
                           turnEvents={turnEvents}
+                          memoryInjectedIds={memoryInjectedIds}
+                          memoryUpdateIds={memoryUpdateIds}
+                          onOpenMemory={handleOpenMemory}
+                          onStartProjectChat={handleStartProjectChat}
                           // Timeline props (only passed to latest message)
                           timelineFiles={timelineFiles}
                           timelineTasks={timelineTasks}
@@ -2178,6 +2326,14 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
               {/* Staged attachment previews (above the input row). */}
               <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
 
+              {projectsEnabled && (
+                <ProjectPicker
+                  value={projectId}
+                  disabled={memoryToggleLocked}
+                  onChange={(value) => { void handleProjectChange(value); }}
+                />
+              )}
+
               <div className="flex items-center gap-3">
                 <TextareaAutosize
                   ref={inputRef}
@@ -2196,6 +2352,60 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
                   minRows={1}
                   maxRows={10}
                 />
+                <div className="flex items-center gap-1 shrink-0">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex">
+                          <button
+                            type="button"
+                            aria-pressed={memoryEnabled}
+                            disabled={memoryToggleDisabled}
+                            onClick={() => {
+                              if (memoryToggleDisabled) return;
+                              setMemoryPreferenceEnabled((enabled) => !enabled);
+                            }}
+                            className={cn(
+                              "inline-flex h-9 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                              memoryEnabled
+                                ? "border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20"
+                                : "border-border bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
+                            )}
+                          >
+                            <Brain className="h-3.5 w-3.5" />
+                            <span>Memory</span>
+                          </button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {!agentAllowsMemory
+                          ? "Memory is disabled for this chat. This agent doesn't allow memory use. Please contact an administrator to enable it."
+                          : memoryToggleLocked
+                          ? "Memory cannot be changed after the first message in this chat"
+                          : memoryEnabled
+                            ? "Memory is on for this chat"
+                            : "Memory is off for this chat"}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                          onClick={() => handleOpenMemory([])}
+                        >
+                          <BookOpen className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Manage memory</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
                 {/* Attach files */}
                 <Button
                   size="icon"
@@ -2355,6 +2565,7 @@ const LoadEarlierDivider = React.memo(function LoadEarlierDivider({
   );
 });
 
+
 interface ChatMessageProps {
   message: ChatMessageType;
   onCopy: (content: string, id: string) => void;
@@ -2372,6 +2583,10 @@ interface ChatMessageProps {
   agentCustomTheme?: import("@/types/dynamic-agent").CustomThemeConfig | null;
   agentName?: string;
   turnEvents?: StreamEvent[];
+  memoryInjectedIds?: string[];
+  memoryUpdateIds?: string[];
+  onOpenMemory?: (memoryIds: string[]) => void;
+  onStartProjectChat?: (projectId: string) => void;
   // Timeline props (for AgentTimeline)
   timelineFiles?: string[];
   timelineTasks?: TaskItem[];
@@ -2403,6 +2618,10 @@ const ChatMessage = React.memo(function ChatMessage({
   agentCustomTheme,
   agentName,
   turnEvents = [],
+  memoryInjectedIds = [],
+  memoryUpdateIds = [],
+  onOpenMemory,
+  onStartProjectChat,
   // Timeline props
   timelineFiles = [],
   timelineTasks = [],
@@ -2428,6 +2647,38 @@ const ChatMessage = React.memo(function ChatMessage({
     isStreaming, 
     message.turnStatus
   );
+  const projectActions = useMemo(() => {
+    const found = new Map<string, { id: string; name: string }>();
+    for (const event of turnEvents) {
+      const toolData = event.toolData;
+      if (!toolData || !("completed_tool_name" in toolData)) continue;
+      const toolName = toolData.completed_tool_name || "";
+      if (toolName !== "list_projects" && toolName !== "create_project") continue;
+      if (!toolData.result) continue;
+      try {
+        let decoded: unknown = JSON.parse(toolData.result);
+        if (Array.isArray(decoded) && decoded.length === 1 && typeof decoded[0] === "object") {
+          const text = (decoded[0] as { text?: unknown }).text;
+          if (typeof text === "string") decoded = JSON.parse(text);
+        }
+        if (!decoded || typeof decoded !== "object") continue;
+        const object = decoded as Record<string, unknown>;
+        const candidates = Array.isArray(object.items)
+          ? object.items
+          : [object.project && typeof object.project === "object" ? object.project : object];
+        for (const candidate of candidates) {
+          if (!candidate || typeof candidate !== "object") continue;
+          const record = candidate as Record<string, unknown>;
+          const id = String(record.id ?? "");
+          if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) continue;
+          found.set(id, { id, name: String(record.name ?? id) });
+        }
+      } catch {
+        // Tool result was not structured JSON; no Project action.
+      }
+    }
+    return [...found.values()];
+  }, [turnEvents]);
 
   return (
     <motion.div
@@ -2625,6 +2876,17 @@ const ChatMessage = React.memo(function ChatMessage({
               </motion.div>
             )}
 
+            {memoryInjectedIds.length > 0 && onOpenMemory && (
+              <button
+                type="button"
+                onClick={() => onOpenMemory(memoryInjectedIds)}
+                className="mb-2 mr-2 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
+              >
+                <Brain className="h-3.5 w-3.5" />
+                {memoryInjectedIds.length === 1 ? "1 memory injected" : `${memoryInjectedIds.length} memories injected`}
+              </button>
+            )}
+
             {/* Main content: timeline (streaming or completed with events) or fallback */}
             {isStreaming || turnEvents.length > 0 ? (
               <AgentTimeline
@@ -2652,6 +2914,33 @@ const ChatMessage = React.memo(function ChatMessage({
                 This response failed to complete. No content was generated.
               </div>
             ) : null}
+
+            {memoryUpdateIds.length > 0 && onOpenMemory && (
+              <button
+                type="button"
+                onClick={() => onOpenMemory(memoryUpdateIds)}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-sky-500/25 bg-sky-500/10 px-2.5 py-1 text-xs font-medium text-sky-300 transition-colors hover:bg-sky-500/20"
+              >
+                <Brain className="h-3.5 w-3.5" />
+                {memoryUpdateIds.length === 1 ? "Memory updated" : `${memoryUpdateIds.length} memories updated`}
+              </button>
+            )}
+
+            {projectActions.length > 0 && onStartProjectChat && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {projectActions.map((project) => (
+                  <Button
+                    key={project.id}
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onStartProjectChat(project.id)}
+                  >
+                    Start chat in {project.name}
+                  </Button>
+                ))}
+              </div>
+            )}
 
             {/* Action buttons (copy, retry, collapse) */}
             {displayContent && (

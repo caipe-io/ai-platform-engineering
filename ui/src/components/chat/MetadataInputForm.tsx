@@ -5,7 +5,7 @@ import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { AlertCircle,ChevronDown,Send } from "lucide-react";
-import React,{ useCallback,useState } from "react";
+import React,{ useCallback,useEffect,useRef,useState } from "react";
 
 // Dynamic agent input field metadata.
 export interface InputField {
@@ -37,7 +37,73 @@ interface MetadataInputFormProps {
   disabled?: boolean;
 }
 
-export function MetadataInputForm({
+interface MetadataInputDraft {
+  version: 1;
+  formData: Record<string, string>;
+  multiselectMode: Record<string, boolean>;
+}
+
+const METADATA_INPUT_DRAFT_PREFIX = "caipe:chat-input-form-draft:v1:";
+
+function draftStorageKey(messageId: string): string {
+  return `${METADATA_INPUT_DRAFT_PREFIX}${messageId}`;
+}
+
+function defaultDraft(inputFields: InputField[]): MetadataInputDraft {
+  const formData: Record<string, string> = {};
+  const multiselectMode: Record<string, boolean> = {};
+
+  inputFields.forEach((field) => {
+    if (field.default_value) {
+      formData[field.field_name] = field.default_value;
+    }
+    if (field.field_values && field.field_values.length > 0) {
+      multiselectMode[field.field_name] = field.field_type === "multiselect";
+    }
+  });
+
+  return { version: 1, formData, multiselectMode };
+}
+
+function loadDraft(messageId: string, inputFields: InputField[]): MetadataInputDraft {
+  const initial = defaultDraft(inputFields);
+  if (typeof window === "undefined") return initial;
+
+  try {
+    const raw = window.localStorage.getItem(draftStorageKey(messageId));
+    if (!raw) return initial;
+
+    const stored = JSON.parse(raw) as Partial<MetadataInputDraft>;
+    if (stored.version !== 1 || !stored.formData || !stored.multiselectMode) {
+      return initial;
+    }
+
+    inputFields.forEach((field) => {
+      const value = stored.formData?.[field.field_name];
+      if (typeof value === "string") {
+        initial.formData[field.field_name] = value;
+      }
+
+      const mode = stored.multiselectMode?.[field.field_name];
+      if (field.field_values?.length && typeof mode === "boolean") {
+        initial.multiselectMode[field.field_name] = mode;
+      }
+    });
+  } catch {
+    // Ignore malformed or unavailable browser storage and use field defaults.
+  }
+
+  return initial;
+}
+
+export function MetadataInputForm(props: MetadataInputFormProps) {
+  // A new interruption must get its own state even if React reuses the form's
+  // position in the tree. Draft restoration is handled by the inner component.
+  return <MetadataInputFormInner key={props.messageId} {...props} />;
+}
+
+function MetadataInputFormInner({
+  messageId,
   title = "Additional Input Required",
   description,
   inputFields,
@@ -45,28 +111,41 @@ export function MetadataInputForm({
   onCancel,
   disabled = false,
 }: MetadataInputFormProps) {
-  // Initialize form data with default values
-  const [formData, setFormData] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {};
-    inputFields.forEach((field) => {
-      if (field.default_value) {
-        initial[field.field_name] = field.default_value;
-      }
-    });
-    return initial;
-  });
+  const initialDraft = useRef<MetadataInputDraft | null>(null);
+  if (initialDraft.current === null) {
+    initialDraft.current = loadDraft(messageId, inputFields);
+  }
+
+  const [formData, setFormData] = useState<Record<string, string>>(
+    () => initialDraft.current?.formData ?? {},
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Per-field: when true, show checkboxes (multi-select); when false, show dropdown (default)
-  const [multiselectMode, setMultiselectMode] = useState<Record<string, boolean>>(() => {
-    const initial: Record<string, boolean> = {};
-    inputFields.forEach((field) => {
-      if (field.field_values && field.field_values.length > 0) {
-        initial[field.field_name] = field.field_type === "multiselect";
-      }
-    });
-    return initial;
-  });
+  const [multiselectMode, setMultiselectMode] = useState<Record<string, boolean>>(
+    () => initialDraft.current?.multiselectMode ?? {},
+  );
+
+  useEffect(() => {
+    try {
+      const draft: MetadataInputDraft = {
+        version: 1,
+        formData,
+        multiselectMode,
+      };
+      window.localStorage.setItem(draftStorageKey(messageId), JSON.stringify(draft));
+    } catch {
+      // Storage may be unavailable in privacy mode; the form still works in memory.
+    }
+  }, [formData, messageId, multiselectMode]);
+
+  const clearDraft = useCallback(() => {
+    try {
+      window.localStorage.removeItem(draftStorageKey(messageId));
+    } catch {
+      // Nothing else is required when browser storage is unavailable.
+    }
+  }, [messageId]);
 
   const setMultiselectForField = useCallback((fieldName: string, enabled: boolean) => {
     setMultiselectMode((prev) => ({ ...prev, [fieldName]: enabled }));
@@ -135,10 +214,16 @@ export function MetadataInputForm({
     setIsSubmitting(true);
     try {
       await onSubmit(formData);
+      clearDraft();
     } finally {
       setIsSubmitting(false);
     }
-  }, [formData, onSubmit, validateForm]);
+  }, [clearDraft, formData, onSubmit, validateForm]);
+
+  const handleCancel = useCallback(() => {
+    clearDraft();
+    onCancel?.();
+  }, [clearDraft, onCancel]);
 
   return (
     <motion.div
@@ -320,7 +405,7 @@ export function MetadataInputForm({
               type="button"
               variant="ghost"
               size="sm"
-              onClick={onCancel}
+              onClick={handleCancel}
               disabled={isSubmitting}
             >
               Cancel

@@ -88,6 +88,8 @@ export interface Conversation {
     /** UI version (from package.json) when client_type is 'webui' */
     ui_version?: string;
     total_messages: number;
+    /** Immutable Project selected when the conversation was created. */
+    project_id?: string;
     /** @deprecated Kept for backward compat with old conversations */
     agent_version?: string;
     /** @deprecated Kept for backward compat with old conversations */

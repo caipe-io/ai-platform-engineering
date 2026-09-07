@@ -2,6 +2,7 @@
 
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
+import { SettingsSwitch } from "@/components/settings/shared/SettingsSwitch";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,6 +19,7 @@ import {
   AlertTriangle,
   Bot,
   CalendarClock,
+  FolderKanban,
   Loader2,
 } from "lucide-react";
 import { useEffect,useState } from "react";
@@ -40,6 +42,10 @@ export function PlatformDefaultsSettings({
   const [savedScheduleEditorAgentId,setSavedScheduleEditorAgentId] = useState<string | null>(null);
   const [scheduleEditorSource,setScheduleEditorSource] = useState("fallback");
   const [scheduleEditorSaveState,setScheduleEditorSaveState] = useState<AutoSaveState>({ status: "idle" });
+  const [projectsEnabled,setProjectsEnabled] = useState(false);
+  const [savedProjectsEnabled,setSavedProjectsEnabled] = useState(false);
+  const [projectsSource,setProjectsSource] = useState("fallback");
+  const [projectsSaveState,setProjectsSaveState] = useState<AutoSaveState>({ status: "idle" });
   const [confirmAction,setConfirmAction] = useState<PendingAction | null>(null);
 
   useEffect(() => {
@@ -68,6 +74,10 @@ export function PlatformDefaultsSettings({
         setSelectedScheduleEditorAgentId(scheduleEditorValue);
         setSavedScheduleEditorAgentId(scheduleEditorValue);
         setScheduleEditorSource(configData.data.schedule_editor_agent_source || "fallback");
+        const projectsValue = configData.data.projects?.enabled === true;
+        setProjectsEnabled(projectsValue);
+        setSavedProjectsEnabled(projectsValue);
+        setProjectsSource(configData.data.projects_source || "fallback");
       } catch (reason) {
         if (!cancelled) {
           setLoadError(reason instanceof Error ? reason.message : "Could not load the platform default");
@@ -162,6 +172,34 @@ export function PlatformDefaultsSettings({
     }
   };
 
+  const updateProjectsEnabled = async (next: boolean) => {
+    if (readOnly || projectsSaveState.status === "saving") return;
+    setProjectsEnabled(next);
+    setProjectsSaveState({ status: "saving" });
+    try {
+      const response = await fetch("/api/admin/platform-config",{
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projects: { enabled: next } }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Could not update Projects");
+      }
+      const effectiveValue = data.data?.projects?.enabled === true;
+      setProjectsEnabled(effectiveValue);
+      setSavedProjectsEnabled(effectiveValue);
+      setProjectsSource(data.data?.projects_source || "db");
+      setProjectsSaveState({ status: "saved" });
+    } catch (reason) {
+      setProjectsEnabled(savedProjectsEnabled);
+      setProjectsSaveState({
+        status: "error",
+        error: reason instanceof Error ? reason.message : "Could not update Projects",
+      });
+    }
+  };
+
   const selectedAgent = agents.find((agent) => agent._id === selectedAgentId);
   const savedAgentMissing = Boolean(savedAgentId) && !agents.some((agent) => agent._id === savedAgentId);
   const missingSelectedOption = selectedAgentId && !agents.some((agent) => agent._id === selectedAgentId)
@@ -242,6 +280,47 @@ export function PlatformDefaultsSettings({
               ) : null}
               <AutoSaveStatus state={saveState} />
             </div>
+          </div>
+        )}
+      </SettingsCard>
+
+      <SettingsCard
+        description="Enable shared Project workspaces for every user and agent across the platform."
+        title={<span className="flex items-center gap-2"><FolderKanban className="h-5 w-5 text-primary" />Projects</span>}
+      >
+        {loading ? (
+          <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading Projects setting…
+          </div>
+        ) : loadError ? (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            {loadError}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex max-w-2xl items-start justify-between gap-4 rounded-lg border p-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Enable Projects platform-wide</p>
+                <p className="text-xs text-muted-foreground">
+                  Users can create and select Projects. Project chats share files, group history,
+                  and include Project memory whenever the selected agent has Memory enabled.
+                </p>
+              </div>
+              <SettingsSwitch
+                checked={projectsEnabled}
+                disabled={readOnly || projectsSaveState.status === "saving"}
+                label="Enable Projects platform-wide"
+                onCheckedChange={(checked) => void updateProjectsEnabled(checked)}
+                testId="projects-enabled-switch"
+              />
+            </div>
+            {projectsSource === "env" ? (
+              <p className="text-xs text-muted-foreground">
+                Currently using the deployment value (<code>PROJECTS_ENABLED</code>). Changing it here creates a live platform override.
+              </p>
+            ) : null}
+            <AutoSaveStatus state={projectsSaveState} />
           </div>
         )}
       </SettingsCard>

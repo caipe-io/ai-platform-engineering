@@ -25,6 +25,8 @@ from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_HTTP_TIMEOUT_SECONDS = 300
+
 
 def _scheduler_url() -> str:
   url = os.environ.get("SCHEDULER_URL", "").rstrip("/")
@@ -105,6 +107,16 @@ class CreateScheduleArgs(BaseModel):
     str,
     Field(description=("Dynamic agent _id to fire (e.g. 'agent-weekly-report'). Must already exist in dynamic_agents.")),
   ]
+  project_id: Annotated[
+    str | None,
+    Field(
+      default=None,
+      description=(
+        "Optional memory Project ID. When the current chat is scoped, "
+        "use that same key so scheduled runs mount the same namespace memory."
+      ),
+    ),
+  ] = None
   title: Annotated[
     str,
     Field(description=("Human-readable job title shown in schedule UIs. Choose it at schedule creation time, e.g. 'Weekly status report'.")),
@@ -132,6 +144,17 @@ class CreateScheduleArgs(BaseModel):
       description=("Optional Dynamic Agent _id to open for future user-initiated edits. If omitted, UIs fall back to the generic schedule editor."),
     ),
   ] = None
+  http_timeout_seconds: Annotated[
+    int,
+    Field(
+      default=DEFAULT_HTTP_TIMEOUT_SECONDS,
+      ge=1,
+      description=(
+        "Optional per-fire HTTP timeout in seconds for the scheduler runner's "
+        "chat invoke. Defaults to 300."
+      ),
+    ),
+  ] = DEFAULT_HTTP_TIMEOUT_SECONDS
 
 
 class ListSchedulesArgs(BaseModel):
@@ -149,6 +172,10 @@ class ScheduleIdArgs(BaseModel):
 class PatchScheduleArgs(BaseModel):
   schedule_id: Annotated[str, Field(description="The schedule to patch.")]
   agent_id: Annotated[str | None, Field(default=None, description="New Dynamic Agent id.")] = None
+  project_id: Annotated[
+    str | None,
+    Field(default=None, description="New memory Project ID."),
+  ] = None
   edit_agent_id: Annotated[str | None, Field(default=None, description="New schedule editor agent id.")] = None
   enabled: Annotated[bool | None, Field(default=None, description="Toggle on/off.")] = None
   cron: Annotated[str | None, Field(default=None, description="New cron expression.")] = None
@@ -159,6 +186,17 @@ class PatchScheduleArgs(BaseModel):
     default=None,
     description="Replacement display attributes JSON object.",
   )
+  http_timeout_seconds: Annotated[
+    int | None,
+    Field(
+      default=None,
+      ge=1,
+      description=(
+        "New per-fire HTTP timeout in seconds. Omit to leave unchanged; "
+        "set 300 to use the default."
+      ),
+    ),
+  ] = None
 
 
 class DeleteScheduleArgs(BaseModel):

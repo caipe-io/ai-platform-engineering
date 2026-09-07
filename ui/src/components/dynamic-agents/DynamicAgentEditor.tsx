@@ -2229,11 +2229,11 @@ export function DynamicAgentEditor({
             {activeStep === "tools" && (
               <div className="space-y-6 pt-2">
                 {/* Built-in Tools */}
-                <BuiltinToolsPicker
-                  value={builtinTools}
-                  onChange={setBuiltinTools}
-                  disabled={loading || !!readOnly}
-                />
+              <BuiltinToolsPicker
+                value={builtinTools}
+                onChange={setBuiltinTools}
+                disabled={loading || !!readOnly}
+              />
 
                 {/* MCP Tools */}
                 <div className="space-y-4">

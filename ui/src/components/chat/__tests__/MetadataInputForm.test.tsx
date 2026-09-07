@@ -65,6 +65,7 @@ describe("MetadataInputForm", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
   });
 
   it("renders dropdown by default for select fields", () => {
@@ -148,6 +149,84 @@ describe("MetadataInputForm", () => {
         })
       );
     });
+  });
+
+  it("restores an unfinished draft after the form is remounted", () => {
+    const fields: InputField[] = [
+      { field_name: "summary", field_label: "Summary", required: false },
+    ];
+    const { unmount } = render(
+      <MetadataInputForm
+        messageId="msg-draft"
+        inputFields={fields}
+        onSubmit={onSubmit}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Enter summary..."), {
+      target: { value: "Keep this while I visit another page" },
+    });
+    unmount();
+
+    render(
+      <MetadataInputForm
+        messageId="msg-draft"
+        inputFields={fields}
+        onSubmit={onSubmit}
+      />
+    );
+
+    expect(screen.getByPlaceholderText("Enter summary...")).toHaveValue(
+      "Keep this while I visit another page",
+    );
+  });
+
+  it("does not share a draft with a different interruption", () => {
+    const fields: InputField[] = [
+      { field_name: "summary", field_label: "Summary", required: false },
+    ];
+    const { unmount } = render(
+      <MetadataInputForm messageId="msg-one" inputFields={fields} onSubmit={onSubmit} />
+    );
+    fireEvent.change(screen.getByPlaceholderText("Enter summary..."), {
+      target: { value: "First conversation draft" },
+    });
+    unmount();
+
+    render(
+      <MetadataInputForm messageId="msg-two" inputFields={fields} onSubmit={onSubmit} />
+    );
+
+    expect(screen.getByPlaceholderText("Enter summary...")).toHaveValue("");
+  });
+
+  it("clears the saved draft after successful submission", async () => {
+    const fields: InputField[] = [
+      { field_name: "summary", field_label: "Summary", required: false },
+    ];
+    const { unmount } = render(
+      <MetadataInputForm
+        messageId="msg-submit"
+        inputFields={fields}
+        onSubmit={onSubmit}
+      />
+    );
+    fireEvent.change(screen.getByPlaceholderText("Enter summary..."), {
+      target: { value: "Submitted value" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /submit/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ summary: "Submitted value" }));
+    unmount();
+
+    render(
+      <MetadataInputForm
+        messageId="msg-submit"
+        inputFields={fields}
+        onSubmit={onSubmit}
+      />
+    );
+
+    expect(screen.getByPlaceholderText("Enter summary...")).toHaveValue("");
   });
 
   it("parseUserInputRequest returns null when no input_fields pattern", () => {

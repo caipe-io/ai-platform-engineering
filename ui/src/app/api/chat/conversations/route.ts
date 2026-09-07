@@ -2,6 +2,7 @@
 // POST /api/chat/conversations - Create new conversation (or return existing via upsert)
 
 import {
+  ApiError,
   getAuthFromBearerOrSession,
   getPaginationParams,
   getUserTeamIds,
@@ -12,6 +13,7 @@ import {
 } from '@/lib/api-middleware';
 import type { ConversationAccessLevel } from '@/lib/api-middleware';
 import { getCollection, isMongoDBConfigured } from '@/lib/mongodb';
+import { getProjectsEnabled } from '@/lib/projects-config';
 import {
   annotateConversationsWithViewerSharing,
   conversationVisibilityCandidateQuery,
@@ -20,6 +22,7 @@ import {
 } from '@/lib/rbac/conversation-implicit-authz';
 import { requireAgentUsePermission } from '@/lib/rbac/openfga-agent-authz';
 import { writeOpenFgaTuples } from '@/lib/rbac/openfga';
+import { authenticateRequest,buildBackendHeaders,getDynamicAgentsConfig } from '@/lib/da-proxy';
 import { buildParticipants } from '@/types/a2a';
 import type { ClientType, Conversation, CreateConversationRequest } from '@/types/mongodb';
 import { VALID_CLIENT_TYPES } from '@/types/mongodb';
@@ -356,6 +359,61 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return denial;
   }
 
+  const requestedProjectId = body.metadata?.project_id;
+  if (requestedProjectId !== undefined) {
+    if (!(await getProjectsEnabled())) {
+      throw new ApiError('Projects are not enabled on this platform', 400);
+    }
+    if (
+      typeof requestedProjectId !== 'string' ||
+      !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(requestedProjectId)
+    ) {
+      throw new ApiError('project_id must be a valid lowercase Project ID', 400);
+    }
+    const auth = await authenticateRequest(request);
+    if (auth instanceof NextResponse) return auth;
+    const daConfig = getDynamicAgentsConfig();
+    if (daConfig instanceof NextResponse) return daConfig;
+    let projectsResponse: Response;
+    try {
+      projectsResponse = await fetch(
+        `${daConfig.dynamicAgentsUrl}/api/v1/projects`,
+        { headers: buildBackendHeaders('application/json', auth), cache: 'no-store' },
+      );
+    } catch {
+      return NextResponse.json(
+        { success: false, error: 'Project could not be validated' },
+        { status: 503 },
+      );
+    }
+    if (!projectsResponse.ok) {
+      return NextResponse.json(
+        { success: false, error: 'Project could not be validated' },
+        { status: projectsResponse.status === 503 ? 503 : 400 },
+      );
+    }
+    let projectsPayload: Record<string, unknown>;
+    try {
+      projectsPayload = await projectsResponse.json() as Record<string, unknown>;
+    } catch {
+      return NextResponse.json(
+        { success: false, error: 'Project could not be validated' },
+        { status: 503 },
+      );
+    }
+    const projectData = projectsPayload.data as { items?: unknown } | undefined;
+    const projectItems = projectData?.items;
+    if (
+      !Array.isArray(projectItems) ||
+      !projectItems.some((item: { id?: unknown }) => item.id === requestedProjectId)
+    ) {
+      return NextResponse.json(
+        { success: false, error: 'Project is not available to this user' },
+        { status: 400 },
+      );
+    }
+  }
+
   const conversations = await getCollection<Conversation>('conversations');
 
   // ⚠️ RISK: owner_id can be set by any authenticated caller. This trusts the caller
@@ -377,6 +435,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       idempotency_key: body.idempotency_key,
     });
     if (existing) {
+      const existingProjectId = existing.metadata?.project_id;
+      if (
+        requestedProjectId !== undefined &&
+        existingProjectId !== requestedProjectId
+      ) {
+        throw new ApiError(
+          "An idempotent conversation's Project is immutable",
+          409,
+        );
+      }
       // If the returning caller is a service account, ensure the writer grant exists
       // (write-if-missing). This heals conversations created before this fix was deployed.
       if (saSub) {

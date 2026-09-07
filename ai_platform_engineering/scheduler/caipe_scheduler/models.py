@@ -17,6 +17,11 @@ OneOffRunStatus = Literal[
   "failed",
   "cancelled",
 ]
+DEFAULT_HTTP_TIMEOUT_SECONDS = 300
+
+
+def _default_http_timeout(value: Any) -> Any:
+  return DEFAULT_HTTP_TIMEOUT_SECONDS if value is None else value
 
 
 class LastRun(BaseModel):
@@ -36,15 +41,22 @@ class ScheduleVersion(BaseModel):
   changed_fields: list[str] = Field(default_factory=list)
   title: str | None = None
   agent_id: str
+  project_id: str | None = None
   edit_agent_id: str | None = None
   message_template: str
   attributes: dict[str, Any] = Field(default_factory=dict)
   cron: str
   tz: str
+  http_timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS
   enabled: bool = True
   cronjob_name: str | None = None
   created_at: datetime | None = None
   updated_at: datetime | None = None
+
+  @field_validator("http_timeout_seconds", mode="before")
+  @classmethod
+  def default_http_timeout(cls, value: Any) -> Any:
+    return _default_http_timeout(value)
 
 
 class ScheduleChange(BaseModel):
@@ -76,6 +88,10 @@ class ScheduleCreate(BaseModel):
     ...,
     description="Dynamic agent _id (e.g. 'agent-weekly-report'). Must exist in dynamic_agents collection.",
   )
+  project_id: str | None = Field(
+    default=None,
+    description="Optional immutable memory Project ID for each scheduled chat run.",
+  )
   title: str = Field(
     ...,
     min_length=1,
@@ -96,6 +112,14 @@ class ScheduleCreate(BaseModel):
     default=None,
     description=("Optional Dynamic Agent _id to use when a user wants to edit this schedule. When unset, UIs use their default schedule editor agent."),
   )
+  http_timeout_seconds: int = Field(
+    default=DEFAULT_HTTP_TIMEOUT_SECONDS,
+    ge=1,
+    description=(
+      "Optional per-fire HTTP timeout in seconds for the cron-runner chat invoke. "
+      "Defaults to 300."
+    ),
+  )
 
   @field_validator("title")
   @classmethod
@@ -115,6 +139,16 @@ class ScheduleCreate(BaseModel):
       raise ValueError("edit_agent_id must be a non-empty string")
     return value
 
+  @field_validator("project_id")
+  @classmethod
+  def project_id_must_not_be_blank(cls, value: str | None) -> str | None:
+    if value is None:
+      return value
+    value = value.strip()
+    if not value:
+      raise ValueError("project_id must be a non-empty string")
+    return value
+
 
 class SchedulePatch(BaseModel):
   """Body of PATCH /v1/schedules/{id}. All fields optional."""
@@ -122,6 +156,7 @@ class SchedulePatch(BaseModel):
   model_config = ConfigDict(extra="forbid")
 
   agent_id: str | None = None
+  project_id: str | None = None
   edit_agent_id: str | None = None
   enabled: bool | None = None
   cron: str | None = None
@@ -129,6 +164,7 @@ class SchedulePatch(BaseModel):
   message_template: str | None = None
   title: str | None = None
   attributes: dict[str, Any] | None = None
+  http_timeout_seconds: int | None = Field(default=None, ge=1)
 
   @field_validator("title")
   @classmethod
@@ -150,6 +186,16 @@ class SchedulePatch(BaseModel):
       raise ValueError("edit_agent_id must be a non-empty string")
     return value
 
+  @field_validator("project_id")
+  @classmethod
+  def patch_project_id_must_not_be_blank(cls, value: str | None) -> str | None:
+    if value is None:
+      return value
+    value = value.strip()
+    if not value:
+      raise ValueError("project_id must be a non-empty string")
+    return value
+
 
 class Schedule(BaseModel):
   """Full schedule doc as stored in Mongo + returned by API."""
@@ -160,12 +206,14 @@ class Schedule(BaseModel):
   owner_sub: str | None = None
   owner_user_id: str
   agent_id: str
+  project_id: str | None = None
   edit_agent_id: str | None = None
   title: str | None = None
   message_template: str
   attributes: dict[str, Any] = Field(default_factory=dict)
   cron: str
   tz: str
+  http_timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS
   enabled: bool = True
   cronjob_name: str | None = None
   created_at: datetime
@@ -174,6 +222,11 @@ class Schedule(BaseModel):
   version: int = 1
   versions: list[ScheduleVersion] = Field(default_factory=list)
   events: list[ScheduleEvent] = Field(default_factory=list)
+
+  @field_validator("http_timeout_seconds", mode="before")
+  @classmethod
+  def default_http_timeout(cls, value: Any) -> Any:
+    return _default_http_timeout(value)
 
 
 class ScheduleCreateResponse(BaseModel):

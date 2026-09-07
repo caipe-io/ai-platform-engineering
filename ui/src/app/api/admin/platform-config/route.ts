@@ -30,6 +30,7 @@ RAG_TEAM_SLUG_PATTERN,
 } from '@/lib/rag-settings';
 import { normalizeRagIngestorLimits } from '@/lib/rag-ingestor-limits';
 import { NextRequest,NextResponse } from 'next/server';
+import { projectsEnabledFromEnvironment } from '@/lib/projects-config';
 
 const platformConfigCache = createJsonResponseCacheStore();
 
@@ -40,6 +41,7 @@ interface PlatformConfigDoc extends PlatformDefaultAgentDocument {
   slack_discovery_cache_ttl_minutes?: unknown;
   webex_discovery_cache_ttl_minutes?: unknown;
   remote_mcp_catalog?: unknown;
+  projects?: unknown;
   rag_default_search_team_slug?: unknown;
   rag_ingestor_limits?: unknown;
 }
@@ -168,6 +170,11 @@ function normalizeReleaseNotesConfig(input: unknown = {}) {
   };
 }
 
+function normalizeProjectsConfig(input: unknown, fallback = false) {
+  const source = isRecord(input) ? input : {};
+  return { enabled: typeof source.enabled === 'boolean' ? source.enabled : fallback };
+}
+
 export const GET = withErrorHandler(async (request: NextRequest) => {
   return withJsonResponseCache(request, platformConfigCache, () => getPlatformConfig(request), {
     ttlMs: envTtlMs('PLATFORM_CONFIG_CACHE_TTL_MS', 10_000),
@@ -217,6 +224,10 @@ async function getPlatformConfig(request: NextRequest) {
         slack_victorops_escalation_agent_id: victoropsAgentId ?? victoropsEnvFallback,
         slack_victorops_escalation_agent_source: victoropsAgentId ? 'db' : (victoropsEnvFallback ? 'env' : 'fallback'),
         release_notes: normalizeReleaseNotesConfig(doc?.release_notes),
+        projects: normalizeProjectsConfig(doc?.projects, projectsEnabledFromEnvironment()),
+        projects_source: isRecord(doc?.projects) && typeof doc.projects.enabled === 'boolean'
+          ? 'db'
+          : (process.env.PROJECTS_ENABLED ? 'env' : 'fallback'),
         slack_discovery_cache_ttl_minutes: slackDiscoveryTtlMinutes,
         webex_discovery_cache_ttl_minutes: webexDiscoveryTtlMinutes,
         // Default (no config saved yet) is "disable all" — operators opt in
@@ -275,6 +286,13 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
 
     if (body.release_notes) {
       update.release_notes = normalizeReleaseNotesConfig(body.release_notes);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'projects')) {
+      if (!isRecord(body.projects) || typeof body.projects.enabled !== 'boolean') {
+        throw new ApiError('projects.enabled must be a boolean', 400, 'INVALID_PROJECTS_CONFIG');
+      }
+      update.projects = normalizeProjectsConfig(body.projects);
     }
 
     // Slack and Webex discovery caches are configured independently.
@@ -426,6 +444,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
           ? { slack_victorops_escalation_agent_id: update.slack_victorops_escalation_agent_id }
           : {}),
         ...(update.release_notes ? { release_notes: update.release_notes } : {}),
+        ...(update.projects ? { projects: update.projects, projects_source: 'db' } : {}),
         ...(Object.prototype.hasOwnProperty.call(update, 'slack_discovery_cache_ttl_minutes')
           ? { slack_discovery_cache_ttl_minutes: update.slack_discovery_cache_ttl_minutes }
           : {}),

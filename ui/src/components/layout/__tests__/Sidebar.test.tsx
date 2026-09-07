@@ -33,6 +33,11 @@ jest.mock('next/navigation', () => ({
   }),
 }))
 
+let mockProjectsEnabled = false
+jest.mock('@/hooks/use-projects-enabled', () => ({
+  useProjectsEnabled: () => mockProjectsEnabled,
+}))
+
 jest.mock('framer-motion', () => ({
   motion: {
     // eslint-disable-next-line react/display-name
@@ -96,6 +101,7 @@ jest.mock('lucide-react', () => ({
   MessageCircleQuestion: (props: unknown) => <span data-testid="icon-message-circle-question" {...props} />,
   Radio: (props: unknown) => <span data-testid="icon-radio" {...props} />,
   History: (props: unknown) => <span data-testid="icon-history" {...props} />,
+  FolderKanban: (props: unknown) => <span data-testid="icon-folder-kanban" {...props} />,
   Plus: (props: unknown) => <span data-testid="icon-plus" {...props} />,
   Archive: (props: unknown) => <span data-testid="icon-archive" {...props} />,
   ArchiveRestore: (props: unknown) => <span data-testid="icon-archive-restore" {...props} />,
@@ -251,6 +257,7 @@ describe('Sidebar — Live Status Indicator', () => {
     mockIsConversationStreaming.mockImplementation(() => false)
     mockHasUnviewedMessages.mockImplementation(() => false)
     mockIsConversationInputRequired.mockImplementation(() => false)
+    mockProjectsEnabled = false
   })
 
   describe('loading placeholders', () => {
@@ -930,6 +937,84 @@ describe('Sidebar — Live Status Indicator', () => {
 
       expect(await screen.findByText('No conversations yet')).toBeInTheDocument()
       expect(screen.getByText('Start a new chat to begin')).toBeInTheDocument()
+    })
+  })
+
+  describe('Projects', () => {
+    it('lets a user create a Project above History', async () => {
+      mockProjectsEnabled = true
+      global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url === '/api/user/projects' && init?.method === 'POST') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              success: true,
+              data: { project: { id: 'project_a', name: 'Project A' } },
+            }),
+          } as Response)
+        }
+        if (url === '/api/user/projects') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ success: true, data: { items: [] } }),
+          } as Response)
+        }
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response)
+      })
+
+      render(<Sidebar {...defaultProps} />)
+
+      expect(await screen.findByText('Projects')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Create Project' }))
+      fireEvent.change(screen.getByLabelText('Project name'), { target: { value: 'Project A' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalledWith(
+          '/api/user/projects',
+          expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'Project A' }) }),
+        )
+      })
+      expect(await screen.findByRole('button', { name: 'Project A' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByRole('button', { name: 'Back to all chats' })).toBeInTheDocument()
+      expect(screen.queryByText('All chats')).not.toBeInTheDocument()
+    })
+
+    it('shows Projects as navigation and uses an explicit return to all chats', async () => {
+      mockProjectsEnabled = true
+      mockConversations = [
+        makeConv('project-chat', 'Project Chat', { metadata: { project_id: 'project_a' } }),
+        makeConv('regular-chat', 'Regular Chat'),
+      ]
+      global.fetch = jest.fn((input: RequestInfo | URL) => {
+        if (String(input) === '/api/user/projects') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              success: true,
+              data: { items: [{ id: 'project_a', name: 'Project A' }] },
+            }),
+          } as Response)
+        }
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response)
+      })
+
+      render(<Sidebar {...defaultProps} />)
+
+      const project = await screen.findByRole('button', { name: 'Project A' })
+      expect(screen.getByText('Project Chat')).toBeInTheDocument()
+      expect(screen.getByText('Regular Chat')).toBeInTheDocument()
+      expect(screen.queryByText('All chats')).not.toBeInTheDocument()
+
+      fireEvent.click(project)
+      expect(screen.getByText('Project Chat')).toBeInTheDocument()
+      expect(screen.queryByText('Regular Chat')).not.toBeInTheDocument()
+      expect(project).toHaveAttribute('aria-pressed', 'true')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Back to all chats' }))
+      expect(screen.getByText('Regular Chat')).toBeInTheDocument()
+      expect(project).toHaveAttribute('aria-pressed', 'false')
     })
   })
 

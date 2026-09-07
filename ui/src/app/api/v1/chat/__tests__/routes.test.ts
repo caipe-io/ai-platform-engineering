@@ -24,6 +24,7 @@ const mockMintScheduledOwnerToken = jest.fn();
 
 jest.mock("@/lib/da-proxy", () => ({
   authenticateRequest: (...args: unknown[]) => mockAuthenticateRequest(...args),
+  getDynamicAgentsInvokeProxyOptions: () => ({}),
   getDynamicAgentsConfig: (...args: unknown[]) => mockGetDynamicAgentsConfig(...args),
   proxySSEStream: (...args: unknown[]) => mockProxySSEStream(...args),
   proxyJSONRequest: (...args: unknown[]) => mockProxyJSONRequest(...args),
@@ -99,6 +100,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
       sub: "owner-sub",
       email: "owner@example.com",
       agentId: "agent-persisted",
+      projectId: "pod-safe",
       scheduleTitle: "Persisted schedule title",
     });
     mockMintScheduledOwnerToken.mockResolvedValue("owner-bearer-token");
@@ -359,6 +361,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
           message: "run scheduled prep",
           conversation_id: "scheduled-sched_123-run_456",
           agent_id: "agent-1",
+          project_id: "pod-caller-controlled",
           owner_user_id: "owner@example.com",
           trace_id: "scheduled-sched_123-run_456",
           client_context: {
@@ -408,6 +411,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     expect(proxiedBody.conversation_id).not.toBe("scheduled-sched_123-run_456");
     expect(proxiedBody.conversation_id).toEqual(expect.any(String));
     expect(proxiedBody.agent_id).toBe("agent-persisted");
+    expect(proxiedBody.project_id).toBe("pod-safe");
     expect(proxiedBody.owner_user_id).toBe("owner@example.com");
     expect(proxiedBody.client_context).toEqual(
       expect.objectContaining({

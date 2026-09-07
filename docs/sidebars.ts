@@ -243,6 +243,7 @@ const sidebars: SidebarsConfig = {
         },
         { type: 'doc', id: 'architecture/slack-bot-authorization', label: 'Slack Bot Authorization' },
         { type: 'doc', id: 'architecture/slack-io-guardrails', label: 'Slack I/O Guardrails' },
+        { type: 'doc', id: 'architecture/user-memory-design', label: 'User Memory' },
         { type: 'doc', id: 'architecture/streaming_architecture', label: 'Streaming Architecture' },
       ],
     },
@@ -251,6 +252,7 @@ const sidebars: SidebarsConfig = {
       label: 'Features',
       items: [
         { type: 'doc', id: 'features/agent-builder', label: 'Agent Builder' },
+        { type: 'doc', id: 'features/user-memory', label: 'User Memory' },
         { type: 'doc', id: 'features/workflows', label: 'Workflows' },
         { type: 'doc', id: 'features/agentic-apps', label: 'External Apps' },
         {

@@ -14,6 +14,8 @@ export function buildWorkflowDaAuthHeaders(
   const headers: Record<string, string> = {};
   const incomingAuth = request.headers.get("Authorization")?.trim();
   const sessionRecord = session as Record<string, unknown>;
+  const subject =
+    (typeof sessionRecord.sub === "string" && sessionRecord.sub.trim()) || null;
   const accessToken =
     typeof sessionRecord.accessToken === "string" ? sessionRecord.accessToken.trim() : "";
 
@@ -25,6 +27,7 @@ export function buildWorkflowDaAuthHeaders(
 
   headers["X-User-Context"] = Buffer.from(
     JSON.stringify({
+      sub: subject,
       email: user.email,
       name: user.name ?? null,
     }),

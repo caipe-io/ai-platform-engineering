@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { Agent, type Dispatcher } from "undici";
 import { getServerConfig } from "@/lib/config";
 import {
   ApiError,
@@ -20,6 +21,29 @@ import {
   requireRbacPermission,
 } from "@/lib/api-middleware";
 import type { RbacResource, RbacScope } from "@/lib/rbac/types";
+
+const DEFAULT_DYNAMIC_AGENTS_INVOKE_TIMEOUT_SECONDS = 900;
+
+function getDynamicAgentsInvokeTimeoutMs(): number {
+  const raw = process.env.DYNAMIC_AGENTS_INVOKE_TIMEOUT_SECONDS;
+  if (!raw) return DEFAULT_DYNAMIC_AGENTS_INVOKE_TIMEOUT_SECONDS * 1000;
+
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.round(parsed * 1000);
+  }
+
+  console.warn(
+    `[dynamic-agents] Ignoring invalid DYNAMIC_AGENTS_INVOKE_TIMEOUT_SECONDS=${raw}; ` +
+      `using ${DEFAULT_DYNAMIC_AGENTS_INVOKE_TIMEOUT_SECONDS}s.`,
+  );
+  return DEFAULT_DYNAMIC_AGENTS_INVOKE_TIMEOUT_SECONDS * 1000;
+}
+
+const dynamicAgentsInvokeDispatcher = new Agent({
+  headersTimeout: getDynamicAgentsInvokeTimeoutMs(),
+  bodyTimeout: getDynamicAgentsInvokeTimeoutMs(),
+});
 
 // ═══════════════════════════════════════════════════════════════
 // Auth helper
@@ -100,7 +124,14 @@ export async function authenticateRequest(
     // DA doesn't parse these — they pass through via extra="allow"
     // on UserContext and are available to the user_info tool.
     const s = session as Record<string, unknown>;
+    const subject = (s?.sub as string | undefined)?.trim() || user.email;
+    const immutableSubject = (s?.sub as string | undefined)?.trim() || null;
     const userContext = {
+      // Memory ownership must never fall back to mutable email. `subject`
+      // retains the compatibility fallback for older ReBAC callers, while
+      // DA receives a nullable Keycloak subject and fails memory closed when
+      // production identity is incomplete.
+      sub: immutableSubject,
       email: user.email,
       name: user.name ?? null,
       is_admin: user.role === "admin",
@@ -111,7 +142,6 @@ export async function authenticateRequest(
 
     const encoded = Buffer.from(JSON.stringify(userContext)).toString("base64");
     const bearerToken = (s?.accessToken as string | undefined) || undefined;
-    const subject = (s?.sub as string | undefined) || user.email;
     const tenantId = (s?.org as string | undefined) || "default";
     const isServiceAccount = (s?.isServiceAccount as boolean | undefined) === true;
     return { subject, email: user.email, role: user.role, tenantId, userContextHeader: encoded, bearerToken, isServiceAccount };
@@ -321,9 +351,22 @@ export async function proxyJSONRequest(
   body: string,
   authResult: AuthResult,
   logPrefix: string,
+  options: ProxyRequestOptions = {},
 ): Promise<Response> {
-  return proxyRequest(backendUrl, "POST", authResult, logPrefix, body);
+  return proxyRequest(backendUrl, "POST", authResult, logPrefix, body, options);
 }
+
+export function getDynamicAgentsInvokeProxyOptions(): ProxyRequestOptions {
+  return { dispatcher: dynamicAgentsInvokeDispatcher };
+}
+
+interface ProxyRequestOptions {
+  dispatcher?: Dispatcher;
+}
+
+type FetchRequestInit = RequestInit & {
+  dispatcher?: Dispatcher;
+};
 
 /**
  * Proxy any HTTP method to the Dynamic Agents backend and return the
@@ -341,15 +384,19 @@ export async function proxyRequest(
   authResult: AuthResult,
   logPrefix: string,
   body?: string,
+  options: ProxyRequestOptions = {},
 ): Promise<Response> {
   const backendHeaders = buildBackendHeaders("application/json", authResult);
 
   try {
-    const backendResponse = await fetch(backendUrl, {
+    const requestInit: FetchRequestInit = {
       method,
       headers: backendHeaders,
       ...(body ? { body } : {}),
-    });
+      ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
+    };
+
+    const backendResponse = await fetch(backendUrl, requestInit);
 
     if (!backendResponse.ok) {
       const errorText = await backendResponse.text().catch(() => "");

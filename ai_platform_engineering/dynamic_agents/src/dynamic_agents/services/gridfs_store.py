@@ -21,7 +21,7 @@ from langgraph.store.base import (
     SearchOp,
 )
 from pymongo.database import Database
-from pymongo.errors import OperationFailure
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +226,20 @@ class MongoDBGridFSStore(BaseStore):
             count += 1
         return count
 
+    def put_if_absent(self, namespace: tuple[str, ...], key: str, value: dict) -> bool:
+        """Create one file without replacing an existing namespace/key identity."""
+
+        namespace_list = _coerce_namespace(namespace)
+        content = _serialize_value(value)
+        metadata = {"namespace": namespace_list, "key": key}
+        if self._ttl_seconds > 0:
+            metadata["expireAt"] = datetime.now(timezone.utc) + timedelta(seconds=self._ttl_seconds)
+        try:
+            self._fs.put(content.encode("utf-8"), filename=key, metadata=metadata)
+        except DuplicateKeyError:
+            return False
+        return True
+
     def delete_by_key_prefix(self, namespace: tuple[str, ...], prefix: str) -> int:
         """Delete all files in a namespace whose key starts with prefix."""
         namespace_list = _coerce_namespace(namespace)
@@ -261,6 +275,15 @@ class MongoDBGridFSStore(BaseStore):
                 self._files_collection.create_index("metadata.expireAt", expireAfterSeconds=0)
             else:
                 raise
+
+    def ensure_identity_index(self) -> None:
+        """Ensure every store namespace/key pair has at most one GridFS file."""
+
+        self._files_collection.create_index(
+            [("metadata.namespace", 1), ("metadata.key", 1)],
+            unique=True,
+            name="namespace_key_unique",
+        )
 
 
 def _serialize_value(value: dict) -> str:

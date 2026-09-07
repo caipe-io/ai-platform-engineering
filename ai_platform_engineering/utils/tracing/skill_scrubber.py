@@ -115,6 +115,9 @@ _WORKFLOW_SECTION_HEADER = "## Self-Service Workflows"
 # Header rendered by ``get_workflow_definition`` tool output for
 # each requested workflow (the bulk-payload case).
 _WORKFLOW_DEFN_HEADER = "## Workflow:"
+_MEMORY_OPEN = "<agent_memory>"
+_MEMORY_CLOSE = "</agent_memory>"
+_MEMORY_FILE_MARKER = "<!-- caipe-memory:file"
 
 # Tool / entity names whose I/O we redact wholesale because they
 # echo workflow llm_prompts directly. Defensive redaction allowlist
@@ -151,6 +154,7 @@ _LANGCHAIN_IO_ATTR_KEYS = (
 # workflows live in the agent's graph state and therefore get
 # stamped onto every node span by the LangChain instrumentor.
 _SENSITIVE_STATE_CHANNELS = (
+    "memory_contents",
     "skills_metadata",
     "skills",  # alternate name some middlewares use
     "tasks",  # workflow plan: list of dicts with full llm_prompt
@@ -201,6 +205,15 @@ def _strip_known_sections(text: str) -> str:
     text = _strip_marker_section(text, _SKILLS_SECTION_HEADER)
     text = _strip_marker_section(text, _WORKFLOW_SECTION_HEADER)
     text = _strip_marker_section(text, _WORKFLOW_DEFN_HEADER)
+    if _MEMORY_OPEN in text:
+        start = text.find(_MEMORY_OPEN)
+        end = text.find(_MEMORY_CLOSE, start)
+        if end >= 0:
+            text = (
+                text[:start]
+                + f"{_MEMORY_OPEN}\n[redacted: user memory]\n{_MEMORY_CLOSE}"
+                + text[end + len(_MEMORY_CLOSE) :]
+            )
     return text
 
 
@@ -250,6 +263,8 @@ def _redact_value(value: Any, placeholder: str) -> Any:
 
     # Plain string path.
     redacted = _strip_known_sections(value)
+    if _MEMORY_FILE_MARKER in redacted:
+        return "[redacted: user memory]"
     if _looks_like_skill_read(redacted):
         # The string is a tool-call result that loaded a skill file
         # (or a system message with embedded skill paths). Wholesale

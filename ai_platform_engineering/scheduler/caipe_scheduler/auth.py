@@ -15,6 +15,7 @@ from caipe_scheduler.config import Settings
 class CallerIdentity:
   sub: str
   email: str
+  token: str
 
 
 _jwks_clients: dict[str, PyJWKClient] = {}
@@ -62,4 +63,4 @@ def authenticate_caller(authorization: str | None, settings: Settings) -> Caller
     raise HTTPException(401, "Caller token has no subject.")
   if not isinstance(email, str) or not email.strip():
     raise HTTPException(401, "Caller token has no email or username.")
-  return CallerIdentity(sub=sub.strip(), email=email.strip().lower())
+  return CallerIdentity(sub=sub.strip(), email=email.strip().lower(), token=token)

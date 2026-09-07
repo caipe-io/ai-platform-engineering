@@ -99,9 +99,13 @@ const FEATURES = [
     title: 'Agent Memory',
     icon: '💾',
     color: '#059669',
+    to: '/docs/features/user-memory',
     items: [
-      'Chat persistence memory with multi-turn conversation',
-      'Fact extraction across chats for a user',
+      'Persistent, owner-isolated memory across conversations',
+      'Global, agent, and immutable Project memory scopes',
+      'Platform-wide Projects with per-chat selection',
+      'Markdown memory maintained with standard filesystem tools',
+      'Manage Memory UI with auditable transcript badges',
     ],
   },
   {

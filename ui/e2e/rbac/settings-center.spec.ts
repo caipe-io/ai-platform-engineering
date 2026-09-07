@@ -354,17 +354,17 @@ test.describe("mocked routed Settings browser regression",() => {
     ).toEqual([]);
   });
 
-  test("shows preference explanations on hover without a dead documentation link",async ({ page }) => {
+  test("shows preference explanations on hover without documentation links",async ({ page }) => {
     const state = createState();
     await installSettingsCenterMocks(page,state);
     const settings = await openSettings(page);
 
-    await settings.getByRole("button",{ name: "More about Cross-Thread Memory" }).hover();
+    await settings.getByRole("button",{ name: "More about Show Thinking" }).hover();
 
     await expect(page.getByRole("tooltip")).toContainText(
-      "the assistant extracts and recalls facts about you",
+      'Controls whether the "Thinking..." panel is expanded or collapsed',
     );
-    await expect(page.locator('a[href="/docs/features/cross-thread-memory"]')).toHaveCount(0);
+    await expect(settings.locator('a[href^="/docs/"]')).toHaveCount(0);
   });
 
   test("rolls back a failed personal autosave, retries it, and reloads the saved value",async ({ page }) => {

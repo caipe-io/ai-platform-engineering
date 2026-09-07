@@ -17,6 +17,10 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockRouterPush }),
 }));
 
+jest.mock("@/hooks/use-projects-enabled", () => ({
+  useProjectsEnabled: () => true,
+}));
+
 jest.mock("@/components/auth-guard", () => ({
   AuthGuard: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="auth-guard">{children}</div>
@@ -70,6 +74,19 @@ jest.mock("@/components/ui/label", () => ({
 jest.mock("@/components/ui/textarea", () => ({
   Textarea: (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => (
     <textarea {...props} />
+  ),
+}));
+
+jest.mock("@/components/chat/ProjectPicker", () => ({
+  ProjectPicker: ({ value, onChange }: { value?: string; onChange: (value?: string) => void }) => (
+    <select
+      aria-label="Project"
+      value={value || ""}
+      onChange={(event) => onChange(event.target.value || undefined)}
+    >
+      <option value="">No project</option>
+      <option value="platform">Platform</option>
+    </select>
   ),
 }));
 

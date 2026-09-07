@@ -14,10 +14,6 @@ proxyRequest,
 } from "@/lib/da-proxy";
 import { NextRequest,NextResponse } from "next/server";
 
-function buildFileNamespace(agentId: string, conversationId: string): string {
-  return JSON.stringify([agentId, conversationId, "filesystem"]);
-}
-
 async function proxyFileContent(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
@@ -60,7 +56,8 @@ async function proxyFileContent(
   if (daConfig instanceof NextResponse) return daConfig;
 
   const backendUrl = new URL("/api/v1/files/content", daConfig.dynamicAgentsUrl);
-  backendUrl.searchParams.set("fs_namespace", buildFileNamespace(agentId, conversationId));
+  backendUrl.searchParams.set("conversation_id", conversationId);
+  backendUrl.searchParams.set("agent_id", agentId);
   backendUrl.searchParams.set("path", filePath);
 
   return proxyRequest(

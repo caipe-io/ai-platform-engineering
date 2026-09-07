@@ -10,7 +10,19 @@ Real-time streaming from backend to UI via `POST /api/dynamic-agents/chat/stream
 | `tool_start` | Tool invoked | `{tool_name, tool_call_id, args, namespace}` |
 | `tool_end` | Tool finished | `{tool_call_id, namespace}` |
 | `input_required` | HITL needed | `{tool_call_id, tool_name, args}` |
+| `memory_injected` | Memory supplied to the root model | `{memory_ids, namespace}` |
+| `memory_update` | A mounted memory file changed | `{memory_ids, action, namespace}` |
 | `done` | Stream ends | `{}` |
+
+## Memory events
+
+`memory_injected` contains stable record IDs only; memory bodies are never
+copied into the event. `memory_update.action` is `created`, `updated`, or
+`deleted`. Both events use the root namespace because subagents are denied all
+memory paths.
+
+The former `memory_context_used` event is no longer emitted. Clients should map
+that name to `memory_injected` when replaying persisted legacy transcripts.
 
 ## Known Tools
 

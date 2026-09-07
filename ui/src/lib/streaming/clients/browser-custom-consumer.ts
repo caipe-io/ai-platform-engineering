@@ -78,6 +78,8 @@ export class CustomStreamAdapter implements StreamAdapter {
       conversation_id: params.conversationId,
       agent_id: params.agentId,
       protocol: "custom",
+      memory_enabled: params.memoryEnabled ?? true,
+      project_id: params.projectId,
       ...(params.clientContext && { client_context: params.clientContext }),
       ...(params.files?.length && { files: params.files }),
     });
@@ -92,6 +94,8 @@ export class CustomStreamAdapter implements StreamAdapter {
       agent_id: params.agentId,
       resume_data: params.resumeData,
       protocol: "custom",
+      memory_enabled: params.memoryEnabled ?? true,
+      project_id: params.projectId,
       ...(params.clientContext && { client_context: params.clientContext }),
     });
 
@@ -211,6 +215,36 @@ export class CustomStreamAdapter implements StreamAdapter {
         case "warning": {
           const parsed = JSON.parse(data);
           callbacks.onWarning?.(parsed.message, parsed.namespace ?? []);
+          return false;
+        }
+
+        case "memory_injected": {
+          const parsed = JSON.parse(data);
+          callbacks.onMemoryInjected?.(
+            parsed.memory_ids ?? [],
+            parsed.namespace ?? [],
+          );
+          return false;
+        }
+
+        case "memory_context_used": {
+          const parsed = JSON.parse(data);
+          // Backward compatibility for persisted legacy streams: old context
+          // injection events render as ordinary memory injection badges.
+          callbacks.onMemoryInjected?.(
+            parsed.memory_ids ?? [],
+            parsed.namespace ?? [],
+          );
+          return false;
+        }
+
+        case "memory_update": {
+          const parsed = JSON.parse(data);
+          callbacks.onMemoryUpdate?.(
+            parsed.memory_ids ?? [],
+            parsed.action,
+            parsed.namespace ?? [],
+          );
           return false;
         }
 

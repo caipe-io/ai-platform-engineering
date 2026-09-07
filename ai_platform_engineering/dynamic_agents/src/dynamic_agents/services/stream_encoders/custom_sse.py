@@ -102,6 +102,21 @@ class CustomStreamEncoder(StreamEncoder):
     def on_warning(self, message: str) -> list[str]:
         return [_sse_frame("warning", {"message": message, "namespace": []})]
 
+    def on_memory_injected(self, memory_ids: list[str]) -> list[str]:
+        if not memory_ids:
+            return []
+        return [_sse_frame("memory_injected", {"memory_ids": memory_ids, "namespace": []})]
+
+    def on_memory_update(self, memory_ids: list[str], action: str) -> list[str]:
+        if not memory_ids:
+            return []
+        return [
+            _sse_frame(
+                "memory_update",
+                {"memory_ids": memory_ids, "action": action, "namespace": []},
+            )
+        ]
+
     def on_input_required(
         self,
         interrupt_id: str,

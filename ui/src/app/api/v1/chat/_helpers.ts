@@ -9,7 +9,7 @@
  */
 
 export {
-authenticateRequest,buildBackendHeaders,getDynamicAgentsConfig,proxyJSONRequest,
+authenticateRequest,buildBackendHeaders,getDynamicAgentsConfig,getDynamicAgentsInvokeProxyOptions,proxyJSONRequest,
 proxyRequest,proxySSEStream
 } from "@/lib/da-proxy";
 

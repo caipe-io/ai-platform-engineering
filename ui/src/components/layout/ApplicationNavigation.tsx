@@ -41,6 +41,7 @@ import { useAdminRole } from "@/hooks/use-admin-role";
 import { useAutonomousCapability } from "@/hooks/use-autonomous-capability";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { useKbTabGates } from "@/hooks/use-kb-tab-gates";
+import { useProjectsEnabled } from "@/hooks/use-projects-enabled";
 import { useAdminTabGates } from "@/hooks/useAdminTabGates";
 import { KNOWLEDGE_NAV_ITEMS } from "@/components/rag/KnowledgeSidebar";
 import { PERSONAL_SETTINGS_ROUTES } from "@/components/settings/settings-routes";
@@ -164,6 +165,7 @@ function ApplicationNavigationContents({
   const { data: session } = useSession();
   const { isAdmin } = useAdminRole();
   const { canUseAutonomous } = useAutonomousCapability();
+  const projectsEnabled = useProjectsEnabled();
   const { gates: adminGates,loading: adminGatesLoading } = useAdminTabGates();
   const {
     gates: knowledgeGates,
@@ -224,7 +226,7 @@ function ApplicationNavigationContents({
   const items = [
     { key: "home",href: "/",label: "Home",icon: Home },
     { key: "chat",href: chatHref,label: "Chat",icon: MessageCircle },
-    config.projectsEnabled && {
+    projectsEnabled && {
       key: "projects",
       href: "/projects",
       label: "Projects",

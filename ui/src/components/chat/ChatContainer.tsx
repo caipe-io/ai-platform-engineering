@@ -177,6 +177,7 @@ export function ChatContainer() {
               owner_id: conv.owner_id,
               accessLevel: conv.access_level,
               sharing: conv.sharing,
+              metadata: conv.metadata,
             };
 
             useChatStore.setState((state) => ({

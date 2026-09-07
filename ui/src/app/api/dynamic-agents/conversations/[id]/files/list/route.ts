@@ -46,10 +46,8 @@ export async function GET(
   if (daConfig instanceof NextResponse) return daConfig;
 
   const backendUrl = new URL("/api/v1/files/list", daConfig.dynamicAgentsUrl);
-  backendUrl.searchParams.set(
-    "fs_namespace",
-    JSON.stringify([agentId, conversationId, "filesystem"]),
-  );
+  backendUrl.searchParams.set("conversation_id", conversationId);
+  backendUrl.searchParams.set("agent_id", agentId);
 
   return proxyRequest(backendUrl.toString(), "GET", authResult, "[conversation-files/list]");
 }

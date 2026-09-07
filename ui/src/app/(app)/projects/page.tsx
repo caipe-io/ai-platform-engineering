@@ -2,10 +2,10 @@ import { notFound } from "next/navigation";
 
 import { AuthGuard } from "@/components/auth-guard";
 import { ProjectsHub } from "@/components/projects/ProjectsHub";
-import { getServerConfig } from "@/lib/config";
+import { getProjectsEnabled } from "@/lib/projects-config";
 
-export default function ProjectsPage() {
-  if (!getServerConfig().projectsEnabled) notFound();
+export default async function ProjectsPage() {
+  if (!(await getProjectsEnabled())) notFound();
 
   return (
     <AuthGuard>

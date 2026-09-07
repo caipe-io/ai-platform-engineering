@@ -49,6 +49,7 @@ describe("scheduled-run-auth", () => {
       schedule_id: "sched_123",
       owner_user_id: "owner@example.com",
       agent_id: "agent-persisted",
+      project_id: "pod-safe",
       title: "Daily platform report",
     });
     mockGetCollection.mockResolvedValue({ findOne });
@@ -58,6 +59,7 @@ describe("scheduled-run-auth", () => {
       sub: "owner-sub",
       email: "owner@example.com",
       agentId: "agent-persisted",
+      projectId: "pod-safe",
       scheduleTitle: "Daily platform report",
     });
     expect(findOne).toHaveBeenCalledWith({ schedule_id: "sched_123" });
@@ -78,6 +80,7 @@ describe("scheduled-run-auth", () => {
       sub: "owner-sub",
       email: "owner@example.com",
       agentId: "agent-persisted",
+      projectId: null,
       scheduleTitle: null,
     });
     expect(mockFindUserIdByEmail).not.toHaveBeenCalled();

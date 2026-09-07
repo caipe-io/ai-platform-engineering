@@ -14,13 +14,17 @@ const AGENTS = [
 function installFetchMock({
   defaultAgentId = null,
   patchSuccess = true,
+  projectsEnabled = false,
   scheduleEditorAgentId = null,
   source = "db",
+  projectsSource = "db",
 }: {
   defaultAgentId?: string | null;
   patchSuccess?: boolean;
+  projectsEnabled?: boolean;
   scheduleEditorAgentId?: string | null;
   source?: string;
+  projectsSource?: string;
 } = {}): jest.Mock {
   const mock = jest.fn(async (input: RequestInfo | URL,init?: RequestInit) => {
     const path = String(input);
@@ -34,6 +38,7 @@ function installFetchMock({
     if (path.includes("/api/admin/platform-config") && init?.method === "PATCH") {
       const body = JSON.parse(String(init.body)) as {
         default_agent_id?: string | null;
+        projects?: { enabled?: boolean };
         schedule_editor_agent_id?: string | null;
       };
       return {
@@ -51,6 +56,10 @@ function installFetchMock({
                     ? body.schedule_editor_agent_id
                     : scheduleEditorAgentId,
                 schedule_editor_agent_source: "db",
+                projects: {
+                  enabled: body.projects?.enabled ?? projectsEnabled,
+                },
+                projects_source: "db",
               },
             })
           : ({ success: false,error: "Platform update failed" }),
@@ -66,6 +75,8 @@ function installFetchMock({
             default_agent_id: defaultAgentId,
             schedule_editor_agent_id: scheduleEditorAgentId,
             schedule_editor_agent_source: source,
+            projects: { enabled: projectsEnabled },
+            projects_source: projectsSource,
             source,
           },
         }),
@@ -118,6 +129,28 @@ describe("PlatformDefaultsSettings",() => {
       await screen.findByRole("combobox",{ name: /Platform default agent for new chats/i }),
     ).toBeDisabled();
     expect(screen.getByRole("combobox",{ name: "Scheduler editor agent" })).toBeDisabled();
+    expect(screen.getByRole("switch",{ name: "Enable Projects platform-wide" })).toBeDisabled();
+  });
+
+  it("auto-saves the platform-wide Projects setting",async () => {
+    const fetchMock = installFetchMock({ projectsEnabled: false });
+    render(<PlatformDefaultsSettings />);
+
+    fireEvent.click(await screen.findByRole("switch",{ name: "Enable Projects platform-wide" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/platform-config",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ projects: { enabled: true } }),
+        }),
+      );
+      expect(screen.getByRole("switch",{ name: "Enable Projects platform-wide" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
   });
 
   it("opens confirmation as soon as a consequential selection is made",async () => {

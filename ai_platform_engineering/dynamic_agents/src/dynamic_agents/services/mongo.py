@@ -139,6 +139,10 @@ class MongoDBService:
         servers_coll = self._get_servers_collection()
         servers_coll.create_index([("enabled", ASCENDING)])
 
+        self._db["conversations"].create_index(
+            [("owner_subject", ASCENDING), ("metadata.project_id", ASCENDING), ("updated_at", ASCENDING)]
+        )
+
         logger.info("MongoDB indexes ensured")
 
     def _get_agents_collection(self) -> Collection:
@@ -200,8 +204,6 @@ class MongoDBService:
         except PyMongoError as exc:
             logger.error("Failed to resolve RAG collection membership: %s", exc)
             return direct
-
-
 
     # =========================================================================
     # Read-only MCP server access

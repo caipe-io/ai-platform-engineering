@@ -89,7 +89,14 @@ interface ChatState {
   inputRequiredConversations: Set<string>;
 
   // Actions
-  createConversation: (agentId: string) => Promise<string>;
+  createConversation: (
+    agentId: string,
+    options?: {
+      projectId?: string;
+      continuedFrom?: string;
+      openingContext?: Record<string, unknown>;
+    },
+  ) => Promise<string>;
   setActiveConversation: (id: string) => void;
   addMessage: (conversationId: string, message: Omit<ChatMessage, "id" | "timestamp">, turnId?: string, messageId?: string) => string;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => void;
@@ -188,6 +195,8 @@ function serializeStreamEvent(event: StreamEvent): StoredStreamEvent {
     toolData: event.toolData,
     warningData: event.warningData,
     inputRequiredData: event.inputRequiredData,
+    memoryUpdateData: event.memoryUpdateData,
+    memoryInjectedData: event.memoryInjectedData,
     // Content fields
     content: event.content,
     displayContent: event.displayContent,
@@ -208,7 +217,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       unviewedConversations: new Set<string>(),
       inputRequiredConversations: new Set<string>(),
 
-      createConversation: async (agentId: string) => {
+      createConversation: async (agentId: string, options) => {
         const storageMode = getStorageMode();
         const normalizedAgentId = agentId.trim();
         if (!normalizedAgentId) {
@@ -223,6 +232,13 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             title: 'New Conversation',
             client_type: 'webui',
             agent_id: normalizedAgentId,
+            ...((options?.projectId || options?.continuedFrom || options?.openingContext) && {
+              metadata: {
+                ...(options.projectId && { project_id: options.projectId }),
+                ...(options.continuedFrom && { continued_from: options.continuedFrom }),
+                ...(options.openingContext && { opening_context: options.openingContext }),
+              },
+            }),
           });
           id = result.conversation._id;
         } else {
@@ -238,6 +254,13 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           messages: [],
           streamEvents: [],
           participants: buildParticipants(normalizedAgentId),
+          ...((options?.projectId || options?.continuedFrom || options?.openingContext) && {
+            metadata: {
+              ...(options.projectId && { project_id: options.projectId }),
+              ...(options.continuedFrom && { continued_from: options.continuedFrom }),
+              ...(options.openingContext && { opening_context: options.openingContext }),
+            },
+          }),
         };
 
         // Update local state

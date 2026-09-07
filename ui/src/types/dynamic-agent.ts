@@ -206,6 +206,10 @@ export interface SleepToolConfig {
   max_seconds?: number; // Maximum sleep duration in seconds (default: 300)
 }
 
+export interface MemoryToolConfig {
+  enabled: boolean;
+}
+
 /**
  * Configuration for all built-in tools available to dynamic agents.
  * Each tool config is optional - if not present, tool uses defaults.
@@ -215,6 +219,8 @@ export interface BuiltinToolsConfig {
   current_datetime?: CurrentDatetimeToolConfig;
   user_info?: UserInfoToolConfig;
   sleep?: SleepToolConfig;
+  memory?: MemoryToolConfig;
+  create_project?: { enabled: boolean };
   workflows?: string[] | null; // Workflow config IDs the agent can trigger/monitor
   // Allow dynamic tool configs for future extensibility
   // Using Record type to avoid index signature conflicts with specific tool types
@@ -576,6 +582,7 @@ export interface ChatRequest {
   message: string;
   conversation_id: string;
   agent_id: string;
+  project_id?: string | null;
 }
 
 export interface ChatEvent {

@@ -16,8 +16,12 @@ from dynamic_agents.auth.authz import (
 from dynamic_agents.config import get_settings
 from dynamic_agents.log_config import conversation_id_var
 from dynamic_agents.models import ChatRequest, ClientContext, DynamicAgentConfig, InputFile, UserContext
+from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
 from dynamic_agents.services.llm_clients import LLMConfigError
+from dynamic_agents.services.memory_paths import memory_owner_key, validate_project_id
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
+from dynamic_agents.services.platform_projects import projects_enabled
+from dynamic_agents.services.projects import get_project
 from dynamic_agents.services.runtime_cache import (
     RuntimeCapacityError,
     RuntimeInitError,
@@ -90,11 +94,63 @@ def apply_config_override(agent: DynamicAgentConfig, config_override: dict[str, 
     # Validate allowed_tools subset constraint before merging
     if "allowed_tools" in config_override:
         _validate_allowed_tools_subset(agent.allowed_tools, config_override["allowed_tools"])
+    _validate_memory_override(agent, config_override)
+    _validate_create_project_override(agent, config_override)
 
     # Convert agent to dict, deep merge, reconstruct
     agent_dict = agent.model_dump(by_alias=True)
     merged = _deep_merge(agent_dict, config_override)
     return DynamicAgentConfig.model_validate(merged)
+
+
+def _validate_memory_override(agent: DynamicAgentConfig, config_override: dict[str, Any]) -> None:
+    """Prevent request overrides from enabling or reconfiguring memory."""
+
+    builtin_override = config_override.get("builtin_tools")
+    if not isinstance(builtin_override, dict) or "memory" not in builtin_override:
+        return
+    memory_override = builtin_override["memory"]
+    if not isinstance(memory_override, dict):
+        raise HTTPException(status_code=400, detail="config_override memory must be an object")
+
+    base_memory = agent.builtin_tools.memory if agent.builtin_tools else None
+    if base_memory is None:
+        if set(memory_override) <= {"enabled"} and memory_override.get("enabled") is False:
+            return
+        raise HTTPException(status_code=400, detail="config_override cannot enable or configure memory")
+
+    base = base_memory.model_dump()
+    candidate = _deep_merge(base, memory_override)
+    if candidate.get("enabled") and not base.get("enabled"):
+        raise HTTPException(status_code=400, detail="config_override cannot enable memory")
+    if {key: value for key, value in candidate.items() if key != "enabled"} != {
+        key: value for key, value in base.items() if key != "enabled"
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail="config_override cannot change memory namespace policy",
+        )
+
+
+def _validate_create_project_override(agent: DynamicAgentConfig, config_override: dict[str, Any]) -> None:
+    """Prevent a request override from granting the model Project creation rights."""
+
+    builtin_override = config_override.get("builtin_tools")
+    if not isinstance(builtin_override, dict):
+        return
+    if "projects" in builtin_override:
+        raise HTTPException(
+            status_code=400,
+            detail="config_override builtin_tools.projects was renamed to create_project",
+        )
+    if "create_project" not in builtin_override:
+        return
+    create_override = builtin_override["create_project"]
+    if not isinstance(create_override, dict):
+        raise HTTPException(status_code=400, detail="config_override create_project must be an object")
+    base_create = agent.builtin_tools.create_project if agent.builtin_tools else None
+    if create_override.get("enabled") is True and not (base_create and base_create.enabled):
+        raise HTTPException(status_code=400, detail="config_override cannot allow Project creation")
 
 
 def _validate_allowed_tools_subset(
@@ -179,6 +235,8 @@ class ResumeStreamRequest(BaseModel):
     resume_data: str  # JSON string with type discriminator (form_input or tool_approval)
     protocol: str = Field("custom", pattern=r"^(custom|agui)$")
     trace_id: str | None = None
+    memory_enabled: bool = True
+    project_id: str | None = None
     config_override: dict | None = Field(
         None,
         description=(
@@ -204,6 +262,49 @@ def _is_scheduler_invoke(request: ChatRequest) -> bool:
     return request.client_context.model_dump().get("source") == "scheduler"
 
 
+async def _validate_project(
+    project_id: str | None,
+    *,
+    mongo: MongoDBService,
+    user: UserContext,
+    conversation_id: str,
+) -> bool:
+    """Validate Project ownership/platform state and prevent scope mutation."""
+
+    settings = get_settings()
+    platform_enabled = projects_enabled(mongo._db, settings)
+    if project_id is not None:
+        if not platform_enabled:
+            raise HTTPException(status_code=400, detail="Projects are not enabled on this platform")
+        try:
+            validate_project_id(project_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if mongo._db is None:
+            raise HTTPException(status_code=503, detail="Project storage is unavailable")
+        store = MongoDBGridFSStore(
+            db=mongo._db,
+            bucket_name=settings.memory_gridfs_bucket_name,
+            ttl_seconds=0,
+        )
+        if get_project(store, memory_owner_key(user, settings), project_id) is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    if mongo._db is None:
+        return platform_enabled
+    conversation = mongo._db["conversations"].find_one(
+        {"_id": conversation_id},
+        {"metadata.project_id": 1},
+    )
+    if not isinstance(conversation, dict) or not conversation:
+        return platform_enabled
+    metadata = conversation.get("metadata")
+    stored = metadata.get("project_id") if isinstance(metadata, dict) else None
+    if stored != project_id and (stored is not None or project_id is not None):
+        raise HTTPException(status_code=409, detail="A conversation's Project is immutable")
+    return platform_enabled
+
+
 async def _collect_invoke_response(
     *,
     runtime,
@@ -221,6 +322,7 @@ async def _collect_invoke_response(
         request.trace_id,
         encoder,
         files=request.files,
+        memory_enabled=request.memory_enabled,
     ):
         pass
 
@@ -263,6 +365,9 @@ async def _generate_sse_events(
     mongo: MongoDBService | None = None,
     client_context: ClientContext | None = None,
     files: list[InputFile] | None = None,
+    memory_enabled: bool = True,
+    project_id: str | None = None,
+    projects_enabled: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Generate SSE events from agent streaming.
 
@@ -286,10 +391,20 @@ async def _generate_sse_events(
             session_id,
             user=user,
             client_context=client_context,
+            project_id=project_id,
+            projects_enabled=projects_enabled,
         )
 
         # Stream response with trace_id for Langfuse tracing
-        async for frame in runtime.stream(message, session_id, user.email, trace_id, encoder, files=files):
+        async for frame in runtime.stream(
+            message,
+            session_id,
+            user.email,
+            trace_id,
+            encoder,
+            files=files,
+            memory_enabled=memory_enabled,
+        ):
             yield frame
 
     except RuntimeCapacityError as e:
@@ -367,6 +482,12 @@ async def chat_start_stream(
 
     # Get MCP servers for this agent and its subagents
     mcp_servers = mongo.get_agent_mcp_servers(agent)
+    platform_projects_enabled = await _validate_project(
+        request.project_id,
+        mongo=mongo,
+        user=user,
+        conversation_id=request.conversation_id,
+    )
 
     logger.info(
         f"[chat] Starting chat request: "
@@ -392,6 +513,9 @@ async def chat_start_stream(
             mongo=mongo,
             client_context=request.client_context,
             files=request.files,
+            memory_enabled=request.memory_enabled,
+            project_id=request.project_id,
+            projects_enabled=platform_projects_enabled,
         ),
         media_type="text/event-stream",
         headers={
@@ -411,6 +535,9 @@ async def _generate_resume_sse_events(
     encoder: StreamEncoder,
     trace_id: str | None = None,
     mongo: MongoDBService | None = None,
+    memory_enabled: bool = True,
+    project_id: str | None = None,
+    projects_enabled: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Generate SSE events from agent resume streaming.
 
@@ -432,10 +559,19 @@ async def _generate_resume_sse_events(
             mcp_servers,
             session_id,
             user=user,
+            project_id=project_id,
+            projects_enabled=projects_enabled,
         )
 
         # Resume streaming with form data
-        async for frame in runtime.resume(session_id, user.email, resume_data, trace_id, encoder):
+        async for frame in runtime.resume(
+            session_id,
+            user.email,
+            resume_data,
+            trace_id,
+            encoder,
+            memory_enabled=memory_enabled,
+        ):
             yield frame
 
     except RuntimeCapacityError as e:
@@ -488,6 +624,12 @@ async def chat_resume_stream(
 
     # Get MCP servers for this agent and its subagents
     mcp_servers = mongo.get_agent_mcp_servers(agent)
+    platform_projects_enabled = await _validate_project(
+        request.project_id,
+        mongo=mongo,
+        user=user,
+        conversation_id=request.conversation_id,
+    )
 
     logger.info(
         f"[chat] Resuming stream: agent='{agent.name}', user={user.email}, "
@@ -508,6 +650,9 @@ async def chat_resume_stream(
             encoder=encoder,
             trace_id=request.trace_id,
             mongo=mongo,
+            memory_enabled=request.memory_enabled,
+            project_id=request.project_id,
+            projects_enabled=platform_projects_enabled,
         ),
         media_type="text/event-stream",
         headers={
@@ -548,6 +693,12 @@ async def chat_invoke(
 
     # Get MCP servers for this agent and its subagents
     mcp_servers = mongo.get_agent_mcp_servers(agent)
+    platform_projects_enabled = await _validate_project(
+        request.project_id,
+        mongo=mongo,
+        user=user,
+        conversation_id=request.conversation_id,
+    )
 
     settings = get_settings()
     persist_history = settings.invoke_persist_history
@@ -568,6 +719,8 @@ async def chat_invoke(
                 request.conversation_id,
                 user=user,
                 client_context=request.client_context,
+                project_id=request.project_id,
+                projects_enabled=platform_projects_enabled,
             ) as runtime:
                 return await _collect_invoke_response(
                     runtime=runtime,
@@ -584,6 +737,8 @@ async def chat_invoke(
                     request.conversation_id,
                     user=user,
                     client_context=request.client_context,
+                    project_id=request.project_id,
+                    projects_enabled=platform_projects_enabled,
                 )
             else:
                 runtime = await stack.enter_async_context(
@@ -593,6 +748,8 @@ async def chat_invoke(
                         request.conversation_id,
                         user=user,
                         client_context=request.client_context,
+                        project_id=request.project_id,
+                        projects_enabled=platform_projects_enabled,
                     )
                 )
 

@@ -9,6 +9,7 @@ from pymongo import MongoClient, ReturnDocument
 from pymongo.collection import Collection
 
 from caipe_scheduler.config import Settings
+from caipe_scheduler.models import DEFAULT_HTTP_TIMEOUT_SECONDS
 
 
 class ScheduleStore:
@@ -103,12 +104,14 @@ class ScheduleStore:
     now = datetime.now(timezone.utc)
     versioned_fields = {
       "agent_id",
+      "project_id",
       "edit_agent_id",
       "title",
       "message_template",
       "attributes",
       "cron",
       "tz",
+      "http_timeout_seconds",
       "enabled",
       "cronjob_name",
     }
@@ -123,11 +126,15 @@ class ScheduleStore:
         "changed_fields": changed_fields,
         "title": existing.get("title"),
         "agent_id": existing.get("agent_id"),
+        "project_id": existing.get("project_id"),
         "edit_agent_id": existing.get("edit_agent_id"),
         "message_template": existing.get("message_template"),
         "attributes": existing.get("attributes") or {},
         "cron": existing.get("cron"),
         "tz": existing.get("tz"),
+        "http_timeout_seconds": (
+          existing.get("http_timeout_seconds") or DEFAULT_HTTP_TIMEOUT_SECONDS
+        ),
         "enabled": existing.get("enabled", True),
         "cronjob_name": existing.get("cronjob_name"),
         "created_at": existing.get("created_at"),

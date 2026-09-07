@@ -27,17 +27,6 @@ export interface FeatureFlag {
 
 export const FEATURE_FLAGS: FeatureFlag[] = [
   {
-    id: "memory",
-    label: "Cross-Thread Memory",
-    description: "Remember facts about you across conversations",
-    detail:
-      "When enabled, the assistant extracts and recalls facts about you (e.g. your clusters, team, preferences) across separate conversations. Disabling this makes every chat start fresh.",
-    icon: "Brain",
-    category: "ai",
-    defaultValue: true,
-    preferencesKey: "memory_enabled",
-  },
-  {
     id: "showThinking",
     label: "Show Thinking",
     description: "Expand the raw stream panel by default",

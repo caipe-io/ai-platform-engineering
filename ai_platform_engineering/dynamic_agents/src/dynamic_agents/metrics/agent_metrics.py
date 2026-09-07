@@ -169,6 +169,20 @@ class AgentMetrics:
             "Total requests rejected because every cached runtime was actively streaming",
         )
 
+        # -----------------------------------------------------------------
+        # Durable memory metrics
+        # -----------------------------------------------------------------
+        self.memory_prompt_cache_invalidations_total = Counter(
+            "da_memory_prompt_cache_invalidations_total",
+            "Memory writes that change the root agent prompt-cache prefix",
+            labelnames=["agent_id", "action"],
+        )
+        self.memory_over_budget_loads_total = Counter(
+            "da_memory_over_budget_loads_total",
+            "Over-budget memory files loaded intact",
+            labelnames=["agent_id", "scope"],
+        )
+
         self._initialized = True
         logger.info("AgentMetrics initialised")
 

@@ -498,6 +498,13 @@ email-to-sub mapping without depending on transient session cookies.
 For browser sessions, the Web UI backend forwards the Keycloak access token to
 Dynamic Agents when it is present so the runtime can bind
 `current_user_token` and pass the same bearer to AgentGateway-backed MCP calls.
+The proxy also includes the session's Keycloak `sub` in `X-User-Context`, but
+Dynamic Agents treats the `sub` from its independently validated bearer token
+as authoritative and overwrites any conflicting compatibility-header value.
+Durable user memory is owned only by that immutable subject; it never falls
+back to mutable email. Requests without a production Keycloak subject therefore
+fail closed for memory access. The email fallback described above remains only
+for legacy agent-use OpenFGA relationships.
 If the slim NextAuth cookie survives a UI restart but the server-side token
 cache is gone, Dynamic Agents proxy routes still forward the signed-in
 `X-User-Context` fallback instead of blocking configuration reads, AI review,

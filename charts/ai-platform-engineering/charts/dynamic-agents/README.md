@@ -59,7 +59,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68
 | autoscaling.minReplicas | int | `1` |  |
 | autoscaling.targetCPUUtilizationPercentage | int | `80` |  |
 | config.AGENT_GATEWAY_MCP_SERVER_IDS | string | `"all"` |  |
-| config.AGENT_RUNTIME_TTL_SECONDS | string | `"60"` |  |
+| config.AGENT_RUNTIME_TTL_SECONDS | string | `"300"` |  |
 | config.ATTACHMENT_LOCAL_PATH | string | `"/var/lib/caipe-attachments"` |  |
 | config.AWS_BEDROCK_ENABLE_PROMPT_CACHE | string | `"false"` |  |
 | config.CAIPE_API_URL | string | `""` |  |

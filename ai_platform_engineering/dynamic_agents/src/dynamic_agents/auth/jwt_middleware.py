@@ -37,7 +37,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from dynamic_agents.auth.token_context import current_traceparent, current_user_token
+from dynamic_agents.auth.token_context import current_traceparent, current_user_sub, current_user_token
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,7 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
 
         authorization = request.headers.get("authorization", "")
         token: str | None = None
+        subject: str | None = None
 
         if authorization.lower().startswith("bearer "):
             raw = authorization[7:].strip()
@@ -111,6 +112,7 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
                         media_type="application/json",
                     )
                 token = raw
+                subject = str(claims.get("sub") or "").strip() or None
                 # The legacy team-claim log field was removed by spec
                 # 2026-05-24-derive-team-from-channel Phase 2.8: team is
                 # not carried on the JWT. Triage of "wrong team" now
@@ -138,8 +140,10 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
         traceparent = request.headers.get("traceparent")
         trace_ctx_token = current_traceparent.set(traceparent if traceparent else None)
         ctx_token = current_user_token.set(token)
+        sub_ctx_token = current_user_sub.set(subject)
         try:
             return await call_next(request)
         finally:
+            current_user_sub.reset(sub_ctx_token)
             current_user_token.reset(ctx_token)
             current_traceparent.reset(trace_ctx_token)

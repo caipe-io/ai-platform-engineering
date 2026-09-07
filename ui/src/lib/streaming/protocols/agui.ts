@@ -36,6 +36,10 @@ export const AGUI = {
 const CUSTOM_NAMESPACE_CONTEXT = "NAMESPACE_CONTEXT";
 const CUSTOM_WARNING = "WARNING";
 const CUSTOM_INPUT_REQUIRED = "INPUT_REQUIRED";
+const CUSTOM_MEMORY_INJECTED = "MEMORY_INJECTED";
+const CUSTOM_MEMORY_CONTEXT_USED = "MEMORY_CONTEXT_USED";
+const CUSTOM_MEMORY_UPDATED = "MEMORY_UPDATED";
+const CUSTOM_MEMORY_UPDATE = "MEMORY_UPDATE";
 
 // ═══════════════════════════════════════════════════════════════
 // Protocol State
@@ -271,7 +275,39 @@ function handleCustom(
       );
       return true;
 
+    case CUSTOM_MEMORY_INJECTED:
+      callbacks.onMemoryInjected?.(
+        stringArray(value?.memory_ids),
+        namespaceArray(value?.namespace, state.currentNamespace),
+      );
+      return false;
+
+    case CUSTOM_MEMORY_CONTEXT_USED:
+      // Backward compatibility for persisted legacy streams.
+      callbacks.onMemoryInjected?.(
+        stringArray(value?.memory_ids),
+        namespaceArray(value?.namespace, state.currentNamespace),
+      );
+      return false;
+
+    case CUSTOM_MEMORY_UPDATED:
+    case CUSTOM_MEMORY_UPDATE:
+      callbacks.onMemoryUpdate?.(
+        stringArray(value?.memory_ids),
+        typeof value?.action === "string" ? value.action : undefined,
+        namespaceArray(value?.namespace, state.currentNamespace),
+      );
+      return false;
+
     default:
       return false;
   }
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+function namespaceArray(value: unknown, fallback: string[]): string[] {
+  return Array.isArray(value) ? value.map(String) : fallback;
 }

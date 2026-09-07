@@ -176,7 +176,7 @@ config:
   CREDENTIAL_SERVICE_AUDIENCE: "caipe-credential-service"
   USE_IMPERSONATION_TOKENS: "false"
   # Agent runtime TTL in seconds (purged after this much inactivity)
-  AGENT_RUNTIME_TTL_SECONDS: "60"
+  AGENT_RUNTIME_TTL_SECONDS: "300"
   # Set to "true" to enable multi-turn conversation history via POST /invoke.
   # When false (default), each /invoke call uses an ephemeral in-memory runtime
   # with no MongoDB writes. Enable only if callers reuse conversation_id across

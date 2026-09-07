@@ -17,6 +17,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import uuid
 from collections.abc import AsyncIterator
@@ -24,6 +25,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from caipe_scheduler.auth import CallerIdentity, authenticate_caller
@@ -104,6 +106,45 @@ def get_owned_schedule(
   if not schedule:
     raise HTTPException(404, "Schedule not found.")
   return schedule
+
+
+def validate_project(
+  _agent_id: str,
+  project_id: str | None,
+  caller: CallerIdentity,
+  settings: Settings,
+) -> None:
+  """Fail closed unless Projects are enabled and the caller owns the Project."""
+  if project_id is None:
+    return
+  if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", project_id):
+    raise HTTPException(422, "project_id must be a valid lowercase Project ID.")
+  url = f"{settings.caipe_api_url.rstrip('/')}/api/user/projects"
+  try:
+    response = httpx.get(
+      url,
+      headers={"Authorization": f"Bearer {caller.token}"},
+      timeout=10.0,
+    )
+  except httpx.HTTPError as exc:
+    raise HTTPException(503, "Project validation is unavailable.") from exc
+  if response.status_code == 404:
+    raise HTTPException(422, "Projects are not enabled on this platform.")
+  if response.status_code >= 400:
+    raise HTTPException(503, "Project validation is unavailable.")
+  try:
+    payload = response.json()
+  except ValueError as exc:
+    raise HTTPException(503, "Project validation is unavailable.") from exc
+  data = payload.get("data") if isinstance(payload, dict) else None
+  items = data.get("items", []) if isinstance(data, dict) else []
+  available = {
+    str(item.get("id"))
+    for item in items
+    if isinstance(item, dict) and item.get("id") is not None
+  }
+  if project_id not in available:
+    raise HTTPException(422, "project_id is not available to this user.")
 
 
 @asynccontextmanager
@@ -198,6 +239,7 @@ def create_schedule(
     raise HTTPException(404, f"agent_id {body.agent_id!r} not found.")
   if body.edit_agent_id and not store.agent_exists(body.edit_agent_id):
     raise HTTPException(404, f"edit_agent_id {body.edit_agent_id!r} not found.")
+  validate_project(body.agent_id, body.project_id, caller, settings)
 
   if store.count_for_owner(caller.sub, caller.email) >= settings.max_schedules_per_owner:
     raise HTTPException(
@@ -213,12 +255,14 @@ def create_schedule(
     "owner_sub": caller.sub,
     "owner_user_id": caller.email,
     "agent_id": body.agent_id,
+    "project_id": body.project_id,
     "edit_agent_id": body.edit_agent_id,
     "title": body.title,
     "message_template": body.message_template,
     "attributes": body.attributes,
     "cron": body.cron,
     "tz": body.tz,
+    "http_timeout_seconds": body.http_timeout_seconds,
     "enabled": True,
     "cronjob_name": cronjob_name,
     "version": 1,
@@ -227,7 +271,12 @@ def create_schedule(
   store.insert(doc)
 
   try:
-    k8s.create(schedule_id=schedule_id, cron=body.cron, tz=body.tz)
+    k8s.create(
+      schedule_id=schedule_id,
+      cron=body.cron,
+      tz=body.tz,
+      http_timeout_seconds=body.http_timeout_seconds,
+    )
   except Exception as e:
     # Roll back the Mongo doc if we couldn't create the CronJob.
     log.exception("CronJob create failed; rolling back schedule %s", schedule_id)
@@ -310,12 +359,24 @@ def patch_schedule(
     raise HTTPException(422, "title must be a non-empty string.")
   if "attributes" in patch and patch["attributes"] is None:
     raise HTTPException(422, "attributes must be a JSON object.")
+  if "http_timeout_seconds" in patch and patch["http_timeout_seconds"] is None:
+    raise HTTPException(422, "http_timeout_seconds must be an integer >= 1.")
   if "agent_id" in patch and patch["agent_id"] is not None:
     if not store.agent_exists(patch["agent_id"]):
       raise HTTPException(404, f"agent_id {patch['agent_id']!r} not found.")
   if "edit_agent_id" in patch and patch["edit_agent_id"] is not None:
     if not store.agent_exists(patch["edit_agent_id"]):
       raise HTTPException(404, f"edit_agent_id {patch['edit_agent_id']!r} not found.")
+  if "project_id" in patch:
+    target_agent_id = str(patch.get("agent_id") or existing.get("agent_id") or "")
+    validate_project(target_agent_id, patch["project_id"], caller, settings)
+  elif "agent_id" in patch and existing.get("project_id"):
+    validate_project(
+      str(patch["agent_id"]),
+      str(existing["project_id"]),
+      caller,
+      settings,
+    )
 
   cronjob_name = existing.get("cronjob_name") or cronjob_name_for(schedule_id)
   suspend = not patch["enabled"] if "enabled" in patch and patch["enabled"] is not None else None
@@ -324,6 +385,11 @@ def patch_schedule(
     cron=patch.get("cron"),
     tz=patch.get("tz"),
     suspend=suspend,
+    **(
+      {"http_timeout_seconds": patch["http_timeout_seconds"]}
+      if "http_timeout_seconds" in patch
+      else {}
+    ),
   )
 
   updated = store.patch(schedule_id, patch)

@@ -179,6 +179,36 @@ class AGUIStreamEncoder(StreamEncoder):
             )
         ]
 
+    def on_memory_injected(self, memory_ids: list[str]) -> list[str]:
+        if not memory_ids:
+            return []
+        return [
+            _sse_frame(
+                "CUSTOM",
+                {
+                    "type": "CUSTOM",
+                    "name": "MEMORY_INJECTED",
+                    "value": {"memory_ids": memory_ids, "namespace": []},
+                    "timestamp": _ts(),
+                },
+            )
+        ]
+
+    def on_memory_update(self, memory_ids: list[str], action: str) -> list[str]:
+        if not memory_ids:
+            return []
+        return [
+            _sse_frame(
+                "CUSTOM",
+                {
+                    "type": "CUSTOM",
+                    "name": "MEMORY_UPDATE",
+                    "value": {"memory_ids": memory_ids, "action": action, "namespace": []},
+                    "timestamp": _ts(),
+                },
+            )
+        ]
+
     def on_input_required(
         self,
         interrupt_id: str,
@@ -461,7 +491,6 @@ class AGUIStreamEncoder(StreamEncoder):
 
                     logger.debug(f"[sse:TOOL_CALL_END] id={tool_call_id[:8]}... ns={namespace} error={bool(error)}")
                     results.extend(self._emit_namespace_if_changed(namespace))
-
                     # Emit TOOL_CALL_RESULT with the content (errors have "ERROR:" prefix)
                     if content:
                         results.append(
