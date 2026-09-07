@@ -94,6 +94,12 @@ const nextConfig: NextConfig = {
   ],
 
   experimental: {
+    // Proxy middleware must retain the body while rewriting /apps/<id> to the
+    // authenticated runtime route. Keep this aligned with the maximum allowed
+    // External App runtime limit; each app enforces its own (smaller) bound.
+    // One MiB of transport headroom lets the runtime return its own clean 413
+    // at the advertised 64 MiB per-app ceiling instead of forwarding a prefix.
+    proxyClientMaxBodySize: "65mb",
     serverActions: {
       bodySizeLimit: "2mb",
     },

@@ -1,5 +1,8 @@
 export type AgenticAppRuntimeKind = "proxied-next-zone";
 
+export const DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
+export const MAX_AGENTIC_APP_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
+
 export interface AgenticAppPolicyAction {
   action: string;
   description?: string;
@@ -21,6 +24,7 @@ export interface AgenticAppManifest {
     mountPath: string;
     preserveMountPath?: boolean;
     chrome?: "iframe";
+    maxRequestBodyBytes?: number;
   };
   surfaces: {
     showInHub: boolean;
