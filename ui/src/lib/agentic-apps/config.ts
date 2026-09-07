@@ -240,9 +240,29 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
   const catalogRaw = raw.catalog === undefined
     ? undefined
     : asRecord(raw.catalog, `${path}.catalog`);
+  const assistantRaw = raw.assistant === undefined
+    ? undefined
+    : asRecord(raw.assistant, `${path}.assistant`);
   const healthRaw = raw.health === undefined
     ? undefined
     : asRecord(raw.health, `${path}.health`);
+
+  if (assistantRaw) {
+    assertKnownKeys(
+      assistantRaw,
+      [
+        "enabled",
+        "agentId",
+        "schemaVersions",
+        "maxContextBytes",
+        "capability",
+        "suggestions",
+        "label",
+        "agentName",
+      ],
+      `${path}.assistant`,
+    );
+  }
 
   return {
     id,
@@ -306,6 +326,81 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
           }
         : {}),
     },
+    ...(assistantRaw
+      ? {
+          assistant: {
+            ...(assistantRaw.enabled !== undefined
+              ? {
+                  enabled: optionalBoolean(
+                    assistantRaw.enabled,
+                    true,
+                    `${path}.assistant.enabled`,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.agentId !== undefined
+              ? {
+                  agentId: requiredString(
+                    assistantRaw.agentId,
+                    `${path}.assistant.agentId`,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.schemaVersions !== undefined
+              ? {
+                  schemaVersions: requiredStringArray(
+                    assistantRaw.schemaVersions,
+                    `${path}.assistant.schemaVersions`,
+                    true,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.maxContextBytes !== undefined
+              ? {
+                  maxContextBytes: requiredNumber(
+                    assistantRaw.maxContextBytes,
+                    `${path}.assistant.maxContextBytes`,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.capability !== undefined
+              ? {
+                  capability: requiredString(
+                    assistantRaw.capability,
+                    `${path}.assistant.capability`,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.suggestions !== undefined
+              ? {
+                  suggestions: optionalBoolean(
+                    assistantRaw.suggestions,
+                    true,
+                    `${path}.assistant.suggestions`,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.label !== undefined
+              ? {
+                  label: requiredBoundedString(
+                    assistantRaw.label,
+                    `${path}.assistant.label`,
+                    32,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.agentName !== undefined
+              ? {
+                  agentName: requiredBoundedString(
+                    assistantRaw.agentName,
+                    `${path}.assistant.agentName`,
+                    64,
+                  ),
+                }
+              : {}),
+          },
+        }
+      : {}),
     ...(healthRaw
       ? {
           health: {
@@ -449,6 +544,14 @@ function assertKnownKeys(
 function requiredString(value: unknown, path: string): string {
   const result = typeof value === "string" ? value.trim() : "";
   if (!result) throw new Error(`${path} must be a non-empty string`);
+  return result;
+}
+
+function requiredBoundedString(value: unknown, path: string, maxLength: number): string {
+  const result = requiredString(value, path);
+  if (result.length > maxLength) {
+    throw new Error(`${path} must be at most ${maxLength} characters`);
+  }
   return result;
 }
 
