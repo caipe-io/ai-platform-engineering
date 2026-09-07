@@ -4,7 +4,10 @@ import { AgenticAppShell } from "../AgenticAppShell";
 
 const mockResolveUsableChatAgent = jest.fn();
 
+const mockRouter = { push: jest.fn() };
+
 jest.mock("next/navigation", () => ({
+  useRouter: () => mockRouter,
   useSearchParams: () => new URLSearchParams(),
 }));
 
