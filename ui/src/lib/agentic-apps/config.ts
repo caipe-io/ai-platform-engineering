@@ -259,9 +259,21 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
         "suggestions",
         "label",
         "agentName",
+        // Deployment manifests used these names before the public schema was
+        // finalized. Accept them so existing app-specific assistants survive
+        // config validation and serialization.
+        "name",
+        "contextEndpoint",
       ],
       `${path}.assistant`,
     );
+    if (
+      assistantRaw.agentName !== undefined
+      && assistantRaw.name !== undefined
+      && assistantRaw.agentName !== assistantRaw.name
+    ) {
+      throw new Error(`${path}.assistant.agentName and ${path}.assistant.name must match`);
+    }
   }
 
   return {
@@ -357,7 +369,7 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
               : {}),
             ...(assistantRaw.maxContextBytes !== undefined
               ? {
-                  maxContextBytes: requiredNumber(
+                  maxContextBytes: requiredAssistantContextLimit(
                     assistantRaw.maxContextBytes,
                     `${path}.assistant.maxContextBytes`,
                   ),
@@ -389,10 +401,10 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
                   ),
                 }
               : {}),
-            ...(assistantRaw.agentName !== undefined
+            ...(assistantRaw.agentName !== undefined || assistantRaw.name !== undefined
               ? {
                   agentName: requiredBoundedString(
-                    assistantRaw.agentName,
+                    assistantRaw.agentName ?? assistantRaw.name,
                     `${path}.assistant.agentName`,
                     64,
                   ),
@@ -589,6 +601,14 @@ function requiredRequestBodyLimit(value: unknown, path: string): number {
     throw new Error(
       `${path} must not exceed ${MAX_AGENTIC_APP_REQUEST_BODY_BYTES} bytes`,
     );
+  }
+  return result;
+}
+
+function requiredAssistantContextLimit(value: unknown, path: string): number {
+  const result = requiredNumber(value, path);
+  if (!Number.isSafeInteger(result) || result < 1 || result > 65536) {
+    throw new Error(`${path} must be an integer between 1 and 65536`);
   }
   return result;
 }

@@ -1,11 +1,12 @@
 "use client";
 
-import { Bot, MessageCircle, Sparkles, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Bot, LoaderCircle, MessageCircle, Sparkles, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
 import { buildAssistantClientContext } from "@/lib/agentic-apps/assistant-context";
 import { cn } from "@/lib/utils";
+import { useChatStore } from "@/store/chat-store";
 import type { AgenticAppAssistantContextRecord } from "@/types/agentic-app";
 
 const DEFAULT_PANEL_SIZE = { width: 720, height: 780 };
@@ -42,6 +43,21 @@ export function AgenticAppAssistantOverlay({
   ).slice(0, 64);
   const [panelSize, setPanelSize] = useState(DEFAULT_PANEL_SIZE);
   const [glassMode, setGlassMode] = useState(readStoredGlassMode);
+  const [assistantConversation, setAssistantConversation] = useState<{
+    agentId: string;
+    id: string;
+  } | null>(null);
+  const [conversationError, setConversationError] = useState<{
+    agentId: string;
+    message: string;
+  } | null>(null);
+  const previousActiveConversationRef = useRef<string | null | undefined>(undefined);
+  const conversationRequestRef = useRef<{
+    agentId: string;
+    promise: Promise<string>;
+  } | null>(null);
+  const createConversation = useChatStore((state) => state.createConversation);
+  const setActiveConversation = useChatStore((state) => state.setActiveConversation);
   const clientContext = useMemo(
     () => buildAssistantClientContext(activeContext),
     [activeContext],
@@ -52,6 +68,65 @@ export function AgenticAppAssistantOverlay({
       window.localStorage.setItem(GLASS_MODE_STORAGE_KEY, String(glassMode));
     }
   }, [glassMode]);
+
+  useEffect(() => {
+    if (!open) return;
+    previousActiveConversationRef.current = useChatStore.getState().activeConversationId;
+    return () => {
+      setActiveConversation(previousActiveConversationRef.current ?? null);
+      previousActiveConversationRef.current = undefined;
+    };
+  }, [open, setActiveConversation]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const previousActiveConversation = previousActiveConversationRef.current ?? null;
+
+    if (assistantConversation?.agentId === assistantAgentId) {
+      setActiveConversation(assistantConversation.id);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    let request = conversationRequestRef.current;
+    if (!request || request.agentId !== assistantAgentId) {
+      request = {
+        agentId: assistantAgentId,
+        promise: createConversation(assistantAgentId),
+      };
+      conversationRequestRef.current = request;
+    }
+
+    request.promise
+      .then((id) => {
+        if (cancelled) {
+          setActiveConversation(previousActiveConversation);
+          return;
+        }
+        setAssistantConversation({ agentId: assistantAgentId, id });
+        setActiveConversation(id);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setConversationError({
+            agentId: assistantAgentId,
+            message: error instanceof Error ? error.message : "Could not start assistant chat",
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    assistantAgentId,
+    assistantConversation,
+    createConversation,
+    open,
+    setActiveConversation,
+  ]);
 
   const handleResizeStart = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -175,7 +250,23 @@ export function AgenticAppAssistantOverlay({
           </div>
 
           <div className="min-h-0 flex-1 [&>div]:bg-transparent">
-            <ChatPanel agentId={assistantAgentId} clientContext={clientContext} />
+            {assistantConversation?.agentId === assistantAgentId ? (
+              <ChatPanel
+                key={assistantConversation.id}
+                conversationId={assistantConversation.id}
+                agentId={assistantAgentId}
+                clientContext={clientContext}
+              />
+            ) : conversationError?.agentId === assistantAgentId ? (
+              <div className="flex h-full items-center justify-center p-6 text-center text-sm text-red-200">
+                {conversationError.message}
+              </div>
+            ) : (
+              <div className="flex h-full items-center justify-center gap-2 text-sm text-slate-300">
+                <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
+                Starting {bubbleLabel}…
+              </div>
+            )}
           </div>
         </section>
       ) : null}
