@@ -53,15 +53,25 @@ function isAgentGatewayEndpoint(endpoint: string): boolean {
   }
 }
 
+function canonicalAgentGatewayTargetEndpoint(endpoint: string): string {
+  // Streamable HTTP session negotiation cannot safely cross an HTTP redirect:
+  // the upstream session id belongs to the redirected URL, while AgentGateway
+  // wraps sessions against the configured target URL. FastMCP serves the
+  // canonical endpoint at `/mcp`, so remove only that path's trailing slash.
+  return endpoint.replace(/\/mcp\/(?=([?#]|$))/, "/mcp");
+}
+
 function upstreamEndpointFor(server: MCPServerConfig): string {
   const targetEndpoint =
     typeof server.agentgateway_target_endpoint === "string"
       ? server.agentgateway_target_endpoint.trim()
       : "";
-  if (targetEndpoint) return targetEndpoint;
+  if (targetEndpoint) return canonicalAgentGatewayTargetEndpoint(targetEndpoint);
 
   const endpoint = typeof server.endpoint === "string" ? server.endpoint.trim() : "";
-  return endpoint && !isAgentGatewayEndpoint(endpoint) ? endpoint : "";
+  return endpoint && !isAgentGatewayEndpoint(endpoint)
+    ? canonicalAgentGatewayTargetEndpoint(endpoint)
+    : "";
 }
 
 function toBridgeTarget(server: MCPServerConfig): AgentGatewayBridgeTarget | null {
