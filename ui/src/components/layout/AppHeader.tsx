@@ -70,16 +70,23 @@ function titleCaseRouteSegment(segment: string): string {
 export function getApplicationBreadcrumbs(
   pathname: string,
 ): WorkspaceBreadcrumbItem[] {
-  const section = pathname.split("/").filter(Boolean)[0];
+  const segments = pathname.split("/").filter(Boolean);
+  const section = segments[0];
   if (!section) return [];
 
-  return [
+  const breadcrumbs: WorkspaceBreadcrumbItem[] = [
     { label: "Home",href: "/" },
     {
       label: APPLICATION_SECTION_LABELS[section] ?? titleCaseRouteSegment(section),
       href: `/${section}`,
     },
   ];
+
+  if (section === "apps" && segments[1] === "create") {
+    breadcrumbs.push({ label: "Create App" });
+  }
+
+  return breadcrumbs;
 }
 
 export function AppHeader() {

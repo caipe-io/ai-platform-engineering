@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowUpRight, LayoutGrid, LoaderCircle, Search } from "lucide-react";
+import { ArrowUpRight, LayoutGrid, LoaderCircle, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
 import type { PublicAgenticApp } from "@/types/agentic-app";
 
@@ -61,18 +62,28 @@ export function AgenticAppsHub(): React.ReactElement {
     <main className="flex-1 overflow-y-auto bg-background px-6 py-8">
       <div className="mx-auto flex max-w-6xl flex-col gap-6">
         <header>
-          <div className="flex items-center gap-3">
-            <span className="rounded-xl bg-primary/10 p-2 text-primary">
-              <LayoutGrid className="h-6 w-6" aria-hidden />
-            </span>
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight">Apps</h1>
-              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Open web applications registered by your platform team. Each app runs
-                independently while CAIPE provides sign-in, navigation, and a secure
-                same-origin connection.
-              </p>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="rounded-xl bg-primary/10 p-2 text-primary">
+                <LayoutGrid className="h-6 w-6" aria-hidden />
+              </span>
+              <div>
+                <h1 className="text-3xl font-semibold tracking-tight">Apps</h1>
+                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                  Open web applications registered by your platform team. Each app runs
+                  independently while CAIPE provides sign-in, navigation, and a secure
+                  same-origin connection.
+                </p>
+              </div>
             </div>
+            <Link
+              href="/apps/create"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/30 bg-primary/10 text-primary shadow-sm transition hover:bg-primary/20"
+              aria-label="Create or add your app"
+              title="Create or add your app"
+            >
+              <Plus className="h-5 w-5" aria-hidden />
+            </Link>
           </div>
         </header>
 
@@ -109,6 +120,14 @@ export function AgenticAppsHub(): React.ReactElement {
                 <h2 className="text-lg font-semibold">No Apps are configured</h2>
                 <p className="mt-2 text-sm text-muted-foreground">
                   An operator can add an app through the deployment-owned catalog.
+                </p>
+                <p className="mt-5 text-sm text-muted-foreground">
+                  Start with{" "}
+                  <Link className="font-semibold text-primary" href="/apps/create">
+                    Create or add your app
+                  </Link>{" "}
+                  to choose a manifest, runtime, access policy, and integrated
+                  rendering mode.
                 </p>
               </section>
             ) : visibleApps.length === 0 ? (

@@ -327,7 +327,7 @@ jest.mock('@/lib/utils', () => ({
 // Imports — after mocks
 // ============================================================================
 
-import { AppHeader } from '../AppHeader'
+import { AppHeader, getApplicationBreadcrumbs } from '../AppHeader'
 import { ApplicationNavigationRail } from '../ApplicationNavigation'
 import { HeaderBreadcrumbSlotProvider } from '../HeaderBreadcrumbSlot'
 import { WorkspaceHierarchicalNavigationList } from '../WorkspaceNavigation'
@@ -549,6 +549,14 @@ describe('AppHeader — application chrome', () => {
       const breadcrumb = within(slot).getByRole('navigation', { name: 'Breadcrumb' })
       expect(within(breadcrumb).getByText('Home')).toHaveAttribute('href', '/')
       expect(within(breadcrumb).getByText('Skills')).toHaveAttribute('href', '/skills')
+    })
+
+    it('provides a Create App breadcrumb for the app creation guide', () => {
+      expect(getApplicationBreadcrumbs('/apps/create')).toEqual([
+        { label: 'Home', href: '/' },
+        { label: 'Apps', href: '/apps' },
+        { label: 'Create App' },
+      ])
     })
 
     it('does not repeat Home as a breadcrumb on the Home route', () => {
