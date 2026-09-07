@@ -90,7 +90,7 @@ interface ChatState {
 
   // Actions
   createConversation: (agentId: string) => Promise<string>;
-  setActiveConversation: (id: string) => void;
+  setActiveConversation: (id: string | null) => void;
   addMessage: (conversationId: string, message: Omit<ChatMessage, "id" | "timestamp">, turnId?: string, messageId?: string) => string;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => void;
   appendToMessage: (conversationId: string, messageId: string, content: string) => void;
@@ -250,12 +250,12 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         return id;
       },
 
-      setActiveConversation: (id: string) => {
+      setActiveConversation: (id: string | null) => {
         const prev = get();
         const newUnviewed = new Set(prev.unviewedConversations);
-        newUnviewed.delete(id);
+        if (id) newUnviewed.delete(id);
         const newInputRequired = new Set(prev.inputRequiredConversations);
-        newInputRequired.delete(id);
+        if (id) newInputRequired.delete(id);
         set({
           activeConversationId: id,
           unviewedConversations: newUnviewed,

@@ -84,7 +84,7 @@ describe("External Apps deployment config", () => {
       )
       .replace(
         "        health:\n          endpoint: /health",
-        "        assistant:\n          enabled: false\n          agentId: agent-example\n          label: Ask Example\n          agentName: Example Assistant\n        health:\n          endpoint: /health\n          timeoutMs: 2000\n          blockLaunchWhen: [degraded, unreachable]",
+        "        assistant:\n          enabled: false\n          agentId: agent-example\n          label: Ask Example\n          name: Example Assistant\n          contextEndpoint: /api/context\n        health:\n          endpoint: /health\n          timeoutMs: 2000\n          blockLaunchWhen: [degraded, unreachable]",
       )
       .replace(
         "      runtime_origin_override: http://example-app.example.svc",
