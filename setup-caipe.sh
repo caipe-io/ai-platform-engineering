@@ -171,6 +171,12 @@ RAG_INGESTOR_OIDC_ISSUER=""
 RAG_INGESTOR_OIDC_CLIENT_ID=""
 LANGFUSE_PUBLIC_KEY=""
 LANGFUSE_SECRET_KEY=""
+# Langfuse Helm chart version. Pinned to the last 1.x release on purpose: the
+# 2.x line hard-requires cert-manager + the ClickHouse operator (ClickHouseCluster
+# / KeeperCluster CRs, ~15 extra pods, 100Gi+ PVCs) and bumps the minimum
+# Kubernetes version — far too heavy for a first-install laptop stack. 1.5.41
+# bundles ClickHouse + MinIO as plain pods. Override with LANGFUSE_CHART_VERSION.
+LANGFUSE_CHART_VERSION="${LANGFUSE_CHART_VERSION:-1.5.41}"
 PF_PIDS=()
 AUTO_YES=false
 NON_INTERACTIVE=false
@@ -3754,7 +3760,15 @@ deploy_langfuse() {
   minio_pw=$(openssl rand -hex 16)
   log "Generated Langfuse secrets"
 
-  helm upgrade --install langfuse langfuse/langfuse -n langfuse \
+  # Pin the chart version (LANGFUSE_CHART_VERSION) and DO NOT swallow stderr: a
+  # failed langfuse install must be visible and must return non-zero so the
+  # caller can continue without tracing instead of aborting the whole install
+  # under `set -e`. (Prior behaviour: `&>/dev/null` + unguarded call meant an
+  # optional observability add-on silently killed the entire deploy.)
+  local _lf_log
+  _lf_log=$(mktemp)
+  if ! helm upgrade --install langfuse langfuse/langfuse -n langfuse \
+    --version "$LANGFUSE_CHART_VERSION" \
     --set langfuse.salt.value="$salt" \
     --set langfuse.encryptionKey.value="$enc_key" \
     --set langfuse.nextauth.secret.value="$nextauth_secret" \
@@ -3764,10 +3778,16 @@ deploy_langfuse() {
     --set s3.accessKeyId.value=minio \
     --set s3.secretAccessKey.value="$minio_pw" \
     --set s3.auth.rootUser=minio \
-    --set s3.auth.rootPassword="$minio_pw" &>/dev/null
-  log "Langfuse Helm release deployed"
+    --set s3.auth.rootPassword="$minio_pw" >"$_lf_log" 2>&1; then
+    err "Langfuse Helm install failed (chart ${LANGFUSE_CHART_VERSION}):"
+    sed 's/^/    /' "$_lf_log" >&2
+    rm -f "$_lf_log"
+    return 1
+  fi
+  rm -f "$_lf_log"
+  log "Langfuse Helm release deployed (chart ${LANGFUSE_CHART_VERSION})"
 
-  wait_for_pods langfuse 420
+  wait_for_pods langfuse 420 || return 1
 }
 
 create_langfuse_api_keys() {
@@ -8355,8 +8375,17 @@ BANNER
   fi
 
   if $ENABLE_TRACING; then
-    deploy_langfuse
-    create_langfuse_api_keys
+    # Non-fatal: using these functions as an `if` condition disables `set -e`
+    # inside them, so a Langfuse failure degrades to "tracing off" instead of
+    # aborting the core platform deploy (deploy_langfuse returns non-zero on a
+    # helm/rollout failure).
+    if deploy_langfuse && create_langfuse_api_keys; then
+      log "Langfuse tracing ready"
+    else
+      warn "Langfuse tracing setup failed — continuing WITHOUT tracing; the core platform is unaffected."
+      warn "Resolve the error above and re-run, or set LANGFUSE_CHART_VERSION to a working chart."
+      ENABLE_TRACING=false
+    fi
   fi
 
   if $INJECT_CORPORATE_CA; then
