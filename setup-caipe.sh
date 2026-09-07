@@ -11,7 +11,10 @@ set -euo pipefail
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
 CAIPE_CHART_VERSION="${CAIPE_CHART_VERSION:-}"
-CAIPE_OCI_REPO="oci://ghcr.io/cnoe-io/charts/ai-platform-engineering"
+# Helm chart OCI registry. Charts publish to ghcr.io/<repo owner>/charts (see
+# .github/workflows/helm.yml), which moved to the caipe-io org — the cnoe-io
+# path is frozen pre-migration at 0.6.0. Override with CAIPE_OCI_REPO.
+CAIPE_OCI_REPO="${CAIPE_OCI_REPO:-oci://ghcr.io/caipe-io/charts/ai-platform-engineering}"
 LANGFUSE_PORT=3100
 DYNAMIC_AGENTS_PORT=8001
 UI_PORT=3000
@@ -992,7 +995,7 @@ choose_chart_version() {
   if command -v crane &>/dev/null; then
     while IFS= read -r v; do
       [[ -n "$v" ]] && versions+=("$v")
-    done < <(crane ls ghcr.io/cnoe-io/charts/ai-platform-engineering 2>/dev/null | sort -Vr | head -10)
+    done < <(crane ls "${CAIPE_OCI_REPO#oci://}" 2>/dev/null | sort -Vr | head -10)
   fi
 
   if [[ ${#versions[@]} -eq 0 && -n "$versions_raw" ]]; then
@@ -1004,45 +1007,71 @@ choose_chart_version() {
     warn "Could not fetch version list; using known default"
   fi
 
-  if [[ ${#versions[@]} -eq 1 ]]; then
-    echo -e "  ${DIM}Latest version: ${versions[0]}${NC}"
-    prompt "Chart version ${CYAN}[${versions[0]}]${NC} (or 'b' to go back)${BOLD}: "
-    tty_read -r input
-    if _is_back "$input"; then return 1; fi
-    CAIPE_CHART_VERSION="${input:-${versions[0]}}"
-  else
-    echo -e "  ${DIM}Available versions (most recent first):${NC}"
-    echo -e "    ${BOLD}0)${NC} ${DIM}← Back to previous step${NC}"
-    local i=1
-    for v in "${versions[@]}"; do
-      if [[ $i -eq 1 ]]; then
-        echo -e "    ${BOLD}${i})${NC} $v  ${DIM}(latest)${NC}"
-      else
-        echo -e "    ${BOLD}${i})${NC} $v"
-      fi
-      i=$((i + 1))
-    done
-    echo -e "    ${BOLD}${i})${NC} Enter a custom version"
-
-    prompt "Select a version ${CYAN}[1]${NC}${BOLD}: "
-    tty_read -r choice
-    choice="${choice:-1}"
-    if _is_back "$choice"; then return 1; fi
-
-    if [[ "$choice" -eq "$i" ]]; then
-      prompt "Enter chart version: "
-      tty_read -r CAIPE_CHART_VERSION
-      if [[ -z "$CAIPE_CHART_VERSION" ]]; then
-        err "Version is required"
-        exit 1
-      fi
-    elif [[ "$choice" -ge 1 && "$choice" -lt "$i" ]]; then
-      CAIPE_CHART_VERSION="${versions[$((choice - 1))]}"
+  # Resolve one value into CAIPE_CHART_VERSION. Any free-form entry (custom
+  # version, or an override typed at the single-version prompt) is checked
+  # against the OCI registry so a version that does not exist can't sail
+  # through to a failing `helm upgrade --install caipe --version <x>` later.
+  local _picked=""
+  while [[ -z "$_picked" ]]; do
+    if [[ ${#versions[@]} -eq 1 ]]; then
+      echo -e "  ${DIM}Latest version: ${versions[0]}${NC}"
+      prompt "Chart version ${CYAN}[${versions[0]}]${NC} (or 'b' to go back)${BOLD}: "
+      tty_read -r input
+      input="${input//[$'\t\r\n ']/}"; input="${input#\\}"
+      if _is_back "$input"; then return 1; fi
+      _picked="${input:-${versions[0]}}"
     else
-      err "Invalid choice"
-      exit 1
+      echo -e "  ${DIM}Available versions (most recent first):${NC}"
+      echo -e "    ${BOLD}0)${NC} ${DIM}← Back to previous step${NC}"
+      local i=1
+      for v in "${versions[@]}"; do
+        if [[ $i -eq 1 ]]; then
+          echo -e "    ${BOLD}${i})${NC} $v  ${DIM}(latest)${NC}"
+        else
+          echo -e "    ${BOLD}${i})${NC} $v"
+        fi
+        i=$((i + 1))
+      done
+      echo -e "    ${BOLD}${i})${NC} Enter a custom version"
+
+      prompt "Select a version ${CYAN}[1]${NC}${BOLD}: "
+      tty_read -r choice
+      choice="${choice//[$'\t\r\n ']/}"; choice="${choice#\\}"
+      choice="${choice:-1}"
+      if _is_back "$choice"; then return 1; fi
+
+      if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
+        warn "Enter a number between 0 and ${i}."
+        continue
+      fi
+      if [[ "$choice" -eq "$i" ]]; then
+        prompt "Enter chart version: "
+        tty_read -r input
+        _picked="${input//[$'\t\r\n ']/}"; _picked="${_picked#\\}"
+        if [[ -z "$_picked" ]]; then
+          warn "Version is required."
+          continue
+        fi
+      elif [[ "$choice" -ge 1 && "$choice" -lt "$i" ]]; then
+        _picked="${versions[$((choice - 1))]}"
+      else
+        warn "Enter a number between 0 and ${i}."
+        continue
+      fi
     fi
-  fi
+
+    # Menu picks come from the registry already; only validate free-form values.
+    if [[ " ${versions[*]} " != *" ${_picked} "* ]]; then
+      if ! helm show chart "$CAIPE_OCI_REPO" --version "$_picked" &>/dev/null; then
+        warn "Chart version '${_picked}' was not found in ${CAIPE_OCI_REPO}."
+        if ! ask_yn "Use it anyway?" "n"; then
+          _picked=""
+          continue
+        fi
+      fi
+    fi
+  done
+  CAIPE_CHART_VERSION="$_picked"
 
   log "Using chart version ${CAIPE_CHART_VERSION}"
 }
