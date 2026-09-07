@@ -51,6 +51,14 @@ init:
   storeName: caipe-openfga
   seedSub: ""
   seedTuples: []
+  platformClient:
+    enabled: false
+    tokenUrl: ""
+    clientId: caipe-platform
+    clientSecretRef:
+      name: ""
+      key: OIDC_CLIENT_SECRET
+    orgObject: organization:caipe
   backoffLimit: 6
   helmHookDeletePolicy: "before-hook-creation"
   argocdHookDeletePolicy: "BeforeHookCreation"

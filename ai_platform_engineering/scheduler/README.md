@@ -30,6 +30,7 @@ GET    /v1/schedules/{id}/one-off-runs - list delayed one-off fires
 POST   /v1/schedules/{id}/runs        - runner reports status (status/error/http_status)
 GET    /v1/internal/schedules/{id}    - runner schedule lookup
 POST   /v1/admin/reconcile-cronjobs   - dry-run/apply runner image refresh for existing CronJobs
+GET    /v1/settings                   - non-sensitive deployed scheduler limits
 GET    /healthz
 ```
 
@@ -40,6 +41,10 @@ and an optional `http_timeout_seconds` value for the cron-runner chat invoke
 timeout. `http_timeout_seconds` defaults to `300`.
 Domain-specific display context belongs in `attributes`; the scheduler does
 not interpret it.
+
+Recurring schedules must leave at least `MINIMUM_SCHEDULE_INTERVAL_SECONDS`
+between fires (`1800`, or 30 minutes, by default). The scheduler enforces this
+on both creation and cron edits before changing MongoDB or Kubernetes.
 
 All but `/healthz` require `X-Scheduler-Token: <SCHEDULER_SERVICE_TOKEN>`.
 User-owned create/list/get/patch/delete and one-off endpoints additionally

@@ -181,6 +181,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const archived = url.searchParams.get('archived') === 'true';
   const pinned = url.searchParams.get('pinned') === 'true';
   const clientTypeParam = url.searchParams.get('client_type') as ClientType | null;
+  const sourceParam = url.searchParams.get('source');
+  const sourceFilter =
+    sourceParam === 'autonomous' || sourceParam === 'web' ? sourceParam : null;
 
   // Validate client_type param if provided
   if (clientTypeParam && !VALID_CLIENT_TYPES.includes(clientTypeParam)) {
@@ -227,6 +230,33 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   if (pinned) {
     query.is_pinned = true;
+  }
+
+  // Source is a content filter, not an authz primitive — push into $and
+  // to narrow results without touching the ownership $or. The previous
+  // `delete query.$or` for source=autonomous was an IDOR.
+  if (sourceFilter === 'autonomous') {
+    query.$and.push({ source: 'autonomous' });
+  } else if (sourceFilter === 'web') {
+    query.$and.push({
+      source: { $in: ['web', null] } as { $in: (string | null)[] },
+    });
+  } else {
+    // Default ("All") view: include autonomous conversations alongside
+    // regular human chats so the sidebar's "All" filter actually shows
+    // both. Slack and Webex threads are still excluded because they have
+    // their own dedicated UI, and `api` conversations are excluded because
+    // they were created by a direct API caller (e.g. the ask-forge CLI)
+    // with no UI transcript to show — they still count in insights/stats,
+    // which query `conversations`/`messages` directly without this filter.
+    // Slack/Webex are checked on both the legacy `source` field and the
+    // newer `client_type` field (Webex is never tagged via `source` — see
+    // the `Conversation.source` union in mongodb.ts), mirroring the same
+    // dual-field exclusion used in admin/users/activity/[identity]/route.ts.
+    query.$and.push({ source: { $nin: ['slack', 'api'] } });
+    if (clientTypeParam !== 'slack' && clientTypeParam !== 'webex') {
+      query.$and.push({ client_type: { $nin: ['slack', 'webex'] } });
+    }
   }
 
   // Get total count
@@ -303,6 +333,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       { status: 400 }
     );
   }
+
+  // A genuine browser session never sends an Authorization header for its own
+  // requests — it authenticates exclusively via the NextAuth session cookie.
+  // Any Bearer-authenticated caller that isn't the Slack/Webex bot (which we
+  // already trust to self-declare 'slack'/'webex' via their own OBO tokens)
+  // is therefore a non-first-party caller falsely able to claim 'webui'. The
+  // caller's declared client_type is trusted for the browser and for
+  // Slack/Webex; otherwise it's overridden here rather than merely rejected,
+  // so the request still succeeds but is correctly attributed as 'api'.
+  const isFirstPartyBotBearer = body.client_type === 'slack' || body.client_type === 'webex';
+  const isUntrustedBearerCaller = session.authMethod === 'bearer' && !isFirstPartyBotBearer;
+  const effectiveClientType: ClientType = isUntrustedBearerCaller ? 'api' : body.client_type;
 
   // Dynamic agent conversation — gate on agent-level can_use.
   // Service-account callers are graphed as `service_account:<sub>` (their grants
@@ -430,14 +472,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   };
 
   // Add UI-specific metadata
-  if (body.client_type === 'webui') {
+  if (effectiveClientType === 'webui') {
     clientMetadata.ui_version = packageJson.version;
   }
 
   const newConversation: Conversation = {
     _id: uuidv4(), // Server owns ID generation
     title: body.title,
-    client_type: body.client_type,
+    client_type: effectiveClientType,
     owner_id: ownerId,
     ...(typeof session.sub === 'string' && session.sub.trim() && ownerId === user.email
       ? { owner_subject: session.sub.trim(), owner_identity_version: 2 }
@@ -446,6 +488,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // Provenance: stamp the SA sub so the audit/reconcile step can find SA-created
     // conversations and verify/repair the writer grant. Only set for SA callers.
     ...(saSub ? { created_by_service_account: saSub } : {}),
+    // 'api' origin: either the caller declared it (CreateConversationRequest['source'])
+    // or the server forced effectiveClientType to 'api' above — the forced case must
+    // win regardless of what the caller claimed for `source`.
+    ...(effectiveClientType === 'api' || body.source === 'api' ? { source: 'api' as const } : {}),
     participants: buildParticipants(body.agent_id, ownerId),
     created_at: now,
     updated_at: now,

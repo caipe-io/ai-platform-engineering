@@ -47,6 +47,11 @@ jest.mock("@/lib/rbac/resource-authz", () => ({
     mockFilterResourcesByPermission(...args),
 }));
 
+const mockGetCollection = jest.fn();
+jest.mock("@/lib/mongodb", () => ({
+  getCollection: (...args: unknown[]) => mockGetCollection(...args),
+}));
+
 import { getServerSession } from "next-auth";
 import { isBootstrapAdmin } from "@/lib/auth-config";
 import { GET } from "@/app/api/rbac/kb-tab-gates/route";
@@ -74,6 +79,12 @@ describe("GET /api/rbac/kb-tab-gates", () => {
     (isBootstrapAdmin as jest.Mock).mockReturnValue(false);
     setOrgChecks({ can_manage: false, can_ingest: false, can_search: false });
     mockFilterResourcesByPermission.mockResolvedValue([]);
+    mockGetCollection.mockResolvedValue({
+      find: jest.fn().mockReturnValue({
+        project: jest.fn().mockReturnThis(),
+        toArray: jest.fn().mockResolvedValue([]),
+      }),
+    });
     delete process.env.RAG_ADMIN_BYPASS_DISABLED;
     process.env.RAG_SERVER_URL = "http://rag.test";
     global.fetch = jest.fn(() =>
@@ -106,6 +117,7 @@ describe("GET /api/rbac/kb-tab-gates", () => {
     expect(body).toEqual({
       gates: {
         search: true,
+        collections: true,
         data_sources: true,
         graph: true,
         mcp_tools: true,
@@ -158,6 +170,7 @@ describe("GET /api/rbac/kb-tab-gates", () => {
     expect(body.org_admin_bypass).toBe(false);
     expect(body.gates).toEqual({
       search: true,
+      collections: true,
       data_sources: true,
       graph: true,
       mcp_tools: true,
@@ -223,6 +236,7 @@ describe("GET /api/rbac/kb-tab-gates", () => {
 
     expect(body.gates).toEqual({
       search: false,
+      collections: false,
       data_sources: false,
       graph: false,
       mcp_tools: false,
@@ -233,7 +247,7 @@ describe("GET /api/rbac/kb-tab-gates", () => {
     });
   });
 
-  it("search requires the explicit can_search capability even with readable KBs", async () => {
+  it("search and graph require the explicit can_search capability even with readable KBs", async () => {
     (getServerSession as jest.Mock).mockResolvedValue({
       accessToken: "tok",
       sub: "viewer-sub",
@@ -252,6 +266,7 @@ describe("GET /api/rbac/kb-tab-gates", () => {
     const body = await res.json();
     expect(body.gates.has_any_kb).toBe(true);
     expect(body.gates.can_search).toBe(false);
+    expect(body.gates.graph).toBe(false);
     expect(body.gates.search).toBe(false);
     // Other read-driven tabs remain visible.
     expect(body.gates.data_sources).toBe(true);
@@ -342,6 +357,7 @@ describe("GET /api/rbac/kb-tab-gates", () => {
     const body = await res.json();
     expect(body.gates).toEqual({
       search: true,
+      collections: true,
       data_sources: true,
       graph: false,
       mcp_tools: true,
@@ -405,6 +421,58 @@ describe("GET /api/rbac/kb-tab-gates", () => {
     const body = await res.json();
     expect(body.gates.has_any_kb).toBe(false);
     expect(body.gates.can_ingest).toBe(false);
+    expect(body.gates.data_sources).toBe(false);
     expect(body.org_admin_bypass).toBe(false);
+  });
+
+  it("data_sources is true for a non-admin with a readable ingestion source", async () => {
+    (getServerSession as jest.Mock).mockResolvedValue({
+      accessToken: "tok",
+      sub: "reader-sub",
+      user: { email: "reader@example.com" },
+    });
+    setOrgChecks({ can_manage: false, can_ingest: false, can_search: false });
+    mockGetCollection.mockResolvedValue({
+      find: jest.fn().mockReturnValue({
+        project: jest.fn().mockReturnThis(),
+        toArray: jest.fn().mockResolvedValue([{ source_id: "slack-channel-C1" }]),
+      }),
+    });
+    mockFilterResourcesByPermission.mockImplementation(async (_session, items: unknown[], target: { type: string }) =>
+      target.type === "ingestion_source" ? items : [],
+    );
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.gates.data_sources).toBe(true);
+    expect(body.gates.has_any_kb).toBe(false);
+  });
+
+  it("data_sources is true for a non-admin with can_ingest but zero readable sources", async () => {
+    (getServerSession as jest.Mock).mockResolvedValue({
+      accessToken: "tok",
+      sub: "author-sub",
+      user: { email: "author@example.com" },
+    });
+    setOrgChecks({ can_manage: false, can_ingest: true, can_search: false });
+    mockFilterResourcesByPermission.mockResolvedValue([]);
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.gates.data_sources).toBe(true);
+  });
+
+  it("data_sources is false for a non-admin with no readable sources and no can_ingest", async () => {
+    (getServerSession as jest.Mock).mockResolvedValue({
+      accessToken: "tok",
+      sub: "nobody-sub",
+      user: { email: "nobody@example.com" },
+    });
+    setOrgChecks({ can_manage: false, can_ingest: false, can_search: false });
+    mockFilterResourcesByPermission.mockResolvedValue([]);
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.gates.data_sources).toBe(false);
   });
 });

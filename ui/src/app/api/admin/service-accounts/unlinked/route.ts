@@ -29,6 +29,7 @@ import { isPlatformAdmin } from "@/lib/rbac/platform-admin";
 import { listOpenFgaObjects } from "@/lib/rbac/openfga";
 import { findAgentVisibilities } from "@/lib/dynamic-agent-visibility";
 import { refFromObject, type UnlinkedScope } from "@/lib/service-account-scopes";
+import { listEveryoneKnowledgeScopes } from "@/lib/rbac/unlinked-knowledge-access";
 import type { ServiceAccountScope } from "@/types/mongodb";
 
 export async function GET() {
@@ -65,11 +66,14 @@ export async function GET() {
     // Agent grants are authoritative in OpenFGA: this surfaces auto-grants
     // written when an agent is shared with Everyone, which never touch the
     // Mongo snapshot. Tool grants stay snapshot-driven.
-    const agentObjects = await listOpenFgaObjects({
-      user: `service_account:${sa.sa_sub}`,
-      relation: "can_use",
-      type: "agent",
-    });
+    const [agentObjects, everyoneKnowledge] = await Promise.all([
+      listOpenFgaObjects({
+        user: `service_account:${sa.sa_sub}`,
+        relation: "can_use",
+        type: "agent",
+      }),
+      listEveryoneKnowledgeScopes(),
+    ]);
     const agentIds = agentObjects.objects.map(refFromObject);
     const visibilityById = await findAgentVisibilities(agentIds);
 
@@ -83,7 +87,46 @@ export async function GET() {
       .filter((s: ServiceAccountScope) => s.type === "tool")
       .map((s: ServiceAccountScope) => ({ type: "tool", ref: s.ref, source: "explicit" }));
 
-    const scopes: UnlinkedScope[] = [...agentScopes, ...toolScopes];
+    const explicitKnowledge = new Map(
+      (sa.scopes_snapshot ?? [])
+        .filter(
+          (scope: ServiceAccountScope) =>
+            scope.type === "datasource" || scope.type === "collection",
+        )
+        .map((scope: ServiceAccountScope) => [
+          `${scope.type}:${scope.ref}`,
+          scope,
+        ]),
+    );
+    const knowledgeScopes = new Map<string, UnlinkedScope>();
+    for (const ref of everyoneKnowledge.datasourceIds) {
+      knowledgeScopes.set(`datasource:${ref}`, {
+        type: "datasource",
+        ref,
+        source: "everyone",
+      });
+    }
+    for (const ref of everyoneKnowledge.collectionIds) {
+      knowledgeScopes.set(`collection:${ref}`, {
+        type: "collection",
+        ref,
+        source: "everyone",
+      });
+    }
+    for (const [key, scope] of explicitKnowledge) {
+      if (knowledgeScopes.has(key)) continue;
+      knowledgeScopes.set(key, {
+        type: scope.type as "datasource" | "collection",
+        ref: scope.ref,
+        source: "explicit",
+      });
+    }
+
+    const scopes: UnlinkedScope[] = [
+      ...agentScopes,
+      ...toolScopes,
+      ...knowledgeScopes.values(),
+    ];
 
     return NextResponse.json({
       success: true,

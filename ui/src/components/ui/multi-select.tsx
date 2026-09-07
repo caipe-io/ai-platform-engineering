@@ -12,6 +12,7 @@ interface MultiSelectProps {
   options: string[];
   selected: string[];
   onChange: (selected: string[]) => void;
+  formatOption?: (option: string) => string;
   placeholder?: string;
   searchPlaceholder?: string;
   emptyLabel?: string;
@@ -24,6 +25,7 @@ export function MultiSelect({
   options,
   selected,
   onChange,
+  formatOption = (option) => option,
   placeholder = "Select...",
   searchPlaceholder = "Search...",
   emptyLabel = "No results found",
@@ -43,7 +45,7 @@ export function MultiSelect({
 
   const normalizedSearch = search.trim().toLowerCase();
   const filtered = normalizedSearch
-    ? options.filter((o) => o.toLowerCase().includes(normalizedSearch))
+    ? options.filter((o) => formatOption(o).toLowerCase().includes(normalizedSearch))
     : options;
 
   const toggle = (option: string) => {
@@ -80,7 +82,7 @@ export function MultiSelect({
             ) : selected.length <= 2 ? (
               selected.map((s) => (
                 <Badge key={s} variant="secondary" className="text-[10px] px-1.5 py-0 h-5 gap-0.5 shrink-0">
-                  {s}
+                  {formatOption(s)}
                   <X className="h-2.5 w-2.5 cursor-pointer" onClick={(e) => remove(s, e)} />
                 </Badge>
               ))
@@ -140,7 +142,7 @@ export function MultiSelect({
                       </svg>
                     )}
                   </div>
-                  {option}
+                  {formatOption(option)}
                 </button>
               );
             })

@@ -96,14 +96,18 @@ def derive_user_acl_tags(user_context: "UserContext") -> list[str]:
     return [PUBLIC_TAG]
 
 
-def apply_doc_acl_filter(
-    query_request: "QueryRequest",
+def merge_acl_filter(
+    filters: "dict[str, Any] | None",
     user_context: "UserContext",
-) -> None:
-    """Inject the ``metadata.acl_tags`` filter into ``query_request.filters``.
+) -> "dict[str, Any] | None":
+    """Merge the ``metadata.acl_tags`` filter into a raw filters dict.
 
-    No-op when the feature flag is off or when the caller is a
-    client-credentials principal (those bypass user-level ACL by design).
+    Shared core of :func:`apply_doc_acl_filter`. Callers that build a plain
+    filters dict directly (the FastMCP tool path in ``server.tools``, which
+    has no ``QueryRequest`` to mutate) can call this instead. Returns
+    ``filters`` unchanged (same object) when the feature flag is off or no
+    tags apply, so callers
+    can compare identity to detect a no-op if needed.
 
     Merge semantics:
 
@@ -121,29 +125,23 @@ def apply_doc_acl_filter(
     buggy caller could pass an ACL tag they are not authorized to use.
     """
     if not DOC_ACL_TAGS_ENABLED:
-        return
-    # Client-credentials principals don't participate in tag ACL.
-    if user_context.email.startswith("client:"):
-        return
-
+        return filters
     user_tags = derive_user_acl_tags(user_context)
     if not user_tags:
-        return
+        return filters
 
-    filters: dict[str, Any] = (
-        dict(query_request.filters) if query_request.filters else {}
-    )
-    existing = filters.get(ACL_FILTER_KEY)
+    merged: dict[str, Any] = dict(filters) if filters else {}
+    existing = merged.get(ACL_FILTER_KEY)
 
     if existing is None:
-        filters[ACL_FILTER_KEY] = list(user_tags)
+        merged[ACL_FILTER_KEY] = list(user_tags)
     elif isinstance(existing, str):
-        filters[ACL_FILTER_KEY] = [existing] if existing in user_tags else [
+        merged[ACL_FILTER_KEY] = [existing] if existing in user_tags else [
             "__noresults__"
         ]
     elif isinstance(existing, list):
         intersection = [t for t in existing if t in user_tags]
-        filters[ACL_FILTER_KEY] = intersection or ["__noresults__"]
+        merged[ACL_FILTER_KEY] = intersection or ["__noresults__"]
     else:
         # Unexpected type — fail closed: deny everything.
         logger.warning(
@@ -151,9 +149,23 @@ def apply_doc_acl_filter(
             type(existing).__name__,
             ACL_FILTER_KEY,
         )
-        filters[ACL_FILTER_KEY] = ["__noresults__"]
+        merged[ACL_FILTER_KEY] = ["__noresults__"]
 
-    query_request.filters = filters
+    return merged
+
+
+def apply_doc_acl_filter(
+    query_request: "QueryRequest",
+    user_context: "UserContext",
+) -> None:
+    """Inject the ``metadata.acl_tags`` filter into ``query_request.filters``.
+
+    No-op when the feature flag is off.
+    See :func:`merge_acl_filter` for the merge semantics.
+    """
+    merged = merge_acl_filter(query_request.filters, user_context)
+    if merged is not query_request.filters:
+        query_request.filters = merged
 
 
 __all__ = [
@@ -161,5 +173,6 @@ __all__ = [
     "PUBLIC_TAG",
     "ACL_FILTER_KEY",
     "derive_user_acl_tags",
+    "merge_acl_filter",
     "apply_doc_acl_filter",
 ]

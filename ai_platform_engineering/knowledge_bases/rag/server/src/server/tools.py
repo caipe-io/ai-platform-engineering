@@ -14,7 +14,14 @@ from common.constants import KV_ONTOLOGY_VERSION_ID_KEY, PROP_DELIMITER, ONTOLOG
 from common.models.rag import valid_metadata_keys, MCPToolConfig, MCPBuiltinToolsConfig, ParallelSearch, StructuredEntity, StructuredEntityId
 import traceback
 from server.query_service import VectorDBQueryService
-from server.rbac import derive_team_for_request, get_accessible_datasource_ids, RBAC_TEAM_SCOPE_ENABLED
+from server.rbac import (
+  authorize_mcp_tool_call,
+  authorize_search,
+  get_accessible_datasource_ids,
+  get_datasource_ids_for_collection,
+  is_unsafe_rbac_bypass_enabled,
+)
+from server.doc_acl import merge_acl_filter
 from fastmcp import FastMCP
 from common.utils import json_encode
 from server.snippet_utils import format_search_result
@@ -26,6 +33,18 @@ logger = get_logger(__name__)
 max_graph_raw_query_results = int(os.getenv("MAX_GRAPH_RAW_QUERY_RESULTS", 100))
 max_graph_raw_query_tokens = int(os.getenv("MAX_GRAPH_RAW_QUERY_TOKENS", 80000))
 search_result_truncate_length = int(os.getenv("SEARCH_RESULT_TRUNCATE_LENGTH", 500))
+
+BUILTIN_MCP_TOOL_IDS = {
+  "search",
+  "fetch_document",
+  "list_datasources_and_entity_types",
+  "graph_explore_ontology_entity",
+  "graph_explore_data_entity",
+  "graph_fetch_data_entity_details",
+  "graph_shortest_path_between_entity_types",
+  "graph_raw_query_data",
+  "graph_raw_query_ontology",
+}
 
 
 class AgentTools:
@@ -52,28 +71,117 @@ class AgentTools:
     """
     Resolve accessible datasource IDs for the current MCP request user.
 
-    Returns None when RBAC is inactive or the user has unrestricted access
-    (so the caller should skip filtering).  Returns a list of datasource IDs
-    when filtering is required; an empty list means nothing is accessible.
+    Returns None when the user has unrestricted access (so the caller should
+    skip filtering).  Returns a list of datasource IDs when filtering is
+    required; an empty list means nothing is accessible.
+
+    Fails CLOSED: no MCP user context means `MCPAuthMiddleware` never ran for
+    this request (e.g. `MCP_AUTH_ENABLED=false`), so there is nothing to
+    authorize against — deny rather than fall through to unrestricted access.
+    The only unrestricted path is the explicit emergency bypass.
     """
-    if not RBAC_TEAM_SCOPE_ENABLED:
-      return None
     user = self._get_mcp_user_context()
     if user is None:
-      return None
-    if user.email.startswith("client:"):
-      return None
-
-    team_id = await derive_team_for_request(None, user)
-    accessible = await get_accessible_datasource_ids(
-      user, scope, "default", team_id=team_id,
-    )
+      return [] if not is_unsafe_rbac_bypass_enabled() else None
+    accessible = await get_accessible_datasource_ids(user, scope)
     if "*" in accessible:
       return None
     return accessible
 
   # Tool IDs permanently managed by the server — never register from custom config
-  _SKIP_TOOL_IDS = {"search", "fetch_document", "list_datasources_and_entity_types"}
+  _SKIP_TOOL_IDS = BUILTIN_MCP_TOOL_IDS
+
+  async def _authorize_search_tool(
+    self,
+    tool_id: Optional[str] = None,
+  ) -> tuple[Optional[UserContext], Optional[List[str]]]:
+    """Apply feature, custom-tool, and datasource gates for a live MCP call."""
+    user = self._get_mcp_user_context()
+    if user is not None:
+      await authorize_search(user)
+      if tool_id is not None and tool_id not in BUILTIN_MCP_TOOL_IDS:
+        await authorize_mcp_tool_call(user, tool_id)
+    accessible = await self._resolve_accessible_datasource_ids("read")
+    return user, accessible
+
+  @staticmethod
+  def _graph_entity_datasource_id(entity: StructuredEntity) -> Optional[str]:
+    value = entity.all_properties.get("_datasource_id")
+    return value if isinstance(value, str) and value else None
+
+  @classmethod
+  def _graph_entity_is_accessible(
+    cls,
+    entity: StructuredEntity,
+    accessible: Optional[List[str]],
+  ) -> bool:
+    if accessible is None:
+      return True
+    datasource_id = cls._graph_entity_datasource_id(entity)
+    # Untagged data-graph entities have no trustworthy provenance. Restricted
+    # callers must never receive them.
+    return datasource_id is not None and datasource_id in set(accessible)
+
+  async def _filter_data_graph_relations(
+    self,
+    relations: List[Any],
+    accessible: Optional[List[str]],
+  ) -> List[Any]:
+    """Keep only relations whose two endpoints have readable provenance."""
+    if accessible is None:
+      return relations
+    if self.data_graphdb is None or not relations:
+      return []
+
+    endpoint_ids = {
+      (endpoint.entity_type, endpoint.primary_key)
+      for relation in relations
+      for endpoint in (relation.from_entity, relation.to_entity)
+    }
+    allowed: set[tuple[str, str]] = set()
+    for entity_type, primary_key in endpoint_ids:
+      entity = await self.data_graphdb.fetch_entity(entity_type, primary_key)
+      if entity is not None and self._graph_entity_is_accessible(entity, accessible):
+        allowed.add((entity_type, primary_key))
+    return [
+      relation
+      for relation in relations
+      if (relation.from_entity.entity_type, relation.from_entity.primary_key) in allowed
+      and (relation.to_entity.entity_type, relation.to_entity.primary_key) in allowed
+    ]
+
+  @staticmethod
+  def _normalize_datasource_constraint(value: Any) -> Optional[List[str]]:
+    """Normalize one optional datasource filter; invalid shapes deny all."""
+    if value is None:
+      return None
+    if isinstance(value, str):
+      return [value] if value else []
+    if isinstance(value, (list, tuple, set)):
+      result: List[str] = []
+      seen: set[str] = set()
+      for item in value:
+        if not isinstance(item, str) or not item or item in seen:
+          continue
+        seen.add(item)
+        result.append(item)
+      return result
+    return []
+
+  @classmethod
+  def _intersect_datasource_constraints(cls, *values: Any) -> Optional[List[str]]:
+    """Intersect every present datasource constraint, preserving first order."""
+    result: Optional[List[str]] = None
+    for value in values:
+      current = cls._normalize_datasource_constraint(value)
+      if current is None:
+        continue
+      if result is None:
+        result = current
+      else:
+        allowed = set(current)
+        result = [item for item in result if item in allowed]
+    return result
 
   # Default configuration for the built-in search tool
   _DEFAULT_SEARCH_CONFIG = MCPToolConfig(
@@ -148,6 +256,10 @@ class AgentTools:
     has_structured_entity_search = any(ps.extra_filters.get("is_structured_entity") in (True, "true", "True") for ps in config.parallel_searches)
     if not (graph_rag_enabled and has_structured_entity_search):
       valid_filter_keys = [k for k in valid_filter_keys if "structured_entity" not in k]
+    # collection_id is not stored document metadata (chunks only carry
+    # datasource_id) — it is resolved to member datasource ids at query time,
+    # so it is documented here rather than added to valid_metadata_keys().
+    valid_filter_keys = valid_filter_keys + ["collection_id"]
 
     # Add note about nested metadata filters
     filters_line = f"    filters (dict): Optional metadata filters. Valid keys: {valid_filter_keys}. Also supports nested metadata filters like metadata.custom_field.\n" if config.allow_runtime_filters else ""
@@ -179,14 +291,48 @@ class AgentTools:
     ) -> Any:
       logger.info(f"[{tool_id}] query={query!r}, limit={limit}, runtime_filters={runtime_filters}, thought={thought!r}")
 
+      # Explicit org-level search capability, mirroring the REST `/v1/query`
+      # and debug `/v1/mcp/invoke` paths — the live FastMCP `/mcp` transport
+      # has no other gate in front of this call.
+      user, accessible = await self._authorize_search_tool(tool_id)
+
+      # None means unrestricted (org admin / emergency bypass); a list is the
+      # caller's accessible datasource ids, intersected below with any
+      # request- or config-narrowed `datasource_id` filter — never widened.
+      if accessible is not None and not accessible:
+        return {ps.label: [] for ps in parallel_searches}
+
       async def _run_one(ps: ParallelSearch) -> List[Dict[str, Any]]:
         weights = [ps.semantic_weight, 1.0 - ps.semantic_weight]  # hybrid search
         q_filters: Dict[str, Any] = {}
         if runtime_filters:
           q_filters.update(runtime_filters)
+        runtime_datasources = q_filters.pop("datasource_id", None)
+        runtime_collections = self._normalize_datasource_constraint(q_filters.pop("collection_id", None))
+        collection_datasources: Optional[List[str]] = None
+        if runtime_collections is not None:
+          resolved: set[str] = set()
+          for collection_id in runtime_collections:
+            resolved.update(await get_datasource_ids_for_collection(collection_id))
+          collection_datasources = list(resolved)
         q_filters.update(ps.extra_filters)
-        if ps.datasource_ids:
-          q_filters["datasource_id"] = list(ps.datasource_ids)
+        extra_datasources = q_filters.pop("datasource_id", None)
+        configured_datasources = list(ps.datasource_ids) if ps.datasource_ids else None
+        datasource_scope = self._intersect_datasource_constraints(
+          runtime_datasources,
+          collection_datasources,
+          extra_datasources,
+          configured_datasources,
+          accessible,
+        )
+        if datasource_scope is not None:
+          if not datasource_scope:
+            return []
+          q_filters["datasource_id"] = datasource_scope
+
+        if user is not None:
+          q_filters = merge_acl_filter(q_filters, user)
+
         results = await self.vector_db_query_service.query(
           query=query,
           filters=q_filters or None,
@@ -254,12 +400,14 @@ class AgentTools:
       _tool_no_filters.__name__ = tool_id
       return _tool_no_filters
 
-  async def fetch_document(self, document_id: str, thought: str = ""):
+  async def fetch_document(self, document_id: str, filters: Optional[Dict[str, Any]] = None, thought: str = ""):
     """
     Fetch the full content of a document by its document_id (obtained from search results).
 
     Args:
         document_id (str): The document ID from search results
+        filters (dict): Optional. Set by the runtime, not the caller, to narrow results
+            to specific datasource_id(s) (e.g. {"datasource_id": ["ds-a"]}).
         thought (str): Your thoughts for choosing this tool
 
     Returns:
@@ -268,10 +416,27 @@ class AgentTools:
     logger.info(f"Fetching document with ID: {document_id}, Thought: {thought}")
 
     try:
+      user, accessible = await self._authorize_search_tool()
+      if accessible is not None and not accessible:
+        return f"Error: Document with ID '{document_id}' not found in the knowledge base."
+
+      q_filters: Dict[str, Any] = {"document_id": document_id}
+      # Agent-config narrowing (client-pinned `filters["datasource_id"]`),
+      # intersected with the caller's RBAC-accessible set — narrows, never widens.
+      requested = filters.get("datasource_id") if filters else None
+      datasource_scope = self._intersect_datasource_constraints(requested, accessible)
+      if datasource_scope is not None:
+        if not datasource_scope:
+          return f"Error: Document with ID '{document_id}' not found in the knowledge base."
+        q_filters["datasource_id"] = datasource_scope
+
+      if user is not None:
+        q_filters = merge_acl_filter(q_filters, user)
+
       # Query vector DB for the specific document
       results = await self.vector_db_query_service.query(
         query="",  # Empty query, we're filtering by ID
-        filters={"document_id": document_id},
+        filters=q_filters,
         limit=100,
         ranker="weighted",
         ranker_params={"weights": [1.0, 0.0]},
@@ -286,11 +451,13 @@ class AgentTools:
       logger.error(f"Error fetching document {document_id}: {e}")
       return f"Error fetching document '{document_id}': {str(e)}"
 
-  async def list_datasources_and_entity_types(self, thought: str = ""):
+  async def list_datasources_and_entity_types(self, filters: Optional[Dict[str, Any]] = None, thought: str = ""):
     """
     Fetch list of available datasources and entity types in the knowledge base.
 
     Args:
+        filters (dict): Optional. Set by the runtime, not the caller, to narrow results
+            to specific datasource_id(s) (e.g. {"datasource_id": ["ds-a"]}).
         thought (str): Your thoughts for choosing this tool
 
     Returns:
@@ -301,16 +468,42 @@ class AgentTools:
     result = {"datasources": [], "entity_types": []}
 
     try:
+      _user, accessible = await self._authorize_search_tool()
+
       # Get datasources from metadata storage
       datasources_info = await self.metadata_storage.fetch_all_datasource_info()
-      result["datasources"] = [ds.datasource_id for ds in datasources_info]
+      ids = [ds.datasource_id for ds in datasources_info]
+      if accessible is not None:
+        ids = [i for i in ids if i in accessible]
 
-      # Get entity types from ontology DB if available==
-      if self.ontology_graphdb is not None:
+      # Agent-config narrowing (client-pinned `filters["datasource_id"]`),
+      # intersected with the caller's RBAC-accessible set — narrows, never widens.
+      requested = filters.get("datasource_id") if filters else None
+      datasource_scope = self._intersect_datasource_constraints(requested, accessible)
+      if datasource_scope is not None:
+        ids = [i for i in ids if i in set(datasource_scope)]
+
+      result["datasources"] = ids
+
+      # Ontology nodes are global schema and do not carry datasource
+      # provenance. Returning them for a restricted or agent-pinned request
+      # would therefore leak types from sources outside the effective scope.
+      # Derive types from the provenance-tagged data graph in that case. Only
+      # an unrestricted request may retain the existing global ontology view.
+      if datasource_scope is not None:
+        if self.data_graphdb is not None:
+          entity_types = await self.data_graphdb.get_all_entity_types(
+            datasource_ids=ids,
+          )
+          result["entity_types"] = sorted(list(entity_types))
+        else:
+          logger.info(
+            "Data graph database not available; scoped entity_types will be empty"
+          )
+      elif self.ontology_graphdb is not None:
         entity_types = await self.ontology_graphdb.get_all_entity_types()
         result["entity_types"] = sorted(list(entity_types))
       else:
-        result["entity_types"] = []
         logger.info("Graph database not available, entity_types will be empty")
 
       return result
@@ -323,7 +516,13 @@ class AgentTools:
   # Graph query tools #
   #####################
 
-  async def graph_explore_ontology_entity(self, entity_type: str, depth: int = 1, thought: str = ""):
+  async def graph_explore_ontology_entity(
+    self,
+    entity_type: str,
+    depth: int = 1,
+    thought: str = "",
+    filters: Optional[Dict[str, Any]] = None,
+  ):
     """
     Explores an ontology entity and its neighborhood up to specified depth.
     Returns the root entity with full details and connected entities with essential properties only.
@@ -332,11 +531,18 @@ class AgentTools:
         entity_type (str): The type of entity to explore
         depth (int): How many hops to explore (default: 1, max: 3)
         thought (str): Your thoughts for choosing this tool
+        filters (dict): Runtime datasource pin. The global ontology cannot be
+            filtered safely, so any bounded scope is denied.
 
     Returns:
         dict: containing the root entity (full details), connected entities (essential properties), and their relations
     """
     logger.info(f"Exploring ontology entity {entity_type} with depth {depth}, Thought: {thought}")
+    _user, accessible = await self._authorize_search_tool()
+    requested = filters.get("datasource_id") if filters else None
+    datasource_scope = self._intersect_datasource_constraints(requested, accessible)
+    if datasource_scope is not None:
+      return "Error: Ontology graph access requires unrestricted datasource access."
     if self.ontology_graphdb is None:
       logger.error("Ontology graph database is not available, Is graph RAG enabled?")
       return "Error: Ontology graph database is not available. Please ensure graph RAG is enabled."
@@ -393,7 +599,14 @@ class AgentTools:
       logger.error(f"Error exploring ontology entity {entity_type}: {e}")
       return f"Error exploring ontology entity '{entity_type}': {str(e)}\nTraceback: {traceback.format_exc()}"
 
-  async def graph_explore_data_entity(self, entity_type: str, primary_key_id: str, depth: int = 1, thought: str = ""):
+  async def graph_explore_data_entity(
+    self,
+    entity_type: str,
+    primary_key_id: str,
+    depth: int = 1,
+    thought: str = "",
+    filters: Optional[Dict[str, Any]] = None,
+  ):
     """
     Explores a data entity and its neighborhood up to specified depth.
     Returns the root entity with full details and connected entities with essential properties only.
@@ -403,11 +616,17 @@ class AgentTools:
         primary_key_id (str): The primary key id of the entity
         depth (int): How many hops to explore (default: 1, max: 3)
         thought (str): Your thoughts for choosing this tool
+        filters (dict): Optional runtime datasource pin.
 
     Returns:
         dict: containing the root entity (full details), connected entities (essential properties), and their relations
     """
     logger.info(f"Exploring data entity {entity_type} with primary_key_id {primary_key_id} and depth {depth}, Thought: {thought}")
+    _user, accessible = await self._authorize_search_tool()
+    requested = filters.get("datasource_id") if filters else None
+    datasource_scope = self._intersect_datasource_constraints(requested, accessible)
+    if datasource_scope is not None and not datasource_scope:
+      return "Error: You do not have access to any data graph sources."
     if self.data_graphdb is None:
       logger.error("Data graph database is not available, Is graph RAG enabled?")
       return "Error: Data graph database is not available. Please ensure graph RAG is enabled."
@@ -421,12 +640,21 @@ class AgentTools:
 
     try:
       # First check if the entity type exists
-      all_entity_types = await self.data_graphdb.get_all_entity_types()
+      all_entity_types = await self.data_graphdb.get_all_entity_types(
+        datasource_ids=datasource_scope,
+      )
       if entity_type not in all_entity_types:
         return f"Error: StructuredEntity type '{entity_type}' does not exist in the data graph database.\nAvailable entity types: {', '.join(sorted(all_entity_types))}"
 
       # Explore the entity neighborhood with specified depth
-      result = await self._explore_entity_with_depth(graphdb=self.data_graphdb, entity_type=entity_type, entity_pk=primary_key_id, max_depth=depth)
+      result = await self._explore_entity_with_depth(
+        graphdb=self.data_graphdb,
+        entity_type=entity_type,
+        entity_pk=primary_key_id,
+        max_depth=depth,
+        accessible=datasource_scope,
+        enforce_datasource_acl=True,
+      )
 
       if result["root_entity"] is None:
         return f"Error: StructuredEntity of type '{entity_type}' with primary key '{primary_key_id}' was not found in the data graph database. Please verify the entity type and primary key are correct."
@@ -451,7 +679,15 @@ class AgentTools:
       logger.error(f"Error exploring data entity {entity_type} with primary_key_id {primary_key_id}: {e}")
       return f"Error exploring data entity '{entity_type}' with primary_key_id '{primary_key_id}': {str(e)}\nTraceback: {traceback.format_exc()}"
 
-  async def _explore_entity_with_depth(self, graphdb: GraphDB, entity_type: str, entity_pk: str, max_depth: int) -> dict:
+  async def _explore_entity_with_depth(
+    self,
+    graphdb: GraphDB,
+    entity_type: str,
+    entity_pk: str,
+    max_depth: int,
+    accessible: Optional[List[str]] = None,
+    enforce_datasource_acl: bool = False,
+  ) -> dict:
     """
     Explores an entity and its neighborhood up to specified depth.
     Returns root entity with full details, other entities with essential properties only.
@@ -475,6 +711,8 @@ class AgentTools:
       return {"root_entity": None, "entities": [], "relations": []}
 
     root_entity = neighborhood["entity"]
+    if enforce_datasource_acl and not self._graph_entity_is_accessible(root_entity, accessible):
+      return {"root_entity": None, "entities": [], "relations": []}
 
     # Extract full entity data for root
     def extract_full_entity_data(entity: StructuredEntity) -> dict:
@@ -531,7 +769,20 @@ class AgentTools:
     connected_entities = []
     all_relations = []
 
-    for entity in neighborhood["entities"]:
+    visible_entities = [
+      entity
+      for entity in neighborhood["entities"]
+      if not enforce_datasource_acl or self._graph_entity_is_accessible(entity, accessible)
+    ]
+    visible_keys = {
+      (
+        entity.entity_type,
+        str(entity.all_properties.get(PRIMARY_ID_KEY) or entity.generate_primary_key()),
+      )
+      for entity in [root_entity, *visible_entities]
+    }
+
+    for entity in visible_entities:
       # Skip the root entity itself
       if entity.all_properties.get(PRIMARY_ID_KEY) == entity_pk:
         continue
@@ -540,12 +791,23 @@ class AgentTools:
 
     # Process all relations
     for relation in neighborhood["relations"]:
+      if enforce_datasource_acl and (
+        (relation.from_entity.entity_type, relation.from_entity.primary_key) not in visible_keys
+        or (relation.to_entity.entity_type, relation.to_entity.primary_key) not in visible_keys
+      ):
+        continue
       relation_tuple = (relation.from_entity.primary_key, relation.relation_name, relation.to_entity.primary_key)
       all_relations.append(relation_tuple)
 
     return {"root_entity": root_entity_data, "entities": connected_entities, "relations": all_relations}
 
-  async def graph_fetch_data_entity_details(self, entity_type: str, primary_key_id: str, thought: str):
+  async def graph_fetch_data_entity_details(
+    self,
+    entity_type: str,
+    primary_key_id: str,
+    thought: str,
+    filters: Optional[Dict[str, Any]] = None,
+  ):
     """
     Fetches details of a single data entity and returns all its properties (excluding internal properties),
     as well as relations from the graph database.
@@ -554,23 +816,33 @@ class AgentTools:
         entity_type (str): The type of entity
         primary_key_id (str): The primary key id of the entity
         thought (str): Your thoughts for choosing this tool
+        filters (dict): Optional runtime datasource pin.
 
     Returns:
         str: The properties of the entity (with key:value pairs), as well as its relations
     """
     logger.info(f"Fetching data entity details of type {entity_type} with primary_key_id {primary_key_id}, Thought: {thought}")
+    _user, accessible = await self._authorize_search_tool()
+    requested = filters.get("datasource_id") if filters else None
+    datasource_scope = self._intersect_datasource_constraints(requested, accessible)
+    if datasource_scope is not None and not datasource_scope:
+      return "Error: You do not have access to any data graph sources."
     if self.data_graphdb is None:
       logger.error("Graph database is not available, Is graph RAG enabled?")
       return "Error: Data graph database is not available. Please ensure graph RAG is enabled."
     try:
       # First check if the entity type exists
-      all_entity_types = await self.data_graphdb.get_all_entity_types()
+      all_entity_types = await self.data_graphdb.get_all_entity_types(
+        datasource_ids=datasource_scope,
+      )
       if entity_type not in all_entity_types:
         return f"Error: StructuredEntity type '{entity_type}' does not exist in the data graph database.\nAvailable entity types: {', '.join(sorted(all_entity_types))}"
 
       entity = await self.data_graphdb.fetch_entity(entity_type, primary_key_id)
       if entity is None:
         return f"Error: StructuredEntity of type '{entity_type}' with primary key '{primary_key_id}' was not found in the data graph database. Please verify the entity type and primary key are correct."
+      if not self._graph_entity_is_accessible(entity, datasource_scope):
+        return f"Error: StructuredEntity of type '{entity_type}' with primary key '{primary_key_id}' was not found in the data graph database."
 
       # Remove internal properties (those starting with _)
       clean_properties = {}
@@ -597,6 +869,7 @@ class AgentTools:
 
       # Get the relations of the entity
       relations = await self.data_graphdb.fetch_entity_relations(entity_type, primary_key_id)
+      relations = await self._filter_data_graph_relations(relations, datasource_scope)
 
       # Format relations as simple dicts
       relations_data = []
@@ -616,7 +889,13 @@ class AgentTools:
       logger.error(f"Error fetching entity details {entity_type} with primary_key_id {primary_key_id}: {e}")
       return f"Error fetching data entity details for '{entity_type}' with primary_key_id '{primary_key_id}': {str(e)}\nTraceback: {traceback.format_exc()}"
 
-  async def graph_shortest_path_between_entity_types(self, entity_type_1: str, entity_type_2: str, thought: str):
+  async def graph_shortest_path_between_entity_types(
+    self,
+    entity_type_1: str,
+    entity_type_2: str,
+    thought: str,
+    filters: Optional[Dict[str, Any]] = None,
+  ):
     """
     Find the shortest relationship paths between two entity types in the ontology graph.
 
@@ -624,11 +903,18 @@ class AgentTools:
         entity_type_1 (str): The first entity type
         entity_type_2 (str): The second entity type
         thought (str): Your thoughts for choosing this tool
+        filters (dict): Runtime datasource pin. The global ontology cannot be
+            filtered safely, so any bounded scope is denied.
 
     Returns:
         str: A cypher-like notation of entities and their relations, "none" if there is no path
     """
     logger.info(f"Getting shortest path between {entity_type_1} and {entity_type_2}, Thought: {thought}")
+    _user, accessible = await self._authorize_search_tool()
+    requested = filters.get("datasource_id") if filters else None
+    datasource_scope = self._intersect_datasource_constraints(requested, accessible)
+    if datasource_scope is not None:
+      return "Error: Ontology graph access requires unrestricted datasource access."
     if self.ontology_graphdb is None:
       logger.error("Ontology graph database is not available, Is graph RAG enabled?")
       return "Error: Ontology graph database is not available. Please ensure graph RAG is enabled."
@@ -783,6 +1069,9 @@ class AgentTools:
         str: The result of the raw query
     """
     logger.info(f"Raw graph query: {query}, Thought: {thought}")
+    _user, accessible = await self._authorize_search_tool()
+    if accessible is not None:
+      return "Error: Raw data-graph queries require unrestricted datasource access."
     if self.data_graphdb is None:
       logger.error("Graph database is not available, Is graph RAG enabled?")
       return "Error: graph database is not available."
@@ -823,18 +1112,30 @@ class AgentTools:
       logger.error(f"Error executing raw graph query: {e}")
       return f"Error executing raw graph query, PLEASE FIX your query: {e}"
 
-  async def graph_raw_query_ontology(self, query: str, thought: str):
+  async def graph_raw_query_ontology(
+    self,
+    query: str,
+    thought: str,
+    filters: Optional[Dict[str, Any]] = None,
+  ):
     """
     Executes a raw read-only query on the ontology graph database.
 
     Args:
         query (str): The raw Cypher query
         thought (str): Your thoughts for choosing this tool
+        filters (dict): Runtime datasource pin. The global ontology cannot be
+            filtered safely, so any bounded scope is denied.
 
     Returns:
         str: The result of the raw query
     """
     logger.info(f"Raw ontology graph query: {query}, Thought: {thought}")
+    _user, accessible = await self._authorize_search_tool()
+    requested = filters.get("datasource_id") if filters else None
+    datasource_scope = self._intersect_datasource_constraints(requested, accessible)
+    if datasource_scope is not None:
+      return "Error: Ontology graph access requires unrestricted datasource access."
     if self.ontology_graphdb is None:
       logger.error("Ontology graph database is not available, Is graph RAG enabled?")
       return "Error: ontology graph database is not available."

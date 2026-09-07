@@ -1,0 +1,223 @@
+# Default values for autonomous-agents
+# This is a YAML-formatted file.
+
+# Override the chart name
+nameOverride: ""
+fullnameOverride: ""
+
+# Container image configuration
+image:
+  repository: "ghcr.io/caipe-io/caipe-autonomous-agents"
+  pullPolicy: "Always"
+  # tag defaults to .Chart.AppVersion when not specified
+  tag: ""
+
+# Secrets for pulling images from private repositories
+imagePullSecrets: []
+
+# Service account configuration
+serviceAccount:
+  create: true
+  automount: true
+  # On EKS, annotate this service account with an IRSA role allowed to call
+  # kms:GenerateDataKey and kms:Decrypt on config.CREDENTIAL_KMS_CMK_ID.
+  annotations: {}
+  name: ""
+
+# Pod annotations and labels
+podAnnotations: {}
+podLabels: {}
+
+# Security contexts satisfy the Kubernetes Pod Security Standards Restricted
+# profile. Unlike most agent images, this image is explicitly built for a
+# read-only root filesystem (see build/Dockerfile.autonomous-agents);
+# /tmp is provided as an emptyDir via the default volumes/volumeMounts below.
+# To enforce the policy at the namespace level:
+#   kubectl label namespace <ns> \
+#     pod-security.kubernetes.io/enforce=baseline \
+#     pod-security.kubernetes.io/warn=restricted \
+#     pod-security.kubernetes.io/audit=restricted
+podSecurityContext:
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1001
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# Service configuration.
+# ClusterIP only: the service has no auth layer of its own. Authentication and
+# admin gating live in the CAIPE UI's /api/autonomous proxy, which reaches this
+# service over the cluster network. Do not expose this service directly
+# (NodePort / LoadBalancer) -- that would bypass the UI gate. This is the
+# Kubernetes equivalent of the loopback-only port binding in docker-compose.
+service:
+  type: ClusterIP
+  port: 8002
+
+# Ingress configuration -- DISABLED by default, and scoped to webhook paths only.
+#
+# Webhook triggers (GitHub, PagerDuty, generic HMAC) and Webex inbound events
+# require this service to be reachable from outside the cluster. The default
+# path below intentionally exposes ONLY /api/v1/hooks -- never widen it to /:
+# the task-management API under /api/v1/tasks has no authentication of its own
+# (admin gating lives in the UI proxy), so exposing / would let anyone on the
+# internet manage autonomous tasks.
+#
+# Before enabling, set a strong WEBHOOK_SECRET (HMAC) in the secret referenced
+# by existingSecret/externalSecrets so unsigned webhook deliveries are rejected.
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+  hosts:
+    - host: autonomous-agents.local
+      paths:
+        - path: /api/v1/hooks
+          pathType: Prefix
+  tls: []
+
+# Replica configuration.
+# Keep replicaCount at 1: the scheduler has no leader election, so a second
+# replica would double-fire cron/interval tasks, and webhook FIFOs are
+# process-local. Use VPA below until scheduling and webhook work move behind a
+# shared durable queue.
+replicaCount: 1
+revisionHistoryLimit: 3
+
+# Resource limits and requests
+resources: {}
+
+# Health probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# VPA configuration. Requires VPA to be installed in the cluster.
+# Inherits global.vpa defaults; override any field here to customise for autonomous-agents.
+vpa:
+  enabled: false
+  updateMode: "InPlaceOrRecreate"
+  controlledResources: ["cpu", "memory"]
+  controlledValues: "RequestsAndLimits"
+  minAllowed:
+    cpu: 50m
+    memory: 128Mi
+  maxAllowed: {}
+
+# /tmp is the only writable path the runtime needs (readOnlyRootFilesystem is
+# true above). Replace or extend these if you mount custom webhook provider
+# files (see config.WEBHOOK_PROVIDERS_FILE).
+volumes:
+  - name: tmp
+    emptyDir: {}
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ConfigMap for non-sensitive configuration.
+# SUPERVISOR_URL and DYNAMIC_AGENTS_URL default to in-release Service names in
+# templates/_helpers.tpl. Set either value here only to override that default.
+config:
+  # Supervisor A2A endpoint -- autonomous tasks are sent here. The default
+  # tracks the in-release supervisor Service name.
+  SUPERVISOR_URL: ""
+  # Dynamic-agents service endpoint -- enables routing of autonomous tasks
+  # whose dynamic_agent_id is set through the user's custom agent. Only
+  # uncomment when the dynamic-agents subchart is enabled (tags.dynamic-agents).
+  DYNAMIC_AGENTS_URL: ""
+  # Minimum gap between cron/interval fires. Webhook triggers are exempt.
+  MINIMUM_SCHEDULE_INTERVAL_SECONDS: "1800"
+  # Reject larger webhook bodies before parsing/signature verification.
+  WEBHOOK_MAX_PAYLOAD_BYTES: "1048576"
+  # Each task is a single-consumer FIFO. Bound queued work separately from
+  # execution concurrency across different tasks.
+  WEBHOOK_MAX_PENDING_PER_TASK: "100"
+  WEBHOOK_MAX_PENDING_PER_OWNER: "500"
+  WEBHOOK_MAX_PENDING_GLOBAL: "5000"
+  WEBHOOK_MAX_PENDING_PAYLOAD_BYTES_GLOBAL: "67108864"
+  WEBHOOK_MAX_CONCURRENT_PER_OWNER: "20"
+  WEBHOOK_MAX_CONCURRENT_GLOBAL: "100"
+  # MongoDB database name (uses same DB as CAIPE UI so the Autonomous tab's
+  # task list and run history come from the same source of truth)
+  MONGODB_DATABASE: "caipe"
+  # Publish completed autonomous runs into the UI conversations collection.
+  # OFF by default in production -- it writes to a shared collection that the
+  # UI also writes to, and the implications (storage growth, cross-tenancy
+  # leak surface, multi-tenant isolation) need an operator decision.
+  CHAT_HISTORY_PUBLISH_ENABLED: "false"
+  # Owner email stamped on autonomous-origin conversations (audit-trail
+  # marker; pick something clearly synthetic).
+  CHAT_HISTORY_OWNER_EMAIL: "autonomous@system"
+  # CORS origins -- empty by default (the UI talks to this service via its
+  # server-side proxy, so browsers never hit it directly). Note: the service
+  # rejects "*" at startup by design.
+  CORS_ORIGINS: ""
+  # Per-task webhook secrets use the same AWS KMS envelope-encryption format
+  # as UI-managed integration credentials (including Webex OAuth secrets).
+  # Leave blank only when every task uses no per-task secret (or relies on the
+  # global WEBHOOK_SECRET fallback). Never put the plaintext secret here.
+  CREDENTIAL_KMS_CMK_ID: ""
+  CREDENTIAL_KMS_REGION: ""
+
+# OAuth client used by Autonomous Agents to authenticate its calls to Dynamic
+# Agents. The standalone chart keeps this disabled because it cannot assume an
+# identity provider or Secret name. The umbrella chart enables it for the
+# bundled Keycloak caipe-platform client.
+dynamicAgentsAuth:
+  enabled: false
+  # Defaults to the bundled Keycloak token endpoint for this Helm release.
+  # Set an explicit URL when using an external identity provider.
+  tokenUrl: ""
+  clientId: "caipe-platform"
+  scope: "openid profile email"
+  clientSecretRef:
+    name: ""
+    key: "OIDC_CLIENT_SECRET"
+
+# Pre-existing secret with sensitive values:
+#   MONGODB_URI            (required -- same MongoDB the CAIPE UI uses)
+#   WEBHOOK_SECRET         (required before exposing webhook ingress -- global
+#                           HMAC fallback secret for incoming webhooks)
+#   WEBEX_BOT_TOKEN        (optional -- enables Webex inbound)
+#   WEBEX_WEBHOOK_SECRET   (optional -- HMAC secret Webex signs events with)
+#   WEBEX_BOT_PUBLIC_URL   (required whenever WEBEX_BOT_TOKEN is set --
+#                           externally-reachable base URL of this service)
+existingSecret: ""
+
+# LLM secret containing LLM_PROVIDER, API keys, and model configuration
+# This secret is typically shared across CAIPE components
+llmSecret: ""
+
+# External Secrets configuration
+externalSecrets:
+  enabled: false
+  apiVersion: "v1beta1"
+  secretStoreRef:
+    name: "vault"
+    kind: "ClusterSecretStore"
+  data: []

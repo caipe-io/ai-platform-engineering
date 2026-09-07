@@ -8,7 +8,7 @@ const mockUseAuthorizationMetrics = jest.fn();
 let currentSearchParams = new URLSearchParams();
 
 jest.mock("next/navigation", () => ({
-  usePathname: () => "/admin",
+  usePathname: () => "/admin/operations/metrics",
   useRouter: () => ({ replace: replaceMock }),
   useSearchParams: () => currentSearchParams,
 }));
@@ -61,7 +61,7 @@ describe("MetricsTab filter deep links", () => {
   });
 
   it("restores a preset for operations and authorization metrics", () => {
-    currentSearchParams = new URLSearchParams("cat=platform&tab=metrics&metricsRange=7d");
+    currentSearchParams = new URLSearchParams("metricsRange=7d");
     render(<MetricsTab />);
 
     expect(mockUseAuthorizationMetrics).toHaveBeenCalledWith(
@@ -71,15 +71,13 @@ describe("MetricsTab filter deep links", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "24h" }));
     expect(replaceMock).toHaveBeenLastCalledWith(
-      "/admin?cat=platform&tab=metrics",
+      "/admin/operations/metrics",
       { scroll: false },
     );
   });
 
   it("restores custom endpoints and rewrites them for a relative range", () => {
     currentSearchParams = new URLSearchParams({
-      cat: "platform",
-      tab: "metrics",
       metricsRange: "custom",
       metricsFrom: "2026-07-01T00:00:00.000Z",
       metricsTo: "2026-07-02T12:00:00.000Z",
@@ -96,7 +94,7 @@ describe("MetricsTab filter deep links", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "1h" }));
     expect(replaceMock).toHaveBeenLastCalledWith(
-      "/admin?cat=platform&tab=metrics&metricsRange=1h",
+      "/admin/operations/metrics?metricsRange=1h",
       { scroll: false },
     );
   });

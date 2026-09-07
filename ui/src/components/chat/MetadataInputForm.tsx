@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { AlertCircle,ChevronDown,Send } from "lucide-react";
@@ -309,7 +310,7 @@ function MetadataInputFormInner({
                 </div>
               ) : hasOptions ? (
                 <div className="relative">
-                  <select
+                  <Select
                     value={formData[field.field_name] || ""}
                     onChange={(e) => handleFieldChange(field.field_name, e.target.value)}
                     disabled={disabled || isSubmitting}
@@ -328,7 +329,7 @@ function MetadataInputFormInner({
                         {value}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                 </div>
               ) : fieldType === "boolean" ? (

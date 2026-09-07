@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_NAME="scripts/generate-helm-chart-docs.sh"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-OCI_REGISTRY="oci://ghcr.io/cnoe-io/charts/ai-platform-engineering"
+OCI_REGISTRY="oci://ghcr.io/caipe-io/charts/ai-platform-engineering"
 PARENT_CHARTS=("ai-platform-engineering" "rag-stack")
 CHARTS_ROOT="${REPO_ROOT}/charts"
 DOCS_HELM_ROOT="${REPO_ROOT}/docs/docs/installation/helm-charts"
@@ -24,12 +24,27 @@ info()  { echo -e "${GREEN}✓${NC} $*"; }
 warn()  { echo -e "${YELLOW}⚠${NC} $*" >&2; }
 error() { echo -e "${RED}✗${NC} $*" >&2; }
 
+trim_trailing_blank_lines() {
+  local file="$1"
+  local temporary_file="${file}.tmp"
+  awk '
+    { lines[NR] = $0 }
+    $0 !~ /^[[:space:]]*$/ { last_content_line = NR }
+    END {
+      for (line_number = 1; line_number <= last_content_line; line_number++) {
+        print lines[line_number]
+      }
+    }
+  ' "$file" > "$temporary_file"
+  mv "$temporary_file" "$file"
+}
+
 # ---------------------------------------------------------------------------
-# T005: Strip RC / pre-release suffixes from a version string
+# T005: Strip pre-release suffixes from a version string
 # ---------------------------------------------------------------------------
-strip_rc_version() {
+strip_prerelease_version() {
   local ver="${1:-}"
-  echo "$ver" | sed -E 's/-(rc|alpha|beta|pre)\.[^ "]*//g'
+  echo "$ver" | sed -E 's/-(dev|rc|hotfix|alpha|beta|pre)\.[^ "]*//g'
 }
 
 # ---------------------------------------------------------------------------
@@ -38,27 +53,39 @@ strip_rc_version() {
 # ---------------------------------------------------------------------------
 resolve_version() {
   if [[ -n "${CHART_VERSION:-}" ]]; then
-    info "Using CHART_VERSION override: ${CHART_VERSION}"
-    PUBLISHED_VERSION="${CHART_VERSION}"
+    PUBLISHED_VERSION="$(strip_prerelease_version "${CHART_VERSION}")"
+    info "Using CHART_VERSION override: ${PUBLISHED_VERSION}"
     return
   fi
 
   local registry_version=""
   if command -v helm >/dev/null 2>&1; then
-    registry_version=$(
-      timeout 10 helm show chart "${OCI_REGISTRY}" 2>/dev/null \
-        | yq '.version // ""' 2>/dev/null
-    ) || true
+    if command -v timeout >/dev/null 2>&1; then
+      registry_version=$(
+        timeout 10 helm show chart "${OCI_REGISTRY}" 2>/dev/null \
+          | yq '.version // ""' 2>/dev/null
+      ) || true
+    elif command -v gtimeout >/dev/null 2>&1; then
+      registry_version=$(
+        gtimeout 10 helm show chart "${OCI_REGISTRY}" 2>/dev/null \
+          | yq '.version // ""' 2>/dev/null
+      ) || true
+    else
+      registry_version=$(
+        helm show chart "${OCI_REGISTRY}" 2>/dev/null \
+          | yq '.version // ""' 2>/dev/null
+      ) || true
+    fi
   fi
 
   if [[ -n "$registry_version" ]]; then
-    PUBLISHED_VERSION="$(strip_rc_version "$registry_version")"
+    PUBLISHED_VERSION="$(strip_prerelease_version "$registry_version")"
     info "Resolved version from OCI registry: ${PUBLISHED_VERSION}"
   else
     local local_app_version
     local_app_version=$(yq '.appVersion // .version // "0.0.0"' \
       "${CHARTS_ROOT}/ai-platform-engineering/Chart.yaml" 2>/dev/null) || true
-    PUBLISHED_VERSION="$(strip_rc_version "${local_app_version:-0.0.0}")"
+    PUBLISHED_VERSION="$(strip_prerelease_version "${local_app_version:-0.0.0}")"
     warn "OCI registry unreachable — falling back to local appVersion: ${PUBLISHED_VERSION}"
   fi
 }
@@ -198,7 +225,7 @@ HEADER
     fi
 
     local clean_version
-    clean_version="$(strip_rc_version "$dep_version")"
+    clean_version="$(strip_prerelease_version "$dep_version")"
 
     local cond_display=""
     if [[ -n "$dep_condition" && "$dep_condition" != "null" ]]; then
@@ -223,7 +250,33 @@ HEADER
 mdx_escape() {
   sed -E \
     -e 's|<(https?://[^>]+)>|[\1](\1)|g' \
-    -e 's|<([a-zA-Z][a-zA-Z0-9_.:-]*(/[a-zA-Z0-9_.:-]*)*)>|`\1`|g'
+    -e 's|<([a-zA-Z][a-zA-Z0-9_.:-]*(/[a-zA-Z0-9_.:-]*)*)>|`\1`|g' \
+    | awk '
+      /^```/ {
+        print
+        in_fence = !in_fence
+        next
+      }
+      in_fence {
+        print
+        next
+      }
+      {
+        segment_count = split($0, segments, "`")
+        output = ""
+        for (segment_number = 1; segment_number <= segment_count; segment_number++) {
+          if (segment_number % 2 == 1) {
+            gsub(/\{/, "\\{", segments[segment_number])
+            gsub(/\}/, "\\}", segments[segment_number])
+          }
+          output = output segments[segment_number]
+          if (segment_number < segment_count) {
+            output = output "`"
+          }
+        }
+        print output
+      }
+    '
 }
 
 # ---------------------------------------------------------------------------
@@ -247,9 +300,9 @@ generate_source_readme() {
   local parent_group
   parent_group=$(parent_group_of "$chart_dir")
 
-  local oci_url="oci://ghcr.io/cnoe-io/charts/${name}"
+  local oci_url="oci://ghcr.io/caipe-io/charts/${name}"
   if is_parent_chart "$chart_dir"; then
-    oci_url="oci://ghcr.io/cnoe-io/charts/${name}"
+    oci_url="oci://ghcr.io/caipe-io/charts/${name}"
   fi
 
   cat > "${chart_dir}/README.md" <<EOF
@@ -308,6 +361,8 @@ ${values_table:-"_No configurable values._"}
 ${deps_section}
 EOF
 
+  trim_trailing_blank_lines "${chart_dir}/README.md"
+
   GENERATED_FILES+=("${chart_dir}/README.md")
   info "Generated source README: ${chart_dir#"${REPO_ROOT}/"}/README.md"
 }
@@ -343,7 +398,7 @@ generate_docusaurus_page() {
     deps_section=$(generate_dependencies_section "$chart_dir")
   fi
 
-  local oci_url="oci://ghcr.io/cnoe-io/charts/${name}"
+  local oci_url="oci://ghcr.io/caipe-io/charts/${name}"
 
   {
     cat <<EOF
@@ -409,6 +464,8 @@ ${deps_section}
 EOF
   } | mdx_escape > "$doc_file"
 
+  trim_trailing_blank_lines "$doc_file"
+
   GENERATED_FILES+=("$doc_file")
   info "Generated Docusaurus page: ${doc_file#"${REPO_ROOT}/"}"
 }
@@ -420,9 +477,9 @@ validate_no_rc_versions() {
   info "Validating no RC/pre-release versions in generated files..."
   local rc_found=false
   for f in "${GENERATED_FILES[@]}"; do
-    if grep -qE '-(rc|alpha|beta|pre)\.' "$f" 2>/dev/null; then
+    if grep -qE '-(dev|rc|hotfix|alpha|beta|pre)\.' "$f" 2>/dev/null; then
       error "RC version pattern found in: ${f#"${REPO_ROOT}/"}"
-      grep -nE '-(rc|alpha|beta|pre)\.' "$f" | head -5 >&2
+      grep -nE '-(dev|rc|hotfix|alpha|beta|pre)\.' "$f" | head -5 >&2
       rc_found=true
     fi
   done
@@ -453,8 +510,10 @@ main() {
   run_helm_docs
 
   # Step 3: Discover all charts
-  local charts
-  mapfile -t charts < <(discover_charts)
+  local charts=()
+  while IFS= read -r chart_dir; do
+    charts+=("$chart_dir")
+  done < <(discover_charts)
   info "Discovered ${#charts[@]} charts"
 
   # Step 4: Generate docs for each chart

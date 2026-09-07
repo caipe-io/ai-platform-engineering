@@ -5,7 +5,7 @@ fullnameOverride: "rag-server"
 enableGraphRag: true
 
 image:
-  repository: "ghcr.io/cnoe-io/caipe-rag-server"
+  repository: "ghcr.io/caipe-io/caipe-rag-server"
   # tag defaults to .Chart.AppVersion when not specified
   tag: ""
   pullPolicy: IfNotPresent
@@ -47,59 +47,6 @@ env: {}
 
 # Additional envFrom references (secrets, configmaps)
 envFrom: []
-
-# Web Ingestor configuration (runs as sidecar container)
-webIngestor:
-  enabled: true
-  image:
-    repository: "ghcr.io/cnoe-io/caipe-rag-ingestors"
-    # tag defaults to .Chart.AppVersion when not specified
-    tag: ""
-    pullPolicy: IfNotPresent
-
-  # Environment variables for web-ingestor container
-  env: {}
-    # LOG_LEVEL: "INFO"
-    # WEBLOADER_MAX_CONCURRENCY: "10"
-    # WEBLOADER_MAX_INGESTION_TASKS: "5"
-    # WEBLOADER_RELOAD_INTERVAL: "86400"
-    #
-    # Scrapy settings (optional)
-    # SCRAPY_CONCURRENT_REQUESTS: "16"
-    # SCRAPY_DOWNLOAD_DELAY: "0"
-    # SCRAPY_DEPTH_LIMIT: "0"
-    # SCRAPY_JAVASCRIPT_ENABLED: "false"
-
-  # Additional envFrom references (secrets, configmaps)
-  envFrom: []
-
-  # Extra volume mounts for the web-ingestor container (e.g. for Playwright browser cache)
-  extraVolumeMounts: []
-  # - name: playwright-browsers
-  #   mountPath: /opt/playwright
-
-  # Resource limits for the web ingestor sidecar
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-      ephemeral-storage: 256Mi
-    limits:
-      cpu: 500m
-      memory: 1Gi
-      ephemeral-storage: 1Gi
-
-  # Container-level security context for the web-ingestor sidecar
-  securityContext:
-    allowPrivilegeEscalation: false
-    runAsNonRoot: true
-    runAsUser: 1001
-    capabilities:
-      drop:
-        - ALL
-    readOnlyRootFilesystem: false
-    seccompProfile:
-      type: RuntimeDefault
 
 serviceAccount:
   create: false
@@ -144,13 +91,13 @@ affinity: {}
 # Init containers to run before the main containers (e.g. install Playwright browsers)
 initContainers: []
 # - name: playwright-install
-#   image: "ghcr.io/cnoe-io/caipe-rag-ingestors:0.4.4"
+#   image: "ghcr.io/caipe-io/caipe-rag-ingestors:0.4.4"
 #   command: ["sh", "-c", "playwright install chromium"]
 #   volumeMounts:
 #     - name: playwright-browsers
 #       mountPath: /opt/playwright
 
-# Extra volumes for the pod (referenced by initContainers or webIngestor.extraVolumeMounts)
+# Extra volumes for the pod (referenced by initContainers or the main container)
 extraVolumes: []
 # - name: playwright-browsers
 #   emptyDir: {}

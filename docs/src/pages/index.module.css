@@ -29,7 +29,7 @@
 
 .heroGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1.15fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 2rem;
   align-items: stretch;
   margin-bottom: 2.5rem;
@@ -44,160 +44,11 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-}
-
-.heroCenter {
-  display: flex;
-  align-items: stretch;
-  justify-content: center;
-}
-
-.heroDemoFrame {
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid rgba(56, 189, 248, 0.2);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(56, 189, 248, 0.08);
-  background: #0f172a;
+  align-items: center;
+  text-align: center;
   width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.heroDemoBar {
-  background: #1e293b;
-  padding: 0.55rem 0.85rem;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.heroDemoDot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
-  opacity: 0.85;
-}
-
-.heroDemoTitle {
-  font-size: 0.72rem;
-  color: #64748b;
-  font-family: monospace;
-  margin-left: 0.4rem;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.heroDemoFullscreen {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: #475569;
-  font-size: 1rem;
-  cursor: pointer;
-  padding: 0 0.1rem;
-  line-height: 1;
-  transition: color 0.15s;
-  display: flex;
-  align-items: center;
-}
-
-.heroDemoFullscreen:hover {
-  color: #94a3b8;
-}
-
-/* ── GIF fullscreen overlay ─────────────────────────────────────── */
-.gifOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  animation: fadeIn 0.15s ease;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-.gifOverlayInner {
-  position: relative;
-  max-width: min(90vw, 1100px);
-  max-height: 90vh;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(56, 189, 248, 0.2);
-}
-
-.gifOverlayClose {
-  position: absolute;
-  top: 0.6rem;
-  right: 0.7rem;
-  z-index: 1;
-  background: rgba(15, 23, 42, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #94a3b8;
-  border-radius: 6px;
-  width: 28px;
-  height: 28px;
-  font-size: 0.8rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s, color 0.15s;
-}
-
-.gifOverlayClose:hover {
-  background: rgba(15, 23, 42, 0.95);
-  color: #fff;
-}
-
-.gifOverlayImg {
-  display: block;
-  width: 100%;
-  height: auto;
-  max-height: 90vh;
-  object-fit: contain;
-}
-
-.heroDemoGif {
-  width: 100%;
-  flex: 1;
-  min-height: 0;
-  display: block;
-  object-fit: contain;
-  background: #0f172a;
-}
-
-.heroRight {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  min-width: 0;
-}
-
-.heroRight .codeBlock {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  margin-top: 0 !important;
-}
-
-.heroRight .codePre {
-  flex: 1;
+  max-width: 1100px;
+  margin: 0 auto;
 }
 
 .heroBadge {
@@ -225,6 +76,7 @@
   color: #fff;
   overflow-wrap: anywhere;
   text-wrap: balance;
+  white-space: nowrap;
 }
 
 .heroAccent {
@@ -234,18 +86,23 @@
   background-clip: text;
 }
 
+.heroLine {
+  display: block;
+}
+
 .heroSubtitle {
   font-size: 1.05rem;
   color: rgba(255, 255, 255, 0.72);
-  max-width: 480px;
-  margin: 0 0 1rem;
+  max-width: 560px;
+  margin: 0 auto 1rem;
   line-height: 1.65;
 }
 
 .heroPronunciation {
   font-size: 0.85rem;
   color: rgba(255, 255, 255, 0.5);
-  margin: 0 0 1.75rem;
+  max-width: 560px;
+  margin: 0 auto 1.75rem;
   line-height: 1.5;
   font-style: italic;
 }
@@ -253,7 +110,7 @@
 .heroButtons {
   display: flex;
   gap: 0.75rem;
-  justify-content: flex-start;
+  justify-content: center;
   flex-wrap: wrap;
   margin-bottom: 0;
 }
@@ -825,58 +682,35 @@
 }
 
 /* ── Responsive ─────────────────────────────────────────────────── */
-@media (max-width: 1200px) {
-  .heroGrid {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 2rem;
-  }
-  .heroCenter {
-    grid-column: 1 / -1;
-    order: -1;
-  }
-  .heroDemoFrame {
-    max-width: 700px;
-    margin: 0 auto;
-  }
-}
-
 @media (max-width: 900px) {
   .heroGrid {
     grid-template-columns: minmax(0, 1fr);
     text-align: center;
     gap: 2rem;
   }
-  .heroCenter { order: -1; }
+  
   .heroButtons { justify-content: center; }
+  .heroTitle { white-space: normal; }
   .heroSubtitle { margin: 0 auto 1rem; }
 }
 
 @media (max-width: 640px) {
   .hero { padding: 3rem 1rem 2.75rem; }
   .heroGrid { gap: 1.5rem; margin-bottom: 2rem; }
-  .heroLeft { order: -2; }
-  .heroCenter { order: -1; }
+  
   .heroTitle { font-size: clamp(2rem, 10vw, 2.6rem) !important; }
   .heroSubtitle { font-size: 0.98rem; }
   .heroPronunciation { margin-bottom: 1.25rem; }
+  .heroLine { display: inline; }
   .heroButtons, .ctaButtons {
     flex-direction: column;
     align-items: stretch;
     width: 100%;
   }
   .heroButtons a, .ctaButtons a { width: 100%; }
-  .heroDemoFrame { border-radius: 9px; }
-  .heroDemoGif {
-    flex: 0 0 auto;
-    aspect-ratio: 16 / 10;
-    height: auto;
-  }
-  .heroDemoFullscreen {
-    width: 40px;
-    height: 40px;
-    justify-content: center;
-    margin: -0.45rem -0.45rem -0.45rem auto;
-  }
+  
+  
+  
   .heroStats {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -896,17 +730,16 @@
   .codeHeader { flex-wrap: wrap; }
   .codePre { padding: 1rem; font-size: 0.72rem; }
   .cta { padding: 4rem 1rem; }
-  .gifOverlay { padding: 0.75rem; }
-  .gifOverlayInner { max-width: 100%; max-height: calc(100dvh - 1.5rem); }
-  .gifOverlayImg { max-height: calc(100dvh - 1.5rem); }
-  .gifOverlayClose { width: 40px; height: 40px; }
-}
+  
+  
+  
+  }
 
 @media (max-width: 380px) {
   .hero { padding-left: 0.75rem; padding-right: 0.75rem; }
   .heroTitle { font-size: 1.9rem !important; }
   .heroSubtitle { line-height: 1.55; }
-  .heroDemoBar { padding-left: 0.7rem; padding-right: 0.7rem; }
+  
   .heroStats { gap: 1.25rem 0.5rem; }
   .heroStatNumber { font-size: 1.4rem; }
   .heroStatLabel { font-size: 0.65rem; }
@@ -914,7 +747,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gifOverlay { animation: none; }
   .heroPrimary,
   .heroSecondary,
   .featureCard,
@@ -925,4 +757,92 @@
   .featureCard:hover,
   .useCaseCard:hover,
   .useCaseCard:hover .useCaseImg img { transform: none; }
+}
+
+/* ── Hero install widget ────────────────────────────────────────── */
+.installWidget {
+  margin-top: 2rem;
+  width: 100%;
+  max-width: 980px;
+  background: #0b1120;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 10px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.installTabs {
+  display: flex;
+  gap: 1.25rem;
+  padding: 0 1.1rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.installTab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  padding: 0.65rem 0.1rem;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.installTab:hover {
+  color: #cbd5e1;
+}
+
+.installTab[data-active='true'] {
+  color: #f8fafc;
+  border-bottom-color: #38bdf8;
+}
+
+.installRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 5.5rem;
+  padding: 0.9rem 1.1rem;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease;
+}
+
+.installRow:hover {
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.installIcon {
+  flex-shrink: 0;
+  color: #64748b;
+  transition: color 150ms ease;
+}
+
+.installRow:hover .installIcon {
+  color: #94a3b8;
+}
+
+.installPre {
+  margin: 0;
+  white-space: pre;
+  overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+}
+
+.installPre code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #e2e8f0;
+}
+
+@media (max-width: 640px) {
+  .installWidget { max-width: 100%; }
+  .installRow { padding: 0.8rem 0.9rem; }
 }

@@ -7,7 +7,7 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import requests
 
@@ -104,6 +104,35 @@ class WebexSpaceDiscovery:
             "last_errors": dict(self._last_errors),
         }
 
+    def inspect_space(self, *, bot_id: str, space_id: str) -> dict[str, Any]:
+        """Verify bot membership and return provider-owned publication metadata."""
+
+        canonical_id = canonicalize_webex_space_id(space_id)
+        result = self.list_spaces(bot_id=bot_id)
+        space = next(
+            (
+                candidate
+                for candidate in result.spaces
+                if str(candidate.get("id") or "") == canonical_id
+            ),
+            None,
+        )
+        if space is None:
+            raise ValueError("The configured Webex bot is not a member of this space")
+        bot = configured_webex_bot(bot_id)
+        if bot is None:
+            raise ValueError(f"Unknown Webex bot: {bot_id}")
+        token = os.environ.get(bot.token_env, "").strip()
+        if not token:
+            raise RuntimeError(f'Webex bot "{bot.name}" is not configured')
+        provider_room_id = str(space.get("webex_room_id") or space["id"])
+        return {
+            "bot_id": bot.id,
+            "space_id": canonical_id,
+            "space_name": str(space.get("name") or canonical_id),
+            "member_count": self._fetch_room_member_count(token, provider_room_id),
+        }
+
     def _fetch_all_rooms(self, token: str) -> list[dict[str, Any]]:
         spaces: list[dict[str, Any]] = []
         url: str | None = (
@@ -129,6 +158,30 @@ class WebexSpaceDiscovery:
 
         spaces.sort(key=lambda space: str(space["name"]).casefold())
         return spaces
+
+    def _fetch_room_member_count(self, token: str, room_id: str) -> int:
+        member_count = 0
+        url: str | None = "https://webexapis.com/v1/memberships?" + urlencode(
+            {"roomId": room_id, "max": 1000}
+        )
+        for _page in range(MAX_WEBEX_PAGES):
+            if not url:
+                return member_count
+            response = self._request_get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            items = payload.get("items", []) if isinstance(payload, dict) else []
+            if not isinstance(items, list):
+                raise RuntimeError("Webex returned an invalid memberships response")
+            member_count += len(items)
+            url = _next_page_url(response, payload)
+        if url:
+            raise RuntimeError("Webex space membership exceeds the inspection limit")
+        return member_count
 
 
 def _normalize_room(candidate: object) -> dict[str, Any] | None:

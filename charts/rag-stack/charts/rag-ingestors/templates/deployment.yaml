@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/ingestor-type: {{ $ingestor.type }}
     app.kubernetes.io/ingestor-name: {{ $ingestor.name }}
 spec:
-  replicas: 1
+  replicas: {{ $ingestor.replicas | default 1 }}
   revisionHistoryLimit: {{ $.Values.revisionHistoryLimit }}
   selector:
     matchLabels:
@@ -50,27 +50,78 @@ spec:
       {{- end }}
       containers:
         - name: ingestor
-          image: "{{ include "rag-ingestors.imageRepository" (dict "root" $ "repository" $.Values.image.repository) }}:{{ $.Values.image.tag | default (include "rag-ingestors.appVersion" $) }}"
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default (include "rag-ingestors.appVersion" $) }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           {{- with $.Values.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
+            {{- $global := $.Values.global | default dict }}
+            {{- $rag := $global.rag | default dict }}
+            {{- $oidc := $rag.ingestorOidc | default dict }}
+            {{- $secretRef := $oidc.clientSecretRef | default dict }}
+            {{- $customEnv := $ingestor.env | default dict }}
+            {{- $initDelaySeconds := 60 }}
+            {{- if hasKey $ingestor "initDelaySeconds" }}
+            {{- $initDelaySeconds = $ingestor.initDelaySeconds }}
+            {{- end }}
             # Core ingestor configuration
+            {{- if not (hasKey $customEnv "INGESTOR_TYPE") }}
             - name: INGESTOR_TYPE
               value: {{ $ingestor.type | quote }}
+            {{- end }}
+            {{- if not (hasKey $customEnv "RAG_SERVER_URL") }}
             - name: RAG_SERVER_URL
               value: {{ include "rag-ingestors.ragServerUrl" (list $ingestor $) | quote }}
+            {{- end }}
+            {{- if not (hasKey $customEnv "REDIS_URL") }}
+            - name: REDIS_URL
+              value: {{ include "rag-ingestors.redisUrl" $ | quote }}
+            {{- end }}
+            {{- if not (hasKey $customEnv "LOG_LEVEL") }}
             - name: LOG_LEVEL
               value: {{ $ingestor.logLevel | default "INFO" | quote }}
+            {{- end }}
             
-            # Sync configuration
+            # Deployment-managed ingestors retain a fixed refresh interval.
+            # UI-managed ingestors schedule from their datasource records and
+            # omit this setting.
+            {{- if and (hasKey $ingestor "syncInterval") (not (hasKey $customEnv "SYNC_INTERVAL")) }}
             - name: SYNC_INTERVAL
-              value: {{ $ingestor.syncInterval | default 86400 | quote }}
+              value: {{ $ingestor.syncInterval | quote }}
+            {{- end }}
+            {{- if not (hasKey $customEnv "INIT_DELAY_SECONDS") }}
             - name: INIT_DELAY_SECONDS
-              value: {{ $ingestor.initDelaySeconds | default 60 | quote }}
-            
+              value: {{ $initDelaySeconds | quote }}
+            {{- end }}
+
+            # Shared RAG transport authentication. Per-ingestor env values take
+            # precedence over these umbrella defaults.
+            {{- if and $oidc.issuer (not (hasKey $customEnv "INGESTOR_OIDC_ISSUER")) }}
+            - name: INGESTOR_OIDC_ISSUER
+              value: {{ tpl $oidc.issuer $ | quote }}
+            {{- end }}
+            {{- if and $oidc.discoveryUrl (not (hasKey $customEnv "INGESTOR_OIDC_DISCOVERY_URL")) }}
+            - name: INGESTOR_OIDC_DISCOVERY_URL
+              value: {{ tpl $oidc.discoveryUrl $ | quote }}
+            {{- end }}
+            {{- if and $oidc.clientId (not (hasKey $customEnv "INGESTOR_OIDC_CLIENT_ID")) }}
+            - name: INGESTOR_OIDC_CLIENT_ID
+              value: {{ $oidc.clientId | quote }}
+            {{- end }}
+            {{- if and $oidc.scope (not (hasKey $customEnv "INGESTOR_OIDC_SCOPE")) }}
+            - name: INGESTOR_OIDC_SCOPE
+              value: {{ $oidc.scope | quote }}
+            {{- end }}
+            {{- if and $secretRef.name (not (hasKey $customEnv "INGESTOR_OIDC_CLIENT_SECRET")) }}
+            - name: INGESTOR_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl $secretRef.name $ | quote }}
+                  key: {{ $secretRef.key | default "INGESTOR_OIDC_CLIENT_SECRET" | quote }}
+            {{- end }}
+
             # Custom environment variables from ingestor config
             {{- range $key, $value := $ingestor.env }}
             - name: {{ $key }}
@@ -115,4 +166,3 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}
-

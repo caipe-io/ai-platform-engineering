@@ -43,6 +43,19 @@ spec:
             - name: OPENFGA_SEED_TUPLES
               value: {{ .Values.init.seedTuples | toJson | quote }}
             {{- end }}
+            {{- if .Values.init.platformClient.enabled }}
+            - name: KEYCLOAK_TOKEN_URL
+              value: {{ include "openfga.platformClientTokenUrl" . | quote }}
+            - name: KEYCLOAK_PLATFORM_CLIENT_ID
+              value: {{ .Values.init.platformClient.clientId | quote }}
+            - name: OPENFGA_ORG_OBJECT
+              value: {{ .Values.init.platformClient.orgObject | quote }}
+            - name: KEYCLOAK_PLATFORM_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "openfga.init.platformClient.clientSecretRef.name is required when platformClient seeding is enabled" .Values.init.platformClient.clientSecretRef.name | quote }}
+                  key: {{ .Values.init.platformClient.clientSecretRef.key | quote }}
+            {{- end }}
           volumeMounts:
             - name: openfga-model
               mountPath: /model

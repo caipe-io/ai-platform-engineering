@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { isLightColorTheme } from "@/lib/color-theme";
 import { cn } from "@/lib/utils";
 import { AnimatePresence,motion } from "framer-motion";
 import {
@@ -12,7 +13,7 @@ Palette,
 Settings,
 Sun,
 } from "lucide-react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/theme-provider";
 import * as React from "react";
 
 const themes = [
@@ -26,7 +27,13 @@ const themes = [
     value: "light",
     label: "Light",
     icon: Sun,
-    description: "Light background for bright environments",
+    description: "Balanced tonal surfaces and brand color",
+  },
+  {
+    value: "legacy-light",
+    label: "Legacy Light",
+    icon: Sun,
+    description: "Original bright neutral palette",
   },
   {
     value: "system",
@@ -184,7 +191,7 @@ export function ThemeToggle() {
 
             <div className="p-2 border-t border-border/50 bg-muted/30">
               <p className="text-[10px] text-muted-foreground text-center">
-                Current: {resolvedTheme === "dark" || resolvedTheme?.includes("dark") ? "Dark" : "Light"} mode
+                Current: {isLightColorTheme(resolvedTheme) ? "Light" : "Dark"} mode
               </p>
             </div>
           </motion.div>
@@ -211,7 +218,7 @@ export function ThemeQuickToggle() {
     );
   }
 
-  const isDark = resolvedTheme === "dark" || resolvedTheme?.includes("night") || resolvedTheme === "midnight" || resolvedTheme === "nord" || resolvedTheme === "cyberpunk" || resolvedTheme === "tron" || resolvedTheme === "matrix";
+  const isDark = !isLightColorTheme(resolvedTheme);
 
   return (
     <Button

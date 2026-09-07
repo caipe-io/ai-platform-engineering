@@ -113,7 +113,7 @@ describe("POST /api/rag/sources/[sourceId]/adopt", () => {
     const { POST } = await import("../route");
 
     const response = await POST(
-      postRequest({ owner_team_slug: "platform", shared_with_teams: ["sre"] }),
+      postRequest({ owner_team_slug: "platform" }),
       params(),
     );
     const json = await response.json();
@@ -122,8 +122,33 @@ describe("POST /api/rag/sources/[sourceId]/adopt", () => {
     expect(json.data).toMatchObject({ config_driven: false, config_import_adopted: true });
     expect(mockAdoptConfigImportedRagSources).toHaveBeenCalledWith(
       ["slack-channel-C1"],
-      { ownerTeamSlug: "platform", sharedTeamSlugs: ["sre"] },
+      { ownerTeamSlug: "platform" },
     );
+  });
+
+  it("rejects the removed management-sharing field", async () => {
+    const { POST } = await import("../route");
+
+    const response = await POST(
+      postRequest({ owner_team_slug: "platform", shared_with_teams: ["secondary"] }),
+      params(),
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(json.code).toBe("MANAGEMENT_SHARING_NOT_SUPPORTED");
+    expect(mockAdoptConfigImportedRagSources).not.toHaveBeenCalled();
+  });
+
+  it("requires one management owner team", async () => {
+    const { POST } = await import("../route");
+
+    const response = await POST(postRequest({}), params());
+    const json = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(json.code).toBe("OWNER_TEAM_REQUIRED");
+    expect(mockAdoptConfigImportedRagSources).not.toHaveBeenCalled();
   });
 
   // T056

@@ -173,11 +173,13 @@ function healthResponse(capabilities: Capability[] = HEALTHY_CAPABILITIES, probe
 }
 
 async function setupWithHealth(page: Page, body = healthResponse()) {
+  const requests = { health: 0 };
   await installMockedRbacApp(page, {
     isAdmin: true,
     handlers: [
       async ({ route, path }) => {
         if (path === "/api/platform/health") {
+          requests.health += 1;
           await fulfillJson(route, body, body.status === "down" ? 503 : 200);
           return true;
         }
@@ -210,41 +212,36 @@ async function setupWithHealth(page: Page, body = healthResponse()) {
   await page.goto("/");
   await dismissReleaseUpgradeDialog(page);
   await page.waitForLoadState("networkidle");
+  return requests;
 }
 
-async function openHealthPopover(page: Page, statusPattern: RegExp = /system status: healthy/i) {
-  await dismissReleaseUpgradeDialog(page);
-  const badge = page.getByRole("button", { name: statusPattern });
-  await expect(badge).toBeVisible();
-  await badge.click({ force: true });
-  await expect(page.getByText("System Status")).toBeVisible();
-}
-
-test.describe("Platform Health widget", () => {
+test.describe("Platform Health page", () => {
   test.beforeEach(() => {
     if (!mockedRbacEnabled()) {
       test.skip(true, "Set RUN_RBAC_E2E=1 to run platform health e2e tests.");
     }
   });
 
-  test("healthy response keeps the header compact", async ({ page }) => {
-    await setupWithHealth(page);
+  test("checks platform health only on the admin Health page", async ({ page }) => {
+    const requests = await setupWithHealth(page);
 
-    const badge = page.getByRole("button", { name: /system status: healthy/i });
-    await expect(badge).toBeVisible();
-    await expect(badge).not.toContainText("Healthy");
+    await expect(
+      page.getByRole("button", { name: /system status:/i }),
+    ).toHaveCount(0);
+    expect(requests.health).toBe(0);
 
-    await openHealthPopover(page);
-    const healthLink = page.getByRole("link", { name: /open admin health status/i });
-    await expect(healthLink).toHaveAttribute("href", /\/admin\?cat=platform&tab=health$/);
-    await expect(page.getByText("Platform", { exact: true })).toBeVisible();
+    await page.goto("/admin/operations/health");
+    await dismissReleaseUpgradeDialog(page);
+    await expect(page).toHaveURL(/\/admin\/operations\/health$/);
+    await expect.poll(() => requests.health).toBeGreaterThan(0);
+    await expect(page.getByText("System Status: Healthy")).toBeVisible();
     await expect(page.getByText("Chat Runtime", { exact: true })).toBeVisible();
     await expect(page.getByText("Audit Service")).toBeVisible();
-    await expect(page.getByRole("button", { name: /open health dashboard/i })).toHaveCount(0);
-
-    await healthLink.click();
-    await expect(page).toHaveURL(/\/admin\?cat=platform&tab=health$/);
-    await expect(page.getByRole("tab", { name: "Health", selected: true })).toBeVisible();
+    await expect(
+      page
+        .getByRole("navigation",{ name: "Admin sections" })
+        .getByRole("link",{ exact: true,name: "Health" }),
+    ).toHaveAttribute("aria-current","page");
   });
 
   test("audit-service capability degradation is visible but non-blocking", async ({ page }) => {
@@ -260,12 +257,7 @@ test.describe("Platform Health widget", () => {
     );
     await setupWithHealth(page, healthResponse(capabilities));
 
-    await expect(page.getByRole("button", { name: /system status: degraded/i })).toBeVisible();
-    await openHealthPopover(page, /system status: degraded/i);
-    await expect(page.getByText("Audit Service")).toBeVisible();
-    await expect(page.getByText(/queue worker is not running/)).toBeVisible();
-
-    await page.goto("/admin?cat=platform&tab=health");
+    await page.goto("/admin/operations/health");
     await dismissReleaseUpgradeDialog(page);
     await expect(page.getByText("Platform Capabilities", { exact: true })).toBeVisible();
     await expect(page.getByText("Audit Service")).toBeVisible();
@@ -286,7 +278,7 @@ test.describe("Platform Health widget", () => {
     );
     await setupWithHealth(page, healthResponse(capabilities));
 
-    await page.goto("/admin?cat=platform&tab=health");
+    await page.goto("/admin/operations/health");
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByText("System Status: Degraded")).toBeVisible();
@@ -306,8 +298,14 @@ test.describe("Platform Health widget", () => {
     );
     await setupWithHealth(page, healthResponse(capabilities));
 
-    await expect(page.getByRole("button", { name: /system status: degraded/i })).toBeVisible();
-    await openHealthPopover(page, /system status: degraded/i);
+    await page.goto("/admin/operations/health");
+    await dismissReleaseUpgradeDialog(page);
+    await expect(page.getByText("System Status: Degraded")).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Inspect Knowledge Bases health details",
+      }),
+    ).toBeVisible();
     await expect(page.getByText("Knowledge Bases health check returned HTTP 503")).toBeVisible();
     await expect(page.getByText(/need attention/i)).toHaveCount(0);
   });
@@ -324,9 +322,9 @@ test.describe("Platform Health widget", () => {
     );
     await setupWithHealth(page, healthResponse(capabilities));
 
-    await expect(page.getByRole("button", { name: /system status: degraded/i })).toBeVisible();
-    await openHealthPopover(page, /system status: degraded/i);
-    await expect(page.getByText("Down")).toBeVisible();
+    await page.goto("/admin/operations/health");
+    await dismissReleaseUpgradeDialog(page);
+    await expect(page.getByText("System Status: Down")).toBeVisible();
     await expect(page.getByText("Chat Runtime", { exact: true })).toBeVisible();
     await expect(page.getByText("Chat runtime health check returned HTTP 503")).toBeVisible();
   });
@@ -334,10 +332,14 @@ test.describe("Platform Health widget", () => {
   test("admin Health tab shows capabilities, not integration diagnostics", async ({ page }) => {
     await setupWithHealth(page);
 
-    await page.goto("/admin?cat=platform&tab=health");
+    await page.goto("/admin/operations/health");
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByRole("tab", { name: "Health", selected: true })).toBeVisible();
+    await expect(
+      page
+        .getByRole("navigation",{ name: "Admin sections" })
+        .getByRole("link",{ exact: true,name: "Health" }),
+    ).toHaveAttribute("aria-current","page");
     await expect(page.getByText("Platform Capabilities", { exact: true })).toBeVisible();
     await expect(page.getByText("Chat Runtime", { exact: true })).toBeVisible();
     await expect(page.getByText("Checks the runtime health endpoint used by the chat experience.")).toBeVisible();

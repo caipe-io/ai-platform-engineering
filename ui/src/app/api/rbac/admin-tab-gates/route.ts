@@ -48,6 +48,7 @@ const ALL_TABS: AdminTabKey[] = [
   "action_audit",
   "openfga",
   "migrations",
+  "approvals",
   "service_accounts",
 ];
 
@@ -424,6 +425,12 @@ async function getAdminTabGates(request?: NextRequest) {
 
     for (const tab of ALL_TABS) {
       if (tab === "credentials" || tab === "service_accounts") continue;
+      if (tab === "approvals") {
+        // Everyone can review the status of their own requests. The queue API
+        // separately decides whether the viewer may see and act on other
+        // people's requests.
+        continue;
+      }
       if (tab === "dynamic_agent_conversations") {
         if (!isAdmin) {
           batchEntries.push({
@@ -501,6 +508,10 @@ async function getAdminTabGates(request?: NextRequest) {
         }
         continue;
       }
+      if (tab === "approvals") {
+        gates[tab] = true;
+        continue;
+      }
       if (tab === "dynamic_agent_conversations") {
         gates[tab] = isAdmin || (primaryAllowed.get(tab) ?? false);
         continue;
@@ -540,6 +551,8 @@ async function getAdminTabGates(request?: NextRequest) {
       } else {
         allowed = isAdmin || (actor ? await hasDynamicAgentConversationsRead(actor) : false);
       }
+    } else if (tab === "approvals") {
+      allowed = Boolean(actor);
     } else if (tab === "service_accounts" && simulatedUser) {
       allowed = simulatedOrganizationAdmin || await isMemberOfAnyTeam(simulatedUser);
     } else {

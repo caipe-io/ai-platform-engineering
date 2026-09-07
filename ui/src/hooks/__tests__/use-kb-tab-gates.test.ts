@@ -29,6 +29,7 @@ describe("useKbTabGates", () => {
     expect(result.current.gates).toEqual({
       search: true,
       data_sources: true,
+      collections: true,
       graph: true,
       mcp_tools: true,
       has_any_kb: true,

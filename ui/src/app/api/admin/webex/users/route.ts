@@ -23,7 +23,7 @@ type WebexUserRow = {
   email?: string;
   display_name?: string;
   webex_user_id: string;
-  link_status: "linked" | "pending" | "unlinked";
+  link_status: "linked" | "unlinked";
   enabled?: boolean;
   teams: string[];
   last_interaction: string | null;
@@ -77,28 +77,6 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const webexIdsLinked = new Set(linked.map((l) => l.webex_user_id));
 
-  let pendingSet = new Set<string>();
-  try {
-    const nonceColl = await getCollection<{
-      webex_user_id: string;
-      expires_at?: Date;
-      created_at?: Date;
-      consumed?: boolean;
-    }>("webex_link_nonces");
-    const now = Date.now();
-    const ttlMs = 10 * 60 * 1000;
-    const pendingRows = await nonceColl
-      .find({
-        consumed: { $ne: true },
-        $or: [{ expires_at: { $gt: new Date() } }, { created_at: { $gte: new Date(now - ttlMs) } }],
-      })
-      .project({ webex_user_id: 1 })
-      .toArray();
-    pendingSet = new Set(pendingRows.map((r) => r.webex_user_id));
-  } catch {
-    pendingSet = new Set();
-  }
-
   const unlinkedFromMetrics: Array<{ webex_user_id: string }> = [];
   try {
     const metricsColl = await getCollection<WebexUserMetrics>("webex_user_metrics");
@@ -123,12 +101,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     if ("unlinked" in row && row.unlinked) {
       return status === "all" || status === "unlinked";
     }
-    const isPending = pendingSet.has(row.webex_user_id);
-    if (status === "all") return true;
-    if (status === "unlinked") return false;
-    if (status === "pending") return isPending;
-    if (status === "linked") return !isPending;
-    return true;
+    return status !== "unlinked";
   });
 
   const total = filtered.length;
@@ -174,15 +147,13 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         metrics = (await metricsColl.findOne({ webex_user_id: r.webex_user_id })) ?? {};
       }
 
-      const isPending = pendingSet.has(r.webex_user_id);
-
       return {
         keycloak_user_id: r.keycloak_user_id,
         username: r.username,
         email: r.email,
         display_name: r.display_name,
         webex_user_id: r.webex_user_id,
-        link_status: isPending ? ("pending" as const) : ("linked" as const),
+        link_status: "linked" as const,
         enabled: r.enabled,
         teams: teamNames,
         last_interaction: metrics.last_interaction_at?.toISOString() ?? null,

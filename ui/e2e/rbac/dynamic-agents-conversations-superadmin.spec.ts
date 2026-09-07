@@ -10,8 +10,8 @@ import {
 } from "./_mocked-rbac";
 
 const adminSession = {
-  email: "sraradhy@cisco.com",
-  name: "Sri Aradhyula",
+  email: "user@example.com",
+  name: "Example User",
   role: "admin" as const,
   canViewAdmin: true,
 };
@@ -157,7 +157,7 @@ function installConversationRoutes(options: {
   };
 }
 
-test.describe("mocked RBAC Dynamic Agent conversations", () => {
+test.describe("mocked RBAC Dynamic Agents workspace", () => {
   test.beforeEach(() => {
     test.skip(
       !mockedRbacEnabled(),
@@ -186,16 +186,22 @@ test.describe("mocked RBAC Dynamic Agent conversations", () => {
     await page.goto("/dynamic-agents?tab=conversations", { waitUntil: "domcontentloaded" });
 
     await expect(page).toHaveURL(/\/dynamic-agents\?tab=conversations/);
-    await expect(page.getByRole("tab", { name: "Conversations" })).toHaveAttribute("data-state", "active");
-    await expect(page.getByText("View and manage Dynamic Agent conversations.")).toBeVisible();
+    const navigation = page.getByRole("navigation", { name: "Agent sections" });
+    await expect(navigation.getByRole("button", { name: /Conversations/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(
+      page.getByText("Review agent conversations and manage their checkpoint history."),
+    ).toBeVisible();
     await expect(page.getByText("You do not have permission to access this resource.")).toHaveCount(0);
     await expect(page.getByText("3 conversations found")).toBeVisible();
 
     await expect(page.getByText("Slack incident bridge")).toBeVisible();
-    await expect(page.getByText("Incident Commander")).toHaveCount(3);
+    await expect(page.getByText("Incident Commander")).toHaveCount(2);
     await expect(page.getByText("Slack", { exact: true })).toBeVisible();
     await expect(page.getByText("Web cost review")).toBeVisible();
-    await expect(page.getByText("FinOps Analyst")).toHaveCount(2);
+    await expect(page.getByText("FinOps Analyst")).toHaveCount(1);
     await expect(page.getByText("Archived audit trail")).toBeVisible();
     await expect(page.getByText("Archived", { exact: true })).toBeVisible();
     await expect(page.getByText("Showing 1–3 of 3")).toBeVisible();
@@ -225,6 +231,60 @@ test.describe("mocked RBAC Dynamic Agent conversations", () => {
     expect(conversationRequests[0].searchParams.get("page_size")).toBe("10");
   });
 
+  test("discloses separate Model Providers and LLM Models views", async ({ page }) => {
+    const modelRoutes: MockRouteHandler = async ({ method,path,route }) => {
+      if (path === "/api/llm-models" && method === "GET") {
+        await fulfillJson(route,{ success: true,data: { items: [] } });
+        return true;
+      }
+      if (path === "/api/credentials/secrets" && method === "GET") {
+        await fulfillJson(route,{ data: [] });
+        return true;
+      }
+      return false;
+    };
+
+    await installMockedRbacApp(page,{
+      handlers: [modelRoutes],
+      isAdmin: true,
+      session: adminSession,
+    });
+    await page.goto("/dynamic-agents?tab=agents",{ waitUntil: "domcontentloaded" });
+
+    const navigation = page.getByRole("navigation",{ name: "Agent sections" });
+    const modelsDisclosure = navigation.locator("button[aria-controls]",{
+      hasText: /^Models$/,
+    });
+    await expect(modelsDisclosure).toHaveAttribute("aria-expanded","false");
+    await modelsDisclosure.click();
+    await expect(modelsDisclosure).toHaveAttribute("aria-expanded","true");
+
+    await navigation.getByRole("button",{ name: "Model Providers" }).click();
+    await expect(page).toHaveURL(/tab=model-providers/);
+    await expect(page.getByText("Model Providers",{ exact: true }).last()).toBeVisible();
+    const breadcrumb = page.getByRole("navigation",{ name: "Breadcrumb" });
+    await expect(breadcrumb.getByRole("link",{ name: "Agents" })).toHaveAttribute(
+      "href",
+      "/dynamic-agents?tab=agents",
+    );
+    await expect(breadcrumb.getByRole("link",{ name: "Models" })).toHaveAttribute(
+      "href",
+      "/dynamic-agents?tab=model-providers",
+    );
+    await expect(breadcrumb.getByRole("link",{ name: "Model Providers" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    const childrenId = await modelsDisclosure.getAttribute("aria-controls");
+    const modelChildren = page.locator(`#${childrenId}`);
+    await modelChildren.getByRole("button",{ exact: true,name: "LLM Models" }).click();
+    await expect(page).toHaveURL(/tab=llm-models/);
+    await expect(
+      modelChildren.getByRole("button",{ exact: true,name: "LLM Models" }),
+    ).toHaveAttribute("aria-current","page");
+  });
+
   test("search, agent filter, refresh, and page size use the Conversations API parameters", async ({
     page,
   }) => {
@@ -245,16 +305,17 @@ test.describe("mocked RBAC Dynamic Agent conversations", () => {
     await expect(page.getByText("3 conversations found")).toBeVisible();
 
     await page.getByPlaceholder("Search by ID, title, or owner...").fill("cost");
-    await page.getByRole("button", { name: "Search" }).click();
+    await page.getByRole("button", { exact: true, name: "Search" }).click();
     await expect(page.getByText("1 conversation found")).toBeVisible();
     await expect(page.getByText("Web cost review")).toBeVisible();
     await expect(page.getByText("Slack incident bridge")).toHaveCount(0);
 
-    const agentSelect = page.locator("select").first();
-    await agentSelect.selectOption("agent-finops");
+    const agentPicker = page.getByRole("combobox", { name: "Filter conversations by agent" });
+    await agentPicker.click();
+    await page.getByRole("option", { name: /FinOps Analyst/ }).click();
     await expect(page.getByText("1 conversation found")).toBeVisible();
 
-    const rowsSelect = page.locator("label", { hasText: "Rows" }).locator("..").locator("select");
+    const rowsSelect = page.getByLabel("Rows per page");
     await rowsSelect.selectOption("20");
     await expect(page.getByText("Showing 1–1 of 1")).toBeVisible();
 
@@ -330,8 +391,14 @@ test.describe("mocked RBAC Dynamic Agent conversations", () => {
 
     await page.goto("/dynamic-agents?tab=conversations", { waitUntil: "domcontentloaded" });
 
-    await expect(page.getByRole("tab", { name: "Conversations" })).toHaveCount(0);
-    await expect(page.getByRole("tab", { name: "Agents" })).toHaveAttribute("data-state", "active");
-    await expect(page.getByText("View and manage Dynamic Agent conversations.")).toHaveCount(0);
+    const navigation = page.getByRole("navigation", { name: "Agent sections" });
+    await expect(navigation.getByRole("button", { name: /Conversations/ })).toHaveCount(0);
+    await expect(navigation.getByRole("button", { name: /Agents/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(
+      page.getByText("Review agent conversations and manage their checkpoint history."),
+    ).toHaveCount(0);
   });
 });

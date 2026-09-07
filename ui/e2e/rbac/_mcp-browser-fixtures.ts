@@ -2,7 +2,10 @@
 
 import { expect, type Page } from "@playwright/test";
 
-import { dismissReleaseUpgradeDialog } from "./_helpers";
+import {
+  chooseSearchablePickerOption,
+  dismissReleaseUpgradeDialog,
+} from "./_helpers";
 import {
   fulfillJson,
   installMockedRbacApp,
@@ -626,11 +629,11 @@ export async function waitForMcpTestToolsLoaded(page: Page): Promise<void> {
 }
 
 export async function selectAgentGatewayTarget(page: Page, targetLabel: string | RegExp): Promise<void> {
-  await page.getByRole("combobox", { name: /agentgateway target/i }).click();
-  await page.getByRole("textbox", { name: /search targets/i }).fill(
-    typeof targetLabel === "string" ? targetLabel : "",
+  await chooseSearchablePickerOption(
+    page,
+    page.getByRole("combobox", { name: /agentgateway target/i }),
+    targetLabel,
   );
-  await page.getByRole("option", { name: targetLabel }).click();
 }
 
 /** Reads the currently-selected tool name off the `#mcp-test-tool` AgentPicker trigger. */

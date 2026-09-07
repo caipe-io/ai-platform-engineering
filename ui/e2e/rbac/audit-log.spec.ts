@@ -239,7 +239,7 @@ test.describe("audit log — mocked regression", () => {
       handlers: [makeAuditConfigHandler(), makeAuditEventsHandler(baseAuditRecords(), queries)],
     });
 
-    await page.goto("/admin?cat=security&tab=action-audit", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/security/rbac-audit", { waitUntil: "domcontentloaded" });
 
     await expect(page.getByText("RBAC Audit Log", { exact: true })).toBeVisible();
     await expect(page.getByText("Storage: S3 s3://caipe-audit/audit")).toBeVisible();
@@ -270,12 +270,12 @@ test.describe("audit log — mocked regression", () => {
       handlers: [makeAuditConfigHandler(), makeAuditEventsHandler(baseAuditRecords(), queries)],
     });
 
-    await page.goto("/admin?cat=security&tab=action-audit", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/security/rbac-audit", { waitUntil: "domcontentloaded" });
     await expect(page.getByText("3 events found")).toBeVisible();
 
-    await page.locator("select").first().selectOption("6h");
-    await page.locator("select").nth(1).selectOption("cas_decision");
-    await page.locator("select").nth(2).selectOption("deny");
+    await page.getByLabel("Audit time range").selectOption("6h");
+    await page.getByLabel("Audit event type").selectOption("cas_decision");
+    await page.getByLabel("Audit outcome").selectOption("deny");
     await page.getByPlaceholder("User email...").fill("alice@caipe.local");
     await page.getByRole("button", { name: /^Search$/ }).click();
 
@@ -287,7 +287,7 @@ test.describe("audit log — mocked regression", () => {
     expect(presetQuery?.searchParams.get("outcome")).toBe("deny");
     expect(presetQuery?.searchParams.get("user_email")).toBe("alice@caipe.local");
 
-    await page.locator("select").first().selectOption("custom");
+    await page.getByLabel("Audit time range").selectOption("custom");
     await page.locator('input[type="datetime-local"]').first().fill("2026-06-20T08:00");
     await page.locator('input[type="datetime-local"]').nth(1).fill("2026-06-20T14:00");
     await page.getByRole("button", { name: /^Search$/ }).click();
@@ -328,7 +328,7 @@ test.describe("audit log — mocked regression", () => {
       handlers: [makeAuditConfigHandler(), makeAuditEventsHandler(records, queries)],
     });
 
-    await page.goto("/admin?cat=security&tab=action-audit", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/security/rbac-audit", { waitUntil: "domcontentloaded" });
     await expect(page.getByText("205 events found")).toBeVisible();
 
     const downloadPromise = page.waitForEvent("download");
@@ -373,7 +373,7 @@ test.describe("audit log — mocked regression", () => {
       ],
     });
 
-    await page.goto("/admin?cat=security&tab=action-audit", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/security/rbac-audit", { waitUntil: "domcontentloaded" });
 
     await expect(page.getByText("Storage: audit-service unavailable")).toBeVisible();
     await expect(page.getByText("1 event found")).toBeVisible();

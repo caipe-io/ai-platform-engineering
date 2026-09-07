@@ -1,23 +1,26 @@
-"use client";
-
-import { AppHeader } from "@/components/layout/AppHeader";
-import { LiveStreamBanner } from "@/components/layout/LiveStreamBanner";
-import { useUserInit } from "@/hooks/use-user-init";
+import {
+  APPLICATION_NAVIGATION_COLLAPSED_COOKIE,
+  isWorkspaceRailCollapsed,
+} from "@/lib/workspace-rail";
+import { cookies } from "next/headers";
 import React from "react";
+import { AppLayoutClient } from "./layout-client";
 
-export default function AppLayout({
+export default async function AppLayout({
   children,
 }: {
   children: React.ReactNode;
-}) {
-  // Initialize user in MongoDB on first login
-  useUserInit();
-  
+}): Promise<React.ReactElement> {
+  const cookieStore = await cookies();
+  const initialNavigationCollapsed = isWorkspaceRailCollapsed(
+    cookieStore.get(APPLICATION_NAVIGATION_COLLAPSED_COOKIE)?.value,
+  );
+
   return (
-    <div className="h-screen flex flex-col bg-background noise-overlay">
-      <AppHeader />
-      <LiveStreamBanner />
+    <AppLayoutClient
+      initialNavigationCollapsed={initialNavigationCollapsed}
+    >
       {children}
-    </div>
+    </AppLayoutClient>
   );
 }

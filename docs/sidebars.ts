@@ -113,6 +113,11 @@ const sidebars: SidebarsConfig = {
                     },
                     {
                       type: 'doc',
+                      id: 'installation/helm-charts/ai-platform-engineering/autonomous-agents-chart',
+                      label: 'autonomous-agents',
+                    },
+                    {
+                      type: 'doc',
                       id: 'installation/helm-charts/ai-platform-engineering/slack-bot-chart',
                       label: 'slack-bot',
                     },
@@ -199,6 +204,17 @@ const sidebars: SidebarsConfig = {
         { type: 'doc', id: 'repo-ops/issue-triage', label: 'Issue Triage Dashboard' },
         {
           type: 'category',
+          label: 'Advanced',
+          items: [
+            {
+              type: 'doc',
+              id: 'development/advanced/ci-infrastructure',
+              label: 'CI Infrastructure',
+            },
+          ],
+        },
+        {
+          type: 'category',
           label: 'Skills',
           items: [
             { type: 'doc', id: 'repo-ops/skills/index', label: 'Overview' },
@@ -218,10 +234,8 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'architecture/index', label: 'Solution Architecture' },
         { type: 'doc', id: 'architecture/gateway', label: 'AgentGateway' },
-        {
-          type: 'doc',
-          id: 'architecture/scheduler',
-        },
+        { type: 'doc', id: 'architecture/scheduler', label: 'Scheduler' },
+        { type: 'doc', id: 'architecture/autonomous-agents', label: 'Autonomous Agents' },
         {
           type: 'doc',
           id: 'architecture/enterprise-identity-federation',
@@ -230,7 +244,6 @@ const sidebars: SidebarsConfig = {
         { type: 'doc', id: 'architecture/slack-bot-authorization', label: 'Slack Bot Authorization' },
         { type: 'doc', id: 'architecture/slack-io-guardrails', label: 'Slack I/O Guardrails' },
         { type: 'doc', id: 'architecture/user-memory-design', label: 'User Memory' },
-        { type: 'doc', id: 'architecture/scheduler', label: 'Scheduler' },
         { type: 'doc', id: 'architecture/streaming_architecture', label: 'Streaming Architecture' },
       ],
     },
@@ -238,9 +251,10 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Features',
       items: [
-        { type: 'doc', id: 'features/custom-agents', label: 'Custom Agents' },
+        { type: 'doc', id: 'features/agent-builder', label: 'Agent Builder' },
         { type: 'doc', id: 'features/user-memory', label: 'User Memory' },
         { type: 'doc', id: 'features/workflows', label: 'Workflows' },
+        { type: 'doc', id: 'features/agentic-apps', label: 'External Apps' },
         {
           type: 'category',
           label: 'Rich Web UI',
@@ -251,6 +265,7 @@ const sidebars: SidebarsConfig = {
             { type: 'doc', id: 'ui/configuration', label: 'Configuration' },
             { type: 'doc', id: 'ui/customization', label: 'Customization & Branding' },
             { type: 'doc', id: 'ui/development', label: 'Development Guide' },
+            { type: 'doc', id: 'ui/selection-controls', label: 'Selection Controls' },
             { type: 'doc', id: 'ui/api-reference', label: 'API Reference' },
             { type: 'doc', id: 'ui/troubleshooting', label: 'Troubleshooting' },
           ],
@@ -378,43 +393,6 @@ const sidebars: SidebarsConfig = {
         },
       ],
     },
-    {
-      type: 'category',
-      label: 'CAIPE Labs',
-      items: [
-        {
-          type: 'doc',
-          id: 'workshop/caipeintro',
-          label: 'Introduction to CAIPE',
-        },
-        {
-          type: 'doc',
-          id: 'workshop/agent',
-          label: 'Introduction to AI Agents',
-        },
-        {
-          type: 'doc',
-          id: 'workshop/mas',
-          label: 'Multi-Agent System',
-        },
-        {
-          type: 'doc',
-          id: 'workshop/rag',
-          label: 'RAG (Retrieval-Augmented Generation)',
-        },
-        {
-          type: 'doc',
-          id: 'workshop/tracing',
-          label: 'Tracing',
-        },
-        {
-          type: 'doc',
-          id: 'workshop/conclusion',
-          label: 'Conclusion',
-        }
-      ],
-    },
-
   ],
   communitySidebar: [
     {

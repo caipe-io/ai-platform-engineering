@@ -25,7 +25,6 @@ jobs:
     outputs:
       should_build: ${{ steps.set-outputs.outputs.should_build }}
       tag_version: ${{ steps.version.outputs.tag_version }}
-      image_prefix: ${{ steps.set-outputs.outputs.image_prefix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -49,15 +48,9 @@ jobs:
 
           if [[ "$TAG_VERSION" =~ -chart\.[0-9]+$ ]]; then
             SHOULD_BUILD="false"
-            IMAGE_PREFIX=""
-          elif [[ "$TAG_VERSION" =~ -(rc|hotfix)\.[0-9]+ ]]; then
-            IMAGE_PREFIX="pre-release/"
-          else
-            IMAGE_PREFIX=""
           fi
 
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
-          echo "image_prefix=$IMAGE_PREFIX" >> "$GITHUB_OUTPUT"
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -66,7 +59,9 @@ jobs:
   build-and-push:
     runs-on: ${{ matrix.runner }}
     needs: determine-changes
-    if: needs.determine-changes.outputs.should_build == 'true'
+    if: |
+      needs.determine-changes.outputs.should_build == 'true' &&
+      (github.event_name != 'pull_request' || !startsWith(github.head_ref, 'prebuild/'))
     permissions:
       contents: read
       packages: write
@@ -82,11 +77,11 @@ jobs:
             arch: arm64
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}openfga-authz-bridge
+      IMAGE_NAME: ${{ github.repository_owner }}/openfga-authz-bridge
       DOCKERFILE: deploy/openfga/bridge/Dockerfile
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -94,7 +89,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -156,10 +151,10 @@ jobs:
       packages: write
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}openfga-authz-bridge
+      IMAGE_NAME: ${{ github.repository_owner }}/openfga-authz-bridge
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -171,7 +166,7 @@ jobs:
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4

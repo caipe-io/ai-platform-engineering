@@ -7,6 +7,7 @@ import { useCallback,useEffect,useRef,useState } from "react";
 
 const EMPTY_GATES: KbTabGatesMap = {
   search: false,
+  collections: false,
   data_sources: false,
   graph: false,
   mcp_tools: false,
@@ -18,6 +19,7 @@ const EMPTY_GATES: KbTabGatesMap = {
 
 const DEV_AUTH_GATES: KbTabGatesMap = {
   search: true,
+  collections: true,
   data_sources: true,
   graph: true,
   mcp_tools: true,
@@ -127,7 +129,11 @@ export function useKbTabGates(): KbTabGatesState {
       const [key, value] = entry;
       return (
         typeof value === "boolean" &&
-        (key === "search" || key === "data_sources" || key === "graph" || key === "mcp_tools") &&
+        (key === "search" ||
+          key === "collections" ||
+          key === "data_sources" ||
+          key === "graph" ||
+          key === "mcp_tools") &&
         value === true
       );
     })

@@ -187,5 +187,5 @@ If any are behind: list each file and line that needs updating.
 
 ## See also
 
-- [`.claude/skills/README.md`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.claude/skills/README.md) — full skill index
+- [`.claude/skills/README.md`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.claude/skills/README.md) — full skill index
 - [Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code) — slash commands and skill discovery

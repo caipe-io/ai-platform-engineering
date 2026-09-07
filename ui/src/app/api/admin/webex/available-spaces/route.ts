@@ -3,12 +3,17 @@ import { NextRequest } from "next/server";
 import {
   ApiError,
   getAuthFromBearerOrSession,
-  requireRbacPermission,
   successResponse,
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { callWebexBotAdmin } from "@/lib/webex-bot-admin";
 import { getDiscoveryCacheTtlMs } from "@/lib/rbac/discovery-cache-config";
+import {
+  activeConnectorPublicationRequestsByItemId,
+  connectorPublicationRequestView,
+  publicationActorFromSession,
+} from "@/lib/publication-approval.server";
+import { requireResourcePermission } from "@/lib/rbac/resource-authz";
 
 interface WebexBotOption {
   id: string;
@@ -47,7 +52,11 @@ function applyCursor(spaces: NormalizedSpace[], cursor: string | undefined): Nor
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const { user, session } = await getAuthFromBearerOrSession(request);
-  await requireRbacPermission(session, "admin_ui", "view");
+  await requireResourcePermission(
+    session,
+    { type: "admin_surface", id: "webex", action: "read" },
+    { bypassForOrgAdmin: true },
+  );
 
   const params = request.nextUrl.searchParams;
   const requestedBotId = params.get("bot_id")?.trim();
@@ -68,7 +77,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
     ? Math.min(parsedLimit, MAX_UI_LIMIT)
     : DEFAULT_UI_LIMIT;
-  const cacheTtlSeconds = Math.floor((await getDiscoveryCacheTtlMs()) / 1000);
+  const cacheTtlSeconds = Math.floor(
+    (await getDiscoveryCacheTtlMs("webex")) / 1000,
+  );
 
   const snapshots = await Promise.all(
     bots.map((bot) => callWebexBotAdmin<RuntimeSpacesResponse>(
@@ -85,6 +96,20 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     )),
   );
 
+  const actor = publicationActorFromSession(session);
+  const annotatePending = async (spaces: NormalizedSpace[]) => {
+    const pendingById = await activeConnectorPublicationRequestsByItemId(
+      "webex_space",
+      spaces.map((space) => space.id),
+    );
+    return spaces.map((space) => {
+      const pending = pendingById.get(space.id);
+      return pending
+        ? { ...space, pending_publication: connectorPublicationRequestView(pending, actor) }
+        : space;
+    });
+  };
+
   if (snapshots.length === 1) {
     const snapshot = snapshots[0];
     console.log(
@@ -92,10 +117,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     );
     return successResponse({
       ...snapshot,
-      spaces: snapshot.spaces.map((space) => ({
+      spaces: await annotatePending(snapshot.spaces.map((space) => ({
         ...space,
         available_bot_ids: [bots[0].id],
-      })),
+      }))),
       bots: bots.map(({ id, name }) => ({ id, name })),
     });
   }
@@ -115,7 +140,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const hasMore = afterCursor.length > limit;
 
   return successResponse({
-    spaces: page,
+    spaces: await annotatePending(page),
     total_matches: allSpaces.length,
     total_visible: allSpaces.length,
     next_cursor: hasMore ? page.at(-1)?.name ?? null : null,

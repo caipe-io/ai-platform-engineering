@@ -59,6 +59,7 @@ Each project key maps to a **list** of datasource configs. A single dict is also
 | `custom_fields` | no | `{}` | Map of friendly name to Jira field ID (e.g. `{"severity": "customfield_10202"}`) |
 | `include_comments` | no | `true` | Include issue comments in document content |
 | `include_links` | no | `true` | Include linked issues in document content |
+| `reload_interval` | no | `86400` | Refresh interval for this datasource in seconds |
 
 To find custom field IDs, browse to:
 `https://your-org.atlassian.net/rest/api/3/field`
@@ -68,7 +69,6 @@ To find custom field IDs, browse to:
 | Variable | Default | Description |
 |---|---|---|
 | `JIRA_PAGE_SIZE` | `100` | Number of issues per API request (max 100) |
-| `SYNC_INTERVAL` | `86400` | Sync interval in seconds (default 24h) |
 | `INIT_DELAY_SECONDS` | `0` | Delay before first sync in seconds |
 | `LOG_LEVEL` | `INFO` | Logging level |
 

@@ -27,7 +27,7 @@ services:
       - mcp-servers
 
   mcp-backstage:
-    image: ghcr.io/cnoe-io/mcp-backstage:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/mcp-backstage:${IMAGE_TAG:-0.5.66}
     container_name: mcp-backstage
     env_file: [.env]
     ports: ["18001:8000"]
@@ -49,7 +49,7 @@ services:
   # ArgoCD MCP
 
   mcp-argocd:
-    image: ghcr.io/cnoe-io/mcp-argocd:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/mcp-argocd:${IMAGE_TAG:-0.5.66}
     container_name: mcp-argocd
     env_file: [.env]
     ports: ["18002:8000"]
@@ -87,7 +87,7 @@ services:
   # Jira MCP
 
   mcp-jira:
-    image: ghcr.io/cnoe-io/mcp-jira:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/mcp-jira:${IMAGE_TAG:-0.5.66}
     container_name: mcp-jira
     env_file: [.env]
     ports: ["18004:8000"]
@@ -109,7 +109,7 @@ services:
   # Komodor MCP
 
   mcp-komodor:
-    image: ghcr.io/cnoe-io/mcp-komodor:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/mcp-komodor:${IMAGE_TAG:-0.5.66}
     container_name: mcp-komodor
     env_file: [.env]
     ports: ["18005:8000"]
@@ -130,7 +130,7 @@ services:
   # PagerDuty MCP
 
   mcp-pagerduty:
-    image: ghcr.io/cnoe-io/mcp-pagerduty:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/mcp-pagerduty:${IMAGE_TAG:-0.5.66}
     container_name: mcp-pagerduty
     env_file: [.env]
     ports: ["18006:8000"]
@@ -180,7 +180,7 @@ services:
   # Splunk
 
   mcp-splunk:
-    image: ghcr.io/cnoe-io/mcp-splunk:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/mcp-splunk:${IMAGE_TAG:-0.5.66}
     container_name: mcp-splunk
     env_file: [.env]
     ports: ["18008:8000"]
@@ -202,7 +202,7 @@ services:
   # Webex
 
   mcp-webex:
-    image: ghcr.io/cnoe-io/mcp-webex:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/mcp-webex:${IMAGE_TAG:-0.5.66}
     container_name: mcp-webex
     env_file: [.env]
     ports: ["18009:8000"]
@@ -224,7 +224,7 @@ services:
   # NetUtils MCP
 
   mcp-netutils:
-    image: ghcr.io/cnoe-io/mcp-netutils:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/mcp-netutils:${IMAGE_TAG:-0.5.66}
     container_name: mcp-netutils
     env_file: [.env]
     ports: ["18011:8000"]
@@ -267,6 +267,7 @@ services:
       start_period: 40s
     profiles:
       - caipe-mongodb
+      - autonomous-agents
 
   # MongoDB Admin UI (optional)
   caipe-ui-mongo-express:
@@ -297,13 +298,16 @@ services:
   #   - Configure via MONGODB_* environment variables
   #   - See mongodb service configuration above
   caipe-ui:
-    image: ghcr.io/cnoe-io/caipe-ui:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/caipe-ui:${IMAGE_TAG:-0.5.66}
     container_name: caipe-ui
     ports: ["3000:3000"]
     env_file:
       - .env
     environment:
       - NODE_ENV=production
+      # Safe release metadata shown by System Health. A specific
+      # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
+      - CAIPE_RELEASE_VERSION=${IMAGE_TAG:-0.5.66}
       # Pass the active Compose profile set through to the UI so product
       # health can show profile-enabled integrations as degraded/down even
       # when their container crashes before serving traffic.
@@ -352,6 +356,15 @@ services:
       - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-caipe-platform-dev-secret}
       # Workflow runner - set WORKFLOW_RUNNER_ENABLED=true to show Run Workflow button and Multi-Step Workflows
       - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
+      # Projects - set PROJECTS_ENABLED=true to show the Projects workspace
+      - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
+      # Top-level workflows and schedules are independent, opt-in navigation surfaces.
+      - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
+      - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-false}
+      # Compact header shortcut that reuses the existing feedback dialog.
+      - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
       # Connections & Secrets. Docker Compose reads provider bootstrap values
       # from .env; Kubernetes deployments use ESO to inject the same env names.
@@ -371,6 +384,12 @@ services:
       - WEBEX_CLIENT_ID=${WEBEX_CLIENT_ID:-}
       - WEBEX_CLIENT_SECRET=${WEBEX_CLIENT_SECRET:-}
       - WEBEX_REDIRECT_URI=${WEBEX_REDIRECT_URI:-}
+      # Autonomous Agents - URL the UI's /api/autonomous proxy targets.
+      # Add the autonomous-agents profile to start the upstream service.
+      # The Autonomous tab is admin-gated; in production grant the OIDC admin
+      # group, or set ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED=true ONLY for local dev.
+      - ENABLE_AUTONOMOUS_AGENTS=${ENABLE_AUTONOMOUS_AGENTS:-false}
+      - AUTONOMOUS_AGENTS_URL=${AUTONOMOUS_AGENTS_URL:-http://autonomous-agents:8002}
       # Audit log storage is owned by the lightweight Python audit-service.
       - AUDIT_LOG_BACKEND=${AUDIT_LOG_BACKEND:-service}
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
@@ -398,7 +417,7 @@ services:
     build:
       context: .
       dockerfile: build/Dockerfile.audit-service
-    image: ghcr.io/cnoe-io/caipe-audit-service:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/caipe-audit-service:${IMAGE_TAG:-0.5.66}
     container_name: audit-service
     ports:
       - "127.0.0.1:${AUDIT_SERVICE_PORT:-8010}:8010"
@@ -449,7 +468,7 @@ services:
   #                                      RAG Services                                                #
   ####################################################################################################
   rag-server:
-    image: ghcr.io/cnoe-io/caipe-rag-server:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/caipe-rag-server:${IMAGE_TAG:-0.5.66}
     container_name: rag-server
     # Network alias keeps the legacy `rag_server` hostname working for any
     # client that still has it hardcoded. AGW's hickory-dns resolver rejects
@@ -476,7 +495,6 @@ services:
       - ENABLE_GRAPH_RAG=${ENABLE_GRAPH_RAG:-true}
       - CLEANUP_INTERVAL=86400
       - EMBEDDINGS_MODEL=${EMBEDDINGS_MODEL:-text-embedding-3-large}
-      - RBAC_TEAM_SCOPE_ENABLED=${RBAC_TEAM_SCOPE_ENABLED:-true}
       - OPENFGA_HTTP=${OPENFGA_HTTP:-http://openfga:8080}
       - OPENFGA_STORE_NAME=${OPENFGA_STORE_NAME:-caipe-openfga}
       - CAIPE_UNSAFE_RBAC_BYPASS=${CAIPE_UNSAFE_RBAC_BYPASS:-false}
@@ -501,7 +519,7 @@ services:
   # Ports:
   #   - 8100: Dynamic Agents API (proxied via UI at /api/dynamic-agents)
   dynamic-agents:
-    image: ghcr.io/cnoe-io/caipe-dynamic-agents:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/caipe-dynamic-agents:${IMAGE_TAG:-0.5.66}
     container_name: dynamic-agents
     ports: ["8100:8001"]
     volumes:
@@ -526,6 +544,7 @@ services:
       # Centralized Authorization Service. Dynamic Agents delegates agent-use
       # decisions to the UI BFF and fails closed with 503 if this is unset.
       - AUTHZ_SERVICE_URL=${AUTHZ_SERVICE_URL:-http://caipe-ui:3000}
+      - CAIPE_ORG_KEY=${CAIPE_ORG_KEY:-caipe}
       # Tracing (Langfuse)
       - ENABLE_TRACING=${ENABLE_TRACING:-false}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
@@ -549,8 +568,83 @@ services:
     profiles:
       - dynamic-agents
 
+  ####################################################################################################
+  #                                    Autonomous Agents Service                                     #
+  ####################################################################################################
+  # Autonomous Agents - Standalone scheduler that fires tasks (cron / interval / webhook)
+  # at the dynamic-agents runtime. Tasks and run history are read/written via the UI's
+  # /api/autonomous proxy (admin-gated); this service is the upstream the proxy targets.
+  #
+  # Configuration:
+  #   - Runs each task against a dynamic agent via DYNAMIC_AGENTS_URL
+  #     (default http://dynamic-agents:8001); every task targets a dynamic_agent_id.
+  #   - Persists run history and task definitions to the same MongoDB the UI uses,
+  #     so the conversation deep-link in the Autonomous tab works end-to-end.
+  #
+  # Ports:
+  #   - 8002: Autonomous Agents API (proxied via UI at /api/autonomous, admin-only)
+  autonomous-agents:
+    image: ghcr.io/cnoe-io/caipe-autonomous-agents:${IMAGE_TAG:-0.2.36}
+    container_name: autonomous-agents
+    # Bind to loopback only -- the FastAPI service has no auth layer of
+    # its own; auth and admin gating live in the UI's /api/autonomous
+    # proxy. Publishing 0.0.0.0:8002 in production would let anyone on
+    # the host network bypass the UI gate by talking to the service
+    # directly. The UI proxy reaches us over the compose network using
+    # the service name regardless, so loopback publishing only affects
+    # off-host access (which we explicitly do not want). See PR #14
+    # review feedback.
+    ports: ["127.0.0.1:8002:8002"]
+    env_file: [.env]
+    environment:
+      # Dynamic-agents runtime endpoint -- every autonomous task runs against a
+      # dynamic agent (its tools / system prompt / middleware) selected by the
+      # task's dynamic_agent_id. Tasks surface a clear ack failure if this URL
+      # is unset. Only effective when the dynamic-agents profile is also active.
+      - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
+      # MongoDB persistence -- shared with the UI so the Autonomous tab's
+      # task list and run history come from the same source of truth.
+      # The caipe-mongodb service is auto-included via the
+      # autonomous-agents profile (added to its profiles list below),
+      # so a "--profile autonomous-agents" up brings Mongo along.
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
+      # IMP-13: publish completed autonomous runs into the UI
+      # conversations collection. OFF by default in production -- it
+      # writes to a shared collection that the UI also writes to and
+      # the implications (storage growth, cross-tenancy leak surface,
+      # multi-tenant isolation) need an operator decision. Dev compose
+      # turns it on so the "Open run" deep link in the Autonomous tab
+      # is exercised end-to-end.
+      - CHAT_HISTORY_PUBLISH_ENABLED=${CHAT_HISTORY_PUBLISH_ENABLED:-false}
+      - CHAT_HISTORY_OWNER_EMAIL=${CHAT_HISTORY_OWNER_EMAIL:-autonomous@system}
+      # Webhook HMAC fallback secret (set to a strong random value in production).
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      # CORS -- empty by default (UI talks via server-side proxy, browsers don't hit us).
+      - CORS_ORIGINS=${AUTONOMOUS_CORS_ORIGINS:-}
+    depends_on:
+      # Mongo IS effectively required (we default MONGODB_URI to it
+      # above) so wait for the healthcheck. ``required: false`` is the
+      # idiomatic way to express "if this service was started by the
+      # active profile selection, wait for it; otherwise don't error".
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      dynamic-agents:
+        condition: service_started
+        required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    profiles:
+      - autonomous-agents
+
   agent_ontology:
-    image: ghcr.io/cnoe-io/caipe-rag-agent-ontology:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/caipe-rag-agent-ontology:${IMAGE_TAG:-0.5.66}
     container_name: agent_ontology
     ports: ["8098:8098"]
     environment:
@@ -569,24 +663,24 @@ services:
 
 
   web_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: web-ingestor
     environment:
       - INGESTOR_TYPE=webloader
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
       - RAG_SERVER_URL=http://rag-server:9446
-      - MAX_CONCURRENT_JOBS=${WEBLOADER_INGESTOR_MAX_CONCURRENT_JOBS:-10}
+      - WEBLOADER_MAX_INGESTION_TASKS=${WEBLOADER_MAX_INGESTION_TASKS:-5}
       - WEBLOADER_CHECK_INTERVAL=${WEBLOADER_CHECK_INTERVAL:-86400}
     env_file: [.env]
     restart: unless-stopped
-    depends_on: [rag-server]
+    depends_on: [rag-server, rag-redis]
     profiles:
       - web-ingestor
       - web_ingestor
 
   jira_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: jira-ingestor
     environment:
       - INGESTOR_TYPE=jira
@@ -596,13 +690,81 @@ services:
       - JIRA_PROJECTS=${JIRA_PROJECTS}
       - JIRA_PAGE_SIZE=${JIRA_PAGE_SIZE:-100}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REDIS_URL=redis://rag-redis:6379/0
       - RAG_SERVER_URL=http://rag-server:9446
       - SYNC_INTERVAL=${SYNC_INTERVAL:-86400}
     env_file: [.env]
     restart: unless-stopped
-    depends_on: [rag-server]
+    depends_on: [rag-server, rag-redis]
     profiles:
       - jira-ingestor
+
+  confluence_ingestor:
+    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    container_name: confluence-ingestor
+    environment:
+      - INGESTOR_TYPE=confluence
+      - CONFLUENCE_URL=${CONFLUENCE_URL}
+      - CONFLUENCE_USERNAME=${CONFLUENCE_USERNAME}
+      - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
+      - CONFLUENCE_SPACES=${CONFLUENCE_SPACES:-}
+      - CONFLUENCE_SYNC_INTERVAL=${CONFLUENCE_SYNC_INTERVAL:-86400}
+      - CONFLUENCE_SSL_VERIFY=${CONFLUENCE_SSL_VERIFY:-true}
+      - CONFLUENCE_MAX_CONCURRENCY=${CONFLUENCE_MAX_CONCURRENCY:-5}
+      - CONFLUENCE_MAX_INGESTION_TASKS=${CONFLUENCE_MAX_INGESTION_TASKS:-5}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REDIS_URL=redis://rag-redis:6379/0
+      - RAG_SERVER_URL=http://rag-server:9446
+    env_file: [.env]
+    restart: unless-stopped
+    depends_on: [rag-server, rag-redis]
+    profiles:
+      - confluence-ingestor
+
+  slack_ingestor:
+    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    container_name: slack-ingestor
+    environment:
+      - INGESTOR_TYPE=slack
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_BOT_NAME=${SLACK_BOT_NAME}
+      - SLACK_WORKSPACE_URL=${SLACK_WORKSPACE_URL:-https://slack.com}
+      - SLACK_CHANNELS=${SLACK_CHANNELS:-{}}
+      - SLACK_MAX_INGESTION_TASKS=${SLACK_MAX_INGESTION_TASKS:-5}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REDIS_URL=redis://rag-redis:6379/0
+      - RAG_SERVER_URL=http://rag-server:9446
+      - SYNC_INTERVAL=${SYNC_INTERVAL:-86400}
+      - INIT_DELAY_SECONDS=${INIT_DELAY_SECONDS:-0}
+      - EXIT_AFTER_FIRST_SYNC=${EXIT_AFTER_FIRST_SYNC:-false}
+      - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
+    env_file: [.env]
+    restart: unless-stopped
+    depends_on: [rag-server, rag-redis]
+    profiles:
+      - slack-ingestor
+
+  webex_ingestor:
+    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    container_name: webex-ingestor
+    environment:
+      - INGESTOR_TYPE=webex
+      - WEBEX_ACCESS_TOKEN=${WEBEX_ACCESS_TOKEN}
+      - WEBEX_BOT_NAME=${WEBEX_BOT_NAME}
+      - WEBEX_SPACES=${WEBEX_SPACES:-{}}
+      - WEBEX_MAX_INGESTION_TASKS=${WEBEX_MAX_INGESTION_TASKS:-5}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REDIS_URL=redis://rag-redis:6379/0
+      - RAG_SERVER_URL=http://rag-server:9446
+      - SYNC_INTERVAL=${SYNC_INTERVAL:-86400}
+      - INIT_DELAY_SECONDS=${INIT_DELAY_SECONDS:-60}
+      - EXIT_AFTER_FIRST_SYNC=${EXIT_AFTER_FIRST_SYNC:-false}
+      - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
+    env_file: [.env]
+    restart: unless-stopped
+    depends_on: [rag-server, rag-redis]
+    profiles:
+      - webex-ingestor
 
   # RAG Dependencies
   neo4j:
@@ -888,7 +1050,7 @@ services:
   #                                 Slack Bot Integration                                            #
   ####################################################################################################
   slack-bot:
-    image: ghcr.io/cnoe-io/caipe-slack-bot:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/caipe-slack-bot:${IMAGE_TAG:-0.5.66}
     container_name: slack-bot
     env_file: [.env]
     ports: ["8030:3000"]
@@ -925,7 +1087,7 @@ services:
   #                                 Webex Bot Integration                                            #
   ####################################################################################################
   webex-bot:
-    image: ghcr.io/cnoe-io/caipe-webex-bot:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/caipe-webex-bot:${IMAGE_TAG:-0.5.66}
     container_name: webex-bot
     env_file: [.env]
     ports: ["8032:3002"]
@@ -1249,8 +1411,22 @@ services:
       # Seed a dev allow tuple with a Keycloak user `sub`. If unset, OpenFGA
       # starts deny-by-default and you can write tuples later.
       OPENFGA_SEED_SUB: ${OPENFGA_SEED_SUB:-}
+      # Grant the platform service account `auditor` on the org. CAS's
+      # subject-binding requires this before it evaluates decisions for a
+      # different subject — the on-behalf-of flow autonomous task runs use.
+      # The service-account `sub` is realm-specific, so the seed resolves it
+      # from a client-credentials token instead of a static value. Defaults
+      # match the local realm seed (see keycloak-init).
+      KEYCLOAK_TOKEN_URL: http://keycloak:7080/realms/caipe/protocol/openid-connect/token
+      KEYCLOAK_PLATFORM_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-caipe-platform}
+      KEYCLOAK_PLATFORM_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-caipe-platform-dev-secret}
+      OPENFGA_ORG_OBJECT: organization:${CAIPE_ORG_KEY:-caipe}
     depends_on:
       openfga:
+        condition: service_healthy
+      # The auditor-grant seed mints a token from the local realm; Keycloak's
+      # healthcheck already gates on the realm JWKS being served.
+      keycloak:
         condition: service_healthy
 
   openfga-authz-bridge:
@@ -1277,6 +1453,7 @@ services:
       JWT_ISSUER: ${BRIDGE_JWT_ISSUER:-http://localhost:7080/realms/caipe}
       JWT_AUDIENCES: ${BRIDGE_JWT_AUDIENCES:-caipe-platform,agentgateway}
       CAIPE_AGENT_CONTEXT_HMAC_SECRET: ${CAIPE_AGENT_CONTEXT_HMAC_SECRET:-}
+      CAIPE_ORG_KEY: ${CAIPE_ORG_KEY:-caipe}
       # Caller-keyed tool-authorization rollout flag (FR-012c). Default-off so
       # prod/compose without the var keeps legacy agent-only tool enforcement;
       # set CAIPE_CALLER_TOOL_CHECK_ENABLED=true (in .env) to enforce the dual
@@ -1309,7 +1486,7 @@ services:
     build:
       context: ./deploy/agentgateway
       dockerfile: Dockerfile.config-bridge
-    image: ghcr.io/cnoe-io/agentgateway-config-bridge:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/cnoe-io/agentgateway-config-bridge:${IMAGE_TAG:-0.5.66}
     container_name: agentgateway-config-bridge
     restart: unless-stopped
     read_only: true

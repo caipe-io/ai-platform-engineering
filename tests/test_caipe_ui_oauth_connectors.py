@@ -92,4 +92,3 @@ def test_rejects_inline_oauth_client_secrets() -> None:
 
     assert result.returncode != 0
     assert ".clientSecret is not allowed" in result.stderr
-

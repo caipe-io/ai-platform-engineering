@@ -7,8 +7,10 @@ Custom fields (e.g. SLO impact), linked issues, and comments are included in the
 """
 
 import os
+import asyncio
 import json
 import time
+import traceback
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 import requests
@@ -16,15 +18,26 @@ from requests.auth import HTTPBasicAuth
 from langchain_core.documents import Document
 
 from common.ingestor import IngestorBuilder, Client
+from common.ingestor_listener import (
+    configured_reload_interval,
+    reload_persisted_datasources,
+    run_ingestor_listener,
+)
 from common.models.rag import DataSourceInfo, DocumentMetadata
-from common.job_manager import JobStatus
+from common.models.server import (
+    JiraIngestRequest,
+    JiraIngestorCommand,
+    JiraReloadRequest,
+)
+from common.job_manager import JobStatus, JobManager
 from common import utils
 
 logger = utils.get_logger(__name__)
 
-# Sync configuration
-sync_interval = int(os.environ.get("SYNC_INTERVAL", "86400"))  # Default 24 hours
 init_delay = int(os.environ.get("INIT_DELAY_SECONDS", "0"))
+
+MAX_INGESTION_TASKS = int(os.environ.get("JIRA_MAX_INGESTION_TASKS", "5"))
+PREVIEW_MAX_ITEMS = max(1, min(int(os.getenv("INGESTOR_PREVIEW_MAX_ITEMS", "100")), 100))
 
 # Jira configuration
 JIRA_URL = os.environ.get("JIRA_URL")
@@ -46,12 +59,12 @@ if not JIRA_API_TOKEN:
 #
 # Format:
 #   {
-#     "SDPL": [
-#       {"name": "untriaged", "jql": "project = SDPL AND status = Open ORDER BY updated DESC",
+#     "EXAMPLE": [
+#       {"name": "untriaged", "jql": "project = EXAMPLE AND status = Open ORDER BY updated DESC",
 #        "custom_fields": {"slo": "customfield_123"}, "include_comments": true},
-#       {"name": "user-requests", "jql": "project = SDPL AND type = 'User Request'"}
+#       {"name": "user-requests", "jql": "project = EXAMPLE AND type = 'User Request'"}
 #     ],
-#     "FE": {"name": "Frontend", "jql": "project = FE ORDER BY updated DESC"}
+#     "WEB": {"name": "Web", "jql": "project = WEB ORDER BY updated DESC"}
 #   }
 #
 # Required per-datasource fields:
@@ -64,7 +77,7 @@ if not JIRA_API_TOKEN:
 projects_json = os.environ.get("JIRA_PROJECTS", "{}")
 _raw_projects: Dict[str, Any] = json.loads(projects_json)
 if not _raw_projects:
-    raise ValueError("No projects configured. Set JIRA_PROJECTS environment variable.")
+    logger.info("JIRA_PROJECTS is empty; waiting for UI-created ingestion requests")
 
 # Normalise: ensure every value is a list of datasource configs
 projects: Dict[str, List[Dict[str, Any]]] = {}
@@ -119,6 +132,23 @@ class JiraClient:
                 break
             next_page_token = result.get("nextPageToken")
         return all_issues
+
+    def preview_issues(
+        self,
+        jql: str,
+        limit: int,
+    ) -> tuple[List[Dict[str, Any]], bool]:
+        """Return one bounded Jira search page and whether more matches exist."""
+        result = self._get(
+            "/rest/api/3/search/jql",
+            params={
+                "jql": jql,
+                "maxResults": limit,
+                "fields": "summary,status,issuetype",
+            },
+        )
+        issues = result.get("issues", [])
+        return issues[:limit], result.get("isLast", True) is not True
 
     def get_issue_comments(self, issue_key: str) -> List[Dict[str, Any]]:
         """Fetch all comments for a given issue key."""
@@ -196,6 +226,7 @@ def _build_issue_document(
     custom_fields: Optional[Dict[str, str]] = None,
     include_comments: bool = True,
     include_links: bool = True,
+    reload_interval: int = 86400,
 ) -> Document:
     """
     Build a RAG Document from a Jira issue dict.
@@ -305,8 +336,7 @@ def _build_issue_document(
         document_type="jira_issue",
         document_ingested_at=int(time.time()),
         document_id=f"jira-issue-{key}",
-        # sync_interval=0 is valid (single-run mode) but get_fresh_until requires >0
-        fresh_until=utils.get_fresh_until(sync_interval or 86400),
+        fresh_until=utils.get_fresh_until(reload_interval),
         title=f"[{key}] {summary}",
         metadata={
             "issue_key": key,
@@ -371,12 +401,17 @@ async def sync_jira_projects(client: Client) -> None:
             ds_slug = ds_name.lower().replace(" ", "-")
             datasource_id = f"jira-{project_key.lower()}-{ds_slug}"
 
-            # Skip if this datasource was recently synced (within sync_interval)
             existing = existing_datasources.get(datasource_id)
-            if existing and existing.last_updated and (now - existing.last_updated) < sync_interval:
+            if existing and (existing.metadata or {}).get("config_managed") is True:
+                logger.debug(
+                    f"Skipping legacy JIRA_PROJECTS config for database-managed datasource {datasource_id}"
+                )
+                continue
+            reload_interval = configured_reload_interval(ds_config, existing)
+            if existing and existing.last_updated and (now - existing.last_updated) < reload_interval:
                 logger.info(
                     f"Skipping {project_key}/{ds_name}: last synced {now - existing.last_updated}s ago "
-                    f"(interval: {sync_interval}s)"
+                    f"(interval: {reload_interval}s)"
                 )
                 continue
 
@@ -402,12 +437,23 @@ async def sync_jira_projects(client: Client) -> None:
                     description=f"Jira issues: {ds_name} ({project_key})",
                     source_type="jira",
                     last_updated=int(time.time()),
+                    default_chunk_size=existing.default_chunk_size if existing else 10000,
+                    default_chunk_overlap=existing.default_chunk_overlap if existing else 2000,
+                    reload_interval=reload_interval,
+                    creator_subject=existing.creator_subject if existing else None,
+                    owner_subject=existing.owner_subject if existing else None,
+                    owner_team_slug=existing.owner_team_slug if existing else None,
+                    shared_with_teams=existing.shared_with_teams if existing else [],
+                    search_with_teams=existing.search_with_teams if existing else [],
                     metadata={
+                        **((existing.metadata or {}) if existing else {}),
                         "project_key": project_key,
                         "datasource_name": ds_name,
                         "jira_url": JIRA_URL,
                         "jql": jql,
-                        "reload_interval": sync_interval,
+                        "custom_fields": ds_custom_fields,
+                        "include_comments": ds_include_comments,
+                        "include_links": ds_include_links,
                     },
                 )
                 await client.upsert_datasource(datasource)
@@ -431,6 +477,7 @@ async def sync_jira_projects(client: Client) -> None:
                         custom_fields=ds_custom_fields,
                         include_comments=ds_include_comments,
                         include_links=ds_include_links,
+                        reload_interval=reload_interval,
                     )
                     documents.append(doc)
                 except Exception as e:
@@ -446,13 +493,24 @@ async def sync_jira_projects(client: Client) -> None:
                 description=f"Jira issues: {ds_name} ({project_key})",
                 source_type="jira",
                 last_updated=int(time.time()),
+                default_chunk_size=existing.default_chunk_size if existing else 10000,
+                default_chunk_overlap=existing.default_chunk_overlap if existing else 2000,
+                reload_interval=reload_interval,
+                creator_subject=existing.creator_subject if existing else None,
+                owner_subject=existing.owner_subject if existing else None,
+                owner_team_slug=existing.owner_team_slug if existing else None,
+                shared_with_teams=existing.shared_with_teams if existing else [],
+                search_with_teams=existing.search_with_teams if existing else [],
                 metadata={
+                    **((existing.metadata or {}) if existing else {}),
                     "project_key": project_key,
                     "datasource_name": ds_name,
                     "jira_url": JIRA_URL,
                     "jql": jql,
                     "issue_count": len(documents),
-                    "reload_interval": sync_interval,
+                    "custom_fields": ds_custom_fields,
+                    "include_comments": ds_include_comments,
+                    "include_links": ds_include_links,
                 },
             )
             await client.upsert_datasource(datasource)
@@ -471,7 +529,7 @@ async def sync_jira_projects(client: Client) -> None:
                     job_id=job_id,
                     datasource_id=datasource_id,
                     documents=documents,
-                    fresh_until=utils.get_fresh_until(sync_interval or 86400),
+                    fresh_until=utils.get_fresh_until(reload_interval),
                 )
                 await client.update_job(
                     job_id=job_id,
@@ -489,6 +547,329 @@ async def sync_jira_projects(client: Client) -> None:
                 )
 
 
+async def _fetch_and_build_documents(
+    jira: "JiraClient",
+    jql: str,
+    datasource_id: str,
+    ingestor_id: str,
+    custom_fields: Optional[Dict[str, str]],
+    include_comments: bool,
+    include_links: bool,
+    reload_interval: int,
+) -> List[Document]:
+    """Run a JQL search and build RAG documents for the resulting issues."""
+    standard_fields = [
+        "summary",
+        "issuetype",
+        "status",
+        "priority",
+        "assignee",
+        "reporter",
+        "created",
+        "updated",
+        "resolutiondate",
+        "description",
+        "labels",
+        "components",
+        "issuelinks",
+    ]
+    all_fields = standard_fields + list((custom_fields or {}).values())
+
+    all_issues = jira.search_issues(jql, all_fields)
+    logger.info(f"Fetched {len(all_issues)} issues for datasource {datasource_id}")
+
+    documents: List[Document] = []
+    for issue in all_issues:
+        key = issue.get("key", "UNKNOWN")
+        comments: List[Dict[str, Any]] = []
+        if include_comments:
+            comments = jira.get_issue_comments(key)
+
+        try:
+            doc = _build_issue_document(
+                issue=issue,
+                comments=comments,
+                jira_url=JIRA_URL,
+                datasource_id=datasource_id,
+                ingestor_id=ingestor_id,
+                custom_fields=custom_fields,
+                include_comments=include_comments,
+                include_links=include_links,
+                reload_interval=reload_interval,
+            )
+            documents.append(doc)
+        except Exception as e:
+            logger.warning(f"Failed to build document for {key}: {e}")
+
+    return documents
+
+
+async def process_project_ingestion(
+    client: Client,
+    job_manager: JobManager,
+    ingest_request: JiraIngestRequest,
+    job_id: str,
+) -> None:
+    """Process on-demand project ingestion from Redis (server already created datasource+job)."""
+    try:
+        datasource_id = f"jira-{ingest_request.project_key.lower()}-{ingest_request.source_slug}"
+
+        datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
+        datasource_info = next((ds for ds in datasources if ds.datasource_id == datasource_id), None)
+
+        if not datasource_info:
+            error_msg = f"Datasource not found: {datasource_id}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        job = await job_manager.get_job(job_id)
+        if not job or job.datasource_id != datasource_id:
+            raise ValueError(f"Job {job_id} does not belong to datasource {datasource_id}")
+
+        if job.status == JobStatus.TERMINATED:
+            logger.info(f"Job {job_id} was already terminated, skipping processing")
+            return
+
+        await job_manager.upsert_job(job_id=job_id, status=JobStatus.IN_PROGRESS, message=f"Starting Jira ingestion for {ingest_request.name} ({ingest_request.project_key})")
+        logger.info(f"Processing job: {job_id} for datasource: {datasource_id}")
+
+        jira = JiraClient(JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN)
+        documents = await _fetch_and_build_documents(
+            jira=jira,
+            jql=ingest_request.jql,
+            datasource_id=datasource_id,
+            ingestor_id=client.ingestor_id or "",
+            custom_fields=ingest_request.custom_fields,
+            include_comments=ingest_request.include_comments,
+            include_links=ingest_request.include_links,
+            reload_interval=datasource_info.reload_interval,
+        )
+
+        datasource_info.last_updated = int(time.time())
+        if datasource_info.metadata is None:
+            datasource_info.metadata = {}
+        datasource_info.metadata.update(
+            {
+                "project_key": ingest_request.project_key,
+                "datasource_name": ingest_request.name,
+                "jira_url": JIRA_URL,
+                "jql": ingest_request.jql,
+                "issue_count": len(documents),
+                "custom_fields": ingest_request.custom_fields,
+                "include_comments": ingest_request.include_comments,
+                "include_links": ingest_request.include_links,
+            }
+        )
+        await client.upsert_datasource(datasource_info)
+
+        if not documents:
+            await job_manager.upsert_job(job_id=job_id, status=JobStatus.COMPLETED, message=f"No documents created for {ingest_request.name}")
+            return
+
+        await job_manager.upsert_job(job_id=job_id, total=len(documents), message=f"Ingesting {len(documents)} issues from {ingest_request.name}")
+
+        await client.ingest_documents(job_id=job_id, datasource_id=datasource_id, documents=documents, fresh_until=utils.get_fresh_until(datasource_info.reload_interval))
+
+        await job_manager.upsert_job(job_id=job_id, status=JobStatus.COMPLETED, message=f"Successfully ingested {len(documents)} issues from {ingest_request.name}")
+        logger.info(f"✓ Successfully ingested {len(documents)} documents from {ingest_request.name}")
+
+    except Exception as e:
+        error_msg = f"Error processing Jira project {ingest_request.project_key}/{ingest_request.source_slug}: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+
+        try:
+            if job_id:
+                await job_manager.add_error_msg(job_id, error_msg)
+        except Exception as status_error:
+            logger.warning(
+                f"Failed to record the Jira ingestion error for job {job_id}: {status_error}"
+            )
+
+        raise
+
+
+async def preview_project_ingestion(
+    _client: Client,
+    ingest_request: JiraIngestRequest,
+) -> dict[str, object]:
+    """Execute the submitted JQL without fetching comments or ingesting."""
+    jira = JiraClient(JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN)
+    issues, has_more = await asyncio.to_thread(
+        jira.preview_issues,
+        ingest_request.jql,
+        PREVIEW_MAX_ITEMS,
+    )
+    items: List[Dict[str, str]] = []
+    for issue in issues:
+        key = str(issue.get("key") or "")
+        fields = issue.get("fields") or {}
+        summary = str(fields.get("summary") or key or "Untitled issue")
+        status_name = str((fields.get("status") or {}).get("name") or "")
+        issue_type = str((fields.get("issuetype") or {}).get("name") or "")
+        items.append(
+            {
+                "id": key or summary,
+                "title": f"{key}: {summary}" if key else summary,
+                "url": f"{JIRA_URL.rstrip('/')}/browse/{key}" if key else JIRA_URL,
+                "detail": " · ".join(value for value in [issue_type, status_name] if value),
+            }
+        )
+    return {
+        "items": items,
+        "total_discovered": len(items) + (1 if has_more else 0),
+        "truncated": has_more,
+        "warnings": [],
+        "summary": {
+            "project_key": ingest_request.project_key,
+            "jql": ingest_request.jql,
+            "preview_limit": PREVIEW_MAX_ITEMS,
+        },
+    }
+
+
+async def reload_datasource(
+    client: Client,
+    job_manager: JobManager,
+    datasource_info: DataSourceInfo,
+    job_id: str | None = None,
+) -> None:
+    """Reload a single Jira project datasource, re-running its stored JQL."""
+    try:
+        metadata = datasource_info.metadata or {}
+        jql = metadata.get("jql")
+        if not jql:
+            raise ValueError(f"No jql in metadata for {datasource_info.datasource_id}")
+
+        ds_name = metadata.get("datasource_name", datasource_info.datasource_id)
+        custom_fields = metadata.get("custom_fields")
+        include_comments = metadata.get("include_comments", True)
+        include_links = metadata.get("include_links", True)
+
+        logger.info(f"Reloading Jira datasource: {datasource_info.datasource_id}")
+        if job_id is not None:
+            await job_manager.upsert_job(
+                job_id,
+                status=JobStatus.IN_PROGRESS,
+                message=f"Reloading Jira datasource {ds_name}",
+            )
+
+        jira = JiraClient(JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN)
+        documents = await _fetch_and_build_documents(
+            jira=jira,
+            jql=jql,
+            datasource_id=datasource_info.datasource_id,
+            ingestor_id=client.ingestor_id or "",
+            custom_fields=custom_fields,
+            include_comments=include_comments,
+            include_links=include_links,
+            reload_interval=datasource_info.reload_interval,
+        )
+
+        datasource_info.last_updated = int(time.time())
+        datasource_info.metadata = {**metadata, "issue_count": len(documents)}
+        await client.upsert_datasource(datasource_info)
+
+        if not documents:
+            logger.info(f"No documents created for {ds_name} during reload")
+            if job_id is not None:
+                await job_manager.upsert_job(
+                    job_id,
+                    status=JobStatus.COMPLETED,
+                    message=f"No documents created for {ds_name}",
+                )
+            return
+
+        if job_id is None:
+            job_response = await client.create_job(datasource_id=datasource_info.datasource_id, job_status=JobStatus.IN_PROGRESS, message=f"Reloading {len(documents)} issues from {ds_name}", total=len(documents))
+            job_id = job_response["job_id"]
+        else:
+            await job_manager.upsert_job(
+                job_id,
+                total=len(documents),
+                message=f"Reloading {len(documents)} issues from {ds_name}",
+            )
+
+        await client.ingest_documents(job_id=job_id, datasource_id=datasource_info.datasource_id, documents=documents, fresh_until=utils.get_fresh_until(datasource_info.reload_interval))
+        await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully reloaded {len(documents)} issues from {ds_name}")
+        logger.info(f"✓ Successfully reloaded {len(documents)} documents from {ds_name}")
+
+    except Exception as e:
+        logger.error(f"Error reloading {datasource_info.datasource_id}: {e}")
+        logger.error(traceback.format_exc())
+        if job_id:
+            await job_manager.add_error_msg(job_id, str(e))
+        raise
+
+
+async def redis_listener(client: Client):
+    """Run Jira commands through the shared per-ingestor listener."""
+
+    async def reconcile_legacy_config() -> None:
+        """Expose legacy connector options immediately for config migration."""
+        if not projects:
+            return
+        datasources = {
+            datasource.datasource_id: datasource
+            for datasource in await client.list_datasources(ingestor_id=client.ingestor_id)
+        }
+        for project_key, configs in projects.items():
+            for config in configs:
+                name = config.get("name", project_key)
+                slug = name.lower().replace(" ", "-")
+                datasource = datasources.get(f"jira-{project_key.lower()}-{slug}")
+                if not datasource:
+                    continue
+                metadata = datasource.metadata or {}
+                if metadata.get("config_managed") is True:
+                    continue
+                datasource.reload_interval = configured_reload_interval(config, datasource)
+                datasource.metadata = {
+                    **metadata,
+                    "project_key": project_key,
+                    "datasource_name": name,
+                    "jira_url": JIRA_URL,
+                    "jql": config["jql"],
+                    "custom_fields": config.get("custom_fields", {}),
+                    "include_comments": config.get("include_comments", True),
+                    "include_links": config.get("include_links", True),
+                }
+                await client.upsert_datasource(datasource)
+
+    await run_ingestor_listener(
+        client,
+        ingest_command=JiraIngestorCommand.INGEST_PROJECT,
+        ingest_model=JiraIngestRequest,
+        ingest_handler=process_project_ingestion,
+        reload_all_command=JiraIngestorCommand.RELOAD_ALL,
+        reload_all_handler=reload_all_jira_projects,
+        reload_datasource_command=JiraIngestorCommand.RELOAD_DATASOURCE,
+        reload_model=JiraReloadRequest,
+        reload_handler=reload_datasource,
+        max_tasks=MAX_INGESTION_TASKS,
+        describe_ingest=lambda request: f"Jira project ingestion: {request.project_key}/{request.source_slug}",
+        on_startup=reconcile_legacy_config,
+        preview_command=JiraIngestorCommand.PREVIEW_PROJECT,
+        preview_model=JiraIngestRequest,
+        preview_handler=preview_project_ingestion,
+    )
+
+
+async def periodic_reload(client: Client) -> None:
+    """Refresh both legacy env sources and UI/database-managed sources."""
+    await sync_jira_projects(client)
+    await reload_persisted_datasources(
+        client,
+        reload_datasource,
+        config_managed_only=True,
+    )
+
+
+async def reload_all_jira_projects(client: Client) -> None:
+    """Force a reload of every Jira datasource assigned to this worker."""
+    await reload_persisted_datasources(client, reload_datasource, due_only=False)
+
+
 def main() -> None:
     """Main entry point for the Jira ingestor."""
     IngestorBuilder() \
@@ -497,12 +878,12 @@ def main() -> None:
         .description(f"Jira issue ingestor for {JIRA_URL}") \
         .metadata({
             "jira_url": JIRA_URL,
-            "projects": list(projects.keys()),
-            "sync_interval": sync_interval,
+            "projects": projects,
             "init_delay": init_delay,
         }) \
-        .sync_with_fn(sync_jira_projects) \
-        .every(sync_interval) \
+        .sync_with_fn(periodic_reload) \
+        .with_startup(redis_listener) \
+        .schedule_from_datasources() \
         .with_init_delay(init_delay) \
         .run()
 

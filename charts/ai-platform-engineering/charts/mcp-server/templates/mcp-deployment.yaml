@@ -43,7 +43,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ include "agent.imageRepository" (dict "root" . "repository" .Values.mcp.image.repository) }}:{{ .Values.mcp.image.tag | default (include "agent.appVersion" .) }}"
+          image: "{{ .Values.mcp.image.repository }}:{{ .Values.mcp.image.tag | default (include "agent.appVersion" .) }}"
           imagePullPolicy: {{ .Values.mcp.image.pullPolicy | default "IfNotPresent" }}
           ports:
             - name: http

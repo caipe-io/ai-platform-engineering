@@ -13,7 +13,7 @@ Redis / Neo4j connections) is not triggered.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from common.models.rbac import Role, UserContext
 from server import restapi
+from server import rbac
 from server.rbac import require_authenticated_user
 
 
@@ -57,6 +58,14 @@ def client() -> TestClient:
 def _wire(monkeypatch: pytest.MonkeyPatch):
     restapi.app.dependency_overrides[require_authenticated_user] = _user
     monkeypatch.setattr(restapi, "vector_db", MagicMock(), raising=False)
+    query_service = AsyncMock()
+
+    async def _build_filter_expression(filters: dict) -> str:
+        return " and ".join(f'{key} == "{value}"' for key, value in filters.items())
+
+    query_service.build_filter_expression.side_effect = _build_filter_expression
+    monkeypatch.setattr(restapi, "vector_db_query_service", query_service, raising=False)
+    monkeypatch.setattr(restapi, "authorize_search", AsyncMock(return_value=None))
     yield
     restapi.app.dependency_overrides.clear()
 
@@ -92,7 +101,7 @@ def test_list_documents_allowed_queries_milvus(monkeypatch: pytest.MonkeyPatch):
 def test_list_documents_passes_datasource_id_and_scope_to_check(monkeypatch: pytest.MonkeyPatch):
     calls = []
 
-    async def _spy(request, user, datasource_id, scope):
+    async def _spy(user, datasource_id, scope):
         calls.append((datasource_id, scope))
 
     monkeypatch.setattr(restapi, "check_datasource_access", _spy, raising=False)
@@ -104,12 +113,17 @@ def test_list_documents_passes_datasource_id_and_scope_to_check(monkeypatch: pyt
     assert calls == [("primary-ds", "read")]
 
 
-def test_list_documents_org_admin_bypass_via_real_helper(monkeypatch: pytest.MonkeyPatch):
-    """A coarse-ADMIN principal is allowed through the REAL check_datasource_access
-    helper's unrestricted-access short-circuit (no monkeypatch of the check)."""
+def test_list_documents_allowed_via_real_helper_when_openfga_grants_access(monkeypatch: pytest.MonkeyPatch):
+    """A caller is allowed through the REAL check_datasource_access helper when
+    OpenFGA grants the per-datasource relation (no monkeypatch of the check
+    itself — only the underlying OpenFGA call)."""
     restapi.app.dependency_overrides[require_authenticated_user] = lambda: _user(role=Role.ADMIN)
-    monkeypatch.setattr(restapi, "RBAC_TEAM_SCOPE_ENABLED", True, raising=False)
     monkeypatch.setenv("OPENFGA_HTTP", "http://openfga")
+
+    async def _grant(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(rbac, "_openfga_check_data_source", _grant, raising=False)
     restapi.vector_db.client.query.return_value = []
 
     client = TestClient(restapi.app, raise_server_exceptions=False)
@@ -167,7 +181,7 @@ def test_get_chunk_content_allowed_returns_text(monkeypatch: pytest.MonkeyPatch)
 def test_get_chunk_content_resolves_datasource_id_from_chunk_metadata(monkeypatch: pytest.MonkeyPatch):
     calls = []
 
-    async def _spy(request, user, datasource_id, scope):
+    async def _spy(user, datasource_id, scope):
         calls.append((datasource_id, scope))
 
     monkeypatch.setattr(restapi, "check_datasource_access", _spy, raising=False)

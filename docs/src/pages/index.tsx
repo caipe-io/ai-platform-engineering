@@ -1,64 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './index.module.css';
 
-const CURL_CMD = 'bash <(curl -fsSL https://raw.githubusercontent.com/cnoe-io/ai-platform-engineering/main/setup-caipe.sh)';
-const HELM_CMD = 'helm upgrade --install ai-platform-engineering \\\n    oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \\\n    --version 0.5.68 -f your-values.yaml';
-const GIF_URL = 'https://github.com/cnoe-io/ai-platform-engineering/releases/download/0.4.8/caipe-setup.gif';
-
-function DemoGif() {
-  const [open, setOpen] = useState(false);
-  const close = useCallback(() => setOpen(false), []);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, close]);
-
-  return (
-    <>
-      <div className={styles.heroCenter}>
-        <div className={styles.heroDemoFrame}>
-          <div className={styles.heroDemoBar}>
-            <span className={styles.heroDemoDot} style={{background:'#ff5f57'}} />
-            <span className={styles.heroDemoDot} style={{background:'#ffbd2e'}} />
-            <span className={styles.heroDemoDot} style={{background:'#28c840'}} />
-            <span className={styles.heroDemoTitle}>CAIPE Setup</span>
-            <button
-              className={styles.heroDemoFullscreen}
-              onClick={() => setOpen(true)}
-              aria-label="View fullscreen"
-              title="View fullscreen"
-            >
-              ⛶
-            </button>
-          </div>
-          <img
-            src={GIF_URL}
-            alt="CAIPE setup walkthrough"
-            className={styles.heroDemoGif}
-            loading="eager"
-          />
-        </div>
-      </div>
-
-      {open && (
-        <div className={styles.gifOverlay} onClick={close} role="dialog" aria-modal="true">
-          <div className={styles.gifOverlayInner} onClick={(e) => e.stopPropagation()}>
-            <button className={styles.gifOverlayClose} onClick={close} aria-label="Close">✕</button>
-            <img src={GIF_URL} alt="CAIPE setup walkthrough" className={styles.gifOverlayImg} />
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
+const CURL_CMD = 'bash <(curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh)';
+const HELM_CMD = 'helm upgrade --install ai-platform-engineering \\\n    oci://ghcr.io/caipe-io/charts/ai-platform-engineering \\\n    --version 1.0.1 -f your-values.yaml';
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -75,6 +23,63 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+const INSTALL_METHODS = [
+  { id: 'curl', label: 'curl', cmd: CURL_CMD },
+  { id: 'helm', label: 'Helm', cmd: HELM_CMD },
+];
+
+function InstallWidget() {
+  const [active, setActive] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const method = INSTALL_METHODS[active];
+
+  const copy = () => {
+    navigator.clipboard.writeText(method.cmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className={styles.installWidget}>
+      <div className={styles.installTabs}>
+        {INSTALL_METHODS.map((m, i) => (
+          <button
+            className={styles.installTab}
+            data-active={i === active ? 'true' : 'false'}
+            key={m.id}
+            onClick={() => { setActive(i); setCopied(false); }}
+            type="button"
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+      <button
+        aria-label={copied ? 'Copied' : 'Copy command'}
+        className={styles.installRow}
+        onClick={copy}
+        type="button"
+      >
+        <pre className={styles.installPre}>
+          <code>
+            <span className={styles.codePrompt}>$</span> {method.cmd}
+          </code>
+        </pre>
+        {copied ? (
+          <svg className={styles.installIcon} fill="none" height="16" viewBox="0 0 24 24" width="16">
+            <path d="M5 13l4 4L19 7" stroke="#4ade80" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+          </svg>
+        ) : (
+          <svg className={styles.installIcon} fill="none" height="16" viewBox="0 0 24 24" width="16">
+            <rect height="13" rx="2" stroke="currentColor" strokeWidth="1.8" width="13" x="8" y="8" />
+            <path d="M5 16V5a2 2 0 0 1 2-2h11" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+          </svg>
+        )}
+      </button>
+    </div>
+  );
+}
+
 const HOME_FEATURES = [
   {
     icon: '🤖',
@@ -85,12 +90,12 @@ const HOME_FEATURES = [
   {
     icon: '🎨',
     title: 'Rich Web UI',
-    description: 'Streaming chat, agent builder, skills gateway, and admin controls.',
+    description: 'Streaming chat, Agent Builder, Skills Gateway, and admin controls.',
     to: '/features',
   },
   {
     icon: '🧠',
-    title: 'Integrated Knowledge Bases',
+    title: 'Knowledge Bases',
     description: 'Hybrid RAG and optional Graph RAG across web, AWS, Kubernetes, Jira, GitHub, Slack, and more.',
     to: '/features',
   },
@@ -109,25 +114,19 @@ const HOME_FEATURES = [
   {
     icon: '🚀',
     title: 'Flexible Deployment',
-    description: 'Helm, Docker Compose, Langfuse tracing — bring any OpenAI-compatible LLM.',
+    description: 'Helm, Docker Compose, Langfuse tracing. Bring any OpenAI-compatible LLM.',
     to: '/features',
   },
   {
     icon: '⚙️',
-    title: 'Deterministic Workflows',
-    description: 'Multi-step dynamic-agent pipelines with persisted run history and artifacts.',
-    to: '/features',
-  },
-  {
-    icon: '🛡️',
-    title: 'Ready-to-Use SRE Agent',
-    description: 'A pre-built SRE agent teams can deploy immediately and customize for their own workflows.',
+    title: 'Workflows',
+    description: 'Ordered agent steps with persisted run history and artifacts.',
     to: '/features',
   },
   {
     icon: '🛠️',
-    title: 'Custom Agents',
-    description: 'Build agents with custom prompts, tools, and personas — no boilerplate.',
+    title: 'Agent Builder',
+    description: 'Build governed agents with configured models, tools, knowledge, and guardrails.',
     to: '/features',
   },
   {
@@ -139,13 +138,13 @@ const HOME_FEATURES = [
   {
     icon: '🌐',
     title: 'Multi-Model Support',
-    description: 'Claude, OpenAI, Gemini, or any compatible endpoint — swap without rewiring.',
+    description: 'Claude, OpenAI, Gemini, or any compatible endpoint. Swap without rewiring.',
     to: '/features',
   },
   {
     icon: '💻',
     title: 'Multiple Clients',
-    description: 'Web UI, Backstage plugin, Chat CLI, Slack Bot, and Webex Bot.',
+    description: 'Web UI, Chat CLI, Slack Bot, and Webex Bot.',
     to: '/features',
   },
 ];
@@ -163,20 +162,11 @@ const USE_CASES = [
   {
     title: 'JARVIS: Multi-Agent System Design Deep Dive',
     description:
-      "A technical deep dive into how JARVIS — Cisco's internal platform AI assistant — is architected as a multi-agent system using CAIPE for superior performance and scalability.",
+      "A technical deep dive into how JARVIS, Cisco's internal platform AI assistant, is architected as a multi-agent system on CAIPE for better performance and scale.",
     image: 'https://outshift-headless-cms-s3.s3.us-east-2.amazonaws.com/CREA-989.png',
     href: 'https://outshift.cisco.com/blog/ai-ml/jarvis-technical-deep-dive-multi-agent-design',
     label: 'Cisco Outshift',
     external: true,
-  },
-  {
-    title: 'CAIPE Hands-On Workshop',
-    description:
-      'Step-by-step labs covering single-agent design, multi-agent orchestration, RAG knowledge bases, and distributed tracing — learn by building.',
-    image: 'https://outshift-headless-cms-s3.s3.us-east-2.amazonaws.com/INSIDEOUTSHIFT_1.png',
-    href: '/docs/workshop/caipeintro',
-    label: 'CAIPE Labs',
-    external: false,
   },
 ];
 
@@ -189,7 +179,7 @@ const AGENTS = [
 function HeroSection() {
   const [stars, setStars] = useState<string | null>(null);
   useEffect(() => {
-    fetch('https://api.github.com/repos/cnoe-io/ai-platform-engineering')
+    fetch('https://api.github.com/repos/caipe-io/ai-platform-engineering')
       .then((r) => r.json())
       .then((d) => {
         const n = d.stargazers_count;
@@ -205,19 +195,23 @@ function HeroSection() {
         <div className={styles.heroGrid}>
           {/* Left: copy + CTAs */}
           <div className={styles.heroLeft}>
-<Heading as="h1" className={styles.heroTitle}>
-              Open source Platform for{' '}
-              <span className={styles.heroAccent}>AI Platform Engineering</span>
+            <Heading as="h1" className={styles.heroTitle}>
+              Open Source AI Platform for{' '}
+              <span className={styles.heroAccent}>All</span>
             </Heading>
             <p className={styles.heroSubtitle}>
-              CAIPE is an open source <strong>AI platform</strong> for any size teams to build
-              customizable AI agents and automated agentic
-              workflows wherever your team operates — Web, Slack, Webex, event
-              streams, and more — secured with <strong>strong human and non-human identity
-              and access management</strong>.
+              <span className={styles.heroLine}>
+                Build, govern, and operate secure AI agents and agentic workflows
+              </span>{' '}
+              <span className={styles.heroLine}>for enterprises and individuals</span>
             </p>
             <p className={styles.heroPronunciation}>
-              💡 Pronounced like <strong>cape</strong> 🦸 — just as a cape empowers a superhero, CAIPE empowers teams with 🤖 agentic AI automation.
+              <span className={styles.heroLine}>
+                💡 Pronounced like <strong>cape</strong> 🦸 — just as a cape empowers a superhero,
+              </span>{' '}
+              <span className={styles.heroLine}>
+                CAIPE empowers teams with 🤖 agentic AI automation.
+              </span>
             </p>
             <div className={styles.heroButtons}>
               <Link className={styles.heroPrimary} to="/docs/getting-started/quick-start">
@@ -226,65 +220,23 @@ function HeroSection() {
               <Link className={styles.heroSecondary} href="https://app.vidcast.io/share/embed/e0033e26-46bf-4298-8c20-0a2fd1746073">
                 Watch a Demo ▶
               </Link>
-              <Link className={styles.heroSecondary} href="https://github.com/cnoe-io/ai-platform-engineering">
+              <Link className={styles.heroSecondary} href="https://github.com/caipe-io/ai-platform-engineering">
                 GitHub ↗
               </Link>
             </div>
-          </div>
 
-          {/* Center: product demo GIF */}
-          <DemoGif />
-
-          {/* Right: Quick Install — two independently copyable blocks */}
-          <div className={styles.heroRight}>
-            <div className={styles.codeBlock}>
-              <div className={styles.codeHeader}>
-                <span className={styles.codeTab}>curl · Kind cluster or existing K8s</span>
-                <CopyButton text={CURL_CMD} />
-              </div>
-              <pre className={styles.codePre}>
-                <code>
-                  <span className={styles.codeComment}># Install CAIPE via setup script</span>{'\n'}
-                  <span className={styles.codePrompt}>$</span>{' '}
-                  {'bash <(curl -fsSL https://raw.githubusercontent.com/cnoe-io/'}{'\n'}
-                  {'    ai-platform-engineering/main/setup-caipe.sh)'}
-                </code>
-              </pre>
-            </div>
-            <div className={styles.codeBlock}>
-              <div className={styles.codeHeader}>
-                <span className={styles.codeTab}>Kubernetes · Helm</span>
-                <CopyButton text={HELM_CMD} />
-              </div>
-              <pre className={styles.codePre}>
-                <code>
-                  <span className={styles.codeComment}># Or via Helm</span>{'\n'}
-                  <span className={styles.codePrompt}>$</span>{' '}
-                  {'helm upgrade --install ai-platform-engineering \\'}{'\n'}
-                  {'    oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \\'}{'\n'}
-                  {'    --version 0.5.68 -f your-values.yaml'}
-                </code>
-              </pre>
-            </div>
+            <InstallWidget />
           </div>
         </div>
 
-        {/* Stats row — full width below both columns */}
+        {/* Stats row */}
         <div className={styles.heroStats}>
-          <div className={styles.heroStat}>
-            <span className={styles.heroStatNumber}>15+</span>
-            <span className={styles.heroStatLabel}>Integrations</span>
-          </div>
-          <div className={styles.heroStat}>
-            <span className={styles.heroStatNumber}>Multi</span>
-            <span className={styles.heroStatLabel}>Agent System</span>
-          </div>
           <div className={styles.heroStat}>
             <span className={styles.heroStatNumber}>OSS</span>
             <span className={styles.heroStatLabel}>Apache 2.0</span>
           </div>
           <a
-            href="https://github.com/cnoe-io/ai-platform-engineering"
+            href="https://github.com/caipe-io/ai-platform-engineering"
             target="_blank"
             rel="noopener noreferrer"
             className={styles.heroStat}
@@ -308,7 +260,8 @@ function FeaturesSection() {
           Built for teams of all sizes
         </Heading>
         <p className={styles.sectionSubtitle}>
-          Platform Engineering, SRE, Developers, Product Managers — custom agents, skills, knowledge bases, and BYO MCP servers, natively in the cloud-native ecosystem, secured with human and non-human IAM, powered by your choice of LLM.
+          Everything you need to run agents in production, plus the controls to
+          let your whole team help themselves safely.
         </p>
       </div>
       <div className={styles.featuresGrid}>
@@ -340,8 +293,8 @@ function InTheWildSection() {
           Used in production
         </Heading>
         <p className={styles.sectionSubtitle}>
-          Teams building with CAIPE — from always-on AI assistants to
-          enterprise-scale multi-agent platform automation.
+          Teams building with CAIPE, from always-on AI assistants to platform
+          automation at enterprise scale.
         </p>
       </div>
       <div className={styles.useCasesGrid}>
@@ -378,7 +331,7 @@ function AgentsSection() {
   return (
     <section className={styles.integrations}>
       <p className={styles.integrationsTitle}>
-        Pre-built integrations for your platform stack — or bring your own MCP server and build custom agents
+        Pre-built integrations for your platform stack, or bring your own MCP server and build custom agents
       </p>
       <div className={styles.integrationsList}>
         {AGENTS.map((a) => (
@@ -399,25 +352,37 @@ function QuickStartSection() {
             Up and running in minutes
           </Heading>
           <p className={styles.sectionSubtitle} style={{margin: 0}}>
-            Install via the setup script or Helm. Bring your own LLM — any
+            Install with the setup script or Helm. Bring your own LLM, any
             OpenAI-compatible endpoint works.
           </p>
         </div>
 
         <div className={styles.codeBlock}>
           <div className={styles.codeHeader}>
-            <span className={styles.codeTab}>curl · Quickstart</span>
+            <span className={styles.codeTab}>curl · Kind cluster or existing K8s</span>
+            <CopyButton text={CURL_CMD} />
           </div>
           <pre className={styles.codePre}>
             <code>
               <span className={styles.codeComment}># Install CAIPE via setup script</span>{'\n'}
               <span className={styles.codePrompt}>$</span>{' '}
-              {'bash <(curl -fsSL https://raw.githubusercontent.com/cnoe-io/ai-platform-engineering/main/setup-caipe.sh)'}{'\n\n'}
+              {'bash <(curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh)'}
+            </code>
+          </pre>
+        </div>
+
+        <div className={styles.codeBlock}>
+          <div className={styles.codeHeader}>
+            <span className={styles.codeTab}>Kubernetes · Helm</span>
+            <CopyButton text={HELM_CMD} />
+          </div>
+          <pre className={styles.codePre}>
+            <code>
               <span className={styles.codeComment}># Or via Helm</span>{'\n'}
               <span className={styles.codePrompt}>$</span>{' '}
               {'helm upgrade --install ai-platform-engineering \\'}{'\n'}
-              {'    oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \\'}{'\n'}
-              {'    --version 0.5.68 -f your-values.yaml'}
+              {'    oci://ghcr.io/caipe-io/charts/ai-platform-engineering \\'}{'\n'}
+              {'    --version 1.0.1 -f your-values.yaml'}
             </code>
           </pre>
         </div>
@@ -441,13 +406,11 @@ function VisionSection() {
       <div className={styles.visionInner}>
         <Heading as="h2" className={styles.visionTitle}>Our Mission</Heading>
         <p className={styles.visionBody}>
-          To redefine platform engineering by creating{' '}
+          To make AI automation something{' '}
           <strong className={styles.visionHighlight}>
-            intelligent, secure, and scalable multi-agent systems
-          </strong>{' '}
-          that empower teams to focus on innovation, seamlessly manage complex
-          infrastructures, and shape the future of cloud-native operations
-          through the Internet of Agents.
+            any team can run and trust
+          </strong>
+          . Open source, self-hosted, and secure from day one.
         </p>
       </div>
     </section>
@@ -487,7 +450,7 @@ function CtaSection() {
         </Link>
         <Link
           className={styles.heroSecondary}
-          href="https://github.com/cnoe-io/ai-platform-engineering"
+          href="https://github.com/caipe-io/ai-platform-engineering"
         >
           Star on GitHub ↗
         </Link>
@@ -501,7 +464,7 @@ export default function Home() {
   return (
     <Layout
       title={siteConfig.title}
-      description="Open-source multi-agent system for AI-powered platform engineering. Automate deployments, incidents, runbooks, and more."
+      description="Open Source AI Platform for All. Build, govern, and operate secure AI agents and agentic workflows for enterprises and individuals."
     >
       <main>
         <HeroSection />

@@ -1,6 +1,6 @@
 "use client";
 
-import React,{ useRef,useState } from "react";
+import React,{ useLayoutEffect,useRef,useState } from "react";
 
 interface DataPoint {
   label: string;
@@ -36,6 +36,26 @@ export function SimpleLineChart({
   const [dragEnd, setDragEnd] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
+  // Mirrors the SVG's actual rendered pixel width so the viewBox always matches it 1:1.
+  // Without this, a fixed 800-unit viewBox stretched via preserveAspectRatio="none" onto a
+  // much wider rendered box scales X and Y unevenly, turning circular data points into
+  // ellipses and stretching stroke widths/glyphs — this keeps the scale factor at 1 in both
+  // axes instead, so nothing needs to be drawn anisotropically.
+  const [measuredWidth, setMeasuredWidth] = useState(800);
+
+  useLayoutEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const measure = () => {
+      const width = el.getBoundingClientRect().width;
+      if (width > 0) setMeasuredWidth(width);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   if (!data || data.length === 0) {
     return (
@@ -46,7 +66,7 @@ export function SimpleLineChart({
   }
 
   const padding = { top: 20, right: 20, bottom: 40, left: 50 };
-  const chartWidth = 800;
+  const chartWidth = measuredWidth;
   const chartHeight = height;
   const innerWidth = chartWidth - padding.left - padding.right;
   const innerHeight = chartHeight - padding.top - padding.bottom;
@@ -157,6 +177,11 @@ export function SimpleLineChart({
         width="100%"
         height={chartHeight}
         viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        // chartWidth tracks the actual rendered pixel width (see the ResizeObserver above),
+        // so this stretch is always ~1:1 in both axes — "none" just guards the brief window
+        // before the first measurement, or if ResizeObserver is unavailable, so points at the
+        // edges still line up with the mouse instead of being letterboxed by "meet" scaling.
+        preserveAspectRatio="none"
         className="overflow-visible select-none"
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}

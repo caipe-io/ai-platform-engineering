@@ -214,6 +214,9 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'users', { 'metadata.sso_id': 1 }),
     safeCreateIndex(db, 'users', { last_login: -1 }),
 
+    // Teams are resolved by slug throughout RBAC and connector discovery.
+    safeCreateIndex(db, 'teams', { slug: 1 }),
+
     // Conversations collection
     safeCreateIndex(db, 'conversations', { owner_id: 1 }),
     safeCreateIndex(db, 'conversations', { created_at: -1 }),
@@ -323,8 +326,7 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'channel_team_mappings', { slack_channel_id: 1 }, { unique: true }),
     safeCreateIndex(db, 'slack_channel_agent_routes', { workspace_id: 1, channel_id: 1, agent_id: 1 }, { unique: true }),
     safeCreateIndex(db, 'slack_channel_agent_routes', { workspace_id: 1, channel_id: 1, status: 1 }),
-    safeCreateIndex(db, 'slack_link_nonces', { nonce: 1 }, { unique: true }),
-    safeCreateIndex(db, 'slack_link_nonces', { created_at: 1 }, { expireAfterSeconds: 600 }),
+    safeCreateIndex(db, 'slack_channel_agent_routes', { channel_id: 1, status: 1, priority: 1 }),
     safeCreateIndex(db, 'slack_user_metrics', { slack_user_id: 1 }, { unique: true }),
 
     // RAG ingestion source configuration (self-service ingestion, PR1)
@@ -333,6 +335,37 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'rag_ingestion_sources', { shared_with_teams: 1 }),
     safeCreateIndex(db, 'rag_ingestion_sources', { source_type: 1, status: 1 }),
     safeCreateIndex(db, 'rag_ingestion_sources', { config_driven: 1 }),
+
+    // First-class RAG collections. Datasource content remains in Milvus under
+    // datasource_id; this is control-plane membership and delegation only.
+    safeCreateIndex(db, 'rag_collections', { is_platform: 1 }),
+    safeCreateIndex(db, 'rag_collections', { owner_subject: 1, updated_at: -1 }),
+    safeCreateIndex(db, 'rag_collections', { maintainer_team_slugs: 1 }),
+    safeCreateIndex(db, 'rag_collections', { reader_team_slugs: 1 }),
+    safeCreateIndex(db, 'rag_collections', { source_ids: 1 }),
+
+    // Reusable publication approval workflow. Requested state remains
+    // separate from effective state until a domain adapter applies approval.
+    safeCreateIndex(db, 'publication_requests', { status: 1, created_at: -1 }),
+    safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'resource.id': 1, status: 1 }),
+    safeCreateIndex(db, 'publication_requests', { 'requested_state.source_ids': 1, status: 1 }),
+    safeCreateIndex(db, 'publication_requests', { approver_team_slugs: 1, status: 1 }),
+    safeCreateIndex(db, 'publication_requests', { approver_user_subjects: 1, status: 1 }),
+    safeCreateIndex(db, 'publication_requests', { 'requester.subject': 1, created_at: -1 }),
+    safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'requested_state.channel_defaults.channel_id': 1, status: 1 }),
+    safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'requested_state.space_id': 1, status: 1 }),
+
+    // Durable header notifications. Direct, team, organization-admin, and
+    // global platform audiences share the feed while read state remains
+    // personal to each viewer.
+    safeCreateIndex(db, 'in_app_notifications', { event_key: 1 }, { unique: true }),
+    safeCreateIndex(db, 'in_app_notifications', { recipient_user_subjects: 1, created_at: -1 }),
+    safeCreateIndex(db, 'in_app_notifications', { recipient_team_slugs: 1, created_at: -1 }),
+    safeCreateIndex(db, 'in_app_notifications', { recipient_organization_admins: 1, created_at: -1 }),
+    safeCreateIndex(db, 'in_app_notifications', { recipient_platform_users: 1, created_at: -1 }),
+    safeCreateIndex(db, 'in_app_notifications', { archived_at: 1, created_at: -1 }),
+    safeCreateIndex(db, 'platform_health_notification_states', { active_incident_id: 1 }),
+    safeCreateIndex(db, 'platform_health_notification_states', { current_status: 1, updated_at: -1 }),
   ]);
 
   console.log('✅ MongoDB indexes ensured');

@@ -1,5 +1,5 @@
 """Shared RBAC models for the RAG system."""
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel
 
 
@@ -27,6 +27,8 @@ class UserContext(BaseModel):
   """
 
   subject: Optional[str] = None
+  subject_type: Literal["user", "service_account"] = "user"
+  client_id: Optional[str] = None
   email: str
   role: str
   is_authenticated: bool

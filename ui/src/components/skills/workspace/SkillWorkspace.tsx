@@ -59,6 +59,7 @@ TabsTrigger,
 } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { getConfig } from "@/lib/config";
+import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import { cn } from "@/lib/utils";
 
 import { buildBlockingMessage,buildLastReview,useAiReview } from "@/components/ai-review";
@@ -311,11 +312,11 @@ export function SkillWorkspace({
     return () => window.removeEventListener("beforeunload", handler);
   }, [trackDirty]);
 
-  // When the global header records a pending navigation (e.g. the user
-  // clicked "Chat" in the top nav while dirty), surface our existing
+  // When application navigation records a pending destination (e.g. the user
+  // clicked "Chat" while dirty), surface our existing
   // discard-confirm dialog. The handshake happens via the form's
   // `guardedClose` so we reuse the same UI for ALL navigation entry
-  // points (Back button, top nav, deep links).
+  // points (Back button, application navigation, deep links).
   useEffect(() => {
     if (pendingNavigationHref && trackDirty) {
       form.guardedClose();
@@ -328,10 +329,10 @@ export function SkillWorkspace({
       form.guardedClose();
       return;
     }
-    router.push(backHref);
-  }, [form, router, backHref, trackDirty]);
+    pushWithNavigationProgress(router,backHref);
+  }, [form,router,backHref,trackDirty]);
 
-  // Confirm + navigate. Prefer the pending external href (top-nav click)
+  // Confirm + navigate. Prefer the pending external href (application-navigation click)
   // over `backHref` — when the user clicks "Chat" in the global header and
   // then confirms "Discard & leave", they expect to land on Chat, not on
   // the Skills gallery.
@@ -342,15 +343,7 @@ export function SkillWorkspace({
       ? confirmNavigation()
       : null;
     const target = externalHref || backHref;
-    // External hrefs may belong to entirely different route trees, so we
-    // use `window.location.assign` for those (matches how `TaskBuilderCanvas`
-    // handles the same handshake) and stick with `router.push` for our own
-    // back-href.
-    if (externalHref) {
-      window.location.href = target;
-    } else {
-      router.push(target);
-    }
+    pushWithNavigationProgress(router,target);
   }, [
     form,
     router,
@@ -877,7 +870,7 @@ export function SkillWorkspace({
 
       {/* Discard-confirmation dialog (driven by the form hook + the
           global unsaved-changes store). Used by ALL exit paths: Back
-          button, top-nav links via AppHeader, and any future
+          button, application-navigation links, and any future
           programmatic navigation that calls `requestNavigation`. */}
       <Dialog
         open={form.showDiscardConfirm}

@@ -35,7 +35,9 @@ export interface FgaEnforcementManifestEntry {
  * Types that are intentionally NOT gated by FGA. Each needs a documented reason;
  * the Layer-2 guard rejects `not_gated` for any type outside this allowlist.
  */
-export const NOT_GATED_ALLOWLIST: Partial<Record<UniversalRebacResourceType, string>> = {
+export const NOT_GATED_ALLOWLIST: Partial<
+  Record<UniversalRebacResourceType, string>
+> = {
   secret_ref:
     "Secret metadata/use is gated by the credential service + Keycloak; FGA tuples " +
     "exist for sharing but the runtime gate is the credential exchange route. " +
@@ -48,53 +50,71 @@ export const FGA_ENFORCEMENT_MANIFEST: Record<
 > = {
   organization: {
     status: "rebac_enforced",
-    surfaces: ["ui/src/app/api/rbac/kb-tab-gates/route.ts", "ui/src/app/api/rag/[...path]/route.ts"],
-    notes: "Org-level capabilities (can_search, can_ingest, can_manage) checked on the data path and tab gates.",
+    surfaces: [
+      "ui/src/app/api/rbac/kb-tab-gates/route.ts",
+      "ui/src/app/api/rag/[...path]/route.ts",
+    ],
+    notes:
+      "Org-level capabilities (can_search, can_ingest, can_manage) checked on the data path and tab gates.",
   },
   user: {
     status: "role_gated",
     surfaces: ["ui/src/app/api/auth/role/route.ts"],
-    notes: "User identity/role resolution; admin user management is Keycloak-gated.",
+    notes:
+      "User identity/role resolution; admin user management is Keycloak-gated.",
   },
   user_profile: {
     status: "rebac_enforced",
     surfaces: ["ui/src/lib/rbac/login-openfga-bootstrap.ts"],
-    notes: "Self-read profile object keyed by Keycloak subject; bootstrapped + checked via OpenFGA.",
+    notes:
+      "Self-read profile object keyed by Keycloak subject; bootstrapped + checked via OpenFGA.",
   },
   external_group: {
     status: "rebac_shadowed",
     surfaces: ["ui/src/lib/rbac/identity-group-sync-reconciler.ts"],
-    notes: "Imported enterprise group; membership reconciled to tuples, not a direct gate.",
+    notes:
+      "Imported enterprise group; membership reconciled to tuples, not a direct gate.",
   },
   team: {
     status: "rebac_enforced",
     surfaces: ["ui/src/app/api/admin/teams/[id]/kb-assignments/route.ts"],
-    notes: "Team membership drives can_use/can_manage on owned resources via team#member usersets.",
+    notes:
+      "Team membership drives can_use/can_manage on owned resources via team#member usersets.",
   },
   slack_workspace: {
     status: "role_gated",
     surfaces: ["ui/src/app/api/admin/slack/channels/route.ts"],
-    notes: "Slack workspace config; channel grants reconciled to FGA, admin gate is Keycloak.",
+    notes:
+      "Slack workspace config; channel grants reconciled to FGA, admin gate is Keycloak.",
   },
   slack_channel: {
     status: "rebac_enforced",
-    surfaces: ["ui/src/app/api/integrations/slack/channels/[workspaceId]/[channelId]/access-check/route.ts"],
+    surfaces: [
+      "ui/src/app/api/integrations/slack/channels/[workspaceId]/[channelId]/access-check/route.ts",
+    ],
     notes: "Channel-scoped resource access checked via OpenFGA usersets.",
   },
   webex_workspace: {
     status: "role_gated",
     surfaces: ["ui/src/app/api/admin/webex/spaces/route.ts"],
-    notes: "Webex workspace config; space grants reconciled to FGA, admin gate is Keycloak.",
+    notes:
+      "Webex workspace config; space grants reconciled to FGA, admin gate is Keycloak.",
   },
   webex_space: {
     status: "rebac_enforced",
-    surfaces: ["ui/src/app/api/integrations/webex/spaces/[workspaceId]/[spaceId]/access-check/route.ts"],
+    surfaces: [
+      "ui/src/app/api/integrations/webex/spaces/[workspaceId]/[spaceId]/access-check/route.ts",
+    ],
     notes: "Space-scoped resource access checked via OpenFGA usersets.",
   },
   agent: {
     status: "rebac_enforced",
-    surfaces: ["ui/src/lib/rbac/openfga-agent-authz.ts", "ui/src/app/api/dynamic-agents/route.ts"],
-    notes: "agent#can_use gates execution; reconcileAgentRelationships writes ownership/share tuples.",
+    surfaces: [
+      "ui/src/lib/rbac/openfga-agent-authz.ts",
+      "ui/src/app/api/dynamic-agents/route.ts",
+    ],
+    notes:
+      "agent#can_use gates execution; reconcileAgentRelationships writes ownership/share tuples.",
   },
   llm_model: {
     status: "rebac_enforced",
@@ -104,67 +124,94 @@ export const FGA_ENFORCEMENT_MANIFEST: Record<
   mcp_gateway: {
     status: "rebac_enforced",
     surfaces: ["deploy/openfga/bridge/main.py"],
-    notes: "Coarse AGW gate: user can_call mcp_gateway:list, enforced by the ext_authz bridge.",
+    notes:
+      "Coarse AGW gate: user can_call mcp_gateway:list, enforced by the ext_authz bridge.",
   },
   mcp_server: {
     status: "role_gated",
     surfaces: ["ui/src/app/api/mcp-servers/route.ts"],
-    notes: "Server registration Keycloak-gated; reconcileMcpServerRelationships writes tuples.",
+    notes:
+      "Server registration Keycloak-gated; reconcileMcpServerRelationships writes tuples.",
   },
   tool: {
     status: "rebac_enforced",
     surfaces: ["deploy/openfga/bridge/main.py"],
-    notes: "Per-tool can_call enforced by the AGW ext_authz bridge on tools/call.",
+    notes:
+      "Per-tool can_call enforced by the AGW ext_authz bridge on tools/call.",
+  },
+  rag_collection: {
+    status: "rebac_enforced",
+    surfaces: [
+      "ui/src/app/api/rag/collections/route.ts",
+      "ui/src/app/api/rag/collections/[id]/route.ts",
+    ],
+    notes:
+      "Collection read/publish/manage is checked in the BFF; member sources inherit collection read access through knowledge_base#parent_collection.",
   },
   knowledge_base: {
     status: "rebac_enforced",
-    surfaces: ["ui/src/app/api/rag/kbs/[id]/sharing/route.ts", "ui/src/app/api/rag/[...path]/route.ts"],
-    notes: "KB read/ingest/manage checked + reconciled; data_source inherits via parent_kb.",
+    surfaces: [
+      "ui/src/app/api/rag/kbs/[id]/sharing/route.ts",
+      "ui/src/app/api/rag/[...path]/route.ts",
+    ],
+    notes:
+      "KB read/ingest/manage checked + reconciled; data_source inherits via parent_kb.",
   },
   data_source: {
     status: "rebac_enforced",
     surfaces: ["ui/src/app/api/rag/[...path]/route.ts"],
-    notes: "Datasource read filtered by can_read; create writes ownership server-side + reconciled.",
+    notes:
+      "Datasource read filtered by can_read; create writes ownership server-side + reconciled.",
   },
   mcp_tool: {
     status: "rebac_enforced",
     surfaces: ["ui/src/app/api/rag/[...path]/route.ts"],
-    notes: "mcp_tool#can_call gates custom-tool invocation; layered under org can_search.",
+    notes:
+      "mcp_tool#can_call gates custom-tool invocation; layered under org can_search.",
   },
   ingestion_source: {
     status: "rebac_enforced",
     surfaces: ["ui/src/lib/rbac/openfga-owned-resources-reconcile.ts"],
-    notes: "Source CRUD gated by can_read/can_manage/can_delete; ownership reconciled via reconcileIngestionSourceRelationships.",
+    notes:
+      "Source CRUD gated by can_read/can_manage/can_delete; ownership reconciled via reconcileIngestionSourceRelationships.",
   },
   document: {
     status: "role_gated",
-    surfaces: ["ai_platform_engineering/knowledge_bases/rag/server/src/server/restapi.py"],
-    notes: "Document access flows through KB/datasource gates; no standalone FGA gate yet.",
+    surfaces: [
+      "ai_platform_engineering/knowledge_bases/rag/server/src/server/restapi.py",
+    ],
+    notes:
+      "Document access flows through KB/datasource gates; no standalone FGA gate yet.",
   },
   skill: {
     status: "role_gated",
     surfaces: ["ui/src/app/api/skills/configs/route.ts"],
-    notes: "Skill catalog Keycloak-gated with team-grant patterns; not yet a direct FGA gate.",
+    notes:
+      "Skill catalog Keycloak-gated with team-grant patterns; not yet a direct FGA gate.",
   },
   task: {
     status: "role_gated",
     surfaces: ["ui/src/app/api/workflow-configs/route.ts"],
-    notes: "Workflow configs map to the OpenFGA `task` namespace; Keycloak-gated today, FGA enforcement tracked separately.",
+    notes:
+      "Workflow configs map to the OpenFGA `task` namespace; Keycloak-gated today, FGA enforcement tracked separately.",
   },
   conversation: {
     status: "role_gated",
     surfaces: ["ui/src/app/api/chat/conversations/route.ts"],
-    notes: "Conversation ownership/sharing gated in-app; FGA enforcement tracked separately.",
+    notes:
+      "Conversation ownership/sharing gated in-app; FGA enforcement tracked separately.",
   },
   admin_surface: {
     status: "rebac_enforced",
     surfaces: ["ui/src/app/api/rbac/admin-tab-gates/route.ts"],
-    notes: "Admin surfaces gated by team#admin / organization#admin usersets via OpenFGA.",
+    notes:
+      "Admin surfaces gated by team#admin / organization#admin usersets via OpenFGA.",
   },
   policy: {
     status: "rebac_shadowed",
     surfaces: ["ui/src/lib/rbac/policy-change-validator.ts"],
-    notes: "ReBAC policy change-sets validated; enforcement is admin-role gated today.",
+    notes:
+      "ReBAC policy change-sets validated; enforcement is admin-role gated today.",
   },
   audit_log: {
     status: "role_gated",
@@ -174,7 +221,8 @@ export const FGA_ENFORCEMENT_MANIFEST: Record<
   secret_ref: {
     status: "not_gated",
     surfaces: ["ui/src/app/api/credentials/exchange/route.ts"],
-    notes: "See NOT_GATED_ALLOWLIST — gated by the credential service, FGA enforcement pending.",
+    notes:
+      "See NOT_GATED_ALLOWLIST — gated by the credential service, FGA enforcement pending.",
   },
   system_config: {
     status: "role_gated",

@@ -61,11 +61,9 @@ jobs:
 
           APP_VERSION="${TAG_VERSION%-chart.*}"
           CHART_ONLY=false
-          REGISTRY_PATH="pre-release-helm-charts"
           IS_FINAL_RELEASE=false
 
           if [[ "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            REGISTRY_PATH="charts"
             IS_FINAL_RELEASE=true
           fi
 
@@ -77,14 +75,13 @@ jobs:
           echo "tag_version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "chart_only=$CHART_ONLY" >> "$GITHUB_OUTPUT"
-          echo "registry_path=$REGISTRY_PATH" >> "$GITHUB_OUTPUT"
 
           echo "Publishing Helm charts for tag: $TAG_VERSION"
           echo "App version: $APP_VERSION"
-          echo "Registry path: $REGISTRY_PATH"
+          echo "Registry path: charts"
 
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -144,16 +141,6 @@ jobs:
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v3.14.0
-
-      - name: 🔑 Generate GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ secrets.CI_BUILD_APP_ID }}
-          private-key: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-packages: write
 
       - name: Login to GHCR
         if: steps.detect.outputs.rag-stack-changed == 'true' || steps.detect.outputs.ai-platform-changed == 'true'
@@ -309,7 +296,7 @@ jobs:
       - name: Push Helm charts to GHCR
         if: steps.detect.outputs.rag-stack-changed == 'true' || steps.detect.outputs.ai-platform-changed == 'true'
         run: |
-          REGISTRY="oci://ghcr.io/${{ github.repository_owner }}/${{ steps.tag.outputs.registry_path }}"
+          REGISTRY="oci://ghcr.io/${{ github.repository_owner }}/charts"
           mkdir -p /tmp/release-helm-pull-checks
 
           for CHART_FILE in ./packaged-charts/*.tgz; do
@@ -335,11 +322,10 @@ jobs:
           TAG_VERSION: ${{ steps.tag.outputs.tag_version }}
           APP_VERSION: ${{ steps.tag.outputs.app_version }}
           CHART_ONLY: ${{ steps.tag.outputs.chart_only }}
-          REGISTRY_PATH: ${{ steps.tag.outputs.registry_path }}
           RAG_STACK_CHANGED: ${{ steps.detect.outputs.rag-stack-changed }}
           AI_PLATFORM_CHANGED: ${{ steps.detect.outputs.ai-platform-changed }}
         run: |
-          REGISTRY="ghcr.io/${{ github.repository_owner }}/${REGISTRY_PATH}"
+          REGISTRY="ghcr.io/${{ github.repository_owner }}/charts"
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           # Helm Tagged Charts

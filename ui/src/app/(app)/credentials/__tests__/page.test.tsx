@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { getServerSession } from "next-auth";
 import { notFound, redirect } from "next/navigation";
 
-import CredentialsPage from "../page";
+import CredentialsLayout from "../layout";
 
 jest.mock("next-auth", () => ({
   getServerSession: jest.fn(),
@@ -26,10 +26,6 @@ jest.mock("@/lib/feature-flags/credentials", () => ({
   isUserConnectionsEnabled: jest.fn(() => true),
 }));
 
-jest.mock("@/components/credentials/CredentialsWorkspace", () => ({
-  CredentialsWorkspace: () => <div>Credentials workspace</div>,
-}));
-
 const mockCheckOpenFgaTuple = jest.fn();
 jest.mock("@/lib/rbac/openfga", () => ({
   checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
@@ -43,7 +39,7 @@ const mockGetServerSession = getServerSession as jest.MockedFunction<typeof getS
 const mockRedirect = redirect as unknown as jest.Mock;
 const mockNotFound = notFound as unknown as jest.Mock;
 
-describe("CredentialsPage", () => {
+describe("CredentialsLayout", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
@@ -52,7 +48,9 @@ describe("CredentialsPage", () => {
   it("redirects unauthenticated visitors to the sign-in page", async () => {
     mockGetServerSession.mockResolvedValue(null);
 
-    await expect(CredentialsPage()).rejects.toThrow("redirect:/login?callbackUrl=%2Fcredentials");
+    await expect(CredentialsLayout({ children: <div>Credentials workspace</div> })).rejects.toThrow(
+      "redirect:/login?callbackUrl=%2Fcredentials",
+    );
 
     expect(mockRedirect).toHaveBeenCalledWith("/login?callbackUrl=%2Fcredentials");
   });
@@ -64,7 +62,7 @@ describe("CredentialsPage", () => {
       expires: "2026-05-22T00:00:00.000Z",
     });
 
-    render(await CredentialsPage());
+    render(await CredentialsLayout({ children: <div>Credentials workspace</div> }));
 
     expect(mockCheckOpenFgaTuple).toHaveBeenCalledWith({
       user: "user:user-sub",
@@ -82,7 +80,9 @@ describe("CredentialsPage", () => {
     });
     mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
 
-    await expect(CredentialsPage()).rejects.toThrow("notFound");
+    await expect(
+      CredentialsLayout({ children: <div>Credentials workspace</div> }),
+    ).rejects.toThrow("notFound");
 
     expect(mockNotFound).toHaveBeenCalled();
   });

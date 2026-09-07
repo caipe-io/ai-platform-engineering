@@ -4,7 +4,7 @@
 
 # Global image configuration
 image:
-  repository: "ghcr.io/cnoe-io/caipe-rag-ingestors"
+  repository: "ghcr.io/caipe-io/caipe-rag-ingestors"
   # tag defaults to .Chart.AppVersion when not specified
   tag: ""
   pullPolicy: IfNotPresent
@@ -215,7 +215,6 @@ ingestors: []
   # Example Slack Ingestor
   # - name: slack-workspace
   #   type: slack                            # INGESTOR_TYPE
-  #   syncInterval: 86400                    # SYNC_INTERVAL (24 hours)
   #   initDelaySeconds: 60                   # INIT_DELAY_SECONDS
   #   logLevel: INFO                         # LOG_LEVEL
   #
@@ -253,7 +252,6 @@ ingestors: []
   # Example Webex Ingestor
   # - name: webex-workspace
   #   type: webex                            # INGESTOR_TYPE
-  #   syncInterval: 86400                    # SYNC_INTERVAL (24 hours)
   #   initDelaySeconds: 60                   # INIT_DELAY_SECONDS
   #   logLevel: INFO                         # LOG_LEVEL
   #
@@ -308,7 +306,6 @@ ingestors: []
   # Example Jira Ingestor
   # - name: jira-workspace
   #   type: jira                             # INGESTOR_TYPE
-  #   syncInterval: 86400                    # SYNC_INTERVAL (24 hours)
   #   initDelaySeconds: 60                   # INIT_DELAY_SECONDS
   #   logLevel: INFO                         # LOG_LEVEL
   #
@@ -356,7 +353,6 @@ ingestors: []
   # Example Confluence Ingestor
   # - name: confluence-wiki
   #   type: confluence                        # INGESTOR_TYPE
-  #   syncInterval: 86400                     # CONFLUENCE_SYNC_INTERVAL (24 hours)
   #   initDelaySeconds: 60                    # INIT_DELAY_SECONDS
   #   logLevel: INFO                          # LOG_LEVEL
   #
@@ -432,4 +428,3 @@ vpa:
 
 # Image pull secrets
 imagePullSecrets: []
-

@@ -113,6 +113,23 @@ describe("GET /api/rag/sources/[sourceId]", () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(json.data).toEqual(record);
+    expect(json.data).toEqual({ ...record, _permissions: { can_manage: true } });
+  });
+
+  it("includes _permissions.can_manage: false when the caller can read but not manage", async () => {
+    const record = { source_id: "slack-channel-C1", name: "eng-general" };
+    sources.findOne.mockResolvedValue(record);
+    mockRequireResourcePermission
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("denied"), { statusCode: 403, code: "ingestion_source#manage" }),
+      );
+    const { GET } = await import("../route");
+
+    const response = await GET(request(), { params: Promise.resolve({ sourceId: "slack-channel-C1" }) });
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data).toEqual({ ...record, _permissions: { can_manage: false } });
   });
 });

@@ -45,7 +45,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ include "caipe-ui.imageRepository" (dict "root" . "repository" .Values.image.repository) }}:{{ .Values.image.tag | default (include "caipe-ui.appVersion" .) }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "caipe-ui.appVersion" .) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if .Values.image.command }}
           command:
@@ -76,6 +76,8 @@ spec:
           {{- $schedulerRunnerSecretName = printf "%s-scheduler-runner" $schedulerRunnerBase }}
           {{- end }}
           env:
+            - name: CAIPE_RELEASE_VERSION
+              value: {{ index .Values.config "CAIPE_RELEASE_VERSION" | default (.Values.image.tag | default (include "caipe-ui.appVersion" .)) | quote }}
             {{- if $hasAppConfig }}
             - name: APP_CONFIG_PATH
               value: "/etc/caipe-ui/app-config.yaml"

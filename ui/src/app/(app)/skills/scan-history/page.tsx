@@ -7,6 +7,7 @@ import { ScanAllDialog } from "@/components/skills/ScanAllDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { ScanStatus } from "@/types/agent-skill";
 import {
@@ -19,7 +20,7 @@ ShieldCheck,
 Zap,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
-import Link from "next/link";
+import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import { useCallback,useEffect,useMemo,useState } from "react";
 
 type Trigger =
@@ -140,9 +141,9 @@ export default function ScanHistoryPage() {
           <header className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                <Link href="/skills" className="inline-flex items-center gap-1 hover:text-foreground">
+                <NavigationProgressLink href="/skills" className="inline-flex items-center gap-1 hover:text-foreground">
                   <ArrowLeft className="h-3.5 w-3.5" /> Skills
-                </Link>
+                </NavigationProgressLink>
                 <span>/</span>
                 <span>Scan history</span>
               </div>
@@ -406,7 +407,7 @@ function FilterSelect({
   options: { v: string; l: string }[];
 }) {
   return (
-    <select
+    <Select
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
@@ -416,6 +417,6 @@ function FilterSelect({
           {o.l}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }

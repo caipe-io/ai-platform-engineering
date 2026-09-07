@@ -39,6 +39,11 @@ import {
   type ShareableResourceInput,
 } from "./openfga-owned-resources";
 import { openFgaResourceId } from "./openfga-resource-ids";
+import {
+  isEveryoneKnowledgeAudience,
+  reconcileExistingUnlinkedKnowledgeAccess,
+  withUnlinkedEveryoneKnowledgeAccess,
+} from "./unlinked-knowledge-access";
 
 export { OpenFgaReconcileRequiredError } from "@/lib/authz";
 
@@ -222,7 +227,26 @@ export async function reconcileConfigDrivenLlmModelRelationships(
 export async function reconcileKnowledgeBaseRelationships(
   input: KnowledgeBaseRelationshipInput,
 ): Promise<OpenFgaReconcileResult> {
-  return reconcileOwnedResource(buildKnowledgeBaseRelationshipTupleDiff(input));
+  const previousEveryoneAccess = isEveryoneKnowledgeAudience(
+    input.previousSharedTeamSlugs,
+  );
+  const nextEveryoneAccess = isEveryoneKnowledgeAudience(
+    input.nextSharedTeamSlugs,
+  );
+  const diff = await withUnlinkedEveryoneKnowledgeAccess(
+    {
+      type: "datasource",
+      id: input.knowledgeBaseId,
+      previousEveryoneAccess,
+      nextEveryoneAccess,
+    },
+    buildKnowledgeBaseRelationshipTupleDiff(input),
+  );
+  const result = await reconcileOwnedResource(diff);
+  if (previousEveryoneAccess && !nextEveryoneAccess) {
+    await reconcileExistingUnlinkedKnowledgeAccess();
+  }
+  return result;
 }
 
 export async function reconcileDataSourceRelationships(
@@ -243,6 +267,57 @@ export async function reconcileIngestionSourceRelationships(
   return reconcileOwnedResource(buildIngestionSourceRelationshipTupleDiff(input));
 }
 
+async function deleteAllRelationshipTuplesForObject(
+  object: string,
+  source: string,
+  ctx?: TupleReconcileContext,
+): Promise<OpenFgaReconcileResult> {
+  if (!isOpenFgaReconciliationEnabled()) {
+    throw new OpenFgaReconcileRequiredError();
+  }
+
+  const deletes = await readAllTuplesForObject(object);
+  const diff = { writes: [] as OpenFgaTupleKey[], deletes: uniqueTuples(deletes) };
+  assertReconciliationEnabled(diff);
+  return reconcileTupleDiff(diff, { ...ctx, source: ctx?.source ?? source });
+}
+
+/** Remove every management tuple for an ingestion-source config row. */
+export async function deleteAllIngestionSourceRelationshipTuples(
+  sourceId: string,
+  ctx?: TupleReconcileContext,
+): Promise<OpenFgaReconcileResult> {
+  return deleteAllRelationshipTuplesForObject(
+    `ingestion_source:${sourceId}`,
+    "ingestion_source_delete",
+    ctx,
+  );
+}
+
+/** Remove every query/share tuple for a knowledge base. */
+export async function deleteAllKnowledgeBaseRelationshipTuples(
+  knowledgeBaseId: string,
+  ctx?: TupleReconcileContext,
+): Promise<OpenFgaReconcileResult> {
+  return deleteAllRelationshipTuplesForObject(
+    `knowledge_base:${knowledgeBaseId}`,
+    "knowledge_base_delete",
+    ctx,
+  );
+}
+
+/** Remove every tuple for a datasource, including its parent_kb edge. */
+export async function deleteAllDataSourceRelationshipTuples(
+  dataSourceId: string,
+  ctx?: TupleReconcileContext,
+): Promise<OpenFgaReconcileResult> {
+  return deleteAllRelationshipTuplesForObject(
+    `data_source:${dataSourceId}`,
+    "data_source_delete",
+    ctx,
+  );
+}
+
 /**
  * Remove every tuple targeting `mcp_tool:<toolId>` so deleting a custom MCP
  * tool leaves no orphaned grants.
@@ -250,25 +325,10 @@ export async function reconcileIngestionSourceRelationships(
 export async function deleteAllMcpToolRelationshipTuples(
   toolId: string,
 ): Promise<OpenFgaReconcileResult> {
-  if (!isOpenFgaReconciliationEnabled()) {
-    throw new OpenFgaReconcileRequiredError();
-  }
-
-  const object = `mcp_tool:${toolId}`;
-  const allTuples: OpenFgaTupleKey[] = [];
-  let continuationToken: string | undefined;
-  do {
-    const page = await readOpenFgaTuples({ tuple: { object }, continuationToken });
-    allTuples.push(...page.tuples.map((tuple) => tuple.key));
-    continuationToken = page.continuationToken;
-  } while (continuationToken);
-
-  const diff = {
-    writes: [] as OpenFgaTupleKey[],
-    deletes: allTuples.filter((tuple) => tuple.object === object),
-  };
-  assertReconciliationEnabled(diff);
-  return reconcileTupleDiff(diff, { source: "mcp_tool_delete" });
+  return deleteAllRelationshipTuplesForObject(
+    `mcp_tool:${toolId}`,
+    "mcp_tool_delete",
+  );
 }
 
 const MCP_TOOL_WILDCARD_SUFFIX = "_*";

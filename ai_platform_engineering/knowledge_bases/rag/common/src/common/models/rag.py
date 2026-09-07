@@ -178,8 +178,9 @@ class IngestorInfo(BaseModel):
 
 class DataSourceInfo(OwnedResourceMixin, BaseModel):
   # OwnedResourceMixin adds creator_subject / owner_subject / owner_team_slug /
-  # shared_with_teams for group-based access control (spec 2026-06-03, US5).
-  # Config is the source of truth; OpenFGA is the derived projection.
+  # legacy shared_with_teams fields (spec 2026-06-03, US5). New RAG sources use
+  # one management owner plus the independent search_with_teams projection.
+  # Config is the recovery source of truth; OpenFGA is the enforcement graph.
   datasource_id: str = Field(
     ...,
     description=(
@@ -204,7 +205,43 @@ class DataSourceInfo(OwnedResourceMixin, BaseModel):
   default_chunk_size: Optional[int] = Field(default=10000, description="Default chunk size for this data source, applies to all documents unless overridden")
   default_chunk_overlap: Optional[int] = Field(default=2000, description="Default chunk overlap for this data source, applies to all documents unless overridden")
   reload_interval: int = Field(default=DEFAULT_RELOAD_INTERVAL, description="Reload interval in seconds. Used to calculate fresh_until and next reload time.")
+  search_with_teams: List[str] = Field(
+    default_factory=list,
+    description="Teams explicitly granted Search access, independent from the management owner team.",
+  )
+  search_with_users: List[str] = Field(
+    default_factory=list,
+    description="User subjects explicitly granted Search access, independent from the management owner.",
+  )
   metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+  @model_validator(mode="after")
+  def _normalize_search_with_teams(self) -> "DataSourceInfo":
+    """Normalize search grants without coupling them to management ownership."""
+    seen: set[str] = set()
+    normalized: List[str] = []
+    for raw in self.search_with_teams or []:
+      slug = raw.strip() if isinstance(raw, str) else ""
+      if not slug or slug in seen:
+        continue
+      seen.add(slug)
+      normalized.append(slug)
+    self.search_with_teams = normalized
+    return self
+
+  @model_validator(mode="after")
+  def _normalize_search_with_users(self) -> "DataSourceInfo":
+    """Normalize direct-user search grants without exposing display identities."""
+    seen: set[str] = set()
+    normalized: List[str] = []
+    for raw in self.search_with_users or []:
+      subject = raw.strip() if isinstance(raw, str) else ""
+      if not subject or subject in seen:
+        continue
+      seen.add(subject)
+      normalized.append(subject)
+    self.search_with_users = normalized
+    return self
 
   @model_validator(mode="before")
   @classmethod

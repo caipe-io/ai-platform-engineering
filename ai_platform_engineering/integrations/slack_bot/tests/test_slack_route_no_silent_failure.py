@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import pathlib
 import sys
 
@@ -256,6 +257,44 @@ def test_bot_message_subtype_still_mints_unlinked_sa_token(
     assert context.get("obo_token") == "unlinked-sa-token"
     assert context.get("is_bot") is True
     assert context.get("unlinked_fallback") is True
+
+
+def test_missing_unlinked_token_uses_stdlib_log_formatting(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app_module = _load_slack_app(monkeypatch, rbac_enabled=True)
+
+    async def _missing_token() -> None:
+        return None
+
+    monkeypatch.setattr(app_module, "_mint_unlinked_obo_token", _missing_token)
+    monkeypatch.setattr(
+        app_module.utils,
+        "get_bot_info_by_id",
+        lambda _bot_id: (None, "UBOT"),
+    )
+    logger = logging.getLogger("slack-bot-middleware-test")
+
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        result = app_module.rbac_global_middleware(
+            {
+                "event_id": "E-bot-without-unlinked-token",
+                "event": {
+                    "type": "app_mention",
+                    "subtype": "bot_message",
+                    "channel": "C123",
+                    "bot_id": "B123",
+                    "ts": "1700000000.000200",
+                },
+            },
+            {},
+            lambda: None,
+            logger,
+        )
+
+    assert result is app_module._HANDLED_200
+    assert "no unlinked SA available" in caplog.text
 
 
 def test_route_miss_notice_does_not_call_slack_for_ambient_messages(

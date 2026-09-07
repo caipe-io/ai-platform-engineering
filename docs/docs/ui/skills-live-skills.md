@@ -19,7 +19,7 @@ image.
 
 | Layer            | Location                                                         |
 | ---------------- | ---------------------------------------------------------------- |
-| Packaged default | [`charts/ai-platform-engineering/data/skills/live-skills.md`](https://github.com/cnoe-io/ai-platform-engineering/tree/main/charts/ai-platform-engineering/data/skills/live-skills.md) |
+| Packaged default | [`charts/ai-platform-engineering/data/skills/live-skills.md`](https://github.com/caipe-io/ai-platform-engineering/tree/main/charts/ai-platform-engineering/data/skills/live-skills.md) |
 | Helm ConfigMap   | `skills-live-skills` (key `live-skills.md`)                          |
 | Mounted in pod   | `/app/data/skills-live-skills/live-skills.md` on the `caipe-ui` pod  |
 | Served at        | `GET /api/skills/live-skills` (returns `{ template, source, … }`)  |
@@ -186,7 +186,7 @@ The renderer parses the canonical Markdown's frontmatter once, substitutes
 `{{COMMAND_NAME}}`, `{{DESCRIPTION}}`, `{{BASE_URL}}`, and `{{ARG_REF}}`,
 then re-wraps the body as appropriate for each surface (YAML frontmatter,
 TOML basic strings, or a JSON object). Adding a new agent is one entry in
-[`ui/src/app/api/skills/live-skills/agents.ts`](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ui/src/app/api/skills/live-skills/agents.ts)
+[`ui/src/app/api/skills/live-skills/agents.ts`](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/src/app/api/skills/live-skills/agents.ts)
 plus a case in `renderForAgent()`.
 
 ### Per-agent launch & invocation guidance
@@ -221,6 +221,6 @@ basic Markdown (bold, inline code, links, fenced code blocks).
 
 ## See also
 
-- Chart-side reference: [`charts/ai-platform-engineering/docs/skills-live-skills.md`](https://github.com/cnoe-io/ai-platform-engineering/tree/main/charts/ai-platform-engineering/docs/skills-live-skills.md)
-- Default template: [`live-skills.md`](https://github.com/cnoe-io/ai-platform-engineering/tree/main/charts/ai-platform-engineering/data/skills/live-skills.md)
-- ConfigMap template: [`templates/skills-live-skills-config.yaml`](https://github.com/cnoe-io/ai-platform-engineering/tree/main/charts/ai-platform-engineering/templates/skills-live-skills-config.yaml)
+- Chart-side reference: [`charts/ai-platform-engineering/docs/skills-live-skills.md`](https://github.com/caipe-io/ai-platform-engineering/tree/main/charts/ai-platform-engineering/docs/skills-live-skills.md)
+- Default template: [`live-skills.md`](https://github.com/caipe-io/ai-platform-engineering/tree/main/charts/ai-platform-engineering/data/skills/live-skills.md)
+- ConfigMap template: [`templates/skills-live-skills-config.yaml`](https://github.com/caipe-io/ai-platform-engineering/tree/main/charts/ai-platform-engineering/templates/skills-live-skills-config.yaml)

@@ -31,7 +31,8 @@ jest.mock("@/lib/rbac/resource-catalog", () => ({
 
 const mockHasOrganizationAdmin = jest.fn();
 jest.mock("@/lib/rbac/platform-admin", () => ({
-  hasOrganizationAdmin: (...args: unknown[]) => mockHasOrganizationAdmin(...args),
+  hasOrganizationAdmin: (...args: unknown[]) =>
+    mockHasOrganizationAdmin(...args),
 }));
 
 const mockGetCollection = jest.fn();
@@ -56,12 +57,13 @@ function request(path: string): NextRequest {
 }
 
 function collectionReturning(rows: unknown[]) {
+  const cursor = {
+    sort: jest.fn(),
+    toArray: jest.fn().mockResolvedValue(rows),
+  };
+  cursor.sort.mockReturnValue(cursor);
   return {
-    find: jest.fn().mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        toArray: jest.fn().mockResolvedValue(rows),
-      }),
-    }),
+    find: jest.fn().mockReturnValue(cursor),
     updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
     bulkWrite: jest.fn().mockResolvedValue({}),
   };
@@ -70,11 +72,19 @@ function collectionReturning(rows: unknown[]) {
 beforeEach(() => {
   jest.resetAllMocks();
   mockGetServerSession.mockResolvedValue(SESSION);
+  mockListOpenFgaObjects.mockResolvedValue({ objects: [] });
   mockListRebacCatalog.mockResolvedValue({ resources: [] });
   mockHasOrganizationAdmin.mockResolvedValue(false);
-  mockAuthenticateRequest.mockResolvedValue({ subject: "caller-sub", bearerToken: "token" });
+  mockAuthenticateRequest.mockResolvedValue({
+    subject: "caller-sub",
+    bearerToken: "token",
+  });
   mockBuildBackendHeaders.mockReturnValue({ Authorization: "Bearer token" });
-  global.fetch = jest.fn().mockRejectedValue(new Error("probe unavailable")) as unknown as typeof fetch;
+  global.fetch = jest
+    .fn()
+    .mockRejectedValue(
+      new Error("probe unavailable"),
+    ) as unknown as typeof fetch;
 });
 
 describe("GET /api/admin/service-accounts/grantable", () => {
@@ -83,7 +93,13 @@ describe("GET /api/admin/service-accounts/grantable", () => {
       .mockResolvedValueOnce({ objects: ["agent:incident-resolver"] }) // can_use agent
       .mockResolvedValueOnce({ objects: ["tool:jira/search", "tool:jira/*"] }); // can_call tool
     mockListRebacCatalog.mockResolvedValue({
-      resources: [{ type: "agent", id: "incident-resolver", display_name: "Incident Resolver" }],
+      resources: [
+        {
+          type: "agent",
+          id: "incident-resolver",
+          display_name: "Incident Resolver",
+        },
+      ],
     });
 
     const res = await GET();
@@ -96,13 +112,48 @@ describe("GET /api/admin/service-accounts/grantable", () => {
     expect(calls).toEqual([
       { user: "user:caller-sub", relation: "can_use", type: "agent" },
       { user: "user:caller-sub", relation: "can_call", type: "tool" },
+      { user: "user:caller-sub", relation: "can_read", type: "data_source" },
+      {
+        user: "user:caller-sub",
+        relation: "can_read",
+        type: "rag_collection",
+      },
     ]);
 
-    expect(body.data.agents).toEqual([{ ref: "incident-resolver", name: "Incident Resolver" }]);
+    expect(body.data.agents).toEqual([
+      { ref: "incident-resolver", name: "Incident Resolver" },
+    ]);
     // Tools humanized; wildcard rendered as "all tools". Sorted by name.
     expect(body.data.tools).toEqual([
       { ref: "jira/*", name: "jira: all tools" },
       { ref: "jira/search", name: "jira: search" },
+    ]);
+  });
+
+  it("returns readable RAG collections alongside individual datasources", async () => {
+    mockListOpenFgaObjects.mockImplementation(
+      async (input: { type: string }) => {
+        if (input.type === "rag_collection") {
+          return { objects: ["rag_collection:platform-rag"] };
+        }
+        return { objects: [] };
+      },
+    );
+    mockGetCollection.mockImplementation((name: string) => {
+      if (name === "rag_collections") {
+        return Promise.resolve(
+          collectionReturning([{ _id: "platform-rag", name: "Platform RAG" }]),
+        );
+      }
+      throw new Error(`unexpected collection ${name}`);
+    });
+
+    const res = await GET(request("/api/admin/service-accounts/grantable"));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.collections).toEqual([
+      { ref: "platform-rag", name: "Platform RAG" },
     ]);
   });
 
@@ -113,7 +164,9 @@ describe("GET /api/admin/service-accounts/grantable", () => {
 
     const res = await GET();
     const body = await res.json();
-    expect(body.data.agents).toEqual([{ ref: "mystery-agent", name: "mystery-agent" }]);
+    expect(body.data.agents).toEqual([
+      { ref: "mystery-agent", name: "mystery-agent" },
+    ]);
     expect(body.data.tools).toEqual([]);
   });
 
@@ -128,6 +181,49 @@ describe("GET /api/admin/service-accounts/grantable", () => {
     const body = await res.json();
     expect(body.data.agents).toEqual([{ ref: "a1", name: "a1" }]);
     expect(body.data.tools).toEqual([{ ref: "srv/do", name: "srv: do" }]);
+  });
+
+  it("returns only caller-readable datasources with friendly RAG labels", async () => {
+    mockGetServerSession.mockResolvedValue({
+      ...SESSION,
+      accessToken: "access-token",
+      org: "example-org",
+    });
+    mockListOpenFgaObjects
+      .mockResolvedValueOnce({ objects: [] })
+      .mockResolvedValueOnce({ objects: [] })
+      .mockResolvedValueOnce({
+        objects: ["data_source:source-a", "data_source:source-b"],
+      });
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        datasources: [
+          { datasource_id: "source-a", name: "Primary handbook" },
+          { datasource_id: "source-unheld", name: "Unheld source" },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    const res = await GET(request("/api/admin/service-accounts/grantable"));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.datasources).toEqual([
+      { ref: "source-a", name: "Primary handbook" },
+      { ref: "source-b", name: "source-b" },
+    ]);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:9446/v1/datasources",
+      {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer access-token",
+          "Content-Type": "application/json",
+          "X-Tenant-Id": "example-org",
+        },
+      },
+    );
   });
 
   it("401 when unauthenticated", async () => {
@@ -148,7 +244,11 @@ describe("GET /api/admin/service-accounts/grantable", () => {
       if (name === "dynamic_agents") {
         return Promise.resolve(
           collectionReturning([
-            { _id: "incident-resolver", name: "Incident Resolver", description: "" },
+            {
+              _id: "incident-resolver",
+              name: "Incident Resolver",
+              description: "",
+            },
             { _id: "runbook-agent", name: "Runbook Agent", description: "" },
           ]),
         );
@@ -182,14 +282,26 @@ describe("GET /api/admin/service-accounts/grantable", () => {
           ]),
         );
       }
+      if (name === "rag_collections") {
+        return Promise.resolve(
+          collectionReturning([{ _id: "platform-rag", name: "Platform RAG" }]),
+        );
+      }
       throw new Error(`unexpected collection ${name}`);
     });
 
-    const res = await GET(request("/api/admin/service-accounts/grantable?context=unlinked"));
+    const res = await GET(
+      request("/api/admin/service-accounts/grantable?context=unlinked"),
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    expect(mockListOpenFgaObjects).not.toHaveBeenCalled();
+    expect(mockListOpenFgaObjects).toHaveBeenCalledTimes(1);
+    expect(mockListOpenFgaObjects).toHaveBeenCalledWith({
+      user: "user:caller-sub",
+      relation: "can_read",
+      type: "data_source",
+    });
     expect(body.data.agents).toEqual([
       { ref: "incident-resolver", name: "Incident Resolver" },
       { ref: "runbook-agent", name: "Runbook Agent" },
@@ -200,13 +312,18 @@ describe("GET /api/admin/service-accounts/grantable", () => {
       { ref: "jira/create_issue", name: "jira: create issue" },
       { ref: "jira/search", name: "jira: search" },
     ]);
+    expect(body.data.collections).toEqual([
+      { ref: "platform-rag", name: "Platform RAG" },
+    ]);
   });
 
   it("returns the full platform MCP catalog for a platform admin in the normal service account picker", async () => {
     mockHasOrganizationAdmin.mockResolvedValue(true);
     mockGetCollection.mockImplementation((name: string) => {
       if (name === "dynamic_agents") {
-        return Promise.resolve(collectionReturning([{ _id: "private", name: "Private Agent" }]));
+        return Promise.resolve(
+          collectionReturning([{ _id: "private", name: "Private Agent" }]),
+        );
       }
       if (name === "mcp_servers") {
         return Promise.resolve(
@@ -219,6 +336,9 @@ describe("GET /api/admin/service-accounts/grantable", () => {
       if (name === "mcp_tool_catalog") {
         return Promise.resolve(collectionReturning([]));
       }
+      if (name === "rag_collections") {
+        return Promise.resolve(collectionReturning([]));
+      }
       throw new Error(`unexpected collection ${name}`);
     });
 
@@ -226,11 +346,55 @@ describe("GET /api/admin/service-accounts/grantable", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    expect(mockListOpenFgaObjects).not.toHaveBeenCalled();
-    expect(body.data.agents).toEqual([{ ref: "private", name: "Private Agent" }]);
+    expect(mockListOpenFgaObjects).toHaveBeenCalledTimes(1);
+    expect(mockListOpenFgaObjects).toHaveBeenCalledWith({
+      user: "user:caller-sub",
+      relation: "can_read",
+      type: "data_source",
+    });
+    expect(body.data.agents).toEqual([
+      { ref: "private", name: "Private Agent" },
+    ]);
     expect(body.data.tools).toEqual([
       { ref: "argocd/*", name: "argocd: all tools" },
       { ref: "jira/*", name: "jira: all tools" },
+    ]);
+  });
+
+  it("includes every RAG-server datasource in an admin's full catalog", async () => {
+    mockHasOrganizationAdmin.mockResolvedValue(true);
+    mockGetServerSession.mockResolvedValue({
+      ...SESSION,
+      accessToken: "admin-token",
+      org: "example-org",
+    });
+    mockGetCollection.mockImplementation((name: string) => {
+      if (name === "dynamic_agents" || name === "mcp_servers") {
+        return Promise.resolve(collectionReturning([]));
+      }
+      if (name === "mcp_tool_catalog") {
+        return Promise.resolve(collectionReturning([]));
+      }
+      if (name === "rag_collections") {
+        return Promise.resolve(collectionReturning([]));
+      }
+      throw new Error(`unexpected collection ${name}`);
+    });
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        datasources: [
+          { datasource_id: "source-admin", name: "Organization handbook" },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    const res = await GET(request("/api/admin/service-accounts/grantable"));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.datasources).toEqual([
+      { ref: "source-admin", name: "Organization handbook" },
     ]);
   });
 
@@ -241,9 +405,14 @@ describe("GET /api/admin/service-accounts/grantable", () => {
         return Promise.resolve(collectionReturning([]));
       }
       if (name === "mcp_servers") {
-        return Promise.resolve(collectionReturning([{ _id: "jira", name: "Jira" }]));
+        return Promise.resolve(
+          collectionReturning([{ _id: "jira", name: "Jira" }]),
+        );
       }
       if (name === "mcp_tool_catalog") {
+        return Promise.resolve(collectionReturning([]));
+      }
+      if (name === "rag_collections") {
         return Promise.resolve(collectionReturning([]));
       }
       throw new Error(`unexpected collection ${name}`);
@@ -253,7 +422,11 @@ describe("GET /api/admin/service-accounts/grantable", () => {
       json: async () => ({
         success: true,
         tools: [
-          { name: "search", namespaced_name: "jira/search", description: "Search Jira" },
+          {
+            name: "search",
+            namespaced_name: "jira/search",
+            description: "Search Jira",
+          },
           { name: "create_issue", description: "Create Jira issue" },
         ],
       }),
@@ -281,19 +454,28 @@ describe("GET /api/admin/service-accounts/grantable", () => {
         return Promise.resolve(collectionReturning([]));
       }
       if (name === "mcp_servers") {
-        return Promise.resolve(collectionReturning([{ _id: "jira", name: "Jira" }]));
+        return Promise.resolve(
+          collectionReturning([{ _id: "jira", name: "Jira" }]),
+        );
       }
       if (name === "mcp_tool_catalog") {
+        return Promise.resolve(collectionReturning([]));
+      }
+      if (name === "rag_collections") {
         return Promise.resolve(collectionReturning([]));
       }
       throw new Error(`unexpected collection ${name}`);
     });
 
-    const res = await GET(request("/api/admin/service-accounts/grantable?context=unlinked"));
+    const res = await GET(
+      request("/api/admin/service-accounts/grantable?context=unlinked"),
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    expect(body.data.tools).toEqual([{ ref: "jira/*", name: "jira: all tools" }]);
+    expect(body.data.tools).toEqual([
+      { ref: "jira/*", name: "jira: all tools" },
+    ]);
   });
 
   it("falls back to a wildcard when a server was cataloged with no individual tools", async () => {
@@ -303,7 +485,9 @@ describe("GET /api/admin/service-accounts/grantable", () => {
         return Promise.resolve(collectionReturning([]));
       }
       if (name === "mcp_servers") {
-        return Promise.resolve(collectionReturning([{ _id: "jira", name: "Jira" }]));
+        return Promise.resolve(
+          collectionReturning([{ _id: "jira", name: "Jira" }]),
+        );
       }
       if (name === "mcp_tool_catalog") {
         return Promise.resolve(
@@ -319,20 +503,29 @@ describe("GET /api/admin/service-accounts/grantable", () => {
           ]),
         );
       }
+      if (name === "rag_collections") {
+        return Promise.resolve(collectionReturning([]));
+      }
       throw new Error(`unexpected collection ${name}`);
     });
 
-    const res = await GET(request("/api/admin/service-accounts/grantable?context=unlinked"));
+    const res = await GET(
+      request("/api/admin/service-accounts/grantable?context=unlinked"),
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    expect(body.data.tools).toEqual([{ ref: "jira/*", name: "jira: all tools" }]);
+    expect(body.data.tools).toEqual([
+      { ref: "jira/*", name: "jira: all tools" },
+    ]);
   });
 
   it("403s the unlinked full-catalog context when the caller is not a platform admin", async () => {
     mockHasOrganizationAdmin.mockResolvedValue(false);
 
-    const res = await GET(request("/api/admin/service-accounts/grantable?context=unlinked"));
+    const res = await GET(
+      request("/api/admin/service-accounts/grantable?context=unlinked"),
+    );
     expect(res.status).toBe(403);
     expect(mockGetCollection).not.toHaveBeenCalled();
     expect(mockListOpenFgaObjects).not.toHaveBeenCalled();

@@ -2,6 +2,10 @@
 
 import type { ReactNode } from "react";
 import type { SlackRouteExecutionIdentity } from "@/types/slack-rebac";
+import type {
+  PendingConnectorPublicationRequestView,
+  PublicationActor,
+} from "@/types/publication-approval";
 
 // Re-export so callers that only import from connector-admin-adapter can
 // reference the type without an additional import from slack-rebac.
@@ -152,10 +156,69 @@ export interface DiscoveredItem {
   id: string;
   name: string;
   secondary: string;
+  /** True when this item is already owned, even if the viewer cannot manage it. */
+  configured?: boolean;
+  /** Friendly Owner-team label for an already configured item. */
+  configuredBy?: string;
+  /** Saved Owner-team slug for a configured item outside the viewer's list. */
+  configuredTeamSlug?: string;
+  /** Saved agent id for a configured item outside the viewer's list. */
+  configuredAgentId?: string;
+  /** Friendly saved-agent label for a configured item. */
+  configuredAgentName?: string;
+  /** Provider workspace identifier when discovery spans multiple workspaces. */
+  workspaceId?: string;
+  /** Provider-reported audience size used by publication thresholds. */
+  memberCount?: number;
   teamRequired?: boolean;
   selectable?: boolean;
   botId?: string;
   availableBotIds?: string[];
+  pendingApproval?: {
+    requestId: string;
+    status: "pending" | "applying";
+    requester: PublicationActor;
+    requesterIsViewer: boolean;
+    teamSlug: string;
+    agentId: string;
+    botId?: string;
+    approverTeamSlugs: string[];
+    approverUserSubjects: string[];
+  };
+}
+
+export function parsePendingConnectorPublication(
+  value: unknown,
+): DiscoveredItem["pendingApproval"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const request = value as Partial<PendingConnectorPublicationRequestView>;
+  if (
+    typeof request.id !== "string" ||
+    (request.status !== "pending" && request.status !== "applying") ||
+    !request.requester ||
+    typeof request.requester.subject !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    requestId: request.id,
+    status: request.status,
+    requester: request.requester,
+    requesterIsViewer: request.requester_is_viewer === true,
+    teamSlug: typeof request.team_slug === "string" ? request.team_slug : "",
+    agentId: typeof request.agent_id === "string" ? request.agent_id : "",
+    ...(typeof request.bot_id === "string" ? { botId: request.bot_id } : {}),
+    approverTeamSlugs: Array.isArray(request.approver_team_slugs)
+      ? request.approver_team_slugs.filter(
+          (slug): slug is string => typeof slug === "string",
+        )
+      : [],
+    approverUserSubjects: Array.isArray(request.approver_user_subjects)
+      ? request.approver_user_subjects.filter(
+          (subject): subject is string => typeof subject === "string",
+        )
+      : [],
+  };
 }
 
 export interface DiscoveryPage {
@@ -182,12 +245,10 @@ export interface ConnectorAdminAdapter {
   itemSingular: string;     // "channel" | "space"
   itemPlural: string;       // "channels" | "spaces"
   singlePanelView?: "channels" | "onboard" | "advanced";
+  // When set, the Advanced tab shows only the Reload Bot Cache action,
+  // hiding the runtime status tiles, Refresh Runtime Status, and YAML import.
+  advancedTabMinimal?: boolean;
   directMessagesPanel?: {
-    title: string;
-    description: string;
-    render: (options: { disabled: boolean }) => ReactNode;
-  };
-  migrationPanel?: {
     title: string;
     description: string;
     render: (options: { disabled: boolean }) => ReactNode;
@@ -305,12 +366,19 @@ export interface ConnectorAdminAdapter {
       teamRequired?: boolean;
       selectable?: boolean;
       botId?: string;
+      workspaceId?: string;
+      memberCount?: number;
     }>;
     defaultTeamSlug: string;
     defaultAgentId: string;
     createDefaultRoutes: boolean;
     fetchFn: (url: string, init: RequestInit) => Promise<Response>;
-  }) => Promise<{ toastMessage: string }>;
+  }) => Promise<{
+    toastMessage: string;
+    appliedItemIds?: string[];
+    pendingItemIds?: string[];
+    pendingApproverTeamSlugs?: string[];
+  }>;
 
   // ── Configured detail extras ──────────────────────────────────────────
   // Provider-specific controls rendered under shared diagnostics.
@@ -341,7 +409,7 @@ export interface ConnectorAdminAdapter {
   // Rendered above the configured-items table when selfService=true or
   // on the Onboard tab. Slack and Webex have near-identical copy; each
   // adapter provides the exact JSX so the panel stays generic.
-  authzDisclaimer: ReactNode;
+  authzDisclaimer: ReactNode | null;
 
   // ── Diagnostics fixability ────────────────────────────────────────────
   diagnosticRouteIsFixable: (route: DiagnosticRoute) => boolean;

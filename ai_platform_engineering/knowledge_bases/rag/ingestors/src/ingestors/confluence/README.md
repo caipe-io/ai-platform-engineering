@@ -9,13 +9,16 @@ This ingestor follows the webloader pattern with two operational modes:
 1. **On-Demand Ingestion** - Redis listener processes individual page requests from the REST API (user-initiated)
 2. **Periodic Reload** - Background task refreshes all configured spaces at regular intervals
 
-Each Confluence space is treated as a datasource, with pages being ingested as documents within that datasource.
+On-demand sources are rooted at one page, so a space can contain several
+independent datasources. Legacy `CONFLUENCE_SPACES` configuration continues to
+use one datasource per configured space.
 
 ## Features
 
 - On-demand page ingestion via REST API
 - Automatic periodic syncing of configured spaces
-- Space-level datasource organization (one datasource per space)
+- Page-rooted datasource organization for self-service sources
+- Backward-compatible whole-space environment configuration
 - **Title-based page filtering** with configurable regex include/exclude patterns (mirrors webloader's URL pattern filtering)
 - HTML to plain text conversion with BeautifulSoup
 - Chunking with LangChain RecursiveCharacterTextSplitter
@@ -35,10 +38,12 @@ Required environment variables:
 Optional environment variables:
 
 - `CONFLUENCE_SPACES` - JSON object mapping space keys to page configurations. Format: `{"SPACE_KEY": [{"page_id": "123", "get_child_pages": false}], "SPACE2": []}`. Empty array fetches entire space. If not set, only user-requested pages are ingested.
-- `CONFLUENCE_SYNC_INTERVAL` - Sync interval in seconds (default: `86400` = 24 hours)
 - `CONFLUENCE_SSL_VERIFY` - Enable SSL verification (default: `true`)
 - `CONFLUENCE_MAX_CONCURRENCY` - Max concurrent page fetches (default: `5`)
 - `CONFLUENCE_MAX_INGESTION_TASKS` - Max concurrent ingestion tasks from Redis queue (default: `5`)
+
+Each datasource stores its own required refresh interval. Legacy
+`CONFLUENCE_SPACES` sources retain a 24-hour interval until imported and edited.
 
 ## Usage
 
@@ -85,7 +90,7 @@ curl -X POST "http://localhost:8080/v1/ingest/confluence/page" \
 curl -X POST "http://localhost:8080/v1/ingest/confluence/reload" \
   -H "Content-Type: application/json" \
   -d '{
-    "datasource_id": "src_confluence___yourcompany_atlassian_net__DEV"
+    "datasource_id": "src_confluence___example_atlassian_net__DEV__123456"
   }'
 
 # Reload all datasources
@@ -128,7 +133,7 @@ Title patterns are persisted in the datasource metadata and applied on every rel
 ### On-Demand Ingestion Flow
 
 1. User submits a Confluence page URL via REST API
-2. Server creates/updates a space-level datasource and creates a job
+2. Server creates or updates the page-rooted datasource and creates a job
 3. Request is queued to Redis (`ingestor:confluence:requests`)
 4. Ingestor picks up request from Redis queue
 5. Page is fetched from Confluence REST API v1
@@ -146,11 +151,12 @@ Title patterns are persisted in the datasource metadata and applied on every rel
 
 ### Datasource Model
 
-**Space-Level Datasources**: Each Confluence space is one datasource
+**Page-rooted datasources**: UI/API-created sources include the root page ID.
+Legacy environment-managed sources omit that suffix and remain space-level.
 
 ```python
 DataSourceInfo(
-    datasource_id="src_confluence___company_atlassian_net__SPACE",
+    datasource_id="src_confluence___example_atlassian_net__SPACE__123",
     source_type="confluence",
     metadata={
         "confluence_ingest_request": {  # Original request for audit trail
@@ -160,16 +166,21 @@ DataSourceInfo(
             "denied_title_patterns": ["Deprecated"]  # Optional regex blacklist
         },
         "space_key": "SPACE",
+        "root_page_id": "123",
+        "root_page_url": "https://example.atlassian.net/wiki/spaces/SPACE/pages/123/Overview",
         "page_configs": [  # List of page configurations
-            {"page_id": "123", "get_child_pages": false, "source": "https://..."},
-            {"page_id": "456", "get_child_pages": true}
-        ],  # Empty list fetches entire space
-        "confluence_url": "https://company.atlassian.net/wiki",
+            {"page_id": "123", "get_child_pages": false, "source": "https://..."}
+        ],
+        "confluence_url": "https://example.atlassian.net/wiki",
         "allowed_title_patterns": None,              # Also stored at top level
         "denied_title_patterns": ["Deprecated"]      # for fast access by ingestor
     }
 )
 ```
+
+The legacy whole-space form remains
+`src_confluence___example_atlassian_net__SPACE`; an empty `page_configs` list
+fetches the full space.
 
 **Document Metadata**: Each page chunk includes:
 - `page_id` - Confluence page ID

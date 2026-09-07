@@ -29,11 +29,38 @@ const CHART_JSON = join(
 /** Types that carry the canonical shareable shape (owner team + share-with-teams). */
 const SHAREABLE_TYPES = [
   "agent",
+  "rag_collection",
   "knowledge_base",
   "data_source",
   "mcp_tool",
   "ingestion_source",
 ] as const;
+
+describe("rag_collection management/search separation", () => {
+  const collection = () => modelTypes.get("rag_collection")!;
+  const chartCollection = () => chartTypes.get("rag_collection")!;
+
+  it("does not derive query access from owner, publisher, or manager", () => {
+    expect(collection().definitions.get("can_read")).toBe("reader");
+    const chartCanRead = JSON.stringify(chartCollection().relations.can_read);
+    expect(chartCanRead).toContain('"relation":"reader"');
+    expect(chartCanRead).not.toMatch(
+      /owner|publisher|manager|can_publish|can_manage/,
+    );
+  });
+
+  it("still lets non-reader maintainers discover the control-plane object", () => {
+    expect(collection().definitions.get("can_discover")).toBe(
+      "can_read or can_publish or can_manage",
+    );
+    const chartCanDiscover = JSON.stringify(
+      chartCollection().relations.can_discover,
+    );
+    expect(chartCanDiscover).toContain('"relation":"can_read"');
+    expect(chartCanDiscover).toContain('"relation":"can_publish"');
+    expect(chartCanDiscover).toContain('"relation":"can_manage"');
+  });
+});
 
 interface ParsedType {
   relations: Set<string>;
@@ -64,12 +91,21 @@ function parseModelFga(text: string): Map<string, ParsedType> {
 
 interface ChartType {
   relations: Record<string, unknown>;
-  metadata?: { relations?: Record<string, { directly_related_user_types?: Array<{ type: string }> }> };
+  metadata?: {
+    relations?: Record<
+      string,
+      { directly_related_user_types?: Array<{ type: string }> }
+    >;
+  };
 }
 
 function parseChartJson(text: string): Map<string, ChartType> {
   const model = JSON.parse(text) as {
-    type_definitions: Array<{ type: string; relations?: Record<string, unknown>; metadata?: ChartType["metadata"] }>;
+    type_definitions: Array<{
+      type: string;
+      relations?: Record<string, unknown>;
+      metadata?: ChartType["metadata"];
+    }>;
   };
   const out = new Map<string, ChartType>();
   for (const t of model.type_definitions) {
@@ -105,7 +141,9 @@ describe.each(SHAREABLE_TYPES)("shareable type drift: %s", (typeName) => {
   it("resolves can_manage through manager and/or owner", () => {
     const t = modelTypes.get(typeName)!;
     const canManage = t.definitions.get("can_manage") ?? "";
-    expect(/\bmanager\b/.test(canManage) || /\bowner\b/.test(canManage)).toBe(true);
+    expect(/\bmanager\b/.test(canManage) || /\bowner\b/.test(canManage)).toBe(
+      true,
+    );
   });
 
   it("agrees between authored .fga and chart JSON on the relation set", () => {
@@ -154,7 +192,8 @@ describe("data_source parent_kb inheritance (US4)", () => {
 
   it("declares `parent_kb` as a knowledge_base relation in the chart JSON", () => {
     const directTypes =
-      dsChart().metadata?.relations?.parent_kb?.directly_related_user_types ?? [];
+      dsChart().metadata?.relations?.parent_kb?.directly_related_user_types ??
+      [];
     expect(directTypes.map((d) => d.type)).toEqual(["knowledge_base"]);
   });
 

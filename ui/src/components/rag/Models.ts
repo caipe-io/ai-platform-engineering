@@ -2,6 +2,8 @@
  * RAG Models - Ported directly from RAG WebUI
  */
 
+import type { RagCollectionMembershipLabel } from "@/types/rag-collection";
+
 export type QueryResult = {
 	document: {
 		page_content?: string
@@ -25,12 +27,17 @@ export type IngestionJob = {
 }
 
 export type IngestorInfo = {
-	ingestor_id: string
+	ingestor_id?: string
 	ingestor_type: string
 	ingestor_name: string
 	description?: string
 	last_seen?: number
 	metadata?: Record<string, unknown>
+	creator_subject?: string | null
+	owner_subject?: string | null
+	owner_team_slug?: string | null
+	search_with_teams?: string[]
+	shared_with_teams?: string[]
 }
 
 export type DataSourceInfo = {
@@ -44,9 +51,30 @@ export type DataSourceInfo = {
 	ingestor_id: string
 	description: string
 	source_type: string
-	default_chunk_size: number
-	default_chunk_overlap: number
-	reload_interval: number  // Reload interval in seconds (default: 86400 = 24h)
+	default_chunk_size?: number
+	default_chunk_overlap?: number
+	reload_interval?: number  // Reload interval in seconds (default: 86400 = 24h)
 	last_updated: number
 	metadata?: Record<string, unknown>
+	creator_subject?: string | null
+	owner_subject?: string | null
+	owner_team_slug?: string | null
+	search_with_teams?: string[]
+	search_with_users?: string[]
+	owner_display_name?: string | null
+	owner_email?: string | null
+	search_user_display_names?: string[]
+	rag_collections?: RagCollectionMembershipLabel[]
+	/**
+	 * Whether this datasource is governed by the independent source-management
+	 * policy. Undefined means the BFF could not determine the policy state.
+	 */
+	has_source_config?: boolean
+	_permissions?: {
+		can_read_content: boolean
+		can_ingest: boolean
+		can_manage_query: boolean
+		can_read_source_config: boolean
+		can_manage_source: boolean
+	}
 }

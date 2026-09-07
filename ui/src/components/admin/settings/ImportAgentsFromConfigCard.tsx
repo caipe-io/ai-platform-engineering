@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Admin -> Settings -> General pane for adopting YAML-seeded dynamic agents
+ * Admin -> Settings -> Agents pane for adopting YAML-seeded dynamic agents
  * into the DB as source of truth (spec: config-driven agents currently
  * re-seeded from APP_CONFIG_PATH on every restart via seed-config.ts).
  *
@@ -17,7 +17,6 @@
 import { AlertTriangle, FileUp, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { AdminBadge } from "@/components/admin/shared/AdminBadge";
 import { TeamOwnershipFields } from "@/components/rbac/TeamOwnershipFields";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -160,7 +159,6 @@ export function ImportAgentsFromConfigCard({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           Import Agents from Config
-          <AdminBadge />
         </CardTitle>
         <CardDescription>
           Adopt YAML-seeded dynamic agents into the database. Once adopted, an agent&apos;s

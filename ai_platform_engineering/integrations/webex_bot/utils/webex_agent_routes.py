@@ -430,6 +430,7 @@ async def resolve_webex_agent_route(
     text: str,
     is_direct: bool = False,
     was_bot_mentioned: bool = False,
+    thread_parent_id: Optional[str] = None,
     resolver: WebexAgentRouteResolver | None = None,
 ) -> tuple[Optional[str], Optional[str]]:
     """Resolve the agent for a Webex message (agent_id, deny_message)."""
@@ -457,6 +458,15 @@ async def resolve_webex_agent_route(
         if default_agent_id:
             return default_agent_id, None
         return None, "No agent route is configured for this Webex space."
+
+    # Thread replies are excluded from passive message-mode routing, mirroring
+    # Slack's handle_message_events which skips true thread replies before its
+    # listen-mode filter runs. Webex's parentId (thread_parent_id here) is only
+    # ever populated on true replies, never on the root message, so a plain
+    # truthiness check is sufficient. @mentions still route from within a
+    # thread since that only applies when the inferred mode is "message".
+    if listen == "message" and thread_parent_id:
+        return None, None
 
     matches = active.match_routes(
         bot_id=bot_id,

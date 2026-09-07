@@ -48,4 +48,4 @@ docker compose --profile argocd --profile github --profile jira --profile pagerd
 - **devops-engineer**: DevOps-focused setup with ArgoCD, AWS, GitHub, Jira, Komodor, and PagerDuty integrations
 - **caipe-basic**: Minimal setup with the UI, Dynamic Agents runtime, RAG, and a small set of MCP tools
 
-See the [docker-compose.yaml](https://github.com/cnoe-io/ai-platform-engineering/blob/main/docker-compose.yaml) for the available Compose profiles.
+See the [docker-compose.yaml](https://github.com/caipe-io/ai-platform-engineering/blob/main/docker-compose.yaml) for the available Compose profiles.

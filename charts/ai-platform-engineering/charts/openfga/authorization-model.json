@@ -252,6 +252,9 @@
         "searcher": {
           "this": {}
         },
+        "automation_eligible": {
+          "this": {}
+        },
         "can_use": {
           "union": {
             "child": [
@@ -311,6 +314,22 @@
               {
                 "computedUserset": {
                   "relation": "searcher"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "admin"
+                }
+              }
+            ]
+          }
+        },
+        "can_automate": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "automation_eligible"
                 }
               },
               {
@@ -523,6 +542,21 @@
             ]
           },
           "searcher": {
+            "directly_related_user_types": [
+              {
+                "type": "service_account"
+              },
+              {
+                "type": "team",
+                "relation": "member"
+              },
+              {
+                "type": "team",
+                "relation": "admin"
+              }
+            ]
+          },
+          "automation_eligible": {
             "directly_related_user_types": [
               {
                 "type": "team",
@@ -2255,6 +2289,228 @@
       }
     },
     {
+      "type": "rag_collection",
+      "relations": {
+        "auditor": {
+          "this": {}
+        },
+        "can_audit": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "auditor"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "can_manage"
+                }
+              }
+            ]
+          }
+        },
+        "can_discover": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "can_read"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "can_publish"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "can_manage"
+                }
+              }
+            ]
+          }
+        },
+        "can_manage": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "manager"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "owner"
+                }
+              }
+            ]
+          }
+        },
+        "can_publish": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "publisher"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "can_manage"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "owner"
+                }
+              }
+            ]
+          }
+        },
+        "can_read": {
+          "computedUserset": {
+            "relation": "reader"
+          }
+        },
+        "can_use": {
+          "computedUserset": {
+            "relation": "can_read"
+          }
+        },
+        "can_write": {
+          "computedUserset": {
+            "relation": "can_publish"
+          }
+        },
+        "creator": {
+          "this": {}
+        },
+        "manager": {
+          "this": {}
+        },
+        "owner": {
+          "this": {}
+        },
+        "publisher": {
+          "this": {}
+        },
+        "reader": {
+          "this": {}
+        }
+      },
+      "metadata": {
+        "relations": {
+          "auditor": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "relation": "admin",
+                "type": "team"
+              }
+            ]
+          },
+          "can_audit": {},
+          "can_discover": {},
+          "can_manage": {},
+          "can_publish": {},
+          "can_read": {},
+          "can_use": {},
+          "can_write": {},
+          "creator": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              }
+            ]
+          },
+          "manager": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "relation": "admin",
+                "type": "team"
+              },
+              {
+                "relation": "admin",
+                "type": "organization"
+              }
+            ]
+          },
+          "owner": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              }
+            ]
+          },
+          "publisher": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "relation": "member",
+                "type": "team"
+              },
+              {
+                "relation": "admin",
+                "type": "team"
+              }
+            ]
+          },
+          "reader": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "user",
+                "wildcard": {}
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "relation": "member",
+                "type": "team"
+              },
+              {
+                "relation": "admin",
+                "type": "team"
+              },
+              {
+                "relation": "member",
+                "type": "external_group"
+              },
+              {
+                "type": "slack_channel"
+              },
+              {
+                "type": "webex_space"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
       "type": "knowledge_base",
       "relations": {
         "creator": {
@@ -2301,6 +2557,16 @@
               {
                 "computedUserset": {
                   "relation": "owner"
+                }
+              },
+              {
+                "tupleToUserset": {
+                  "tupleset": {
+                    "relation": "parent_collection"
+                  },
+                  "computedUserset": {
+                    "relation": "can_read"
+                  }
                 }
               }
             ]
@@ -2373,6 +2639,9 @@
               }
             ]
           }
+        },
+        "parent_collection": {
+          "this": {}
         }
       },
       "metadata": {
@@ -2473,6 +2742,13 @@
               {
                 "type": "team",
                 "relation": "admin"
+              }
+            ]
+          },
+          "parent_collection": {
+            "directly_related_user_types": [
+              {
+                "type": "rag_collection"
               }
             ]
           }
@@ -4432,6 +4708,10 @@
               },
               {
                 "type": "service_account"
+              },
+              {
+                "type": "team",
+                "relation": "member"
               },
               {
                 "type": "team",

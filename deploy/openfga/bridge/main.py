@@ -78,6 +78,11 @@ AGENT_CONTEXT_LOCAL_MAX_AGE_SECONDS = int(
 CALLER_TOOL_CHECK_ENABLED = os.environ.get(
     "CAIPE_CALLER_TOOL_CHECK_ENABLED", ""
 ).strip().lower() in ("1", "true", "yes", "on")
+# The Knowledge Base target owns caller authorization: organization Search,
+# custom-tool grants, and readable datasources. Mirror its feature gate here
+# instead of requiring a second generic MCP assignment.
+CAIPE_ORG_KEY = os.environ.get("CAIPE_ORG_KEY", "caipe").strip() or "caipe"
+SEARCH_CAPABILITY_MCP_SERVERS = frozenset({"knowledge-base"})
 # MCP targets in this set require the caller to hold `can_invoke` on the
 # corresponding `mcp_server:<target>` object. This supports selectively
 # restricted servers without enabling caller-keyed checks for every MCP tool.
@@ -387,7 +392,7 @@ def _is_service_account_claims(payload: dict | None) -> bool:
 
     A token is a service account iff its `preferred_username` claim starts with
     `service-account-`. This MUST match the BFF (`jwt-validation.ts`) and the DA
-    backend (`openfga_authz.py`) so the same token namespaces identically at
+    backend (`authz.py`) so the same token namespaces identically at
     every enforcement layer.
     """
     if not payload:
@@ -684,10 +689,12 @@ def _audit_decision(
     reason_code: str,
     pdp: str = "openfga",
     duration_ms: float | None = None,
+    subject_ref: str | None = None,
 ) -> None:
     resource_ref = f"{user} {relation} {obj}" if user else f"{relation} {obj}"
     log_authz_decision(
         subject=subject,
+        subject_ref=subject_ref,
         outcome=outcome,
         reason_code=reason_code,
         correlation_id=_request_correlation_id(request),
@@ -742,6 +749,7 @@ class OpenFgaAuthorizationService:
                 reason_code="OK_BYPASS",
                 pdp="agent_gateway",
                 duration_ms=0,
+                subject_ref=f"user:{sub}",
             )
             return build_check_response(allowed=True)
 
@@ -755,6 +763,12 @@ class OpenFgaAuthorizationService:
             user = f"service_account:{sub}"
         else:
             user = f"user:{sub}"
+        # Stable identity ref for audit events (real, resolvable identity —
+        # audit logs are no longer anonymized). Kept separate from `user`
+        # because some checks below reassign `user` to `agent:<agent_id>` for
+        # agent-scoped OpenFGA tuple keys; the audited subject is always the
+        # caller, never the agent.
+        subject_ref = user
         start = time.perf_counter()
         try:
             allowed = _check_openfga(user, relation, obj)
@@ -772,6 +786,7 @@ class OpenFgaAuthorizationService:
                         outcome="deny",
                         reason_code="DENY_MCP_SERVER_INVOKE",
                         duration_ms=(time.perf_counter() - start) * 1000,
+                        subject_ref=subject_ref,
                     )
                     return build_check_response(
                         allowed=False,
@@ -787,6 +802,7 @@ class OpenFgaAuthorizationService:
                     outcome="allow",
                     reason_code="OK_MCP_SERVER_INVOKE",
                     duration_ms=(time.perf_counter() - start) * 1000,
+                    subject_ref=subject_ref,
                 )
             tool_call = mcp_tool_call_from_request(request)
             if allowed and tool_call and AGENT_CONTEXT_HMAC_SECRET:
@@ -801,6 +817,7 @@ class OpenFgaAuthorizationService:
                         outcome="deny",
                         reason_code="DENY_NO_AGENT_CONTEXT",
                         duration_ms=(time.perf_counter() - start) * 1000,
+                        subject_ref=subject_ref,
                     )
                     return build_check_response(
                         allowed=False,
@@ -851,6 +868,7 @@ class OpenFgaAuthorizationService:
                             outcome="deny",
                             reason_code="DENY_AGENT_USE",
                             duration_ms=(time.perf_counter() - start) * 1000,
+                            subject_ref=subject_ref,
                         )
                         return build_check_response(
                             allowed=False,
@@ -867,6 +885,7 @@ class OpenFgaAuthorizationService:
                             outcome="deny",
                             reason_code="DENY_AGENT_TOOL",
                             duration_ms=(time.perf_counter() - start) * 1000,
+                            subject_ref=subject_ref,
                         )
                         return build_check_response(
                             allowed=False,
@@ -883,6 +902,7 @@ class OpenFgaAuthorizationService:
                         outcome="allow",
                         reason_code="OK_LOCAL_AGENT_CONTEXT",
                         duration_ms=(time.perf_counter() - start) * 1000,
+                        subject_ref=subject_ref,
                     )
                 # Caller-keyed tool authorization (FR-012/012a/012b). The agent
                 # being allowed to call the tool is NOT sufficient — the calling
@@ -893,42 +913,64 @@ class OpenFgaAuthorizationService:
                 # rollout (FR-012c, see CALLER_TOOL_CHECK_ENABLED).
                 if CALLER_TOOL_CHECK_ENABLED:
                     caller_tool_obj = f"tool:{tool_call[0]}/{tool_call[1]}"
-                    caller_exact = _check_openfga(user, "can_call", caller_tool_obj)
-                    caller_wildcard = False
-                    if not caller_exact:
-                        caller_wildcard = _check_openfga(
+                    if tool_call[0] in SEARCH_CAPABILITY_MCP_SERVERS:
+                        caller_relation = "can_search"
+                        caller_obj = f"organization:{CAIPE_ORG_KEY}"
+                        caller_allowed = _check_openfga(
                             user,
-                            "can_call",
-                            f"tool:{tool_call[0]}/*",
+                            caller_relation,
+                            caller_obj,
                         )
-                    if not (caller_exact or caller_wildcard):
+                        deny_reason = "DENY_CALLER_SEARCH"
+                        allow_reason = "OK_CALLER_SEARCH"
+                        deny_message = "caller lacks Knowledge Base search access"
+                    else:
+                        caller_relation = "can_call"
+                        caller_obj = caller_tool_obj
+                        caller_exact = _check_openfga(
+                            user,
+                            caller_relation,
+                            caller_obj,
+                        )
+                        caller_wildcard = False
+                        if not caller_exact:
+                            caller_wildcard = _check_openfga(
+                                user,
+                                caller_relation,
+                                f"tool:{tool_call[0]}/*",
+                            )
+                        caller_allowed = caller_exact or caller_wildcard
+                        deny_reason = "DENY_CALLER_TOOL"
+                        allow_reason = "OK_CALLER_TOOL"
+                        deny_message = "caller lacks tool grant"
+                    if not caller_allowed:
                         _audit_decision(
                             request=request,
                             subject=sub,
                             user=user,
-                            relation="can_call",
-                            obj=caller_tool_obj,
+                            relation=caller_relation,
+                            obj=caller_obj,
                             outcome="deny",
-                            reason_code="DENY_CALLER_TOOL",
+                            reason_code=deny_reason,
                             duration_ms=(time.perf_counter() - start) * 1000,
+                            subject_ref=subject_ref,
                         )
                         return build_check_response(
                             allowed=False,
                             code=PERMISSION_DENIED,
-                            message="caller lacks tool grant",
+                            message=deny_message,
                         )
-                    # Caller-keyed tool grant confirmed — audit the allow so every
-                    # call-time decision under any credential is recorded
-                    # (FR-027/SC-009), not only denials.
+                    # Audit the caller-side allow as well as denials.
                     _audit_decision(
                         request=request,
                         subject=sub,
                         user=user,
-                        relation="can_call",
-                        obj=caller_tool_obj,
+                        relation=caller_relation,
+                        obj=caller_obj,
                         outcome="allow",
-                        reason_code="OK_CALLER_TOOL",
+                        reason_code=allow_reason,
                         duration_ms=(time.perf_counter() - start) * 1000,
+                        subject_ref=subject_ref,
                     )
         except Exception as e:
             duration_ms = (time.perf_counter() - start) * 1000
@@ -942,6 +984,7 @@ class OpenFgaAuthorizationService:
                 outcome="deny",
                 reason_code="DENY_PDP_UNAVAILABLE",
                 duration_ms=duration_ms,
+                subject_ref=subject_ref,
             )
             return build_check_response(
                 allowed=False,
@@ -958,6 +1001,7 @@ class OpenFgaAuthorizationService:
             obj=obj,
             outcome="allow" if allowed else "deny",
             reason_code="OK" if allowed else "DENY_NO_CAPABILITY",
+            subject_ref=subject_ref,
             duration_ms=duration_ms,
         )
         return build_check_response(allowed=allowed)

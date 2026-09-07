@@ -43,7 +43,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ include "rag-server.imageRepository" (dict "root" . "repository" .Values.image.repository) }}:{{ .Values.image.tag | default (include "rag-server.appVersion" .) }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "rag-server.appVersion" .) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -59,6 +59,9 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           env:
+            {{- $global := .Values.global | default dict }}
+            {{- $rag := $global.rag | default dict }}
+            {{- $ingestorOidc := $rag.ingestorOidc | default dict }}
             # Computed connection settings (from global values)
             - name: REDIS_URL
               value: {{ include "rag-server.redisUrl" . | quote }}
@@ -77,6 +80,26 @@ spec:
               value: {{ include "rag-server.enableGraphRag" . | quote }}
             - name: OPENFGA_HTTP
               value: {{ include "rag-server.openfgaHttpUrl" . | default (printf "http://%s-openfga:8080" .Release.Name) | quote }}
+            {{- if and $ingestorOidc.issuer (not (hasKey .Values.env "INGESTOR_OIDC_ISSUER")) }}
+            - name: INGESTOR_OIDC_ISSUER
+              value: {{ tpl $ingestorOidc.issuer . | quote }}
+            {{- end }}
+            {{- if and $ingestorOidc.discoveryUrl (not (hasKey .Values.env "INGESTOR_OIDC_DISCOVERY_URL")) }}
+            - name: INGESTOR_OIDC_DISCOVERY_URL
+              value: {{ tpl $ingestorOidc.discoveryUrl . | quote }}
+            {{- end }}
+            {{- if and $ingestorOidc.jwksUrl (not (hasKey .Values.env "INGESTOR_OIDC_JWKS_URL")) }}
+            - name: INGESTOR_OIDC_JWKS_URL
+              value: {{ tpl $ingestorOidc.jwksUrl . | quote }}
+            {{- end }}
+            {{- if and $ingestorOidc.clientId (not (hasKey .Values.env "INGESTOR_OIDC_CLIENT_ID")) }}
+            - name: INGESTOR_OIDC_CLIENT_ID
+              value: {{ $ingestorOidc.clientId | quote }}
+            {{- end }}
+            {{- if and $ingestorOidc.clientId (not (hasKey .Values.env "RAG_TRUSTED_INGESTOR_CLIENT_IDS")) }}
+            - name: RAG_TRUSTED_INGESTOR_CLIENT_IDS
+              value: {{ $ingestorOidc.clientId | quote }}
+            {{- end }}
             # All other configuration via env map (OPENFGA_HTTP handled above)
             {{- range $key, $value := .Values.env }}
             {{- if ne $key "OPENFGA_HTTP" }}
@@ -100,41 +123,6 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-        {{- if .Values.webIngestor.enabled }}
-        # Web Ingestor sidecar container
-        - name: web-ingestor
-          {{- with .Values.webIngestor.securityContext }}
-          securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          image: "{{ include "rag-server.imageRepository" (dict "root" . "repository" .Values.webIngestor.image.repository) }}:{{ .Values.webIngestor.image.tag | default (include "rag-server.appVersion" .) }}"
-          imagePullPolicy: {{ .Values.webIngestor.image.pullPolicy }}
-          {{- with .Values.webIngestor.envFrom }}
-          envFrom:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          env:
-            # Fixed/computed values
-            - name: INGESTOR_TYPE
-              value: "webloader"
-            - name: REDIS_URL
-              value: {{ include "rag-server.redisUrl" . | quote }}
-            - name: RAG_SERVER_URL
-              value: "http://localhost:9446"
-            # All other configuration via env map
-            {{- range $key, $value := .Values.webIngestor.env }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-            {{- end }}
-          {{- with .Values.webIngestor.resources }}
-          resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- with .Values.webIngestor.extraVolumeMounts }}
-          volumeMounts:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-        {{- end }}
       {{- with .Values.extraVolumes }}
       volumes:
         {{- toYaml . | nindent 8 }}
@@ -151,5 +139,3 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-
-

@@ -9,7 +9,7 @@ authors = [
 ]
 requires-python = ">=3.13, <4.0"
 dependencies = [
-    "aiohttp==3.14.1",
+    "aiohttp==3.14.3",
     "aiohttp-retry==2.9.1",
     "beautifulsoup4==4.14.2",
     "boto3==1.42.45",
@@ -68,6 +68,6 @@ ignore = ["F403"]
 "tests/webloader/test_ingestor.py" = ["E402"]
 
 [tool.uv]
-constraint-dependencies = ["urllib3>=2.6.3"]
+constraint-dependencies = ["click>=8.3.3", "urllib3>=2.6.3"]
 [tool.uv.sources]
 common = { path = "../common" }

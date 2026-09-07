@@ -26,6 +26,41 @@ describe("ingestion source id formulas", () => {
     );
   });
 
+  it("uses the root page id to distinguish sources in the same Confluence space", () => {
+    expect(
+      confluenceSpaceSourceId(
+        "https://confluence.example.com/wiki",
+        "ENG",
+        "123",
+      ),
+    ).toBe("src_confluence___confluence_example_com__ENG__123");
+    expect(
+      confluenceSpaceSourceId(
+        "https://confluence.example.com/wiki",
+        "ENG",
+        "456",
+      ),
+    ).not.toBe(
+      confluenceSpaceSourceId(
+        "https://confluence.example.com/wiki",
+        "ENG",
+        "123",
+      ),
+    );
+  });
+
+  it("makes page-scoped Confluence ids safe for managed access", () => {
+    expect(
+      confluenceSpaceSourceId(
+        "https://confluence.example.com:8090/wiki",
+        "Control Plane",
+        "123",
+      ),
+    ).toBe(
+      "src_confluence___confluence_example_com_8090__Control_Plane__123",
+    );
+  });
+
   it("webex_space matches `webex-space-{space_id}` (ingestors/webex/ingestor.py:425)", () => {
     expect(webexSpaceSourceId("abc123")).toBe("webex-space-abc123");
   });
@@ -74,8 +109,9 @@ describe("ingestion source id formulas", () => {
           source_type: "confluence_space",
           confluence_url: "https://confluence.example.com",
           space_key: "ENG",
+          page_id: "123",
         }),
-      ).toBe("src_confluence___confluence_example_com__ENG");
+      ).toBe("src_confluence___confluence_example_com__ENG__123");
     });
 
     it("jira_project", () => {

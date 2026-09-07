@@ -220,16 +220,17 @@ test.describe("RBAC e2e — MCP server permission gating", () => {
     });
 
     await page.goto("/dynamic-agents?tab=mcp-servers", { waitUntil: "domcontentloaded" });
-    const mcpServersPanel = page.getByLabel("MCP Servers");
+    const healthyServer = page.getByRole("group",{ name: "MCP server Healthy MCP" });
+    const degradedServer = page.getByRole("group",{ name: "MCP server Degraded MCP" });
     await expect(page.getByText("Healthy MCP")).toBeVisible();
     await expect(page.getByText("Degraded MCP")).toBeVisible();
 
     await page.getByRole("button", { name: /Probe tools for Healthy MCP/i }).click();
-    await expect(mcpServersPanel.getByText("Healthy", { exact: true })).toBeVisible();
+    await expect(healthyServer.getByText("Healthy",{ exact: true })).toBeVisible();
     await expect(page.getByText("1 tool(s) available")).toBeVisible();
 
     await page.getByRole("button", { name: /Probe tools for Degraded MCP/i }).click();
-    await expect(mcpServersPanel.getByText("Degraded", { exact: true })).toBeVisible();
+    await expect(degradedServer.getByText("Degraded",{ exact: true })).toBeVisible();
     await expect(page.getByText("Tool Scan Degraded")).toBeVisible();
     await expect(page.getByText("MCP initialize failed with HTTP 500")).toBeVisible();
   });

@@ -168,6 +168,43 @@ class MongoDBService:
             return DynamicAgentConfig(**_strip_nulls(doc))
         return None
 
+    def resolve_rag_datasource_ids(
+        self,
+        collection_ids: list[str],
+        datasource_ids: list[str] | None = None,
+    ) -> list[str]:
+        """Expand RAG collections into current datasource ids.
+
+        Collections are control-plane documents only; chunks remain keyed by
+        ``datasource_id`` in Milvus. Reading membership for each tool call
+        means a Platform/team knowledge-base update automatically propagates
+        to cached agent runtimes without rebuilding or rewriting agents.
+
+        Mongo errors fail closed to the explicitly pinned datasource ids.
+        """
+        direct = list(dict.fromkeys(datasource_ids or []))
+        if not collection_ids:
+            return direct
+        if self._db is None:
+            logger.warning("Cannot resolve RAG collections: MongoDB is not connected")
+            return direct
+        try:
+            docs = self._db["rag_collections"].find(
+                {"_id": {"$in": list(dict.fromkeys(collection_ids))}},
+                {"source_ids": 1},
+            )
+            combined = direct[:]
+            seen = set(combined)
+            for doc in docs:
+                for source_id in doc.get("source_ids") or []:
+                    if isinstance(source_id, str) and source_id and source_id not in seen:
+                        seen.add(source_id)
+                        combined.append(source_id)
+            return combined
+        except PyMongoError as exc:
+            logger.error("Failed to resolve RAG collection membership: %s", exc)
+            return direct
+
     # =========================================================================
     # Read-only MCP server access
     # =========================================================================

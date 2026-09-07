@@ -20,6 +20,7 @@ function makeRow(overrides: Partial<ConnectorOnboardingRow>): ConnectorOnboardin
     importLabel: `Import ${name}`,
     teamLabel: `Team for ${name}`,
     agentLabel: `Dynamic Agent for ${name}`,
+    pendingApproval: overrides.pendingApproval,
   };
 }
 
@@ -61,14 +62,14 @@ function renderWizard(
   return onApply;
 }
 
-it("enables Set up for the ready rows and skips blocked rows when both are selected", () => {
+it("enables Submit for the ready rows and skips blocked rows when both are selected", () => {
   const onApply = renderWizard([
     makeRow({ id: "ready", name: "Ready Space", selected: true, teamSlug: "team-a", agentId: "agent-a" }),
     makeRow({ id: "blocked", name: "Blocked Space", selected: true }),
   ]);
 
   // Only the one ready row is counted in the button label (not 2 selected).
-  const applyButton = screen.getByRole("button", { name: "Set up 1 space" });
+  const applyButton = screen.getByRole("button", { name: "Submit 1 space" });
   expect(applyButton).toBeEnabled();
 
   // The admin is told the blocked row will be skipped rather than being blocked.
@@ -81,24 +82,24 @@ it("enables Set up for the ready rows and skips blocked rows when both are selec
   expect(onApply).toHaveBeenCalledTimes(1);
 });
 
-it("disables Set up only when every selected row is blocked", () => {
+it("disables Submit only when every selected row is blocked", () => {
   renderWizard([
     makeRow({ id: "b1", name: "Blocked One", selected: true }),
     makeRow({ id: "b2", name: "Blocked Two", selected: true }),
   ]);
 
-  expect(screen.getByRole("button", { name: "Set up 0 spaces" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Submit 0 spaces" })).toBeDisabled();
   expect(
-    screen.getByText("2 spaces need a team or Dynamic Agent before setup."),
+    screen.getByText("2 spaces need both a Team and Dynamic Agent."),
   ).toBeInTheDocument();
 });
 
-it("disables Set up when nothing is selected", () => {
+it("disables Submit when nothing is selected", () => {
   renderWizard([
     makeRow({ id: "ready", name: "Ready Space", selected: false, teamSlug: "team-a", agentId: "agent-a" }),
   ]);
 
-  expect(screen.getByRole("button", { name: "Set up 0 spaces" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Submit 0 spaces" })).toBeDisabled();
   expect(screen.getByText("Select at least one space to set up.")).toBeInTheDocument();
 });
 
@@ -123,7 +124,7 @@ it("shows non-team direct rooms as personal DMs instead of team-assigned rows", 
   expect(screen.queryByLabelText("Dynamic Agent for Sri Aradhyula")).not.toBeInTheDocument();
   expect(screen.getAllByText("Personal DM")).toHaveLength(2);
   expect(screen.getByText("Direct user routing")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Set up 0 spaces" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Submit 0 spaces" })).toBeDisabled();
 });
 
 it("matches a row by ID when the name does not contain the search string", () => {
@@ -149,4 +150,116 @@ it("excludes a row whose name, id, and secondary all fail to match the search", 
 
   expect(screen.queryByText("general")).not.toBeInTheDocument();
   expect(screen.getByText('No spaces match "nonexistent".')).toBeInTheDocument();
+});
+
+it("shows the requester's persisted Slack onboarding choices after refresh", () => {
+  renderWizard([
+    makeRow({
+      id: "channel-primary",
+      name: "Primary Channel",
+      selected: true,
+      teamSlug: "team-a",
+      agentId: "agent-a",
+      pendingApproval: {
+        requestId: "request-primary",
+        status: "pending",
+        requester: { subject: "user-primary", name: "Example User" },
+        requesterIsViewer: true,
+        teamSlug: "team-a",
+        agentId: "agent-a",
+        approverTeamSlugs: ["team-a"],
+        approverUserSubjects: [],
+      },
+    }),
+  ]);
+
+  expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
+  expect(screen.getByText(/Submitted by you; awaiting approval from Team A/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Submit 0 spaces" })).toBeDisabled();
+});
+
+it("allows the requester to resubmit changed choices or clear both to withdraw", () => {
+  const pendingApproval = {
+    requestId: "request-primary",
+    status: "pending" as const,
+    requester: { subject: "user-primary", name: "Example User" },
+    requesterIsViewer: true,
+    teamSlug: "team-a",
+    agentId: "agent-original",
+    approverTeamSlugs: ["team-a"],
+    approverUserSubjects: [],
+  };
+  const { unmount } = render(
+    <ConnectorOnboardingWizard
+      itemSingular="space"
+      itemPlural="spaces"
+      discoveredLabel="space"
+      findLabel="Find spaces"
+      refreshLabel="Refresh"
+      loadingLabel="Loading…"
+      emptyLabel="No spaces"
+      description="desc"
+      discoveryStatusText="status"
+      discoveredCount={1}
+      configuredCount={0}
+      newCount={1}
+      selectedCount={1}
+      rows={[makeRow({
+        selected: true,
+        teamSlug: "team-a",
+        agentId: "agent-a",
+        pendingApproval,
+      })]}
+      teams={[{ value: "team-a", label: "Team A" }]}
+      agents={[{ value: "agent-a", label: "Agent A" }]}
+      error={null}
+      disabled={false}
+      loading={false}
+      discovering={false}
+      onDiscover={jest.fn()}
+      onSelectAll={jest.fn()}
+      onClearSelection={jest.fn()}
+      onRowChange={jest.fn()}
+      onApply={jest.fn()}
+    />,
+  );
+  expect(screen.getByText("Ready to resubmit")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Submit 1 space" })).toBeEnabled();
+  unmount();
+
+  renderWizard([
+    makeRow({
+      selected: true,
+      teamSlug: "",
+      agentId: "",
+      pendingApproval,
+    }),
+  ]);
+  expect(screen.getByText("Ready to withdraw")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Withdraw 1 request" })).toBeEnabled();
+});
+
+it("shows another user's pending request without allowing edits", () => {
+  renderWizard([
+    makeRow({
+      selected: false,
+      selectable: false,
+      teamSlug: "team-a",
+      agentId: "agent-a",
+      pendingApproval: {
+        requestId: "request-primary",
+        status: "pending",
+        requester: { subject: "user-secondary", name: "Another User" },
+        requesterIsViewer: false,
+        teamSlug: "team-a",
+        agentId: "agent-a",
+        approverTeamSlugs: ["team-a"],
+        approverUserSubjects: [],
+      },
+    }),
+  ]);
+
+  expect(screen.getByText(/Submitted by Another User; awaiting approval from Team A/)).toBeInTheDocument();
+  expect(screen.getByLabelText("Team for Space")).toBeDisabled();
+  expect(screen.getByLabelText("Dynamic Agent for Space")).toBeDisabled();
 });

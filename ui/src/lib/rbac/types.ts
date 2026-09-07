@@ -211,6 +211,7 @@ export type AdminTabKey =
   | "action_audit"
   | "openfga"
   | "migrations"
+  | "approvals"
   | "service_accounts";
 
 /** Per-tab visibility gates returned by GET /api/rbac/admin-tab-gates */
@@ -234,6 +235,7 @@ export type IntegrationPanelModesMap = Partial<
  */
 export type KbTabKey =
   | "search"
+  | "collections"
   | "data_sources"
   | "graph"
   | "mcp_tools";
@@ -244,6 +246,13 @@ export type KbTabKey =
  */
 export interface KbTabGatesMap {
   search: boolean;
+  /** Reusable RAG collections; available to readers and source authors. */
+  collections?: boolean;
+  /**
+   * Merged "Data Sources" tab (ingestion source config + post-ingestion
+   * status live in one view). True iff the caller has a readable KB, a
+   * readable `ingestion_source` config row, OR holds `organization#can_ingest`.
+   */
   data_sources: boolean;
   graph: boolean;
   mcp_tools: boolean;

@@ -195,12 +195,12 @@ test.describe("MCP server credential probe (Test Connection)", () => {
   });
 });
 
-test.describe("admin settings MCP tab", () => {
-  test("MCP tab renders the catalog settings card", async ({ page }) => {
+test.describe("admin MCP catalog", () => {
+  test("renders the catalog settings card", async ({ page }) => {
     await installMcpBrowserMocks(page, { isAdmin: true });
     await installCatalogPlatformConfig(page);
 
-    // Override admin-tab-gates to enable the mcp tab
+    // Override admin-tab-gates to enable the MCP catalog destination.
     await page.route("**/api/rbac/admin-tab-gates", async (route) => {
       await fulfillJson(route, {
         gates: {
@@ -218,13 +218,15 @@ test.describe("admin settings MCP tab", () => {
       });
     });
 
-    await page.goto("/admin?tab=mcp", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/platform/mcp-catalog", { waitUntil: "domcontentloaded" });
 
-    // The MCPCatalogSettingsCard title
-    await expect(page.getByText(/MCP Catalog/i)).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.getByRole("heading", { level: 1, name: "MCP Catalog", exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Built-in providers", { exact: true })).toBeVisible();
   });
 
-  test("MCP tab lists built-in providers with toggle controls", async ({ page }) => {
+  test("lists built-in providers with toggle controls", async ({ page }) => {
     await installMcpBrowserMocks(page, { isAdmin: true });
 
     await page.route("**/api/rbac/admin-tab-gates", async (route) => {
@@ -261,15 +263,17 @@ test.describe("admin settings MCP tab", () => {
       await route.continue();
     });
 
-    await page.goto("/admin?tab=mcp", { waitUntil: "domcontentloaded" });
-    await expect(page.getByText(/MCP Catalog/i)).toBeVisible({ timeout: 10_000 });
+    await page.goto("/admin/platform/mcp-catalog", { waitUntil: "domcontentloaded" });
+    await expect(
+      page.getByRole("heading", { level: 1, name: "MCP Catalog", exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
 
     // Provider checkboxes should be present
     await expect(page.getByText("Amplitude")).toBeVisible();
     await expect(page.getByText("ThousandEyes")).toBeVisible();
   });
 
-  test("MCP tab does not list Zapier as a built-in provider", async ({ page }) => {
+  test("does not list Zapier as a built-in provider", async ({ page }) => {
     await installMcpBrowserMocks(page, { isAdmin: true });
 
     await page.route("**/api/rbac/admin-tab-gates", async (route) => {
@@ -306,8 +310,10 @@ test.describe("admin settings MCP tab", () => {
       await route.continue();
     });
 
-    await page.goto("/admin?tab=mcp", { waitUntil: "domcontentloaded" });
-    await expect(page.getByText(/MCP Catalog/i)).toBeVisible({ timeout: 10_000 });
+    await page.goto("/admin/platform/mcp-catalog", { waitUntil: "domcontentloaded" });
+    await expect(
+      page.getByRole("heading", { level: 1, name: "MCP Catalog", exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
 
     // Sanity check the list actually rendered before asserting the negative.
     await expect(page.getByText("Amplitude", { exact: true })).toBeVisible();

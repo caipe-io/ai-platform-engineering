@@ -44,13 +44,22 @@ _loader_pool = _make_stub_module(
   get_worker_pool=AsyncMock(),
   shutdown_worker_pool=AsyncMock(),
 )
+_crawl_request_factory = MagicMock()
+_loader_types = _make_stub_module(
+  "loader.worker_types",
+  CrawlDocuments=MagicMock,
+  CrawlRequest=_crawl_request_factory,
+  CrawlStatus=types.SimpleNamespace(FAILED="failed"),
+)
 sys.modules.setdefault("loader", _loader_pkg)
 sys.modules.setdefault("loader.scrapy_loader", _loader_scrapy)
 sys.modules.setdefault("loader.worker_pool", _loader_pool)
+sys.modules.setdefault("loader.worker_types", _loader_types)
 
 # redis stub (module-level `Redis.from_url(...)` call)
 _redis_instance = MagicMock()
 _redis_instance.blpop = AsyncMock(return_value=None)
+_redis_instance.smembers = AsyncMock(return_value=set())
 _redis_instance.close = AsyncMock()
 _redis_mod = _make_stub_module("redis")
 _redis_async_mod = _make_stub_module("redis.asyncio")
@@ -67,6 +76,7 @@ sys.modules.setdefault("redis.asyncio", _redis_async_mod)
 import ingestors.webloader.ingestor as ingestor_module  # noqa: E402
 from ingestors.webloader.ingestor import (  # noqa: E402
   _get_effective_settings,
+  preview_url_ingestion,
   process_url_ingestion,
   reload_datasource,
   periodic_reload,
@@ -88,6 +98,66 @@ from common.job_manager import JobInfo, JobStatus
 _time = time_module.time
 
 
+@pytest.mark.asyncio
+async def test_preview_uses_bounded_real_crawl_without_persisting():
+  request = UrlIngestRequest(
+    url="https://example.com/docs",
+    settings=ScrapySettings(max_pages=500),
+    reload_interval=86400,
+  )
+  client = MagicMock(ingestor_id="web:primary")
+  pool = MagicMock()
+
+  async def crawl(*, request, on_progress, on_documents, timeout):
+    assert request is not None
+    assert on_progress is None
+    assert timeout <= 110
+    await on_documents(
+      types.SimpleNamespace(
+        documents=[
+          {
+            "id": "doc-1",
+            "metadata": {
+              "title": "Example docs",
+              "metadata": {"source": "https://example.com/docs"},
+            },
+          }
+        ],
+      )
+    )
+    return types.SimpleNamespace(
+      status="completed",
+      fatal_error=None,
+      pages_crawled=1,
+      urls_found_in_sitemap=25,
+      urls_matched_in_sitemap=8,
+      urls_filtered_max_pages=5,
+      errors=[],
+      pages_failed=0,
+      sitemap_url_used=None,
+    )
+
+  pool.crawl = AsyncMock(side_effect=crawl)
+  with (
+    patch.object(ingestor_module, "PREVIEW_MAX_ITEMS", 20),
+    patch.object(ingestor_module, "get_worker_pool", AsyncMock(return_value=pool)),
+  ):
+    result = await preview_url_ingestion(client, request)
+
+  assert result["items"] == [
+    {
+      "id": "doc-1",
+      "title": "Example docs",
+      "url": "https://example.com/docs",
+    }
+  ]
+  assert result["total_discovered"] == 8
+  assert result["total_is_exact"] is True
+  assert result["truncated"] is True
+  crawl_request = _crawl_request_factory.call_args.kwargs
+  assert crawl_request["max_pages"] == 20
+
+
 # ---------------------------------------------------------------------------
 # Test helpers / factories
 # ---------------------------------------------------------------------------
@@ -106,6 +176,7 @@ def make_url_request(
 ) -> UrlIngestRequest:
   kwargs: dict = dict(
     url=url,
+    reload_interval=86400,
     check_for_sitemaps=check_for_sitemaps,
     sitemap_max_urls=sitemap_max_urls,
     ingest_type=ingest_type,
@@ -161,7 +232,10 @@ def make_client(
 
 def make_job_manager(jobs: list | None = None) -> MagicMock:
   jm = MagicMock()
-  jm.get_jobs_by_datasource = AsyncMock(return_value=jobs or [])
+  job_list = jobs or []
+  jobs_by_id = {job.job_id: job for job in job_list}
+  jm.get_job = AsyncMock(side_effect=lambda job_id: jobs_by_id.get(job_id))
+  jm.get_jobs_by_datasource = AsyncMock(return_value=job_list)
   jm.upsert_job = AsyncMock()
   jm.add_error_msg = AsyncMock()
   return jm
@@ -316,7 +390,7 @@ class TestGetEffectiveSettings:
 
   def test_no_settings_provided_creates_default_scrapy_settings(self):
     """When request.settings is None, default ScrapySettings are created."""
-    request = UrlIngestRequest(url="https://ex.com")
+    request = UrlIngestRequest(url="https://ex.com", reload_interval=86400)
     assert request.settings is not None  # pydantic default_factory
     eff, _ = _get_effective_settings(request, "ds-1")
     assert isinstance(eff, ScrapySettings)
@@ -344,7 +418,7 @@ class TestProcessUrlIngestion:
       mock_instance = MagicMock()
       mock_instance.load = AsyncMock()
       MockLoader.return_value = mock_instance
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
     jm.upsert_job.assert_any_call(
       job_id="job-xyz",
@@ -365,7 +439,7 @@ class TestProcessUrlIngestion:
       patch("ingestors.webloader.ingestor.generate_datasource_id_from_url", return_value="ds-abc"),
       pytest.raises(ValueError, match="Datasource not found: ds-abc"),
     ):
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
   async def test_no_job_found_raises_value_error(self):
     ds = make_datasource("ds-abc", "ing-1")
@@ -375,9 +449,9 @@ class TestProcessUrlIngestion:
 
     with (
       patch("ingestors.webloader.ingestor.generate_datasource_id_from_url", return_value="ds-abc"),
-      pytest.raises(ValueError, match="No job found for datasource: ds-abc"),
+      pytest.raises(ValueError, match="Job job-xyz does not belong to datasource ds-abc"),
     ):
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
   async def test_terminated_job_is_skipped_no_loader_called(self):
     ds = make_datasource("ds-abc", "ing-1")
@@ -390,7 +464,7 @@ class TestProcessUrlIngestion:
       patch("ingestors.webloader.ingestor.generate_datasource_id_from_url", return_value="ds-abc"),
       patch("ingestors.webloader.ingestor.ScrapyLoader") as MockLoader,
     ):
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
     MockLoader.assert_not_called()
 
@@ -405,7 +479,7 @@ class TestProcessUrlIngestion:
       patch("ingestors.webloader.ingestor.generate_datasource_id_from_url", return_value="ds-abc"),
       patch("ingestors.webloader.ingestor.ScrapyLoader"),
     ):
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
     in_progress_calls = [c for c in jm.upsert_job.call_args_list if c.kwargs.get("status") == JobStatus.IN_PROGRESS]
     assert len(in_progress_calls) == 0
@@ -424,7 +498,7 @@ class TestProcessUrlIngestion:
       mock_instance = MagicMock()
       mock_instance.load = AsyncMock()
       MockLoader.return_value = mock_instance
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
     all_messages = [c.kwargs.get("message", "") for c in jm.upsert_job.call_args_list]
     assert any("Deprecated" in m for m in all_messages)
@@ -445,7 +519,7 @@ class TestProcessUrlIngestion:
       mock_instance = MagicMock()
       mock_instance.load = AsyncMock()
       MockLoader.return_value = mock_instance
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
     # Only one upsert_job call: the IN_PROGRESS at the start
     assert jm.upsert_job.await_count == 1
@@ -466,15 +540,15 @@ class TestProcessUrlIngestion:
       MockLoader.return_value = mock_instance
 
       with pytest.raises(RuntimeError, match="scrapy boom"):
-        await process_url_ingestion(client, jm, req)
+        await process_url_ingestion(client, jm, req, "job-xyz")
 
     jm.add_error_msg.assert_awaited_once()
     job_id_arg, msg_arg = jm.add_error_msg.call_args.args
     assert job_id_arg == "job-xyz"
     assert "scrapy boom" in msg_arg
 
-  async def test_error_before_job_id_known_does_not_call_add_error_msg(self):
-    """If the exception happens before job_id is set, add_error_msg must not be called."""
+  async def test_datasource_error_is_recorded_on_exact_job(self):
+    """The shared listener supplies the job id even when setup fails early."""
     client = make_client("ing-1", [])  # datasource not found → raises before job_id
     jm = make_job_manager()
     req = make_url_request("https://example.com")
@@ -483,12 +557,13 @@ class TestProcessUrlIngestion:
       patch("ingestors.webloader.ingestor.generate_datasource_id_from_url", return_value="ds-abc"),
       pytest.raises(ValueError),
     ):
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
-    jm.add_error_msg.assert_not_awaited()
+    jm.add_error_msg.assert_awaited_once()
+    assert jm.add_error_msg.call_args.args[0] == "job-xyz"
 
-  async def test_most_recent_job_is_used(self):
-    """The first element of get_jobs_by_datasource (most recent) drives the job_id."""
+  async def test_server_supplied_job_is_used(self):
+    """The command's exact job wins even when another job is more recent."""
     ds = make_datasource("ds-abc", "ing-1")
     job1 = make_job("job-most-recent", JobStatus.IN_PROGRESS, "ds-abc")
     job2 = make_job("job-older", JobStatus.COMPLETED, "ds-abc")
@@ -503,10 +578,10 @@ class TestProcessUrlIngestion:
       mock_instance = MagicMock()
       mock_instance.load = AsyncMock()
       MockLoader.return_value = mock_instance
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-older")
 
     for c in jm.upsert_job.call_args_list:
-      assert c.kwargs.get("job_id") == "job-most-recent"
+      assert c.kwargs.get("job_id") == "job-older"
 
   async def test_effective_settings_passed_to_loader(self):
     """ScrapyLoader.load receives the effective (possibly remapped) settings."""
@@ -523,7 +598,7 @@ class TestProcessUrlIngestion:
       mock_instance = MagicMock()
       mock_instance.load = AsyncMock()
       MockLoader.return_value = mock_instance
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
     load_kwargs = mock_instance.load.call_args.kwargs
     assert load_kwargs["settings"].crawl_mode == CrawlMode.SITEMAP
@@ -546,7 +621,7 @@ class TestProcessUrlIngestion:
       MockLoader.return_value = mock_instance
 
       with pytest.raises(RuntimeError, match="scrapy boom"):
-        await process_url_ingestion(client, jm, req)
+        await process_url_ingestion(client, jm, req, "job-xyz")
 
   async def test_datasource_id_derived_from_url(self):
     """generate_datasource_id_from_url is called with the exact URL from the request."""
@@ -566,7 +641,7 @@ class TestProcessUrlIngestion:
       mock_instance = MagicMock()
       mock_instance.load = AsyncMock()
       MockLoader.return_value = mock_instance
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
     mock_gen_id.assert_called_once_with("https://my-special-site.com/path")
 
@@ -584,7 +659,7 @@ class TestProcessUrlIngestion:
       mock_instance = MagicMock()
       mock_instance.load = AsyncMock()
       MockLoader.return_value = mock_instance
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-xyz")
 
     MockLoader.assert_called_once_with(
       rag_client=client,
@@ -608,7 +683,7 @@ class TestProcessUrlIngestion:
       mock_instance = MagicMock()
       mock_instance.load = AsyncMock()
       MockLoader.return_value = mock_instance
-      await process_url_ingestion(client, jm, req)
+      await process_url_ingestion(client, jm, req, "job-right")
 
     # datasource_info passed to ScrapyLoader must be ds_right
     loader_kwargs = MockLoader.call_args.kwargs
@@ -633,6 +708,7 @@ class TestReloadDatasource:
   ) -> DataSourceInfo:
     url_req = UrlIngestRequest(
       url=url,
+      reload_interval=86400,
       check_for_sitemaps=check_for_sitemaps,
       sitemap_max_urls=sitemap_max_urls,
     ).model_dump()
@@ -689,6 +765,25 @@ class TestReloadDatasource:
     with patch("ingestors.webloader.ingestor.ScrapyLoader") as MockLoader:
       await reload_datasource(client, jm, ds)
       MockLoader.assert_not_called()
+
+  @pytest.mark.parametrize(
+    ("metadata", "message"),
+    [
+      (None, "No metadata"),
+      ({}, "No metadata"),
+      ({"some_other_key": "value"}, "No url_ingest_request"),
+    ],
+  )
+  async def test_on_demand_reload_rejects_missing_configuration(self, metadata, message):
+    """A UI-created job must fail instead of remaining pending forever."""
+    ds = make_datasource("ds-1", metadata=metadata)
+    client = make_client()
+    jm = make_job_manager()
+
+    with pytest.raises(ValueError, match=message):
+      await reload_datasource(client, jm, ds, job_id="job-1")
+
+    client.create_job.assert_not_awaited()
 
   async def test_last_updated_is_refreshed_before_loading(self):
     ds = self._ds_with_url_request()
@@ -833,7 +928,7 @@ class TestPeriodicReload:
   ) -> DataSourceInfo:
     """Returns a datasource that was updated `seconds_ago` seconds ago."""
     last_updated = int(_time()) - seconds_ago
-    meta: dict = {"url_ingest_request": UrlIngestRequest(url="https://ex.com").model_dump()}
+    meta: dict = {"url_ingest_request": UrlIngestRequest(url="https://ex.com", reload_interval=86400).model_dump()}
     return make_datasource(datasource_id, last_updated=last_updated, metadata=meta, reload_interval=reload_interval)
 
   async def test_empty_datasource_list_does_nothing(self):
@@ -865,7 +960,7 @@ class TestPeriodicReload:
 
   async def test_never_updated_datasource_is_always_reloaded(self):
     """last_updated=None means never synced → always trigger reload."""
-    meta = {"url_ingest_request": UrlIngestRequest(url="https://ex.com").model_dump()}
+    meta = {"url_ingest_request": UrlIngestRequest(url="https://ex.com", reload_interval=86400).model_dump()}
     ds = make_datasource("ds-1", last_updated=None, metadata=meta)
     client = make_client("ing-1", [ds])
 
@@ -877,7 +972,7 @@ class TestPeriodicReload:
 
   async def test_uses_default_reload_interval_when_not_in_metadata_stale(self):
     """No reload_interval in metadata → uses DEFAULT_RELOAD_INTERVAL; stale → reload."""
-    meta = {"url_ingest_request": UrlIngestRequest(url="https://ex.com").model_dump()}
+    meta = {"url_ingest_request": UrlIngestRequest(url="https://ex.com", reload_interval=86400).model_dump()}
     ds = make_datasource(
       "ds-1",
       last_updated=int(_time()) - DEFAULT_RELOAD_INTERVAL - 1,
@@ -893,7 +988,7 @@ class TestPeriodicReload:
 
   async def test_uses_default_reload_interval_when_not_in_metadata_fresh(self):
     """No reload_interval in metadata; updated just now → skip (default interval)."""
-    meta = {"url_ingest_request": UrlIngestRequest(url="https://ex.com").model_dump()}
+    meta = {"url_ingest_request": UrlIngestRequest(url="https://ex.com", reload_interval=86400).model_dump()}
     ds = make_datasource(
       "ds-1",
       last_updated=int(_time()) - 10,
@@ -954,7 +1049,7 @@ class TestPeriodicReload:
 
     with (
       patch("ingestors.webloader.ingestor.reload_datasource", return_value=None),
-      patch.object(ingestor_module.logger, "warning") as mock_warn,
+      patch("common.ingestor_listener.logger.warning") as mock_warn,
     ):
       await periodic_reload(client)
 
@@ -969,7 +1064,7 @@ class TestPeriodicReload:
 
     reloaded: list[str] = []
 
-    async def side_effect(c, jm, ds):
+    async def side_effect(c, jm, ds, job_id=None):
       reloaded.append(ds.datasource_id)
       if ds.datasource_id == "ds-fail":
         raise RuntimeError("boom")
@@ -996,7 +1091,7 @@ class TestPeriodicReload:
 
     reloaded: list[str] = []
 
-    async def capture(c, jm, ds):
+    async def capture(c, jm, ds, job_id=None):
       reloaded.append(ds.datasource_id)
 
     with patch("ingestors.webloader.ingestor.reload_datasource", side_effect=capture):
@@ -1012,7 +1107,7 @@ class TestPeriodicReload:
 
     reloaded: list[str] = []
 
-    async def real_reload(c, jm, ds):
+    async def real_reload(c, jm, ds, job_id=None):
       if not ds.metadata:
         return
       reloaded.append(ds.datasource_id)
@@ -1061,7 +1156,7 @@ class TestPeriodicReload:
 
     captured_jm = []
 
-    async def capture(c, jm, ds_info):
+    async def capture(c, jm, ds_info, job_id=None):
       captured_jm.append(jm)
 
     with (
@@ -1069,6 +1164,7 @@ class TestPeriodicReload:
       patch("ingestors.webloader.ingestor.JobManager") as MockJM,
     ):
       mock_jm_instance = MagicMock()
+      mock_jm_instance.get_jobs_by_datasource = AsyncMock(return_value=[])
       MockJM.return_value = mock_jm_instance
       await periodic_reload(client)
 
@@ -1083,7 +1179,7 @@ class TestPeriodicReload:
 
     with (
       patch("ingestors.webloader.ingestor.reload_datasource", return_value=None),
-      patch.object(ingestor_module.logger, "info") as mock_info,
+      patch("common.ingestor_listener.logger.info") as mock_info,
     ):
       await periodic_reload(client)
 
@@ -1098,7 +1194,7 @@ class TestPeriodicReload:
 
     attempted: list[str] = []
 
-    async def always_fail(c, jm, ds):
+    async def always_fail(c, jm, ds, job_id=None):
       attempted.append(ds.datasource_id)
       raise RuntimeError("always fails")
 

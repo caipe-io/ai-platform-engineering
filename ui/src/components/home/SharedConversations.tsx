@@ -1,8 +1,11 @@
 "use client";
 
+import { apiClient } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
-import { Users,Users2 } from "lucide-react";
-import React,{ useState } from "react";
+import type { Conversation as MongoConversation } from "@/types/mongodb";
+import { Users, Users2 } from "lucide-react";
+import { useSession } from "next-auth/react";
+import React, { useEffect, useState } from "react";
 import { ConversationCard } from "./ConversationCard";
 
 type TabId = "shared-with-me" | "team";
@@ -16,10 +19,14 @@ interface SharedConversation {
   teamName?: string;
 }
 
-interface SharedConversationsProps {
-  sharedWithMe: SharedConversation[];
-  sharedWithTeam: SharedConversation[];
-  loading: boolean;
+function mapSharedConversation(conv: MongoConversation): SharedConversation {
+  return {
+    id: conv._id,
+    title: conv.title,
+    updatedAt: conv.updated_at,
+    totalMessages: conv.metadata?.total_messages,
+    sharedBy: conv.owner_id,
+  };
 }
 
 const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
@@ -27,12 +34,44 @@ const tabs: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "team", label: "Team", icon: Users },
 ];
 
-export function SharedConversations({
-  sharedWithMe,
-  sharedWithTeam,
-  loading,
-}: SharedConversationsProps) {
+interface SharedConversationsProps {
+  compact?: boolean;
+}
+
+export function SharedConversations({ compact = false }: SharedConversationsProps = {}) {
+  const { status } = useSession();
+  const isAuthenticated = status === "authenticated";
   const [activeTab, setActiveTab] = useState<TabId>("shared-with-me");
+  const [sharedWithMe, setSharedWithMe] = useState<SharedConversation[]>([]);
+  const [sharedWithTeam, setSharedWithTeam] = useState<SharedConversation[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        const response = await apiClient.getSharedConversations({ page_size: 20 });
+        const all = response.items.map(mapSharedConversation);
+        setSharedWithMe(all);
+        setSharedWithTeam(
+          response.items
+            .filter((c) => (c.sharing?.shared_with_teams?.length ?? 0) > 0)
+            .map(mapSharedConversation),
+        );
+      } catch (err) {
+        console.error("[SharedConversations] Failed to load shared conversations:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+  }, [isAuthenticated]);
 
   const getActiveItems = (): SharedConversation[] => {
     switch (activeTab) {
@@ -57,6 +96,9 @@ export function SharedConversations({
   };
 
   const activeItems = getActiveItems();
+  const gridClassName = compact
+    ? "grid grid-cols-1 gap-3 xl:grid-cols-2"
+    : "grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3";
 
   return (
     <div data-testid="shared-conversations">
@@ -86,7 +128,7 @@ export function SharedConversations({
 
       {/* Content */}
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className={gridClassName}>
           {Array.from({ length: 3 }).map((_, i) => (
             <div
               key={i}
@@ -106,7 +148,7 @@ export function SharedConversations({
           <p className="text-sm text-muted-foreground">{getEmptyMessage()}</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className={gridClassName}>
           {activeItems.map((conv) => (
             <ConversationCard
               key={conv.id}

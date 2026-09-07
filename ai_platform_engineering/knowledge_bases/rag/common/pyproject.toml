@@ -10,7 +10,7 @@ requires-python = ">=3.13, <4.0"
 dependencies = [
     "cymple==0.12.0",
     "neo4j==5.28.2",
-    "pydantic==2.11.9",
+    "pydantic==2.12.5",
     "redis==6.4.0",
     # Embedding providers - lightweight API-based (always included)
     "langchain-openai==1.2.1",

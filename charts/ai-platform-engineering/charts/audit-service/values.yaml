@@ -8,7 +8,7 @@ replicaCount: 1
 revisionHistoryLimit: 3
 
 image:
-  repository: ghcr.io/cnoe-io/caipe-audit-service
+  repository: ghcr.io/caipe-io/caipe-audit-service
   tag: ""
   pullPolicy: IfNotPresent
 

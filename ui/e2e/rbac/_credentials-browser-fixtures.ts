@@ -501,13 +501,13 @@ export async function installCredentialsBrowserMocks(
 }
 
 export async function gotoAdminCredentialsTab(page: Page): Promise<void> {
-  await page.goto("/admin?tab=credentials", { waitUntil: "domcontentloaded" });
+  await page.goto("/admin/platform/credentials", { waitUntil: "domcontentloaded" });
 }
 
 export async function gotoPersonalCredentialsSecrets(page: Page): Promise<void> {
-  await page.goto("/credentials#secrets", { waitUntil: "domcontentloaded" });
+  await page.goto("/credentials/secrets", { waitUntil: "domcontentloaded" });
 }
 
 export async function gotoPersonalCredentialsConnections(page: Page): Promise<void> {
-  await page.goto("/credentials#connections", { waitUntil: "domcontentloaded" });
+  await page.goto("/credentials/connections", { waitUntil: "domcontentloaded" });
 }

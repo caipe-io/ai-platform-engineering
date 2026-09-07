@@ -1,0 +1,37 @@
+{{- /*
+  Effective VPA config: local values take precedence over global defaults.
+  global.vpa.enabled=true activates VPA; local vpa.enabled=true enables it independently.
+  No HPA-conflict guard here: this chart deliberately has no autoscaling
+  support (single-replica scheduler, see values.yaml replicaCount).
+*/ -}}
+{{- $globalVpa := dig "vpa" dict (default dict .Values.global) }}
+{{- $vpaEnabled := or .Values.vpa.enabled (and $globalVpa $globalVpa.enabled) }}
+{{- if $vpaEnabled }}
+{{- $vpa := mergeOverwrite (deepCopy $globalVpa) .Values.vpa }}
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: {{ include "autonomous-agents.fullname" . }}
+  labels:
+    {{- include "autonomous-agents.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "autonomous-agents.fullname" . }}
+  updatePolicy:
+    updateMode: {{ $vpa.updateMode | quote }}
+  resourcePolicy:
+    containerPolicies:
+      - containerName: {{ .Chart.Name }}
+        controlledResources: {{ $vpa.controlledResources | toJson }}
+        controlledValues: {{ $vpa.controlledValues | quote }}
+        {{- with $vpa.minAllowed }}
+        minAllowed:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with $vpa.maxAllowed }}
+        maxAllowed:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+{{- end }}

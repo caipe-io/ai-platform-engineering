@@ -12,7 +12,7 @@ paginatedResponse,
 requireConversationAccess,
 successResponse,
 validateRequired,
-validateUUID,
+validateConversationId,
 withErrorHandler,
 } from '@/lib/api-middleware';
 import type { ConversationAccessLevel } from '@/lib/api-middleware';
@@ -35,7 +35,7 @@ export const GET = withErrorHandler(async (
   const params = await context.params;
   const conversationId = params.id;
 
-  if (!validateUUID(conversationId)) {
+  if (!validateConversationId(conversationId)) {
     throw new ApiError('Invalid conversation ID format', 400);
   }
 
@@ -80,7 +80,7 @@ export const POST = withErrorHandler(async (
   const conversationId = params.id;
   const body: AddMessageRequest = await request.json();
 
-  if (!validateUUID(conversationId)) {
+  if (!validateConversationId(conversationId)) {
     throw new ApiError('Invalid conversation ID format', 400);
   }
 

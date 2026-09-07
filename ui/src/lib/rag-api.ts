@@ -21,11 +21,19 @@ export interface DataSourceInfo {
    * Falls back to `datasource_id` for legacy rows. NEVER an authorization key.
    */
   name?: string | null;
-  ingestor_id: string;
+  ingestor_id?: string;
   source_type: string;
   description: string;
   created_at: string;
-  metadata: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  creator_subject?: string | null;
+  owner_subject?: string | null;
+  owner_team_slug?: string | null;
+  search_with_teams?: string[];
+  search_with_users?: string[];
+  owner_display_name?: string | null;
+  owner_email?: string | null;
+  search_user_display_names?: string[];
 }
 
 export interface IngestorInfo {
@@ -269,6 +277,7 @@ export async function deleteDataSource(datasourceId: string): Promise<void> {
 
 export async function ingestUrl(params: {
   url: string;
+  reload_interval: number;
   check_for_sitemaps?: boolean;
   sitemap_max_urls?: number;
   description?: string;
@@ -280,6 +289,7 @@ export async function ingestUrl(params: {
       url: params.url,
       description: params.description || '',
       get_child_pages: params.get_child_pages || false,
+      reload_interval: params.reload_interval,
     });
   } else {
     return post('/v1/ingest/webloader/url', params);
@@ -445,6 +455,7 @@ export interface MCPToolConfig {
   // truth, OpenFGA is the derived projection.
   owner_team_slug?: string | null;
   shared_with_teams?: string[];
+  search_with_teams?: string[];
   /**
    * When true, every organization member may call/use this tool. The OpenFGA
    * projection grants `organization#member` reader/user/caller (in addition to

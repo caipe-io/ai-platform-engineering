@@ -25,6 +25,7 @@ let mockIsAdmin = false;
 const pushMock = jest.fn();
 const replaceMock = jest.fn();
 let currentSearchParams = new URLSearchParams();
+let currentPathname = '/admin';
 jest.mock('@/hooks/use-admin-role', () => ({
   useAdminRole: () => ({ isAdmin: mockIsAdmin, loading: false }),
 }));
@@ -37,7 +38,7 @@ jest.mock('next-auth/react', () => ({
 jest.mock('next/navigation', () => ({
   useSearchParams: () => currentSearchParams,
   useRouter: () => ({ push: pushMock, replace: replaceMock, back: jest.fn(), refresh: jest.fn() }),
-  usePathname: () => '/admin',
+  usePathname: () => currentPathname,
 }));
 
 jest.mock('@/lib/config', () => ({
@@ -113,20 +114,26 @@ jest.mock('@/components/admin/settings/ReviewConfigsTab', () => ({
   ),
 }));
 
-jest.mock('@/components/admin/settings/PlatformSettingsTab', () => ({
-  PlatformSettingsTab: (props: { isAdmin?: boolean; readOnly?: boolean }) => (
-    <div
-      data-testid="platform-settings-tab"
-      data-admin={String(Boolean(props.isAdmin))}
-      data-read-only={String(Boolean(props.readOnly))}
-    >
-      PlatformSettingsTab
+jest.mock('@/components/admin/settings/RagSettingsTab', () => ({
+  RagSettingsTab: (props: { readOnly?: boolean }) => (
+    <div data-testid="rag-settings-tab" data-read-only={String(Boolean(props.readOnly))}>
+      RagSettingsTab
     </div>
   ),
 }));
 
-jest.mock('@/components/admin/settings/ReleaseNotesSettingsTab', () => ({
-  ReleaseNotesSettingsTab: () => <div data-testid="release-notes-settings-tab">ReleaseNotesSettingsTab</div>,
+jest.mock('@/components/admin/settings/ImportAgentsFromConfigCard', () => ({
+  ImportAgentsFromConfigCard: (props: { readOnly?: boolean }) => (
+    <div data-testid="import-agents-card" data-read-only={String(Boolean(props.readOnly))}>
+      ImportAgentsFromConfigCard
+    </div>
+  ),
+}));
+
+jest.mock('@/components/admin/autonomous/AutonomousTeamAccessPanel', () => ({
+  AutonomousTeamAccessPanel: () => (
+    <div data-testid="autonomous-enablement-panel">Autonomous team access</div>
+  ),
 }));
 
 jest.mock('@/components/admin/ServiceAccountsTab', () => ({
@@ -355,8 +362,16 @@ function setupFetchMock(overrides: {
   tabGates?: Record<string, boolean>;
   integrationPanelModes?: { slack: string; webex: string };
   simulation?: unknown;
+  userPreferences?: unknown;
 } = {}): jest.Mock {
   const mock = jest.fn((url: string) => {
+    if (url.includes('/api/user/preferences')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(overrides.userPreferences ?? { success: true, data: {} }),
+      });
+    }
     if (url.includes('/api/rbac/admin-tab-gates')) {
       return Promise.resolve({
         ok: true,
@@ -471,6 +486,7 @@ describe('Admin Dashboard Page', () => {
     mockIsAdmin = false;
     mockIsDevAnonymousAuthEnabled.mockReturnValue(true);
     currentSearchParams = new URLSearchParams();
+    currentPathname = '/admin';
   });
 
   describe('Loading state', () => {
@@ -478,7 +494,7 @@ describe('Admin Dashboard Page', () => {
       setupFetchMock();
       render(<AdminPage />);
 
-      expect(await screen.findByRole('heading', { name: 'Admin' })).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { level: 1, name: 'Users' })).toBeInTheDocument();
       expect(screen.queryByTestId('spinner')).not.toBeInTheDocument();
     });
 
@@ -489,13 +505,16 @@ describe('Admin Dashboard Page', () => {
       // every admin tab — even tabs that have nothing to do with users.
       // UserManagementTab now owns the only first-paint /api/admin/users
       // call, and only when the Users tab is the active tab.
-      currentSearchParams = new URLSearchParams('cat=settings&tab=settings');
+      mockIsAdmin = true;
+      currentPathname = '/admin/platform/agents';
+      currentSearchParams = new URLSearchParams();
       const fetchMock = setupFetchMock();
       render(<AdminPage />);
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { name: 'Admin' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'Agent configuration' })).toBeInTheDocument();
       });
+      expect(screen.getByTestId('import-agents-card')).toHaveAttribute('data-read-only', 'false');
 
       const userListCalls = fetchMock.mock.calls.filter(([url]) => {
         if (typeof url !== 'string') return false;
@@ -510,18 +529,20 @@ describe('Admin Dashboard Page', () => {
   describe('Error state', () => {
     it('keeps the page usable and shows card-local errors on stats fetch failure', async () => {
       // Must be on a tab with a loader (stats) so a fetch is actually triggered.
-      currentSearchParams = new URLSearchParams('cat=insights&tab=stats');
+      currentPathname = '/admin/insights/statistics';
+      currentSearchParams = new URLSearchParams();
       (global.fetch as jest.Mock) = jest.fn().mockRejectedValue(new Error('Network error'));
       render(<AdminPage />);
 
       expect((await screen.findAllByText(/network error/i)).length).toBeGreaterThan(1);
-      expect(screen.getByRole('heading', { name: 'Admin' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'Statistics' })).toBeInTheDocument();
       expect(screen.queryByText('Retry')).not.toBeInTheDocument();
     });
 
     it('shows auth error on 401 response', async () => {
       // Must be on a tab with a loader (stats) so a fetch is actually triggered.
-      currentSearchParams = new URLSearchParams('cat=insights&tab=stats');
+      currentPathname = '/admin/insights/statistics';
+      currentSearchParams = new URLSearchParams();
       (global.fetch as jest.Mock) = jest.fn().mockResolvedValue({
         ok: false,
         status: 401,
@@ -545,12 +566,14 @@ describe('Admin Dashboard Page', () => {
       });
     });
 
-    it('shows Read-Only badge', async () => {
+    it('does not label the self-service admin view as read-only', async () => {
       render(<AdminPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Read-Only')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Users' })).toBeInTheDocument();
       });
+
+      expect(screen.queryByText('Read-Only')).not.toBeInTheDocument();
     });
 
     it('shows read-only description text', async () => {
@@ -558,7 +581,7 @@ describe('Admin Dashboard Page', () => {
 
       await waitFor(() => {
         expect(
-          screen.getByText(/view access.*teams.*health.*platform settings/i)
+          screen.getByText('Review people, roles, memberships, and resource access.')
         ).toBeInTheDocument();
       });
     });
@@ -616,37 +639,46 @@ describe('Admin Dashboard Page', () => {
           webex: 'self_service',
         },
       });
-      currentSearchParams = new URLSearchParams('cat=integrations&tab=slack');
+      currentPathname = '/admin/integrations/slack';
+      currentSearchParams = new URLSearchParams();
 
       render(<AdminPage />);
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: 'Integrations' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Integrations' })).toHaveAttribute(
+          'data-active',
+          'true',
+        );
       });
 
-      expect(screen.getByRole('tab', { name: /^Slack$/i })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: /^Webex$/i })).toBeInTheDocument();
+      const navigation = screen.getByRole('navigation', { name: 'Admin sections' });
+      expect(within(navigation).getByRole('link', { name: /^Slack$/i })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      expect(within(navigation).getByRole('link', { name: /^Webex$/i })).toBeInTheDocument();
       await waitFor(() => {
         expect(screen.getByTestId('slack-integration-panel')).toHaveAttribute('data-self-service', 'true');
       });
       expect(screen.getByTestId('slack-integration-panel')).toHaveAttribute('data-disabled', 'false');
     });
 
-    it('shows scoped Insights and configured integrations but only Health from Metrics & Health', async () => {
+    it('shows permitted categories and only Health inside Operations', async () => {
+      currentPathname = '/admin/operations/health';
       render(<AdminPage />);
 
-      expect(await screen.findByRole('button', { name: 'Integrations' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Insights' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Metrics & Health' })).toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Insights' }));
-      expect(await screen.findByRole('tab', { name: 'Statistics' })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: 'Feedback' })).toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Metrics & Health' }));
-      expect(screen.getByRole('tab', { name: 'Health' })).toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: 'Metrics' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: 'Authorization Insights' })).not.toBeInTheDocument();
+      const navigation = await screen.findByRole('navigation', { name: 'Admin sections' });
+      expect(within(navigation).getByRole('button', { name: 'Integrations' })).toBeInTheDocument();
+      expect(within(navigation).getByRole('button', { name: 'Insights' })).toBeInTheDocument();
+      expect(within(navigation).getByRole('button', { name: 'Metrics & Health' })).toHaveAttribute(
+        'data-active',
+        'true',
+      );
+      expect(within(navigation).getByRole('link', { name: 'Health' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      expect(within(navigation).queryByRole('link', { name: 'Metrics' })).not.toBeInTheDocument();
     });
   });
 
@@ -724,43 +756,32 @@ describe('Admin Dashboard Page', () => {
 
       expect(await screen.findByRole('button', { name: /viewing as regular user/i })).toBeInTheDocument();
       expect(screen.queryByText(/previewing regular user's effective access/i)).not.toBeInTheDocument();
-      expect(screen.getByText(/manage access.*teams.*health.*platform settings/i)).toBeInTheDocument();
+      expect(screen.getByText('Review people, roles, memberships, and resource access.')).toBeInTheDocument();
       expect(screen.queryByText('Access Preview · Read-Only')).not.toBeInTheDocument();
       expect(screen.queryByText(/no user session is impersonated/i)).not.toBeInTheDocument();
-      await waitFor(() => {
-        expect(screen.getByRole('tab', { name: 'Users' })).toBeInTheDocument();
-        expect(screen.getByRole('tab', { name: 'Teams' })).toBeInTheDocument();
-      });
-      expect(screen.getByRole('button', { name: 'Integrations' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Insights' })).toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
-      expect(await screen.findByRole('tab', { name: 'Slack' })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: 'Webex' })).toBeInTheDocument();
-      expect(screen.getByTestId('slack-integration-panel')).toHaveAttribute('data-self-service', 'true');
-      expect(screen.getByTestId('slack-integration-panel')).toHaveAttribute('data-disabled', 'true');
-
-      fireEvent.click(screen.getByRole('button', { name: 'Insights' }));
-      await waitFor(() => {
-        expect(global.fetch).toHaveBeenCalledWith(
-          expect.stringMatching(/\/api\/admin\/stats\?.*simulate_type=user.*simulate_id=kc-user/),
-          expect.objectContaining({ signal: expect.any(AbortSignal) })
-        );
-      });
-      expect(await screen.findByRole('tab', { name: 'Statistics' })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: 'Feedback' })).toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Metrics & Health' }));
-      expect(screen.getByRole('tab', { name: 'Health' })).toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: 'Metrics' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: 'Authorization Insights' })).not.toBeInTheDocument();
+      const navigation = await screen.findByRole('navigation', { name: 'Admin sections' });
+      expect(within(navigation).getByRole('button', { name: 'Teams & Users' })).toHaveAttribute(
+        'data-active',
+        'true',
+      );
+      expect(within(navigation).getByRole('link', { name: 'Users' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      expect(within(navigation).getByRole('link', { name: 'Teams' })).toBeInTheDocument();
+      expect(within(navigation).getByRole('button', { name: 'Integrations' })).toBeInTheDocument();
+      expect(within(navigation).getByRole('button', { name: 'Insights' })).toBeInTheDocument();
+      expect(within(navigation).getByRole('button', { name: 'Metrics & Health' })).toBeInTheDocument();
+      expect(within(navigation).getByRole('link', { name: 'Users' })).toHaveAttribute(
+        'href',
+        expect.stringContaining('simulate_type=user'),
+      );
       expect(screen.queryByText(/No Admin access is available/i)).not.toBeInTheDocument();
     });
 
     it('scopes Teams & Users data requests to the selected preview account', async () => {
-      currentSearchParams = new URLSearchParams(
-        'simulate_type=user&simulate_id=kc-user&cat=people&tab=users'
-      );
+      currentPathname = '/admin/people/users';
+      currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=kc-user');
       const fetchMock = setupFetchMock({
         tabGates: baselineUserGates,
         simulation: {
@@ -789,9 +810,8 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('scopes the Teams grid request to the selected preview account', async () => {
-      currentSearchParams = new URLSearchParams(
-        'simulate_type=user&simulate_id=kc-user&cat=people&tab=teams'
-      );
+      currentPathname = '/admin/people/teams';
+      currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=kc-user');
       const fetchMock = setupFetchMock({
         tabGates: baselineUserGates,
         simulation: {
@@ -820,6 +840,7 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('uses a simulated admin\'s effective access while keeping the preview read-only', async () => {
+      currentPathname = '/admin/platform/agents';
       currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=admin-target');
       setupFetchMock({
         tabGates: {
@@ -847,33 +868,31 @@ describe('Admin Dashboard Page', () => {
       render(<AdminPage />);
 
       expect(await screen.findByRole('button', { name: /viewing as target admin/i })).toBeInTheDocument();
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-pressed', 'true');
-      });
-      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        'General',
-        'Agents',
-        'MCP',
-        'Skills',
-        'Service Accounts',
-        'AI Review',
-        'Credentials',
-      ]);
-      expect(screen.getByTestId('platform-settings-tab')).toHaveAttribute('data-admin', 'true');
-      expect(screen.getByTestId('platform-settings-tab')).toHaveAttribute('data-read-only', 'true');
-
-      fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
-      expect(await screen.findByTestId('slack-integration-panel')).toHaveAttribute(
-        'data-self-service',
-        'false',
+      const navigation = await screen.findByRole('navigation', { name: 'Admin sections' });
+      expect(within(navigation).getByRole('button', { name: 'Resources' })).toHaveAttribute(
+        'data-active',
+        'true',
       );
-      expect(screen.getByTestId('slack-integration-panel')).toHaveAttribute('data-disabled', 'true');
+      for (const label of [
+        'Agent configuration',
+        'MCP Catalog',
+        'RAG',
+        'Skill Hubs',
+        'Service Accounts',
+        'Credentials',
+      ]) {
+        expect(within(navigation).getByRole('link', { name: label })).toBeInTheDocument();
+      }
+      expect(within(navigation).getByRole('link', { name: 'Agent configuration' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      expect(screen.getByTestId('import-agents-card')).toHaveAttribute('data-read-only', 'true');
     });
 
     it('scopes Feedback requests to the selected preview account', async () => {
-      currentSearchParams = new URLSearchParams(
-        'simulate_type=user&simulate_id=kc-user&cat=insights&tab=feedback'
-      );
+      currentPathname = '/admin/insights/feedback';
+      currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=kc-user');
       setupFetchMock({
         tabGates: baselineUserGates,
         integrationPanelModes: {
@@ -906,7 +925,7 @@ describe('Admin Dashboard Page', () => {
       render(<AdminPage />);
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { name: 'Admin' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'Users' })).toBeInTheDocument();
       });
 
       expect(screen.queryByText('Read-Only')).not.toBeInTheDocument();
@@ -917,13 +936,14 @@ describe('Admin Dashboard Page', () => {
 
       await waitFor(() => {
         expect(
-          screen.getByText(/manage access.*teams.*health.*platform settings/i)
+          screen.getByText('Review people, roles, memberships, and resource access.')
         ).toBeInTheDocument();
       });
     });
 
     it('shows UserManagementTab column headers', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=users');
+      currentPathname = '/admin/people/users';
+      currentSearchParams = new URLSearchParams();
 
       render(<AdminPage />);
 
@@ -937,8 +957,9 @@ describe('Admin Dashboard Page', () => {
       expect(within(table).queryByText('Roles')).not.toBeInTheDocument();
     });
 
-    it('exposes Slack pending as a user table filter', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=users&umSlack=pending');
+    it('exposes Slack linked as a user table filter', async () => {
+      currentPathname = '/admin/people/users';
+      currentSearchParams = new URLSearchParams('umSlack=linked');
       const fetchMock = setupFetchMock();
 
       render(<AdminPage />);
@@ -947,28 +968,27 @@ describe('Admin Dashboard Page', () => {
         expect(screen.getByText('admin@example.com')).toBeInTheDocument();
       });
 
-      const slackSelect = screen
-        .getAllByRole('combobox')
-        .find((select) => within(select).queryByRole('option', { name: 'Pending' }));
-      expect(slackSelect).toBeDefined();
-      expect(slackSelect).toHaveValue('pending');
-      expect(within(slackSelect!).getByRole('option', { name: 'Pending' })).toBeInTheDocument();
+      const slackLabel = screen.getByText('Slack', { selector: 'span.text-xs' });
+      const slackFilter = slackLabel.parentElement?.querySelector('select');
+      expect(slackFilter).toBeDefined();
+      expect(slackFilter).toHaveValue('linked');
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringContaining('/api/admin/users?page=1&pageSize=20&slackStatus=pending')
+          expect.stringContaining('/api/admin/users?page=1&pageSize=20&slackStatus=linked')
         );
       });
 
-      fireEvent.change(slackSelect!, { target: { value: 'linked' } });
+      fireEvent.change(slackFilter!, { target: { value: 'unlinked' } });
       expect(replaceMock).toHaveBeenCalledWith(
-        expect.stringContaining('umSlack=linked'),
+        expect.stringContaining('umSlack=unlinked'),
         { scroll: false }
       );
     });
 
     it('exposes Webex linked as a user table filter', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=users&umWebex=linked');
+      currentPathname = '/admin/people/users';
+      currentSearchParams = new URLSearchParams('umWebex=linked');
       const fetchMock = setupFetchMock();
 
       render(<AdminPage />);
@@ -995,33 +1015,58 @@ describe('Admin Dashboard Page', () => {
       );
     });
 
-    it('orders Security & Policy tabs with RBAC Audit as default and no Permissions Tool', async () => {
-      currentSearchParams = new URLSearchParams('cat=security');
+    it('renders Autonomous Enablement as its own Security & Policy page', async () => {
+      mockIsAdmin = true;
+      currentPathname = '/admin/security/autonomous-enablement';
+      setupFetchMock();
 
       render(<AdminPage />);
 
-      await waitFor(() => {
-        expect(screen.getByText('Security & Policy')).toBeInTheDocument();
-      });
+      expect(await screen.findByTestId('autonomous-enablement-panel')).toBeInTheDocument();
+      const navigation = screen.getByRole('navigation', { name: 'Admin sections' });
+      expect(
+        within(navigation).getByRole('link', { name: /^Autonomous Enablement$/i }),
+      ).toHaveAttribute('aria-current', 'page');
+    });
 
-      fireEvent.click(screen.getByText('Security & Policy'));
-      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+    it('orders Security & Policy destinations and omits Permissions Tool', async () => {
+      currentPathname = '/admin/security/rbac-audit';
+
+      render(<AdminPage />);
+
+      const navigation = await screen.findByRole('navigation', { name: 'Admin sections' });
+      const destinationLabels = [
+        'Access before sign-in',
+        'AI Review',
+        'Autonomous Enablement',
         'RBAC Audit',
+        'Approvals',
         'Access Explorer',
         'Self Check',
         'Chat Audit',
         'Keycloak',
         'Migrations',
-      ]);
-      expect(screen.getByRole('tab', { name: /^RBAC Audit$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
+      ];
+      const renderedLinks = within(navigation)
+        .getAllByRole('link')
+        .map((link) => link.textContent?.trim())
+        .filter((label): label is string => destinationLabels.includes(label ?? ''));
+      expect(renderedLinks).toEqual(destinationLabels);
+      expect(within(navigation).getByRole('link', { name: /^RBAC Audit$/i })).toHaveAttribute(
+        'aria-current',
+        'page',
       );
-      expect(screen.queryByRole('tab', { name: /^Permissions Tool$/i })).not.toBeInTheDocument();
+      expect(
+        within(navigation).queryByRole('link', { name: /^Permissions Tool$/i }),
+      ).not.toBeInTheDocument();
+      for (const subgroup of ['Policy', 'Authorization', 'Audit', 'Identity & maintenance']) {
+        expect(within(navigation).queryByText(subgroup)).not.toBeInTheDocument();
+      }
     });
 
     it('does not show Keycloak role badges for listed users', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=users');
+      currentPathname = '/admin/people/users';
+      currentSearchParams = new URLSearchParams();
 
       render(<AdminPage />);
 
@@ -1034,353 +1079,96 @@ describe('Admin Dashboard Page', () => {
       expect(within(table).queryByText('user')).not.toBeInTheDocument();
     });
 
-    it('does not expose the retired Roles tab in Teams & Users', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=users');
+    it("discloses categories manually and collapses the previous category after navigation", async () => {
+      currentPathname = "/admin/people/users";
+      setupFetchMock();
+      const { rerender } = render(<AdminPage />);
 
-      render(<AdminPage />);
+      const navigation = await screen.findByRole("navigation", { name: "Admin sections" });
+      const peopleCategory = within(navigation).getByRole("button", { name: "Teams & Users" });
+      expect(peopleCategory).toHaveAttribute("data-active", "true");
+      expect(peopleCategory).toHaveAttribute("aria-expanded", "true");
+      expect(within(navigation).getByRole("link", { name: "Users" })).toHaveAttribute("aria-current", "page");
+      expect(within(navigation).getByRole("link", { name: "Teams" })).toBeInTheDocument();
+      expect(within(navigation).queryByRole("link", { name: "Roles" })).not.toBeInTheDocument();
+      expect(within(navigation).queryByRole("link", { name: "Slack" })).not.toBeInTheDocument();
 
+      fireEvent.click(within(navigation).getByRole("button", { name: "Integrations" }));
+
+      expect(within(navigation).getByRole("link", { name: "Slack" })).toBeInTheDocument();
+      expect(within(navigation).getByRole("link", { name: "Webex" })).toBeInTheDocument();
+      expect(peopleCategory).toHaveAttribute("aria-expanded", "true");
+      expect(within(navigation).getByRole("link", { name: "Users" })).toBeInTheDocument();
+      expect(replaceMock).not.toHaveBeenCalled();
+
+      currentPathname = "/admin/integrations/slack";
+      rerender(<AdminPage />);
+
+      expect(
+        await screen.findByRole("heading", { level: 1, name: "Slack" }),
+      ).toBeInTheDocument();
+      const updatedNavigation = screen.getByRole("navigation", { name: "Admin sections" });
+      expect(updatedNavigation).toBe(navigation);
       await waitFor(() => {
-        expect(screen.getByText('Teams & Users')).toBeInTheDocument();
+        expect(
+          within(updatedNavigation).getByRole("button", { name: "Teams & Users" }),
+        ).toHaveAttribute("aria-expanded", "false");
       });
-
-      fireEvent.click(screen.getByRole('button', { name: 'Teams & Users' }));
-      expect(screen.getByRole('tab', { name: /^Users$/i })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: /^Teams$/i })).toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: /^Slack$/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: /^Roles$/i })).not.toBeInTheDocument();
+      expect(
+        within(updatedNavigation).getByRole("button", { name: "Integrations" }),
+      ).toHaveAttribute("aria-expanded", "true");
     });
 
-    it('groups admin tabs by category and promotes settings to its own category', async () => {
+    it("defaults bare Admin to the canonical Users route", async () => {
       render(<AdminPage />);
 
-      await waitFor(() => {
-        expect(screen.getByText('Settings')).toBeInTheDocument();
-      });
-
-      const categoryButtons = ['Settings', 'Teams & Users', 'Integrations', 'Insights', 'Metrics & Health', 'Security & Policy']
-        .map((label) => screen.getByRole('button', { name: label }));
-      expect(categoryButtons[0]).toHaveTextContent('Settings');
-      expect(screen.queryByRole('button', { name: 'Resources' })).not.toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        'General',
-        'Agents',
-        'MCP',
-        'Skills',
-        'Service Accounts',
-        'AI Review',
-        'Credentials',
-      ]);
-      expect(screen.getByTestId('platform-settings-tab')).toBeInTheDocument();
-      // Release notes lives under General, not as a standalone tab.
-      expect(screen.queryByRole('tab', { name: /release notes/i })).not.toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: /skills/i })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: /ai review/i })).toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: /knowledge bases/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: /rag team access/i })).not.toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Insights' }));
-      await waitFor(() => {
-        expect(screen.queryByTestId('spinner')).not.toBeInTheDocument();
-      });
-      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        'Statistics',
-        'Feedback',
-      ]);
-      expect(screen.getByRole('tab', { name: /^Statistics$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
+      expect(await screen.findByRole("heading", { level: 1, name: "Users" })).toBeInTheDocument();
+      const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+      expect(within(breadcrumb).getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
+      expect(within(breadcrumb).getByRole("link", { name: "Admin" })).toHaveAttribute(
+        "href",
+        "/admin/people/users",
       );
-      expect(screen.queryByRole('tab', { name: /^Insights$/i })).not.toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: /metrics & health/i }));
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('spinner')).not.toBeInTheDocument();
-      });
-
-      expect(screen.getByRole('tab', { name: /metrics/i })).toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: /health/i })).toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: /skills/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: /ai review/i })).not.toBeInTheDocument();
-    });
-
-    it('keeps the settings shell available for non-admin users when admin stats are forbidden', async () => {
-      currentSearchParams = new URLSearchParams('cat=settings&tab=settings');
-      setupFetchMock({
-        tabGates: {
-          users: false,
-          teams: false,
-          roles: false,
-          slack: false,
-          webex: false,
-          skills: false,
-          feedback: false,
-          stats: false,
-          metrics: false,
-          health: false,
-          audit_logs: false,
-          action_audit: false,
-          openfga: false,
-          migrations: false,
-        },
-        statsStatus: 403,
-      });
-
-      render(<AdminPage />);
-
-      expect(await screen.findByTestId('platform-settings-tab')).toBeInTheDocument();
-      expect(screen.queryByText(/Access denied/i)).not.toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: /^Users$/i })).not.toBeInTheDocument();
-    });
-
-    it('defaults bare /admin to Settings General tab', async () => {
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Settings')).toBeInTheDocument();
-
-      expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('tab', { name: /^General$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
+      expect(within(breadcrumb).getByRole("link", { name: "Teams & Users" })).toHaveAttribute(
+        "href",
+        "/admin/people/users",
       );
-      expect(screen.getByTestId('platform-settings-tab')).toBeInTheDocument();
-      expect(replaceMock).toHaveBeenCalledWith(
-        '/admin?cat=settings&tab=settings',
-        { scroll: false }
+      expect(within(breadcrumb).getByRole("link", { name: "Users" })).toHaveAttribute(
+        "aria-current",
+        "page",
       );
-    });
-
-    it('falls back to the General settings tab for the removed release-notes tab', async () => {
-      currentSearchParams = new URLSearchParams('cat=settings&tab=release-notes');
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Settings')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-pressed', 'true');
-      // An unknown tab value falls through to the first visible Settings tab
-      // (General), which renders both the platform settings and the release
-      // notes preference/config sections.
-      expect(screen.getByRole('tab', { name: /^General$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      expect(screen.getByTestId('platform-settings-tab')).toBeInTheDocument();
-      expect(screen.getByTestId('release-notes-settings-tab')).toBeInTheDocument();
+      expect(
+        within(screen.getByRole("navigation", { name: "Admin sections" }))
+          .getByRole("link", { name: "Users" }),
+      ).toHaveAttribute("aria-current", "page");
+      expect(await screen.findByText("admin@example.com")).toBeInTheDocument();
+      expect(replaceMock).toHaveBeenCalledWith("/admin/people/users", { scroll: false });
+      expect(screen.queryByText("Settings")).not.toBeInTheDocument();
     });
 
     it.each([
-      ['settings', 'settings', /^General$/i],
-      ['settings', 'agents', /^Agents$/i],
-      ['settings', 'ai-review', /^AI Review$/i],
-      ['settings', 'skills', /^Skills$/i],
-      ['people', 'users', /^Users$/i],
-      ['people', 'teams', /^Teams$/i],
-      ['integrations', 'slack', /^Slack$/i],
-      ['integrations', 'webex', /^Webex$/i],
-      ['insights', 'stats', /^Statistics$/i],
-      ['insights', 'feedback', /^Feedback$/i],
-      ['platform', 'metrics', /^Metrics$/i],
-      ['platform', 'health', /^Health$/i],
-      ['security', 'access-explorer', /^Access Explorer$/i],
-      ['security', 'rbac-self-check', /^Self Check$/i],
-      ['security', 'keycloak', /^Keycloak$/i],
-      ['security', 'action-audit', /^RBAC Audit$/i],
-      ['security', 'audit-logs', /^Chat Audit$/i],
-      ['security', 'migrations', /^Migrations$/i],
-    ])('keeps direct sub-tab route cat=%s tab=%s selected', async (category, tab, label) => {
-      currentSearchParams = new URLSearchParams(`cat=${category}&tab=${tab}`);
-
+      ["/admin/platform/rag", "RAG"],
+      ["/admin/integrations/slack", "Slack"],
+      ["/admin/integrations/webex", "Webex"],
+      ["/admin/security/access-explorer", "Access Explorer"],
+      ["/admin/security/self-check", "Self Check"],
+      ["/admin/operations/metrics", "Metrics"],
+      ["/admin/operations/health", "Health"],
+    ])("selects canonical destination %s", async (path, label) => {
+      currentPathname = path;
       render(<AdminPage />);
 
-      await waitFor(() => {
-        expect(screen.getByRole('tab', { name: label })).toHaveAttribute('aria-selected', 'true');
-      });
-      expect(replaceMock).not.toHaveBeenCalledWith('/admin?cat=settings&tab=settings', {
-        scroll: false,
-      });
-    });
-
-    it('moves Slack and Webex under the top-level Integrations category', async () => {
-      currentSearchParams = new URLSearchParams('cat=integrations&tab=slack');
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Integrations')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Integrations' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        'Slack',
-        'Webex',
-      ]);
-      expect(screen.getByRole('tab', { name: /^Slack$/i })).toHaveAttribute('aria-selected', 'true');
-      expect(screen.getByTestId('slack-integration-panel')).toBeInTheDocument();
-    });
-
-    it('opens the Webex integration panel from the query string', async () => {
-      currentSearchParams = new URLSearchParams('cat=integrations&tab=webex');
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Integrations')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Integrations' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('tab', { name: /^Webex$/i })).toHaveAttribute('aria-selected', 'true');
-      expect(screen.getByTestId('webex-integration-panel')).toBeInTheDocument();
-    });
-
-    it('falls back from removed Settings Knowledge Bases links to General', async () => {
-      currentSearchParams = new URLSearchParams('cat=settings&tab=rag-access');
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Settings')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('tab', { name: /^General$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      expect(screen.queryByRole('tab', { name: /^Knowledge Bases$/i })).not.toBeInTheDocument();
-      expect(screen.queryByTestId('rag-team-access-panel')).not.toBeInTheDocument();
-      expect(replaceMock).toHaveBeenCalledWith('/admin?cat=settings&tab=settings', {
-        scroll: false,
-      });
-    });
-
-    it('canonicalizes legacy OpenFGA RAG deep links to Access Explorer', async () => {
-      currentSearchParams = new URLSearchParams('cat=security&tab=openfga&subtab=rag&openfgaTab=rag');
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Security & Policy')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Security & Policy' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('tab', { name: /^Access Explorer$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      expect(screen.getByTestId('access-explorer-tab')).toBeInTheDocument();
-      expect(screen.queryByRole('tab', { name: /^Knowledge Bases$/i })).not.toBeInTheDocument();
-      expect(screen.queryByTestId('rag-team-access-panel')).not.toBeInTheDocument();
-      // assisted-by Codex Codex-sonnet-4-6
-      // Preserve the legacy OpenFGA deep-link markers for the Access Explorer route.
-      expect(replaceMock).toHaveBeenCalledWith(
-        '/admin?cat=security&tab=access-explorer&subtab=rag&openfgaTab=rag',
-        { scroll: false },
-      );
-      expect(replaceMock).not.toHaveBeenCalledWith('/admin?cat=settings&tab=rag-access', {
-        scroll: false,
-      });
-    });
-
-    it('canonicalizes legacy Resources Knowledge Base links to Settings General', async () => {
-      currentSearchParams = new URLSearchParams('cat=resources&tab=rag-access');
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Settings')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('tab', { name: /^General$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      expect(screen.queryByRole('tab', { name: /^Knowledge Bases$/i })).not.toBeInTheDocument();
-      expect(screen.queryByTestId('rag-team-access-panel')).not.toBeInTheDocument();
-      expect(replaceMock).toHaveBeenCalledWith('/admin?cat=settings&tab=settings', {
-        scroll: false,
-      });
-    });
-
-    it('canonicalizes legacy Insights overview deep links to the merged Statistics tab', async () => {
-      currentSearchParams = new URLSearchParams('cat=insights&tab=insights');
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Insights')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Insights' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('tab', { name: /^Statistics$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      expect(screen.queryByRole('tab', { name: /^Insights$/i })).not.toBeInTheDocument();
-      expect(replaceMock).toHaveBeenCalledWith(
-        '/admin?cat=insights&tab=stats&dateRange=30d',
-        { scroll: false },
-      );
-    });
-
-    it('opens the requested Access Explorer sub-tab from the query string', async () => {
-      currentSearchParams = new URLSearchParams('cat=security&tab=access-explorer');
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Security & Policy')).toBeInTheDocument();
-
-      expect(screen.getByRole('button', { name: 'Security & Policy' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('tab', { name: /^Access Explorer$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      expect(screen.getByTestId('access-explorer-tab')).toBeInTheDocument();
-      expect(replaceMock).not.toHaveBeenCalledWith('/admin?cat=security&tab=openfga', {
-        scroll: false,
-      });
-    });
-
-    it('opens the requested RBAC Self Check sub-tab from the query string', async () => {
-      currentSearchParams = new URLSearchParams('cat=security&tab=rbac-self-check');
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Security & Policy')).toBeInTheDocument();
-
-      expect(screen.getByRole('button', { name: 'Security & Policy' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('tab', { name: /^Self Check$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      expect(screen.getByTestId('rbac-self-check-tab')).toBeInTheDocument();
-    });
-
-    it('canonicalizes legacy OpenFGA tab links to Access Explorer', async () => {
-      currentSearchParams = new URLSearchParams('cat=security&tab=openfga');
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Security & Policy')).toBeInTheDocument();
-
-      expect(screen.getByRole('button', { name: 'Security & Policy' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('tab', { name: /^Access Explorer$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      expect(screen.getByTestId('access-explorer-tab')).toBeInTheDocument();
-      expect(replaceMock).toHaveBeenCalledWith('/admin?cat=security&tab=access-explorer', {
-        scroll: false,
-      });
-    });
-
-    it('canonicalizes legacy OpenFGA Slack deep links to Integrations Slack', async () => {
-      currentSearchParams = new URLSearchParams(
-        'cat=system&tab=settings&subtab=slack&openfgaTab=slack'
-      );
-
-      render(<AdminPage />);
-
-      expect(await screen.findByText('Integrations')).toBeInTheDocument();
-
-      expect(screen.getByRole('button', { name: 'Integrations' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByRole('tab', { name: /^Slack$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      expect(screen.getByTestId('slack-integration-panel')).toBeInTheDocument();
-      expect(replaceMock).toHaveBeenCalledWith(
-        '/admin?cat=integrations&tab=slack',
-        { scroll: false }
-      );
+      expect(await screen.findByRole("heading", { level: 1, name: label })).toBeInTheDocument();
+      expect(
+        within(screen.getByRole("navigation", { name: "Admin sections" }))
+          .getByRole("link", { name: label }),
+      ).toHaveAttribute("aria-current", "page");
+      expect(replaceMock).not.toHaveBeenCalled();
     });
 
     it('opens an in-app modal before deleting a team', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=teams');
+      currentPathname = '/admin/people/teams';
+      currentSearchParams = new URLSearchParams();
       const confirmSpy = jest.spyOn(window, 'confirm').mockReturnValue(false);
       const fetchMock = setupFetchMock();
 
@@ -1406,6 +1194,45 @@ describe('Admin Dashboard Page', () => {
       confirmSpy.mockRestore();
     });
 
+    it('marks the Everyone and Super Admins teams as built in', async () => {
+      currentPathname = '/admin/people/teams';
+      currentSearchParams = new URLSearchParams();
+      setupFetchMock({
+        teams: {
+          success: true,
+          data: {
+            teams: [
+              {
+                _id: 'team-everyone',
+                name: 'Everyone',
+                slug: 'everyone',
+                owner_id: 'admin@example.com',
+                member_count: 2,
+              },
+              {
+                _id: 'team-super-admins',
+                name: 'Super Admins',
+                slug: 'super-admins',
+                owner_id: 'admin@example.com',
+                member_count: 1,
+              },
+            ],
+          },
+        },
+      });
+
+      render(<AdminPage />);
+
+      expect(
+        await screen.findByLabelText(
+          'Built-in team for organization-wide access.',
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText('Built-in team for platform administrators.'),
+      ).toBeInTheDocument();
+    });
+
     // The team card was decluttered to four high-signal chips (Members,
     // Agents, MCPs, KBs); the Slack/Webex "Chat" chip was dropped — those
     // surfaces remain reachable via the team-management dialog tabs.
@@ -1414,7 +1241,8 @@ describe('Admin Dashboard Page', () => {
       // KB grants are sourced from OpenFGA and decorated onto each team as
       // `kb_count` by GET /api/admin/teams; the card no longer derives the
       // count from a `resources.knowledge_bases` array.
-      currentSearchParams = new URLSearchParams('cat=people&tab=teams');
+      currentPathname = '/admin/people/teams';
+      currentSearchParams = new URLSearchParams();
       setupFetchMock({
         teams: {
           success: true,
@@ -1441,7 +1269,8 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('filters teams by search text and shows an empty result state', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=teams');
+      currentPathname = '/admin/people/teams';
+      currentSearchParams = new URLSearchParams();
       // The Teams grid is server-paginated: search is sent to the API as a
       // `search` query param and the server returns the matching page. The
       // mock mirrors that — it filters by the `search` param so the debounced
@@ -1507,7 +1336,8 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('refreshes teams from the database without reloading the whole admin dashboard', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=teams');
+      currentPathname = '/admin/people/teams';
+      currentSearchParams = new URLSearchParams();
       let teamFetchCount = 0;
       const fetchMock = setupFetchMock({
         teams: () => {
@@ -1556,7 +1386,8 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('does not request archived teams or show the Archived badge by default', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=teams');
+      currentPathname = '/admin/people/teams';
+      currentSearchParams = new URLSearchParams();
       const fetchMock = setupFetchMock();
 
       render(<AdminPage />);
@@ -1574,7 +1405,8 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('requests archived teams when "Show archived" is checked', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=teams');
+      currentPathname = '/admin/people/teams';
+      currentSearchParams = new URLSearchParams();
       const fetchMock = setupFetchMock();
 
       render(<AdminPage />);
@@ -1594,7 +1426,8 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('renders the Archived badge for teams with status "archived"', async () => {
-      currentSearchParams = new URLSearchParams('cat=people&tab=teams');
+      currentPathname = '/admin/people/teams';
+      currentSearchParams = new URLSearchParams();
       setupFetchMock({
         teams: (url: string) => {
           const includeArchived = new URL(url, 'http://localhost').searchParams.get('include_archived') === 'true';
@@ -1625,24 +1458,24 @@ describe('Admin Dashboard Page', () => {
   });
 
   describe('Insights filter deep links', () => {
-    it('makes the default Statistics range explicit in the URL', async () => {
-      currentSearchParams = new URLSearchParams('cat=insights&tab=stats');
+    it('makes the default Statistics range explicit in the canonical URL', async () => {
+      currentPathname = '/admin/insights/statistics';
+      currentSearchParams = new URLSearchParams();
       setupFetchMock();
 
       render(<AdminPage />);
 
       await waitFor(() => {
         expect(replaceMock).toHaveBeenCalledWith(
-          '/admin?cat=insights&tab=stats&dateRange=30d',
+          '/admin/insights/statistics?dateRange=30d',
           { scroll: false },
         );
       });
     });
 
     it('applies Statistics URL filters to the first card requests', async () => {
+      currentPathname = '/admin/insights/statistics';
       currentSearchParams = new URLSearchParams({
-        cat: 'insights',
-        tab: 'stats',
         source: 'slack',
         statsChannels: 'primary-channel',
         statsAgents: 'agent-primary',
@@ -1678,9 +1511,8 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('applies Feedback URL filters to the initial request', async () => {
+      currentPathname = '/admin/insights/feedback';
       currentSearchParams = new URLSearchParams({
-        cat: 'insights',
-        tab: 'feedback',
         source: 'slack',
         channels: 'primary-channel',
         rating: 'negative',
@@ -1729,30 +1561,115 @@ describe('Admin Dashboard Page', () => {
     });
   });
 
+  describe('Webex source option', () => {
+    it('shows a Webex option in the Statistics source picker when Webex is enabled', async () => {
+      currentPathname = '/admin/insights/statistics';
+      const fetchMock = setupFetchMock({
+        userPreferences: { success: true, data: { integrations: { webex: true } } },
+      });
+
+      render(<AdminPage />);
+      await screen.findByText('42');
+
+      const sourceSelect = await screen.findByDisplayValue('All Sources');
+      expect(within(sourceSelect as HTMLElement).getByRole('option', { name: 'Webex' })).toBeInTheDocument();
+
+      fireEvent.change(sourceSelect, { target: { value: 'webex' } });
+
+      await waitFor(() => {
+        const sourceRefreshes = fetchMock.mock.calls.filter(([url]) => {
+          const parsed = new URL(url, 'http://localhost');
+          return parsed.pathname === '/api/admin/stats' && parsed.searchParams.get('source') === 'webex';
+        });
+        expect(sourceRefreshes.length).toBeGreaterThan(0);
+      });
+      expect(sourceSelect).toHaveValue('webex');
+    });
+
+    it('omits the Webex option from the Statistics source picker when Webex is disabled', async () => {
+      currentPathname = '/admin/insights/statistics';
+      setupFetchMock({
+        userPreferences: { success: true, data: { integrations: { webex: false } } },
+      });
+
+      render(<AdminPage />);
+      await screen.findByText('42');
+
+      const sourceSelect = await screen.findByDisplayValue('All Sources');
+      expect(within(sourceSelect as HTMLElement).queryByRole('option', { name: 'Webex' })).not.toBeInTheDocument();
+    });
+
+    it('never shows a Webex option in the Feedback source picker, regardless of the Webex flag', async () => {
+      currentPathname = '/admin/insights/feedback';
+      setupFetchMock({
+        userPreferences: { success: true, data: { integrations: { webex: true } } },
+      });
+
+      render(<AdminPage />);
+
+      const sourceSelect = await screen.findByDisplayValue('All Sources');
+      expect(within(sourceSelect as HTMLElement).queryByRole('option', { name: 'Webex' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('API source option', () => {
+    it('always shows an API option in the Statistics source picker, unlike Webex there is no enablement flag', async () => {
+      currentPathname = '/admin/insights/statistics';
+      const fetchMock = setupFetchMock({
+        userPreferences: { success: true, data: { integrations: { webex: false } } },
+      });
+
+      render(<AdminPage />);
+      await screen.findByText('42');
+
+      const sourceSelect = await screen.findByDisplayValue('All Sources');
+      expect(within(sourceSelect as HTMLElement).getByRole('option', { name: 'API' })).toBeInTheDocument();
+
+      fireEvent.change(sourceSelect, { target: { value: 'api' } });
+
+      await waitFor(() => {
+        const sourceRefreshes = fetchMock.mock.calls.filter(([url]) => {
+          const parsed = new URL(url, 'http://localhost');
+          return parsed.pathname === '/api/admin/stats' && parsed.searchParams.get('source') === 'api';
+        });
+        expect(sourceRefreshes.length).toBeGreaterThan(0);
+      });
+      expect(sourceSelect).toHaveValue('api');
+    });
+
+    it('never shows an API option in the Feedback source picker', async () => {
+      currentPathname = '/admin/insights/feedback';
+      setupFetchMock({
+        userPreferences: { success: true, data: { integrations: { webex: true } } },
+      });
+
+      render(<AdminPage />);
+
+      const sourceSelect = await screen.findByDisplayValue('All Sources');
+      expect(within(sourceSelect as HTMLElement).queryByRole('option', { name: 'API' })).not.toBeInTheDocument();
+    });
+  });
+
   describe('Stats rendering', () => {
     beforeEach(() => {
+      currentPathname = '/admin/insights/statistics';
       setupFetchMock();
     });
 
-    it('renders overview stat cards and detailed charts from the first Statistics tab', async () => {
+    it('renders overview stat cards and detailed charts on Statistics', async () => {
+      currentPathname = '/admin/insights/statistics';
       render(<AdminPage />);
-
-      await screen.findByText('Teams & Users');
-      expect(screen.queryByText('Total Users')).not.toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Insights' }));
 
       await waitFor(() => {
         expect(screen.getByText('42')).toBeInTheDocument();
       });
 
-      expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-        'Statistics',
-        'Feedback',
-      ]);
-      expect(screen.getByRole('tab', { name: /^Statistics$/i })).toHaveAttribute(
-        'aria-selected',
-        'true'
+      expect(
+        within(screen.getByRole('navigation', { name: 'Admin sections' }))
+          .getByRole('link', { name: /^Statistics$/i }),
+      ).toHaveAttribute(
+        'aria-current',
+        'page',
       );
       expect(screen.getByText('Total Users')).toBeInTheDocument();
       expect(screen.getByText('Conversations')).toBeInTheDocument();
@@ -1765,7 +1682,6 @@ describe('Admin Dashboard Page', () => {
       const fetchMock = setupFetchMock();
       render(<AdminPage />);
 
-      fireEvent.click(await screen.findByRole('button', { name: 'Insights' }));
       await screen.findByText('42');
       await act(async () => {
         await new Promise((resolve) => window.setTimeout(resolve, 200));
@@ -1774,8 +1690,8 @@ describe('Admin Dashboard Page', () => {
       const statsUrls = fetchMock.mock.calls
         .map(([url]) => new URL(url, 'http://localhost'))
         .filter((url) => url.pathname === '/api/admin/stats');
-      expect(statsUrls).toHaveLength(10);
-      expect(new Set(statsUrls.map((url) => url.searchParams.get('section'))).size).toBe(10);
+      expect(statsUrls).toHaveLength(12);
+      expect(new Set(statsUrls.map((url) => url.searchParams.get('section'))).size).toBe(12);
       expect(statsUrls.every((url) => url.searchParams.get('range') === '30d')).toBe(true);
     });
 
@@ -1804,82 +1720,8 @@ describe('Admin Dashboard Page', () => {
       expect(chart).not.toHaveTextContent('"value":11');
     });
 
-    it('pushes Feedback onto browser history with the clicked trend date', async () => {
-      currentSearchParams = new URLSearchParams({
-        cat: 'insights',
-        tab: 'stats',
-        source: 'slack',
-        users: 'test-user@example.com',
-        statsAgents: 'agent-primary',
-        dateRange: '30d',
-      });
-      setupFetchMock({
-        stats: {
-          ...mockStatsResponse,
-          data: {
-            ...mockStatsResponse.data,
-            feedback_summary: {
-              positive: 8,
-              negative: 3,
-              total: 11,
-              daily: [{ date: '2026-07-20', positive: 8, negative: 3 }],
-            },
-          },
-        },
-      });
-
-      render(<AdminPage />);
-
-      fireEvent.click(await screen.findByRole('button', { name: 'View feedback for Jul 20' }));
-
-      const targetUrl = new URL(pushMock.mock.calls.at(-1)?.[0], 'http://localhost');
-      expect(targetUrl.pathname).toBe('/admin');
-      expect(targetUrl.searchParams.get('cat')).toBe('insights');
-      expect(targetUrl.searchParams.get('tab')).toBe('feedback');
-      expect(targetUrl.searchParams.get('dateRange')).toBe('custom');
-      expect(targetUrl.searchParams.get('from')).toBe(
-        new Date(2026, 6, 20, 0, 0, 0, 0).toISOString(),
-      );
-      expect(targetUrl.searchParams.get('to')).toBe(
-        new Date(2026, 6, 20, 23, 59, 59, 999).toISOString(),
-      );
-      expect(targetUrl.searchParams.get('source')).toBe('slack');
-      expect(targetUrl.searchParams.get('users')).toBe('test-user@example.com');
-      expect(targetUrl.searchParams.get('statsAgents')).toBe('agent-primary');
-      expect(replaceMock).not.toHaveBeenCalledWith(
-        expect.stringContaining('tab=feedback'),
-        { scroll: false },
-      );
-    });
-
-    it('resets a custom Feedback date when manually returning to Statistics', async () => {
-      currentSearchParams = new URLSearchParams({
-        cat: 'insights',
-        tab: 'feedback',
-        source: 'slack',
-        dateRange: 'custom',
-        from: new Date(2026, 6, 20, 0, 0, 0, 0).toISOString(),
-        to: new Date(2026, 6, 20, 23, 59, 59, 999).toISOString(),
-      });
-      setupFetchMock();
-
-      render(<AdminPage />);
-
-      fireEvent.mouseDown(
-        await screen.findByRole('tab', { name: 'Statistics' }),
-        { button: 0, ctrlKey: false },
-      );
-
-      const targetUrl = new URL(replaceMock.mock.calls.at(-1)?.[0], 'http://localhost');
-      expect(targetUrl.searchParams.get('cat')).toBe('insights');
-      expect(targetUrl.searchParams.get('tab')).toBe('stats');
-      expect(targetUrl.searchParams.get('dateRange')).toBe('30d');
-      expect(targetUrl.searchParams.has('from')).toBe(false);
-      expect(targetUrl.searchParams.has('to')).toBe(false);
-      expect(targetUrl.searchParams.get('source')).toBe('slack');
-    });
-
     it('loads a requested Top Users page without changing the other leaderboard page', async () => {
+      currentPathname = '/admin/insights/statistics';
       const fetchMock = setupFetchMock({
         stats: (url: string) => {
           const requestUrl = new URL(url, 'http://localhost');
@@ -1936,7 +1778,6 @@ describe('Admin Dashboard Page', () => {
       });
       render(<AdminPage />);
 
-      fireEvent.click(await screen.findByRole('button', { name: 'Insights' }));
       await screen.findByText('Test User 01');
 
       const pageInput = screen.getByRole('spinbutton', {
@@ -1961,6 +1802,7 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('shows pagination loading only on the requested Top Users card', async () => {
+      currentPathname = '/admin/insights/statistics';
       const topUsersResponse = (url: string) => {
         const requestUrl = new URL(url, 'http://localhost');
         if (requestUrl.searchParams.get('section') !== 'top_users') {
@@ -2029,7 +1871,6 @@ describe('Admin Dashboard Page', () => {
       global.fetch = fetchMock as unknown as typeof fetch;
 
       render(<AdminPage />);
-      fireEvent.click(await screen.findByRole('button', { name: 'Insights' }));
       await screen.findByText('Test User 01');
 
       deferNextTopUsersRequest = true;
@@ -2051,6 +1892,67 @@ describe('Admin Dashboard Page', () => {
         resolveTopUsersRequest?.();
       });
       expect(await screen.findByText('Test User 11')).toBeInTheDocument();
+    });
+
+    it('pushes canonical Feedback history with the clicked trend date', async () => {
+      currentSearchParams = new URLSearchParams({
+        source: 'slack',
+        users: 'test-user@example.com',
+        statsAgents: 'agent-primary',
+        dateRange: '30d',
+      });
+      setupFetchMock({
+        stats: {
+          ...mockStatsResponse,
+          data: {
+            ...mockStatsResponse.data,
+            feedback_summary: {
+              positive: 8,
+              negative: 3,
+              total: 11,
+              daily: [{ date: '2026-07-20', positive: 8, negative: 3 }],
+            },
+          },
+        },
+      });
+
+      render(<AdminPage />);
+
+      fireEvent.click(await screen.findByRole('button', { name: 'View feedback for Jul 20' }));
+
+      const targetUrl = new URL(pushMock.mock.calls.at(-1)?.[0], 'http://localhost');
+      expect(targetUrl.pathname).toBe('/admin/insights/feedback');
+      expect(targetUrl.searchParams.get('dateRange')).toBe('custom');
+      expect(targetUrl.searchParams.get('from')).toBe(
+        new Date(2026, 6, 20, 0, 0, 0, 0).toISOString(),
+      );
+      expect(targetUrl.searchParams.get('to')).toBe(
+        new Date(2026, 6, 20, 23, 59, 59, 999).toISOString(),
+      );
+      expect(targetUrl.searchParams.get('source')).toBe('slack');
+      expect(targetUrl.searchParams.get('users')).toBe('test-user@example.com');
+      expect(targetUrl.searchParams.get('statsAgents')).toBe('agent-primary');
+    });
+
+    it('resets a custom Feedback date in the canonical Statistics link', async () => {
+      currentPathname = '/admin/insights/feedback';
+      currentSearchParams = new URLSearchParams({
+        source: 'slack',
+        dateRange: 'custom',
+        from: new Date(2026, 6, 20, 0, 0, 0, 0).toISOString(),
+        to: new Date(2026, 6, 20, 23, 59, 59, 999).toISOString(),
+      });
+
+      render(<AdminPage />);
+
+      const navigation = await screen.findByRole('navigation', { name: 'Admin sections' });
+      const statisticsLink = within(navigation).getByRole('link', { name: 'Statistics' });
+      const targetUrl = new URL(statisticsLink.getAttribute('href') ?? '', 'http://localhost');
+      expect(targetUrl.pathname).toBe('/admin/insights/statistics');
+      expect(targetUrl.searchParams.get('dateRange')).toBe('30d');
+      expect(targetUrl.searchParams.has('from')).toBe(false);
+      expect(targetUrl.searchParams.has('to')).toBe(false);
+      expect(targetUrl.searchParams.get('source')).toBe('slack');
     });
 
     it('updates cards independently and issues one request per section when a filter changes', async () => {
@@ -2091,14 +1993,14 @@ describe('Admin Dashboard Page', () => {
         .slice(callsBeforeFilter)
         .map(([url]) => new URL(url, 'http://localhost').searchParams.get('section'))
         .filter(Boolean);
-      expect(refreshCalls).toHaveLength(9);
-      expect(new Set(refreshCalls).size).toBe(9);
+      expect(refreshCalls).toHaveLength(11);
+      expect(new Set(refreshCalls).size).toBe(11);
       expect(refreshCalls).not.toContain('filters');
       const refreshUrls = fetchMock.mock.calls
         .slice(callsBeforeFilter)
         .map(([url]) => new URL(url, 'http://localhost'))
         .filter((url) => url.pathname === '/api/admin/stats');
-      expect(refreshUrls).toHaveLength(9);
+      expect(refreshUrls).toHaveLength(11);
       expect(refreshUrls.every((url) => url.searchParams.get('source') === 'web')).toBe(true);
       await waitFor(() => {
         expect(fetchMock.mock.calls.slice(callsBeforeFilter).some(([url]) => {
@@ -2172,7 +2074,7 @@ describe('Admin Dashboard Page', () => {
         .slice(callsBeforeFilter)
         .map(([url]) => new URL(url, 'http://localhost'))
         .filter((url) => url.pathname === '/api/admin/stats');
-      expect(refreshUrls).toHaveLength(9);
+      expect(refreshUrls).toHaveLength(11);
       expect(refreshUrls.every((url) => url.searchParams.get('agent') === 'agent-primary')).toBe(true);
       expect(refreshUrls.find((url) => url.searchParams.get('section') === 'overview'))
         .toBeDefined();
@@ -2205,7 +2107,7 @@ describe('Admin Dashboard Page', () => {
           .slice(callsBeforeChannel)
           .map(([url]) => new URL(url, 'http://localhost'))
           .filter((url) => url.pathname === '/api/admin/stats');
-        expect(channelRefreshes).toHaveLength(9);
+        expect(channelRefreshes).toHaveLength(11);
         expect(channelRefreshes.every((url) => (
           url.searchParams.get('source') === 'slack'
           && url.searchParams.get('channel') === 'primary-channel'
@@ -2228,7 +2130,7 @@ describe('Admin Dashboard Page', () => {
           .slice(callsBeforeTeam)
           .map(([url]) => new URL(url, 'http://localhost'))
           .filter((url) => url.pathname === '/api/admin/stats');
-        expect(teamRefreshes).toHaveLength(9);
+        expect(teamRefreshes).toHaveLength(11);
         expect(teamRefreshes.every((url) => (
           url.searchParams.get('team') === 'platform-team'
           && url.searchParams.has('user') === false
@@ -2245,6 +2147,7 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('renders user list with correct data', async () => {
+      currentPathname = '/admin/people/users';
       render(<AdminPage />);
 
       await waitFor(() => {
@@ -2257,13 +2160,10 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('fetches stats with a relative date preset', async () => {
+      currentPathname = '/admin/insights/statistics';
       const fetchMock = setupFetchMock();
 
       render(<AdminPage />);
-
-      // assisted-by Codex Codex-sonnet-4-6
-      // Stats are lazy-loaded when the Insights category is opened.
-      fireEvent.click(screen.getByRole('button', { name: 'Insights' }));
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(

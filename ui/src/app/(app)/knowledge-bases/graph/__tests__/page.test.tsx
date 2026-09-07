@@ -1,16 +1,13 @@
 /**
- * Tests for the Knowledge Bases &rarr; Graph page banner.
+ * Tests for the Knowledge Bases &rarr; Graph page RBAC boundary and banner.
  *
  * The banner must render when:
  *   - the caller has at least one readable KB (`has_any_kb=true`), or
  *   - the BFF served the org-admin bypass (`orgAdminBypass=true`).
  *
- * It must stay hidden when the caller has no readable KB and is not an
- * admin — that state is already handled upstream by the `kb-tab-gates`
- * route (the tab itself is disabled) but we double-check the page is a
- * no-op in that case so a deep-link doesn't render an "empty" banner.
- *
- * assisted-by Cursor claude-opus-4-7
+ * A deep-link with no readable KB must render the access empty state without
+ * mounting GraphView. The global ontology is available only to callers that
+ * received the org-admin bypass.
  */
 
 import React from "react";
@@ -57,7 +54,11 @@ jest.mock("@/hooks/use-kb-tab-gates", () => ({
 
 jest.mock("@/components/rag/GraphView", () => ({
   __esModule: true,
-  default: () => <div data-testid="graph-view">GraphView</div>,
+  default: ({ allowOntology }: { allowOntology?: boolean }) => (
+    <div data-testid="graph-view" data-allow-ontology={String(Boolean(allowOntology))}>
+      GraphView
+    </div>
+  ),
 }));
 
 jest.mock("framer-motion", () => ({
@@ -89,17 +90,17 @@ describe("Knowledge Bases &rarr; Graph page banner", () => {
     mockOrgAdminBypass = false;
   });
 
-  it("renders the amber info banner with the readable-KB count when the caller has any readable KBs", () => {
+  it("renders a scoped banner and disables the global ontology for a bounded caller", () => {
     render(<Graph />);
 
     const banner = screen.getByTestId("graph-info-banner");
     expect(banner).toBeInTheDocument();
-    expect(banner.textContent).toContain("Global entity graph.");
+    expect(banner.textContent).toContain("Source-scoped data graph.");
     expect(banner.textContent).toContain("3 knowledge bases");
-    expect(screen.getByTestId("graph-view")).toBeInTheDocument();
+    expect(screen.getByTestId("graph-view")).toHaveAttribute("data-allow-ontology", "false");
   });
 
-  it("renders the banner without a count when the BFF served the org-admin bypass", () => {
+  it("enables the global ontology when the BFF served the org-admin bypass", () => {
     mockOrgAdminBypass = true;
     mockGates = {
       search: true,
@@ -114,11 +115,12 @@ describe("Knowledge Bases &rarr; Graph page banner", () => {
 
     const banner = screen.getByTestId("graph-info-banner");
     expect(banner).toBeInTheDocument();
-    expect(banner.textContent).toContain("Global entity graph.");
+    expect(banner.textContent).toContain("Unrestricted graph access.");
     expect(banner.textContent).not.toContain("0 knowledge");
+    expect(screen.getByTestId("graph-view")).toHaveAttribute("data-allow-ontology", "true");
   });
 
-  it("does not render the banner when the caller has no readable KBs and is not an admin", () => {
+  it("blocks a direct graph deep-link when the caller has no readable KBs", () => {
     mockGates = {
       search: false,
       data_sources: false,
@@ -132,7 +134,10 @@ describe("Knowledge Bases &rarr; Graph page banner", () => {
     render(<Graph />);
 
     expect(screen.queryByTestId("graph-info-banner")).not.toBeInTheDocument();
-    expect(screen.getByTestId("graph-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("graph-view")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("You don't have access to any knowledge bases yet."),
+    ).toBeInTheDocument();
   });
 
   it("uses the singular noun when exactly one KB is readable", () => {

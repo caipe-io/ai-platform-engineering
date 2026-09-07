@@ -186,7 +186,7 @@ export default function RoadmapPage() {
                         {(item as any).issueRefs.map((ref: string) => (
                           <a
                             key={ref}
-                            href={`https://github.com/cnoe-io/ai-platform-engineering/issues/${ref.replace('#', '')}`}
+                            href={`https://github.com/caipe-io/ai-platform-engineering/issues/${ref.replace('#', '')}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className={styles.issueRef}
@@ -216,7 +216,7 @@ export default function RoadmapPage() {
             <div className={styles.heroCtas}>
               <Link
                 className={styles.primaryBtn}
-                href="https://github.com/cnoe-io/ai-platform-engineering/issues/new?template=feature_request.yml"
+                href="https://github.com/caipe-io/ai-platform-engineering/issues/new?template=feature_request.yml"
               >
                 Request a Feature ↗
               </Link>

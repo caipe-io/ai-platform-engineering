@@ -34,4 +34,4 @@ npm run serve
 
 ## Deployment with Github Actions
 
-[![Publish Docs](https://github.com/cnoe-io/ai-platform-engineering/actions/workflows/publish-gh-pages.yml/badge.svg)](https://github.com/cnoe-io/ai-platform-engineering/actions/workflows/publish-gh-pages.yml)
+[![Publish Docs](https://github.com/caipe-io/ai-platform-engineering/actions/workflows/publish-gh-pages.yml/badge.svg)](https://github.com/caipe-io/ai-platform-engineering/actions/workflows/publish-gh-pages.yml)

@@ -28,6 +28,7 @@ withErrorHandler,
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
 import { writeOpenFgaTupleDiff } from "@/lib/rbac/openfga";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
+import { requireReservedTeamMutationPermission } from "@/lib/rbac/team-admin-guards";
 import { slackWorkspaceRef } from "@/lib/rbac/slack-channel-grant-store";
 import { slackChannelTeamVisibilityRelationships } from "@/lib/rbac/slack-channel-rebac";
 import { buildUniversalRebacTupleDiff } from "@/lib/rbac/tuple-builders";
@@ -228,6 +229,7 @@ export const PUT = withErrorHandler(
       const team = await teamsCol.findOne({ _id: teamId } as never);
       if (!team) throw new ApiError("Team not found", 404);
       const ownerTeamSlug = teamSlug(team, teamIdStr);
+      await requireReservedTeamMutationPermission(session, { slug: ownerTeamSlug });
       await requireResourcePermission(session, { type: "team", id: ownerTeamSlug, action: "manage" }, { bypassForOrgAdmin: true });
 
       const teamCol = await getCollection<ChannelTeamMappingDoc>("channel_team_mappings");

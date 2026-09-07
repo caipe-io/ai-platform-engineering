@@ -3,30 +3,30 @@
 Mirrors the webloader ingestor pattern:
 - Redis listener handles on-demand page ingestion
 - Periodic reload refreshes all configured spaces
-- Each Confluence space is a datasource, pages are like URLs within a sitemap
+- UI sources use one root page per datasource; legacy config can still model a
+  whole space as one datasource
 """
 
 import os
-import asyncio
 import json
 import re
 import time
 import traceback
-from typing import Set, List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any
 from redis.asyncio import Redis
 from common.ingestor import IngestorBuilder, Client
+from common.ingestor_listener import reload_persisted_datasources, run_ingestor_listener
 from common.models.rag import DataSourceInfo
 from common.models.server import (
-  IngestorRequest,
   ConfluenceIngestRequest,
   ConfluenceIngestorCommand,
   ConfluenceReloadRequest,
 )
 from common.job_manager import JobStatus, JobManager
 from common.constants import (
-  CONFLUENCE_INGESTOR_REDIS_QUEUE,
   CONFLUENCE_INGESTOR_NAME,
   CONFLUENCE_INGESTOR_TYPE,
+  DEFAULT_RELOAD_INTERVAL,
 )
 from common.utils import get_logger
 from loader import ConfluenceLoader, generate_datasource_id
@@ -52,9 +52,9 @@ if not CONFLUENCE_TOKEN:
 
 CONFLUENCE_SSL_VERIFY = os.environ.get("CONFLUENCE_SSL_VERIFY", "true").lower() == "true"
 CONFLUENCE_SPACES = os.environ.get("CONFLUENCE_SPACES", "")
-RELOAD_INTERVAL = int(os.environ.get("CONFLUENCE_SYNC_INTERVAL", "86400"))  # 24 hours default
 MAX_CONCURRENCY = int(os.environ.get("CONFLUENCE_MAX_CONCURRENCY", "5"))
 MAX_INGESTION_TASKS = int(os.environ.get("CONFLUENCE_MAX_INGESTION_TASKS", "5"))
+PREVIEW_MAX_ITEMS = max(1, min(int(os.getenv("INGESTOR_PREVIEW_MAX_ITEMS", "100")), 500))
 
 
 def _get_title_patterns(metadata: Optional[Dict[str, Any]]) -> Dict[str, List[str]]:
@@ -111,7 +111,7 @@ def _create_datasource_info(
     last_updated=int(time.time()),
     default_chunk_size=1000,
     default_chunk_overlap=200,
-    reload_interval=RELOAD_INTERVAL,
+    reload_interval=DEFAULT_RELOAD_INTERVAL,
   )
 
 
@@ -189,43 +189,42 @@ async def track_fetch_failures(job_manager: JobManager, job_id: str, failed_page
     await job_manager.increment_failure(job_id=job_id, message=error_msg)
 
 
-async def process_page_ingestion(client: Client, job_manager: JobManager, ingest_request: ConfluenceIngestRequest):
+async def process_page_ingestion(
+  client: Client,
+  job_manager: JobManager,
+  ingest_request: ConfluenceIngestRequest,
+  job_id: str,
+) -> None:
   """Process on-demand page ingestion from Redis (server already created datasource)."""
   try:
     # Parse URL to extract space_key and page_id
     confluence_match = re.search(r"/spaces/([^/]+)/pages/(\d+)", ingest_request.url)
     if not confluence_match:
-      logger.error(f"Invalid Confluence URL format: {ingest_request.url}")
-      return
+      raise ValueError(f"Invalid Confluence URL format: {ingest_request.url}")
 
     space_key = confluence_match.group(1)
     page_id = confluence_match.group(2)
 
-    # Generate space-level datasource ID
-    datasource_id = generate_datasource_id(CONFLUENCE_URL, space_key)
+    # UI-created sources are page-scoped. The explicit ID keeps retrying an
+    # existing legacy space-level source compatible after page-scoped IDs were
+    # introduced.
+    datasource_id = (
+      ingest_request.preprovisioned_datasource_id
+      or generate_datasource_id(CONFLUENCE_URL, space_key, page_id)
+    )
 
-    # Fetch space-level datasource
+    # Fetch the exact page-scoped or legacy space-level datasource.
     datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
     datasource_info = next((ds for ds in datasources if ds.datasource_id == datasource_id), None)
 
-    # Fetch server-created job
-    jobs = await job_manager.get_jobs_by_datasource(datasource_id)
-
-    # Handle missing datasource or job - update job status before raising
     if not datasource_info:
       error_msg = f"Datasource not found: {datasource_id}"
       logger.error(error_msg)
-      if jobs:
-        await job_manager.upsert_job(job_id=jobs[0].job_id, status=JobStatus.FAILED, message=error_msg)
       raise ValueError(error_msg)
 
-    if not jobs:
-      error_msg = f"No job found for datasource: {datasource_id}"
-      logger.error(error_msg)
-      raise ValueError(error_msg)
-
-    job = jobs[0]  # Get the most recent job
-    job_id = job.job_id
+    job = await job_manager.get_job(job_id)
+    if not job or job.datasource_id != datasource_id:
+      raise ValueError(f"Job {job_id} does not belong to datasource {datasource_id}")
 
     # Check if job was terminated before we started
     if job.status == JobStatus.TERMINATED:
@@ -302,13 +301,92 @@ async def process_page_ingestion(client: Client, job_manager: JobManager, ingest
     try:
       if "job_id" in locals():
         await job_manager.add_error_msg(job_id, error_msg)
-    except Exception:
-      pass
+    except Exception as status_error:
+      logger.warning(
+        f"Failed to record the Confluence ingestion error for job "
+        f"{locals().get('job_id')}: {status_error}"
+      )
 
     raise
 
 
-async def reload_datasource(client: Client, job_manager: JobManager, datasource_info: DataSourceInfo):
+async def preview_page_ingestion(
+  client: Client,
+  ingest_request: ConfluenceIngestRequest,
+) -> dict[str, object]:
+  """Resolve the real page selection and title filters without ingesting."""
+  confluence_match = re.search(r"/spaces/([^/]+)/pages/(\d+)", ingest_request.url)
+  if not confluence_match:
+    raise ValueError(f"Invalid Confluence URL format: {ingest_request.url}")
+  space_key = confluence_match.group(1)
+  page_id = confluence_match.group(2)
+  datasource_info = DataSourceInfo(
+    datasource_id=(
+      ingest_request.preprovisioned_datasource_id
+      or generate_datasource_id(CONFLUENCE_URL, space_key, page_id)
+    ),
+    ingestor_id=client.ingestor_id or "",
+    source_type="confluence",
+    last_updated=None,
+    default_chunk_size=ingest_request.default_chunk_size,
+    default_chunk_overlap=ingest_request.default_chunk_overlap,
+    reload_interval=ingest_request.reload_interval,
+  )
+  async with ConfluenceLoader(
+    rag_client=client,
+    job_manager=JobManager(redis_client),
+    datasource_info=datasource_info,
+    confluence_url=CONFLUENCE_URL,
+    username=CONFLUENCE_USERNAME,
+    token=CONFLUENCE_TOKEN,
+    verify_ssl=CONFLUENCE_SSL_VERIFY,
+    max_concurrency=MAX_CONCURRENCY,
+    allowed_title_patterns=ingest_request.allowed_title_patterns,
+    denied_title_patterns=ingest_request.denied_title_patterns,
+  ) as loader:
+    pages, failed_pages = await loader.load_pages(
+      space_key,
+      [{"page_id": page_id, "get_child_pages": ingest_request.get_child_pages}],
+      # Fetch one visible item beyond the UI limit. ``load_pages`` also peeks
+      # one child beyond this bound, so a large page tree remains bounded while
+      # the response can accurately report that more candidates exist.
+      max_pages=PREVIEW_MAX_ITEMS + 1,
+    )
+    selection_truncated = loader.last_load_truncated
+
+  items: list[dict[str, str]] = []
+  for page in pages[:PREVIEW_MAX_ITEMS]:
+    found_page_id = str(page.get("id") or "")
+    relative_url = page.get("_links", {}).get("webui", "")
+    page_url = f"{CONFLUENCE_URL}{relative_url}" if relative_url else ingest_request.url
+    items.append(
+      {
+        "id": found_page_id or page_url,
+        "title": str(page.get("title") or found_page_id or page_url),
+        "url": page_url,
+      }
+    )
+  return {
+    "items": items,
+    "total_discovered": len(pages),
+    "truncated": selection_truncated or len(pages) > PREVIEW_MAX_ITEMS,
+    "warnings": [message for _, message in failed_pages[:10]],
+    "summary": {
+      "space_key": space_key,
+      "root_page_id": page_id,
+      "include_child_pages": ingest_request.get_child_pages,
+      "failed_pages": len(failed_pages),
+      "preview_limit": PREVIEW_MAX_ITEMS,
+    },
+  }
+
+
+async def reload_datasource(
+  client: Client,
+  job_manager: JobManager,
+  datasource_info: DataSourceInfo,
+  job_id: str | None = None,
+) -> None:
   """Reload a single Confluence datasource.
 
   Fetches pages based on page_ids in metadata:
@@ -319,17 +397,29 @@ async def reload_datasource(client: Client, job_manager: JobManager, datasource_
   try:
     # Extract metadata
     if not datasource_info.metadata:
-      logger.warning(f"No metadata for {datasource_info.datasource_id}")
+      message = f"No metadata for {datasource_info.datasource_id}"
+      if job_id is not None:
+        raise ValueError(message)
+      logger.warning(message)
       return
 
     space_key = datasource_info.metadata.get("space_key")
     if not space_key:
-      logger.warning(f"No space_key in metadata for {datasource_info.datasource_id}")
+      message = f"No space_key in metadata for {datasource_info.datasource_id}"
+      if job_id is not None:
+        raise ValueError(message)
+      logger.warning(message)
       return
 
     page_configs = datasource_info.metadata.get("page_configs", [])
     title_patterns = _get_title_patterns(datasource_info.metadata)
     logger.info(f"Reloading datasource: {datasource_info.datasource_id} with page_configs: {page_configs}")
+    if job_id is not None:
+      await job_manager.upsert_job(
+        job_id,
+        status=JobStatus.IN_PROGRESS,
+        message=f"Reloading Confluence space {space_key}",
+      )
 
     try:
       # Use loader to fetch and ingest pages
@@ -348,15 +438,23 @@ async def reload_datasource(client: Client, job_manager: JobManager, datasource_
         # Load pages
         pages, failed_pages = await loader.load_pages(space_key, page_configs)
 
-        # Create reload job with total (successful + failed)
+        # Periodic reloads create their own job. On-demand reloads update the
+        # exact server-created job carried on the Redis command.
         total_count = len(pages) + len(failed_pages)
-        job_response = await client.create_job(
-          datasource_id=datasource_info.datasource_id,
-          job_status=JobStatus.IN_PROGRESS,
-          message=f"Reloading {len(pages)} pages from {space_key}, {len(failed_pages)} failed to load",
-          total=total_count,
-        )
-        job_id = job_response["job_id"]
+        if job_id is None:
+          job_response = await client.create_job(
+            datasource_id=datasource_info.datasource_id,
+            job_status=JobStatus.IN_PROGRESS,
+            message=f"Reloading {len(pages)} pages from {space_key}, {len(failed_pages)} failed to load",
+            total=total_count,
+          )
+          job_id = job_response["job_id"]
+        else:
+          await job_manager.upsert_job(
+            job_id,
+            total=total_count,
+            message=f"Reloading {len(pages)} pages from {space_key}, {len(failed_pages)} failed to load",
+          )
 
         # Track fetch failures
         await track_fetch_failures(job_manager, job_id, failed_pages)
@@ -387,6 +485,7 @@ async def reload_datasource(client: Client, job_manager: JobManager, datasource_
   except Exception as e:
     logger.error(f"Error in reload_datasource: {e}")
     logger.error(traceback.format_exc())
+    raise
 
 
 async def periodic_reload(client: Client):
@@ -414,6 +513,23 @@ async def periodic_reload(client: Client):
             None,
           )
 
+          if datasource_info and (datasource_info.metadata or {}).get("config_managed") is True:
+            logger.debug(
+              f"Skipping legacy CONFLUENCE_SPACES config for database-managed datasource {datasource_id}"
+            )
+            continue
+
+          if (
+            datasource_info
+            and datasource_info.last_updated
+            and int(time.time()) - datasource_info.last_updated
+            < datasource_info.reload_interval
+          ):
+            logger.debug(
+              f"Skipping {space_key}: datasource refresh is not due"
+            )
+            continue
+
           if not datasource_info:
             # Create datasource
             logger.info(f"Creating datasource for configured space: {datasource_id}")
@@ -425,6 +541,13 @@ async def periodic_reload(client: Client):
               page_configs=page_configs,
             )
             await client.upsert_datasource(datasource_info)
+          else:
+            datasource_info.metadata = {
+              **(datasource_info.metadata or {}),
+              "space_key": space_key,
+              "page_configs": page_configs,
+              "confluence_url": CONFLUENCE_URL,
+            }
 
           title_patterns = _get_title_patterns(datasource_info.metadata)
 
@@ -482,20 +605,14 @@ async def periodic_reload(client: Client):
           logger.error(f"Error auto-syncing space {space_key}: {e}")
           logger.error(traceback.format_exc())
 
-    # Then reload any existing datasources that haven't been updated recently
-    # (skip ones we just synced from CONFLUENCE_SPACES)
-    datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
-    current_time = int(time.time())
-
-    datasources_to_reload = [ds for ds in datasources if (current_time - ds.last_updated) >= RELOAD_INTERVAL]
-
-    logger.info(f"Found {len(datasources)} total datasources, {len(datasources_to_reload)} need reload")
-
-    for datasource_info in datasources_to_reload:
-      try:
-        await reload_datasource(client, job_manager, datasource_info)
-      except Exception as e:
-        logger.error(f"Error reloading {datasource_info.datasource_id}: {e}")
+    # Refresh UI/database-managed sources too, honoring each source's own
+    # reload interval instead of the connector-wide legacy interval.
+    await reload_persisted_datasources(
+      client,
+      reload_datasource,
+      config_managed_only=True,
+      job_manager=job_manager,
+    )
 
     logger.info("Periodic reload completed")
 
@@ -505,116 +622,60 @@ async def periodic_reload(client: Client):
 
 
 async def redis_listener(client: Client):
-  """Listen for Confluence ingest requests on Redis queue.
+  """Run Confluence commands through the shared per-ingestor listener."""
 
-  Manages concurrent page ingestion tasks following webloader pattern.
-  """
-  job_manager = JobManager(redis_client)
-  active_tasks: Set[asyncio.Task] = set()
+  async def reconcile_legacy_config() -> None:
+    """Expose legacy connector options immediately for config migration."""
+    if not CONFLUENCE_SPACES:
+      return
+    spaces = parse_confluence_spaces_json(CONFLUENCE_SPACES)
+    datasources = {
+      datasource.datasource_id: datasource
+      for datasource in await client.list_datasources(ingestor_id=client.ingestor_id)
+    }
+    for space_key, page_configs in spaces.items():
+      datasource = datasources.get(generate_datasource_id(CONFLUENCE_URL, space_key))
+      if not datasource:
+        continue
+      metadata = datasource.metadata or {}
+      if metadata.get("config_managed") is True:
+        continue
+      datasource.metadata = {
+        **metadata,
+        "space_key": space_key,
+        "page_configs": page_configs,
+        "confluence_url": CONFLUENCE_URL,
+      }
+      await client.upsert_datasource(datasource)
 
-  logger.info(f"Starting Redis listener on queue: {CONFLUENCE_INGESTOR_REDIS_QUEUE}")
-  logger.info(f"Max concurrent tasks: {MAX_INGESTION_TASKS}")
+  await run_ingestor_listener(
+    client,
+    ingest_command=ConfluenceIngestorCommand.INGEST_PAGE,
+    ingest_model=ConfluenceIngestRequest,
+    ingest_handler=process_page_ingestion,
+    reload_all_command=ConfluenceIngestorCommand.RELOAD_ALL,
+    reload_all_handler=reload_all_confluence_spaces,
+    reload_datasource_command=ConfluenceIngestorCommand.RELOAD_DATASOURCE,
+    reload_model=ConfluenceReloadRequest,
+    reload_handler=reload_datasource,
+    max_tasks=MAX_INGESTION_TASKS,
+    describe_ingest=lambda request: f"Confluence page ingestion: {request.url}",
+    on_startup=reconcile_legacy_config,
+    on_shutdown=redis_client.aclose,
+    preview_command=ConfluenceIngestorCommand.PREVIEW_PAGE,
+    preview_model=ConfluenceIngestRequest,
+    preview_handler=preview_page_ingestion,
+  )
 
-  async def handle_task(coro, task_name: str):
-    """Wrapper for task error handling."""
-    try:
-      await coro
-    except Exception as e:
-      logger.error(f"Error in {task_name}: {e}")
-      logger.error(traceback.format_exc())
 
-  try:
-    while True:
-      try:
-        # Clean completed tasks
-        done_tasks = {task for task in active_tasks if task.done()}
-        for task in done_tasks:
-          try:
-            task.result()
-          except Exception as e:
-            logger.error(f"Task failed: {e}")
-            logger.error(traceback.format_exc())
-        active_tasks -= done_tasks
-
-        # Check capacity
-        if len(active_tasks) >= MAX_INGESTION_TASKS:
-          await asyncio.sleep(0.5)
-          continue
-
-        # Pop from Redis (blocking with 1s timeout)
-        result = await redis_client.blpop([CONFLUENCE_INGESTOR_REDIS_QUEUE], timeout=1)
-
-        if result is None:
-          continue
-
-        _, message = result
-
-        try:
-          ingestor_request = IngestorRequest.model_validate_json(message)
-
-          if ingestor_request.ingestor_id != client.ingestor_id:
-            continue
-
-          # Handle INGEST_PAGE command
-          if ingestor_request.command == ConfluenceIngestorCommand.INGEST_PAGE:
-            ingest_request = ConfluenceIngestRequest.model_validate(ingestor_request.payload)
-
-            task = asyncio.create_task(
-              handle_task(
-                process_page_ingestion(client, job_manager, ingest_request),
-                f"Page ingestion: {ingest_request.url}",
-              )
-            )
-            active_tasks.add(task)
-
-          # Handle RELOAD_ALL command
-          elif ingestor_request.command == ConfluenceIngestorCommand.RELOAD_ALL:
-            task = asyncio.create_task(handle_task(periodic_reload(client), "Reload all datasources"))
-            active_tasks.add(task)
-
-          # Handle RELOAD_DATASOURCE command
-          elif ingestor_request.command == ConfluenceIngestorCommand.RELOAD_DATASOURCE:
-            reload_request = ConfluenceReloadRequest.model_validate(ingestor_request.payload)
-
-            # Fetch datasource info
-            datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
-            datasource_info = next(
-              (ds for ds in datasources if ds.datasource_id == reload_request.datasource_id),
-              None,
-            )
-
-            if datasource_info:
-              task = asyncio.create_task(
-                handle_task(
-                  reload_datasource(client, job_manager, datasource_info),
-                  f"Reload datasource: {reload_request.datasource_id}",
-                )
-              )
-              active_tasks.add(task)
-            else:
-              logger.warning(f"Datasource not found: {reload_request.datasource_id}")
-
-        except Exception as e:
-          logger.error(f"Error processing message: {e}")
-          logger.error(traceback.format_exc())
-
-      except asyncio.CancelledError:
-        logger.info("Redis listener cancelled, waiting for tasks...")
-        if active_tasks:
-          await asyncio.gather(*active_tasks, return_exceptions=True)
-        break
-      except Exception as e:
-        logger.error(f"Listener loop error: {e}")
-        logger.error(traceback.format_exc())
-        await asyncio.sleep(5)
-
-  finally:
-    if active_tasks:
-      for task in active_tasks:
-        task.cancel()
-      await asyncio.gather(*active_tasks, return_exceptions=True)
-
-    await redis_client.close()
+async def reload_all_confluence_spaces(client: Client) -> None:
+  """Force a reload of every Confluence datasource assigned to this worker."""
+  await reload_persisted_datasources(
+    client,
+    reload_datasource,
+    due_only=False,
+    job_manager=JobManager(redis_client),
+  )
 
 
 if __name__ == "__main__":
@@ -622,12 +683,27 @@ if __name__ == "__main__":
     logger.info("Starting Confluence Ingestor...")
     logger.info(f"Confluence URL: {CONFLUENCE_URL}")
     logger.info(f"Configured spaces: {CONFLUENCE_SPACES or '(none)'}")
-    logger.info(f"Reload interval: {RELOAD_INTERVAL}s")
 
     # Build and run the ingestor (same pattern as webloader)
-    IngestorBuilder().name(CONFLUENCE_INGESTOR_NAME).type(CONFLUENCE_INGESTOR_TYPE).description(f"Confluence wiki page ingestor for {CONFLUENCE_URL}").metadata({"confluence_url": CONFLUENCE_URL, "reload_interval": RELOAD_INTERVAL}).sync_with_fn(periodic_reload).with_startup(redis_listener).every(
-      RELOAD_INTERVAL
-    ).run()
+    configured_spaces = (
+      parse_confluence_spaces_json(CONFLUENCE_SPACES) if CONFLUENCE_SPACES else {}
+    )
+    (
+      IngestorBuilder()
+      .name(CONFLUENCE_INGESTOR_NAME)
+      .type(CONFLUENCE_INGESTOR_TYPE)
+      .description(f"Confluence wiki page ingestor for {CONFLUENCE_URL}")
+      .metadata(
+        {
+          "confluence_url": CONFLUENCE_URL,
+          "spaces": configured_spaces,
+        }
+      )
+      .sync_with_fn(periodic_reload)
+      .with_startup(redis_listener)
+      .schedule_from_datasources()
+      .run()
+    )
 
   except KeyboardInterrupt:
     logger.info("Confluence ingestor interrupted by user")

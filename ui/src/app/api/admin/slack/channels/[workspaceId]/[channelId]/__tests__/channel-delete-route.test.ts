@@ -56,7 +56,15 @@ import { DELETE } from "../route";
 const WS = "T123";
 const CH = "C456";
 const CHANNEL_REF = `slack_channel:${WS}--${CH}`;
-const CHANNEL_USABLE_OBJECT_TYPES = ["agent", "mcp_server", "tool", "knowledge_base", "document", "skill"];
+const CHANNEL_USABLE_OBJECT_TYPES = [
+  "agent",
+  "mcp_server",
+  "tool",
+  "knowledge_base",
+  "rag_collection",
+  "document",
+  "skill",
+];
 
 function ctx() {
   return { params: Promise.resolve({ workspaceId: WS, channelId: CH }) };

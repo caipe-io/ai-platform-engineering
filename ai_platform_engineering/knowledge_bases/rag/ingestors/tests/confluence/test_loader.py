@@ -494,6 +494,13 @@ class TestGenerateDatasourceId:
     r2 = generate_datasource_id("https://example.com", "ENG")
     assert r1 != r2
 
+  def test_different_root_pages_in_one_space_produce_different_ids(self):
+    r1 = generate_datasource_id("https://example.com/wiki", "SRE", "123")
+    r2 = generate_datasource_id("https://example.com/wiki", "SRE", "456")
+
+    assert r1 == "src_confluence___example_com__SRE__123"
+    assert r1 != r2
+
   def test_space_key_appended_correctly(self):
     result = generate_datasource_id("https://example.com", "MY_SPACE")
     assert result.endswith("__MY_SPACE")

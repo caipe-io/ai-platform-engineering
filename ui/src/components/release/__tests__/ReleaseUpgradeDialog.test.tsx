@@ -94,7 +94,7 @@ describe("ReleaseUpgradeDialog", () => {
     expect(screen.getByText("Added Slack and Webex ReBAC migration assistant")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View full changelog" })).toHaveAttribute(
       "href",
-      "https://github.com/cnoe-io/ai-platform-engineering/blob/main/CHANGELOG.md",
+      "https://github.com/caipe-io/ai-platform-engineering/blob/main/CHANGELOG.md",
     );
     expect(screen.queryByRole("button", { name: "Open Migration Assistant" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Skip until next login" })).toBeInTheDocument();

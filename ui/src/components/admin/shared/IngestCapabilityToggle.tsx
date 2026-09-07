@@ -1,5 +1,6 @@
 "use client";
 
+import { Switch } from "@/components/ui/switch";
 import { AlertCircle,CheckCircle2,Loader2,Upload } from "lucide-react";
 import { useCallback,useEffect,useState } from "react";
 
@@ -9,16 +10,16 @@ import { useCallback,useEffect,useState } from "react";
  *
  * Reads/writes the org-level `ingestor` grant for this team via
  * `/api/admin/teams/[id]/ingest-capability`. This is deliberately separate
- * from per-KB assignment below it: per-KB `ingestor` means "push into KB X",
- * while THIS capability is what lets the team's members open the Ingest UI and
- * author brand-new data sources. Granting/revoking is org-admin-only (enforced
- * server-side); a 403 surfaces inline.
+ * from datasource Owner and Search grants. It lets team members open the
+ * creation UI and author brand-new datasources. Granting/revoking is
+ * org-admin-only (enforced server-side); a 403 surfaces inline.
  *
  * assisted-by Cursor claude-opus-4.8
  */
 interface IngestCapabilityToggleProps {
   teamId: string;
   teamName: string;
+  readOnly?: boolean;
 }
 
 interface CapabilityState {
@@ -28,6 +29,7 @@ interface CapabilityState {
 export function IngestCapabilityToggle({
   teamId,
   teamName,
+  readOnly = false,
 }: IngestCapabilityToggleProps) {
   const [enabled, setEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -65,6 +67,7 @@ export function IngestCapabilityToggle({
   };
 
   const handleToggle = async () => {
+    if (readOnly) return;
     const next = !enabled;
     try {
       setSaving(true);
@@ -101,36 +104,25 @@ export function IngestCapabilityToggle({
             <Upload className="h-4 w-4 text-amber-600 dark:text-amber-300" />
           </div>
           <div className="min-w-0">
-            <h4 className="text-sm font-medium">Create / ingest data sources</h4>
+            <h4 className="text-sm font-medium">Create datasources</h4>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Allow <strong>{teamName}</strong> members to author brand-new data
-              sources (web / Confluence). This is separate from the per-KB
-              permissions below, which only control pushing into existing
-              knowledge bases.
+              Allow <strong>{teamName}</strong> members to create new
+              datasources. This does not change access to existing datasources.
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          aria-label="Allow this team to create data sources"
-          disabled={loading || saving}
-          onClick={handleToggle}
-          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 ${
-            enabled ? "bg-amber-500" : "bg-muted-foreground/30"
-          }`}
-        >
-          {loading || saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin mx-auto text-background" />
-          ) : (
-            <span
-              className={`inline-block h-5 w-5 transform rounded-full bg-background shadow transition-transform ${
-                enabled ? "translate-x-5" : "translate-x-0.5"
-              }`}
-            />
+        <div className="relative shrink-0">
+          <Switch
+            checked={enabled}
+            aria-label="Allow this team to create data sources"
+            disabled={loading || saving || readOnly}
+            onCheckedChange={() => void handleToggle()}
+            className={enabled ? "bg-amber-500" : undefined}
+          />
+          {(loading || saving) && (
+            <Loader2 className="pointer-events-none absolute left-3.5 top-1.5 h-3 w-3 animate-spin text-foreground" />
           )}
-        </button>
+        </div>
       </div>
       {error && (
         <div className="flex items-start gap-2 px-4 pb-3 text-destructive text-xs">

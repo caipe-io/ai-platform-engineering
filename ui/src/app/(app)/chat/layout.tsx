@@ -3,6 +3,7 @@
 import { AuthGuard } from "@/components/auth-guard";
 import { ChatContainer } from "@/components/chat/ChatContainer";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { WorkspaceBreadcrumbs } from "@/components/layout/WorkspacePageHeader";
 import { useParams } from "next/navigation";
 import React,{ useState } from "react";
 
@@ -30,16 +31,27 @@ export default function ChatLayout({
   const hasUuid = !!params?.uuid;
 
   return (
-    <div className="flex-1 flex overflow-hidden">
-      {/* Sidebar - persists across conversation changes */}
-      <Sidebar
-        activeTab="chat"
-        collapsed={sidebarCollapsed}
-        onCollapse={setSidebarCollapsed}
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <WorkspaceBreadcrumbs
+        breadcrumbs={[
+          { label: "Home",href: "/" },
+          { label: "Chat",href: hasUuid ? `/chat/${String(params.uuid)}` : "/chat" },
+        ]}
       />
 
-      {/* Chat content - ChatContainer persists, children used only for /chat redirect */}
-      {hasUuid ? <AuthGuard><ChatContainer /></AuthGuard> : children}
+      <div className="flex min-h-0 flex-1">
+        {/* Sidebar - persists across conversation changes */}
+        <Sidebar
+          activeTab="chat"
+          collapsed={sidebarCollapsed}
+          onCollapse={setSidebarCollapsed}
+        />
+
+        {/* Chat content - ChatContainer persists, children used only for /chat redirect */}
+        <div className="flex min-w-0 flex-1">
+          {hasUuid ? <AuthGuard><ChatContainer /></AuthGuard> : children}
+        </div>
+      </div>
     </div>
   );
 }

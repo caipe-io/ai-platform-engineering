@@ -1,6 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
+import { Select } from "@/components/ui/select";
 import {
 Card,
 CardContent,
@@ -564,7 +566,7 @@ export function TrySkillsGateway() {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Source</label>
-              <select
+              <Select
                 value={querySource}
                 onChange={(e) => {
                   setQuerySource(e.target.value);
@@ -582,28 +584,35 @@ export function TrySkillsGateway() {
                   <option value="gitlab">GitLab</option>
                 )}
                 {availableRepos.length === 0 && <option value="hub">Hub</option>}
-              </select>
+              </Select>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Repository</label>
-              <select
-                value={queryRepo}
-                onChange={(e) => {
-                  setQueryRepo(e.target.value);
-                  if (e.target.value) {
-                    const match = availableRepos.find(r => r.location === e.target.value);
-                    setQuerySource(match?.type || "hub");
-                  }
+              <SearchablePicker
+                options={availableRepos}
+                selected={availableRepos.find(
+                  (repository) => repository.location === queryRepo,
+                )}
+                onSelect={(repository) => {
+                  setQueryRepo(repository.location);
+                  setQuerySource(repository.type || "hub");
                 }}
-                className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50"
-              >
-                <option value="">All repos</option>
-                {availableRepos.map((r) => (
-                  <option key={r.location} value={r.location}>
-                    {r.location} ({r.type})
-                  </option>
-                ))}
-              </select>
+                getOptionKey={(repository) => repository.location}
+                getOptionLabel={(repository) =>
+                  `${repository.location} (${repository.type})`
+                }
+                getSearchText={(repository) => [
+                  repository.location,
+                  repository.type,
+                ]}
+                placeholder="All repos"
+                searchPlaceholder="Search repositories..."
+                emptyLabel="No repositories match"
+                ariaLabel="Repository"
+                onClear={() => setQueryRepo("")}
+                clearLabel="Clear repository filter"
+                triggerClassName="mt-1 text-sm"
+              />
             </div>
             <div className="relative">
               <label className="text-xs font-medium text-muted-foreground">Tags (comma-separated)</label>
@@ -653,7 +662,7 @@ export function TrySkillsGateway() {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">Visibility</label>
-              <select
+              <Select
                 value={queryVisibility}
                 onChange={(e) => setQueryVisibility(e.target.value)}
                 className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -662,7 +671,7 @@ export function TrySkillsGateway() {
                 <option value="global">global</option>
                 <option value="team">team</option>
                 <option value="personal">personal</option>
-              </select>
+              </Select>
             </div>
             <div className="flex items-end pb-2">
               <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground cursor-pointer">

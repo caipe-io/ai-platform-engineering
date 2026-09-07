@@ -14,7 +14,10 @@
  *                      response. Empty/absent ⇒ first page.
  *   - `refresh`      — `1` invalidates the in-process cache before serving.
  *
- * Auth: requires `admin_ui:view`.
+ * Auth: requires read access to the Slack admin surface. Every signed-in
+ * member receives this baseline grant so self-service onboarding can discover
+ * only channels the bot has already joined; management remains separately
+ * protected.
  *
  * Caching strategy:
  *   We pull a snapshot of channels from Slack once per bot token and keep
@@ -38,13 +41,19 @@
  */
 
 import {
-ApiError,
-getAuthFromBearerOrSession,
-requireRbacPermission,
-successResponse,
-withErrorHandler,
+  ApiError,
+  getAuthFromBearerOrSession,
+  successResponse,
+  withErrorHandler,
 } from "@/lib/api-middleware";
 import { getDiscoveryCacheTtlMs } from "@/lib/rbac/discovery-cache-config";
+import {
+  activeConnectorPublicationRequestsByItemId,
+  connectorPublicationRequestView,
+  publicationActorFromSession,
+} from "@/lib/publication-approval.server";
+import { requireResourcePermission } from "@/lib/rbac/resource-authz";
+import { configuredSlackChannelsById } from "@/lib/rbac/slack-channel-configured-directory";
 import { NextRequest } from "next/server";
 
 interface SlackConversation {
@@ -239,7 +248,11 @@ function applyCursor(
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const { user, session } = await getAuthFromBearerOrSession(request);
-  await requireRbacPermission(session, "admin_ui", "view");
+  await requireResourcePermission(
+    session,
+    { type: "admin_surface", id: "slack", action: "read" },
+    { bypassForOrgAdmin: true },
+  );
 
   const token = process.env.SLACK_BOT_TOKEN?.trim();
   if (!token) {
@@ -266,7 +279,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   // last 12 chars uniquely identifies the token without logging it.
   const cacheKey = token.slice(-12);
   const cached = cache.get(cacheKey);
-  const cacheTtlMs = await getDiscoveryCacheTtlMs();
+  const cacheTtlMs = await getDiscoveryCacheTtlMs("slack");
 
   let snapshot: NormalizedChannel[];
   let cacheHit = false;
@@ -302,13 +315,42 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const page = afterCursor.slice(0, limit);
   const hasMore = afterCursor.length > limit;
   const nextCursor = hasMore ? page[page.length - 1].name : null;
+  const actor = publicationActorFromSession(session);
+  const pageIds = page.map((channel) => channel.id);
+  const [configuredById, pendingById] = await Promise.all([
+    configuredSlackChannelsById(pageIds),
+    activeConnectorPublicationRequestsByItemId("slack_channel", pageIds),
+  ]);
+  const channels = page.map((channel) => {
+    const configured = configuredById.get(channel.id);
+    const pending = pendingById.get(channel.id);
+    return {
+      ...channel,
+      configured: Boolean(configured),
+      ...(configured?.teamSlug
+        ? { configured_team_slug: configured.teamSlug }
+        : {}),
+      ...(configured?.teamName
+        ? { configured_team_name: configured.teamName }
+        : {}),
+      ...(configured?.agentId
+        ? { configured_agent_id: configured.agentId }
+        : {}),
+      ...(configured?.agentName
+        ? { configured_agent_name: configured.agentName }
+        : {}),
+      ...(!configured && pending
+        ? { pending_publication: connectorPublicationRequestView(pending, actor) }
+        : {}),
+    };
+  });
 
   console.log(
     `[Admin SlackChannels] discovery ok scope=${scope} endpoint=${endpoint} total=${snapshot.length} matches=${totalMatches} returned=${page.length} q="${q}" cache=${cacheHit ? "hit" : "miss"} by=${user.email}`
   );
 
   return successResponse({
-    channels: page,
+    channels,
     total_matches: totalMatches,
     total_visible: snapshot.length,
     next_cursor: nextCursor,

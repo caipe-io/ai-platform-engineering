@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Popover,PopoverContent,PopoverTrigger } from "@/components/ui/popover";
+import { Select } from "@/components/ui/select";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import type { AuditEventType,UnifiedAuditEvent,UnifiedAuditOutcome } from "@/lib/rbac/types";
 import {
@@ -990,7 +991,8 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
         {/* Filters */}
         <div className="flex flex-wrap gap-3 mb-4">
           <div className="flex items-center gap-0.5">
-            <select
+            <Select
+              aria-label="Audit time range"
               value={timeWindow}
               onChange={(e) => {
                 const next = e.target.value as TimeWindow;
@@ -1009,7 +1011,7 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
                 </option>
               ))}
               <option value="custom">Custom range</option>
-            </select>
+            </Select>
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground">
@@ -1022,7 +1024,8 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
             </Tooltip>
           </div>
           <div className="flex items-center gap-0.5">
-            <select
+            <Select
+              aria-label="Audit event type"
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm max-w-[220px]"
@@ -1045,7 +1048,7 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
                   ))
                 ),
               )}
-            </select>
+            </Select>
             <FilterDefinitionsHelp
               ariaLabel="Event type definitions"
               title="Event types"
@@ -1053,7 +1056,8 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
             />
           </div>
           <div className="flex items-center gap-0.5">
-            <select
+            <Select
+              aria-label="Audit outcome"
               value={outcomeFilter}
               onChange={(e) => setOutcomeFilter(e.target.value)}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"
@@ -1063,7 +1067,7 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
                   {o.label}
                 </option>
               ))}
-            </select>
+            </Select>
             <FilterDefinitionsHelp
               ariaLabel="Outcome filter definitions"
               title="Outcomes"

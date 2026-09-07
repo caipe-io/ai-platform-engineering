@@ -388,6 +388,7 @@ describe('ingestUrl', () => {
     await ingestUrl({
       url: 'https://example.com',
       description: 'Test',
+      reload_interval: 86400,
     });
 
     expect(global.fetch).toHaveBeenCalledWith(
@@ -397,6 +398,7 @@ describe('ingestUrl', () => {
         body: JSON.stringify({
           url: 'https://example.com',
           description: 'Test',
+          reload_interval: 86400,
         }),
       })
     );
@@ -418,6 +420,7 @@ describe('ingestUrl', () => {
       ingest_type: 'confluence',
       description: 'Confluence page',
       get_child_pages: true,
+      reload_interval: 86400,
     });
 
     expect(global.fetch).toHaveBeenCalledWith(
@@ -428,6 +431,7 @@ describe('ingestUrl', () => {
           url: 'https://confluence.example.com/page',
           description: 'Confluence page',
           get_child_pages: true,
+          reload_interval: 86400,
         }),
       })
     );

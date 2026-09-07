@@ -1,9 +1,9 @@
 [project]
 name = "ai-platform-engineering"
-version = "0.5.68-dev.4"
+version = "1.0.1-dev.4"
 description = "Multi-Agent Collaboration & Workflow Automation - AI agents collaborating across tools and teams to deliver high quality results"
 authors = [
-  {name = "CNOE Contributors"}
+  {name = "CAIPE Contributors"}
 ]
 license = {text = "Apache-2.0"}
 readme = "README.md"
@@ -18,7 +18,7 @@ dependencies = [
     "cachetools==6.2.2",
     "cnoe-agent-utils==0.4.0",
     "config==0.5.1",
-    "cryptography==49.0.0",
+    "cryptography==50.0.0",
     "fastapi==0.135.3",
     "httpx==0.28.1",
     "hvac==2.4.0",

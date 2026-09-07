@@ -6,7 +6,7 @@ set -euo pipefail
 #   Roles: kind_cluster, metallb, nginx_ingress, caipe_secrets, caipe_helm,
 #   caipe_mongodb. Benefits: idempotency, inventory-driven multi-env deploys
 #   (demo/devnet/prod from one playbook), Ansible Vault for secrets, CI/CD.
-#   Tracking: https://github.com/cnoe-io/ai-platform-engineering/issues/1115
+#   Tracking: https://github.com/caipe-io/ai-platform-engineering/issues/1115
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
@@ -685,7 +685,7 @@ check_prerequisites() {
           esac
           warn ""
           warn "Then re-run:"
-          warn "  bash <(curl -fsSL https://raw.githubusercontent.com/cnoe-io/ai-platform-engineering/main/setup-caipe.sh)"
+          warn "  bash <(curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh)"
           exit 1
         fi
       fi
@@ -2994,9 +2994,9 @@ _update_compose_image_tag() {
   _ensure_compose_env_file "$env_file"
   local latest
   if command -v gh &>/dev/null; then
-    latest=$(gh release view --repo cnoe-io/ai-platform-engineering --json tagName -q .tagName)
+    latest=$(gh release view --repo caipe-io/ai-platform-engineering --json tagName -q .tagName)
   elif command -v curl &>/dev/null; then
-    latest=$(curl -sf "https://api.github.com/repos/cnoe-io/ai-platform-engineering/releases/latest" \
+    latest=$(curl -sf "https://api.github.com/repos/caipe-io/ai-platform-engineering/releases/latest" \
       | jq .tag_name)
   else
     err "Either GitHub CLI (gh) or curl is required to fetch the latest CAIPE release"
@@ -3227,7 +3227,7 @@ provision_bot_secrets() {
   if $ENABLE_SLACK_BOT; then
     local _slack_keys=(
       SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_SIGNING_SECRET SLACK_CLIENT_SECRET
-      SLACK_LINK_HMAC_SECRET SLACK_INTEGRATION_AUTH_CLIENT_SECRET
+      SLACK_INTEGRATION_AUTH_CLIENT_SECRET
       KEYCLOAK_BOT_CLIENT_SECRET OAUTH2_CLIENT_SECRET
     )
     local _slack_literals=()
@@ -3254,7 +3254,7 @@ provision_bot_secrets() {
 
   if $ENABLE_WEBEX_BOT; then
     local _webex_keys=(
-      WEBEX_INTEGRATION_BOT_ACCESS_TOKEN WEBEX_TOKEN WEBEX_LINK_HMAC_SECRET
+      WEBEX_INTEGRATION_BOT_ACCESS_TOKEN WEBEX_TOKEN
       WEBEX_INTEGRATION_AUTH_CLIENT_SECRET KEYCLOAK_WEBEX_BOT_CLIENT_SECRET
     )
     local _webex_literals=()
@@ -5893,7 +5893,7 @@ deploy_caipe() {
     --namespace caipe
     --version "$CAIPE_CHART_VERSION"
     # Keycloak's post-install hook (init-token-exchange) can't run until Keycloak
-    # finishes its cold boot. helm's default 5m timeout leaves almost no margin 
+    # finishes its cold boot. helm's default 5m timeout leaves almost no margin
     # and aborts the release mid-boot, so give the hook real headroom.
     --timeout 10m
     --set tags.caipe-ui=true
@@ -8167,7 +8167,7 @@ BANNER
   echo -e "${BLUE}${BOLD}║${NC}                                               ${BLUE}${BOLD}║${NC}"
   echo -e "${BLUE}${BOLD}║${NC}  ${DIM}Multi-Agent System on Kubernetes${NC}             ${BLUE}${BOLD}║${NC}"
   echo -e "${BLUE}${BOLD}║${NC}                                               ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}github.com/cnoe-io/ai-platform-engineering${NC}   ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}github.com/caipe-io/ai-platform-engineering${NC}   ${BLUE}${BOLD}║${NC}"
   echo -e "${BLUE}${BOLD}║${NC}  ${DIM}Powered by cnoe-agent-utils LLMFactory${NC}       ${BLUE}${BOLD}║${NC}"
   echo -e "${BLUE}${BOLD}║${NC}  ${DIM}github.com/cnoe-io/cnoe-agent-utils${NC}          ${BLUE}${BOLD}║${NC}"
   echo -e "${BLUE}${BOLD}╚═══════════════════════════════════════════════╝${NC}"
@@ -8355,7 +8355,7 @@ BANNER
     if [[ ! -f "$_ollama_yaml" ]]; then
       err "deploy/kind/ollama.yaml not found at ${_ollama_yaml}."
       err "When running via 'curl | bash', clone the repo and run setup-caipe.sh directly:"
-      err "  git clone https://github.com/cnoe-io/ai-platform-engineering && cd ai-platform-engineering && bash setup-caipe.sh"
+      err "  git clone https://github.com/caipe-io/ai-platform-engineering && cd ai-platform-engineering && bash setup-caipe.sh"
       exit 1
     fi
     kubectl apply -f "$_ollama_yaml" 2>&1 \

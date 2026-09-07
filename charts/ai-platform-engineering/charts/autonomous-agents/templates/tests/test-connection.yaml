@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "autonomous-agents.fullname" . }}-test-connection"
+  labels:
+    {{- include "autonomous-agents.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: wget
+      image: busybox
+      command: ['wget']
+      args: ['{{ include "autonomous-agents.fullname" . }}:{{ .Values.service.port }}/health']
+  restartPolicy: Never

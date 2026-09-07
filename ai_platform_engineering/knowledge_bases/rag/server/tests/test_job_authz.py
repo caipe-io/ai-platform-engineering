@@ -1,10 +1,10 @@
 """Tests for per-datasource RBAC on the job family of endpoints.
 
-The job endpoints previously only enforced the coarse READONLY/INGESTONLY/
-ADMIN role, letting any authenticated ingestor read or mutate jobs belonging
-to a datasource owned by a different team. Every endpoint below now resolves
-the job's ``datasource_id`` (already stored on ``JobInfo``) and calls
-``check_datasource_access(..., "ingest")`` before touching job state.
+Job reads accept either the independent indexed-content grant or source read
+grant. User-initiated termination requires source-management authority.
+Internal progress/status mutation is narrower: only the configured, assigned
+ingestor service may create or update worker jobs. Human Search access must
+never permit lifecycle changes or forging progress, errors, or terminal state.
 
 ``POST /v1/jobs/batch`` is the one exception: it filters the requested
 datasource IDs down to the caller's accessible set instead of 403-ing,
@@ -25,6 +25,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from common.job_manager import JobInfo, JobStatus
+from common.models.rag import DataSourceInfo
 from common.models.rbac import Role, UserContext
 from server import restapi
 from server.rbac import require_authenticated_user
@@ -37,6 +38,17 @@ def _user(role: str = Role.READONLY, subject: str = "primary-sub") -> UserContex
         role=role,
         is_authenticated=True,
         groups=[],
+    )
+
+
+def _service_user() -> UserContext:
+    return UserContext(
+        subject="example-ingestor-sub",
+        subject_type="service_account",
+        client_id="example-ingestor-client",
+        email="example-ingestor@example.com",
+        role=Role.INGESTONLY,
+        is_authenticated=True,
     )
 
 
@@ -56,6 +68,23 @@ def _deny(status_code: int = 403, detail: str = "Access denied for this datasour
         raise HTTPException(status_code=status_code, detail=detail)
 
     return _raise
+
+
+INGESTOR_HEADERS = {
+    "X-Ingestor-Type": "example",
+    "X-Ingestor-Name": "primary",
+}
+
+
+def _configure_trusted_ingestor(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RAG_TRUSTED_INGESTOR_CLIENT_IDS", "example-ingestor-client")
+    restapi.app.dependency_overrides[require_authenticated_user] = _service_user
+    restapi.metadata_storage.get_datasource_info.return_value = DataSourceInfo(
+        datasource_id="primary-ds",
+        ingestor_id="example:primary",
+        source_type="example",
+        last_updated=0,
+    )
 
 
 @pytest.fixture
@@ -80,7 +109,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch):
 
 def test_get_job_denied_returns_403(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
     _wire.get_job.return_value = _job(datasource_id="secondary-ds")
-    monkeypatch.setattr(restapi, "check_datasource_access", _deny(), raising=False)
+    monkeypatch.setattr(restapi, "check_datasource_or_source_access", _deny(), raising=False)
 
     response = client.get("/v1/job/job-1")
 
@@ -89,7 +118,7 @@ def test_get_job_denied_returns_403(client: TestClient, _wire, monkeypatch: pyte
 
 def test_get_job_allowed_returns_job(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
     _wire.get_job.return_value = _job()
-    monkeypatch.setattr(restapi, "check_datasource_access", _allow(), raising=False)
+    monkeypatch.setattr(restapi, "check_datasource_or_source_access", _allow(), raising=False)
 
     response = client.get("/v1/job/job-1")
 
@@ -97,18 +126,18 @@ def test_get_job_allowed_returns_job(client: TestClient, _wire, monkeypatch: pyt
     assert response.json()["job_id"] == "job-1"
 
 
-def test_get_job_checks_ingest_scope_for_jobs_datasource(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
+def test_get_job_checks_read_scope_for_jobs_datasource(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
     calls = []
 
-    async def _spy(request, user, datasource_id, scope):
-        calls.append((datasource_id, scope))
+    async def _spy(user, datasource_id, scope, **kwargs):
+        calls.append((datasource_id, scope, kwargs.get("source_relation")))
 
     _wire.get_job.return_value = _job(datasource_id="primary-ds")
-    monkeypatch.setattr(restapi, "check_datasource_access", _spy, raising=False)
+    monkeypatch.setattr(restapi, "check_datasource_or_source_access", _spy, raising=False)
 
     client.get("/v1/job/job-1")
 
-    assert calls == [("primary-ds", "ingest")]
+    assert calls == [("primary-ds", "read", "can_read")]
 
 
 def test_get_job_404_before_authz_when_missing(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
@@ -118,7 +147,7 @@ def test_get_job_404_before_authz_when_missing(client: TestClient, _wire, monkey
         calls.append(args)
 
     _wire.get_job.return_value = None
-    monkeypatch.setattr(restapi, "check_datasource_access", _spy, raising=False)
+    monkeypatch.setattr(restapi, "check_datasource_or_source_access", _spy, raising=False)
 
     response = client.get("/v1/job/missing-job")
 
@@ -132,7 +161,7 @@ def test_get_job_404_before_authz_when_missing(client: TestClient, _wire, monkey
 
 
 def test_get_jobs_by_datasource_denied_returns_403(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(restapi, "check_datasource_access", _deny(), raising=False)
+    monkeypatch.setattr(restapi, "check_datasource_or_source_access", _deny(), raising=False)
 
     response = client.get("/v1/jobs/datasource/secondary-ds")
 
@@ -141,7 +170,7 @@ def test_get_jobs_by_datasource_denied_returns_403(client: TestClient, _wire, mo
 
 
 def test_get_jobs_by_datasource_allowed_returns_jobs(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(restapi, "check_datasource_access", _allow(), raising=False)
+    monkeypatch.setattr(restapi, "check_datasource_or_source_access", _allow(), raising=False)
     _wire.get_jobs_by_datasource.return_value = [_job()]
 
     response = client.get("/v1/jobs/datasource/primary-ds")
@@ -155,17 +184,14 @@ def test_get_jobs_by_datasource_allowed_returns_jobs(client: TestClient, _wire, 
 
 
 def test_jobs_batch_filters_out_inaccessible_datasources(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(restapi, "RBAC_TEAM_SCOPE_ENABLED", True, raising=False)
-
     async def _accessible(*args, **kwargs):
         return ["primary-ds"]
 
+    async def _no_source_access(*args, **kwargs):
+        return []
+
     monkeypatch.setattr(restapi, "get_accessible_datasource_ids", _accessible, raising=False)
-
-    async def _team(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(restapi, "derive_team_for_request", _team, raising=False)
+    monkeypatch.setattr(restapi, "get_accessible_ingestion_source_ids", _no_source_access, raising=False)
     _wire.get_jobs_batch.return_value = {"primary-ds": [_job()]}
 
     response = client.post("/v1/jobs/batch", json={"datasource_ids": ["primary-ds", "secondary-ds"]})
@@ -177,16 +203,6 @@ def test_jobs_batch_filters_out_inaccessible_datasources(client: TestClient, _wi
     assert kwargs["datasource_ids"] == ["primary-ds"]
 
 
-def test_jobs_batch_unrestricted_when_team_scope_disabled(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(restapi, "RBAC_TEAM_SCOPE_ENABLED", False, raising=False)
-    _wire.get_jobs_batch.return_value = {"primary-ds": [_job()], "secondary-ds": [_job(datasource_id="secondary-ds")]}
-
-    response = client.post("/v1/jobs/batch", json={"datasource_ids": ["primary-ds", "secondary-ds"]})
-
-    assert response.status_code == 200
-    assert response.json()["datasource_count"] == 2
-
-
 # ---------------------------------------------------------------------------
 # POST /v1/job (create)
 # ---------------------------------------------------------------------------
@@ -194,7 +210,6 @@ def test_jobs_batch_unrestricted_when_team_scope_disabled(client: TestClient, _w
 
 def test_create_job_denied_returns_403_and_does_not_create(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
     restapi.metadata_storage.get_datasource_info.return_value = object()
-    monkeypatch.setattr(restapi, "check_datasource_access", _deny(), raising=False)
 
     response = client.post("/v1/job", params={"datasource_id": "secondary-ds"})
 
@@ -203,11 +218,14 @@ def test_create_job_denied_returns_403_and_does_not_create(client: TestClient, _
 
 
 def test_create_job_allowed_creates_job(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
-    restapi.metadata_storage.get_datasource_info.return_value = object()
-    monkeypatch.setattr(restapi, "check_datasource_access", _allow(), raising=False)
+    _configure_trusted_ingestor(monkeypatch)
     _wire.upsert_job.return_value = True
 
-    response = client.post("/v1/job", params={"datasource_id": "primary-ds"})
+    response = client.post(
+        "/v1/job",
+        params={"datasource_id": "primary-ds"},
+        headers=INGESTOR_HEADERS,
+    )
 
     assert response.status_code == 201
     _wire.upsert_job.assert_awaited_once()
@@ -220,7 +238,6 @@ def test_create_job_allowed_creates_job(client: TestClient, _wire, monkeypatch: 
 
 def test_update_job_denied_returns_403_and_does_not_update(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
     _wire.get_job.return_value = _job(datasource_id="secondary-ds")
-    monkeypatch.setattr(restapi, "check_datasource_access", _deny(), raising=False)
 
     response = client.patch("/v1/job/job-1")
 
@@ -229,11 +246,11 @@ def test_update_job_denied_returns_403_and_does_not_update(client: TestClient, _
 
 
 def test_update_job_allowed_updates_job(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
+    _configure_trusted_ingestor(monkeypatch)
     _wire.get_job.return_value = _job()
-    monkeypatch.setattr(restapi, "check_datasource_access", _allow(), raising=False)
     _wire.upsert_job.return_value = True
 
-    response = client.patch("/v1/job/job-1")
+    response = client.patch("/v1/job/job-1", headers=INGESTOR_HEADERS)
 
     assert response.status_code == 200
 
@@ -246,7 +263,7 @@ def test_update_job_allowed_updates_job(client: TestClient, _wire, monkeypatch: 
 def test_terminate_job_denied_returns_403(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
     restapi.app.dependency_overrides[require_authenticated_user] = lambda: _user(role=Role.ADMIN)
     _wire.get_job.return_value = _job(datasource_id="secondary-ds")
-    monkeypatch.setattr(restapi, "check_datasource_access", _deny(), raising=False)
+    monkeypatch.setattr(restapi, "check_datasource_management_access", _deny(), raising=False)
 
     response = client.post("/v1/job/job-1/terminate")
 
@@ -257,7 +274,7 @@ def test_terminate_job_denied_returns_403(client: TestClient, _wire, monkeypatch
 def test_terminate_job_allowed_terminates(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
     restapi.app.dependency_overrides[require_authenticated_user] = lambda: _user(role=Role.ADMIN)
     _wire.get_job.return_value = _job()
-    monkeypatch.setattr(restapi, "check_datasource_access", _allow(), raising=False)
+    monkeypatch.setattr(restapi, "check_datasource_management_access", _allow(), raising=False)
     _wire.terminate_job.return_value = True
 
     response = client.post("/v1/job/job-1/terminate")
@@ -280,7 +297,6 @@ def test_terminate_job_allowed_terminates(client: TestClient, _wire, monkeypatch
 )
 def test_job_mutation_endpoint_denied_returns_403(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch, path: str, manager_attr: str):
     _wire.get_job.return_value = _job(datasource_id="secondary-ds")
-    monkeypatch.setattr(restapi, "check_datasource_access", _deny(), raising=False)
 
     response = client.post(path)
 
@@ -297,11 +313,11 @@ def test_job_mutation_endpoint_denied_returns_403(client: TestClient, _wire, mon
     ],
 )
 def test_job_mutation_endpoint_allowed_calls_jobmanager(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch, path: str, manager_attr: str):
+    _configure_trusted_ingestor(monkeypatch)
     _wire.get_job.return_value = _job()
-    monkeypatch.setattr(restapi, "check_datasource_access", _allow(), raising=False)
     getattr(_wire, manager_attr).return_value = 1
 
-    response = client.post(path)
+    response = client.post(path, headers=INGESTOR_HEADERS)
 
     assert response.status_code == 200
     getattr(_wire, manager_attr).assert_awaited_once()
@@ -309,7 +325,6 @@ def test_job_mutation_endpoint_allowed_calls_jobmanager(client: TestClient, _wir
 
 def test_add_job_errors_denied_returns_403(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
     _wire.get_job.return_value = _job(datasource_id="secondary-ds")
-    monkeypatch.setattr(restapi, "check_datasource_access", _deny(), raising=False)
 
     response = client.post("/v1/job/job-1/add-errors", json=["boom"])
 
@@ -318,11 +333,15 @@ def test_add_job_errors_denied_returns_403(client: TestClient, _wire, monkeypatc
 
 
 def test_add_job_errors_allowed_adds_errors(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
+    _configure_trusted_ingestor(monkeypatch)
     _wire.get_job.return_value = _job()
-    monkeypatch.setattr(restapi, "check_datasource_access", _allow(), raising=False)
     _wire.add_error_msg.return_value = 1
 
-    response = client.post("/v1/job/job-1/add-errors", json=["boom"])
+    response = client.post(
+        "/v1/job/job-1/add-errors",
+        json=["boom"],
+        headers=INGESTOR_HEADERS,
+    )
 
     assert response.status_code == 200
     _wire.add_error_msg.assert_awaited_once()
@@ -335,7 +354,7 @@ def test_add_job_errors_404_before_authz_when_job_missing(client: TestClient, _w
         calls.append(args)
 
     _wire.get_job.return_value = None
-    monkeypatch.setattr(restapi, "check_datasource_access", _spy, raising=False)
+    monkeypatch.setattr(restapi, "authorize_ingestor_job_transport", _spy, raising=False)
 
     response = client.post("/v1/job/missing-job/add-errors", json=["boom"])
 

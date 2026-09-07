@@ -6,6 +6,7 @@ import { getErrorMessage } from "@/lib/error-utils";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -392,17 +393,9 @@ export function LLMModelsTab({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>LLM Models</CardTitle>
-            <CardDescription>
-              Register LLM models available to agents. Models define which AI provider and model
-              identifier an agent uses.
-            </CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
+    <>
+      <WorkspacePageActions>
+        <div className="flex flex-wrap items-center justify-end gap-2">
             <Button variant="outline" size="sm" onClick={fetchModels} disabled={loading}>
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
               Refresh
@@ -411,11 +404,10 @@ export function LLMModelsTab({
               <Plus className="h-4 w-4 mr-2" />
               Add Model
             </Button>
-          </div>
         </div>
-
-      </CardHeader>
-      <CardContent>
+      </WorkspacePageActions>
+      <Card className="rounded-none border-0 bg-transparent shadow-none">
+        <CardContent className="px-0 pt-0">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -518,7 +510,8 @@ export function LLMModelsTab({
             ))}
           </div>
         )}
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </>
   );
 }

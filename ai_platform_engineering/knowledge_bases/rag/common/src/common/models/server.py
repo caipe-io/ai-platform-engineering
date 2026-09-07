@@ -1,5 +1,5 @@
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Dict, Any, List
 from langchain_core.documents import Document
 
@@ -48,6 +48,12 @@ class ScrapySettings(BaseModel):
   user_agent: Optional[str] = Field(None, description="Custom user agent string (defaults to Chrome-like UA)")
   allow_non_public_urls: bool = Field(False, description="Allow crawling URLs that resolve to private/internal IP addresses. Disabled by default (SSRF protection). Only enable for datasources on internal networks.")
 
+  @model_validator(mode="after")
+  def validate_chunk_overlap(self) -> "ScrapySettings":
+    if self.chunk_overlap >= self.chunk_size:
+      raise ValueError("chunk_overlap must be smaller than chunk_size")
+    return self
+
 
 # ============================================================================
 # Models for Ingestor ping and registration
@@ -70,10 +76,48 @@ class IngestorPingResponse(BaseModel):
 # ============================================================================
 
 
+class IngestionTuning(BaseModel):
+  """Chunking and refresh settings shared by non-web ingestion requests."""
+
+  default_chunk_size: int = Field(10000, ge=100, le=100000)
+  default_chunk_overlap: int = Field(2000, ge=0, le=10000)
+  reload_interval: int = Field(..., ge=60)
+  search_team_slugs: List[str] = Field(
+    default_factory=list,
+    description=(
+      "Teams explicitly granted Search access to a newly-created "
+      "datasource. This is independent from source management ownership."
+    ),
+  )
+  search_user_subjects: List[str] = Field(
+    default_factory=list,
+    description="Individual user subjects granted Search access to the new datasource.",
+  )
+  ownership_preprovisioned: bool = Field(
+    False,
+    description="The caller already reconciled independent knowledge_base/data_source OpenFGA policy.",
+  )
+  config_managed: bool = Field(
+    False,
+    description="The datasource configuration is managed in the application database rather than legacy connector env config.",
+  )
+
+  @model_validator(mode="after")
+  def validate_chunk_overlap(self) -> "IngestionTuning":
+    if self.default_chunk_overlap >= self.default_chunk_size:
+      raise ValueError("default_chunk_overlap must be smaller than default_chunk_size")
+    return self
+
+
 class IngestorRequest(BaseModel):
   ingestor_id: str = Field(..., description="ID of the ingestor performing the ingestion")
   command: str = Field(..., description="Command to execute")
   payload: Optional[Any] = Field(..., description="Data associated with the command")
+  job_id: Optional[str] = Field(None, description="Exact server-created job associated with this command")
+  response_key: Optional[str] = Field(
+    None,
+    description="Redis list key used for a bounded request/response command such as preview",
+  )
 
 
 class DocumentIngestRequest(BaseModel):
@@ -95,12 +139,29 @@ class UrlIngestRequest(BaseModel):
   url: str = Field(..., description="URL to ingest")
   description: str = Field("", description="Description for this data source")
   settings: ScrapySettings = Field(default_factory=lambda: ScrapySettings(), description="Scraping configuration (crawl mode, JS rendering, rate limiting, etc.)")
-  reload_interval: Optional[int] = Field(None, description="Auto-reload interval in seconds. If not specified, uses global WEBLOADER_RELOAD_INTERVAL (default 24h). Minimum: 60 seconds.")
-  # Owning team for the new data source (spec 2026-06-03-explicit-ingest-capability).
-  # Required for non-org-admin authors; the server authorizes creation against
-  # the org `can_ingest` capability + owning-team membership and writes ownership
-  # tuples so the team gets read/ingest. None means personal/admin-owned.
-  owner_team_slug: Optional[str] = Field(None, description="Slug of the team that will own this new data source. Required for non-org-admin authors.")
+  reload_interval: int = Field(..., ge=60, description="Auto-reload interval in seconds.")
+  # Optional management owner. None creates a personal source owned by the
+  # caller; Search Access remains the independent list below.
+  owner_team_slug: Optional[str] = Field(None, description="Slug of the team that will manage this new data source. None creates a personal source.")
+  search_team_slugs: List[str] = Field(
+    default_factory=list,
+    description=(
+      "Teams explicitly granted Search access to a newly-created "
+      "datasource. This is independent from source management ownership."
+    ),
+  )
+  search_user_subjects: List[str] = Field(
+    default_factory=list,
+    description="Individual user subjects granted Search access to the new datasource.",
+  )
+  ownership_preprovisioned: bool = Field(
+    False,
+    description="The caller already reconciled independent knowledge_base/data_source OpenFGA policy.",
+  )
+  config_managed: bool = Field(
+    False,
+    description="The datasource configuration is managed in the application database rather than legacy connector env config.",
+  )
 
   # DEPRECATED fields - will be removed in a future version.
   # Use 'settings' object instead.
@@ -115,6 +176,7 @@ class UrlReloadRequest(BaseModel):
 
 class WebIngestorCommand(str, Enum):
   INGEST_URL = "ingest-url"
+  PREVIEW_URL = "preview-url"
   RELOAD_ALL = "reload-all"
   RELOAD_DATASOURCE = "reload-datasource"
 
@@ -124,16 +186,23 @@ class WebIngestorCommand(str, Enum):
 # ============================================================================
 
 
-class ConfluenceIngestRequest(BaseModel):
+class ConfluenceIngestRequest(IngestionTuning):
   url: str = Field(..., description="Confluence page URL (e.g., 'https://domain.atlassian.net/wiki/spaces/SPACE/pages/PAGE_ID/Title')")
+  name: Optional[str] = Field(None, max_length=120, description="Human-readable name for this data source")
   description: str = Field("", description="Description for this data source")
   get_child_pages: bool = Field(False, description="Whether to ingest direct child pages of this page")
   allowed_title_patterns: Optional[List[str]] = Field(None, description="Regex patterns for page titles to include (whitelist). If set, only pages whose title matches at least one pattern are ingested.")
   denied_title_patterns: Optional[List[str]] = Field(None, description="Regex patterns for page titles to exclude (blacklist). Pages whose title matches any pattern are skipped. Checked after allowed_title_patterns.")
-  # Owning team for a NEW Confluence space data source (spec 2026-06-03).
-  # Required for non-org-admin authors when the space is created for the first
-  # time; ignored when appending pages to an existing space. None = personal.
-  owner_team_slug: Optional[str] = Field(None, description="Slug of the team that will own this new data source. Required for non-org-admin authors creating a new Confluence space.")
+  # Optional management owner for a new Confluence datasource. None creates a
+  # personal source; ignored when appending pages to an existing datasource.
+  owner_team_slug: Optional[str] = Field(None, description="Slug of the team that will manage this new data source. None creates a personal source.")
+  preprovisioned_datasource_id: Optional[str] = Field(
+    None,
+    description=(
+      "Datasource ID already provisioned by the application. Supports existing "
+      "legacy space-level sources while new page sources use a page-specific ID."
+    ),
+  )
 
 
 class ConfluenceReloadRequest(BaseModel):
@@ -142,6 +211,85 @@ class ConfluenceReloadRequest(BaseModel):
 
 class ConfluenceIngestorCommand(str, Enum):
   INGEST_PAGE = "ingest-page"
+  PREVIEW_PAGE = "preview-page"
+  RELOAD_ALL = "reload-all"
+  RELOAD_DATASOURCE = "reload-datasource"
+
+
+# ============================================================================
+# Models specific for Slack Ingestor
+# ============================================================================
+
+
+class SlackIngestRequest(IngestionTuning):
+  channel_id: str = Field(..., description="Slack channel ID to ingest (e.g., 'C0123456789')")
+  channel_name: Optional[str] = Field(None, description="Human-readable channel name, used for display and message links")
+  description: str = Field("", description="Description for this data source")
+  lookback_days: int = Field(30, description="Number of days of message history to fetch on first sync", ge=0)
+  include_bots: bool = Field(False, description="Whether to include bot messages")
+  owner_team_slug: Optional[str] = Field(None, description="Slug of the team that will manage this new data source. None creates a personal source.")
+
+
+class SlackReloadRequest(BaseModel):
+  datasource_id: str = Field(..., description="ID of the Slack channel datasource to reload")
+
+
+class SlackIngestorCommand(str, Enum):
+  INGEST_CHANNEL = "ingest-channel"
+  RELOAD_ALL = "reload-all"
+  RELOAD_DATASOURCE = "reload-datasource"
+
+
+# ============================================================================
+# Models specific for Jira Ingestor
+# ============================================================================
+
+
+class JiraIngestRequest(IngestionTuning):
+  project_key: str = Field(..., description="Jira project key (e.g., 'PROJ')")
+  # The caller-supplied, immutable slug used to derive datasource_id — NOT
+  # derived from the mutable `name` field, so renaming a source never
+  # orphans its ingested data (see ui/src/lib/ingestion-source-id.ts).
+  source_slug: str = Field(..., description="Immutable slug identifying this datasource within the project")
+  name: str = Field(..., description="Human-readable name for this datasource")
+  jql: str = Field(..., description="JQL query string used to fetch issues")
+  description: str = Field("", description="Description for this data source")
+  include_comments: bool = Field(True, description="Whether to include issue comments")
+  include_links: bool = Field(True, description="Whether to include linked issues")
+  custom_fields: Optional[Dict[str, str]] = Field(None, description="Mapping of friendly field name to Jira custom field id")
+  owner_team_slug: Optional[str] = Field(None, description="Slug of the team that will manage this new data source. None creates a personal source.")
+
+
+class JiraReloadRequest(BaseModel):
+  datasource_id: str = Field(..., description="ID of the Jira project datasource to reload")
+
+
+class JiraIngestorCommand(str, Enum):
+  INGEST_PROJECT = "ingest-project"
+  PREVIEW_PROJECT = "preview-project"
+  RELOAD_ALL = "reload-all"
+  RELOAD_DATASOURCE = "reload-datasource"
+
+
+# ============================================================================
+# Models specific for Webex Ingestor
+# ============================================================================
+
+
+class WebexIngestRequest(IngestionTuning):
+  space_id: str = Field(..., description="Webex space (room) ID to ingest")
+  space_name: Optional[str] = Field(None, description="Human-readable space name, used for display")
+  description: str = Field("", description="Description for this data source")
+  include_bots: bool = Field(False, description="Whether to include bot messages")
+  owner_team_slug: Optional[str] = Field(None, description="Slug of the team that will manage this new data source. None creates a personal source.")
+
+
+class WebexReloadRequest(BaseModel):
+  datasource_id: str = Field(..., description="ID of the Webex space datasource to reload")
+
+
+class WebexIngestorCommand(str, Enum):
+  INGEST_SPACE = "ingest-space"
   RELOAD_ALL = "reload-all"
   RELOAD_DATASOURCE = "reload-datasource"
 

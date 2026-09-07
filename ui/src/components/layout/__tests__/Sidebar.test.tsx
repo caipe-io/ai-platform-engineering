@@ -10,7 +10,7 @@
  */
 
 import React from 'react'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 // ============================================================================
 // Mocks — must be before imports
@@ -119,6 +119,7 @@ jest.mock('lucide-react', () => ({
   Users: (props: unknown) => <span data-testid="icon-users" {...props} />,
   TrendingUp: (props: unknown) => <span data-testid="icon-trending-up" {...props} />,
   RefreshCw: (props: unknown) => <span data-testid="icon-refresh" {...props} />,
+  Webhook: (props: unknown) => <span data-testid="icon-webhook" {...props} />,
   X: (props: unknown) => <span data-testid="icon-x" {...props} />,
 }))
 
@@ -203,6 +204,13 @@ jest.mock('@/lib/api-client', () => ({
   },
 }))
 
+const mockListAutonomousTasks = jest.fn()
+jest.mock('@/components/autonomous/api', () => ({
+  autonomousApi: {
+    listTasks: (...args: unknown[]) => mockListAutonomousTasks(...args),
+  },
+}))
+
 // ============================================================================
 // Imports — after mocks
 // ============================================================================
@@ -238,12 +246,76 @@ const defaultProps = {
 describe('Sidebar — Live Status Indicator', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockListAutonomousTasks.mockReset()
+    mockListAutonomousTasks.mockReturnValue(new Promise(() => {}))
+    mockLoadConversationsFromServer.mockReturnValue(new Promise<void>(() => {}))
+    global.fetch = jest.fn(
+      () => new Promise<Response>(() => {}),
+    ) as unknown as typeof fetch
     mockConversations = []
     mockActiveConversationId = null
     mockIsConversationStreaming.mockImplementation(() => false)
     mockHasUnviewedMessages.mockImplementation(() => false)
     mockIsConversationInputRequired.mockImplementation(() => false)
     mockProjectsEnabled = false
+  })
+
+  describe('loading placeholders', () => {
+    it('shows conversation-shaped rows while the initial history loads', async () => {
+      let resolveConversations!: () => void
+      mockLoadConversationsFromServer.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          resolveConversations = resolve
+        }),
+      )
+
+      render(<Sidebar {...defaultProps} />)
+
+      expect(screen.getByTestId('conversation-list-skeleton')).toBeInTheDocument()
+      expect(screen.queryByText('No conversations yet')).not.toBeInTheDocument()
+
+      await act(async () => {
+        resolveConversations()
+      })
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('conversation-list-skeleton')).not.toBeInTheDocument()
+      })
+      expect(screen.getByText('No conversations yet')).toBeInTheDocument()
+    })
+
+    it('shows the date immediately and skeleton-loads the agent name independently', async () => {
+      let resolveAgents!: (response: Response) => void
+      global.fetch = jest.fn(
+        () => new Promise<Response>((resolve) => {
+          resolveAgents = resolve
+        }),
+      ) as unknown as typeof fetch
+      mockConversations = [
+        makeConv('conv-1', 'Agent Chat', {
+          participants: [{ type: 'agent', id: 'agent-1' }],
+        }),
+      ]
+
+      render(<Sidebar {...defaultProps} />)
+
+      expect(screen.getByText('Jan 1, 2026')).toBeInTheDocument()
+      expect(screen.getByTestId('agent-name-skeleton')).toBeInTheDocument()
+
+      await act(async () => {
+        resolveAgents({
+          json: async () => ({
+            success: true,
+            data: [{ _id: 'agent-1', name: 'Agent One' }],
+          }),
+        } as Response)
+      })
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('agent-name-skeleton')).not.toBeInTheDocument()
+      })
+      expect(screen.getByText(/Agent One/)).toBeInTheDocument()
+    })
   })
 
   // --------------------------------------------------------------------------
@@ -438,6 +510,8 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} />)
 
+      expect(screen.queryByText('Important Team 2 Meeting Prep')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /Scheduled Runs/i }))
       expect(screen.getByText('Important Team 2 Meeting Prep')).toBeInTheDocument()
       expect(screen.queryByText('sched_ec7107dfab744ddd')).not.toBeInTheDocument()
     })
@@ -451,7 +525,129 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} />)
 
+      fireEvent.click(screen.getByRole('button', { name: /Scheduled Runs/i }))
       expect(screen.getByText('sched_ec7107dfab744ddd')).toBeInTheDocument()
+    })
+
+    it('shows an autonomous task title badge with distinct violet styling', () => {
+      mockConversations = [
+        makeConv('conv-1', '[Autonomous] Review open pull requests', {
+          source: 'autonomous',
+          task_id: 'review-open-prs-a1b2',
+          metadata: { task_name: 'Review open pull requests' },
+        }),
+      ]
+
+      render(<Sidebar {...defaultProps} />)
+
+      expect(screen.queryByText('Review open pull requests')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /Autonomous Runs/i }))
+      const badge = screen.getByText('Review open pull requests')
+      expect(badge).toHaveClass(
+        'border-violet-500/30',
+        'bg-violet-500/10',
+        'text-violet-700',
+      )
+      expect(badge).toHaveAttribute(
+        'title',
+        'Autonomous task review-open-prs-a1b2: Review open pull requests',
+      )
+    })
+
+    it('uses the conversation title for existing autonomous conversations', () => {
+      mockConversations = [
+        makeConv('conv-1', '[Autonomous] Legacy task title', {
+          source: 'autonomous',
+          task_id: 'legacy-task-a1b2',
+        }),
+      ]
+
+      render(<Sidebar {...defaultProps} />)
+
+      fireEvent.click(screen.getByRole('button', { name: /Autonomous Runs/i }))
+      expect(screen.getByText('Legacy task title')).toHaveClass('border-violet-500/30')
+    })
+
+    it('separates run conversations into collapsed sections above History', () => {
+      mockConversations = [
+        makeConv('conv-normal', 'Normal Chat'),
+        makeConv('conv-scheduled', 'Scheduled Chat', {
+          metadata: { schedule_id: 'sched-1', schedule_title: 'Nightly report' },
+        }),
+        makeConv('conv-autonomous', '[Autonomous] Review alerts', {
+          source: 'autonomous',
+          task_id: 'review-alerts',
+          metadata: { task_name: 'Review alerts' },
+        }),
+      ]
+
+      render(<Sidebar {...defaultProps} />)
+
+      const autonomous = screen.getByRole('button', { name: /Autonomous Runs/i })
+      const scheduled = screen.getByRole('button', { name: /Scheduled Runs/i })
+      const history = screen.getByTestId('conversation-section-history')
+
+      expect(autonomous).toHaveAttribute('aria-expanded', 'false')
+      expect(scheduled).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
+      expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
+      expect(screen.getByText('Normal Chat')).toBeInTheDocument()
+      expect(
+        autonomous.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+      expect(
+        scheduled.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+
+      fireEvent.click(autonomous)
+      expect(autonomous).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByText('Review alerts')).toBeInTheDocument()
+      expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
+    })
+
+    it('groups the current user webhook tasks in a nested collapsed section', async () => {
+      mockLoadConversationsFromServer.mockResolvedValueOnce(undefined)
+      mockListAutonomousTasks.mockResolvedValue([
+        {
+          id: 'daily-branch-summary-41a9',
+          name: 'Daily branch summary',
+          agent: null,
+          dynamic_agent_id: 'agent-1',
+          prompt: 'Summarize the delivery.',
+          trigger: { type: 'webhook', provider: 'github', has_secret: true },
+          enabled: true,
+          owner_id: 'test@test.com',
+        },
+        {
+          id: 'other-owner-hook',
+          name: 'Other owner hook',
+          agent: null,
+          dynamic_agent_id: 'agent-1',
+          prompt: 'Ignore this task.',
+          trigger: { type: 'webhook', provider: 'jira', has_secret: true },
+          enabled: true,
+          owner_id: 'other@test.com',
+        },
+      ])
+
+      render(<Sidebar {...defaultProps} />)
+
+      const autonomous = await screen.findByRole('button', { name: /Autonomous Runs/i })
+      expect(mockListAutonomousTasks).toHaveBeenCalledTimes(1)
+      fireEvent.click(autonomous)
+
+      const webhookRuns = screen.getByRole('button', { name: /Webhook Runs/i })
+      expect(webhookRuns).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByText('Daily branch summary')).not.toBeInTheDocument()
+
+      fireEvent.click(webhookRuns)
+      expect(await screen.findByText('Daily branch summary')).toBeInTheDocument()
+      expect(screen.queryByText('Other owner hook')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByTestId('webhook-task-daily-branch-summary-41a9'))
+      expect(mockPush).toHaveBeenCalledWith(
+        '/chat/webhooks/daily-branch-summary-41a9',
+      )
     })
 
     it('does not show "Live" or "New response" for normal conversations', () => {
@@ -733,12 +929,13 @@ describe('Sidebar — Live Status Indicator', () => {
   // --------------------------------------------------------------------------
 
   describe('empty state', () => {
-    it('shows empty state message when no conversations exist', () => {
+    it('shows empty state message after loading when no conversations exist', async () => {
       mockConversations = []
+      mockLoadConversationsFromServer.mockResolvedValueOnce(undefined)
 
       render(<Sidebar {...defaultProps} />)
 
-      expect(screen.getByText('No conversations yet')).toBeInTheDocument()
+      expect(await screen.findByText('No conversations yet')).toBeInTheDocument()
       expect(screen.getByText('Start a new chat to begin')).toBeInTheDocument()
     })
   })

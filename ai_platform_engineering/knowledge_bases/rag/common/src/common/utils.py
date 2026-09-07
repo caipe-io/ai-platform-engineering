@@ -2,6 +2,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 from json import JSONEncoder
 import traceback
@@ -168,6 +169,33 @@ def generate_datasource_id_from_url(url: str) -> str:
   # Replace non-alphanumeric characters with underscore
   clean_url = "".join(c if c.isalnum() else "_" for c in url)
   return f"src_{clean_url}_{source_hash}"
+
+
+def generate_confluence_datasource_id(
+  confluence_url: str,
+  space_key: str,
+  page_id: Optional[str] = None,
+) -> str:
+  """Generate a stable ID for a Confluence space or page-rooted source.
+
+  Legacy environment configuration models an entire space as one datasource
+  and therefore omits ``page_id``. UI-created sources are rooted at a page;
+  including that immutable page ID lets one space contain multiple independent
+  datasources without changing scheduled reload or stale-chunk replacement.
+  """
+  domain = urlparse(confluence_url).netloc.replace(".", "_").replace("-", "_")
+  datasource_id = f"src_confluence___{domain}__{space_key}"
+  if not page_id:
+    # Keep whole-space IDs stable for legacy environment configuration. These
+    # sources are handled by the one-time import compatibility path.
+    return datasource_id
+
+  raw_id = f"{datasource_id}__{page_id}"
+  safe_id = re.sub(r"[^A-Za-z0-9._~@|*+=,/-]", "_", raw_id)
+  if len(safe_id) <= 192:
+    return safe_id
+  suffix = hashlib.sha256(raw_id.encode()).hexdigest()[:12]
+  return f"{safe_id[:179]}_{suffix}"
 
 
 def derive_friendly_name_from_url(url: str, max_length: int = 64) -> str:

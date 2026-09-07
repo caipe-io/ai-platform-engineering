@@ -176,7 +176,8 @@ Confluence ingestion:
   "description": "Platform runbook",
   "get_child_pages": true,
   "allowed_title_patterns": ["Runbook", "How-to"],
-  "denied_title_patterns": ["Archive"]
+  "denied_title_patterns": ["Archive"],
+  "reload_interval": 86400
 }
 ```
 

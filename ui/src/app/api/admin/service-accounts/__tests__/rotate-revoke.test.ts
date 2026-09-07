@@ -20,18 +20,23 @@ jest.mock("@/lib/auth-config", () => ({ authOptions: {} }));
 
 const mockCheckOpenFgaTuple = jest.fn();
 const mockListOpenFgaObjects = jest.fn();
+const mockReadOpenFgaTuples = jest.fn();
 const mockDeleteExactOpenFgaTuples = jest.fn();
 jest.mock("@/lib/rbac/openfga", () => ({
   checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
   listOpenFgaObjects: (...args: unknown[]) => mockListOpenFgaObjects(...args),
-  deleteExactOpenFgaTuples: (...args: unknown[]) => mockDeleteExactOpenFgaTuples(...args),
+  readOpenFgaTuples: (...args: unknown[]) => mockReadOpenFgaTuples(...args),
+  deleteExactOpenFgaTuples: (...args: unknown[]) =>
+    mockDeleteExactOpenFgaTuples(...args),
 }));
 
 const mockRegenerateClientSecret = jest.fn();
 const mockDeleteServiceAccountClient = jest.fn();
 jest.mock("@/lib/rbac/keycloak-admin", () => ({
-  regenerateClientSecret: (...args: unknown[]) => mockRegenerateClientSecret(...args),
-  deleteServiceAccountClient: (...args: unknown[]) => mockDeleteServiceAccountClient(...args),
+  regenerateClientSecret: (...args: unknown[]) =>
+    mockRegenerateClientSecret(...args),
+  deleteServiceAccountClient: (...args: unknown[]) =>
+    mockDeleteServiceAccountClient(...args),
   getServiceAccountTokenUrl: () =>
     "https://keycloak.example.com/realms/caipe/protocol/openid-connect/token",
 }));
@@ -50,7 +55,8 @@ jest.mock("@/lib/service-accounts", () => ({
 
 const mockHasOrganizationAdmin = jest.fn();
 jest.mock("@/lib/rbac/platform-admin", () => ({
-  hasOrganizationAdmin: (...args: unknown[]) => mockHasOrganizationAdmin(...args),
+  hasOrganizationAdmin: (...args: unknown[]) =>
+    mockHasOrganizationAdmin(...args),
 }));
 
 import { POST as ROTATE } from "../[id]/rotate/route";
@@ -69,7 +75,10 @@ const DOC = {
 };
 
 function req(method: string): NextRequest {
-  return new NextRequest(`http://localhost:3000/api/admin/service-accounts/${SA_ID}`, { method });
+  return new NextRequest(
+    `http://localhost:3000/api/admin/service-accounts/${SA_ID}`,
+    { method },
+  );
 }
 function ctx() {
   return { params: Promise.resolve({ id: SA_ID }) };
@@ -82,9 +91,17 @@ beforeEach(() => {
   mockGetBySub.mockResolvedValue(DOC);
   mockRegenerateClientSecret.mockResolvedValue("new-secret-xyz");
   mockDeleteServiceAccountClient.mockResolvedValue(undefined);
-  mockDeleteExactOpenFgaTuples.mockResolvedValue({ enabled: true, writes: 0, deletes: 3 });
+  mockDeleteExactOpenFgaTuples.mockResolvedValue({
+    enabled: true,
+    writes: 0,
+    deletes: 3,
+  });
   mockUpdateStatus.mockResolvedValue(true);
   mockListOpenFgaObjects.mockResolvedValue({ objects: [] });
+  mockReadOpenFgaTuples.mockResolvedValue({
+    tuples: [],
+    continuationToken: undefined,
+  });
   mockHasOrganizationAdmin.mockResolvedValue(false);
 });
 
@@ -137,6 +154,18 @@ describe("DELETE .../[id] (revoke)", () => {
     mockListOpenFgaObjects
       .mockResolvedValueOnce({ objects: ["agent:incident-resolver"] }) // can_use agent
       .mockResolvedValueOnce({ objects: ["tool:jira/search", "tool:jira/*"] }); // can_call tool
+    mockReadOpenFgaTuples.mockResolvedValue({
+      tuples: [
+        {
+          key: {
+            user: `service_account:${SA_ID}`,
+            relation: "reader",
+            object: "rag_collection:platform-rag",
+          },
+        },
+      ],
+      continuationToken: undefined,
+    });
 
     const res = await REVOKE(req("DELETE"), ctx());
     expect(res.status).toBe(200);
@@ -149,14 +178,44 @@ describe("DELETE .../[id] (revoke)", () => {
     const deleted = mockDeleteExactOpenFgaTuples.mock.calls[0][0];
     expect(deleted).toEqual(
       expect.arrayContaining([
-        { user: "team:team-sre#member", relation: "owner_team", object: `service_account:${SA_ID}` },
-        { user: `service_account:${SA_ID}`, relation: "caller", object: "mcp_gateway:list" },
-        { user: `service_account:${SA_ID}`, relation: "user", object: "agent:incident-resolver" },
-        { user: `service_account:${SA_ID}`, relation: "caller", object: "tool:jira/search" },
-        { user: `service_account:${SA_ID}`, relation: "caller", object: "tool:jira/*" },
+        {
+          user: "team:team-sre#member",
+          relation: "owner_team",
+          object: `service_account:${SA_ID}`,
+        },
+        {
+          user: `service_account:${SA_ID}`,
+          relation: "caller",
+          object: "mcp_gateway:list",
+        },
+        {
+          user: `service_account:${SA_ID}`,
+          relation: "searcher",
+          object: "organization:caipe",
+        },
+        {
+          user: `service_account:${SA_ID}`,
+          relation: "user",
+          object: "agent:incident-resolver",
+        },
+        {
+          user: `service_account:${SA_ID}`,
+          relation: "caller",
+          object: "tool:jira/search",
+        },
+        {
+          user: `service_account:${SA_ID}`,
+          relation: "caller",
+          object: "tool:jira/*",
+        },
+        {
+          user: `service_account:${SA_ID}`,
+          relation: "reader",
+          object: "rag_collection:platform-rag",
+        },
       ]),
     );
-    expect(deleted).toHaveLength(5);
+    expect(deleted).toHaveLength(7);
 
     // Doc marked revoked (retained — frees name for reuse, FR-018a).
     expect(mockUpdateStatus).toHaveBeenCalledWith(SA_ID, "revoked");

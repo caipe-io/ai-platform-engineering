@@ -101,7 +101,7 @@ test.describe("mocked RBAC admin browser regression", () => {
       handlers: [auditHandler],
     });
 
-    await page.goto("/admin?cat=security&tab=action-audit", {
+    await page.goto("/admin/security/rbac-audit", {
       waitUntil: "domcontentloaded",
     });
 
@@ -127,7 +127,7 @@ test.describe("mocked RBAC admin browser regression", () => {
     expect(manifest.record_count).toBe(2);
     expect(auditEvents[0].correlation_id).toBe("corr-grant");
 
-    await page.locator("select").nth(1).selectOption("cas_grant");
+    await page.getByLabel("Audit event type").selectOption("cas_grant");
     await page.getByRole("button", { name: /^Search$/ }).click();
 
     await expect.poll(() => auditQueries.some((query) => query.includes("type=cas_grant"))).toBe(true);

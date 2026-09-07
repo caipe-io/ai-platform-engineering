@@ -21,7 +21,7 @@ const CHAT_CONVERSATION_ID = "rbac-caller-cred-conv";
 
 const CALLER_CREDENTIAL_WARNING =
   "Jira needs your Atlassian account connected. " +
-  "[Connect Atlassian](/credentials#connections) — then start a new chat.";
+  "[Connect Atlassian](/credentials/connections) — then start a new chat.";
 
 function minimalSessionEnv() {
   return {
@@ -225,14 +225,14 @@ test.describe("RBAC e2e — caller-scoped MCP credentials", () => {
 
       const connectLink = page.getByRole("link", { name: "Connect Atlassian" });
       await expect(connectLink).toBeVisible();
-      await expect(connectLink).toHaveAttribute("href", "/credentials#connections");
+      await expect(connectLink).toHaveAttribute("href", "/credentials/connections");
 
       await expect(page.getByText(/cannot access Jira without your Atlassian connection/i)).toBeVisible();
 
       await installCredentialsBrowserMocks(page);
       await connectLink.click({ force: true });
 
-      await expect(page).toHaveURL(/\/credentials#connections$/);
+      await expect(page).toHaveURL(/\/credentials\/connections$/);
       await expect(page.getByRole("heading", { name: "Connected Apps" })).toBeVisible();
     });
   });

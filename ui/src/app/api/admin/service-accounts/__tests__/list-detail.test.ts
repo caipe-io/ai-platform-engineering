@@ -23,9 +23,11 @@ jest.mock("@/lib/auth-config", () => ({
 
 const mockListOpenFgaObjects = jest.fn();
 const mockCheckOpenFgaTuple = jest.fn();
+const mockReadOpenFgaTuples = jest.fn();
 jest.mock("@/lib/rbac/openfga", () => ({
   listOpenFgaObjects: (...args: unknown[]) => mockListOpenFgaObjects(...args),
   checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
+  readOpenFgaTuples: (...args: unknown[]) => mockReadOpenFgaTuples(...args),
 }));
 
 const mockResolveAuthorizedAdminSimulationScope = jest.fn();
@@ -36,7 +38,8 @@ jest.mock("@/lib/rbac/admin-simulation-server", () => ({
 
 const mockHasOrganizationAdmin = jest.fn();
 jest.mock("@/lib/rbac/platform-admin", () => ({
-  hasOrganizationAdmin: (...args: unknown[]) => mockHasOrganizationAdmin(...args),
+  hasOrganizationAdmin: (...args: unknown[]) =>
+    mockHasOrganizationAdmin(...args),
 }));
 
 const mockListByOwningTeams = jest.fn();
@@ -67,7 +70,9 @@ function assertNoSecrets(value: unknown): void {
   }
 }
 
-function listRequest(path = "http://localhost:3000/api/admin/service-accounts"): NextRequest {
+function listRequest(
+  path = "http://localhost:3000/api/admin/service-accounts",
+): NextRequest {
   return new NextRequest(new URL(path));
 }
 
@@ -87,9 +92,24 @@ const SA_DOC = {
   status: "active" as const,
   revoked_at: null,
   scopes_snapshot: [
-    { type: "agent" as const, ref: "incident-resolver", added_by: "x", added_at: new Date() },
-    { type: "tool" as const, ref: "jira/search", added_by: "x", added_at: new Date() },
-    { type: "tool" as const, ref: "jira/*", added_by: "x", added_at: new Date() },
+    {
+      type: "agent" as const,
+      ref: "incident-resolver",
+      added_by: "x",
+      added_at: new Date(),
+    },
+    {
+      type: "tool" as const,
+      ref: "jira/search",
+      added_by: "x",
+      added_at: new Date(),
+    },
+    {
+      type: "tool" as const,
+      ref: "jira/*",
+      added_by: "x",
+      added_at: new Date(),
+    },
   ],
 };
 
@@ -99,6 +119,10 @@ beforeEach(() => {
   mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
   mockResolveAuthorizedAdminSimulationScope.mockResolvedValue(null);
   mockHasOrganizationAdmin.mockResolvedValue(false);
+  mockReadOpenFgaTuples.mockResolvedValue({
+    tuples: [],
+    continuationToken: undefined,
+  });
 });
 
 describe("GET /api/admin/service-accounts (list)", () => {
@@ -115,7 +139,12 @@ describe("GET /api/admin/service-accounts (list)", () => {
     const item = body.data.items[0];
     expect(item.id).toBe("sa-123");
     expect(item.name).toBe("incident-bot");
-    expect(item.scope_counts).toEqual({ agents: 1, tools: 2 });
+    expect(item.scope_counts).toEqual({
+      agents: 1,
+      tools: 2,
+      datasources: 0,
+      collections: 0,
+    });
 
     assertNoSecrets(body);
   });
@@ -144,10 +173,14 @@ describe("GET /api/admin/service-accounts (list)", () => {
     mockListByOwningTeams.mockResolvedValue([SA_DOC]);
 
     const res = await listGET(
-      listRequest("http://localhost:3000/api/admin/service-accounts?team=team-sre"),
+      listRequest(
+        "http://localhost:3000/api/admin/service-accounts?team=team-sre",
+      ),
     );
     expect(res.status).toBe(200);
-    expect(mockListByOwningTeams).toHaveBeenCalledWith(["team-sre"], { includeRevoked: false });
+    expect(mockListByOwningTeams).toHaveBeenCalledWith(["team-sre"], {
+      includeRevoked: false,
+    });
   });
 
   it("?team= returns empty (no Mongo query) when the caller is NOT in that team", async () => {
@@ -157,7 +190,9 @@ describe("GET /api/admin/service-accounts (list)", () => {
     mockListOpenFgaObjects.mockResolvedValue({ objects: ["team:team-sre"] });
 
     const res = await listGET(
-      listRequest("http://localhost:3000/api/admin/service-accounts?team=team-other"),
+      listRequest(
+        "http://localhost:3000/api/admin/service-accounts?team=team-other",
+      ),
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -170,7 +205,9 @@ describe("GET /api/admin/service-accounts (list)", () => {
     mockListByOwningTeams.mockResolvedValue([SA_DOC]);
 
     const res = await listGET(
-      listRequest("http://localhost:3000/api/admin/service-accounts?team=team-sre"),
+      listRequest(
+        "http://localhost:3000/api/admin/service-accounts?team=team-sre",
+      ),
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -179,7 +216,9 @@ describe("GET /api/admin/service-accounts (list)", () => {
 
     // The bypass must skip the OpenFGA membership lookup altogether.
     expect(mockListOpenFgaObjects).not.toHaveBeenCalled();
-    expect(mockListByOwningTeams).toHaveBeenCalledWith(["team-sre"], { includeRevoked: false });
+    expect(mockListByOwningTeams).toHaveBeenCalledWith(["team-sre"], {
+      includeRevoked: false,
+    });
   });
 
   it("admin WITHOUT ?team= sees SAs across every team (org-wide, unbounded)", async () => {
@@ -195,7 +234,9 @@ describe("GET /api/admin/service-accounts (list)", () => {
     // the caller's own membership lookup is never consulted, and the Mongo
     // query is unbounded (owningTeamIds === null, not the caller's teams).
     expect(mockListOpenFgaObjects).not.toHaveBeenCalled();
-    expect(mockListByOwningTeams).toHaveBeenCalledWith(null, { includeRevoked: false });
+    expect(mockListByOwningTeams).toHaveBeenCalledWith(null, {
+      includeRevoked: false,
+    });
   });
 
   it("uses the preview subject's team memberships for a read-only simulation", async () => {
@@ -260,8 +301,23 @@ describe("GET /api/admin/service-accounts/[id] (detail)", () => {
     mockListOpenFgaObjects
       .mockResolvedValueOnce({ objects: ["agent:incident-resolver"] }) // can_use agent
       .mockResolvedValueOnce({ objects: ["tool:jira/search", "tool:jira/*"] }); // can_call tool
+    mockReadOpenFgaTuples.mockResolvedValue({
+      tuples: [
+        {
+          key: {
+            user: "service_account:sa-123",
+            relation: "reader",
+            object: "rag_collection:platform-rag",
+          },
+        },
+      ],
+      continuationToken: undefined,
+    });
 
-    const res = await detailGET(new Request("http://localhost"), detailCtx("sa-123"));
+    const res = await detailGET(
+      new Request("http://localhost"),
+      detailCtx("sa-123"),
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
 
@@ -271,6 +327,7 @@ describe("GET /api/admin/service-accounts/[id] (detail)", () => {
       { type: "agent", ref: "incident-resolver" },
       { type: "tool", ref: "jira/search" },
       { type: "tool", ref: "jira/*" },
+      { type: "collection", ref: "platform-rag" },
     ]);
 
     assertNoSecrets(body);
@@ -279,7 +336,10 @@ describe("GET /api/admin/service-accounts/[id] (detail)", () => {
   it("404s for a non-member (does not reveal existence)", async () => {
     mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
 
-    const res = await detailGET(new Request("http://localhost"), detailCtx("sa-123"));
+    const res = await detailGET(
+      new Request("http://localhost"),
+      detailCtx("sa-123"),
+    );
     expect(res.status).toBe(404);
     // Must not read the doc or scopes once authorization fails.
     expect(mockGetBySub).not.toHaveBeenCalled();
@@ -288,7 +348,10 @@ describe("GET /api/admin/service-accounts/[id] (detail)", () => {
 
   it("401s when unauthenticated", async () => {
     mockGetServerSession.mockResolvedValue(null);
-    const res = await detailGET(new Request("http://localhost"), detailCtx("sa-123"));
+    const res = await detailGET(
+      new Request("http://localhost"),
+      detailCtx("sa-123"),
+    );
     expect(res.status).toBe(401);
   });
 
@@ -300,7 +363,10 @@ describe("GET /api/admin/service-accounts/[id] (detail)", () => {
       .mockResolvedValueOnce({ objects: ["agent:incident-resolver"] })
       .mockResolvedValueOnce({ objects: ["tool:jira/search", "tool:jira/*"] });
 
-    const res = await detailGET(new Request("http://localhost"), detailCtx("sa-123"));
+    const res = await detailGET(
+      new Request("http://localhost"),
+      detailCtx("sa-123"),
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.data.id).toBe("sa-123");

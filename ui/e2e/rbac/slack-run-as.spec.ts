@@ -131,7 +131,7 @@ test.describe("mocked Slack Run as browser regression", () => {
       handlers: [slackHandler],
     });
 
-    await page.goto("/admin?cat=integrations&tab=slack", {
+    await page.goto("/admin/integrations/slack", {
       waitUntil: "domcontentloaded",
     });
 
@@ -268,7 +268,7 @@ test.describe("mocked Slack Run as browser regression", () => {
       handlers: [slackHandler],
     });
 
-    await page.goto("/admin?cat=integrations&tab=slack", {
+    await page.goto("/admin/integrations/slack", {
       waitUntil: "domcontentloaded",
     });
 
@@ -288,8 +288,7 @@ test.describe("mocked Slack Run as browser regression", () => {
 
     await dialog.getByLabel("Service Account").check();
     await expect(dialog.getByText(/No active service accounts found/)).not.toBeVisible();
-    await dialog.getByRole("button", { name: "Service account" }).click();
-    await page.getByLabel("Search service accounts").fill("runner");
+    await dialog.getByRole("combobox", { name: "Service account" }).click();
     await page.getByRole("option", { name: "slack-runner" }).click();
 
     await dialog.getByRole("button", { name: "Add Agent" }).click();
@@ -426,25 +425,29 @@ test.describe("mocked Slack Run as browser regression", () => {
       handlers: [slackHandler],
     });
 
-    await page.goto("/admin?cat=integrations&tab=slack", {
+    await page.goto("/admin/integrations/slack", {
       waitUntil: "domcontentloaded",
     });
 
     // assisted-by Codex Codex-sonnet-4-6
     // A team-shared Slack channel should show the non-admin configured view and
     // allow route edits when the selected team grants channel manage.
-    await expect(page.getByRole("button", { name: "Integrations" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Slack" })).toBeVisible();
-    await expect(page.getByText("My Slack Channel Settings")).toBeVisible();
-    await expect(page.getByText("Manage Slack bot routing for channels shared with your team.")).toBeVisible();
-    await expect(page.getByText(/Members of the assigned team can update this Slack channel/)).toBeVisible();
-    await expect(page.getByText(/OpenFGA|can_use|team:<slug>/)).toHaveCount(0);
-    await page.getByLabel("Slack access details").focus();
-    await expect(page.getByText(/Technical details:/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Integrations" })).toHaveAttribute("data-active", "true");
+    await expect(
+      page
+        .getByRole("navigation",{ name: "Admin sections" })
+        .getByRole("link", { name: "Slack" }),
+    ).toHaveAttribute("aria-current","page");
+    await expect(page.getByText("Slack channels", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        "Manage existing Slack integrations or request onboarding for a channel your team uses.",
+      ),
+    ).toBeVisible();
     await expect(page.getByText("1 configured channels")).toBeVisible();
     await expect(page.getByText("#grid-test-4")).toBeVisible();
     await expect(page.getByText("team:eti-sre-admin-jenkins")).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Onboard channels" })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "Onboard channels" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Advanced" })).toHaveCount(0);
     await page.getByRole("button", { name: /#grid-test-4/ }).click();
     await expect(page.getByRole("button", { name: "Add Agent" })).toBeVisible();
@@ -585,14 +588,14 @@ test.describe("mocked Slack Run as browser regression", () => {
       handlers: [slackHandler],
     });
 
-    await page.goto("/admin?cat=integrations&tab=slack", {
+    await page.goto("/admin/integrations/slack", {
       waitUntil: "domcontentloaded",
     });
 
     // assisted-by Codex Codex-sonnet-4-6
     // Visibility alone is not enough. If the channel row is returned without
     // can_manage, non-admin users may inspect it but cannot mutate routes.
-    await expect(page.getByText("My Slack Channel Settings")).toBeVisible();
+    await expect(page.getByText("Slack channels", { exact: true })).toBeVisible();
     await expect(page.getByText("#locked-shared-channel")).toBeVisible();
     await page.getByRole("button", { name: /#locked-shared-channel/ }).click();
 
@@ -733,15 +736,16 @@ test.describe("mocked Slack Run as browser regression", () => {
       handlers: [slackHandler],
     });
 
-    await page.goto("/admin?cat=integrations&tab=slack&subtab=onboard", {
+    await page.goto("/admin/integrations/slack", {
       waitUntil: "domcontentloaded",
     });
 
     // assisted-by Codex Codex-sonnet-4-6
-    // The generic team member should stay in the self-service configured view:
-    // no Onboard/Advanced admin surfaces, with editability decided per channel.
-    await expect(page.getByText("My Slack Channel Settings")).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Onboard channels" })).toHaveCount(0);
+    // The generic team member can request onboarding from the self-service view,
+    // while platform-wide Advanced controls remain hidden. Existing-channel
+    // editability is still decided per channel.
+    await expect(page.getByText("Slack channels", { exact: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Onboard channels" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Advanced" })).toHaveCount(0);
     await expect(page.getByText("Discover channels")).toHaveCount(0);
     await expect(page.getByText("#editable-channel")).toBeVisible();
@@ -807,11 +811,11 @@ test.describe("mocked Slack Run as browser regression", () => {
       handlers: [slackHandler],
     });
 
-    await page.goto("/admin?cat=integrations&tab=slack", {
+    await page.goto("/admin/integrations/slack", {
       waitUntil: "domcontentloaded",
     });
 
-    await expect(page.getByText("My Slack Channel Settings")).toBeVisible();
+    await expect(page.getByText("Slack channels", { exact: true })).toBeVisible();
     await expect(page.getByText("#hidden-channel")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Add Agent" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Edit agent:/ })).toHaveCount(0);
@@ -931,7 +935,7 @@ test.describe("mocked Slack Run as browser regression", () => {
       handlers: [slackHandler],
     });
 
-    await page.goto("/admin?cat=integrations&tab=slack", {
+    await page.goto("/admin/integrations/slack", {
       waitUntil: "domcontentloaded",
     });
 
@@ -1047,7 +1051,7 @@ test.describe("mocked Slack Run as browser regression", () => {
       handlers: [slackHandler],
     });
 
-    await page.goto("/admin?cat=integrations&tab=slack", {
+    await page.goto("/admin/integrations/slack", {
       waitUntil: "domcontentloaded",
     });
 

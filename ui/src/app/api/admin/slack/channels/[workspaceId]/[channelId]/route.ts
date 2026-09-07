@@ -53,6 +53,7 @@ const CHANNEL_USABLE_OBJECT_TYPES = [
   "mcp_server",
   "tool",
   "knowledge_base",
+  "rag_collection",
   "document",
   "skill",
 ] as const;

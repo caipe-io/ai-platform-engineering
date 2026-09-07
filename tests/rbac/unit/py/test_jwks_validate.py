@@ -121,9 +121,14 @@ def test_wrong_audience_raises(env, patch_jwks, keypair: _Keypair) -> None:
 
 def test_signature_mismatch_raises(env, patch_jwks, keypair: _Keypair) -> None:
     token = _mint(keypair, issuer="http://kc.example:7080/realms/caipe", audience="caipe-platform")
-    # Tamper: flip a char in the signature segment.
+    # Flip an actual signature byte. Replacing trailing base64url characters can
+    # alter only unused padding bits and occasionally leave the decoded bytes
+    # unchanged.
     head, payload, sig = token.split(".")
-    tampered = ".".join([head, payload, sig[:-2] + ("AB" if sig[-2:] != "AB" else "CD")])
+    signature = bytearray(jwt.utils.base64url_decode(sig.encode("ascii")))
+    signature[0] ^= 1
+    tampered_sig = jwt.utils.base64url_encode(bytes(signature)).decode("ascii")
+    tampered = ".".join([head, payload, tampered_sig])
     with pytest.raises(jwks_validate.InvalidTokenError):
         jwks_validate.validate_bearer_jwt(tampered)
 

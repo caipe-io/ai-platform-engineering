@@ -304,7 +304,11 @@ class Neo4jDB(GraphDB):
     # Return results in order
     return [results_by_idx[i] for i in range(len(batch_keywords))]
 
-  async def get_all_entity_types(self, max_results=1000) -> List[str]:
+  async def get_all_entity_types(
+    self,
+    max_results: int = 1000,
+    datasource_ids: List[str] | None = None,
+  ) -> List[str]:
     """
     Gets all entity types in the database for this tenant.
     Returns distinct values from the _entity_type property.
@@ -312,10 +316,19 @@ class Neo4jDB(GraphDB):
     logger.debug(f"Executing get_all_entity_types with max_results={max_results}")
     # Query to get distinct _entity_type values from nodes that have this tenant_label
     escaped_tenant_label = self._escape_label(self.tenant_label)
-    query = f"MATCH (n:{escaped_tenant_label}) WHERE n.{ENTITY_TYPE_KEY} IS NOT NULL RETURN DISTINCT n.{ENTITY_TYPE_KEY} AS entity_type"
+    conditions = [f"n.{ENTITY_TYPE_KEY} IS NOT NULL"]
+    params: dict[str, Any] = {}
+    if datasource_ids is not None:
+      conditions.append(f"n.`{DATASOURCE_ID_KEY}` IN $datasource_ids")
+      params["datasource_ids"] = datasource_ids
+    query = (
+      f"MATCH (n:{escaped_tenant_label}) "
+      f"WHERE {' AND '.join(conditions)} "
+      f"RETURN DISTINCT n.{ENTITY_TYPE_KEY} AS entity_type"
+    )
     logger.debug(query)
     async with self.driver.session(default_access_mode=neo4j.READ_ACCESS, database=self.database) as session:
-      res = await session.run(query)  # type: ignore
+      res = await session.run(query, params)  # type: ignore
       records: list[Record] = await res.fetch(max_results)
       entity_types = []
       for record in records:
@@ -476,7 +489,13 @@ class Neo4jDB(GraphDB):
 
       return relations
 
-  async def fetch_relations_batch(self, offset: int = 0, limit: int = 10000, relation_name: str | None = None) -> List[Relation]:
+  async def fetch_relations_batch(
+    self,
+    offset: int = 0,
+    limit: int = 10000,
+    relation_name: str | None = None,
+    datasource_ids: List[str] | None = None,
+  ) -> List[Relation]:
     """
     Fetch relations in batches for efficient bulk processing.
 
@@ -502,8 +521,15 @@ class Neo4jDB(GraphDB):
     else:
       rel_pattern = "[r]"
 
+    where_clause = ""
+    params: dict[str, Any] = {}
+    if datasource_ids is not None:
+      where_clause = f"WHERE a.`{DATASOURCE_ID_KEY}` IN $datasource_ids AND b.`{DATASOURCE_ID_KEY}` IN $datasource_ids"
+      params["datasource_ids"] = datasource_ids
+
     query = f"""
         MATCH {from_pattern}-{rel_pattern}->{to_pattern}
+        {where_clause}
         RETURN a, r, b
         SKIP {offset}
         LIMIT {limit}
@@ -512,7 +538,7 @@ class Neo4jDB(GraphDB):
     logger.debug(query)
 
     async with self.driver.session(default_access_mode=neo4j.READ_ACCESS, database=self.database) as session:
-      res = await session.run(query)  # type: ignore
+      res = await session.run(query, params)  # type: ignore
       records: list[Record] = await res.fetch(limit)
       relations = []
 
@@ -548,7 +574,13 @@ class Neo4jDB(GraphDB):
     logger.info(f"Fetched {len(relations)} relations in batch (offset={offset})")
     return relations
 
-  async def fetch_entities_batch(self, offset: int = 0, limit: int = 10000, entity_type: str | None = None) -> List[StructuredEntity]:
+  async def fetch_entities_batch(
+    self,
+    offset: int = 0,
+    limit: int = 10000,
+    entity_type: str | None = None,
+    datasource_ids: List[str] | None = None,
+  ) -> List[StructuredEntity]:
     """
     Fetch entities in batches for efficient bulk processing.
 
@@ -571,10 +603,17 @@ class Neo4jDB(GraphDB):
     else:
       match_clause = f"MATCH (n:{escaped_tenant_label})"
 
-    # Exclude default data label entities
+    where_conditions = [f"n.`{ENTITY_TYPE_KEY}` <> '{escaped_tenant_label}'"]
+    params: dict[str, Any] = {}
+    if datasource_ids is not None:
+      where_conditions.append(f"n.`{DATASOURCE_ID_KEY}` IN $datasource_ids")
+      params["datasource_ids"] = datasource_ids
+
+    # Exclude default data label entities and apply authorization before
+    # pagination so inaccessible rows cannot starve a page.
     query = f"""
         {match_clause}
-        WHERE n.`{ENTITY_TYPE_KEY}` <> '{escaped_tenant_label}'
+        WHERE {" AND ".join(where_conditions)}
         RETURN n
         SKIP {offset}
         LIMIT {limit}
@@ -583,7 +622,7 @@ class Neo4jDB(GraphDB):
     logger.debug(query)
 
     async with self.driver.session(default_access_mode=neo4j.READ_ACCESS, database=self.database) as session:
-      res = await session.run(query)  # type: ignore
+      res = await session.run(query, params)  # type: ignore
       records: list[Record] = await res.fetch(limit)
       entities = []
 
@@ -1591,7 +1630,7 @@ class Neo4jDB(GraphDB):
       logger.info(f"Found {len(entities)} entities and {len(relations)} relations at depth {depth}")
       return {"entity": start_entity, "entities": entities, "relations": relations}
 
-  async def get_graph_stats(self) -> dict:
+  async def get_graph_stats(self, datasource_ids: List[str] | None = None) -> dict:
     """
     Get statistics about the graph database.
     """
@@ -1599,27 +1638,36 @@ class Neo4jDB(GraphDB):
 
     escaped_tenant = self._escape_label(self.tenant_label)
 
+    node_conditions = [f"n.`{ENTITY_TYPE_KEY}` <> '{escaped_tenant}'"]
+    rel_where = ""
+    params: dict[str, Any] = {}
+    if datasource_ids is not None:
+      node_conditions.append(f"n.`{DATASOURCE_ID_KEY}` IN $datasource_ids")
+      rel_where = f"WHERE a.`{DATASOURCE_ID_KEY}` IN $datasource_ids AND b.`{DATASOURCE_ID_KEY}` IN $datasource_ids"
+      params["datasource_ids"] = datasource_ids
+
     # Count nodes
     node_query = f"""
         MATCH (n:{escaped_tenant})
-        WHERE n.`{ENTITY_TYPE_KEY}` <> '{escaped_tenant}'
+        WHERE {" AND ".join(node_conditions)}
         RETURN COUNT(n) as count
         """
 
     # Count relations
     rel_query = f"""
-        MATCH (:{escaped_tenant})-[r]-(:{escaped_tenant})
+        MATCH (a:{escaped_tenant})-[r]-(b:{escaped_tenant})
+        {rel_where}
         RETURN COUNT(r) as count
         """
 
     async with self.driver.session(default_access_mode=neo4j.READ_ACCESS, database=self.database) as session:
       # Get node count
-      res = await session.run(node_query)  # type: ignore
+      res = await session.run(node_query, params)  # type: ignore
       node_record = await res.single()
       node_count = node_record.get("count", 0) if node_record else 0
 
       # Get relation count (divide by 2 because undirected)
-      res = await session.run(rel_query)  # type: ignore
+      res = await session.run(rel_query, params)  # type: ignore
       rel_record = await res.single()
       relation_count = rel_record.get("count", 0) if rel_record else 0
       relation_count = relation_count // 2  # Divide by 2 for undirected relations
@@ -1627,7 +1675,12 @@ class Neo4jDB(GraphDB):
       logger.info(f"Graph stats: {node_count} nodes, {relation_count} relations")
       return {"node_count": node_count, "relation_count": relation_count}
 
-  async def fetch_random_entities(self, count: int = 10, entity_type: str | None = None) -> List[StructuredEntity]:
+  async def fetch_random_entities(
+    self,
+    count: int = 10,
+    entity_type: str | None = None,
+    datasource_ids: List[str] | None = None,
+  ) -> List[StructuredEntity]:
     """
     Fetch random entities from the graph database.
     """
@@ -1641,10 +1694,16 @@ class Neo4jDB(GraphDB):
     else:
       match_clause = f"MATCH (n:{escaped_tenant})"
 
+    where_conditions = [f"n.`{ENTITY_TYPE_KEY}` <> '{escaped_tenant}'"]
+    params: dict[str, Any] = {}
+    if datasource_ids is not None:
+      where_conditions.append(f"n.`{DATASOURCE_ID_KEY}` IN $datasource_ids")
+      params["datasource_ids"] = datasource_ids
+
     # Use ORDER BY rand() for random sampling
     query = f"""
         {match_clause}
-        WHERE n.`{ENTITY_TYPE_KEY}` <> '{escaped_tenant}'
+        WHERE {" AND ".join(where_conditions)}
         RETURN n
         ORDER BY rand()
         LIMIT {count}
@@ -1653,7 +1712,7 @@ class Neo4jDB(GraphDB):
     logger.debug(query)
 
     async with self.driver.session(default_access_mode=neo4j.READ_ACCESS, database=self.database) as session:
-      res = await session.run(query)  # type: ignore
+      res = await session.run(query, params)  # type: ignore
       records = await res.fetch(count)
 
       entities = []

@@ -32,6 +32,7 @@ logger = logging.getLogger("caipe.slack_bot.slack_admin_api")
 
 CollectionFactory = Callable[[str], Optional[Collection[Any]]]
 OpenFgaWriter = Callable[[dict[str, str]], None]
+RequestGet = Callable[..., requests.Response]
 
 
 @dataclass(frozen=True)
@@ -144,11 +145,13 @@ class SlackBotAdminService:
         resolver: SlackAgentRouteResolver,
         collection_factory: CollectionFactory | None = None,
         openfga_writer: OpenFgaWriter | None = None,
+        request_get: RequestGet = requests.get,
     ) -> None:
         self._config = config
         self._resolver = resolver
         self._collection_factory = collection_factory
         self._openfga_writer = openfga_writer
+        self._request_get = request_get
         self._client: Optional[MongoClient] = None
         self._db_name = os.environ.get("MONGODB_DATABASE", "caipe")
         self._last_sync: dict[str, Any] | None = None
@@ -179,6 +182,113 @@ class SlackBotAdminService:
             },
             "route_cache": self._resolver.cache_status(),
             "last_sync": self._last_sync,
+        }
+
+    def send_notification(self, *, channel_id: str, text: str) -> dict[str, str]:
+        """Send an operator-configured publication approval notification."""
+
+        normalized_channel_id = channel_id.strip()
+        normalized_text = text.strip()
+        if not normalized_channel_id:
+            raise ValueError("channel_id is required")
+        if not normalized_text:
+            raise ValueError("text is required")
+        if len(normalized_text) > 4000:
+            raise ValueError("text must not exceed 4000 characters")
+
+        token = os.environ.get(
+            "SLACK_INTEGRATION_BOT_TOKEN",
+            os.environ.get("SLACK_BOT_TOKEN", ""),
+        ).strip()
+        if not token:
+            raise RuntimeError("No Slack bot token is configured for notifications")
+        response = requests.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={
+                "channel": normalized_channel_id,
+                "text": normalized_text,
+                "unfurl_links": False,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("ok") is not True:
+            raise RuntimeError(str(payload.get("error") or "Slack rejected the notification"))
+        return {
+            "channel_id": normalized_channel_id,
+            "message_ts": str(payload.get("ts") or ""),
+        }
+
+    def inspect_channel(self, *, channel_id: str) -> dict[str, Any]:
+        """Return provider-owned metadata used by publication risk policy.
+
+        The browser-supplied name, membership count, and workspace identifier
+        are deliberately ignored by the onboarding API. This lookup also proves
+        that the configured bot is currently a member of the channel.
+        """
+
+        normalized_channel_id = channel_id.strip()
+        if not normalized_channel_id:
+            raise ValueError("channel_id is required")
+        token = os.environ.get(
+            "SLACK_INTEGRATION_BOT_TOKEN",
+            os.environ.get("SLACK_BOT_TOKEN", ""),
+        ).strip()
+        if not token:
+            raise RuntimeError("No Slack bot token is configured for channel inspection")
+        headers = {"Authorization": f"Bearer {token}"}
+        channel_response = self._request_get(
+            "https://slack.com/api/conversations.info",
+            headers=headers,
+            params={"channel": normalized_channel_id, "include_num_members": "true"},
+            timeout=10,
+        )
+        channel_response.raise_for_status()
+        channel_payload = channel_response.json()
+        if not isinstance(channel_payload, dict) or channel_payload.get("ok") is not True:
+            error = (
+                channel_payload.get("error")
+                if isinstance(channel_payload, dict)
+                else None
+            )
+            raise ValueError(str(error or "Slack rejected the channel lookup"))
+        channel = channel_payload.get("channel")
+        if not isinstance(channel, dict):
+            raise RuntimeError("Slack returned an invalid channel response")
+        if channel.get("is_member") is not True:
+            raise ValueError("The configured Slack bot is not a member of this channel")
+
+        auth_response = self._request_get(
+            "https://slack.com/api/auth.test",
+            headers=headers,
+            timeout=10,
+        )
+        auth_response.raise_for_status()
+        auth_payload = auth_response.json()
+        if not isinstance(auth_payload, dict) or auth_payload.get("ok") is not True:
+            error = auth_payload.get("error") if isinstance(auth_payload, dict) else None
+            raise RuntimeError(str(error or "Slack rejected the workspace lookup"))
+        workspace_id = str(auth_payload.get("team_id") or "").strip()
+        if not workspace_id:
+            raise RuntimeError("Slack did not return a workspace identifier")
+
+        member_count = channel.get("num_members")
+        return {
+            "workspace_id": workspace_id,
+            "channel_id": str(channel.get("id") or normalized_channel_id),
+            "channel_name": str(channel.get("name") or normalized_channel_id),
+            **(
+                {"member_count": member_count}
+                if isinstance(member_count, int)
+                and not isinstance(member_count, bool)
+                and member_count >= 0
+                else {}
+            ),
         }
 
     def config_defaults(self, *, workspace_id: str | None = None) -> dict[str, Any]:
@@ -470,6 +580,41 @@ class _SlackAdminRequestHandler(BaseHTTPRequestHandler):
                 logger.warning("Slack admin config sync failed: %s", exc)
                 self._write_json({"error": str(exc)}, status=500)
             return
+        if path == "/admin/slack/notifications":
+            if not self._authorize(scope_env="SLACK_ADMIN_NOTIFICATION_SCOPE"):
+                return
+            try:
+                self._write_json(
+                    self.service.send_notification(
+                        channel_id=_required_string(body.get("channel_id"), "channel_id"),
+                        text=_required_string(body.get("text"), "text"),
+                    )
+                )
+            except ValueError as exc:
+                self._write_json({"error": str(exc)}, status=400)
+            except RuntimeError as exc:
+                self._write_json({"error": str(exc)}, status=503)
+            except requests.RequestException as exc:
+                logger.warning("Slack approval notification failed: %s", exc)
+                self._write_json({"error": "slack_api_unavailable"}, status=502)
+            return
+        if path == "/admin/slack/channels/inspect":
+            if not self._authorize(scope_env="SLACK_ADMIN_STATUS_SCOPE"):
+                return
+            try:
+                self._write_json(
+                    self.service.inspect_channel(
+                        channel_id=_required_string(body.get("channel_id"), "channel_id"),
+                    )
+                )
+            except ValueError as exc:
+                self._write_json({"error": str(exc)}, status=400)
+            except RuntimeError as exc:
+                self._write_json({"error": str(exc)}, status=503)
+            except requests.RequestException as exc:
+                logger.warning("Slack channel inspection failed: %s", exc)
+                self._write_json({"error": "slack_api_unavailable"}, status=502)
+            return
         self._write_json({"error": "not_found"}, status=404)
 
     def log_message(self, _format: str, *_args: object) -> None:
@@ -513,6 +658,13 @@ def _optional_string(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _required_string(value: object, field: str) -> str:
+    normalized = _optional_string(value)
+    if normalized is None:
+        raise ValueError(f"{field} is required")
+    return normalized
 
 
 def _suggested_agent_id(agents: list[dict[str, Any]]) -> str | None:

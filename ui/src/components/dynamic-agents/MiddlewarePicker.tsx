@@ -3,26 +3,27 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ModelPicker } from "@/components/ui/model-picker";
+import { Select } from "@/components/ui/select";
 import {
-Tooltip,
-TooltipContent,
-TooltipProvider,
-TooltipTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type {
-FeaturesConfig,
-MiddlewareDefinition,
-MiddlewareEntry,
+  FeaturesConfig,
+  MiddlewareDefinition,
+  MiddlewareEntry,
 } from "@/types/dynamic-agent";
 import {
-ChevronDown,
-ChevronRight,
-GripVertical,
-Info,
-Loader2,
-Plus,
-Trash2,
+  ChevronDown,
+  ChevronRight,
+  CopyPlus,
+  Info,
+  Loader2,
+  Trash2,
 } from "lucide-react";
 import React from "react";
 
@@ -50,7 +51,9 @@ function useMiddlewareDefinitions(): {
   error: string | null;
   retry: () => void;
 } {
-  const [definitions, setDefinitions] = React.useState<MiddlewareDefinition[]>([]);
+  const [definitions, setDefinitions] = React.useState<MiddlewareDefinition[]>(
+    [],
+  );
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [attempt, setAttempt] = React.useState(0);
@@ -74,14 +77,20 @@ function useMiddlewareDefinitions(): {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load middleware definitions");
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Failed to load middleware definitions",
+          );
           setLoading(false);
         }
       }
     }
 
     fetchDefinitions();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [attempt]);
 
   const retry = React.useCallback(() => setAttempt((n) => n + 1), []);
@@ -102,39 +111,52 @@ function snakeToTitle(s: string): string {
 }
 
 /** Parse a param_schema value into a type and optional options. */
-function parseParamSchema(schema: string): { type: "number" | "boolean" | "string" | "select"; options?: string[] } {
+function parseParamSchema(schema: string): {
+  type: "number" | "boolean" | "string" | "select";
+  options?: string[];
+} {
   if (schema === "number") return { type: "number" };
   if (schema === "boolean") return { type: "boolean" };
   if (schema === "string") return { type: "string" };
-  if (schema.includes("|")) return { type: "select", options: schema.split("|") };
+  if (schema.includes("|"))
+    return { type: "select", options: schema.split("|") };
   return { type: "string" };
 }
 
-/** Build the default middleware list (all default-enabled entries). */
-function getDefaultEntries(definitions: MiddlewareDefinition[]): MiddlewareEntry[] {
-  return definitions
-    .filter((d) => d.enabled_by_default)
-    .map((d) => ({
-      type: d.key,
-      enabled: true,
-      params: { ...d.default_params },
-    }));
+/**
+ * Materialize every registered middleware so the UI matches its toggle model.
+ * A missing/empty feature list means the runtime defaults are active; once an
+ * agent has an explicit list, any missing definition is genuinely off.
+ */
+function materializeEntries(
+  definitions: MiddlewareDefinition[],
+  value: FeaturesConfig | undefined,
+): MiddlewareEntry[] {
+  const configured = value?.middleware ?? [];
+  const usesRuntimeDefaults = configured.length === 0;
+  const entries = configured.map((entry) => ({
+    ...entry,
+    params: { ...entry.params },
+  }));
+  const present = new Set(entries.map((entry) => entry.type));
+
+  for (const definition of definitions) {
+    if (present.has(definition.key)) continue;
+    entries.push({
+      type: definition.key,
+      enabled: usesRuntimeDefaults && definition.enabled_by_default,
+      params: { ...definition.default_params },
+    });
+  }
+  return entries;
 }
 
 /** Get the definition for a middleware type key. */
-function getDefinition(definitions: MiddlewareDefinition[], type: string): MiddlewareDefinition | undefined {
-  return definitions.find((d) => d.key === type);
-}
-
-/** Check if a singleton middleware is already in the list. */
-function isSingletonPresent(
+function getDefinition(
   definitions: MiddlewareDefinition[],
-  entries: MiddlewareEntry[],
-  key: string,
-): boolean {
-  const def = getDefinition(definitions, key);
-  if (!def || def.allow_multiple) return false;
-  return entries.some((e) => e.type === key);
+  type: string,
+): MiddlewareDefinition | undefined {
+  return definitions.find((d) => d.key === type);
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +171,7 @@ function MiddlewareEntryCard({
   availableModels,
   onUpdate,
   onRemove,
+  onDuplicate,
   onToggle,
   defaultExpanded,
 }: {
@@ -158,7 +181,8 @@ function MiddlewareEntryCard({
   disabled?: boolean;
   availableModels?: { model_id: string; name: string; provider: string }[];
   onUpdate: (index: number, params: Record<string, unknown>) => void;
-  onRemove: (index: number) => void;
+  onRemove?: (index: number) => void;
+  onDuplicate?: (index: number) => void;
   onToggle: (index: number) => void;
   defaultExpanded?: boolean;
 }) {
@@ -172,7 +196,7 @@ function MiddlewareEntryCard({
 
   // Determine which params to render (exclude model_id/model_provider — handled separately)
   const paramKeys = Object.keys(entry.params).filter(
-    (k) => k !== "model_id" && k !== "model_provider"
+    (k) => k !== "model_id" && k !== "model_provider",
   );
 
   return (
@@ -184,11 +208,10 @@ function MiddlewareEntryCard({
     >
       {/* Header row */}
       <div className="flex items-center gap-2 px-3 py-2">
-        <GripVertical className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
-
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
+          aria-label={`${expanded ? "Collapse" : "Configure"} ${label}`}
           className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
         >
           {expanded ? (
@@ -205,13 +228,14 @@ function MiddlewareEntryCard({
             checked={entry.enabled}
             onChange={() => onToggle(index)}
             disabled={disabled}
+            aria-label={`${entry.enabled ? "Disable" : "Enable"} ${label}`}
             className="sr-only peer"
           />
           <div className="w-8 h-4 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-ring">
             <div
               className={cn(
                 "w-3 h-3 bg-background rounded-full transition-transform mt-0.5 ml-0.5",
-                entry.enabled && "translate-x-4"
+                entry.enabled && "translate-x-4",
               )}
             />
           </div>
@@ -234,16 +258,34 @@ function MiddlewareEntryCard({
           </TooltipProvider>
         )}
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0"
-          onClick={() => onRemove(index)}
-          disabled={disabled}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        {onDuplicate && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={() => onDuplicate(index)}
+            disabled={disabled}
+            aria-label={`Add another ${label} configuration`}
+            title={`Add another ${label} configuration`}
+          >
+            <CopyPlus className="h-3.5 w-3.5" />
+          </Button>
+        )}
+
+        {onRemove && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive"
+            onClick={() => onRemove(index)}
+            disabled={disabled}
+            aria-label={`Remove this ${label} configuration`}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </div>
 
       {/* Expanded params */}
@@ -252,40 +294,31 @@ function MiddlewareEntryCard({
           {/* Model selection for middleware that need it */}
           {definition?.model_params && availableModels && (
             <div className="space-y-1">
-              <Label className="text-xs">Model</Label>
-              <select
-                value={`${entry.params.model_id ?? ""}::${entry.params.model_provider ?? ""}`}
-                onChange={(e) => {
-                  const lastDelim = e.target.value.lastIndexOf("::");
-                  if (lastDelim > 0) {
-                    const mid = e.target.value.slice(0, lastDelim);
-                    const mprov = e.target.value.slice(lastDelim + 2);
-                    onUpdate(index, {
-                      ...entry.params,
-                      model_id: mid,
-                      model_provider: mprov,
-                    });
-                  }
+              <Label className="text-xs" htmlFor={`middleware-model-${index}`}>
+                Model
+              </Label>
+              <ModelPicker
+                id={`middleware-model-${index}`}
+                options={availableModels}
+                modelId={String(entry.params.model_id ?? "")}
+                modelProvider={String(entry.params.model_provider ?? "")}
+                onChange={(modelId, modelProvider) => {
+                  onUpdate(index, {
+                    ...entry.params,
+                    model_id: modelId,
+                    model_provider: modelProvider,
+                  });
                 }}
                 disabled={disabled}
-                className={cn(
-                  "flex h-8 w-full rounded-md border bg-background px-2 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50",
-                  !entry.params.model_id ? "border-destructive" : "border-input",
+                ariaLabel="Middleware model"
+                ariaInvalid={!entry.params.model_id}
+                triggerClassName={cn(
+                  "h-8 px-2 py-1 text-xs",
+                  !entry.params.model_id
+                    ? "border-destructive"
+                    : "border-input",
                 )}
-              >
-                <option value="::">Select a model...</option>
-                {availableModels.map((m) => (
-                  <option
-                    key={`${m.model_id}::${m.provider}`}
-                    value={`${m.model_id}::${m.provider}`}
-                  >
-                    {m.name}
-                    {m.provider && m.provider !== "default"
-                      ? ` (${m.provider})`
-                      : ""}
-                  </option>
-                ))}
-              </select>
+              />
               {!entry.params.model_id && (
                 <p className="text-xs text-destructive">
                   A model is required for this middleware to function.
@@ -298,7 +331,9 @@ function MiddlewareEntryCard({
           {paramKeys.map((key) => {
             const schemaHint = definition?.param_schema?.[key];
             const parsed = schemaHint ? parseParamSchema(schemaHint) : null;
-            const paramType = parsed?.type ?? (typeof entry.params[key] === "number" ? "number" : "string");
+            const paramType =
+              parsed?.type ??
+              (typeof entry.params[key] === "number" ? "number" : "string");
             const paramLabel = snakeToTitle(key);
             const val = entry.params[key];
 
@@ -306,7 +341,7 @@ function MiddlewareEntryCard({
               return (
                 <div key={key} className="space-y-1">
                   <Label className="text-xs">{paramLabel}</Label>
-                  <select
+                  <Select
                     value={String(val ?? "")}
                     onChange={(e) => handleParamChange(key, e.target.value)}
                     disabled={disabled}
@@ -317,7 +352,7 @@ function MiddlewareEntryCard({
                         {opt}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               );
             }
@@ -332,7 +367,7 @@ function MiddlewareEntryCard({
                     onChange={(e) =>
                       handleParamChange(
                         key,
-                        e.target.value ? Number(e.target.value) : undefined
+                        e.target.value ? Number(e.target.value) : undefined,
                       )
                     }
                     disabled={disabled}
@@ -400,27 +435,12 @@ export function MiddlewarePicker({
     onError?.(!!error);
   }, [error, onError]);
 
-  // If no features config, show the defaults (once loaded)
-  const entries: MiddlewareEntry[] =
-    value?.middleware && value.middleware.length > 0
-      ? value.middleware
-      : loading ? [] : getDefaultEntries(definitions);
-
-  const [showAddMenu, setShowAddMenu] = React.useState(false);
-  const [lastAddedIndex, setLastAddedIndex] = React.useState<number | null>(null);
-  const menuRef = React.useRef<HTMLDivElement>(null);
-
-  // Close menu on click outside
-  React.useEffect(() => {
-    if (!showAddMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setShowAddMenu(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [showAddMenu]);
+  const entries: MiddlewareEntry[] = loading
+    ? []
+    : materializeEntries(definitions, value);
+  const [lastAddedIndex, setLastAddedIndex] = React.useState<number | null>(
+    null,
+  );
 
   // Clear lastAddedIndex after it's been consumed by the render
   React.useEffect(() => {
@@ -441,7 +461,7 @@ export function MiddlewarePicker({
 
   const handleUpdateParams = (
     index: number,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
   ) => {
     const updated = [...entries];
     updated[index] = { ...updated[index], params };
@@ -453,25 +473,20 @@ export function MiddlewarePicker({
     updateEntries(updated);
   };
 
-  const handleAdd = (key: string) => {
-    const def = getDefinition(definitions, key);
+  const handleDuplicate = (index: number) => {
+    const current = entries[index];
+    const def = getDefinition(definitions, current.type);
     if (!def) return;
     const newEntry: MiddlewareEntry = {
-      type: key,
+      type: current.type,
       enabled: true,
       params: { ...def.default_params },
     };
-    const newEntries = [...entries, newEntry];
-    setLastAddedIndex(newEntries.length - 1);
+    const newEntries = [...entries];
+    newEntries.splice(index + 1, 0, newEntry);
+    setLastAddedIndex(index + 1);
     updateEntries(newEntries);
-    setShowAddMenu(false);
   };
-
-  // Determine which middleware types can be added
-  const addableTypes = definitions.filter((def) => {
-    if (def.allow_multiple) return true;
-    return !isSingletonPresent(definitions, entries, def.key);
-  });
 
   return (
     <div className="space-y-3">
@@ -486,7 +501,8 @@ export function MiddlewarePicker({
         <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
           <p className="font-medium">Unable to connect to the agents backend</p>
           <p className="mt-1 text-destructive/80">
-            Middleware definitions could not be loaded. Saving is disabled until this is resolved.
+            Middleware definitions could not be loaded. Saving is disabled until
+            this is resolved.
           </p>
           <Button
             type="button"
@@ -502,67 +518,50 @@ export function MiddlewarePicker({
 
       {!loading && !error && (
         <>
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-muted-foreground">
-              Add middleware to customize agent behavior during execution.
-            </p>
-            <div className="relative shrink-0 ml-4" ref={menuRef}>
-              <Button
-                type="button"
-                size="sm"
-                className="h-7 text-xs gap-1.5"
-                onClick={() => setShowAddMenu(!showAddMenu)}
-                disabled={disabled || addableTypes.length === 0}
-              >
-                <Plus className="h-3 w-3" />
-                Add configuration
-              </Button>
-              {showAddMenu && (
-                <div className="absolute top-full right-0 mt-1 z-50 w-64 rounded-lg border bg-background shadow-xl py-1">
-                  {addableTypes.map((def) => (
-                    <button
-                      key={def.key}
-                      type="button"
-                      className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors"
-                      onClick={() => handleAdd(def.key)}
-                    >
-                      <span className="font-medium">{def.label}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {def.description}
-                      </span>
-                    </button>
-                  ))}
-                  {addableTypes.length === 0 && (
-                    <p className="px-3 py-2 text-xs text-muted-foreground italic">
-                      All singleton middleware already added
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Every available middleware is shown below. Turn on what this agent
+            needs, then expand it to adjust its settings. Middleware that
+            supports multiple rules includes a duplicate button.
+          </p>
 
           {/* Middleware entries list */}
           <div className="space-y-2">
             {entries.length === 0 ? (
               <p className="text-xs text-muted-foreground italic py-4 text-center">
-                No middleware configured. The agent will run without any middleware.
+                No middleware configured. The agent will run without any
+                middleware.
               </p>
             ) : (
-              entries.map((entry, index) => (
-                <MiddlewareEntryCard
-                  key={`${entry.type}-${index}`}
-                  entry={entry}
-                  index={index}
-                  definition={getDefinition(definitions, entry.type)}
-                  disabled={disabled}
-                  availableModels={availableModels}
-                  onUpdate={handleUpdateParams}
-                  onRemove={handleRemove}
-                  onToggle={handleToggle}
-                  defaultExpanded={index === lastAddedIndex}
-                />
-              ))
+              entries.map((entry, index) => {
+                const definition = getDefinition(definitions, entry.type);
+                const sameTypeIndexes = entries.flatMap(
+                  (candidate, itemIndex) =>
+                    candidate.type === entry.type ? [itemIndex] : [],
+                );
+                return (
+                  <MiddlewareEntryCard
+                    key={`${entry.type}-${index}`}
+                    entry={entry}
+                    index={index}
+                    definition={definition}
+                    disabled={disabled}
+                    availableModels={availableModels}
+                    onUpdate={handleUpdateParams}
+                    onRemove={
+                      definition?.allow_multiple && sameTypeIndexes.length > 1
+                        ? handleRemove
+                        : undefined
+                    }
+                    onDuplicate={
+                      definition?.allow_multiple && sameTypeIndexes[0] === index
+                        ? handleDuplicate
+                        : undefined
+                    }
+                    onToggle={handleToggle}
+                    defaultExpanded={index === lastAddedIndex}
+                  />
+                );
+              })
             )}
           </div>
         </>

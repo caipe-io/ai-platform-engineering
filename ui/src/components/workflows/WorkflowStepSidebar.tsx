@@ -6,6 +6,7 @@ import { AgentPicker,type AgentPickerOption } from "@/components/ui/agent-picker
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { WorkflowStep } from "@/types/workflow-config";
@@ -293,7 +294,7 @@ export function WorkflowStepSidebar({
             <Label htmlFor="on_error" className="text-xs font-semibold">
               Error Handling
             </Label>
-            <select
+            <Select
               id="on_error"
               value={step.on_error}
               onChange={(e) => {
@@ -311,7 +312,7 @@ export function WorkflowStepSidebar({
               <option value="abort">Abort workflow</option>
               <option value="skip">Skip step</option>
               <option value="retry">Retry step</option>
-            </select>
+            </Select>
           </div>
           {step.on_error === "retry" && (
             <div className="w-24 space-y-2">

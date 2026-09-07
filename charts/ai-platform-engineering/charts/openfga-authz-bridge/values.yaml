@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/cnoe-io/openfga-authz-bridge
+  repository: ghcr.io/caipe-io/openfga-authz-bridge
   tag: ""
   pullPolicy: IfNotPresent
 
@@ -16,6 +16,9 @@ serviceAccount:
 service:
   type: ClusterIP
   port: 9100
+
+# Must match the organization key used by the UI and RAG server.
+organizationKey: caipe
 
 openfga:
   httpUrl: "http://openfga:8080"

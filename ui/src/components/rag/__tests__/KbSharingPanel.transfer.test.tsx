@@ -12,28 +12,28 @@ import React from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-// TeamOwnershipFields pulls in the team pickers / popovers; stub it to a minimal
-// control surface so this test focuses on KbSharingPanel's transfer logic.
-jest.mock("@/components/rbac/TeamOwnershipFields", () => ({
-  TeamOwnershipFields: ({
-    onOwnerTeamChange,
-    onTransfer,
+const mockToast = jest.fn();
+jest.mock("@/components/ui/toast", () => ({
+  useToast: () => ({ toast: mockToast }),
+}));
+
+// Stub the searchable person/team controls so this test focuses on the
+// transfer-confirmation flow.
+jest.mock("@/components/ui/access-subject-picker", () => ({
+  AccessSubjectPicker: ({
+    onChange,
   }: {
-    onOwnerTeamChange: (slug: string) => void;
-    onTransfer?: (slug: string, confirmedNotMember: boolean) => void;
+    onChange: (ref: { kind: "team"; id: string }) => void;
   }) => (
     <button
       type="button"
       data-testid="mock-transfer-owner"
-      onClick={() => {
-        // Simulate the user choosing a new owner team they are not a member of.
-        onOwnerTeamChange("other-team");
-        onTransfer?.("other-team", false);
-      }}
+      onClick={() => onChange({ kind: "team", id: "other-team" })}
     >
       Change owner
     </button>
   ),
+  AccessSubjectMultiPicker: () => <div data-testid="mock-search-access" />,
 }));
 
 import { KbSharingPanel } from "../KbSharingPanel";
@@ -107,13 +107,13 @@ describe("KbSharingPanel — Confirm Transfer recovery", () => {
     );
 
     await act(async () => {
-      await user.click(screen.getByRole("button", { name: /save sharing/i }));
+      await user.click(screen.getByRole("button", { name: /transfer & save/i }));
     });
 
     // Inline confirm affordance appears (not just a transient error).
     const confirmBtn = await screen.findByRole("button", { name: /confirm transfer/i });
     expect(confirmBtn).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent(/not a member of the destination team/i);
+    expect(screen.getByRole("alert")).toHaveTextContent(/not a member/i);
 
     // The retry succeeds.
     fetchMock.mockImplementationOnce(async () =>
@@ -135,13 +135,26 @@ describe("KbSharingPanel — Confirm Transfer recovery", () => {
     expect(putCalls.length).toBeGreaterThanOrEqual(2);
     const retryBody = JSON.parse(putCalls[putCalls.length - 1][1].body);
     expect(retryBody).toMatchObject({
-      owner_team_slug: "other-team",
+      owner: { kind: "team", id: "other-team" },
       confirm_not_member: true,
     });
 
-    // Success message replaces the error.
-    await waitFor(() =>
-      expect(screen.getByText(/ownership transferred/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(mockToast).toHaveBeenCalledWith(
+      "Datasource Owner and Search access updated.",
+      "success",
+    ));
+  });
+
+  it("uses Cancel to close the management dialog", async () => {
+    const user = userEvent.setup();
+    const onCancel = jest.fn();
+    primeInitialFetch(fetchMock);
+
+    render(<KbSharingPanel knowledgeBaseId={KB_ID} onCancel={onCancel} />);
+
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Reset" })).not.toBeInTheDocument();
   });
 });

@@ -22,7 +22,6 @@ const customJestConfig = {
   ],
   coveragePathIgnorePatterns: [
     '/node_modules/',
-    '<rootDir>/src/components/agent-builder/',
     '<rootDir>/src/components/chat/DynamicAgentChatPanel.tsx',
     '<rootDir>/src/components/rag/IngestView.tsx',
     '<rootDir>/src/components/rag/MCPToolsView.tsx',

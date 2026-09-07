@@ -7,7 +7,7 @@ from dynamic_agents.routes.projects import router as projects_router
 
 
 def test_dynamic_agents_service_does_not_ship_agent_crud_router() -> None:
-    """The BFF owns agent configuration writes; DA only serves runtime routes."""
+    """The BFF owns agent writes; DA only serves runtime-safe helper routes."""
 
     agent_routes = {
         (method, route.path)
@@ -20,5 +20,5 @@ def test_dynamic_agents_service_does_not_ship_agent_crud_router() -> None:
         for method in (route.methods or set())
     }
 
-    assert agent_routes == set()
+    assert agent_routes == {("GET", "/agents/{agent_id}/probe")}
     assert project_routes == {("GET", "/projects"), ("POST", "/projects")}

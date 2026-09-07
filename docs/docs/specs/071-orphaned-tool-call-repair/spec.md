@@ -9,7 +9,7 @@ title: "2026-02-24: Orphaned Tool Call Repair for Bedrock Multi-Turn Conversatio
 **Status**: Implemented
 **Category**: Bug Fix / Resilience
 **Date**: February 24, 2026
-**PRs**: [#842](https://github.com/cnoe-io/ai-platform-engineering/pull/842) (supervisor fixes), [#31](https://github.com/cnoe-io/cnoe-agent-utils/pull/31) (OTel fix)
+**PRs**: [#842](https://github.com/caipe-io/ai-platform-engineering/pull/842) (supervisor fixes), [#31](https://github.com/cnoe-io/cnoe-agent-utils/pull/31) (OTel fix)
 
 ## Overview
 

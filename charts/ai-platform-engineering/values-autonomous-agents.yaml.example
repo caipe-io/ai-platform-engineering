@@ -1,0 +1,126 @@
+# Example values for enabling the Autonomous Agents service
+#
+# Autonomous Agents is a standalone scheduler that fires tasks
+# (cron / interval / webhook) at the CAIPE supervisor over A2A. Tasks and run
+# history are managed through the CAIPE UI's admin-gated /api/autonomous proxy
+# and persisted to the same MongoDB the UI uses.
+#
+# Three pieces must be wired together (this file does all three):
+#   1. The autonomous-agents subchart itself      (tags.autonomous-agents)
+#   2. The CAIPE UI flags so the Autonomous tab appears and the proxy
+#      knows its upstream                          (caipe-ui.config.*)
+#   3. The supervisor env so its task-management tools can reach the
+#      service                                     (supervisor-agent.env)
+#
+# Usage:
+#   helm install ai-platform-engineering ./charts/ai-platform-engineering \
+#     -f ./charts/ai-platform-engineering/values-mongodb.yaml.example \
+#     -f ./charts/ai-platform-engineering/values-autonomous-agents.yaml.example
+#
+# MongoDB is REQUIRED. Either enable the in-cluster MongoDB (see
+# values-mongodb.yaml.example) or bring your own and provide MONGODB_URI via
+# the secret referenced below. Example secret:
+#   kubectl create secret generic autonomous-agents-secret \
+#     --from-literal=MONGODB_URI="mongodb://admin:changeme@ai-platform-engineering-mongodb:27017/caipe?authSource=admin" \
+#     --from-literal=WEBHOOK_SECRET="<strong random value>"
+
+tags:
+  autonomous-agents: true
+  caipe-ui: true  # The UI hosts the admin-gated proxy in front of the service
+
+######### Autonomous Agents Configuration #########
+autonomous-agents:
+  # Authenticate calls to Dynamic Agents. These defaults use the bundled
+  # Keycloak platform client. Override tokenUrl and clientSecretRef when using
+  # an external identity provider.
+  dynamicAgentsAuth:
+    enabled: true
+    clientId: "caipe-platform"
+    clientSecretRef:
+      name: "caipe-platform-secret"
+      key: "OIDC_CLIENT_SECRET"
+
+  config:
+    # Defaults track the in-release supervisor; override for an external one.
+    # SUPERVISOR_URL: "http://external-supervisor-agent:8000"
+    MONGODB_DATABASE: "caipe"
+    # Minimum gap between cron/interval fires. Webhook triggers are exempt.
+    MINIMUM_SCHEDULE_INTERVAL_SECONDS: "1800"
+    # Reject larger webhook bodies before parsing/signature verification.
+    WEBHOOK_MAX_PAYLOAD_BYTES: "1048576"
+    # Each task is a single-consumer FIFO. Bound queued work separately from
+    # execution concurrency across different tasks.
+    WEBHOOK_MAX_PENDING_PER_TASK: "100"
+    WEBHOOK_MAX_PENDING_PER_OWNER: "500"
+    WEBHOOK_MAX_PENDING_GLOBAL: "5000"
+    WEBHOOK_MAX_PENDING_PAYLOAD_BYTES_GLOBAL: "67108864"
+    WEBHOOK_MAX_CONCURRENT_PER_OWNER: "20"
+    WEBHOOK_MAX_CONCURRENT_GLOBAL: "100"
+    # Uncomment when tags.dynamic-agents=true so autonomous tasks with a
+    # dynamic_agent_id route through the user's custom agent:
+    # DYNAMIC_AGENTS_URL: "http://external-dynamic-agents:8001"
+    # Publish completed runs into the UI conversations collection so the
+    # "Open run" deep link works. OFF by default -- writes to a collection
+    # shared with the UI; opt in deliberately (storage growth, multi-tenant
+    # visibility).
+    # CHAT_HISTORY_PUBLISH_ENABLED: "true"
+
+  # Secret holding MONGODB_URI (required), WEBHOOK_SECRET, and optional
+  # WEBEX_BOT_TOKEN / WEBEX_WEBHOOK_SECRET / WEBEX_BOT_PUBLIC_URL
+  existingSecret: "autonomous-agents-secret"
+
+  # Webhook triggers from external senders (GitHub, PagerDuty, ...) need this
+  # service reachable from the internet. The ingress is path-limited to the
+  # webhook receiver (/api/v1/hooks) -- NEVER widen it to "/": the task API
+  # has no auth of its own (admin gating lives in the UI proxy).
+  # Set WEBHOOK_SECRET in the secret above before enabling.
+  # ingress:
+  #   enabled: true
+  #   className: "nginx"
+  #   hosts:
+  #     - host: autonomous-hooks.example.com
+  #       paths:
+  #         - path: /api/v1/hooks
+  #           pathType: Prefix
+  #   tls:
+  #     - hosts: [autonomous-hooks.example.com]
+  #       secretName: autonomous-hooks-tls
+
+######### CAIPE UI Configuration #########
+caipe-ui:
+  config:
+    # Show the Autonomous tab (admin-gated) and point the /api/autonomous
+    # proxy at the in-release service. This example assumes a release named
+    # "ai-platform-engineering"; change the hostname if your release differs.
+    ENABLE_AUTONOMOUS_AGENTS: "true"
+    AUTONOMOUS_AGENTS_URL: "http://ai-platform-engineering-autonomous-agents:8002"
+
+######### OpenFGA on-behalf-of Configuration #########
+# Enable when running the RBAC/OpenFGA stack with the bundled Keycloak platform
+# client. This seeds the platform service account as an organization auditor so
+# autonomous runs can be authorized on behalf of their task owner.
+openfga:
+  init:
+    platformClient:
+      enabled: true
+      clientId: caipe-platform
+      clientSecretRef:
+        name: caipe-platform-secret
+        key: OIDC_CLIENT_SECRET
+      orgObject: organization:caipe
+
+######### Supervisor Configuration #########
+supervisor-agent:
+  # The supervisor's task-management tools talk to the service directly;
+  # AUTONOMOUS_AGENTS_PUBLIC_URL is used when constructing callback URLs for
+  # webhook senders and should be the externally-reachable ingress host above
+  # (leave empty when webhooks are not exposed).
+  #
+  # NOTE: unlike caipe-ui.config / autonomous-agents.config, supervisor env
+  # values are NOT rendered through `tpl` -- spell out the Service hostname,
+  # which is "<release name>-autonomous-agents". The default below assumes a
+  # release named "ai-platform-engineering".
+  env:
+    ENABLE_AUTONOMOUS_AGENTS: "true"
+    AUTONOMOUS_AGENTS_URL: "http://ai-platform-engineering-autonomous-agents:8002"
+    # AUTONOMOUS_AGENTS_PUBLIC_URL: "https://autonomous-hooks.example.com"

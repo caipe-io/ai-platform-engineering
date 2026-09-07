@@ -14,6 +14,14 @@ COMPOSE_PROFILES='rbac,caipe-ui,caipe-mongodb' \
 docker compose -f docker-compose.dev.yaml ps keycloak
 ```
 
+## Conversation History Compatibility
+
+Chat API routes accept both UUID conversation IDs and bounded legacy opaque IDs.
+This keeps history created before server-owned UUID generation readable and
+manageable. The identifier is only used for an exact record lookup; the normal
+conversation authorization check still runs after the record is loaded for
+every read, update, archive, restore, bookmark, share, and message operation.
+
 Keycloak admin console: `http://localhost:7080/admin` (admin / admin)
 
 When the `rbac` profile is selected, `caipe-ui` has an optional `depends_on`
@@ -866,14 +874,12 @@ agents remain denied unless the user has a direct or team-derived grant.
 2. Bot silently fetches your Slack email, matches it to your Keycloak account, links automatically
 3. Subsequent messages: OBO exchange happens automatically — zero user action required
 
-**Forced-link mode (`SLACK_FORCE_LINK=true`):**
+**Unknown email (no matching Keycloak user):**
 
-1. DM the Slack bot with any message
-2. If unlinked: one-time HMAC-signed link prompt (rate-limited by `SLACK_LINKING_PROMPT_COOLDOWN`)
-3. Click link → SSO login → `slack_user_id` written to Keycloak via Admin API
-4. Subsequent messages: OBO exchange happens automatically
+1. If `SLACK_JIT_CREATE_USER=true` (default): the bot JIT-provisions a federated-only Keycloak shell user and links it silently — zero user action required.
+2. If JIT is disabled, the domain isn't allow-listed, or JIT fails: the user is treated as unlinked (minimum-access fallback) and told to contact an admin. There is no interactive link-to-onboard path — a signed link would be redeemable by whoever holds it, not provably the intended Slack user, so it was removed as a security hole.
 
-The full sequence (HMAC URL shape, TTL enforcement, **JIT user creation** for unknown emails, what happens server-side) is in [Workflows › Slack identity linking](./workflows.md#slack-identity-linking-auto-bootstrap--jit--forced-link).
+The full sequence (**JIT user creation** for unknown emails, what happens server-side) is in [Workflows › Slack identity linking](./workflows.md#slack-identity-linking-auto-bootstrap--jit).
 
 ---
 
@@ -990,7 +996,6 @@ Store secrets in Kubernetes Secrets, ExternalSecrets, or local `.env`:
 ```bash
 WEBEX_INTEGRATION_BOT_ACCESS_TOKEN=...
 WEBEX_WEBHOOK_SECRET=...
-WEBEX_LINK_HMAC_SECRET=...
 KEYCLOAK_WEBEX_BOT_CLIENT_SECRET=...
 WEBEX_BOT_ADMIN_CLIENT_SECRET=...
 MONGODB_URI=...
@@ -1047,10 +1052,14 @@ filter, then joins the matching MongoDB route metadata.
 The **Step 2a: Verify Webex Space ReBAC** panel checks the selected space using the same
 OpenFGA tuple read shape that runtime dispatch uses. If a space has no routeable
 agent, diagnostics shows **Fix missing association with `agent:<id>`** when a
-default Dynamic Agent is available. That repair creates the missing OpenFGA-backed
-association with `listen: mention`, priority `100`, and refreshes the diagnostics. If
-the repair reports `fetch failed`, check that the UI server can reach OpenFGA with
-`OPENFGA_HTTP` and the expected `OPENFGA_STORE_ID`.
+default Dynamic Agent is available. Clicking it does not create a route
+automatically; it prompts the admin to add the agent manually through the
+space's route editor. The route editor no longer exposes `listen` or `priority`
+as editable fields — every route it creates is fixed to `listen: mention`,
+priority `100`, since Webex's Mercury transport only ever delivers `@mention`
+events to group spaces. If a diagnostics fetch reports `fetch failed`, check
+that the UI server can reach OpenFGA with `OPENFGA_HTTP` and the expected
+`OPENFGA_STORE_ID`.
 
 Runtime denials, account-link prompts, and Dynamic Agent responses are sent as
 threaded replies by preserving the incoming Webex message ID and using it as the

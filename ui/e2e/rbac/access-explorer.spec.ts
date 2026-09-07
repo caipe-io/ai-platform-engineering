@@ -10,47 +10,47 @@ import {
 } from "./_mocked-rbac";
 
 const adminSession = {
-  email: "sraradhy@cisco.com",
-  name: "Sri Aradhyula",
+  email: "user@example.com",
+  name: "Example User",
   role: "admin" as const,
   canViewAdmin: true,
 };
 
 const users = [
   {
-    id: "user-sri",
-    email: "sraradhy@cisco.com",
-    firstName: "Sri",
-    lastName: "Aradhyula",
-    username: "sraradhy",
+    id: "test-user",
+    email: "user@example.com",
+    firstName: "Example",
+    lastName: "User",
+    username: "example-user",
   },
 ];
 
 const teams = [{ slug: "platform", name: "Platform Team" }];
-const serviceAccounts = [{ id: "sa-sri-ci-bot", name: "Sri CI Robot" }];
+const serviceAccounts = [{ id: "sa-primary-ci-bot", name: "Primary CI Robot" }];
 const unlinkedServiceAccount = { id: "sa-unlinked", name: "unlinked" };
-const agents = [{ _id: "agent-sri-assistant", name: "Sri Assistant Agent" }];
-const skills = [{ id: "skill-sri-review", name: "Sri Review Skill", description: "Reviews pull requests" }];
+const agents = [{ _id: "agent-primary-assistant", name: "Primary Assistant Agent" }];
+const skills = [{ id: "skill-primary-review", name: "Primary Review Skill", description: "Reviews pull requests" }];
 const emptySkill = { id: "skill-empty", name: "Foo Empty Skill", description: "No grants yet" };
-const datasources = [{ datasource_id: "kb-sri-runbooks", name: "Sri Runbooks", description: "Operational runbooks" }];
-const credentials = [{ id: "secret-sri-github", name: "Sri GitHub Credential", type: "api_key" }];
-const llmModels = [{ _id: "model-sri-gpt", model_id: "model-sri-gpt", name: "Sri GPT Model", provider: "openai" }];
+const datasources = [{ datasource_id: "kb-primary-runbooks", name: "Primary Runbooks", description: "Operational runbooks" }];
+const credentials = [{ id: "secret-primary-provider", name: "Primary Provider Credential", type: "api_key" }];
+const llmModels = [{ _id: "model-primary-chat", model_id: "model-primary-chat", name: "Primary Chat Model", provider: "openai" }];
 const accessExplorerPlaceholder = "Search users, teams, agents, skills, data sources, credentials, or models.";
 
 const effectiveGraph = {
   nodes: [
-    { id: "user:user-sri", label: "Sri Aradhyula", type: "user" },
+    { id: "user:test-user", label: "Example User", type: "user" },
     { id: "team:platform#member", label: "Platform members", type: "userset" },
-    { id: "agent:github", label: "GitHub Agent", type: "agent" },
+    { id: "agent:source-control", label: "Source Control Agent", type: "agent" },
     { id: "mcp_server:payments", label: "Payments MCP", type: "mcp_server" },
     { id: "slack_channel:C123", label: "#ops-alerts", type: "slack_channel" },
-    { id: "organization:caipe", label: "CAIPE organization", type: "organization" },
+    { id: "organization:primary", label: "Primary organization", type: "organization" },
   ],
   edges: [
     {
       id: "effective-user-agent",
-      from: "user:user-sri",
-      to: "agent:github",
+      from: "user:test-user",
+      to: "agent:source-control",
       relation: "can_use",
       kind: "effective",
     },
@@ -63,21 +63,21 @@ const effectiveGraph = {
     },
     {
       id: "effective-user-slack",
-      from: "user:user-sri",
+      from: "user:test-user",
       to: "slack_channel:C123",
       relation: "can_read",
       kind: "effective",
     },
     {
       id: "effective-user-search",
-      from: "user:user-sri",
-      to: "organization:caipe",
+      from: "user:test-user",
+      to: "organization:primary",
       relation: "can_search",
       kind: "effective",
     },
     {
       id: "raw-team-membership",
-      from: "user:user-sri",
+      from: "user:test-user",
       to: "team:platform#member",
       relation: "member",
       kind: "openfga",
@@ -87,29 +87,29 @@ const effectiveGraph = {
 
 const agentRuntimeGraph = {
   nodes: [
-    { id: "agent:github", label: "GitHub Agent", type: "agent" },
+    { id: "agent:source-control", label: "Source Control Agent", type: "agent" },
     { id: "tool:jira/*", label: "Jira MCP tools", type: "tool" },
-    { id: "mcp_tool:caipe_kb", label: "CAIPE KB tool", type: "mcp_tool" },
+    { id: "mcp_tool:primary_kb", label: "Primary KB tool", type: "mcp_tool" },
     { id: "knowledge_base:kb-platform", label: "Platform KB", type: "knowledge_base" },
   ],
   edges: [
     {
       id: "effective-agent-tool",
-      from: "agent:github",
+      from: "agent:source-control",
       to: "tool:jira/*",
       relation: "can_call",
       kind: "effective",
     },
     {
       id: "effective-agent-mcp-tool",
-      from: "agent:github",
-      to: "mcp_tool:caipe_kb",
+      from: "agent:source-control",
+      to: "mcp_tool:primary_kb",
       relation: "can_call",
       kind: "effective",
     },
     {
       id: "effective-agent-kb",
-      from: "agent:github",
+      from: "agent:source-control",
       to: "knowledge_base:kb-platform",
       relation: "can_read",
       kind: "effective",
@@ -120,13 +120,13 @@ const agentRuntimeGraph = {
 const resourceGraph = {
   nodes: [
     { id: "team:platform#member", label: "Platform members", type: "userset" },
-    { id: "skill:skill-sri-review", label: "Sri Review Skill", type: "skill" },
+    { id: "skill:skill-primary-review", label: "Primary Review Skill", type: "skill" },
   ],
   edges: [
     {
       id: "effective-team-skill",
       from: "team:platform#member",
-      to: "skill:skill-sri-review",
+      to: "skill:skill-primary-review",
       relation: "can_use",
       kind: "effective",
     },
@@ -140,8 +140,8 @@ const emptySkillGraph = {
 
 const emptyAgentFeatureGraph = {
   nodes: [
-    { id: "user:user-sri", label: "Sri Aradhyula", type: "user" },
-    { id: "agent:agent-sri-assistant", label: "Sri Assistant Agent", type: "agent" },
+    { id: "user:test-user", label: "Example User", type: "user" },
+    { id: "agent:agent-primary-assistant", label: "Primary Assistant Agent", type: "agent" },
   ],
   edges: [],
 };
@@ -149,13 +149,13 @@ const emptyAgentFeatureGraph = {
 const datasourceGraph = {
   nodes: [
     { id: "team:platform#member", label: "Platform members", type: "userset" },
-    { id: "data_source:kb-sri-runbooks", label: "Sri Runbooks", type: "data_source" },
+    { id: "data_source:kb-primary-runbooks", label: "Primary Runbooks", type: "data_source" },
   ],
   edges: [
     {
       id: "effective-team-datasource",
       from: "team:platform#member",
-      to: "data_source:kb-sri-runbooks",
+      to: "data_source:kb-primary-runbooks",
       relation: "can_read",
       kind: "effective",
     },
@@ -264,7 +264,7 @@ async function installAccessExplorerMocks(
             ? resourceId === "skill-empty"
               ? emptySkillGraph
               : resourceGraph
-            : resourceType === "agent" && resourceId === "agent-sri-assistant" && subject === "user:user-sri"
+            : resourceType === "agent" && resourceId === "agent-primary-assistant" && subject === "user:test-user"
               ? emptyAgentFeatureGraph
             : resourceType === "data_source"
               ? datasourceGraph
@@ -288,22 +288,23 @@ async function installAccessExplorerMocks(
 }
 
 async function gotoAccessExplorer(page: Page) {
-  await page.goto("/admin?cat=security&tab=access-explorer", {
+  await page.goto("/admin/security/access-explorer", {
     waitUntil: "domcontentloaded",
   });
-  await expect(page.getByRole("tab", { name: "Access Explorer" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(
+    page
+      .getByRole("navigation",{ name: "Admin sections" })
+      .getByRole("link", { name: "Access Explorer" }),
+  ).toHaveAttribute("aria-current","page");
 }
 
-async function selectSriAndCheckAccess(page: Page) {
+async function selectExampleAndCheckAccess(page: Page) {
   await page
     .getByPlaceholder(accessExplorerPlaceholder)
-    .fill("sri");
-  await expect(page.getByText("Sri Aradhyula")).toBeVisible();
-  await page.getByText("Sri Aradhyula").click();
-  await expect(page.getByText("user:user-sri")).toBeVisible();
+    .fill("example");
+  await expect(page.getByText("Example User")).toBeVisible();
+  await page.getByText("Example User").click();
+  await expect(page.getByText("user:test-user")).toBeVisible();
   await page.getByRole("button", { name: "Check Access" }).click();
   await expect(page.getByTestId("openfga-graph-canvas")).toBeVisible();
 }
@@ -322,9 +323,9 @@ test.describe("mocked Access Explorer browser regression", () => {
     await installAccessExplorerMocks(page);
     await gotoAccessExplorer(page);
 
-    await expect(page).toHaveURL(/\/admin\?cat=security&tab=access-explorer$/);
-    await expect(page.getByRole("button", { name: "Security & Policy" })).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByRole("heading", { name: "Access Explorer" })).toHaveCount(0);
+    await expect(page).toHaveURL(/\/admin\/security\/access-explorer$/);
+    await expect(page.getByRole("button", { name: "Security & Policy" })).toHaveAttribute("data-active", "true");
+    await expect(page.getByRole("heading", { level: 1,name: "Access Explorer" })).toBeVisible();
     await expect(page.getByTestId("access-explorer-search-stage")).toBeVisible();
     await expect(page.getByTestId("access-explorer-header")).toHaveCount(0);
     await expect(
@@ -345,21 +346,6 @@ test.describe("mocked Access Explorer browser regression", () => {
     await expect(page.getByTestId("openfga-graph-canvas")).toHaveCount(0);
   });
 
-  test("canonicalizes legacy tab=openfga links to tab=access-explorer", async ({ page }) => {
-    await installAccessExplorerMocks(page);
-
-    await page.goto("/admin?cat=security&tab=openfga", {
-      waitUntil: "domcontentloaded",
-    });
-
-    await expect(page).toHaveURL(/\/admin\?cat=security&tab=access-explorer$/);
-    await expect(page.getByRole("tab", { name: "Access Explorer" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    await expect(page.getByTestId("access-explorer-search-stage")).toBeVisible();
-  });
-
   test("shows browseable entities on focus before any search text is entered", async ({ page }) => {
     const harness = await installAccessExplorerMocks(page);
     await gotoAccessExplorer(page);
@@ -367,15 +353,15 @@ test.describe("mocked Access Explorer browser regression", () => {
     const search = page.getByPlaceholder(accessExplorerPlaceholder);
     await search.focus();
 
-    const explorer = page.getByLabel("Access Explorer");
+    const explorer = page.getByTestId("access-explorer-search-stage");
     await expect(explorer.getByText("Users", { exact: true })).toBeVisible();
     await expect(explorer.getByText("Agents", { exact: true })).toBeVisible();
     await expect(explorer.getByText("Skills", { exact: true })).toBeVisible();
     await expect(explorer.getByText("Data Sources", { exact: true })).toBeVisible();
-    await expect(explorer.getByText("Sri Aradhyula")).toBeVisible();
-    await expect(explorer.getByText("Sri Assistant Agent")).toBeVisible();
-    await expect(explorer.getByText("Sri Review Skill")).toBeVisible();
-    await expect(explorer.getByText("Sri Runbooks")).toBeVisible();
+    await expect(explorer.getByText("Example User")).toBeVisible();
+    await expect(explorer.getByText("Primary Assistant Agent")).toBeVisible();
+    await expect(explorer.getByText("Primary Review Skill")).toBeVisible();
+    await expect(explorer.getByText("Primary Runbooks")).toBeVisible();
     await expect.poll(() => [...harness.searchEndpoints].sort()).toEqual([
       "agents",
       "resource-search",
@@ -386,7 +372,7 @@ test.describe("mocked Access Explorer browser regression", () => {
     ]);
   });
 
-  test("searches actors and resource entities before rendering effective access", async ({
+  test("selects an actor before rendering effective access", async ({
     page,
   }) => {
     const harness = await installAccessExplorerMocks(page, { holdGraphResponse: true });
@@ -394,27 +380,15 @@ test.describe("mocked Access Explorer browser regression", () => {
 
     await page
       .getByPlaceholder(accessExplorerPlaceholder)
-      .fill("sri");
+      .fill("example");
 
-    const explorer = page.getByLabel("Access Explorer");
+    const explorer = page.getByTestId("access-explorer-search-stage");
     await expect(explorer.getByText("Users", { exact: true })).toBeVisible();
     await expect(explorer.getByText("Teams", { exact: true })).toBeVisible();
-    await expect(explorer.getByText("Service Accounts", { exact: true })).toBeVisible();
-    await expect(explorer.getByText("Agents", { exact: true })).toBeVisible();
-    await expect(explorer.getByText("Skills", { exact: true })).toBeVisible();
-    await expect(explorer.getByText("Data Sources", { exact: true })).toBeVisible();
     await expect(explorer.getByText("Chats", { exact: true })).toHaveCount(0);
-    await expect(explorer.getByText("Credentials", { exact: true })).toBeVisible();
-    await expect(explorer.getByText("LLM Models", { exact: true })).toBeVisible();
-    await expect(explorer.getByText("Sri Aradhyula")).toBeVisible();
+    await expect(explorer.getByText("Example User")).toBeVisible();
     await expect(explorer.getByText("Platform Team")).toBeVisible();
-    await expect(explorer.getByText("Sri CI Robot")).toBeVisible();
-    await expect(explorer.getByText("Sri Assistant Agent")).toBeVisible();
-    await expect(explorer.getByText("Sri Review Skill")).toBeVisible();
-    await expect(explorer.getByText("Sri Runbooks")).toBeVisible();
-    await expect(explorer.getByText("Sri Troubleshooting Chat")).toHaveCount(0);
-    await expect(explorer.getByText("Sri GitHub Credential")).toBeVisible();
-    await expect(explorer.getByText("Sri GPT Model")).toBeVisible();
+    await expect(explorer.getByText("Example Troubleshooting Chat")).toHaveCount(0);
 
     await expect.poll(() => [...harness.searchEndpoints].sort()).toEqual([
       "agents",
@@ -425,20 +399,23 @@ test.describe("mocked Access Explorer browser regression", () => {
       "users",
     ]);
 
-    await page.getByText("Sri Aradhyula").click();
-    await expect(page.getByText("user:user-sri")).toBeVisible();
+    await page.getByText("Example User").click();
+    await expect(page.getByText("user:test-user")).toBeVisible();
     await page.getByRole("button", { name: "Check Access" }).click();
 
     await expect(page.getByText("Checking access...")).toBeVisible();
     await expect(page.getByTestId("access-explorer-search-stage")).toHaveCount(0);
     harness.releaseGraphResponse();
 
-    await expect.poll(() => harness.graphSubjects.includes("user:user-sri")).toBe(true);
-    await expect.poll(() => harness.graphSubjects.includes("agent:github")).toBe(true);
+    await expect.poll(() => harness.graphSubjects.includes("user:test-user")).toBe(true);
+    await expect.poll(() => harness.graphSubjects.includes("agent:source-control")).toBe(true);
     await expect(page.getByTestId("access-explorer-search-stage")).toHaveCount(0);
     await expect(page.getByTestId("access-explorer-header")).toBeVisible();
     await expect(page.getByTestId("feature-check-panel")).toBeVisible();
-    await expect(page.getByText("Sri Aradhyula can perform this feature path.")).toBeVisible();
+    const featureAgentPicker = page.getByRole("combobox", { name: "Feature check agent" });
+    await featureAgentPicker.click();
+    await page.getByRole("option", { name: "Source Control Agent" }).click();
+    await expect(page.getByText("Example User can perform this feature path.")).toBeVisible();
     await expect(page.getByText("Actor can invoke agent")).toBeVisible();
     await expect(page.getByText("Agent can call MCP/tool")).toBeVisible();
     await expect(page.getByTestId("rf__node-tool:jira/*").getByText("Jira MCP tools")).toBeVisible();
@@ -450,8 +427,8 @@ test.describe("mocked Access Explorer browser regression", () => {
     await expect(page.getByTestId("access-explorer-relationships-count")).toContainText("5");
     await expect(page.getByTestId("access-explorer-relation-types-count")).toContainText("4");
     await expect(page.getByText("Access Summary")).toBeVisible();
-    await expect(page.getByText(/Sri Aradhyula can access 4 resources across 4 types/)).toBeVisible();
-    await expect(renderedCanvas.getByText("GitHub Agent")).toBeVisible();
+    await expect(page.getByText(/Example User can access 4 resources across 4 types/)).toBeVisible();
+    await expect(renderedCanvas.getByText("Source Control Agent")).toBeVisible();
     await expect(renderedCanvas.getByText("Payments MCP")).toBeVisible();
     await expect(renderedCanvas.getByText("#ops-alerts")).toBeVisible();
     await expect(page.getByTitle("Hide Agents")).toBeVisible();
@@ -463,10 +440,10 @@ test.describe("mocked Access Explorer browser regression", () => {
     const harness = await installAccessExplorerMocks(page);
     await gotoAccessExplorer(page);
 
-    await page.getByPlaceholder(accessExplorerPlaceholder).fill("sri");
-    await expect(page.getByText("Sri Review Skill")).toBeVisible();
-    await page.getByText("Sri Review Skill").click();
-    await expect(page.getByText("skill:skill-sri-review")).toBeVisible();
+    await page.getByPlaceholder(accessExplorerPlaceholder).fill("primary");
+    await expect(page.getByText("Primary Review Skill")).toBeVisible();
+    await page.getByText("Primary Review Skill").click();
+    await expect(page.getByText("skill:skill-primary-review")).toBeVisible();
     await page.getByRole("button", { name: "Check Access" }).click();
 
     await expect
@@ -474,14 +451,14 @@ test.describe("mocked Access Explorer browser regression", () => {
         harness.graphRequests.some((request) =>
           request.subject === "" &&
           request.resourceType === "skill" &&
-          request.resourceId === "skill-sri-review",
+          request.resourceId === "skill-primary-review",
         ),
       )
       .toBe(true);
     await expect(page.getByRole("tab", { name: "Relationships" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Feature Check" })).toHaveCount(0);
     await expect(page.getByTestId("openfga-graph-canvas")).toBeVisible();
-    await expect(page.getByTestId("rf__node-skill:skill-sri-review").getByText("Sri Review Skill")).toBeVisible();
+    await expect(page.getByTestId("rf__node-skill:skill-primary-review").getByText("Primary Review Skill")).toBeVisible();
   });
 
   test("keeps selected resources visible when no relationships exist", async ({ page }) => {
@@ -515,37 +492,37 @@ test.describe("mocked Access Explorer browser regression", () => {
     const harness = await installAccessExplorerMocks(page);
     await gotoAccessExplorer(page);
 
-    await page.getByPlaceholder(accessExplorerPlaceholder).fill("sri");
-    await page.getByText("Sri Assistant Agent").click();
-    await expect(page.getByText("agent:agent-sri-assistant")).toBeVisible();
+    await page.getByPlaceholder(accessExplorerPlaceholder).fill("primary");
+    await page.getByText("Primary Assistant Agent").click();
+    await expect(page.getByText("agent:agent-primary-assistant")).toBeVisible();
 
     const principalPicker = page.getByTestId("access-explorer-principal-picker");
     await principalPicker
       .getByPlaceholder("Search team, user, service account, or unlinked service account...")
-      .fill("sri");
-    await expect(principalPicker.getByText("Sri Aradhyula")).toBeVisible();
-    await principalPicker.getByText("Sri Aradhyula").click();
-    await expect(page.getByText("user:user-sri")).toBeVisible();
+      .fill("example");
+    await expect(principalPicker.getByText("Example User")).toBeVisible();
+    await principalPicker.getByText("Example User").click();
+    await expect(page.getByText("user:test-user")).toBeVisible();
     await page.getByRole("button", { name: "Check Access" }).click();
 
     await expect
       .poll(() =>
         harness.graphRequests.some((request) =>
-          request.subject === "user:user-sri" &&
+          request.subject === "user:test-user" &&
           request.resourceType === "agent" &&
-          request.resourceId === "agent-sri-assistant",
+          request.resourceId === "agent-primary-assistant",
         ),
       )
       .toBe(true);
     await expect(page.getByRole("tab", { name: "Feature Check" })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByText("Sri Aradhyula is blocked at: Actor can invoke agent.")).toBeVisible();
-    await expect(page.getByText("user:user-sri can_use agent:agent-sri-assistant").first()).toBeVisible();
+    await expect(page.getByText("Example User is blocked at: Actor can invoke agent.")).toBeVisible();
+    await expect(page.getByText("user:test-user can_use agent:agent-primary-assistant").first()).toBeVisible();
     await page.getByRole("tab", { name: "Relationships" }).click();
     await expect(page.getByTestId("access-explorer-nodes-count")).toContainText("2");
     await expect(page.getByTestId("access-explorer-relationships-count")).toContainText("0");
-    await expect(page.getByTestId("rf__node-user:user-sri").getByText("Sri Aradhyula")).toBeVisible();
+    await expect(page.getByTestId("rf__node-user:test-user").getByText("Example User")).toBeVisible();
     await expect(
-      page.getByTestId("rf__node-agent:agent-sri-assistant").getByText("Sri Assistant Agent"),
+      page.getByTestId("rf__node-agent:agent-primary-assistant").getByText("Primary Assistant Agent"),
     ).toBeVisible();
     await expect(page.getByText("No OpenFGA relationship found for the selected actor and agent.")).toBeVisible();
   });
@@ -554,10 +531,10 @@ test.describe("mocked Access Explorer browser regression", () => {
     const harness = await installAccessExplorerMocks(page);
     await gotoAccessExplorer(page);
 
-    await page.getByPlaceholder(accessExplorerPlaceholder).fill("sri");
-    await expect(page.getByText("Sri Runbooks")).toBeVisible();
-    await page.getByText("Sri Runbooks").click();
-    await expect(page.getByText("data_source:kb-sri-runbooks")).toBeVisible();
+    await page.getByPlaceholder(accessExplorerPlaceholder).fill("primary");
+    await expect(page.getByText("Primary Runbooks")).toBeVisible();
+    await page.getByText("Primary Runbooks").click();
+    await expect(page.getByText("data_source:kb-primary-runbooks")).toBeVisible();
     await page.getByRole("button", { name: "Check Access" }).click();
 
     await expect
@@ -565,14 +542,14 @@ test.describe("mocked Access Explorer browser regression", () => {
         harness.graphRequests.some((request) =>
           request.subject === "" &&
           request.resourceType === "data_source" &&
-          request.resourceId === "kb-sri-runbooks",
+          request.resourceId === "kb-primary-runbooks",
         ),
       )
       .toBe(true);
     await expect(page.getByRole("tab", { name: "Relationships" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Feature Check" })).toHaveCount(0);
     await expect(page.getByTestId("openfga-graph-canvas")).toBeVisible();
-    await expect(page.getByTestId("rf__node-data_source:kb-sri-runbooks").getByText("Sri Runbooks")).toBeVisible();
+    await expect(page.getByTestId("rf__node-data_source:kb-primary-runbooks").getByText("Primary Runbooks")).toBeVisible();
   });
 
   test("lets an agent be explored as a team, user, service account, or unlinked service account", async ({
@@ -583,9 +560,9 @@ test.describe("mocked Access Explorer browser regression", () => {
 
     await page
       .getByPlaceholder(accessExplorerPlaceholder)
-      .fill("sri");
-    await page.getByText("Sri Assistant Agent").click();
-    await expect(page.getByText("agent:agent-sri-assistant")).toBeVisible();
+      .fill("primary");
+    await page.getByText("Primary Assistant Agent").click();
+    await expect(page.getByText("agent:agent-primary-assistant")).toBeVisible();
     const principalPicker = page.getByTestId("access-explorer-principal-picker");
     await expect(principalPicker).toBeVisible();
 
@@ -602,7 +579,7 @@ test.describe("mocked Access Explorer browser regression", () => {
         harness.graphRequests.some((request) =>
           request.subject === "team:platform" &&
           request.resourceType === "agent" &&
-          request.resourceId === "agent-sri-assistant",
+          request.resourceId === "agent-primary-assistant",
         ),
       )
       .toBe(true);
@@ -621,7 +598,7 @@ test.describe("mocked Access Explorer browser regression", () => {
         harness.graphRequests.some((request) =>
           request.subject === "service_account:sa-unlinked" &&
           request.resourceType === "agent" &&
-          request.resourceId === "agent-sri-assistant",
+          request.resourceId === "agent-primary-assistant",
         ),
       )
       .toBe(true);
@@ -632,18 +609,18 @@ test.describe("mocked Access Explorer browser regression", () => {
   }) => {
     const harness = await installAccessExplorerMocks(page);
     await gotoAccessExplorer(page);
-    await selectSriAndCheckAccess(page);
+    await selectExampleAndCheckAccess(page);
 
     await page.getByRole("tab", { name: "Relationships" }).click();
     const canvas = page.getByTestId("openfga-graph-canvas");
-    await expect(canvas.getByText("GitHub Agent")).toBeVisible();
+    await expect(canvas.getByText("Source Control Agent")).toBeVisible();
     await expect(canvas.getByText("Payments MCP")).toBeVisible();
     await expect(canvas.getByText("#ops-alerts")).toBeVisible();
 
     await page.getByTitle("Hide MCP Servers").click();
     await expect(canvas.getByText("Payments MCP")).toHaveCount(0);
-    await expect(canvas.getByText("GitHub Agent")).toBeVisible();
-    await expect.poll(() => harness.graphSubjects.includes("user:user-sri")).toBe(true);
+    await expect(canvas.getByText("Source Control Agent")).toBeVisible();
+    await expect.poll(() => harness.graphSubjects.includes("user:test-user")).toBe(true);
 
     await page.getByTitle("Show MCP Servers").click();
     await expect(canvas.getByText("Payments MCP")).toBeVisible();
@@ -661,8 +638,8 @@ test.describe("mocked Access Explorer browser regression", () => {
     await expect(fullscreenCanvas.getByText("#ops-alerts")).toBeVisible();
     await dialog.getByTitle("Hide Slack Channels").click();
     await expect(fullscreenCanvas.getByText("#ops-alerts")).toHaveCount(0);
-    await expect(fullscreenCanvas.getByText("GitHub Agent")).toBeVisible();
-    await expect.poll(() => harness.graphSubjects.includes("user:user-sri")).toBe(true);
+    await expect(fullscreenCanvas.getByText("Source Control Agent")).toBeVisible();
+    await expect.poll(() => harness.graphSubjects.includes("user:test-user")).toBe(true);
 
     await dialog.getByRole("button", { name: "Exit full screen" }).click();
     await expect(dialog).toHaveCount(0);

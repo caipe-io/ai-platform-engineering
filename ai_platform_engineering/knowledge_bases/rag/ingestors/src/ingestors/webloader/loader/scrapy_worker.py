@@ -111,6 +111,7 @@ class WorkerSpider(Spider):
 
     # Track filtering stats for better error messages
     self.urls_found_in_sitemap = 0
+    self.urls_matched_in_sitemap = 0
     self.urls_filtered_external = 0
     self.urls_filtered_pattern = 0
     self.urls_filtered_max_pages = 0
@@ -322,12 +323,20 @@ class WorkerSpider(Spider):
 
     self._log(logging.INFO, f"Found {len(urls)} URLs in sitemap")
 
-    # Track how many URLs we'll actually crawl
-    urls_to_crawl = []
-    for url in urls[: self.max_pages]:
-      if self._should_follow(url):
-        urls_to_crawl.append(url)
-        self.pending_urls.add(url)
+    # Apply URL filters to the complete sitemap before enforcing max_pages.
+    # Sitemaps are commonly sorted by route, so slicing first can exclude every
+    # matching URL when an allow pattern targets a route later in the file.
+    eligible_urls = [
+      url
+      for url in urls
+      if self._should_follow(url, enforce_page_limit=False)
+    ]
+    self.urls_matched_in_sitemap += len(eligible_urls)
+    already_queued = self.total_pages_to_crawl or 0
+    remaining_pages = max(0, self.max_pages - already_queued)
+    urls_to_crawl = eligible_urls[:remaining_pages]
+    self.urls_filtered_max_pages += len(eligible_urls) - len(urls_to_crawl)
+    self.pending_urls.update(urls_to_crawl)
 
     # Set total for progress tracking. Accumulate rather than overwrite:
     # a sitemap index fans out to multiple child sitemaps, each reaching
@@ -680,13 +689,20 @@ class WorkerSpider(Spider):
         return f"{exc_name}: {exc_msg}"
       return exc_name
 
-  def _should_follow(self, url: str, track_filtering: bool = True) -> bool:
+  def _should_follow(
+    self,
+    url: str,
+    track_filtering: bool = True,
+    enforce_page_limit: bool = True,
+  ) -> bool:
     """
     Check if a URL should be followed.
 
     Args:
         url: The URL to check
         track_filtering: If True, increment filtering counters when rejecting URLs
+        enforce_page_limit: If True, reject URLs after the crawl page limit is
+          reached. Sitemap parsing disables this until after URL filters run.
     """
     if url in self.visited_urls:
       return False
@@ -694,7 +710,7 @@ class WorkerSpider(Spider):
     if not self._is_safe_crawl_url(url, resolve_hostname=False):
       return False
 
-    if self.pages_crawled >= self.max_pages:
+    if enforce_page_limit and self.pages_crawled >= self.max_pages:
       if track_filtering:
         self.urls_filtered_max_pages += 1
       return False
@@ -860,6 +876,7 @@ class WorkerSpider(Spider):
       errors=self.errors,
       # Include filtering stats for debugging
       urls_found_in_sitemap=self.urls_found_in_sitemap,
+      urls_matched_in_sitemap=self.urls_matched_in_sitemap,
       urls_filtered_external=self.urls_filtered_external,
       urls_filtered_pattern=self.urls_filtered_pattern,
       urls_filtered_max_pages=self.urls_filtered_max_pages,

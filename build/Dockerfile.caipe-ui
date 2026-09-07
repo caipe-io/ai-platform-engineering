@@ -110,9 +110,9 @@ COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Copy version info
 COPY --from=build --chown=nextjs:nodejs /app/public/version.json ./public/version.json
 
-# Copy entrypoint script
+# Copy entrypoint script (strip CRLF so shebang works when repo is checked out on Windows / OneDrive)
 COPY --chown=nextjs:nodejs build/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 USER nextjs
 

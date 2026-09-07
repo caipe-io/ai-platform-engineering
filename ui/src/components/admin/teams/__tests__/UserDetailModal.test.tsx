@@ -13,13 +13,17 @@ const userResponse = {
   data: {
     user: {
       id: "user-1",
-      username: "sri",
-      email: "sraradhy@cisco.com",
-      firstName: "Sri",
-      lastName: "Aradhyula",
+      username: "test-user",
+      email: "test-user@example.com",
+      firstName: "Test",
+      lastName: "User",
       enabled: true,
       createdAt: 0,
-      attributes: { slack_user_id: ["U123SLACK"], webex_user_id: ["person-abc"] },
+      attributes: {
+        slack_user_id: ["U123SLACK"],
+        webex_user_id: ["person-abc"],
+        webex_user_email: ["person-abc@example.com"],
+      },
       slackLinkStatus: "linked",
       realmRoles: [
         { id: "legacy-admin", name: "admin" },
@@ -45,7 +49,7 @@ const teamsResponse = {
 const accessResponse = {
   success: true,
   data: {
-    user: { id: "user-1", email: "sraradhy@cisco.com" },
+    user: { id: "user-1", email: "test-user@example.com" },
     teams: [{ team_slug: "platform", team_name: "Platform", role: "admin" }],
     access: {
       agents: [
@@ -64,7 +68,20 @@ const accessResponse = {
           via: [{ team_slug: "platform", team_name: "Platform", role: "admin" }],
         },
       ],
-      knowledge_bases: [],
+      knowledge_bases: [
+        {
+          id: "source-1",
+          name: "Example runbooks",
+          capability: "owner",
+          via: [{ team_slug: "platform", team_name: "Platform", role: "admin" }],
+        },
+        {
+          id: "source-1",
+          name: "Example runbooks",
+          capability: "search",
+          via: [{ team_slug: "platform", team_name: "Platform", role: "admin" }],
+        },
+      ],
       skills: [],
       tasks: [],
     },
@@ -132,7 +149,7 @@ describe("UserDetailModal", () => {
       />
     );
 
-    expect(await screen.findByText("Sri Aradhyula")).toBeInTheDocument();
+    expect(await screen.findByText("Test User")).toBeInTheDocument();
 
     expect(screen.queryByText("Realm roles")).not.toBeInTheDocument();
     expect(screen.queryByText("Per-KB roles")).not.toBeInTheDocument();
@@ -155,11 +172,15 @@ describe("UserDetailModal", () => {
       />
     );
 
-    expect(await screen.findByText("Sri Aradhyula")).toBeInTheDocument();
+    expect(await screen.findByText("Test User")).toBeInTheDocument();
 
     // Access section renders the resolved agent + tool with the team chip.
     expect(await screen.findByText("GitHub agent")).toBeInTheDocument();
     expect(screen.getByText("jira_*")).toBeInTheDocument();
+    expect(screen.getByText("RAG")).toBeInTheDocument();
+    expect(screen.getAllByText("Example runbooks")).toHaveLength(2);
+    expect(screen.getByText("owner")).toBeInTheDocument();
+    expect(screen.getByText("search")).toBeInTheDocument();
     expect(screen.getByText("Access")).toBeInTheDocument();
     expect(screen.getAllByText("Platform").length).toBeGreaterThan(0);
     expect(global.fetch).toHaveBeenCalledWith(
@@ -171,7 +192,7 @@ describe("UserDetailModal", () => {
     const manyToolsAccess = {
       success: true,
       data: {
-        user: { id: "user-1", email: "sraradhy@cisco.com" },
+        user: { id: "user-1", email: "test-user@example.com" },
         teams: [{ team_slug: "platform", team_name: "Platform", role: "member" }],
         access: {
           agents: [],
@@ -260,7 +281,47 @@ describe("UserDetailModal", () => {
     expect(screen.queryByText("team-8")).not.toBeInTheDocument();
   });
 
-  it("shows Webex link status from webex_user_id attribute", async () => {
+  it("shows Webex link status and the linked account's email, not the raw Webex id", async () => {
+    render(
+      <UserDetailModal
+        userId="user-1"
+        onClose={jest.fn()}
+        onSaved={jest.fn()}
+      />
+    );
+
+    expect(await screen.findByText("person-abc@example.com")).toBeInTheDocument();
+    expect(screen.getByText("Webex")).toBeInTheDocument();
+    expect(screen.queryByText("person-abc")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the raw Webex id when linked via the admin flow with no email captured", async () => {
+    const noEmailUser = {
+      ...userResponse,
+      data: {
+        ...userResponse.data,
+        user: {
+          ...userResponse.data.user,
+          attributes: {
+            ...userResponse.data.user.attributes,
+            webex_user_email: undefined,
+          },
+        },
+      },
+    };
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (url.includes("/api/admin/users/user-1/access")) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(accessResponse) });
+      }
+      if (url.includes("/api/admin/users/user-1")) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(noEmailUser) });
+      }
+      if (url.includes("/api/admin/teams")) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(teamsResponse) });
+      }
+      return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({ success: false }) });
+    });
+
     render(
       <UserDetailModal
         userId="user-1"
@@ -270,7 +331,7 @@ describe("UserDetailModal", () => {
     );
 
     expect(await screen.findByText("person-abc")).toBeInTheDocument();
-    expect(screen.getByText("Webex")).toBeInTheDocument();
+    expect(screen.queryByText("person-abc@example.com")).not.toBeInTheDocument();
   });
 
   it("renders account and connector details without mutation controls in read-only mode", async () => {
@@ -283,7 +344,7 @@ describe("UserDetailModal", () => {
       />
     );
 
-    expect(await screen.findByText("Sri Aradhyula")).toBeInTheDocument();
+    expect(await screen.findByText("Test User")).toBeInTheDocument();
     expect(screen.getByRole("switch")).toBeDisabled();
     expect(screen.queryByRole("button", { name: /unlink webex/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /unlink slack/i })).not.toBeInTheDocument();
@@ -303,7 +364,7 @@ describe("UserDetailModal", () => {
       />
     );
 
-    expect(await screen.findByText("Sri Aradhyula")).toBeInTheDocument();
+    expect(await screen.findByText("Test User")).toBeInTheDocument();
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
         "/api/admin/users/user-1?simulate_type=user&simulate_id=preview-user"
@@ -327,7 +388,7 @@ describe("UserDetailModal", () => {
       />
     );
 
-    expect(await screen.findByText("person-abc")).toBeInTheDocument();
+    expect(await screen.findByText("person-abc@example.com")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /unlink webex/i }));
 
     await waitFor(() => {

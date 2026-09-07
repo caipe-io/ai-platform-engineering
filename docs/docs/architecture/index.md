@@ -6,18 +6,26 @@ sidebar_position: 1
 
 Users reach CAIPE through Slack, Webex, the UI, or CLI. Keycloak authenticates every path, CAIPE Agent(s) run the request, and AgentGateway routes MCP tool calls after OpenFGA authorization.
 
-![Solution Architecture](images/6_solution_architecture.svg)
+## CAIPE System Architecture
 
-## Client authentication
+![CAIPE System Architecture](images/caipe-system-architecture.svg)
 
-- **Slack / Webex bots** — platform events → bot integration → OBO JWT token exchange (bot as actor)
-- **CAIPE UI / CLI** — PKCE flow
 
-Keycloak federates to your IdP and issues JWTs with realm roles.
+## CAIPE Dynamic Agents
 
-## Agent and tool path
+![](images/caipe-dynamic-agents.svg)
 
-1. CAIPE Agent(s) receive the user JWT and run the selected agent profile.
-2. AgentGateway calls OpenFGA (`ext_authz`) before routing to MCP servers.
+## CAIPE Authorization Flow
 
-See [Gateway Architecture](./gateway.md) for AgentGateway details and [Scheduler](./scheduler.md) for scheduled runs.
+### Authz High Level 
+
+![](images/caipe-mcp-auth.svg)
+
+### Authz OpenFGA
+
+![](images/interaction-model.svg)
+
+
+## CAIPE Supporting Services
+
+![](images/supporting-services.svg)

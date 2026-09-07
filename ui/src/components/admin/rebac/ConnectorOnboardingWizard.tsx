@@ -3,10 +3,12 @@
 import {
   AlertCircle,
   CheckCircle2,
+  Clock3,
   CircleDashed,
   Loader2,
   Search,
   SlidersHorizontal,
+  Undo2,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -16,6 +18,7 @@ import {
   DiscoveryCacheControls,
   type DiscoveryCacheProvider,
 } from "@/components/admin/rebac/DiscoveryCacheControls";
+import { ConnectorIdentityPicker } from "@/components/admin/rebac/ConnectorIdentityPicker";
 import {
   AgentPicker,
   type AgentPickerOption,
@@ -26,6 +29,7 @@ import { CAIPESpinner } from "@/components/ui/caipe-spinner";
 import { Input } from "@/components/ui/input";
 import { TeamPicker, type TeamPickerOption } from "@/components/ui/team-picker";
 import { cn } from "@/lib/utils";
+import type { DiscoveredItem } from "./connector-admin-adapter";
 
 export interface ConnectorOnboardingOption {
   value: string;
@@ -45,10 +49,14 @@ export interface ConnectorOnboardingRow {
   id: string;
   name: string;
   secondary: string;
+  workspaceId?: string;
+  memberCount?: number;
   selected: boolean;
   teamSlug: string;
   agentId: string;
   isExisting: boolean;
+  configuredBy?: string;
+  configuredAgentName?: string;
   teamRequired?: boolean;
   selectable?: boolean;
   importLabel: string;
@@ -57,6 +65,7 @@ export interface ConnectorOnboardingRow {
   botId?: string;
   botLabel?: string;
   botOptions?: Array<ConnectorOnboardingOption & { disabled?: boolean }>;
+  pendingApproval?: DiscoveredItem["pendingApproval"];
 }
 
 interface ConnectorOnboardingWizardProps {
@@ -133,7 +142,13 @@ interface ConnectorOnboardingWizardProps {
   enableBulkApply?: boolean;
 }
 
-type ReadinessState = "ready" | "needs_setup" | "blocked" | "skipped";
+type ReadinessState =
+  | "ready"
+  | "needs_setup"
+  | "pending"
+  | "withdraw"
+  | "blocked"
+  | "skipped";
 
 function pluralize(
   count: number,
@@ -151,15 +166,49 @@ function rowNeedsTeam(row: ConnectorOnboardingRow): boolean {
   return row.teamRequired !== false;
 }
 
+function pendingRequestChanged(row: ConnectorOnboardingRow): boolean {
+  const pending = row.pendingApproval;
+  if (!pending) return false;
+  return (
+    row.teamSlug !== pending.teamSlug ||
+    row.agentId !== pending.agentId ||
+    (row.botId ?? "") !== (pending.botId ?? "")
+  );
+}
+
 function readinessFor(row: ConnectorOnboardingRow): {
   state: ReadinessState;
   label: string;
 } {
+  if (row.isExisting) {
+    return {
+      state: "ready",
+      label: row.configuredBy
+        ? `Configured by ${row.configuredBy}`
+        : "Configured",
+    };
+  }
+  if (row.pendingApproval) {
+    if (
+      !row.pendingApproval.requesterIsViewer ||
+      row.pendingApproval.status === "applying" ||
+      !row.selected
+    ) {
+      return { state: "pending", label: "Awaiting approval" };
+    }
+    if (!row.teamSlug && !row.agentId) {
+      return { state: "withdraw", label: "Ready to withdraw" };
+    }
+    if (!row.teamSlug || !row.agentId) {
+      return { state: "blocked", label: "Pick both or clear both" };
+    }
+    if (!pendingRequestChanged(row)) {
+      return { state: "pending", label: "Awaiting approval" };
+    }
+    return { state: "needs_setup", label: "Ready to resubmit" };
+  }
   if (!rowIsSelectable(row)) {
     return { state: "skipped", label: "Personal DM" };
-  }
-  if (row.isExisting) {
-    return { state: "ready", label: "Configured" };
   }
   if (!row.selected) {
     return { state: "skipped", label: "Not selected" };
@@ -187,6 +236,10 @@ function readinessClass(state: ReadinessState): string {
   if (state === "ready") return "border-slate-300 bg-slate-50 text-slate-700";
   if (state === "needs_setup")
     return "border-emerald-300 bg-emerald-50 text-emerald-700";
+  if (state === "pending")
+    return "border-amber-500/40 bg-amber-500/10 text-amber-600";
+  if (state === "withdraw")
+    return "border-red-500/40 bg-red-500/10 text-red-600";
   if (state === "blocked") return "border-amber-300 bg-amber-50 text-amber-700";
   return "border-slate-300 bg-slate-50 text-slate-600";
 }
@@ -196,6 +249,10 @@ function ReadinessIcon({ state }: { state: ReadinessState }) {
     return <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />;
   if (state === "needs_setup")
     return <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />;
+  if (state === "pending")
+    return <Clock3 className="h-3.5 w-3.5" aria-hidden="true" />;
+  if (state === "withdraw")
+    return <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />;
   if (state === "blocked")
     return <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />;
   return <CircleDashed className="h-3.5 w-3.5" aria-hidden="true" />;
@@ -256,6 +313,7 @@ export function ConnectorOnboardingWizard({
   const selectedRows = rows.filter(
     (row) => row.selected && rowIsSelectable(row),
   );
+  const hasSelectableRows = rows.some(rowIsSelectable);
   const blockedRows = selectedRows.filter(
     (row) => readinessFor(row).state === "blocked",
   );
@@ -263,8 +321,12 @@ export function ConnectorOnboardingWizard({
   // and not blocked (they have both a team and an agent). Blocked rows are
   // skipped rather than blocking the whole batch, so one unconfigured row
   // can't strand the rows that are already ready to go.
-  const readyRows = selectedRows.filter(
-    (row) => readinessFor(row).state !== "blocked",
+  const readyRows = selectedRows.filter((row) => {
+    const state = readinessFor(row).state;
+    return state === "needs_setup" || state === "withdraw";
+  });
+  const withdrawalRows = readyRows.filter(
+    (row) => readinessFor(row).state === "withdraw",
   );
   const applyDisabled =
     disabled || loading || Boolean(error) || readyRows.length === 0;
@@ -272,7 +334,9 @@ export function ConnectorOnboardingWizard({
     selectedRows.length === 0
       ? `Select at least one ${itemSingular} to set up.`
       : readyRows.length === 0
-        ? `${pluralize(blockedRows.length, itemSingular)} need a team or Dynamic Agent before setup.`
+        ? blockedRows.length > 0
+          ? `${pluralize(blockedRows.length, itemSingular)} need both a Team and Dynamic Agent.`
+          : "Change the pending request, or clear both fields to withdraw it."
         : null;
   // When some (but not all) selected rows are blocked, we still let the
   // admin apply the ready ones and just tell them which got skipped.
@@ -328,26 +392,22 @@ export function ConnectorOnboardingWizard({
         )}
         <div className="flex flex-wrap items-center gap-2">
           {discoveryIdentity && (
-            <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
               <span>{discoveryIdentity.label}</span>
-              <select
-                aria-label={discoveryIdentity.label}
+              <ConnectorIdentityPicker
+                ariaLabel={discoveryIdentity.label}
+                options={discoveryIdentity.options.map((option) => ({
+                  id: option.value,
+                  label: option.label,
+                  disabled: option.disabled,
+                }))}
                 value={discoveryIdentity.value}
-                onChange={(event) => discoveryIdentity.onChange(event.target.value)}
-                disabled={disabled || discoveryBusy || discoveryIdentity.loading}
-                className="h-8 min-w-[12rem] rounded-md border border-input bg-background px-2 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                {discoveryIdentity.loading && <option value="">Loading…</option>}
-                {!discoveryIdentity.loading && discoveryIdentity.options.length === 0 && (
-                  <option value="">No bots available</option>
-                )}
-                {discoveryIdentity.options.map((option) => (
-                  <option key={option.value} value={option.value} disabled={option.disabled}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                onChange={discoveryIdentity.onChange}
+                loading={discoveryIdentity.loading}
+                disabled={disabled || discoveryBusy}
+                triggerClassName="h-8 min-w-[12rem] text-sm"
+              />
+            </div>
           )}
           <Button
             type="button"
@@ -472,7 +532,7 @@ export function ConnectorOnboardingWizard({
                   variant="outline"
                   size="sm"
                   onClick={onSelectAll}
-                  disabled={loading || rows.length === 0}
+                  disabled={loading || !hasSelectableRows}
                 >
                   Select all
                 </Button>
@@ -574,6 +634,33 @@ export function ConnectorOnboardingWizard({
                   ) : (
                     visibleRows.map((row) => {
                       const readiness = readinessFor(row);
+                      const teamOptions = teams.some(
+                        (team) => team.value === row.teamSlug,
+                      )
+                        ? teams
+                        : row.teamSlug
+                          ? [
+                              ...teams,
+                              {
+                                value: row.teamSlug,
+                                label: row.configuredBy || row.teamSlug,
+                              },
+                            ]
+                          : teams;
+                      const agentOptions = agents.some(
+                        (agent) => agent.value === row.agentId,
+                      )
+                        ? agents
+                        : row.agentId
+                          ? [
+                              ...agents,
+                              {
+                                value: row.agentId,
+                                label:
+                                  row.configuredAgentName || row.agentId,
+                              },
+                            ]
+                          : agents;
                       return (
                         <div
                           key={row.id}
@@ -583,6 +670,8 @@ export function ConnectorOnboardingWizard({
                             readiness.state === "blocked" && "bg-amber-500/5",
                             readiness.state === "needs_setup" &&
                               "bg-emerald-500/5",
+                            readiness.state === "pending" && "bg-amber-500/5",
+                            readiness.state === "withdraw" && "bg-red-500/5",
                           )}
                         >
                           <label className="flex items-start gap-2 text-sm">
@@ -607,23 +696,22 @@ export function ConnectorOnboardingWizard({
                             </span>
                           </label>
                           {showBotColumn && (
-                            <select
-                              className="h-8 min-w-0 rounded-md border bg-background px-2 text-sm"
+                            <ConnectorIdentityPicker
+                              options={(row.botOptions ?? []).map((option) => ({
+                                id: option.value,
+                                label: option.label,
+                                disabled: option.disabled,
+                              }))}
                               value={row.botId ?? ""}
-                              onChange={(event) => onRowChange(row.id, {
-                                botId: event.target.value,
+                              onChange={(value) => onRowChange(row.id, {
+                                botId: value,
                                 selected: true,
                               })}
                               disabled={loading || !rowIsSelectable(row)}
-                              aria-label={row.botLabel ?? `Webex bot for ${row.name}`}
-                            >
-                              <option value="">Select a bot</option>
-                              {(row.botOptions ?? []).map((option) => (
-                                <option key={option.value} value={option.value} disabled={option.disabled}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
+                              ariaLabel={row.botLabel ?? `Webex bot for ${row.name}`}
+                              allowClear
+                              triggerClassName="h-8 min-w-0 text-sm"
+                            />
                           )}
                           {/* assisted-by Codex Codex-sonnet-4-6 */}
                           {/* Editing a selectable row implies intent to set it up, so the checkbox follows. */}
@@ -641,7 +729,7 @@ export function ConnectorOnboardingWizard({
                               disabled={loading || !rowIsSelectable(row)}
                               placeholder="Select team"
                               searchPlaceholder="Search teams..."
-                              options={teams.map<TeamPickerOption>((team) => ({
+                              options={teamOptions.map<TeamPickerOption>((team) => ({
                                 slug: team.value,
                                 name: team.label,
                               }))}
@@ -654,7 +742,7 @@ export function ConnectorOnboardingWizard({
                               Personal DM
                             </Badge>
                           )}
-                          {rowIsSelectable(row) ? (
+                          {rowIsSelectable(row) || row.isExisting || row.pendingApproval ? (
                             <AgentPicker
                               ariaLabel={row.agentLabel}
                               triggerClassName="h-9 text-sm"
@@ -666,9 +754,11 @@ export function ConnectorOnboardingWizard({
                                 })
                               }
                               disabled={loading || !rowIsSelectable(row)}
-                              placeholder="Select agent"
+                              placeholder={
+                                row.isExisting ? "Configured" : "Select agent"
+                              }
                               searchPlaceholder="Search agents..."
-                              options={agents.map<AgentPickerOption>(
+                              options={agentOptions.map<AgentPickerOption>(
                                 (agent) => ({
                                   value: agent.value,
                                   label: agent.label,
@@ -691,6 +781,24 @@ export function ConnectorOnboardingWizard({
                               <ReadinessIcon state={readiness.state} />
                               {readiness.label}
                             </Badge>
+                            {row.pendingApproval && (
+                              <p className="max-w-[12rem] text-[11px] leading-snug text-muted-foreground">
+                                Submitted by {row.pendingApproval.requesterIsViewer
+                                  ? "you"
+                                  : row.pendingApproval.requester.name ||
+                                    row.pendingApproval.requester.email ||
+                                    "another user"}
+                                ; awaiting approval from {row.pendingApproval.approverTeamSlugs
+                                  .map((slug) =>
+                                    teams.find((team) => team.value === slug)?.label || slug
+                                  )
+                                  .join(", ") || "platform administrators"}.
+                                {row.pendingApproval.requesterIsViewer &&
+                                  row.pendingApproval.status === "pending" && (
+                                    <> Change the Team or Agent and submit again. Clear both to withdraw.</>
+                                  )}
+                              </p>
+                            )}
                           </div>
                         </div>
                       );
@@ -743,8 +851,10 @@ export function ConnectorOnboardingWizard({
                 >
                   <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                   {loading
-                    ? "Setting up..."
-                    : `Set up ${pluralize(readyRows.length, itemSingular)}`}
+                    ? "Submitting..."
+                    : readyRows.length > 0 && withdrawalRows.length === readyRows.length
+                      ? `Withdraw ${pluralize(withdrawalRows.length, "request")}`
+                      : `Submit ${pluralize(readyRows.length, itemSingular)}`}
                 </Button>
               </div>
               {applyDisabled && disabledReason && (

@@ -9,7 +9,6 @@ import time
 import hashlib
 import traceback
 from typing import Dict, List, Any, Tuple, Optional
-from urllib.parse import urlparse
 import aiohttp
 from aiohttp_retry import RetryClient, ExponentialRetry
 from aiohttp import ClientTimeout
@@ -18,7 +17,11 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from common.job_manager import JobManager, JobStatus
 from common.models.rag import DataSourceInfo, DocumentMetadata
-from common.utils import get_logger, get_fresh_until
+from common.utils import (
+  generate_confluence_datasource_id,
+  get_fresh_until,
+  get_logger,
+)
 
 logger = get_logger(__name__)
 
@@ -27,7 +30,11 @@ CONFLUENCE_BATCH_SIZE = 100  # Documents per batch
 CONFLUENCE_API_PAGE_LIMIT = 100  # Pages per API call for pagination
 
 
-def generate_datasource_id(confluence_url: str, space_key: str) -> str:
+def generate_datasource_id(
+  confluence_url: str,
+  space_key: str,
+  page_id: Optional[str] = None,
+) -> str:
   """Generate datasource ID for a Confluence space or page.
 
   Format: src_confluence___{domain_normalized}__{space_key}[__{page_id}]
@@ -35,12 +42,12 @@ def generate_datasource_id(confluence_url: str, space_key: str) -> str:
   Args:
       confluence_url: Base URL of the Confluence instance
       space_key: Confluence space key
+      page_id: Root page ID for a page-scoped datasource. Omit for a legacy
+          whole-space datasource.
   Returns:
       Datasource ID string
   """
-  domain = urlparse(confluence_url).netloc.replace(".", "_").replace("-", "_")
-
-  return f"src_confluence___{domain}__{space_key}"
+  return generate_confluence_datasource_id(confluence_url, space_key, page_id)
 
 
 class ConfluenceLoader:
@@ -69,6 +76,10 @@ class ConfluenceLoader:
     # Title filtering (regex patterns, mirroring webloader's URL pattern filtering)
     self.allowed_title_patterns = allowed_title_patterns or []
     self.denied_title_patterns = denied_title_patterns or []
+    # Set by ``load_pages`` when a caller supplies ``max_pages`` and more
+    # candidates exist. Preview uses this to report a bounded sample even when
+    # title filters reduce the returned list below the visible item limit.
+    self.last_load_truncated = False
 
     # Chunking configuration
     self.chunk_size = datasource_info.default_chunk_size
@@ -135,7 +146,11 @@ class ConfluenceLoader:
 
     return False
 
-  async def fetch_child_pages(self, parent_page_id: str) -> Tuple[List[str], List[Tuple[str, str]]]:
+  async def fetch_child_pages(
+    self,
+    parent_page_id: str,
+    max_results: Optional[int] = None,
+  ) -> Tuple[List[str], List[Tuple[str, str]], bool]:
     """Fetch direct child page IDs for a parent page.
 
     Uses Confluence REST API v1: GET /rest/api/content/{id}/child/page
@@ -144,9 +159,10 @@ class ConfluenceLoader:
         parent_page_id: ID of the parent page
 
     Returns:
-        Tuple of (child_page_ids, failed_fetches)
+        Tuple of (child_page_ids, failed_fetches, truncated)
         - child_page_ids: List of direct child page IDs
         - failed_fetches: List of (identifier, error_msg) tuples where identifier is the page_id or error type
+        - truncated: True when ``max_results`` bounded a larger result set
     """
     child_ids = []
     failed_fetches = []
@@ -154,10 +170,20 @@ class ConfluenceLoader:
 
     while True:
       try:
+        if max_results is not None:
+          # Fetch one item beyond the requested bound so callers can
+          # distinguish "exactly N" from "more than N" without enumerating an
+          # arbitrarily large Confluence tree.
+          remaining = max_results + 1 - len(child_ids)
+          if remaining <= 0:
+            return child_ids[:max_results], failed_fetches, True
+          request_limit = min(CONFLUENCE_API_PAGE_LIMIT, remaining)
+        else:
+          request_limit = CONFLUENCE_API_PAGE_LIMIT
         url = f"{self.confluence_url}/rest/api/content/{parent_page_id}/child/page"
         params = {
           "start": start,
-          "limit": CONFLUENCE_API_PAGE_LIMIT,
+          "limit": request_limit,
           "expand": "id,title",
         }
 
@@ -177,9 +203,12 @@ class ConfluenceLoader:
               else:
                 self.logger.warning(f"Child page missing ID in response: {child}")
 
+            if max_results is not None and len(child_ids) > max_results:
+              return child_ids[:max_results], failed_fetches, True
+
             start += len(batch)
 
-            if len(batch) < CONFLUENCE_API_PAGE_LIMIT:
+            if len(batch) < request_limit:
               break
           else:
             text = await resp.text()
@@ -193,7 +222,7 @@ class ConfluenceLoader:
         failed_fetches.append((parent_page_id, error_msg))
         break
 
-    return child_ids, failed_fetches
+    return child_ids, failed_fetches, False
 
   def extract_text_from_html(self, html_content: str) -> str:
     """Extract text from Confluence HTML storage format.
@@ -229,6 +258,7 @@ class ConfluenceLoader:
     space_key: str,
     page_configs: Optional[List[Dict[str, Any]]] = None,
     page_limit: int = CONFLUENCE_API_PAGE_LIMIT,
+    max_pages: Optional[int] = None,
   ) -> Tuple[List[Dict[str, Any]], List[Tuple[str, str]]]:
     """Load pages from Confluence space via REST API.
 
@@ -238,6 +268,7 @@ class ConfluenceLoader:
             - page_id (required): Page ID to fetch
             - get_child_pages (optional, default False): Include direct children
         page_limit: Number of pages per API call for enumeration
+        max_pages: Optional hard cap used by non-persisting previews
 
     Returns:
         tuple: (list of successfully fetched pages, list of (page_id, error_msg) tuples)
@@ -246,9 +277,13 @@ class ConfluenceLoader:
     self.logger.debug(f"Loading pages with space_key={space_key}, page_configs={page_configs}")
     pages = []
     failed_pages = []
+    self.last_load_truncated = False
 
     if page_configs:
       for config in page_configs:
+        if max_pages is not None and len(pages) >= max_pages:
+          self.last_load_truncated = True
+          break
         page_id = config.get("page_id")
         if not page_id:
           self.logger.warning(f"Page config missing page_id: {config}")
@@ -264,7 +299,12 @@ class ConfluenceLoader:
 
         # Fetch child pages if requested
         if config.get("get_child_pages", False):
-          child_ids, child_failures = await self.fetch_child_pages(page_id)
+          remaining = None if max_pages is None else max(0, max_pages - len(pages))
+          child_ids, child_failures, children_truncated = await self.fetch_child_pages(
+            page_id,
+            max_results=remaining,
+          )
+          self.last_load_truncated = self.last_load_truncated or children_truncated
           failed_pages.extend(child_failures)
 
           for child_id in child_ids:
@@ -292,8 +332,19 @@ class ConfluenceLoader:
               batch = data.get("results", [])
               if not batch:
                 break
+              if max_pages is not None and len(pages) + len(batch) > max_pages:
+                remaining = max(0, max_pages - len(pages))
+                pages.extend(batch[:remaining])
+                self.last_load_truncated = True
+                break
               pages.extend(batch)
               start += len(batch)
+              if max_pages is not None and len(pages) >= max_pages:
+                # The next request would only be needed to distinguish exact
+                # equality from truncation. Preview page-config calls use the
+                # child endpoint above; keep whole-space enumeration bounded.
+                self.last_load_truncated = len(batch) >= page_limit
+                break
               if len(batch) < page_limit:
                 break
             else:

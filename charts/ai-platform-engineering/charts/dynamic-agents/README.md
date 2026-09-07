@@ -8,17 +8,17 @@ A Helm chart for Dynamic Agents - Standalone agent builder service with MCP tool
 
 | | |
 |---|---|
-| **Version** | `0.2.38` |
+| **Version** | `0.5.68` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.2.38
+helm install dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68
 
 # Upgrade an existing release
-helm upgrade dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.2.38
+helm upgrade dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.2.38 \
+helm install dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.2.38 \
+helm install dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.2.38
+helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68
 ```
 
 ## Reading the Values Table
@@ -52,14 +52,31 @@ helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.2.38
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | affinity | object | `{}` |  |
+| agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
+| agentContext.existingSecret.name | string | `""` |  |
 | autoscaling.enabled | bool | `false` |  |
 | autoscaling.maxReplicas | int | `10` |  |
 | autoscaling.minReplicas | int | `1` |  |
 | autoscaling.targetCPUUtilizationPercentage | int | `80` |  |
+| config.AGENT_GATEWAY_MCP_SERVER_IDS | string | `"all"` |  |
 | config.AGENT_RUNTIME_TTL_SECONDS | string | `"300"` |  |
+| config.ATTACHMENT_LOCAL_PATH | string | `"/var/lib/caipe-attachments"` |  |
+| config.AWS_BEDROCK_ENABLE_PROMPT_CACHE | string | `"false"` |  |
+| config.CAIPE_API_URL | string | `""` |  |
+| config.CAIPE_CREDENTIALS_ENABLED | string | `"false"` |  |
 | config.CORS_ORIGINS | string | `"[\"*\"]"` |  |
+| config.CREDENTIAL_API_URL | string | `""` |  |
+| config.CREDENTIAL_SERVICE_AUDIENCE | string | `"caipe-credential-service"` |  |
 | config.ENABLE_TRACING | string | `"false"` |  |
+| config.INVOKE_PERSIST_HISTORY | string | `"false"` |  |
+| config.KEYCLOAK_URL | string | `""` |  |
 | config.MONGODB_DATABASE | string | `"caipe"` |  |
+| config.OIDC_ISSUER | string | `""` |  |
+| config.OPENFGA_HTTP | string | `""` |  |
+| config.OPENFGA_STORE_NAME | string | `"caipe-openfga"` |  |
+| config.SKILL_TRACE_MAX_ATTR_BYTES | string | `"262144"` |  |
+| config.SKILL_TRACE_SCRUB_ENABLED | string | `"true"` |  |
+| config.USE_IMPERSONATION_TOKENS | string | `"false"` |  |
 | existingSecret | string | `""` |  |
 | externalSecrets.apiVersion | string | `"v1beta1"` |  |
 | externalSecrets.data | list | `[]` |  |
@@ -68,7 +85,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.2.38
 | externalSecrets.secretStoreRef.name | string | `"vault"` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"Always"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-dynamic-agents"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-dynamic-agents"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | ingress.annotations | object | `{}` |  |
@@ -79,9 +96,8 @@ helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.2.38
 | ingress.hosts[0].paths[0].pathType | string | `"Prefix"` |  |
 | ingress.tls | list | `[]` |  |
 | livenessProbe.failureThreshold | int | `3` |  |
-| livenessProbe.httpGet.path | string | `"/healthz"` |  |
+| livenessProbe.httpGet.path | string | `"/health"` |  |
 | livenessProbe.httpGet.port | string | `"http"` |  |
-| livenessProbe.initialDelaySeconds | int | `30` |  |
 | livenessProbe.periodSeconds | int | `10` |  |
 | livenessProbe.timeoutSeconds | int | `5` |  |
 | llmSecret | string | `""` |  |
@@ -89,23 +105,42 @@ helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.2.38
 | nodeSelector | object | `{}` |  |
 | podAnnotations | object | `{}` |  |
 | podLabels | object | `{}` |  |
-| podSecurityContext | object | `{}` |  |
+| podSecurityContext.runAsNonRoot | bool | `true` |  |
 | readinessProbe.failureThreshold | int | `3` |  |
-| readinessProbe.httpGet.path | string | `"/healthz"` |  |
+| readinessProbe.httpGet.path | string | `"/readyz"` |  |
 | readinessProbe.httpGet.port | string | `"http"` |  |
-| readinessProbe.initialDelaySeconds | int | `5` |  |
 | readinessProbe.periodSeconds | int | `5` |  |
 | readinessProbe.timeoutSeconds | int | `3` |  |
 | replicaCount | int | `1` |  |
 | resources | object | `{}` |  |
 | revisionHistoryLimit | int | `3` |  |
-| securityContext | object | `{}` |  |
+| securityContext.allowPrivilegeEscalation | bool | `false` |  |
+| securityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| securityContext.readOnlyRootFilesystem | bool | `false` |  |
+| securityContext.runAsNonRoot | bool | `true` |  |
+| securityContext.runAsUser | int | `1001` |  |
+| securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
+| service.metricsPort | int | `0` |  |
 | service.port | int | `8001` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.annotations | object | `{}` |  |
 | serviceAccount.automount | bool | `true` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
+| startupProbe.failureThreshold | int | `30` |  |
+| startupProbe.httpGet.path | string | `"/readyz"` |  |
+| startupProbe.httpGet.port | string | `"http"` |  |
+| startupProbe.initialDelaySeconds | int | `10` |  |
+| startupProbe.periodSeconds | int | `10` |  |
+| startupProbe.timeoutSeconds | int | `5` |  |
 | tolerations | list | `[]` |  |
 | volumeMounts | list | `[]` |  |
 | volumes | list | `[]` |  |
+| vpa.controlledResources[0] | string | `"cpu"` |  |
+| vpa.controlledResources[1] | string | `"memory"` |  |
+| vpa.controlledValues | string | `"RequestsAndLimits"` |  |
+| vpa.enabled | bool | `false` |  |
+| vpa.maxAllowed | object | `{}` |  |
+| vpa.minAllowed.cpu | string | `"50m"` |  |
+| vpa.minAllowed.memory | string | `"128Mi"` |  |
+| vpa.updateMode | string | `"InPlaceOrRecreate"` |  |

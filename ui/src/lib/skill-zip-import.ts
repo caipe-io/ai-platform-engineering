@@ -8,8 +8,8 @@
  *   * Each `SKILL.md`'s "skill directory" is its parent directory.
  *     Sibling/descendant files inside that directory become the
  *     skill's ancillary files. A SKILL.md at the very root claims
- *     every other top-level file, but only if no other SKILL.md is
- *     present (otherwise we'd cross-pollute skills).
+ *     every file not already claimed by a nested skill, preserving
+ *     paths such as `scripts/run.sh` and `references/guide.md`.
  *   * Two SKILL.md files at the same depth share their parent? Each
  *     keeps its OWN files; the parser scopes ancillaries to "files
  *     under this SKILL.md's directory that are NOT under any deeper
@@ -298,13 +298,6 @@ export async function parseSkillZip(
       if (f === sd.entry) continue;
       if (/(?:^|\/)SKILL\.md$/i.test(f.path)) continue; // never inline another skill
       if (prefix && !f.path.startsWith(prefix)) continue;
-      if (!prefix && f.path.includes("/")) {
-        // Root SKILL.md: only claim other top-level files. A nested
-        // file without its own SKILL.md is treated as orphan and
-        // dropped silently rather than being merged here, which
-        // would lose its directory context.
-        continue;
-      }
       claimed.add(f.path);
       const rel = prefix ? f.path.slice(prefix.length) : f.path;
       if (f.bytes > MAX_ANCILLARY_FILE_BYTES) {

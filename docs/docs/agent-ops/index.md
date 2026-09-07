@@ -7,12 +7,12 @@ Agents and MCP tool servers.
 
 | Component | Image family |
 |---|---|
-| UI/BFF | `ghcr.io/cnoe-io/caipe-ui` |
-| Dynamic Agents | `ghcr.io/cnoe-io/caipe-dynamic-agents` |
-| MCP servers | `ghcr.io/cnoe-io/mcp-<name>` or external MCP image |
-| Slack bot | `ghcr.io/cnoe-io/caipe-slack-bot` |
-| Webex bot | `ghcr.io/cnoe-io/caipe-webex-bot` |
-| Audit service | `ghcr.io/cnoe-io/caipe-audit-service` |
+| UI/BFF | `ghcr.io/caipe-io/caipe-ui` |
+| Dynamic Agents | `ghcr.io/caipe-io/caipe-dynamic-agents` |
+| MCP servers | `ghcr.io/caipe-io/mcp-<name>` or external MCP image |
+| Slack bot | `ghcr.io/caipe-io/caipe-slack-bot` |
+| Webex bot | `ghcr.io/caipe-io/caipe-webex-bot` |
+| Audit service | `ghcr.io/caipe-io/caipe-audit-service` |
 
 ## Validation
 

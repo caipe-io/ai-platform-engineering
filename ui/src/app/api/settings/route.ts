@@ -17,19 +17,22 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   return withAuth(request, async (req, user) => {
     const settings = await getCollection<UserSettings>('user_settings');
 
-    let userSettings = await settings.findOne({ user_id: user.email });
-
-    // Create default settings if they don't exist
-    if (!userSettings) {
-      const newSettings: Omit<UserSettings, '_id'> = {
-        user_id: user.email,
-        ...DEFAULT_USER_SETTINGS,
-        updated_at: new Date(),
-      };
-
-      const result = await settings.insertOne(newSettings);
-      userSettings = { _id: result.insertedId, ...newSettings };
-    }
+    // Atomic get-or-create. A plain find-then-insert races on the unique
+    // user_id index when concurrent requests both miss the read and insert
+    // the same user_id (E11000) — guaranteed in dev-anonymous mode where
+    // every request shares user_id "anonymous@local". $setOnInsert only
+    // writes the defaults on first creation.
+    const userSettings = await settings.findOneAndUpdate(
+      { user_id: user.email },
+      {
+        $setOnInsert: {
+          user_id: user.email,
+          ...DEFAULT_USER_SETTINGS,
+          updated_at: new Date(),
+        },
+      },
+      { upsert: true, returnDocument: 'after' }
+    );
 
     return successResponse(userSettings);
   });

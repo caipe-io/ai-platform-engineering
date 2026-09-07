@@ -25,7 +25,7 @@ dependencies = [
     "uvicorn==0.37.0",
     "fastmcp==3.2.4",
     # HTTP clients
-    "aiohttp==3.14.1",
+    "aiohttp==3.14.3",
     "aiohttp-retry==2.9.1",
     "httpx==0.28.1",
     # Data processing
@@ -36,12 +36,12 @@ dependencies = [
     "openai==2.32.0",
     "python-dotenv==1.2.2",
     "PyJWT[crypto]==2.13.0",
-    "click==8.3.0",
+    "click==8.3.3",
     "aiofile==3.9.0",
     # 098 RBAC additions
     "python-jose[cryptography]==3.5.0",
     "common",
-    "pypdf==6.14.2",
+    "pypdf==6.16.1",
 ]
 
 [project.scripts]
@@ -59,7 +59,7 @@ dev = [
 # Use the -hf image variant or install with: pip install server[huggingface]
 huggingface = [
     "sentence-transformers==5.4.0",
-    "huggingface-hub==1.3.0",
+    "huggingface-hub==1.5.0",
     "common[huggingface]",
 ]
 
@@ -69,7 +69,7 @@ build-backend = "uv_build"
 
 
 [tool.uv]
-constraint-dependencies = ["starlette>=1.3.1", "transformers>=5.0.0"]
+constraint-dependencies = ["mcp>=1.28.1", "starlette>=1.3.1", "transformers>=5.5.0"]
 dev-dependencies = [
     "pytest==9.0.3",
     "pytest-asyncio==1.3.0",

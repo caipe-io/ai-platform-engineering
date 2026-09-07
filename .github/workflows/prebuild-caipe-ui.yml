@@ -3,8 +3,11 @@ description: "Build and push CAIPE UI Docker image for prebuild branches"
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened]
     paths:
+      - '.github/workflows/prebuild-caipe-ui.yml'
+      - '.github/actions/prebuild-status/**'
+      - '.github/actions/publish-prebuild-manifest/**'
       - 'ui/**'
       - 'build/Dockerfile.caipe-ui'
   workflow_call:
@@ -31,33 +34,82 @@ on:
         type: string
         default: ''
 env:
-  IMAGE_NAME: ${{ github.repository_owner }}/prebuild/caipe-ui
+  IMAGE_NAME: ${{ github.repository_owner }}/caipe-ui
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-push:
+  determine-changes:
     runs-on: ubuntu-latest
     if: |
       (github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]') &&
-      (
-        startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
-        github.event.action != 'closed'
-      )
+      startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      github.event.action != 'closed'
+    outputs:
+      should_build: ${{ steps.eligibility.outputs.should_build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ inputs.head_sha || github.ref }}
+          fetch-depth: 0
+
+      - name: Check build eligibility
+        id: eligibility
+        shell: bash
+        env:
+          BASE_REF: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+        run: |
+          git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            BASE="$BASE_SHA"
+          else
+            BASE="origin/${BASE_REF}"
+          fi
+
+          if git diff --name-only "$BASE..HEAD" -- \
+              .github/workflows/prebuild-caipe-ui.yml \
+              .github/actions/prebuild-status \
+              .github/actions/publish-prebuild-manifest \
+              ui \
+              build/Dockerfile.caipe-ui | grep -q .; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    runs-on: ${{ matrix.runner }}
+    needs: determine-changes
+    if: |
+      needs.determine-changes.outputs.should_build == 'true' &&
+      startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name == 'workflow_call' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      github.event.action != 'closed'
     permissions:
       contents: write
       packages: write
       pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -89,33 +141,9 @@ jobs:
           ref: ${{ inputs.head_sha || github.ref }}
           fetch-depth: 0
 
-      - name: Check build eligibility
-        id: eligibility
-        shell: bash
-        env:
-          BASE_REF: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
-          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
-        run: |
-          git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-          if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            BASE="$BASE_SHA"
-          else
-            BASE="origin/${BASE_REF}"
-          fi
-
-          if git diff --name-only "$BASE..HEAD" -- \
-              ui \
-              build/Dockerfile.caipe-ui | grep -q .; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Set up Docker Buildx
-        if: steps.eligibility.outputs.should_build == 'true'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Log in to GitHub Container Registry
-        if: steps.eligibility.outputs.should_build == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
@@ -123,7 +151,6 @@ jobs:
           password: ${{ github.token }}
 
       - name: Compute prebuild tag
-        if: steps.eligibility.outputs.should_build == 'true'
         id: compute_tag
         shell: bash
         env:
@@ -146,7 +173,7 @@ jobs:
           echo "prebuild_tag=${PREBUILD_TAG}" >> $GITHUB_OUTPUT
 
       - name: Upload building prebuild status
-        if: steps.eligibility.outputs.should_build == 'true'
+        if: matrix.arch == 'amd64'
         uses: ./.github/actions/prebuild-status
         with:
           pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
@@ -162,7 +189,6 @@ jobs:
           artifact_suffix: start
 
       - name: Extract metadata for Docker
-        if: steps.eligibility.outputs.should_build == 'true'
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
@@ -170,23 +196,20 @@ jobs:
           tags: |
             type=raw,value=${{ env.PREBUILD_TAG }}
 
-      - name: Set up QEMU
-        if: steps.eligibility.outputs.should_build == 'true'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
-      - name: Build and Push CAIPE UI Docker image
-        if: steps.eligibility.outputs.should_build == 'true'
+      - name: Build and push CAIPE UI image by digest
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: ./build/Dockerfile.caipe-ui
           target: runner
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            io.cnoe.prebuild.branch=${{ env.BRANCH_BARE }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=ghcr.io/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=prebuild-caipe-ui-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=prebuild-caipe-ui-${{ matrix.arch }}
           build-args: |
             CAIPE_URL=http://caipe-supervisor:8000
             BUILDKIT_INLINE_CACHE=1
@@ -195,6 +218,76 @@ jobs:
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
           provenance: false
           sbom: false
+
+      - name: Export digest
+        shell: bash
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: digests-caipe-ui--${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: [determine-changes, build]
+    if: |
+      always() &&
+      needs.determine-changes.result == 'success' &&
+      needs.determine-changes.outputs.should_build == 'true' &&
+      startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name == 'workflow_call' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      github.event.action != 'closed'
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ inputs.head_sha || github.ref }}
+          fetch-depth: 0
+
+      - name: Compute prebuild tag
+        id: compute_tag
+        shell: bash
+        env:
+          HEAD_REF: ${{ inputs.head_ref || github.head_ref }}
+          BASE_REF: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+        run: |
+          BRANCH_NO_PREFIX="${HEAD_REF#prebuild/}"
+          BRANCH_SANITIZED="${BRANCH_NO_PREFIX//\//-}"
+          git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            BASE_COMMIT="$BASE_SHA"
+          else
+            BASE_COMMIT="origin/${BASE_REF}"
+          fi
+          COMMIT_COUNT=$(git rev-list --count "${BASE_COMMIT}..HEAD")
+          echo "prebuild_tag=${BRANCH_SANITIZED}-${COMMIT_COUNT}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish multi-architecture image
+        id: publish
+        uses: ./.github/actions/publish-prebuild-manifest
+        with:
+          artifact_pattern: digests-caipe-ui--*
+          image_repository: ghcr.io/${{ env.IMAGE_NAME }}
+          image_ref: ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.compute_tag.outputs.prebuild_tag }}
+          registry_username: ${{ github.actor }}
+          registry_token: ${{ github.token }}
 
       - name: Upload final prebuild status
         if: ${{ always() && steps.compute_tag.outputs.prebuild_tag != '' }}
@@ -209,53 +302,5 @@ jobs:
           repository: ghcr.io/${{ env.IMAGE_NAME }}
           tag: ${{ steps.compute_tag.outputs.prebuild_tag }}
           ref: ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.compute_tag.outputs.prebuild_tag }}
-          status: ${{ steps.build.outcome == 'success' && 'published' || 'failed' }}
+          status: ${{ steps.publish.outcome == 'success' && 'published' || 'failed' }}
           artifact_suffix: final
-
-  cleanup-images:
-    runs-on: ubuntu-latest
-    if: github.event.action == 'closed' && startsWith(github.event.pull_request.head.ref, 'prebuild/')
-    permissions:
-      contents: read
-      packages: write
-    env:
-      OWNER: ${{ github.repository_owner }}
-      PACKAGE_NAME: prebuild/caipe-ui
-    steps:
-      - name: Delete prebuild images for branch
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        with:
-          script: |
-            const owner = process.env.OWNER;
-            const rawBranch = process.env.HEAD_REF || '';
-            const branchNoPrefix = rawBranch.startsWith('prebuild/') ? rawBranch.substring('prebuild/'.length) : rawBranch;
-            const sanitized = branchNoPrefix.replace(/\//g, '-');
-            const prefix = `${sanitized}-`;
-            const packageName = process.env.PACKAGE_NAME;
-            const packageType = 'container';
-            try {
-              const versions = await github.paginate(github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg, {
-                org: owner,
-                package_type: packageType,
-                package_name: packageName,
-                per_page: 100,
-              });
-              const toDelete = versions.filter(v => (v.metadata?.container?.tags || []).some(t => t.startsWith(prefix)));
-              for (const v of toDelete) {
-                await github.rest.packages.deletePackageVersionForOrg({
-                  org: owner,
-                  package_type: packageType,
-                  package_name: packageName,
-                  package_version_id: v.id,
-                });
-              }
-              core.info(`Deleted ${toDelete.length} versions for ${packageName} with tag prefix ${prefix}`);
-            } catch (e) {
-              if (e.status === 404) {
-                core.info(`Package ${packageName} not found in org ${owner}, skipping.`);
-              } else {
-                throw e;
-              }
-            }

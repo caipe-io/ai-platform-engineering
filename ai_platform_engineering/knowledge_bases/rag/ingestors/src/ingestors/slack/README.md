@@ -50,10 +50,10 @@ This script will walk you through adding channels and generate the properly form
 - `name` - Human-readable channel name (used in document metadata)
 - `lookback_days` - Number of days to look back on first sync (0 = all history)
 - `include_bots` - Whether to include bot messages (default: `false`)
+- `reload_interval` - Refresh interval for this datasource in seconds (default for legacy config: `86400`)
 
 ## Optional Environment Variables
 
-- `SYNC_INTERVAL` - Sync interval in seconds (default: `86400` = 24 hours)
 - `INIT_DELAY_SECONDS` - Delay before first sync in seconds (default: `0`)
 - `LOG_LEVEL` - Logging level (default: `INFO`)
 
@@ -123,4 +123,3 @@ The Slack ingestor:
 - Automatically groups messages into threads when possible
 - Requires the bot to be a member of each channel you want to ingest
 - Respects Slack rate limits with automatic retry and exponential backoff
-

@@ -3,24 +3,200 @@ id: caipe-ui-chart
 sidebar_label: caipe-ui
 ---
 
+:::caution Auto-generated
+This page is auto-generated from the Helm chart source. Do not edit directly.
+Regenerate with `make docs-helm-charts`.
+:::
+
 # caipe-ui
 
-Deploys the CAIPE Next.js UI and BFF.
+A Helm chart for CAIPE UI - chat interface for AI Platform Engineering
 
-The UI talks to Dynamic Agents server-side through `DYNAMIC_AGENTS_URL` and
-proxies browser chat streams through `/api/v1/chat/stream/*`.
-
-## Common Values
-
-| Key | Purpose |
+| | |
 |---|---|
-| `config.DYNAMIC_AGENTS_URL` | Dynamic Agents service URL |
-| `config.MONGODB_DATABASE` | MongoDB database name |
-| `mongodb.enabled` | Deploy bundled MongoDB subchart |
-| `existingSecret` | Secret with sensitive runtime env vars |
-| `externalSecrets` | ExternalSecret integration |
-| `appConfig.models` | UI model selector entries |
-| `appConfig.mcp_servers` | Dynamic-agent MCP bootstrap entries |
+| **Version** | `0.5.68` |
+| **Type** | application |
 
-Use `charts/ai-platform-engineering/charts/caipe-ui/values.yaml` for the
-complete value schema.
+## Quick Start
+
+```bash
+# Add and install the chart
+helm install caipe-ui oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68
+
+# Upgrade an existing release
+helm upgrade caipe-ui oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68
+```
+
+## Customizing Values
+
+Override default values using `--set` flags or a custom values file:
+
+```bash
+# Override individual values
+helm install caipe-ui oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68 \
+  --set replicaCount=2
+
+# Use a custom values file
+helm install caipe-ui oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68 \
+  -f custom-values.yaml
+
+# Show all configurable values
+helm show values oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68
+```
+
+## Reading the Values Table
+
+| Column | Meaning |
+|--------|---------|
+| **Key** | Dot-separated path into `values.yaml` (e.g. `image.repository`) |
+| **Type** | Go/Helm data type (`string`, `int`, `bool`, `object`, `list`) |
+| **Default** | Value used when not overridden |
+| **Description** | What the parameter controls |
+
+## Values
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| affinity | object | `{}` |  |
+| appConfig.agents | list | `[]` |  |
+| appConfig.mcp_servers | list | `[]` |  |
+| appConfig.models | list | `[]` |  |
+| appConfig.rag_sources | list | `[]` |  |
+| appConfig.workflow_configs | list | `[]` |  |
+| autoscaling.enabled | bool | `false` |  |
+| autoscaling.maxReplicas | int | `100` |  |
+| autoscaling.minReplicas | int | `1` |  |
+| autoscaling.targetCPUUtilizationPercentage | int | `80` |  |
+| config.AGENT_GATEWAY_ADMIN_URL | string | `""` |  |
+| config.AGENT_GATEWAY_URL | string | `""` |  |
+| config.ALLOW_KEYCLOAK_ADMIN_PASSWORD_FALLBACK | string | `""` |  |
+| config.APP_NAME | string | `"CAIPE"` |  |
+| config.BOOTSTRAP_ADMIN_EMAILS | string | `""` |  |
+| config.BUILTIN_SKILL_IDS | string | `"none"` |  |
+| config.CAIPE_CREDENTIALS_ENABLED | string | `"false"` |  |
+| config.CAIPE_ORG_DISPLAY_NAME | string | `"CAIPE"` |  |
+| config.CAIPE_ORG_KEY | string | `"caipe"` |  |
+| config.CAIPE_UNSAFE_RBAC_BYPASS | string | `"false"` |  |
+| config.CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS | string | `"false"` |  |
+| config.CREDENTIAL_KEY_PROVIDER | string | `"local-cmk"` |  |
+| config.CREDENTIAL_KMS_CMK_ID | string | `""` |  |
+| config.CREDENTIAL_KMS_REGION | string | `""` |  |
+| config.CREDENTIAL_SERVICE_AUDIENCE | string | `"caipe-credential-service"` |  |
+| config.CREDENTIAL_STORE_BACKEND | string | `"mongodb-envelope"` |  |
+| config.DESCRIPTION | string | `"Where Humans and AI agents collaborate to deliver high quality outcomes."` |  |
+| config.DYNAMIC_AGENTS_URL | string | `""` |  |
+| config.ENABLE_SUBAGENT_CARDS | string | `"true"` |  |
+| config.ENABLE_USER_INFO_TOOL | string | `"false"` |  |
+| config.ENV_BADGE | string | `""` |  |
+| config.KEYCLOAK_REALM | string | `"caipe"` |  |
+| config.KEYCLOAK_RESOURCE_SERVER_ID | string | `"caipe-platform"` |  |
+| config.KEYCLOAK_URL | string | `""` |  |
+| config.LOGO_STYLE | string | `"default"` |  |
+| config.LOGO_URL | string | `"/logo.svg"` |  |
+| config.MONGODB_DATABASE | string | `"caipe"` |  |
+| config.NEXTAUTH_URL | string | `"http://localhost:3000"` |  |
+| config.NODE_ENV | string | `"production"` |  |
+| config.OIDC_CLIENT_ID | string | `"caipe-ui"` |  |
+| config.OIDC_DISCOVERY_URL | string | `""` |  |
+| config.OIDC_ENABLE_REFRESH_TOKEN | string | `"true"` |  |
+| config.OIDC_REQUIRED_ADMIN_GROUP | string | `""` |  |
+| config.OIDC_REQUIRED_GROUP | string | `""` |  |
+| config.OPENFGA_HTTP | string | `""` |  |
+| config.OPENFGA_STORE_NAME | string | `"caipe-openfga"` |  |
+| config.SHOW_POWERED_BY | string | `"false"` |  |
+| config.SKILL_SCANNER_URL | string | `""` |  |
+| config.SLACK_BOT_ADMIN_AUDIENCE | string | `"caipe-slack-bot-admin"` |  |
+| config.SLACK_BOT_ADMIN_CLIENT_ID | string | `"caipe-ui"` |  |
+| config.SLACK_BOT_ADMIN_TOKEN_URL | string | `""` |  |
+| config.SLACK_BOT_ADMIN_URL | string | `""` |  |
+| config.SLACK_DEFAULT_AGENT_ID | string | `""` |  |
+| config.SLACK_DEFAULT_TEAM_SLUG | string | `""` |  |
+| config.SLACK_WORKSPACE_ALIAS | string | `"CAIPE"` |  |
+| config.SSO_ENABLED | string | `"true"` |  |
+| config.SUPPORT_EMAIL | string | `"support@example.com"` |  |
+| config.TAGLINE | string | `"Multi-Agent Workflow Automation"` |  |
+| config.WEBEX_BOT_ADMIN_AUDIENCE | string | `"caipe-webex-bot-admin"` |  |
+| config.WEBEX_BOT_ADMIN_CLIENT_ID | string | `"caipe-ui"` |  |
+| config.WEBEX_BOT_ADMIN_URL | string | `""` |  |
+| config.WEBEX_LINK_ALLOWED_ORG_ID | string | `""` |  |
+| config.WEBEX_LINK_CLIENT_ID | string | `""` |  |
+| config.WEBEX_LINK_REDIRECT_URI | string | `""` |  |
+| config.WEBEX_THREAD_CONTEXT_ENABLED | string | `"true"` |  |
+| config.WEBEX_THREAD_CONTEXT_MAX_CHARS | string | `"4000"` |  |
+| config.WEBEX_THREAD_CONTEXT_MAX_MESSAGES | string | `"10"` |  |
+| config.WEBEX_WORKSPACE_ALIAS | string | `""` |  |
+| config.WORKFLOW_RUNNER_ENABLED | string | `"false"` |  |
+| credentialSecretRefs | list | `[]` |  |
+| existingSecret | string | `""` |  |
+| externalSecrets.apiVersion | string | `"v1beta1"` |  |
+| externalSecrets.data | list | `[]` |  |
+| externalSecrets.enabled | bool | `false` |  |
+| externalSecrets.secretStoreRef.kind | string | `"ClusterSecretStore"` |  |
+| externalSecrets.secretStoreRef.name | string | `"vault"` |  |
+| fullnameOverride | string | `""` |  |
+| image.pullPolicy | string | `"Always"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-ui"` |  |
+| image.tag | string | `""` |  |
+| imagePullSecrets | list | `[]` |  |
+| ingress.annotations | object | `{}` |  |
+| ingress.className | string | `"nginx"` |  |
+| ingress.enabled | bool | `false` |  |
+| ingress.hosts[0].host | string | `"caipe-ui.local"` |  |
+| ingress.hosts[0].paths[0].path | string | `"/"` |  |
+| ingress.hosts[0].paths[0].pathType | string | `"Prefix"` |  |
+| ingress.tls | list | `[]` |  |
+| initContainers | list | `[]` |  |
+| keycloakAdminClient.clientId | string | `"caipe-platform"` |  |
+| keycloakAdminClient.secretKey | string | `"OIDC_CLIENT_SECRET"` |  |
+| keycloakAdminClient.secretName | string | `""` |  |
+| livenessProbe.failureThreshold | int | `3` |  |
+| livenessProbe.httpGet.path | string | `"/api/health"` |  |
+| livenessProbe.httpGet.port | string | `"http"` |  |
+| livenessProbe.periodSeconds | int | `10` |  |
+| livenessProbe.timeoutSeconds | int | `5` |  |
+| nameOverride | string | `""` |  |
+| nodeSelector | object | `{}` |  |
+| oauthConnectors | list | `[]` |  |
+| podAnnotations | object | `{}` |  |
+| podLabels | object | `{}` |  |
+| podSecurityContext.runAsNonRoot | bool | `true` |  |
+| readinessProbe.failureThreshold | int | `3` |  |
+| readinessProbe.httpGet.path | string | `"/api/health"` |  |
+| readinessProbe.httpGet.port | string | `"http"` |  |
+| readinessProbe.periodSeconds | int | `5` |  |
+| readinessProbe.timeoutSeconds | int | `3` |  |
+| replicaCount | int | `1` |  |
+| resources | object | `{}` |  |
+| revisionHistoryLimit | int | `3` |  |
+| schedulerRunnerClient.clientId | string | `"caipe-scheduler-runner"` |  |
+| schedulerRunnerClient.secretKey | string | `"KC_SCHEDULER_CLIENT_SECRET"` |  |
+| schedulerRunnerClient.secretName | string | `""` |  |
+| securityContext.allowPrivilegeEscalation | bool | `false` |  |
+| securityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| securityContext.readOnlyRootFilesystem | bool | `false` |  |
+| securityContext.runAsNonRoot | bool | `true` |  |
+| securityContext.runAsUser | int | `1001` |  |
+| securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
+| service.port | int | `3000` |  |
+| service.type | string | `"ClusterIP"` |  |
+| serviceAccount.annotations | object | `{}` |  |
+| serviceAccount.automount | bool | `true` |  |
+| serviceAccount.create | bool | `true` |  |
+| serviceAccount.name | string | `""` |  |
+| startupProbe.failureThreshold | int | `30` |  |
+| startupProbe.httpGet.path | string | `"/api/health"` |  |
+| startupProbe.httpGet.port | string | `"http"` |  |
+| startupProbe.initialDelaySeconds | int | `10` |  |
+| startupProbe.periodSeconds | int | `10` |  |
+| startupProbe.timeoutSeconds | int | `5` |  |
+| tolerations | list | `[]` |  |
+| volumeMounts | list | `[]` |  |
+| volumes | list | `[]` |  |
+| vpa.controlledResources[0] | string | `"cpu"` |  |
+| vpa.controlledResources[1] | string | `"memory"` |  |
+| vpa.controlledValues | string | `"RequestsAndLimits"` |  |
+| vpa.enabled | bool | `false` |  |
+| vpa.maxAllowed | object | `{}` |  |
+| vpa.minAllowed.cpu | string | `"50m"` |  |
+| vpa.minAllowed.memory | string | `"128Mi"` |  |
+| vpa.updateMode | string | `"InPlaceOrRecreate"` |  |

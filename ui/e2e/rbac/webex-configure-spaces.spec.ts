@@ -49,7 +49,7 @@ type WebexConfigureState = {
   ttl: number;
   platformConfigPatches: unknown[];
   discoveryRequests: URL[];
-  defaultsRequests: unknown[];
+  onboardingRequests: unknown[];
   configuredSpaces: Array<{
     bot_id: string;
     workspace_id: string;
@@ -105,7 +105,7 @@ function defaultState(): WebexConfigureState {
     ttl: 45,
     platformConfigPatches: [],
     discoveryRequests: [],
-    defaultsRequests: [],
+    onboardingRequests: [],
     configuredSpaces: [
       {
         bot_id: webexBot.id,
@@ -151,7 +151,7 @@ function webexConfigureHandler(state: WebexConfigureState): MockRouteHandler {
       await fulfillJson(route, {
         success: true,
         data: {
-          discovery_cache_ttl_minutes: state.ttl,
+          webex_discovery_cache_ttl_minutes: state.ttl,
           release_notes: { enabled: false },
         },
       });
@@ -162,13 +162,13 @@ function webexConfigureHandler(state: WebexConfigureState): MockRouteHandler {
       const body = await postJson(route);
       state.platformConfigPatches.push(body);
       const nextTtl = Number(
-        (body as { discovery_cache_ttl_minutes?: unknown } | null)
-          ?.discovery_cache_ttl_minutes,
+        (body as { webex_discovery_cache_ttl_minutes?: unknown } | null)
+          ?.webex_discovery_cache_ttl_minutes,
       );
       if (Number.isFinite(nextTtl)) state.ttl = nextTtl;
       await fulfillJson(route, {
         success: true,
-        data: { discovery_cache_ttl_minutes: state.ttl },
+        data: { webex_discovery_cache_ttl_minutes: state.ttl },
       });
       return true;
     }
@@ -230,7 +230,41 @@ function webexConfigureHandler(state: WebexConfigureState): MockRouteHandler {
     }
 
     if (path === "/api/dynamic-agents" && method === "GET") {
-      await fulfillJson(route, { success: true, data: { items: agents } });
+      await fulfillJson(route, {
+        success: true,
+        data: {
+          items: agents,
+          total: agents.length,
+          page: 1,
+          page_size: 100,
+          has_more: false,
+        },
+      });
+      return true;
+    }
+
+    if (path === "/api/admin/webex/direct-users" && method === "GET") {
+      await fulfillJson(route, {
+        success: true,
+        data: {
+          users: [
+            {
+              keycloak_user_id: "user-1",
+              email: "user@example.com",
+              display_name: "Example User",
+              linked: false,
+              enabled: false,
+              configured: false,
+              inherited: false,
+              state: "not_allowed",
+              agent_id: "",
+            },
+          ],
+          bot_id: webexBot.id,
+          dm_access_mode: "allowlist",
+          default_agent_id: null,
+        },
+      });
       return true;
     }
 
@@ -247,20 +281,23 @@ function webexConfigureHandler(state: WebexConfigureState): MockRouteHandler {
       return true;
     }
 
-    if (path === "/api/admin/webex/spaces/defaults" && method === "POST") {
+    if (path === "/api/admin/webex/spaces/onboard" && method === "POST") {
       const body = await postJson(route);
-      state.defaultsRequests.push(body);
+      state.onboardingRequests.push(body);
       const request = body as {
+        bot_id?: string;
+        workspace_id?: string;
+        space_id?: string;
+        space_name?: string;
         team_slug?: string;
         agent_id?: string;
-        manual_spaces?: Array<{ id: string; name?: string; bot_id?: string }>;
       } | null;
-      for (const space of request?.manual_spaces ?? []) {
+      if (request?.space_id) {
         state.configuredSpaces.push({
-          bot_id: space.bot_id ?? webexBot.id,
-          workspace_id: "WEBEX-WORKSPACE",
-          space_id: space.id,
-          space_name: space.name ?? space.id,
+          bot_id: request.bot_id ?? webexBot.id,
+          workspace_id: request.workspace_id || "WEBEX-WORKSPACE",
+          space_id: request.space_id,
+          space_name: request.space_name ?? request.space_id,
           team_slug: request?.team_slug,
           primary_agent_id: request?.agent_id,
           active_grants: 1,
@@ -269,15 +306,7 @@ function webexConfigureHandler(state: WebexConfigureState): MockRouteHandler {
       }
       await fulfillJson(route, {
         success: true,
-        data: {
-          summary: {
-            spaces_onboarded: request?.manual_spaces?.length ?? 0,
-            spaces_assigned_team: request?.manual_spaces?.length ?? 0,
-            space_grants_ensured: request?.manual_spaces?.length ?? 0,
-            routes_ensured: request?.manual_spaces?.length ?? 0,
-            routes_preserved: 0,
-          },
-        },
+        data: { pending_approval: false },
       });
       return true;
     }
@@ -300,9 +329,12 @@ async function installWebexConfigureApp(
 }
 
 async function gotoConfigureSpaces(page: Page) {
-  await page.goto("/admin?cat=integrations&tab=webex", {
+  await page.goto("/admin/integrations/webex", {
     waitUntil: "domcontentloaded",
   });
+  // Default landing tab is "Configured spaces" (matches Slack's tab order);
+  // switch to "Configure spaces" for onboarding coverage.
+  await page.getByRole("tab", { name: "Configure spaces" }).click();
   await expect(
     page.getByRole("region", { name: "Configure spaces" }),
   ).toBeVisible();
@@ -313,8 +345,8 @@ async function pickTeam(page: Page, buttonName: RegExp, optionName: RegExp) {
   await page.getByRole("option", { name: optionName }).click();
 }
 
-async function pickAgent(page: Page, buttonName: RegExp, optionName: RegExp) {
-  await page.getByRole("button", { name: buttonName }).click();
+async function pickAgent(page: Page, triggerName: RegExp, optionName: RegExp) {
+  await page.getByRole("combobox", { name: triggerName }).click();
   await page.getByRole("option", { name: optionName }).click();
 }
 
@@ -338,9 +370,9 @@ test.describe("mocked Webex Configure spaces UI", () => {
 
     await ttlInput.fill("30");
     await page.getByTestId("discovery-cache-ttl-save-webex").click();
-    await expect(page.getByText("Saved")).toBeVisible();
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
     expect(state.platformConfigPatches).toContainEqual({
-      discovery_cache_ttl_minutes: 30,
+      webex_discovery_cache_ttl_minutes: 30,
     });
 
     await page.getByTestId("discovery-cache-refresh-webex").click();
@@ -368,8 +400,8 @@ test.describe("mocked Webex Configure spaces UI", () => {
     await gotoConfigureSpaces(page);
 
     // Webex admin uses the single-panel switcher: two tabs ("Configure spaces"
-    // ↔ "Configured spaces"), not the full three-view tab bar. Landing tab is
-    // Configure spaces.
+    // ↔ "Configured spaces"), not the full three-view tab bar.
+    // gotoConfigureSpaces already switched to Configure spaces above.
     const adminViews = page.getByRole("tablist", { name: "Webex admin views" });
     await expect(adminViews.getByRole("tab", { name: "Configure spaces" })).toBeVisible();
     await expect(adminViews.getByRole("tab", { name: "Configured spaces" })).toBeVisible();
@@ -430,7 +462,7 @@ test.describe("mocked Webex Configure spaces UI", () => {
       page.getByRole("checkbox", { name: "Import Workflow Alerts" }),
     ).not.toBeChecked();
     await expect(
-      page.getByRole("button", { name: /^Set up 0 spaces$/ }),
+      page.getByRole("button", { name: /^Submit 0 spaces$/ }),
     ).toBeDisabled();
 
     await pickAgent(
@@ -442,7 +474,7 @@ test.describe("mocked Webex Configure spaces UI", () => {
       page.getByRole("checkbox", { name: "Import Workflow Alerts" }),
     ).toBeChecked();
     await expect(
-      page.getByRole("button", { name: /^Set up 0 spaces$/ }),
+      page.getByRole("button", { name: /^Submit 0 spaces$/ }),
     ).toBeDisabled();
     await pickTeam(
       page,
@@ -453,7 +485,7 @@ test.describe("mocked Webex Configure spaces UI", () => {
       page.getByRole("checkbox", { name: "Import Workflow Alerts" }),
     ).toBeChecked();
     await expect(
-      page.getByRole("button", { name: /^Set up 1 space$/ }),
+      page.getByRole("button", { name: /^Submit 1 space$/ }),
     ).toBeEnabled();
 
     await page.getByRole("button", { name: "Clear selection" }).click();
@@ -493,13 +525,13 @@ test.describe("mocked Webex Configure spaces UI", () => {
       page.getByRole("combobox", { name: /Team for Workflow Alerts/i }),
     ).toContainText("Platform Team");
     await expect(
-      page.getByRole("button", { name: /Dynamic Agent for Workflow Alerts/i }),
+      page.getByRole("combobox", { name: /Dynamic Agent for Workflow Alerts/i }),
     ).toContainText("SRE Agent");
     await expect(
       page.getByRole("combobox", { name: /Team for Night Ops/i }),
     ).toContainText("Platform Team");
     await expect(
-      page.getByRole("button", { name: /Dynamic Agent for Night Ops/i }),
+      page.getByRole("combobox", { name: /Dynamic Agent for Night Ops/i }),
     ).toContainText("SRE Agent");
 
     await pickTeam(page, /Team for Night Ops/i, /Operations Team.*team:ops/);
@@ -512,31 +544,34 @@ test.describe("mocked Webex Configure spaces UI", () => {
       page.getByRole("combobox", { name: /Team for Night Ops/i }),
     ).toContainText("Operations Team");
     await expect(
-      page.getByRole("button", { name: /Dynamic Agent for Night Ops/i }),
+      page.getByRole("combobox", { name: /Dynamic Agent for Night Ops/i }),
     ).toContainText("KB Agent");
 
-    await page.getByRole("button", { name: /^Set up 2 spaces$/ }).click();
-    await expect.poll(() => state.defaultsRequests.length).toBe(2);
-    expect(state.defaultsRequests).toEqual(
+    await page.getByRole("button", { name: /^Submit 2 spaces$/ }).click();
+    await expect.poll(() => state.onboardingRequests.length).toBe(2);
+    expect(state.onboardingRequests).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          bot_id: webexBot.id,
+          space_id: "space-alerts",
+          space_name: "Workflow Alerts",
           team_slug: "platform",
           agent_id: "agent-sre",
-          create_routes: true,
-          manual_spaces: [
-            { id: "space-alerts", name: "Workflow Alerts", bot_id: webexBot.id },
-          ],
+          listen: "mention",
+          create_route: true,
         }),
         expect.objectContaining({
+          bot_id: webexBot.id,
+          space_id: "space-night-ops",
+          space_name: "Night Ops",
           team_slug: "ops",
           agent_id: "agent-kb",
-          create_routes: true,
-          manual_spaces: [
-            { id: "space-night-ops", name: "Night Ops", bot_id: webexBot.id },
-          ],
+          listen: "mention",
+          create_route: true,
         }),
       ]),
     );
-    expect(JSON.stringify(state.defaultsRequests)).not.toContain("direct-sri");
+    expect(JSON.stringify(state.onboardingRequests)).not.toContain("direct-sri");
   });
+
 });

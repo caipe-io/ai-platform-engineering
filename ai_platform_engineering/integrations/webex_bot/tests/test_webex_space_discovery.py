@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from ai_platform_engineering.integrations.webex_bot.utils.webex_space_discovery import (
     WebexSpaceDiscovery,
 )
@@ -66,3 +68,35 @@ def test_discovery_cache_is_scoped_by_bot_and_can_be_refreshed(monkeypatch) -> N
     assert cached.cache_hit is True
     assert refreshed.cache_hit is False
     assert calls == 2
+
+
+def test_space_inspection_counts_provider_memberships(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PRIMARY_TOKEN", "test-token")
+    calls: list[str] = []
+
+    def request_get(url: str, **_kwargs: object) -> _Response:
+        calls.append(url)
+        if "/v1/rooms" in url:
+            return _Response(
+                {
+                    "items": [
+                        {"id": "space-1", "title": "Example Space", "type": "group"},
+                    ]
+                }
+            )
+        return _Response({"items": [{"id": "membership-1"}, {"id": "membership-2"}]})
+
+    discovery = WebexSpaceDiscovery(request_get=request_get)  # type: ignore[arg-type]
+
+    inspected = discovery.inspect_space(bot_id="primary", space_id="space-1")
+
+    assert inspected == {
+        "bot_id": "primary",
+        "space_id": "space-1",
+        "space_name": "Example Space",
+        "member_count": 2,
+    }
+    assert len(calls) == 2
+    assert "/v1/memberships?" in calls[1]

@@ -30,6 +30,16 @@ function updateBody(): Record<string, unknown> {
   return JSON.parse(String(updateCall?.[1]?.body)) as Record<string, unknown>;
 }
 
+async function chooseSecret(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+  index = 0,
+): Promise<void> {
+  const picker = screen.getAllByRole("combobox", { name: /^secret$/i })[index];
+  await user.click(picker);
+  await user.click(await screen.findByRole("option", { name }));
+}
+
 describe("MCPServerEditor credential sources", () => {
   beforeEach(() => {
     global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
@@ -95,19 +105,19 @@ describe("MCPServerEditor credential sources", () => {
     await user.type(screen.getByLabelText(/upstream url|endpoint url/i), "https://mcp.example.com/sse");
 
     await user.click(screen.getByRole("button", { name: /add credential/i }));
-    await screen.findByRole("option", { name: "Jira token" });
-    expect(screen.getByLabelText(/^secret$/i)).toHaveValue("");
+    await screen.findByRole("combobox", { name: /^secret$/i });
+    expect(screen.getByLabelText(/^secret$/i)).toHaveTextContent("Select a secret");
     expect(screen.queryByRole("option", { name: /bearer_token|fingerprint|preview/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/Preview j\.\.\.a/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /create server/i })).toBeDisabled();
     expect(screen.getByLabelText(/credential header/i)).toHaveValue("X-CAIPE-Provider-Token");
-    await user.selectOptions(screen.getByLabelText(/^secret$/i), "secret-jira");
+    await chooseSecret(user, "Jira token");
     expect(screen.getByText("Preview j...a")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /add credential/i }));
     await user.selectOptions(screen.getAllByLabelText(/credential target/i)[1], "env");
     await user.type(screen.getByLabelText(/credential name/i), "JIRA_TOKEN");
-    await user.selectOptions(screen.getAllByLabelText(/^secret$/i)[1], "secret-pagerduty");
+    await chooseSecret(user, "PagerDuty token", 1);
     expect(screen.getByText("Preview pd_...1234")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /create server/i }));
@@ -136,10 +146,10 @@ describe("MCPServerEditor credential sources", () => {
     await user.type(screen.getByLabelText(/display name/i), "Token Test");
     await user.type(screen.getByLabelText(/upstream url|endpoint url/i), "https://mcp.example.com/mcp");
     await user.click(screen.getByRole("button", { name: /add credential/i }));
-    await screen.findByRole("option", { name: "Jira token" });
+    await screen.findByRole("combobox", { name: /^secret$/i });
 
     await user.selectOptions(screen.getByLabelText(/credential header/i), "X-CAIPE-Provider-Token");
-    await user.selectOptions(screen.getByLabelText(/^secret$/i), "secret-jira");
+    await chooseSecret(user, "Jira token");
     await user.click(screen.getByRole("button", { name: /create server/i }));
 
     await waitFor(() => expect(createBody().credential_sources).toEqual([
@@ -173,11 +183,11 @@ describe("MCPServerEditor credential sources", () => {
     await user.type(screen.getByLabelText(/display name/i), "Custom Token Test");
     await user.type(screen.getByLabelText(/upstream url|endpoint url/i), "https://mcp.example.com/mcp");
     await user.click(screen.getByRole("button", { name: /add credential/i }));
-    await screen.findByRole("option", { name: "Jira token" });
+    await screen.findByRole("combobox", { name: /^secret$/i });
 
     await user.selectOptions(screen.getByLabelText(/credential header/i), "__custom__");
     await user.type(screen.getByLabelText(/custom header name/i), "X-My-Token");
-    await user.selectOptions(screen.getByLabelText(/^secret$/i), "secret-jira");
+    await chooseSecret(user, "Jira token");
     await user.click(screen.getByRole("button", { name: /create server/i }));
 
     await waitFor(() => expect(createBody().credential_sources).toEqual([
@@ -250,7 +260,7 @@ describe("MCPServerEditor credential sources", () => {
   });
 
 
-  it("lets users search and select an AgentGateway target", async () => {
+  it("updates the endpoint from the selected AgentGateway target", async () => {
     (global.fetch as jest.Mock).mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === "/api/mcp-servers/agentgateway/discover") {
         return response({
@@ -279,7 +289,6 @@ describe("MCPServerEditor credential sources", () => {
     render(<MCPServerEditor server={null} onSave={jest.fn()} onCancel={jest.fn()} />);
 
     await user.click(await screen.findByRole("combobox", { name: /agentgateway target/i }));
-    await user.type(screen.getByPlaceholderText(/search targets/i), "test");
     await user.click(screen.getByRole("option", { name: /Test ArgoCD/i }));
 
     expect(screen.getByLabelText(/upstream url|endpoint url/i)).toHaveValue("http://mcp-argocd:8000/mcp");

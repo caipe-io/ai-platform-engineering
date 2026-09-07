@@ -17,7 +17,7 @@ This guide walks you through creating an **Amazon EKS** (Elastic Kubernetes Serv
 You need the repo to use the EKS cluster configuration example and to follow the same paths as this guide.
 
 ```bash
-git clone https://github.com/cnoe-io/ai-platform-engineering.git
+git clone https://github.com/caipe-io/ai-platform-engineering.git
 cd ai-platform-engineering
 ```
 

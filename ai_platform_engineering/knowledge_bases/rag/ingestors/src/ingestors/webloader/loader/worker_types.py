@@ -120,6 +120,7 @@ class CrawlResult:
 
   # Filtering stats for debugging failed crawls
   urls_found_in_sitemap: int = 0
+  urls_matched_in_sitemap: int = 0
   urls_filtered_external: int = 0
   urls_filtered_pattern: int = 0
   urls_filtered_max_pages: int = 0
@@ -200,9 +201,11 @@ class WorkerMessage:
       "elapsed_seconds": result.elapsed_seconds,
       # Filtering stats for debugging
       "urls_found_in_sitemap": result.urls_found_in_sitemap,
+      "urls_matched_in_sitemap": result.urls_matched_in_sitemap,
       "urls_filtered_external": result.urls_filtered_external,
       "urls_filtered_pattern": result.urls_filtered_pattern,
       "urls_filtered_max_pages": result.urls_filtered_max_pages,
+      "sitemap_url_used": result.sitemap_url_used,
     }
     return cls(type=MessageType.CRAWL_RESULT, payload=payload)
 

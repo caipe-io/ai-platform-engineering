@@ -120,7 +120,6 @@ def main():
 
     # Application Logs
     mcp.tool()(api_v1_applications_name_logs.application_service__pod_logs)
-    # mcp.tool()(api_v1_applications_name_pods_podname_logs.application_service__pod_logs)
 
     # Application Management
     mcp.tool()(api_v1_applications.list_applications)

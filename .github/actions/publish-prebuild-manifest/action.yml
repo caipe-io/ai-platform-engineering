@@ -1,0 +1,81 @@
+name: Publish prebuild manifest
+description: Merge two native architecture digests into a tagged prebuild image.
+
+inputs:
+  artifact_pattern:
+    description: Artifact pattern containing the AMD64 and ARM64 digest files.
+    required: true
+  image_repository:
+    description: Fully qualified image repository without a tag.
+    required: true
+  image_ref:
+    description: Fully qualified tagged image reference to publish.
+    required: true
+  registry_username:
+    description: Container registry username.
+    required: true
+  registry_token:
+    description: Container registry token.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Download architecture digests
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        pattern: ${{ inputs.artifact_pattern }}
+        path: ${{ runner.temp }}/prebuild-digests
+        merge-multiple: true
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        registry: ghcr.io
+        username: ${{ inputs.registry_username }}
+        password: ${{ inputs.registry_token }}
+
+    - name: Create and inspect multi-architecture image
+      shell: bash
+      working-directory: ${{ runner.temp }}/prebuild-digests
+      env:
+        IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+        IMAGE_REF: ${{ inputs.image_ref }}
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        digests=(*)
+        if [[ "${#digests[@]}" -ne 2 ]]; then
+          echo "Expected two architecture digests, found ${#digests[@]}" >&2
+          exit 1
+        fi
+
+        sources=()
+        for digest in "${digests[@]}"; do
+          if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Invalid digest artifact filename: ${digest}" >&2
+            exit 1
+          fi
+          sources+=("${IMAGE_REPOSITORY}@sha256:${digest}")
+        done
+
+        create_log=$(mktemp)
+        trap 'rm -f "$create_log"' EXIT
+        if ! docker buildx imagetools create --tag "$IMAGE_REF" "${sources[@]}" \
+          >"$create_log" 2>&1; then
+          cat "$create_log" >&2
+          exit 1
+        fi
+        manifest=$(docker buildx imagetools inspect --raw "$IMAGE_REF")
+        if ! jq -e \
+          '[.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]' \
+          <<< "$manifest" >/dev/null; then
+          echo "Published manifest does not contain exactly linux/amd64 and linux/arm64" >&2
+          jq '.manifests[].platform' <<< "$manifest" >&2
+          exit 1
+        fi
+        echo "Validated platforms: linux/amd64, linux/arm64"
+        echo "Published image: ${IMAGE_REF}"

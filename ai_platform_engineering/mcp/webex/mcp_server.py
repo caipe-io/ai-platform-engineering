@@ -238,6 +238,33 @@ def register_tools(server, auth_token: Optional[str] = None) -> None:
             json={k: v for k, v in payload.items() if v is not None},
         )
         response.raise_for_status()
+        # Surface the Webex-side ``id`` (a.k.a. messageId), ``roomId``,
+        # and ``parentId`` in the tool response. The autonomous-agents
+        # service scans completed-run events for these fields so it can
+        # build a Webex thread -> task_id/run_id map; without them, the
+        # bot can never tell which task a later in-thread reply belongs
+        # to. Falls back to a plain success line if Webex returns an
+        # unexpected (non-JSON / partial) body so the agent loop is
+        # never broken by upstream changes.
+        try:
+            sent = response.json()
+        except (ValueError, TypeError):
+            sent = {}
+        message_id = sent.get("id")
+        room_id = sent.get("roomId")
+        parent_id = sent.get("parentId")
+        if message_id:
+            descriptor = f"messageId={message_id}"
+            if room_id:
+                descriptor += f", roomId={room_id}"
+            if parent_id:
+                descriptor += f", parentId={parent_id}"
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Message sent successfully ({descriptor}).",
+                )
+            ]
         return [TextContent(type="text", text="Message sent successfully")]
 
     @server.tool(name=WebexTools.CREATE_ROOM, description=CreateRoom.Config.description)

@@ -2,5 +2,5 @@ apiVersion: v2
 name: rag-ingestors
 description: Configurable ingestors for RAG system - supports AWS, K8s, ArgoCD, Slack, and Webex
 type: application
-version: 0.5.68-dev.3 # Do NOT bump this. It will be updated automatically using the PR or release workflow
-appVersion: "0.5.68-dev.3" # Do NOT modify. It will be updated automatically using the release workflow
+version: 1.0.1-dev.4 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+appVersion: "1.0.1-dev.4" # Do NOT modify. It will be updated automatically using the release workflow

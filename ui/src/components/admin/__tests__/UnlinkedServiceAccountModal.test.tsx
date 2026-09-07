@@ -186,7 +186,7 @@ describe("UnlinkedServiceAccountModal", () => {
     expect(screen.getByText(/read-only/i)).toBeInTheDocument();
   });
 
-  it("shows 'No scopes' when the SA has no scopes", async () => {
+  it("explains when the SA has no access", async () => {
     mockFetch({
       sa: { success: true, data: { ...ANON_SA, scopes: [] } },
     });
@@ -196,7 +196,9 @@ describe("UnlinkedServiceAccountModal", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/no scopes/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/no access has been granted/i),
+      ).toBeInTheDocument();
     });
   });
 
@@ -209,7 +211,8 @@ describe("UnlinkedServiceAccountModal", () => {
 
     // sre-agent is not in ANON_SA.scopes so it should appear in the ref picker.
     const refSelect = screen.getByRole("combobox", { name: /scope ref/i });
-    fireEvent.change(refSelect, { target: { value: "sre-agent" } });
+    fireEvent.click(refSelect);
+    fireEvent.click(await screen.findByRole("option", { name: "SRE Agent" }));
     fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
     await waitFor(() => {
@@ -235,7 +238,8 @@ describe("UnlinkedServiceAccountModal", () => {
     await waitFor(() => screen.getByText(/add a scope/i));
 
     const refSelect = screen.getByRole("combobox", { name: /scope ref/i });
-    fireEvent.change(refSelect, { target: { value: "sre-agent" } });
+    fireEvent.click(refSelect);
+    fireEvent.click(await screen.findByRole("option", { name: "SRE Agent" }));
     fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
     await waitFor(() => {

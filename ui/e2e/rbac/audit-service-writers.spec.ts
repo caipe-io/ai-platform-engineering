@@ -176,7 +176,7 @@ test.describe("audit-service-backed admin audit browser flows", () => {
       handlers: [auditHandler],
     });
 
-    await page.goto("/admin?cat=security&tab=action-audit", {
+    await page.goto("/admin/security/rbac-audit", {
       waitUntil: "domcontentloaded",
     });
 
@@ -192,10 +192,10 @@ test.describe("audit-service-backed admin audit browser flows", () => {
     await expect(page.getByText(/Source:\s*cas/)).toBeVisible();
     await expect(page.getByText(/Subject:\s*alice@caipe.local/i)).toBeVisible();
 
-    await page.locator("select").nth(1).selectOption("cas_decision");
-    await page.locator("select").nth(2).selectOption("deny");
+    await page.getByLabel("Audit event type").selectOption("cas_decision");
+    await page.getByLabel("Audit outcome").selectOption("deny");
     await page.getByPlaceholder("User email...").fill("alice@caipe.local");
-    await page.locator("select").first().selectOption("custom");
+    await page.getByLabel("Audit time range").selectOption("custom");
     await page.locator('input[type="datetime-local"]').first().fill("2026-06-20T08:00");
     await page.locator('input[type="datetime-local"]').nth(1).fill("2026-06-20T14:00");
     await page.getByRole("button", { name: /^Search$/ }).click();
@@ -241,7 +241,7 @@ test.describe("audit-service-backed admin audit browser flows", () => {
       handlers: [makeAuditHandler(records, auditQueries)],
     });
 
-    await page.goto("/admin?cat=security&tab=action-audit", {
+    await page.goto("/admin/security/rbac-audit", {
       waitUntil: "domcontentloaded",
     });
 
@@ -298,7 +298,7 @@ test.describe("audit-service-backed admin audit browser flows", () => {
       handlers: [auditHandler],
     });
 
-    await page.goto("/admin?cat=security&tab=action-audit", {
+    await page.goto("/admin/security/rbac-audit", {
       waitUntil: "domcontentloaded",
     });
 

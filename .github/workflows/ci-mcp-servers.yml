@@ -60,7 +60,6 @@ jobs:
       should_build: ${{ steps.set-matrix.outputs.should_build }}
       should_retag: ${{ steps.set-matrix.outputs.should_retag }}
       tag_version: ${{ steps.version.outputs.tag_version }}
-      image_prefix: ${{ steps.set-matrix.outputs.image_prefix }}
     env:
       ALL_AGENTS: ${{ needs.load-config.outputs.all_agents }}
     steps:
@@ -133,7 +132,6 @@ jobs:
               core.setOutput('agents_to_retag', '[]');
               core.setOutput('should_build', 'false');
               core.setOutput('should_retag', 'false');
-              core.setOutput('image_prefix', '');
               return;
             }
 
@@ -142,9 +140,6 @@ jobs:
             const preReleaseNum = preReleaseMatch ? parseInt(preReleaseMatch[2]) : 0;
             const isSharedChanged = filterOutputs.shared_config === 'true' ||
                                    filterOutputs.shared_dockerfile === 'true';
-
-            // GHCR prefix: -rc.N and -hotfix.N go to pre-release/
-            const imagePrefix = tagVersion && /-(rc|hotfix)\.\d+/.test(tagVersion) ? 'pre-release/' : '';
 
             // Build all if: manual, shared changed, first pre-release (N==1), or final release
             const shouldForceBuildAll = manualBuildAll || isSharedChanged ||
@@ -170,11 +165,8 @@ jobs:
             core.setOutput('agents_to_retag', JSON.stringify(agentsToRetag));
             core.setOutput('should_build', String(agentsToBuild.length > 0));
             core.setOutput('should_retag', String(agentsToRetag.length > 0 && !!tagVersion));
-            core.setOutput('image_prefix', imagePrefix);
-
             console.log(`Agents to build: ${agentsToBuild.join(', ') || 'none'}`);
             console.log(`Agents to retag: ${agentsToRetag.join(', ') || 'none'}`);
-            console.log(`Image prefix: '${imagePrefix}'`);
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -203,11 +195,11 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
+      IMAGE_NAME: ${{ github.repository_owner }}/mcp-${{ matrix.agent }}
 
     steps:
       - name: 🔒 harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -224,7 +216,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
@@ -293,11 +285,11 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
+      IMAGE_NAME: ${{ github.repository_owner }}/mcp-${{ matrix.agent }}
 
     steps:
       - name: 🔒 harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -309,7 +301,7 @@ jobs:
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -357,11 +349,11 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
+      IMAGE_NAME: ${{ github.repository_owner }}/mcp-${{ matrix.agent }}
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -449,7 +441,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - name: Set up Docker Buildx
         if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Log in to GitHub Container Registry
         if: steps.retag-or-build.outputs.needs_build == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4

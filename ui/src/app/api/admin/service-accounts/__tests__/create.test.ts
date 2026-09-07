@@ -25,18 +25,30 @@ const mockCheckOpenFgaTuple = jest.fn();
 const mockWriteOpenFgaTuples = jest.fn();
 const mockDeleteExactOpenFgaTuples = jest.fn();
 const mockListOpenFgaObjects = jest.fn();
+jest.mock("@/lib/authz", () => ({
+  reconcileTupleDiff: (diff: { writes: unknown[]; deletes: unknown[] }) =>
+    diff.writes.length > 0
+      ? mockWriteOpenFgaTuples(diff)
+      : mockDeleteExactOpenFgaTuples(diff.deletes),
+}));
 jest.mock("@/lib/rbac/openfga", () => ({
   checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
-  writeOpenFgaTuples: (...args: unknown[]) => mockWriteOpenFgaTuples(...args),
-  deleteExactOpenFgaTuples: (...args: unknown[]) => mockDeleteExactOpenFgaTuples(...args),
   listOpenFgaObjects: (...args: unknown[]) => mockListOpenFgaObjects(...args),
+}));
+
+const mockHasOrganizationAdmin = jest.fn();
+jest.mock("@/lib/rbac/platform-admin", () => ({
+  hasOrganizationAdmin: (...args: unknown[]) =>
+    mockHasOrganizationAdmin(...args),
 }));
 
 const mockCreateServiceAccountClient = jest.fn();
 const mockDeleteServiceAccountClient = jest.fn();
 jest.mock("@/lib/rbac/keycloak-admin", () => ({
-  createServiceAccountClient: (...args: unknown[]) => mockCreateServiceAccountClient(...args),
-  deleteServiceAccountClient: (...args: unknown[]) => mockDeleteServiceAccountClient(...args),
+  createServiceAccountClient: (...args: unknown[]) =>
+    mockCreateServiceAccountClient(...args),
+  deleteServiceAccountClient: (...args: unknown[]) =>
+    mockDeleteServiceAccountClient(...args),
   getServiceAccountTokenUrl: () =>
     "https://keycloak.example.com/realms/caipe/protocol/openid-connect/token",
 }));
@@ -51,8 +63,13 @@ const mockCreateServiceAccountDoc = jest.fn();
 const mockListByOwningTeams = jest.fn();
 jest.mock("@/lib/service-accounts", () => ({
   isNameTakenInTeam: (...args: unknown[]) => mockIsNameTakenInTeam(...args),
-  createServiceAccountDoc: (...args: unknown[]) => mockCreateServiceAccountDoc(...args),
+  createServiceAccountDoc: (...args: unknown[]) =>
+    mockCreateServiceAccountDoc(...args),
   listByOwningTeams: (...args: unknown[]) => mockListByOwningTeams(...args),
+}));
+
+jest.mock("@/lib/rbac/organization", () => ({
+  organizationObjectId: () => "organization:example-org",
 }));
 
 import { POST } from "../route";
@@ -88,11 +105,23 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockGetServerSession.mockResolvedValue(SESSION);
   mockIsNameTakenInTeam.mockResolvedValue(false);
-  mockWriteOpenFgaTuples.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
-  mockDeleteExactOpenFgaTuples.mockResolvedValue({ enabled: true, writes: 0, deletes: 0 });
+  mockWriteOpenFgaTuples.mockResolvedValue({
+    enabled: true,
+    writes: 1,
+    deletes: 0,
+  });
+  mockDeleteExactOpenFgaTuples.mockResolvedValue({
+    enabled: true,
+    writes: 0,
+    deletes: 0,
+  });
   mockCreateServiceAccountClient.mockResolvedValue(KC_CLIENT);
   mockDeleteServiceAccountClient.mockResolvedValue(undefined);
-  mockCreateServiceAccountDoc.mockResolvedValue({ ...KC_CLIENT, _id: "mongo-id" });
+  mockCreateServiceAccountDoc.mockResolvedValue({
+    ...KC_CLIENT,
+    _id: "mongo-id",
+  });
+  mockHasOrganizationAdmin.mockResolvedValue(false);
 });
 
 describe("POST /api/admin/service-accounts", () => {
@@ -119,7 +148,9 @@ describe("POST /api/admin/service-accounts", () => {
     expect(body.data.id).toBe("sa-sub-1");
     expect(body.data.credential.client_secret).toBe("super-secret-value");
     expect(body.data.credential.client_id).toBe(KC_CLIENT.clientId);
-    expect(body.data.credential.token_url).toContain("/protocol/openid-connect/token");
+    expect(body.data.credential.token_url).toContain(
+      "/protocol/openid-connect/token",
+    );
     expect(body.data.granted_scopes).toHaveLength(2);
 
     // Ownership tuple written with owner_team (base relation, not can_*), plus
@@ -133,9 +164,21 @@ describe("POST /api/admin/service-accounts", () => {
           relation: "owner_team",
           object: "service_account:sa-sub-1",
         },
-        { user: "service_account:sa-sub-1", relation: "caller", object: "mcp_gateway:list" },
-        { user: "service_account:sa-sub-1", relation: "user", object: "agent:incident-resolver" },
-        { user: "service_account:sa-sub-1", relation: "caller", object: "tool:jira/search" },
+        {
+          user: "service_account:sa-sub-1",
+          relation: "caller",
+          object: "mcp_gateway:list",
+        },
+        {
+          user: "service_account:sa-sub-1",
+          relation: "user",
+          object: "agent:incident-resolver",
+        },
+        {
+          user: "service_account:sa-sub-1",
+          relation: "caller",
+          object: "tool:jira/search",
+        },
       ]),
     );
 
@@ -149,7 +192,11 @@ describe("POST /api/admin/service-accounts", () => {
     allowMembershipAndScopes(new Set());
 
     const res = await POST(
-      postRequest({ name: "no-scope-bot", owning_team_id: "team-sre", scopes: [] }),
+      postRequest({
+        name: "no-scope-bot",
+        owning_team_id: "team-sre",
+        scopes: [],
+      }),
     );
 
     expect(res.status).toBe(201);
@@ -158,15 +205,119 @@ describe("POST /api/admin/service-accounts", () => {
     // No scope tuples — only ownership + the coarse-gateway baseline are written.
     const writeArg = mockWriteOpenFgaTuples.mock.calls[0][0];
     expect(writeArg.writes).toHaveLength(2);
-    expect(writeArg.writes.map((t: { relation: string }) => t.relation).sort()).toEqual([
-      "caller",
-      "owner_team",
-    ]);
+    expect(
+      writeArg.writes.map((t: { relation: string }) => t.relation).sort(),
+    ).toEqual(["caller", "owner_team"]);
     expect(writeArg.writes).toEqual(
       expect.arrayContaining([
-        { user: "service_account:sa-sub-1", relation: "caller", object: "mcp_gateway:list" },
+        {
+          user: "service_account:sa-sub-1",
+          relation: "caller",
+          object: "mcp_gateway:list",
+        },
       ]),
     );
+  });
+
+  it("grants a held datasource plus the hidden RAG search baseline", async () => {
+    allowMembershipAndScopes(new Set(["can_read data_source:source-a"]));
+
+    const res = await POST(
+      postRequest({
+        name: "automation-reader",
+        owning_team_id: "team-example",
+        scopes: [{ type: "datasource", ref: "source-a" }],
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: expect.arrayContaining([
+        {
+          user: "service_account:sa-sub-1",
+          relation: "reader",
+          object: "data_source:source-a",
+        },
+        {
+          user: "service_account:sa-sub-1",
+          relation: "searcher",
+          object: "organization:example-org",
+        },
+      ]),
+      deletes: [],
+    });
+    expect(mockCreateServiceAccountDoc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopes_snapshot: [
+          expect.objectContaining({ type: "datasource", ref: "source-a" }),
+        ],
+      }),
+    );
+  });
+
+  it("grants a held collection without expanding its datasources", async () => {
+    allowMembershipAndScopes(new Set(["can_read rag_collection:platform-rag"]));
+
+    const res = await POST(
+      postRequest({
+        name: "collection-reader",
+        owning_team_id: "team-example",
+        scopes: [{ type: "collection", ref: "platform-rag" }],
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: expect.arrayContaining([
+        {
+          user: "service_account:sa-sub-1",
+          relation: "reader",
+          object: "rag_collection:platform-rag",
+        },
+        {
+          user: "service_account:sa-sub-1",
+          relation: "searcher",
+          object: "organization:example-org",
+        },
+      ]),
+      deletes: [],
+    });
+    expect(mockCreateServiceAccountDoc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopes_snapshot: [
+          expect.objectContaining({
+            type: "collection",
+            ref: "platform-rag",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("lets an organization admin create with a datasource from the full catalog", async () => {
+    allowMembershipAndScopes(new Set());
+    mockHasOrganizationAdmin.mockResolvedValue(true);
+
+    const res = await POST(
+      postRequest({
+        name: "platform-reader",
+        owning_team_id: "team-example",
+        scopes: [{ type: "datasource", ref: "source-admin" }],
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(mockCheckOpenFgaTuple).toHaveBeenCalledTimes(1);
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: expect.arrayContaining([
+        {
+          user: "service_account:sa-sub-1",
+          relation: "reader",
+          object: "data_source:source-admin",
+        },
+      ]),
+      deletes: [],
+    });
   });
 
   it("name conflict → 409 (FR-002a)", async () => {
@@ -174,7 +325,11 @@ describe("POST /api/admin/service-accounts", () => {
     mockIsNameTakenInTeam.mockResolvedValue(true);
 
     const res = await POST(
-      postRequest({ name: "incident-bot", owning_team_id: "team-sre", scopes: [] }),
+      postRequest({
+        name: "incident-bot",
+        owning_team_id: "team-sre",
+        scopes: [],
+      }),
     );
 
     expect(res.status).toBe(409);
@@ -186,15 +341,23 @@ describe("POST /api/admin/service-accounts", () => {
     allowMembershipAndScopes(new Set());
     // Simulate the lib's case-insensitive comparison: existing "Incident-Bot".
     mockIsNameTakenInTeam.mockImplementation(
-      async (_team: string, name: string) => name.trim().toLowerCase() === "incident-bot",
+      async (_team: string, name: string) =>
+        name.trim().toLowerCase() === "incident-bot",
     );
 
     const res = await POST(
-      postRequest({ name: "INCIDENT-BOT", owning_team_id: "team-sre", scopes: [] }),
+      postRequest({
+        name: "INCIDENT-BOT",
+        owning_team_id: "team-sre",
+        scopes: [],
+      }),
     );
 
     expect(res.status).toBe(409);
-    expect(mockIsNameTakenInTeam).toHaveBeenCalledWith("team-sre", "INCIDENT-BOT");
+    expect(mockIsNameTakenInTeam).toHaveBeenCalledWith(
+      "team-sre",
+      "INCIDENT-BOT",
+    );
   });
 
   it("unauthorized scope → 403, whole request rejected, nothing created (S3/FR-008)", async () => {
@@ -214,7 +377,9 @@ describe("POST /api/admin/service-accounts", () => {
 
     expect(res.status).toBe(403);
     const body = await res.json();
-    expect(body.data.rejected_scopes).toEqual([{ type: "tool", ref: "jira/search" }]);
+    expect(body.data.rejected_scopes).toEqual([
+      { type: "tool", ref: "jira/search" },
+    ]);
     expect(mockCreateServiceAccountClient).not.toHaveBeenCalled();
     expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
   });
@@ -223,7 +388,11 @@ describe("POST /api/admin/service-accounts", () => {
     mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
 
     const res = await POST(
-      postRequest({ name: "incident-bot", owning_team_id: "team-other", scopes: [] }),
+      postRequest({
+        name: "incident-bot",
+        owning_team_id: "team-other",
+        scopes: [],
+      }),
     );
 
     expect(res.status).toBe(403);

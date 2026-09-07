@@ -452,7 +452,7 @@ describe("SkillWorkspace — export", () => {
 describe("SkillWorkspace — unsaved-changes guard", () => {
   // ---------------------------------------------------------------------
   // (1) Wires form.isDirty into the global store so AppHeader's NavLinks
-  //     intercept top-nav clicks. The existing global tests cover the
+  //     intercept application-navigation clicks. The existing global tests cover the
   //     header side; here we just assert the workspace publishes its
   //     dirty state correctly.
   // ---------------------------------------------------------------------
@@ -510,32 +510,25 @@ describe("SkillWorkspace — unsaved-changes guard", () => {
   //     discard-confirm dialog (NOT a separate header dialog) so the UX
   //     is identical for every exit path.
   // ---------------------------------------------------------------------
-  it("opens the discard dialog when AppHeader requests a top-nav navigation", () => {
+  it("opens the discard dialog when the application rail requests navigation", () => {
     mockStoreState.pendingNavigationHref = "/chat";
     resetForm({ isDirty: true });
     render(<SkillWorkspace existingConfig={SAMPLE_SKILL} />);
     expect(mockForm.guardedClose).toHaveBeenCalled();
   });
 
-  it("Discard & leave honours the pending top-nav href over backHref", () => {
+  it("Discard & leave honours the pending application-navigation href over backHref", () => {
     // Simulate the dialog being shown after AppHeader requested /chat.
     mockStoreState.pendingNavigationHref = "/chat";
     resetForm({ isDirty: true, showDiscardConfirm: true });
 
-    // jsdom's `window.location.href` setter performs a real (mocked)
-    // navigation. We can't easily intercept that, so instead we just
-    // assert the upstream behaviour: confirmDiscard + confirmNavigation
-    // were invoked, and `router.push` was NOT used (since an external
-    // href takes precedence over the in-app backHref).
     render(<SkillWorkspace existingConfig={SAMPLE_SKILL} backHref="/skills" />);
     fireEvent.click(
       screen.getByTestId("skill-workspace-discard-confirm"),
     );
     expect(mockForm.confirmDiscard).toHaveBeenCalled();
     expect(mockConfirmNav).toHaveBeenCalled();
-    // External href (`/chat`) wins over backHref — we hand off to
-    // `window.location.href` rather than calling router.push.
-    expect(pushMock).not.toHaveBeenCalled();
+    expect(pushMock).toHaveBeenCalledWith("/chat");
   });
 
   it("Discard & leave falls back to backHref when there's no pending external nav", () => {
@@ -548,7 +541,7 @@ describe("SkillWorkspace — unsaved-changes guard", () => {
     expect(mockConfirmNav).not.toHaveBeenCalled();
   });
 
-  it("Keep editing cancels the pending top-nav request as well", () => {
+  it("Keep editing cancels the pending application-navigation request as well", () => {
     mockStoreState.pendingNavigationHref = "/chat";
     resetForm({ isDirty: true, showDiscardConfirm: true });
     render(<SkillWorkspace existingConfig={SAMPLE_SKILL} />);

@@ -1,28 +1,59 @@
 import {
-ApiError,
-handleApiError,
-requireRbacPermission,
-} from '@/lib/api-middleware';
-import { authOptions } from '@/lib/auth-config';
-import { getDevAnonymousSession,isDevAnonymousAuthEnabled } from '@/lib/auth/dev-auth-provider';
-import { checkOpenFgaTuple } from '@/lib/rbac/openfga';
+  ApiError,
+  getAuthFromBearerOrSession,
+  handleApiError,
+  requireRbacPermission,
+} from "@/lib/api-middleware";
+import { checkOpenFgaTuple } from "@/lib/rbac/openfga";
 import {
-deleteAllMcpToolRelationshipTuples,
-reconcileDataSourceRelationships,
-reconcileKnowledgeBaseRelationships,
-reconcileMcpToolRelationships,
-} from '@/lib/rbac/openfga-owned-resources-reconcile';
-import { organizationObjectId } from '@/lib/rbac/organization';
+  deleteAllDataSourceRelationshipTuples,
+  deleteAllIngestionSourceRelationshipTuples,
+  deleteAllKnowledgeBaseRelationshipTuples,
+  deleteAllMcpToolRelationshipTuples,
+  reconcileDataSourceRelationships,
+  reconcileIngestionSourceRelationships,
+  reconcileKnowledgeBaseRelationships,
+  reconcileMcpToolRelationships,
+} from "@/lib/rbac/openfga-owned-resources-reconcile";
+import { organizationObjectId } from "@/lib/rbac/organization";
 import {
-filterResourcesByPermission,
-requireResourcePermission,
-type ResourceAuthzSession,
-type ResourcePermissionAction,
-} from '@/lib/rbac/resource-authz';
-import { resolveShareableOwnershipWrite } from '@/lib/rbac/shareable-resource';
-import type { RbacScope } from '@/lib/rbac/types';
-import { getServerSession } from 'next-auth';
-import { NextRequest,NextResponse } from 'next/server';
+  filterResourcesByPermission,
+  requireResourcePermission,
+  type ResourceAuthzSession,
+  type ResourcePermissionAction,
+} from "@/lib/rbac/resource-authz";
+import { getCollection } from "@/lib/mongodb";
+import {
+  computeLocalFileDatasourceId,
+  localUploadFilename,
+} from "@/lib/local-file-datasource-id";
+import {
+  createPublicationRequest,
+  invalidatePublicationRequests,
+  publicationResourceRevision,
+  recordAutoApprovedPublication,
+  type RagPublicationState,
+} from "@/lib/publication-approval.server";
+import {
+  enforceRagFileUploadLimits,
+  enforceRagIngestorLimits,
+  getRagIngestorLimits,
+} from "@/lib/rag-ingestor-limits.server";
+import {
+  removeDatasourceFromAgentPins,
+  removeDatasourceFromRagCollections,
+  visibleRagCollectionsByDatasource,
+} from "@/lib/rag-collections.server";
+import { prepareRagPublication } from "@/lib/rag-publication-approval.server";
+import { resolveShareableOwnershipWrite } from "@/lib/rbac/shareable-resource";
+import { resolveUserIdentitiesBySubject } from "@/lib/rbac/user-identity-directory";
+import type { RbacScope } from "@/lib/rbac/types";
+import type {
+  IngestionSourceConfig,
+  IngestionSourceType,
+} from "@/types/ingestion-source";
+import type { PublicationRequestDocument } from "@/types/publication-approval";
+import { NextRequest, NextResponse } from "next/server";
 
 /**
  * RAG API Proxy with JWT Bearer Token Authentication
@@ -51,58 +82,126 @@ import { NextRequest,NextResponse } from 'next/server';
  */
 
 function getRagServerUrl(): string {
-  return process.env.RAG_SERVER_URL ||
-         process.env.NEXT_PUBLIC_RAG_URL ||
-         'http://localhost:9446';
+  return (
+    process.env.RAG_SERVER_URL ||
+    process.env.NEXT_PUBLIC_RAG_URL ||
+    "http://localhost:9446"
+  );
 }
 
-function scopeForRagProxyMethod(method: string, pathSegments: string[] = []): RbacScope {
-  const path = pathSegments.join('/').toLowerCase();
+function scopeForRagProxyMethod(
+  method: string,
+  pathSegments: string[] = [],
+): RbacScope {
+  const path = pathSegments.join("/").toLowerCase();
+
+  // Content retrieval is governed by the explicit search capability. The
+  // RAG server additionally intersects each request with readable datasource
+  // ids, so this gate never replaces object-level authorization.
   if (
-    path === 'v1/datasources' ||
-    path.startsWith('v1/datasources/') ||
-    path === 'v1/datasource' ||
-    path.startsWith('v1/datasource/')
+    path === "v1/query" ||
+    path === "v1/mcp/invoke" ||
+    path.startsWith("v1/graph/explore/") ||
+    path.startsWith("v1/chunk/") ||
+    /^v1\/datasource\/[^/]+\/documents$/.test(path)
   ) {
-    return method === 'GET' || method === 'POST' ? 'query' : 'admin';
+    return "query";
   }
-  switch (method) {
-    case 'GET':
-    case 'POST':
-      return 'query';
-    case 'PUT':
-    case 'PATCH':
-    case 'DELETE':
-      return 'admin';
-    default:
-      return 'query';
-  }
-}
 
-function actionForRagRequest(method: string, pathSegments: string[]): ResourcePermissionAction {
-  const path = pathSegments.join('/').toLowerCase();
-  if (method === 'GET') return path.includes('query') || path.includes('search') ? 'read' : 'discover';
-  if (method === 'POST') {
-    if (path.includes('ingest') || path.includes('upload') || path.includes('datasource')) return 'ingest';
-    return 'read';
+  if (method === "GET") {
+    // Datasource/source-management discovery must not require Search Access:
+    // a management-only owner still needs to see configuration and jobs.
+    return "view";
   }
-  return 'admin';
-}
 
-function resourceTypeForRagRequest(pathSegments: string[]): 'data_source' | 'knowledge_base' {
-  const path = pathSegments.join('/').toLowerCase();
+  if (method === "POST" && path.startsWith("v1/ingest/")) {
+    if (path.endsWith("/reload-all")) return "admin";
+    if (path.endsWith("/reload")) {
+      // Existing-source reload is an Owner lifecycle action. The object-level
+      // ingestion_source#can_manage check below and the RAG server enforce it.
+      return "view";
+    }
+    return "ingest";
+  }
+
+  if (method === "POST") {
+    if (path === "v1/datasource") return "ingest";
+    if (path === "v1/jobs/batch") return "view";
+    if (/^v1\/datasource\/[^/]+\/cleanup$/.test(path)) return "view";
+    if (/^v1\/job\/[^/]+\/terminate$/.test(path)) {
+      // The RAG server resolves the job's datasource and requires Owner access.
+      return "view";
+    }
+    if (path === "v1/mcp/custom-tools") return "view";
+  }
+
   if (
-    path === 'v1/query' ||
-    path === 'v1/mcp/invoke' ||
-    path.startsWith('v1/ingest/') ||
-    path === 'v1/datasource' ||
-    path.startsWith('v1/datasource/') ||
-    path === 'v1/datasources' ||
-    path.startsWith('v1/datasources/')
+    (method === "PATCH" && /^v1\/datasource\/[^/]+$/.test(path)) ||
+    (method === "DELETE" && path === "v1/datasource")
   ) {
-    return 'data_source';
+    // Datasource lifecycle mutations are authorized below against the
+    // independent ingestion_source Owner graph.
+    return "view";
   }
-  return 'knowledge_base';
+
+  if (
+    (method === "PUT" || method === "DELETE") &&
+    /^v1\/mcp\/custom-tools\/[^/]+$/.test(path)
+  ) {
+    // The per-tool ownership gate below is authoritative for self-service
+    // custom tools; this coarse check only requires org membership.
+    return "view";
+  }
+
+  // Global cleanup, ingestor administration, built-in tool configuration,
+  // and unknown mutations remain administrator-only by default.
+  return "admin";
+}
+
+function actionForRagRequest(
+  method: string,
+  pathSegments: string[],
+): ResourcePermissionAction {
+  const path = pathSegments.join("/").toLowerCase();
+  if (method === "GET")
+    return path.includes("query") || path.includes("search")
+      ? "read"
+      : "discover";
+  if (method === "POST") {
+    if (
+      path.endsWith("/reload") ||
+      /^v1\/datasource\/[^/]+\/cleanup$/.test(path) ||
+      /^v1\/job\/[^/]+\/terminate$/.test(path)
+    ) {
+      return "admin";
+    }
+    if (
+      path.includes("ingest") ||
+      path.includes("upload") ||
+      path.includes("datasource")
+    )
+      return "ingest";
+    return "read";
+  }
+  return "admin";
+}
+
+function resourceTypeForRagRequest(
+  pathSegments: string[],
+): "data_source" | "knowledge_base" {
+  const path = pathSegments.join("/").toLowerCase();
+  if (
+    path === "v1/query" ||
+    path === "v1/mcp/invoke" ||
+    path.startsWith("v1/ingest/") ||
+    path === "v1/datasource" ||
+    path.startsWith("v1/datasource/") ||
+    path === "v1/datasources" ||
+    path.startsWith("v1/datasources/")
+  ) {
+    return "data_source";
+  }
+  return "knowledge_base";
 }
 
 function extractKnowledgeBaseId(
@@ -110,20 +209,95 @@ function extractKnowledgeBaseId(
   pathSegments: string[],
   body?: unknown,
 ): string | null {
-  for (const key of ['kb_id', 'knowledge_base_id', 'knowledgeBaseId', 'datasource_id', 'datasourceId']) {
+  for (const key of [
+    "kb_id",
+    "knowledge_base_id",
+    "knowledgeBaseId",
+    "datasource_id",
+    "datasourceId",
+  ]) {
     const value = request.nextUrl.searchParams.get(key);
     if (value) return value;
-    if (body && typeof body === 'object' && !Array.isArray(body)) {
+    if (body && typeof body === "object" && !Array.isArray(body)) {
       const bodyValue = (body as Record<string, unknown>)[key];
-      if (typeof bodyValue === 'string' && bodyValue.trim()) return bodyValue.trim();
+      if (typeof bodyValue === "string" && bodyValue.trim())
+        return bodyValue.trim();
     }
   }
 
+  if (
+    pathSegments[0]?.toLowerCase() === "v1" &&
+    pathSegments[1]?.toLowerCase() === "datasource" &&
+    pathSegments[2]
+  ) {
+    return pathSegments[2];
+  }
+
   const marker = pathSegments.findIndex((segment) =>
-    ['kb', 'knowledge-bases', 'knowledge_base', 'datasources', 'data-sources'].includes(segment.toLowerCase())
+    [
+      "kb",
+      "knowledge-bases",
+      "knowledge_base",
+      "datasources",
+      "data-sources",
+    ].includes(segment.toLowerCase()),
   );
   if (marker >= 0 && pathSegments[marker + 1]) return pathSegments[marker + 1];
   return null;
+}
+
+function isDatasourceDeleteRequest(
+  method: string,
+  pathSegments: string[],
+): boolean {
+  return (
+    method === "DELETE" &&
+    pathSegments.join("/").toLowerCase() === "v1/datasource"
+  );
+}
+
+const INGEST_PATH_SOURCE_TYPES: Record<string, IngestionSourceType> = {
+  "v1/ingest/slack/channel": "slack_channel",
+  "v1/ingest/slack/reload": "slack_channel",
+  "v1/ingest/confluence/page": "confluence_space",
+  "v1/ingest/confluence/preview": "confluence_space",
+  "v1/ingest/confluence/reload": "confluence_space",
+  "v1/ingest/jira/project": "jira_project",
+  "v1/ingest/jira/preview": "jira_project",
+  "v1/ingest/jira/reload": "jira_project",
+  "v1/ingest/webloader/url": "web_url",
+  "v1/ingest/webloader/preview": "web_url",
+  "v1/ingest/webloader/reload": "web_url",
+  "v1/ingest/webex/space": "webex_space",
+  "v1/ingest/webex/reload": "webex_space",
+};
+
+async function enforceIngestRequestLimits(
+  targetPath: string,
+  body: unknown,
+): Promise<void> {
+  const sourceType = INGEST_PATH_SOURCE_TYPES[targetPath];
+  if (!sourceType || !isRecord(body)) return;
+  const limits = await getRagIngestorLimits();
+
+  // A reload body contains only datasource_id. Resolve DB-managed source
+  // settings so lowering a platform limit governs subsequent reloads too.
+  if (targetPath.endsWith("/reload")) {
+    const datasourceId = normalizeString(body.datasource_id);
+    if (!datasourceId) return;
+    const sources = await getCollection<IngestionSourceConfig>(
+      "rag_ingestion_sources",
+    );
+    const source = await sources.findOne({ source_id: datasourceId } as never);
+    if (!source) return; // Legacy/env source: the RAG server's hard limits remain authoritative.
+    enforceRagIngestorLimits(
+      source.source_type,
+      source as unknown as Record<string, unknown>,
+      limits,
+    );
+    return;
+  }
+  enforceRagIngestorLimits(sourceType, body, limits, { applyDefaults: true });
 }
 
 /**
@@ -136,6 +310,7 @@ interface AuthorizedRagContext {
     sub?: unknown;
     org?: string;
     role?: string;
+    isServiceAccount?: boolean;
     user?: { email?: string | null };
   };
   pendingKnowledgeBaseOwnership?: {
@@ -173,7 +348,17 @@ interface AuthorizedRagContext {
 }
 
 function normalizeString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function principalFromSession(
+  session: AuthorizedRagContext["session"],
+): string | null {
+  const subject = normalizeString(session.sub);
+  if (!subject) return null;
+  return session.isServiceAccount === true
+    ? `service_account:${subject}`
+    : `user:${subject}`;
 }
 
 const TEAM_SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
@@ -184,26 +369,374 @@ function normalizeSlugList(raw: unknown): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const candidate of raw) {
-    if (typeof candidate !== 'string') continue;
+    if (typeof candidate !== "string") continue;
     const trimmed = candidate.trim();
-    if (!trimmed || !TEAM_SLUG_PATTERN.test(trimmed) || seen.has(trimmed)) continue;
+    if (!trimmed || !TEAM_SLUG_PATTERN.test(trimmed) || seen.has(trimmed))
+      continue;
     seen.add(trimmed);
     out.push(trimmed);
   }
   return out;
 }
 
-/** Boolean membership check (`team:<slug>#can_use` or `#can_manage`) for owner writes. */
-async function canUseTeam(session: ResourceAuthzSession, slug: string): Promise<boolean> {
+async function localFileDatasourceId(form: FormData): Promise<string> {
+  const files = form
+    .getAll("file")
+    .filter((value): value is File => value instanceof File);
+  if (files.length === 0) {
+    throw new ApiError(
+      "At least one file is required",
+      400,
+      "INVALID_FILE_UPLOAD",
+    );
+  }
+  return computeLocalFileDatasourceId(files);
+}
+
+function multipartIdList(
+  form: FormData,
+  field: string,
+  maximum: number,
+): string[] {
+  const values = form.getAll(field);
+  if (values.length > maximum) {
+    throw new ApiError(
+      `${field} cannot contain more than ${maximum} values`,
+      400,
+      "INVALID_FILE_UPLOAD",
+    );
+  }
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const candidate = typeof value === "string" ? value.trim() : "";
+    if (!candidate || !TEAM_SLUG_PATTERN.test(candidate)) {
+      throw new ApiError(
+        `${field} contains an invalid identifier`,
+        400,
+        "INVALID_FILE_UPLOAD",
+      );
+    }
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      result.push(candidate);
+    }
+  }
+  return result;
+}
+
+interface LocalFilePublicationContext {
+  sourceId: string;
+  publication: Awaited<ReturnType<typeof prepareRagPublication>>;
+  publicationRequest: PublicationRequestDocument | null;
+}
+
+async function localFileDatasourceExists(
+  accessToken: string | undefined,
+  sourceId: string,
+  ownerTeamSlug: string | null,
+): Promise<boolean> {
+  if (!accessToken) {
+    throw new ApiError(
+      "A Keycloak access token is required to upload files",
+      401,
+      "NO_TOKEN",
+    );
+  }
+  const target = new URL(
+    `${getRagServerUrl()}/v1/datasource/${encodeURIComponent(sourceId)}/exists`,
+  );
+  if (ownerTeamSlug) target.searchParams.set("owner_team_slug", ownerTeamSlug);
+  let response: Response;
   try {
-    await requireResourcePermission(session, { type: 'team', id: slug, action: 'use' });
+    response = await fetch(target, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    throw new ApiError(
+      "Unable to verify whether this file set already exists",
+      503,
+      "COLLISION_CHECK_UNAVAILABLE",
+    );
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      "Unable to verify whether this file set already exists",
+      503,
+      "COLLISION_CHECK_UNAVAILABLE",
+    );
+  }
+  const payload = (await response.json().catch(() => null)) as {
+    exists?: boolean;
+  } | null;
+  return payload?.exists === true;
+}
+
+async function rollbackLocalFilePublication(
+  context: LocalFilePublicationContext,
+): Promise<void> {
+  await Promise.allSettled([
+    deleteAllIngestionSourceRelationshipTuples(context.sourceId),
+    deleteAllKnowledgeBaseRelationshipTuples(context.sourceId),
+    deleteAllDataSourceRelationshipTuples(context.sourceId),
+  ]);
+  if (context.publicationRequest) {
+    await invalidatePublicationRequests(
+      context.publication.resource,
+      context.publication.actor,
+      "The file upload failed before the datasource was created.",
+    ).catch((error) => {
+      console.error(
+        "[RAG Proxy] Failed to invalidate file publication request",
+        error,
+      );
+    });
+  }
+}
+
+async function prepareLocalFilePublication(
+  form: FormData,
+  session: AuthorizedRagContext["session"],
+  maximumSearchTeams: number,
+): Promise<LocalFilePublicationContext> {
+  const sourceId = await localFileDatasourceId(form);
+  const ownerTeamSlug = normalizeString(form.get("owner_team_slug"));
+  const requestedSearchTeamSlugs = multipartIdList(
+    form,
+    "search_team_slugs",
+    maximumSearchTeams,
+  );
+  const requestedSearchUserSubjects = multipartIdList(
+    form,
+    "search_user_subjects",
+    50,
+  );
+  const [searchTeams, searchUsers] = await Promise.all([
+    requestedSearchTeamSlugs.length > 0
+      ? getCollection<{ slug: string }>("teams").then((teams) =>
+          teams
+            .find({ slug: { $in: requestedSearchTeamSlugs } } as never)
+            .project({ _id: 0, slug: 1 })
+            .toArray(),
+        )
+      : [],
+    resolveUserIdentitiesBySubject(requestedSearchUserSubjects),
+  ]);
+  const existingSearchTeams = new Set(searchTeams.map((team) => team.slug));
+  if (requestedSearchTeamSlugs.some((slug) => !existingSearchTeams.has(slug))) {
+    throw new ApiError(
+      "One or more Search teams do not exist",
+      404,
+      "SEARCH_TEAM_NOT_FOUND",
+    );
+  }
+  if (
+    requestedSearchUserSubjects.some((userSubject) => !searchUsers.has(userSubject))
+  ) {
+    throw new ApiError(
+      "One or more Search users do not exist",
+      404,
+      "SEARCH_USER_NOT_FOUND",
+    );
+  }
+  const subject = normalizeString(session.sub);
+  if (!subject) {
+    throw new ApiError(
+      "A stable user subject is required for datasource ownership",
+      401,
+      "NO_SUBJECT",
+    );
+  }
+  const authzSession: ResourceAuthzSession = {
+    sub: subject,
+    role: session.role,
+    user: session.user,
+    isServiceAccount: session.isServiceAccount,
+  };
+  if (ownerTeamSlug && !(await canUseTeam(authzSession, ownerTeamSlug))) {
+    throw new ApiError(
+      "You must belong to the Owner team to assign it",
+      403,
+      "OWNER_TEAM_FORBIDDEN",
+    );
+  }
+  if (
+    await localFileDatasourceExists(
+      session.accessToken,
+      sourceId,
+      ownerTeamSlug,
+    )
+  ) {
+    throw new ApiError(
+      "This file set is already ingested. Delete the existing datasource before uploading it again.",
+      409,
+      "SOURCE_ALREADY_EXISTS",
+    );
+  }
+
+  const files = form
+    .getAll("file")
+    .filter((value): value is File => value instanceof File);
+  const firstName = localUploadFilename(files[0]?.name ?? "uploaded-file");
+  const sourceName =
+    files.length === 1 ? firstName : `${firstName} + ${files.length - 1} files`;
+  const draftSource = {
+    source_id: sourceId,
+    source_type: "local_file",
+    name: sourceName,
+    description: normalizeString(form.get("description")) ?? "",
+    status: "pending",
+    default_chunk_size: Number(form.get("chunk_size") ?? 10000),
+    default_chunk_overlap: Number(form.get("chunk_overlap") ?? 2000),
+    reload_interval: 0,
+    config_driven: false,
+    config_import_adopted: false,
+    visibility: "team",
+    creator_subject: subject,
+    owner_subject: ownerTeamSlug ? undefined : subject,
+    owner_team_slug: ownerTeamSlug ?? undefined,
+    search_with_teams: [],
+    search_with_users: [],
+    shared_with_teams: [],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  } as unknown as IngestionSourceConfig;
+  const publication = await prepareRagPublication({
+    session,
+    source: draftSource,
+    currentSearchTeamSlugs: [],
+    currentSearchUserSubjects: [],
+    requestedSearchTeamSlugs,
+    requestedSearchUserSubjects,
+  });
+  const effectiveSearch = publication.plan
+    .effective_state as unknown as RagPublicationState;
+  let policyStarted = false;
+  try {
+    policyStarted = true;
+    await reconcileIngestionSourceRelationships({
+      sourceId,
+      creatorSubject: subject,
+      ownerSubject: ownerTeamSlug ? null : subject,
+      ownerTeamSlug,
+      nextSharedTeamSlugs: [],
+      previousSharedTeamSlugs: [],
+    });
+    await reconcileKnowledgeBaseRelationships({
+      knowledgeBaseId: sourceId,
+      creatorSubject: subject,
+      ownerSubject: ownerTeamSlug ? null : subject,
+      ownerTeamSlug: null,
+      nextSharedTeamSlugs: effectiveSearch.search_team_slugs,
+      previousSharedTeamSlugs: [],
+      nextSharedUserSubjects: effectiveSearch.search_user_subjects,
+      previousSharedUserSubjects: [],
+    });
+    await reconcileDataSourceRelationships({
+      dataSourceId: sourceId,
+      creatorSubject: subject,
+      parentKnowledgeBaseId: sourceId,
+    });
+  } catch (error) {
+    if (policyStarted) {
+      await Promise.allSettled([
+        deleteAllIngestionSourceRelationshipTuples(sourceId),
+        deleteAllKnowledgeBaseRelationshipTuples(sourceId),
+        deleteAllDataSourceRelationshipTuples(sourceId),
+      ]);
+    }
+    throw error;
+  }
+
+  form.delete("search_team_slugs");
+  form.delete("search_user_subjects");
+  for (const slug of effectiveSearch.search_team_slugs) {
+    form.append("search_team_slugs", slug);
+  }
+  for (const userSubject of effectiveSearch.search_user_subjects) {
+    form.append("search_user_subjects", userSubject);
+  }
+  form.set("ownership_preprovisioned", "true");
+  form.set("preprovisioned_datasource_id", sourceId);
+
+  const resourceRevision = publicationResourceRevision({
+    source_id: sourceId,
+    owner_team_slug: ownerTeamSlug,
+    owner_subject: ownerTeamSlug ? null : subject,
+    creator_subject: subject,
+    search_team_slugs: effectiveSearch.search_team_slugs,
+    search_user_subjects: effectiveSearch.search_user_subjects,
+  });
+  let publicationRequest: PublicationRequestDocument | null = null;
+  try {
+    if (publication.plan.requires_approval) {
+      publicationRequest = await createPublicationRequest({
+        resource: publication.resource,
+        resourceRevision,
+        requestedState: publication.requestedState as unknown as Record<
+          string,
+          unknown
+        >,
+        effectiveState: effectiveSearch as unknown as Record<string, unknown>,
+        riskFacts: publication.plan.risk_facts,
+        requester: publication.actor,
+        requesterTeamSlugs: publication.requesterTeamSlugs,
+        approverTeamSlugs: publication.plan.approver_team_slugs,
+        approverUserSubjects: publication.plan.approver_user_subjects,
+      });
+    } else if (
+      publication.plan.risk_facts.added_team_slugs?.length ||
+      publication.plan.risk_facts.added_user_subjects?.length
+    ) {
+      await recordAutoApprovedPublication({
+        resource: publication.resource,
+        resourceRevision,
+        requestedState: publication.requestedState as unknown as Record<
+          string,
+          unknown
+        >,
+        effectiveState: effectiveSearch as unknown as Record<string, unknown>,
+        riskFacts: publication.plan.risk_facts,
+        requester: publication.actor,
+        requesterTeamSlugs: publication.requesterTeamSlugs,
+        approverTeamSlugs: publication.plan.approver_team_slugs,
+        approverUserSubjects: publication.plan.approver_user_subjects,
+      });
+    }
+  } catch (error) {
+    await Promise.allSettled([
+      deleteAllIngestionSourceRelationshipTuples(sourceId),
+      deleteAllKnowledgeBaseRelationshipTuples(sourceId),
+      deleteAllDataSourceRelationshipTuples(sourceId),
+    ]);
+    throw error;
+  }
+
+  return { sourceId, publication, publicationRequest };
+}
+
+/** Boolean membership check (`team:<slug>#can_use` or `#can_manage`) for owner writes. */
+async function canUseTeam(
+  session: ResourceAuthzSession,
+  slug: string,
+): Promise<boolean> {
+  try {
+    await requireResourcePermission(session, {
+      type: "team",
+      id: slug,
+      action: "use",
+    });
     return true;
   } catch {
     // assisted-by Codex Codex-sonnet-4-6
     // Team admins/owners are valid destination members even when an older
     // projection has manage but lacks the derived can_use edge.
     try {
-      await requireResourcePermission(session, { type: 'team', id: slug, action: 'manage' });
+      await requireResourcePermission(session, {
+        type: "team",
+        id: slug,
+        action: "manage",
+      });
       return true;
     } catch {
       return false;
@@ -219,17 +752,30 @@ async function canUseTeam(session: ResourceAuthzSession, slug: string): Promise<
 async function loadMcpToolConfig(
   toolId: string,
   session: { accessToken?: string; org?: string },
-): Promise<{ creatorSubject: string | null; ownerTeamSlug: string | null; sharedTeamSlugs: string[]; sharedWithOrg: boolean }> {
-  const empty = { creatorSubject: null, ownerTeamSlug: null, sharedTeamSlugs: [] as string[], sharedWithOrg: false };
+): Promise<{
+  creatorSubject: string | null;
+  ownerTeamSlug: string | null;
+  sharedTeamSlugs: string[];
+  sharedWithOrg: boolean;
+}> {
+  const empty = {
+    creatorSubject: null,
+    ownerTeamSlug: null,
+    sharedTeamSlugs: [] as string[],
+    sharedWithOrg: false,
+  };
   if (!session.accessToken) return empty;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
     Authorization: `Bearer ${session.accessToken}`,
   };
-  if (session.org) headers['X-Tenant-Id'] = session.org;
+  if (session.org) headers["X-Tenant-Id"] = session.org;
   let response: Response;
   try {
-    response = await fetch(`${getRagServerUrl()}/v1/mcp/custom-tools`, { method: 'GET', headers });
+    response = await fetch(`${getRagServerUrl()}/v1/mcp/custom-tools`, {
+      method: "GET",
+      headers,
+    });
   } catch {
     return empty;
   }
@@ -265,12 +811,12 @@ async function loadMcpToolConfig(
  * bypass (same `bypassForOrgAdmin` convention as the other RAG surfaces).
  */
 async function requireMcpToolCallPermission(
-  session: AuthorizedRagContext['session'],
+  session: AuthorizedRagContext["session"],
   headers: Record<string, string>,
   pathSegments: string[],
   body: unknown,
 ): Promise<void> {
-  if (pathSegments.join('/') !== 'v1/mcp/invoke') return;
+  if (pathSegments.join("/") !== "v1/mcp/invoke") return;
   if (!isRecord(body)) return;
   const toolName = normalizeString(body.tool_name);
   if (!toolName) return;
@@ -283,14 +829,14 @@ async function requireMcpToolCallPermission(
   let customToolIds: Set<string>;
   try {
     const response = await fetch(`${getRagServerUrl()}/v1/mcp/custom-tools`, {
-      method: 'GET',
+      method: "GET",
       headers,
     });
     if (!response.ok) {
       throw new ApiError(
-        'Unable to verify tool-call permission. Please retry.',
+        "Unable to verify tool-call permission. Please retry.",
         503,
-        'mcp_tool#call_unavailable',
+        "mcp_tool#call_unavailable",
       );
     }
     const data = await response.json();
@@ -298,15 +844,15 @@ async function requireMcpToolCallPermission(
     customToolIds = new Set(
       list
         .filter(isRecord)
-        .map((t) => (typeof t.tool_id === 'string' ? t.tool_id : ''))
+        .map((t) => (typeof t.tool_id === "string" ? t.tool_id : ""))
         .filter(Boolean),
     );
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(
-      'Unable to verify tool-call permission. Please retry.',
+      "Unable to verify tool-call permission. Please retry.",
       503,
-      'mcp_tool#call_unavailable',
+      "mcp_tool#call_unavailable",
     );
   }
   if (!customToolIds.has(toolName)) return; // built-in tool — not gated
@@ -317,18 +863,25 @@ async function requireMcpToolCallPermission(
   // Principal: an agent-initiated call carries `agent:<id>`; otherwise the
   // session user. The agent id is conveyed via the `X-Agent-Id` header set by
   // the dynamic-agent runtime when proxying tool calls on an agent's behalf.
-  const agentId = normalizeString(headers['X-Agent-Id'] ?? headers['x-agent-id']);
-  const subject = normalizeString(session.sub);
-  const principal = agentId ? `agent:${agentId}` : subject ? `user:${subject}` : null;
+  const agentId = normalizeString(
+    headers["X-Agent-Id"] ?? headers["x-agent-id"],
+  );
+  const principal = agentId
+    ? `agent:${agentId}`
+    : principalFromSession(session);
   if (!principal) {
-    throw new ApiError('A stable principal is required to invoke this tool.', 401, 'NO_SUBJECT');
+    throw new ApiError(
+      "A stable principal is required to invoke this tool.",
+      401,
+      "NO_SUBJECT",
+    );
   }
 
   let allowed = false;
   try {
     const result = await checkOpenFgaTuple({
       user: principal,
-      relation: 'can_call',
+      relation: "can_call",
       object: `mcp_tool:${toolName}`,
     });
     allowed = result.allowed === true;
@@ -339,7 +892,7 @@ async function requireMcpToolCallPermission(
     throw new ApiError(
       `You do not have permission to call the "${toolName}" tool.`,
       403,
-      'mcp_tool#call',
+      "mcp_tool#call",
     );
   }
 }
@@ -354,25 +907,29 @@ async function requireMcpToolCallPermission(
  * search. Org admins bypass (kill-switchable). Fails closed on OpenFGA error.
  */
 async function requireSearchCapability(
-  session: AuthorizedRagContext['session'],
+  session: AuthorizedRagContext["session"],
   pathSegments: string[],
 ): Promise<void> {
-  const targetPath = pathSegments.join('/');
-  if (targetPath !== 'v1/query' && targetPath !== 'v1/mcp/invoke') return;
+  const targetPath = pathSegments.join("/");
+  if (targetPath !== "v1/query" && targetPath !== "v1/mcp/invoke") return;
 
   // Org admins bypass (same convention as the other RAG surfaces).
   if (await isOrgAdminSession(session)) return;
 
-  const subject = normalizeString(session.sub);
-  if (!subject) {
-    throw new ApiError('A stable principal is required to search.', 401, 'NO_SUBJECT');
+  const principal = principalFromSession(session);
+  if (!principal) {
+    throw new ApiError(
+      "A stable principal is required to search.",
+      401,
+      "NO_SUBJECT",
+    );
   }
 
   let allowed = false;
   try {
     const result = await checkOpenFgaTuple({
-      user: `user:${subject}`,
-      relation: 'can_search',
+      user: principal,
+      relation: "can_search",
       object: organizationObjectId(),
     });
     allowed = result.allowed === true;
@@ -381,9 +938,9 @@ async function requireSearchCapability(
   }
   if (!allowed) {
     throw new ApiError(
-      'You do not have permission to search. Ask an administrator to enable search for your team.',
+      "You do not have permission to search. Ask an administrator to enable search access.",
       403,
-      'organization#can_search',
+      "organization#can_search",
     );
   }
 }
@@ -418,9 +975,14 @@ async function reconcileMcpToolForOwnership(pending: {
   });
 }
 
-function isDatasourceCreateRequest(method: string, pathSegments: string[]): boolean {
-  const path = pathSegments.join('/').toLowerCase();
-  return method === 'POST' && (path === 'v1/datasource' || path === 'v1/datasources');
+function isDatasourceCreateRequest(
+  method: string,
+  pathSegments: string[],
+): boolean {
+  const path = pathSegments.join("/").toLowerCase();
+  return (
+    method === "POST" && (path === "v1/datasource" || path === "v1/datasources")
+  );
 }
 
 /**
@@ -428,11 +990,14 @@ function isDatasourceCreateRequest(method: string, pathSegments: string[]): bool
  * endpoint for custom MCP tools. The path's last segment is the
  * tool id when this returns true, mirroring `extractMcpToolId`.
  */
-function isMcpToolUpsertRequest(method: string, pathSegments: string[]): boolean {
-  const path = pathSegments.join('/').toLowerCase();
+function isMcpToolUpsertRequest(
+  method: string,
+  pathSegments: string[],
+): boolean {
+  const path = pathSegments.join("/").toLowerCase();
   return (
-    method === 'PUT' &&
-    path.startsWith('v1/mcp/custom-tools/') &&
+    method === "PUT" &&
+    path.startsWith("v1/mcp/custom-tools/") &&
     pathSegments.length === 4
   );
 }
@@ -441,8 +1006,14 @@ function isMcpToolUpsertRequest(method: string, pathSegments: string[]): boolean
  * Detect `POST /v1/mcp/custom-tools` — the RAG server's create endpoint for
  * custom MCP tools. The tool id is in the request body (not the path).
  */
-function isMcpToolCreateRequest(method: string, pathSegments: string[]): boolean {
-  return method === 'POST' && pathSegments.join('/').toLowerCase() === 'v1/mcp/custom-tools';
+function isMcpToolCreateRequest(
+  method: string,
+  pathSegments: string[],
+): boolean {
+  return (
+    method === "POST" &&
+    pathSegments.join("/").toLowerCase() === "v1/mcp/custom-tools"
+  );
 }
 
 /**
@@ -453,9 +1024,9 @@ function isMcpToolCreateRequest(method: string, pathSegments: string[]): boolean
 function extractMcpToolId(pathSegments: string[]): string | null {
   if (
     pathSegments.length === 4 &&
-    pathSegments[0] === 'v1' &&
-    pathSegments[1] === 'mcp' &&
-    pathSegments[2] === 'custom-tools'
+    pathSegments[0] === "v1" &&
+    pathSegments[1] === "mcp" &&
+    pathSegments[2] === "custom-tools"
   ) {
     const candidate = pathSegments[3]?.trim();
     return candidate && candidate.length > 0 ? candidate : null;
@@ -469,64 +1040,106 @@ async function getAuthorizedRagContext(
   request: NextRequest,
   body?: unknown,
 ): Promise<AuthorizedRagContext> {
-  const session = await getServerSession(authOptions) ?? (
-    isDevAnonymousAuthEnabled() ? getDevAnonymousSession() : null
-  );
-  if (!session?.user?.email) {
-    throw new ApiError('Unauthorized', 401);
-  }
-  if (!session.accessToken && !isDevAnonymousAuthEnabled()) {
-    throw new ApiError('A Keycloak access token is required for RAG access.', 401, 'NOT_SIGNED_IN');
-  }
+  const { user, session } = await getAuthFromBearerOrSession(request);
 
   await requireRbacPermission(
-    { accessToken: session.accessToken, sub: session.sub, org: session.org, user: session.user },
-    'rag',
+    session,
+    "rag",
     scopeForRagProxyMethod(method, pathSegments),
   );
 
   const kbId = extractKnowledgeBaseId(request, pathSegments, body);
-  let pendingKnowledgeBaseOwnership: AuthorizedRagContext['pendingKnowledgeBaseOwnership'];
+  let pendingKnowledgeBaseOwnership: AuthorizedRagContext["pendingKnowledgeBaseOwnership"];
   if (kbId && isDatasourceCreateRequest(method, pathSegments)) {
-    const ownerTeamSlug = isRecord(body) ? normalizeString(body.owner_team_slug) : null;
+    const ownerTeamSlug = isRecord(body)
+      ? normalizeString(body.owner_team_slug)
+      : null;
     if (ownerTeamSlug) {
       const canUseOwnerTeam = await canUseTeam(
-        { sub: session.sub, role: session.role, user: session.user },
+        {
+          sub: session.sub,
+          role: session.role,
+          user: session.user,
+          isServiceAccount: session.isServiceAccount,
+        },
         ownerTeamSlug,
       );
       if (!canUseOwnerTeam) {
-        throw new ApiError('You must belong to the owner team to assign it.', 403, 'OWNER_TEAM_FORBIDDEN');
+        throw new ApiError(
+          "You must belong to the owner team to assign it.",
+          403,
+          "OWNER_TEAM_FORBIDDEN",
+        );
       }
     }
     const ownerSubject = normalizeString(session.sub);
     if (!ownerSubject) {
-      throw new ApiError('A stable user subject is required for knowledge base ownership.', 401, 'NO_SUBJECT');
+      throw new ApiError(
+        "A stable user subject is required for knowledge base ownership.",
+        401,
+        "NO_SUBJECT",
+      );
     }
     pendingKnowledgeBaseOwnership = {
       knowledgeBaseId: kbId,
-      ownerSubject,
+      ownerSubject: ownerTeamSlug ? null : ownerSubject,
       ownerTeamSlug,
       creatorSubject: ownerSubject,
     };
   } else if (kbId) {
-    const authzSession = { sub: session.sub, role: session.role, user: session.user };
+    const authzSession = {
+      sub: session.sub,
+      role: session.role,
+      user: session.user,
+      isServiceAccount: session.isServiceAccount,
+    };
     const target = {
       type: resourceTypeForRagRequest(pathSegments),
       id: kbId,
       action: actionForRagRequest(method, pathSegments),
     };
-    await requireResourcePermission(authzSession, target, { bypassForOrgAdmin: true });
+    try {
+      await requireResourcePermission(authzSession, target, {
+        bypassForOrgAdmin: true,
+      });
+    } catch (error) {
+      if (
+        !(error instanceof ApiError) ||
+        error.statusCode !== 403 ||
+        target.type !== "data_source" ||
+        (target.action !== "admin" && target.action !== "ingest")
+      ) {
+        throw error;
+      }
+      // Owner authority is independent from indexed-data access. Owners may
+      // reload, edit, or delete without receiving team Search grants. The RAG
+      // server repeats the same operation-specific check and remains
+      // authoritative.
+      await requireResourcePermission(
+        authzSession,
+        { type: "ingestion_source", id: kbId, action: "manage" },
+        { bypassForOrgAdmin: true },
+      );
+    }
   }
 
-  let pendingMcpToolOwnership: AuthorizedRagContext['pendingMcpToolOwnership'];
-  if (isMcpToolUpsertRequest(method, pathSegments) || isMcpToolCreateRequest(method, pathSegments)) {
+  let pendingMcpToolOwnership: AuthorizedRagContext["pendingMcpToolOwnership"];
+  if (
+    isMcpToolUpsertRequest(method, pathSegments) ||
+    isMcpToolCreateRequest(method, pathSegments)
+  ) {
     // PUT carries the tool_id in the path; POST (create) carries it in the body.
     const toolId =
       extractMcpToolId(pathSegments) ??
       (isRecord(body) ? normalizeString(body.tool_id) : null);
     if (toolId) {
       const ownerSubject = normalizeString(session.sub);
-      const authzSession = { sub: session.sub, role: session.role, user: session.user };
+      const authzSession = {
+        sub: session.sub,
+        role: session.role,
+        user: session.user,
+        isServiceAccount: session.isServiceAccount,
+      };
       // Config is the source of truth: read the previous owner/creator/shared
       // (and org-wide) state so the shared resolver can keep set-once fields,
       // emit revoke deletes for removed teams/org grants, and detect an
@@ -543,13 +1156,20 @@ async function getAuthorizedRagContext(
       // OpenFGA post-success, so we resolve here and apply each half in phase.
       const resolved = await resolveShareableOwnershipWrite(
         {
-          objectType: 'mcp_tool',
+          objectType: "mcp_tool",
           objectId: toolId,
           session: authzSession,
-          requestedOwnerTeamSlug: isRecord(body) ? normalizeString(body.owner_team_slug) : null,
-          requestedSharedTeamSlugs: isRecord(body) ? normalizeSlugList(body.shared_with_teams) : null,
-          requestedSharedWithOrg: isRecord(body) ? body.shared_with_org === true : null,
-          confirmedNotMember: isRecord(body) && body.confirm_not_member === true,
+          requestedOwnerTeamSlug: isRecord(body)
+            ? normalizeString(body.owner_team_slug)
+            : null,
+          requestedSharedTeamSlugs: isRecord(body)
+            ? normalizeSlugList(body.shared_with_teams)
+            : null,
+          requestedSharedWithOrg: isRecord(body)
+            ? body.shared_with_org === true
+            : null,
+          confirmedNotMember:
+            isRecord(body) && body.confirm_not_member === true,
           loadPrevious: async () => previous,
           persist: async () => {},
           canUseOwnerTeam: (slug) => canUseTeam(authzSession, slug),
@@ -564,7 +1184,9 @@ async function getAuthorizedRagContext(
         creatorSubject: resolved.creatorSubject ?? ownerSubject,
         sharedTeamSlugs: resolved.sharedTeamSlugs,
         previousSharedTeamSlugs: resolved.previousSharedTeamSlugs,
-        previousOwnerTeamSlug: resolved.transferred ? resolved.previousOwnerTeamSlug : null,
+        previousOwnerTeamSlug: resolved.transferred
+          ? resolved.previousOwnerTeamSlug
+          : null,
         sharedWithOrg: resolved.sharedWithOrg,
         previousSharedWithOrg: resolved.previousSharedWithOrg,
       };
@@ -572,27 +1194,87 @@ async function getAuthorizedRagContext(
   }
 
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   };
   if (session.accessToken) {
-    headers['Authorization'] = `Bearer ${session.accessToken}`;
+    headers["Authorization"] = `Bearer ${session.accessToken}`;
   }
   if (session.org) {
-    headers['X-Tenant-Id'] = session.org;
+    headers["X-Tenant-Id"] = session.org;
   }
   // RAG derives the user's team membership from OpenFGA at request time
   // using the bearer-token subject (see `_kb_cel_context` on the server
   // side), so this proxy does not forward X-Team-Id or active_team.
-  return { headers, session, pendingKnowledgeBaseOwnership, pendingMcpToolOwnership };
+  return {
+    headers,
+    session: { ...session, user: session.user ?? user },
+    pendingKnowledgeBaseOwnership,
+    pendingMcpToolOwnership,
+  };
 }
 
-function isDatasourceListRequest(method: string, pathSegments: string[]): boolean {
-  return method === 'GET' && pathSegments.join('/') === 'v1/datasources';
+function isDatasourceListRequest(
+  method: string,
+  pathSegments: string[],
+): boolean {
+  return method === "GET" && pathSegments.join("/") === "v1/datasources";
 }
 
 function datasourceId(resource: Record<string, unknown>): string {
   const value = resource.datasource_id ?? resource.id;
-  return typeof value === 'string' ? value : '';
+  return typeof value === "string" ? value : "";
+}
+
+function redactDatasourceConfiguration(
+  resource: Record<string, unknown>,
+  canManageQueryPolicy: boolean,
+): Record<string, unknown> {
+  const visible: Record<string, unknown> = {};
+  for (const key of [
+    "datasource_id",
+    "name",
+    "description",
+    "source_type",
+    "last_updated",
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(resource, key)) {
+      visible[key] = resource[key];
+    }
+  }
+
+  // A legacy query-policy manager may administer Search Access without
+  // gaining connector configuration. Preserve only the ownership fields the
+  // sharing panel needs, matching the RAG server's own redaction contract.
+  if (canManageQueryPolicy) {
+    for (const key of [
+      "creator_subject",
+      "owner_subject",
+      "owner_team_slug",
+      "shared_with_teams",
+      "search_with_teams",
+      "search_with_users",
+      "owner_display_name",
+      "owner_email",
+      "search_user_display_names",
+    ]) {
+      if (Object.prototype.hasOwnProperty.call(resource, key)) {
+        visible[key] = resource[key];
+      }
+    }
+  }
+
+  if (isRecord(resource._permissions)) {
+    visible._permissions = Object.fromEntries(
+      [
+        "can_read_content",
+        "can_ingest",
+        "can_manage_query",
+        "can_read_source_config",
+        "can_manage_source",
+      ].map((key) => [key, resource._permissions[key] === true]),
+    );
+  }
+  return visible;
 }
 
 /**
@@ -602,44 +1284,205 @@ function datasourceId(resource: Record<string, unknown>): string {
  * ReBAC, so the filtering is BFF-side until PR4-server.
  */
 function isMcpToolListRequest(method: string, pathSegments: string[]): boolean {
-  return method === 'GET' && pathSegments.join('/') === 'v1/mcp/custom-tools';
+  return method === "GET" && pathSegments.join("/") === "v1/mcp/custom-tools";
 }
 
 function mcpToolIdOf(resource: Record<string, unknown>): string {
   const value = resource.tool_id ?? resource.id;
-  return typeof value === 'string' ? value : '';
+  return typeof value === "string" ? value : "";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+async function configuredIngestionSourceIds(
+  datasourceIds: string[],
+): Promise<Set<string> | null> {
+  if (datasourceIds.length === 0) return new Set();
+
+  try {
+    const sources = await getCollection<{ source_id: string }>(
+      "rag_ingestion_sources",
+    );
+    const configured = await sources
+      .find(
+        { source_id: { $in: datasourceIds } },
+        { projection: { _id: 0, source_id: 1 } },
+      )
+      .toArray();
+    return new Set(configured.map((source) => source.source_id));
+  } catch (error) {
+    // Datasource discovery should remain available if MongoDB is temporarily
+    // unavailable. The UI treats an unknown source-policy state conservatively
+    // and only exposes controls backed by ingestion_source#can_manage.
+    console.warn(
+      "Could not resolve RAG ingestion-source configuration markers",
+      error,
+    );
+    return null;
+  }
 }
 
 async function filterDatasourceListResponse(
-  session: AuthorizedRagContext['session'],
+  session: AuthorizedRagContext["session"],
   pathSegments: string[],
   data: unknown,
 ): Promise<unknown> {
   if (
-    !isDatasourceListRequest('GET', pathSegments) ||
+    !isDatasourceListRequest("GET", pathSegments) ||
     !data ||
-    typeof data !== 'object' ||
+    typeof data !== "object" ||
     !Array.isArray((data as { datasources?: unknown }).datasources)
   ) {
     return data;
   }
 
-  const envelope = data as { datasources: Array<Record<string, unknown>>; count?: number };
-  const candidates = envelope.datasources.filter((resource) => datasourceId(resource));
-  const datasources = await filterResourcesByPermission(
-    session,
-    candidates,
-    {
-      type: 'data_source',
-      action: 'read',
-      id: datasourceId,
-    },
-    { bypassForOrgAdmin: true },
+  const envelope = data as {
+    datasources: Array<Record<string, unknown>>;
+    count?: number;
+  };
+  const candidates = envelope.datasources.filter((resource) =>
+    datasourceId(resource),
   );
+  // Management of an ingestion source and access to its indexed content are
+  // independent grants. Keep rows visible through either graph, matching the
+  // RAG server's union, while preserving the upstream order. A management-only
+  // row must remain visible so its owner can edit/retry/delete it without being
+  // granted data_source#can_read.
+  const [contentVisible, sourceVisible, queryPolicyManageable] =
+    await Promise.all([
+      filterResourcesByPermission(
+        session,
+        candidates,
+        {
+          type: "data_source",
+          action: "read",
+          id: datasourceId,
+        },
+        { bypassForOrgAdmin: true },
+      ),
+      filterResourcesByPermission(
+        session,
+        candidates,
+        {
+          type: "ingestion_source",
+          action: "read",
+          id: datasourceId,
+        },
+        { bypassForOrgAdmin: true },
+      ),
+      filterResourcesByPermission(
+        session,
+        candidates,
+        {
+          type: "data_source",
+          action: "manage",
+          id: datasourceId,
+        },
+        { bypassForOrgAdmin: true },
+      ),
+    ]);
+  const sourceVisibleIds = new Set(
+    sourceVisible.map(datasourceId).filter(Boolean),
+  );
+  const queryManageableIds = new Set(
+    queryPolicyManageable.map(datasourceId).filter(Boolean),
+  );
+  const visibleIds = new Set(
+    [...contentVisible, ...sourceVisible].map(datasourceId).filter(Boolean),
+  );
+  const visible = candidates
+    .filter((resource) => visibleIds.has(datasourceId(resource)))
+    .map((resource) => {
+      const id = datasourceId(resource);
+      return sourceVisibleIds.has(id)
+        ? resource
+        : redactDatasourceConfiguration(resource, queryManageableIds.has(id));
+    });
+  const configuredIds = await configuredIngestionSourceIds(
+    visible.map(datasourceId),
+  );
+  const markedDatasources = configuredIds
+    ? visible.map((resource) => ({
+        ...resource,
+        has_source_config: configuredIds.has(datasourceId(resource)),
+      }))
+    : visible;
+
+  const subjects = Array.from(
+    new Set(
+      markedDatasources.flatMap((resource) => {
+        const owner =
+          typeof resource.owner_subject === "string"
+            ? resource.owner_subject.trim()
+            : !resource.owner_team_slug &&
+                typeof resource.creator_subject === "string"
+              ? resource.creator_subject.trim()
+              : "";
+        const shared = Array.isArray(resource.search_with_users)
+          ? resource.search_with_users.filter(
+              (value): value is string => typeof value === "string",
+            )
+          : [];
+        return [owner, ...shared].filter(Boolean);
+      }),
+    ),
+  );
+  let identities = new Map<
+    string,
+    { display_name: string; email: string | null }
+  >();
+  try {
+    identities = await resolveUserIdentitiesBySubject(subjects);
+  } catch (error) {
+    console.warn("Could not resolve RAG datasource identity labels", error);
+  }
+  const sessionSubject =
+    typeof session.sub === "string" ? session.sub.trim() : "";
+  const collectionLabels = await visibleRagCollectionsByDatasource(
+    session,
+    markedDatasources.map(datasourceId),
+  ).catch(() => new Map());
+  const datasources = markedDatasources.map((resource) => {
+    const ownerSubject =
+      typeof resource.owner_subject === "string"
+        ? resource.owner_subject.trim()
+        : !resource.owner_team_slug &&
+            typeof resource.creator_subject === "string"
+          ? resource.creator_subject.trim()
+          : "";
+    const ownerIdentity = identities.get(ownerSubject);
+    const ownerEmail =
+      ownerIdentity?.email ??
+      (ownerSubject && ownerSubject === sessionSubject
+        ? session.user?.email?.trim() || null
+        : null);
+    const searchUsers = Array.isArray(resource.search_with_users)
+      ? resource.search_with_users.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : [];
+    return {
+      ...resource,
+      rag_collections: collectionLabels.get(datasourceId(resource)) ?? [],
+      ...(ownerSubject
+        ? {
+            owner_display_name:
+              ownerIdentity?.display_name ?? ownerEmail ?? "Unknown user",
+            owner_email: ownerEmail,
+          }
+        : {}),
+      ...(Array.isArray(resource.search_with_users)
+        ? {
+            search_user_display_names: searchUsers.map(
+              (subject) =>
+                identities.get(subject)?.display_name ?? "Unknown user",
+            ),
+          }
+        : {}),
+    };
+  });
 
   return { ...envelope, datasources, count: datasources.length };
 }
@@ -657,11 +1500,11 @@ async function filterDatasourceListResponse(
  * assisted-by Cursor claude-opus-4-7
  */
 async function filterMcpToolListResponse(
-  session: AuthorizedRagContext['session'],
+  session: AuthorizedRagContext["session"],
   pathSegments: string[],
   data: unknown,
 ): Promise<unknown> {
-  if (!isMcpToolListRequest('GET', pathSegments) || !Array.isArray(data)) {
+  if (!isMcpToolListRequest("GET", pathSegments) || !Array.isArray(data)) {
     return data;
   }
   const candidates = (data as Array<Record<string, unknown>>).filter(
@@ -673,8 +1516,8 @@ async function filterMcpToolListResponse(
     session,
     candidates,
     {
-      type: 'mcp_tool',
-      action: 'read',
+      type: "mcp_tool",
+      action: "read",
       id: mcpToolIdOf,
     },
     { bypassForOrgAdmin: true },
@@ -682,13 +1525,16 @@ async function filterMcpToolListResponse(
 }
 
 async function loadReadableDatasourceIds(
-  session: AuthorizedRagContext['session'],
+  session: AuthorizedRagContext["session"],
   headers: Record<string, string>,
 ): Promise<string[]> {
   const targetUrl = `${getRagServerUrl()}/v1/datasources`;
-  const response = await fetch(targetUrl, { method: 'GET', headers });
+  const response = await fetch(targetUrl, { method: "GET", headers });
   if (!response.ok) {
-    throw new ApiError(`Failed to resolve readable data sources: ${response.status}`, response.status);
+    throw new ApiError(
+      `Failed to resolve readable data sources: ${response.status}`,
+      response.status,
+    );
   }
 
   const data = await response.json();
@@ -701,8 +1547,8 @@ async function loadReadableDatasourceIds(
     session,
     candidates,
     {
-      type: 'data_source',
-      action: 'read',
+      type: "data_source",
+      action: "read",
       id: datasourceId,
     },
     { bypassForOrgAdmin: true },
@@ -716,28 +1562,45 @@ function constrainDatasourceFilter(
   allowedDatasourceIds: string[],
 ): Record<string, unknown> {
   if (allowedDatasourceIds.length === 0) {
-    throw new ApiError('No readable data sources are assigned to this user.', 403, 'data_source#read');
+    throw new ApiError(
+      "No readable data sources are assigned to this user.",
+      403,
+      "data_source#read",
+    );
   }
 
   const filters = isRecord(value.filters) ? { ...value.filters } : {};
   const existing = filters.datasource_id ?? value.datasource_id;
 
-  if (typeof existing === 'string') {
+  if (typeof existing === "string") {
     if (!allowedDatasourceIds.includes(existing)) {
-      throw new ApiError('You do not have permission to search this data source.', 403, 'data_source#read');
+      throw new ApiError(
+        "You do not have permission to search this data source.",
+        403,
+        "data_source#read",
+      );
     }
     filters.datasource_id = existing;
   } else if (Array.isArray(existing)) {
     const intersection = existing.filter(
       (candidate): candidate is string =>
-        typeof candidate === 'string' && allowedDatasourceIds.includes(candidate),
+        typeof candidate === "string" &&
+        allowedDatasourceIds.includes(candidate),
     );
     if (intersection.length === 0) {
-      throw new ApiError('You do not have permission to search these data sources.', 403, 'data_source#read');
+      throw new ApiError(
+        "You do not have permission to search these data sources.",
+        403,
+        "data_source#read",
+      );
     }
-    filters.datasource_id = intersection.length === 1 ? intersection[0] : intersection;
+    filters.datasource_id =
+      intersection.length === 1 ? intersection[0] : intersection;
   } else {
-    filters.datasource_id = allowedDatasourceIds.length === 1 ? allowedDatasourceIds[0] : allowedDatasourceIds;
+    filters.datasource_id =
+      allowedDatasourceIds.length === 1
+        ? allowedDatasourceIds[0]
+        : allowedDatasourceIds;
   }
 
   const { datasource_id, ...rest } = value;
@@ -748,17 +1611,19 @@ function constrainDatasourceFilter(
 function isOrgAdminBypassKillSwitchEnabled(): boolean {
   const raw = process.env.RAG_ADMIN_BYPASS_DISABLED;
   if (!raw) return false;
-  return raw === '1' || raw.trim().toLowerCase() === 'true';
+  return raw === "1" || raw.trim().toLowerCase() === "true";
 }
 
-async function isOrgAdminSession(session: AuthorizedRagContext['session']): Promise<boolean> {
+async function isOrgAdminSession(
+  session: AuthorizedRagContext["session"],
+): Promise<boolean> {
   if (isOrgAdminBypassKillSwitchEnabled()) return false;
-  const subject = typeof session.sub === 'string' && session.sub.trim() ? session.sub.trim() : null;
-  if (!subject) return false;
+  const principal = principalFromSession(session);
+  if (!principal) return false;
   try {
     const result = await checkOpenFgaTuple({
-      user: `user:${subject}`,
-      relation: 'can_manage',
+      user: principal,
+      relation: "can_manage",
       object: organizationObjectId(),
     });
     return result.allowed === true;
@@ -768,17 +1633,17 @@ async function isOrgAdminSession(session: AuthorizedRagContext['session']): Prom
 }
 
 async function constrainSearchBody(
-  session: AuthorizedRagContext['session'],
+  session: AuthorizedRagContext["session"],
   headers: Record<string, string>,
   pathSegments: string[],
   body: unknown,
 ): Promise<unknown> {
-  if (session.role === 'admin' || !isRecord(body)) {
+  if (!isRecord(body)) {
     return body;
   }
 
-  const targetPath = pathSegments.join('/');
-  if (targetPath !== 'v1/query' && targetPath !== 'v1/mcp/invoke') {
+  const targetPath = pathSegments.join("/");
+  if (targetPath !== "v1/query" && targetPath !== "v1/mcp/invoke") {
     return body;
   }
 
@@ -789,13 +1654,16 @@ async function constrainSearchBody(
     return body;
   }
 
-  const allowedDatasourceIds = await loadReadableDatasourceIds(session, headers);
-  if (targetPath === 'v1/query') {
+  const allowedDatasourceIds = await loadReadableDatasourceIds(
+    session,
+    headers,
+  );
+  if (targetPath === "v1/query") {
     return constrainDatasourceFilter(body, allowedDatasourceIds);
   }
 
   const args = body.arguments;
-  if (!isRecord(args) || typeof args.query !== 'string') {
+  if (!isRecord(args) || typeof args.query !== "string") {
     return body;
   }
 
@@ -807,12 +1675,12 @@ async function constrainSearchBody(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
+  { params }: { params: Promise<{ path: string[] }> },
 ) {
   try {
     const { path } = await params;
     const ragServerUrl = getRagServerUrl();
-    const targetPath = path.join('/');
+    const targetPath = path.join("/");
     const targetUrl = new URL(`${ragServerUrl}/${targetPath}`);
 
     const searchParams = request.nextUrl.searchParams;
@@ -820,19 +1688,23 @@ export async function GET(
       targetUrl.searchParams.append(key, value);
     });
 
-    if (request.method === 'GET' && targetPath === 'healthz') {
+    if (request.method === "GET" && targetPath === "healthz") {
       // assisted-by Codex Codex-sonnet-4-6
       // Health is a readiness probe, not a data operation. Keep KB/query/admin
       // routes RBAC-gated, but let UI status checks verify that RAG is up even
       // when the browser session has no downstream Keycloak access token.
-      const response = await fetch(targetUrl.toString(), { method: 'GET' });
+      const response = await fetch(targetUrl.toString(), { method: "GET" });
       const data = await response.json();
       return NextResponse.json(data, { status: response.status });
     }
 
-    const { headers, session } = await getAuthorizedRagContext('GET', path, request);
+    const { headers, session } = await getAuthorizedRagContext(
+      "GET",
+      path,
+      request,
+    );
     const response = await fetch(targetUrl.toString(), {
-      method: 'GET',
+      method: "GET",
       headers,
     });
 
@@ -844,25 +1716,27 @@ export async function GET(
     if (error instanceof ApiError) {
       return handleApiError(error);
     }
-    console.error('[RAG Proxy] GET error:', error);
+    console.error("[RAG Proxy] GET error:", error);
     return NextResponse.json(
-      { error: 'Failed to connect to RAG server', details: String(error) },
-      { status: 502 }
+      { error: "Failed to connect to RAG server", details: String(error) },
+      { status: 502 },
     );
   }
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
+  { params }: { params: Promise<{ path: string[] }> },
 ) {
   try {
     const { path } = await params;
     const ragServerUrl = getRagServerUrl();
-    const targetPath = path.join('/');
+    const targetPath = path.join("/");
     const targetUrl = `${ragServerUrl}/${targetPath}`;
-    const contentType = request.headers.get('content-type') ?? '';
-    const isMultipart = contentType.toLowerCase().includes('multipart/form-data');
+    const contentType = request.headers.get("content-type") ?? "";
+    const isMultipart = contentType
+      .toLowerCase()
+      .includes("multipart/form-data");
 
     // Parse the JSON body when present. We attempt a parse whenever a
     // content-length is absent-but-nonempty OR positive, because the
@@ -871,7 +1745,9 @@ export async function POST(
     // body undefined (the gate then no-ops, falling back to the RAG server's
     // own role check).
     let body: unknown = undefined;
-    const contentLength = request.headers.get('content-length');
+    let multipartBody: FormData | undefined;
+    let localFilePublication: LocalFilePublicationContext | null = null;
+    const contentLength = request.headers.get("content-length");
     const hasBody = contentLength === null || parseInt(contentLength) > 0;
     if (hasBody && !isMultipart) {
       try {
@@ -881,8 +1757,12 @@ export async function POST(
       }
     }
 
-    const { headers, session, pendingKnowledgeBaseOwnership, pendingMcpToolOwnership } =
-      await getAuthorizedRagContext('POST', path, request, body);
+    const {
+      headers,
+      session,
+      pendingKnowledgeBaseOwnership,
+      pendingMcpToolOwnership,
+    } = await getAuthorizedRagContext("POST", path, request, body);
 
     // Enforce the org-level `can_search` capability on the search data path
     // (spec 2026-06-03-explicit-search-capability) BEFORE the narrower per-tool
@@ -895,6 +1775,21 @@ export async function POST(
     await requireMcpToolCallPermission(session, headers, path, body);
 
     body = await constrainSearchBody(session, headers, path, body);
+
+    if (isMultipart) {
+      multipartBody = await request.formData();
+      if (targetPath === "v1/ingest/local-file") {
+        const limits = await getRagIngestorLimits();
+        enforceRagFileUploadLimits(multipartBody, limits);
+        localFilePublication = await prepareLocalFilePublication(
+          multipartBody,
+          session,
+          limits.shared.max_search_teams,
+        );
+      }
+    } else {
+      await enforceIngestRequestLimits(targetPath, body);
+    }
 
     // Persist owner/creator to the datasource config (the source of truth):
     // inject the captured ownership fields into the body forwarded to the RAG
@@ -930,18 +1825,26 @@ export async function POST(
     }
 
     const fetchOptions: RequestInit = {
-      method: 'POST',
+      method: "POST",
       headers,
     };
 
     if (isMultipart) {
-      delete headers['Content-Type'];
-      fetchOptions.body = await request.formData();
+      delete headers["Content-Type"];
+      fetchOptions.body = multipartBody;
     } else if (body !== undefined) {
       fetchOptions.body = JSON.stringify(body);
     }
 
-    const response = await fetch(targetUrl, fetchOptions);
+    let response: Response;
+    try {
+      response = await fetch(targetUrl, fetchOptions);
+    } catch (error) {
+      if (localFilePublication) {
+        await rollbackLocalFilePublication(localFilePublication);
+      }
+      throw error;
+    }
 
     if (response.status === 204) {
       if (pendingMcpToolOwnership) {
@@ -951,18 +1854,42 @@ export async function POST(
     }
 
     const data = await response.json();
+    if (!response.ok && localFilePublication) {
+      await rollbackLocalFilePublication(localFilePublication);
+    }
+    if (response.ok && localFilePublication) {
+      if (
+        !isRecord(data) ||
+        normalizeString(data.datasource_id) !== localFilePublication.sourceId
+      ) {
+        await rollbackLocalFilePublication(localFilePublication);
+        throw new ApiError(
+          "The RAG server returned an unexpected datasource id for this file set",
+          502,
+          "INGEST_DATASOURCE_ID_MISMATCH",
+        );
+      }
+      if (localFilePublication.publicationRequest) {
+        data._publication_request = {
+          id: localFilePublication.publicationRequest._id,
+          status: localFilePublication.publicationRequest.status,
+          reason: localFilePublication.publication.plan.reason,
+        };
+      }
+    }
     if (response.ok && pendingKnowledgeBaseOwnership) {
-      // KB-backed datasources use the same identifier for data_source and
-      // knowledge_base relationships. Team grants are written once on the
-      // knowledge_base; the data_source inherits read/ingest/manage via the
-      // `parent_kb` edge (spec 2026-06-03, US4), so we no longer mirror
-      // per-team tuples onto the data_source — we write only the inheritance
-      // edge. This fixes the prior "see-but-not-search" gap without
-      // duplicating grants across both graphs.
+      // Source management and indexed-data access are independent. A personal
+      // creator owns both graphs; a selected team owns only the source config.
+      await reconcileIngestionSourceRelationships({
+        sourceId: pendingKnowledgeBaseOwnership.knowledgeBaseId,
+        ownerSubject: pendingKnowledgeBaseOwnership.ownerSubject,
+        ownerTeamSlug: pendingKnowledgeBaseOwnership.ownerTeamSlug,
+        creatorSubject: pendingKnowledgeBaseOwnership.creatorSubject,
+      });
       await reconcileKnowledgeBaseRelationships({
         knowledgeBaseId: pendingKnowledgeBaseOwnership.knowledgeBaseId,
         ownerSubject: pendingKnowledgeBaseOwnership.ownerSubject,
-        ownerTeamSlug: pendingKnowledgeBaseOwnership.ownerTeamSlug,
+        ownerTeamSlug: null,
         creatorSubject: pendingKnowledgeBaseOwnership.creatorSubject,
       });
       await reconcileDataSourceRelationships({
@@ -979,22 +1906,22 @@ export async function POST(
     if (error instanceof ApiError) {
       return handleApiError(error);
     }
-    console.error('[RAG Proxy] POST error:', error);
+    console.error("[RAG Proxy] POST error:", error);
     return NextResponse.json(
-      { error: 'Failed to connect to RAG server', details: String(error) },
-      { status: 502 }
+      { error: "Failed to connect to RAG server", details: String(error) },
+      { status: 502 },
     );
   }
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
+  { params }: { params: Promise<{ path: string[] }> },
 ) {
   try {
     const { path } = await params;
     const ragServerUrl = getRagServerUrl();
-    const targetPath = path.join('/');
+    const targetPath = path.join("/");
     const targetUrl = `${ragServerUrl}/${targetPath}`;
 
     // Parse the JSON body when present. Mirror the POST handler: attempt a
@@ -1003,7 +1930,7 @@ export async function PUT(
     // omit content-length on small JSON payloads. A parse failure leaves body
     // undefined.
     let body: unknown = undefined;
-    const contentLength = request.headers.get('content-length');
+    const contentLength = request.headers.get("content-length");
     const hasBody = contentLength === null || parseInt(contentLength) > 0;
     if (hasBody) {
       try {
@@ -1013,7 +1940,12 @@ export async function PUT(
       }
     }
 
-    const { headers, pendingMcpToolOwnership } = await getAuthorizedRagContext('PUT', path, request, body);
+    const { headers, pendingMcpToolOwnership } = await getAuthorizedRagContext(
+      "PUT",
+      path,
+      request,
+      body,
+    );
 
     // Persist owner/creator/shared to the MCP tool config (source of truth).
     // The RAG server replaces the whole config on PUT, so inject the captured
@@ -1033,7 +1965,7 @@ export async function PUT(
     }
 
     const fetchOptions: RequestInit = {
-      method: 'PUT',
+      method: "PUT",
       headers,
     };
 
@@ -1059,22 +1991,22 @@ export async function PUT(
     if (error instanceof ApiError) {
       return handleApiError(error);
     }
-    console.error('[RAG Proxy] PUT error:', error);
+    console.error("[RAG Proxy] PUT error:", error);
     return NextResponse.json(
-      { error: 'Failed to connect to RAG server', details: String(error) },
-      { status: 502 }
+      { error: "Failed to connect to RAG server", details: String(error) },
+      { status: 502 },
     );
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
+  { params }: { params: Promise<{ path: string[] }> },
 ) {
   try {
     const { path } = await params;
     const ragServerUrl = getRagServerUrl();
-    const targetPath = path.join('/');
+    const targetPath = path.join("/");
     const targetUrl = new URL(`${ragServerUrl}/${targetPath}`);
 
     const searchParams = request.nextUrl.searchParams;
@@ -1082,9 +2014,9 @@ export async function DELETE(
       targetUrl.searchParams.append(key, value);
     });
 
-    const { headers } = await getAuthorizedRagContext('DELETE', path, request);
+    const { headers } = await getAuthorizedRagContext("DELETE", path, request);
     const response = await fetch(targetUrl.toString(), {
-      method: 'DELETE',
+      method: "DELETE",
       headers,
     });
 
@@ -1099,10 +2031,52 @@ export async function DELETE(
       if (deletedToolId) {
         await deleteAllMcpToolRelationshipTuples(deletedToolId).catch((err) => {
           console.warn(
-            '[RAG Proxy] failed to clean up mcp_tool tuples after delete:',
+            "[RAG Proxy] failed to clean up mcp_tool tuples after delete:",
             err,
           );
         });
+      }
+    }
+
+    const deletedDatasourceId = isDatasourceDeleteRequest("DELETE", path)
+      ? extractKnowledgeBaseId(request, path)
+      : null;
+    if (deletedDatasourceId && (response.ok || response.status === 404)) {
+      try {
+        // Remove collection membership first: deleting all KB tuples also
+        // targets the parent_collection edges, and racing two exact deletes
+        // would make an otherwise-idempotent cleanup fail spuriously.
+        await removeDatasourceFromRagCollections(deletedDatasourceId);
+        await removeDatasourceFromAgentPins(deletedDatasourceId);
+        await Promise.all([
+          deleteAllIngestionSourceRelationshipTuples(deletedDatasourceId),
+          deleteAllKnowledgeBaseRelationshipTuples(deletedDatasourceId),
+          deleteAllDataSourceRelationshipTuples(deletedDatasourceId),
+        ]);
+      } catch (error) {
+        // The upstream record may already be gone. Return an actionable error
+        // and allow the same DELETE to retry tuple cleanup on the upstream 404;
+        // silently leaving grants would let a later source with the same
+        // deterministic id inherit stale access.
+        console.error(
+          `[RAG Proxy] Failed to clean up access policy for deleted datasource ${deletedDatasourceId}:`,
+          error,
+        );
+        throw new ApiError(
+          "The datasource was deleted, but its access policy could not be cleaned up. Retry the delete.",
+          503,
+          "DATASOURCE_POLICY_CLEANUP_FAILED",
+        );
+      }
+      if (response.status === 404) {
+        return NextResponse.json(
+          {
+            success: true,
+            datasource_id: deletedDatasourceId,
+            already_deleted: true,
+          },
+          { status: 200 },
+        );
       }
     }
 
@@ -1116,26 +2090,26 @@ export async function DELETE(
     if (error instanceof ApiError) {
       return handleApiError(error);
     }
-    console.error('[RAG Proxy] DELETE error:', error);
+    console.error("[RAG Proxy] DELETE error:", error);
     return NextResponse.json(
-      { error: 'Failed to connect to RAG server', details: String(error) },
-      { status: 502 }
+      { error: "Failed to connect to RAG server", details: String(error) },
+      { status: 502 },
     );
   }
 }
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
+  { params }: { params: Promise<{ path: string[] }> },
 ) {
   try {
     const { path } = await params;
     const ragServerUrl = getRagServerUrl();
-    const targetPath = path.join('/');
+    const targetPath = path.join("/");
     const targetUrl = `${ragServerUrl}/${targetPath}`;
 
     let body: unknown = undefined;
-    const contentLength = request.headers.get('content-length');
+    const contentLength = request.headers.get("content-length");
     if (contentLength && parseInt(contentLength) > 0) {
       try {
         body = await request.json();
@@ -1144,8 +2118,13 @@ export async function PATCH(
       }
     }
 
-    const { headers } = await getAuthorizedRagContext('PATCH', path, request, body);
-    const fetchOptions: RequestInit = { method: 'PATCH', headers };
+    const { headers } = await getAuthorizedRagContext(
+      "PATCH",
+      path,
+      request,
+      body,
+    );
+    const fetchOptions: RequestInit = { method: "PATCH", headers };
     if (body !== undefined) fetchOptions.body = JSON.stringify(body);
 
     const response = await fetch(targetUrl, fetchOptions);
@@ -1154,10 +2133,10 @@ export async function PATCH(
     return NextResponse.json(data, { status: response.status });
   } catch (error) {
     if (error instanceof ApiError) return handleApiError(error);
-    console.error('[RAG Proxy] PATCH error:', error);
+    console.error("[RAG Proxy] PATCH error:", error);
     return NextResponse.json(
-      { error: 'Failed to connect to RAG server', details: String(error) },
-      { status: 502 }
+      { error: "Failed to connect to RAG server", details: String(error) },
+      { status: 502 },
     );
   }
 }

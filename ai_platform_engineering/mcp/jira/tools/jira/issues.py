@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from typing import Annotated, Optional, List, Dict, Any
+from typing import Annotated, Optional, List, Dict, Any, Union
 
 from pydantic import Field
 
@@ -18,6 +18,30 @@ from utils.field_handlers import normalize_field_value
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("mcp-jira-issues")
+
+
+def _coerce_update_fields(
+    fields: Union[Dict[str, Any], str]
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Accept structured fields or JSON object strings from MCP transports."""
+    if isinstance(fields, dict):
+        return fields, None
+
+    if isinstance(fields, str):
+        try:
+            parsed_fields = json.loads(fields)
+        except json.JSONDecodeError as exc:
+            return None, f"fields must be a JSON object string: {exc.msg}"
+
+        if isinstance(parsed_fields, dict):
+            return parsed_fields, None
+
+        return None, (
+            f"fields JSON must decode to an object, got {type(parsed_fields).__name__}"
+        )
+
+    return None, f"fields must be a dictionary or JSON object string, got {type(fields).__name__}"
+
 
 async def get_issue(
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
@@ -403,13 +427,16 @@ async def batch_create_issues(
 async def update_issue(
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     fields: Annotated[
-        Dict[str, Any],
+        Union[Dict[str, Any], str],
         Field(
             description=(
                 "Dictionary of fields to update. Can use field names or IDs.\n"
+                "If your MCP client serializes object parameters, "
+                "a JSON object string is also accepted.\n"
                 "Values will be automatically normalized based on field type.\n"
                 "Examples:\n"
                 "- {'summary': 'New title'}\n"
+                '- "{\\"summary\\": \\"New title\\"}"\n'
                 "- {'description': 'Plain text description'} (auto-converted to ADF)\n"
                 "- {'Epic Link': 'PROJ-100'}\n"
                 "- {'Story Points': 5}\n"
@@ -456,6 +483,14 @@ async def update_issue(
         error_result = {
             "success": False,
             "error": "At least one field must be provided for update"
+        }
+        return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+    fields, fields_error = _coerce_update_fields(fields)
+    if fields_error:
+        error_result = {
+            "success": False,
+            "error": fields_error
         }
         return json.dumps(error_result, indent=2, ensure_ascii=False)
 
@@ -833,4 +868,3 @@ async def delete_issue(
 
     logger.error(f"Failed to delete Jira issue {issue_key}: {error_details}")
     return {"error": error_details}
-

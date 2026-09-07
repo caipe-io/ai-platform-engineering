@@ -9,7 +9,7 @@ jest.mock("@/components/ui/toast", () => ({
 const replaceMock = jest.fn();
 let currentSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
-  usePathname: () => "/admin",
+  usePathname: () => "/admin/security/ai-review",
   useRouter: () => ({ replace: replaceMock }),
   useSearchParams: () => currentSearchParams,
 }));
@@ -83,9 +83,8 @@ it("keeps the AI Review save action in the page header row", async () => {
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/review-configs/agent-system-prompt"));
 
   const header = screen.getByRole("region", { name: "AI Review configurations header" });
-  expect(
-    within(header).getByRole("heading", { name: "AI Review configurations Admin" }),
-  ).toBeInTheDocument();
+  expect(within(header).getByRole("heading", { name: "AI Review configurations" })).toBeInTheDocument();
+  expect(within(header).queryByText("Admin")).not.toBeInTheDocument();
   const save = within(header).getByRole("button", { name: "Save" });
   expect(save).toBeInTheDocument();
 
@@ -113,10 +112,10 @@ it("writes the active target to the subtab URL param", async () => {
   render(<ReviewConfigsTab />);
 
   fireEvent.click(await screen.findByRole("tab", { name: "Skills" }));
-  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=skill-md", { scroll: false });
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin/security/ai-review?subtab=skill-md", { scroll: false });
 
   fireEvent.click(screen.getByRole("tab", { name: "Agents" }));
-  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=agent-system-prompt", { scroll: false });
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin/security/ai-review?subtab=agent-system-prompt", { scroll: false });
 });
 
 it("opens the target named by the subtab URL param on load", async () => {

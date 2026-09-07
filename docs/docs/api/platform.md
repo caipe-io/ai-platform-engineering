@@ -594,8 +594,8 @@ Creates a run with generated `id`, `status: "running"`, and `owner_id` set to th
 
 ```json
 {
-  "workflow_id": "agent-builder-v2",
-  "workflow_name": "Build support agent",
+  "workflow_id": "support-triage-v2",
+  "workflow_name": "Support triage",
   "workflow_category": "support",
   "input_parameters": { "tone": "friendly" },
   "input_prompt": "Create an agent that...",
@@ -630,8 +630,8 @@ Without `id`: returns an array of runs for the current owner (not wrapped in `{ 
 [
   {
     "id": "run-1742904000000-x7k2m9p1q",
-    "workflow_id": "agent-builder-v2",
-    "workflow_name": "Build support agent",
+    "workflow_id": "support-triage-v2",
+    "workflow_name": "Support triage",
     "status": "completed",
     "started_at": "2026-03-25T12:00:00.000Z",
     "completed_at": "2026-03-25T12:05:00.000Z",

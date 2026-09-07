@@ -43,6 +43,11 @@ jest.mock("@/lib/rbac/unlinked-service-account", () => ({
   getUnlinkedServiceAccount: () => mockGetUnlinkedServiceAccount(),
 }));
 
+const mockListEveryoneKnowledgeScopes = jest.fn();
+jest.mock("@/lib/rbac/unlinked-knowledge-access", () => ({
+  listEveryoneKnowledgeScopes: () => mockListEveryoneKnowledgeScopes(),
+}));
+
 // QUAL-7: isPlatformAdmin is now imported from @/lib/rbac/platform-admin in the route.
 const mockIsPlatformAdmin = jest.fn();
 jest.mock("@/lib/rbac/platform-admin", () => ({
@@ -80,6 +85,10 @@ beforeEach(() => {
   // Default authoritative reads: no agent grants, empty visibility map.
   mockListOpenFgaObjects.mockResolvedValue({ objects: [] });
   mockFindAgentVisibilities.mockResolvedValue(new Map());
+  mockListEveryoneKnowledgeScopes.mockResolvedValue({
+    datasourceIds: new Set<string>(),
+    collectionIds: new Set<string>(),
+  });
 });
 
 describe("GET /api/admin/service-accounts/unlinked", () => {
@@ -179,6 +188,26 @@ describe("GET /api/admin/service-accounts/unlinked", () => {
     expect(body.data.scopes).toEqual([
       { type: "agent", ref: "default", source: "everyone" },
     ]);
+  });
+
+  it("surfaces Everyone-shared knowledge as automatic access", async () => {
+    mockGetServerSession.mockResolvedValue(ADMIN_SESSION);
+    mockIsPlatformAdmin.mockResolvedValue(true);
+    mockGetUnlinkedServiceAccount.mockResolvedValue(ANON_SA_DOC);
+    mockListEveryoneKnowledgeScopes.mockResolvedValue({
+      datasourceIds: new Set(["published-source"]),
+      collectionIds: new Set(["platform-rag"]),
+    });
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(body.data.scopes).toEqual(
+      expect.arrayContaining([
+        { type: "datasource", ref: "published-source", source: "everyone" },
+        { type: "collection", ref: "platform-rag", source: "everyone" },
+      ]),
+    );
   });
 
   it("does not return credential material in the response", async () => {

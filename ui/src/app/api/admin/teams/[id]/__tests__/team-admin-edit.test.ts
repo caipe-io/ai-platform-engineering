@@ -92,10 +92,13 @@ const TEAM_DOC = {
   resources: { agents: [], agent_admins: [], tools: [], tool_wildcard: false },
 };
 
-function seedCanonicalMembers(rows: Array<{ user_email: string; relationship: "member" | "admin" }>) {
+function seedCanonicalMembers(
+  rows: Array<{ user_email: string; relationship: "member" | "admin" }>,
+  teamSlug = TEAM_DOC.slug,
+) {
   const fixtureRows = rows.map((row) => ({
     team_id: TEAM_ID,
-    team_slug: TEAM_DOC.slug,
+    team_slug: teamSlug,
     user_email: row.user_email,
     relationship: row.relationship,
     source_type: "manual",
@@ -221,6 +224,45 @@ describe("PATCH /api/admin/teams/[id] (issue #1509)", () => {
 
     expect(response.status).toBe(403);
     expect(mockCollections.teams.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("does not let a scoped team admin edit the reserved Everyone team", async () => {
+    mockCollections.teams = createMockCollection([{ ...TEAM_DOC, slug: "everyone", name: "Everyone" }]);
+    seedCanonicalMembers(
+      [{ user_email: "team-admin@example.com", relationship: "admin" }],
+      "everyone",
+    );
+    mockGetServerSession.mockResolvedValue(session("team-admin@example.com"));
+    const { PATCH } = await import("../route");
+
+    const response = await PATCH(
+      makeRequest(`/api/admin/teams/${TEAM_ID}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Changed by team admin" }),
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockCollections.teams.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("allows a platform admin to edit the reserved Everyone team", async () => {
+    mockCollections.teams = createMockCollection([{ ...TEAM_DOC, slug: "everyone", name: "Everyone" }]);
+    mockGetServerSession.mockResolvedValue(session("admin@example.com", "admin"));
+    const { PATCH } = await import("../route");
+
+    const response = await PATCH(
+      makeRequest(`/api/admin/teams/${TEAM_ID}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: "Updated defaults" }),
+      }),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
   });
 });
 

@@ -3,25 +3,125 @@ id: mcp-server-chart
 sidebar_label: mcp-server
 ---
 
+:::caution Auto-generated
+This page is auto-generated from the Helm chart source. Do not edit directly.
+Regenerate with `make docs-helm-charts`.
+:::
+
 # mcp-server
 
-Deploys one MCP server Deployment and Service.
+Deploys one agent's MCP server (Deployment + Service) for CAIPE
 
-The umbrella chart uses this chart through aliases such as `mcp-argocd`,
-`mcp-github`, and `mcp-netutils`.
-
-## Common Values
-
-| Key | Purpose |
+| | |
 |---|---|
-| `mcp.image.repository` | MCP container image repository |
-| `mcp.image.tag` | MCP container image tag |
-| `mcp.mode` | MCP transport mode |
-| `mcp.service.port` | Kubernetes Service port |
-| `agentSecrets` | Integration credentials |
-| `llmSecrets` | LLM provider credentials |
-| `resources` | Pod resource requests and limits |
-| `volumes`, `volumeMounts` | Extra mounts |
+| **Version** | `0.5.68` |
+| **Type** | application |
 
-Use `charts/ai-platform-engineering/charts/mcp-server/values.yaml` for the
-complete value schema.
+## Quick Start
+
+```bash
+# Add and install the chart
+helm install mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68
+
+# Upgrade an existing release
+helm upgrade mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68
+```
+
+## Customizing Values
+
+Override default values using `--set` flags or a custom values file:
+
+```bash
+# Override individual values
+helm install mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68 \
+  --set replicaCount=2
+
+# Use a custom values file
+helm install mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68 \
+  -f custom-values.yaml
+
+# Show all configurable values
+helm show values oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68
+```
+
+## Reading the Values Table
+
+| Column | Meaning |
+|--------|---------|
+| **Key** | Dot-separated path into `values.yaml` (e.g. `image.repository`) |
+| **Type** | Go/Helm data type (`string`, `int`, `bool`, `object`, `list`) |
+| **Default** | Value used when not overridden |
+| **Description** | What the parameter controls |
+
+## Values
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| affinity | object | `{}` |  |
+| agentExports.data.enabled | bool | `true` |  |
+| agentSecrets | object | `{"create":false,"data":{},"externalSecrets":{"data":[],"dataFrom":[],"enabled":false,"name":"","secretStoreRef":{"kind":"ClusterSecretStore","name":""},"target":{}},"requiresSecret":true,"secretName":""}` | DEPRECATED: use mcpSecrets instead. Retained for backwards compatibility. agentSecrets and mcpSecrets are deep-merged; mcpSecrets wins on conflict. |
+| autoscaling.enabled | bool | `false` |  |
+| autoscaling.maxReplicas | int | `100` |  |
+| autoscaling.minReplicas | int | `1` |  |
+| autoscaling.targetCPUUtilizationPercentage | int | `80` |  |
+| fullnameOverride | string | `""` |  |
+| image.pullPolicy | string | `"IfNotPresent"` |  |
+| image.repository | string | `""` |  |
+| image.tag | string | `""` |  |
+| imagePullSecrets | list | `[]` |  |
+| llmSecrets.create | bool | `false` |  |
+| llmSecrets.data | object | `{}` |  |
+| llmSecrets.externalSecrets.data | list | `[]` |  |
+| llmSecrets.externalSecrets.enabled | bool | `false` |  |
+| llmSecrets.externalSecrets.secretStoreRef.kind | string | `"ClusterSecretStore"` |  |
+| llmSecrets.externalSecrets.secretStoreRef.name | string | `""` |  |
+| llmSecrets.secretName | string | `"llm-secret"` |  |
+| mcp.image.pullPolicy | string | `"IfNotPresent"` |  |
+| mcp.image.repository | string | `nil` |  |
+| mcp.image.tag | string | `""` |  |
+| mcp.livenessProbe.failureThreshold | int | `3` |  |
+| mcp.livenessProbe.periodSeconds | int | `10` |  |
+| mcp.livenessProbe.tcpSocket.port | string | `"http"` |  |
+| mcp.livenessProbe.timeoutSeconds | int | `5` |  |
+| mcp.mode | string | `"http"` |  |
+| mcp.readinessProbe.failureThreshold | int | `3` |  |
+| mcp.readinessProbe.periodSeconds | int | `5` |  |
+| mcp.readinessProbe.tcpSocket.port | string | `"http"` |  |
+| mcp.readinessProbe.timeoutSeconds | int | `3` |  |
+| mcp.resources | object | `{}` |  |
+| mcp.service.port | int | `8000` |  |
+| mcp.service.type | string | `"ClusterIP"` |  |
+| mcp.startupProbe.failureThreshold | int | `30` |  |
+| mcp.startupProbe.initialDelaySeconds | int | `10` |  |
+| mcp.startupProbe.periodSeconds | int | `10` |  |
+| mcp.startupProbe.tcpSocket.port | string | `"http"` |  |
+| mcp.startupProbe.timeoutSeconds | int | `5` |  |
+| mcp.volumeMounts | list | `[]` |  |
+| mcp.volumes | list | `[]` |  |
+| mcpSecrets | object | `{}` |  |
+| nameOverride | string | `""` |  |
+| nodeSelector | object | `{}` |  |
+| podAnnotations | object | `{}` |  |
+| podLabels | object | `{}` |  |
+| podSecurityContext.runAsNonRoot | bool | `true` |  |
+| replicaCount | int | `1` |  |
+| revisionHistoryLimit | int | `3` |  |
+| securityContext.allowPrivilegeEscalation | bool | `false` |  |
+| securityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| securityContext.readOnlyRootFilesystem | bool | `false` |  |
+| securityContext.runAsNonRoot | bool | `true` |  |
+| securityContext.runAsUser | int | `1001` |  |
+| securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
+| serviceAccount.annotations | object | `{}` |  |
+| serviceAccount.automount | bool | `true` |  |
+| serviceAccount.create | bool | `true` |  |
+| serviceAccount.name | string | `""` |  |
+| tolerations | list | `[]` |  |
+| vpa.controlledResources[0] | string | `"cpu"` |  |
+| vpa.controlledResources[1] | string | `"memory"` |  |
+| vpa.controlledValues | string | `"RequestsAndLimits"` |  |
+| vpa.enabled | bool | `false` |  |
+| vpa.maxAllowed | object | `{}` |  |
+| vpa.minAllowed.cpu | string | `"50m"` |  |
+| vpa.minAllowed.memory | string | `"128Mi"` |  |
+| vpa.updateMode | string | `"InPlaceOrRecreate"` |  |

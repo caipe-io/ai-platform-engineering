@@ -4,8 +4,17 @@
  */
 
 import { encode } from "next-auth/jwt";
-import { Page, expect } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import type { RbacEnv } from "./_env";
+
+export async function chooseSearchablePickerOption(
+  page: Page,
+  trigger: Locator,
+  optionName: string | RegExp,
+): Promise<void> {
+  await trigger.click();
+  await page.getByRole("option", { name: optionName }).click();
+}
 
 type TestSessionInput = {
   email: string;

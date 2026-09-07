@@ -54,6 +54,11 @@ models:
     name: "Claude Sonnet 4.5 (Bedrock)"
     provider: "aws-bedrock"
     description: "Claude Sonnet 4.5 via AWS Bedrock"
+  - model_id: "bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    name: "Claude Haiku 4.5 (via proxy)"
+    provider: "openai"
+    description: "Claude Haiku via the OpenAI-compatible proxy"
+
   # Azure OpenAI — uncomment when AZURE_OPENAI_* envs are set on
   # dynamic-agents. `model_id` must match the Azure deployment name.
   # - model_id: "gpt-4o"

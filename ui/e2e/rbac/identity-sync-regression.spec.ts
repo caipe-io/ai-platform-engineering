@@ -152,14 +152,18 @@ test.describe("mocked identity sync browser regression", () => {
     await enableIdentitySyncTab(page);
     const mock = await installIdentitySyncMock(page);
 
-    await page.goto("/admin?cat=people&tab=identity-sync", {
+    await page.goto("/admin/people/identity-sync", {
       waitUntil: "domcontentloaded",
     });
 
-    await expect(page.getByRole("button", { name: "Teams & Users" })).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByRole("tab", { name: "Identity Sync" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    await expect(page.getByRole("button", { name: "Teams & Users" })).toHaveAttribute("data-active", "true");
+    await expect(
+      page
+        .getByRole("navigation",{ name: "Admin sections" })
+        .getByRole("link", { name: "Identity Sync" }),
+    ).toHaveAttribute(
+      "aria-current",
+      "page",
     );
     await expect(page.getByText("Okta Connector Status")).toBeVisible();
     await expect(page.getByText("Configured")).toBeVisible();

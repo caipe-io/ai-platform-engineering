@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -49,11 +51,15 @@ async def _run_sync(client, mock_syncer, channels_config=None):
   import ingestors.slack.ingestor as mod
 
   importlib.reload(mod)
-  if channels_config is not None:
-    mod.channels = channels_config
-  with patch.object(mod, "SlackChannelSyncer", return_value=mock_syncer):
-    with patch.object(mod, "WebClient"):
-      await mod.sync_slack_channels(client)
+  env_patch = (
+    {"SLACK_CHANNELS": json.dumps(channels_config)}
+    if channels_config is not None
+    else {}
+  )
+  with patch.dict(os.environ, env_patch):
+    with patch.object(mod, "SlackChannelSyncer", return_value=mock_syncer):
+      with patch.object(mod, "WebClient"):
+        await mod.sync_slack_channels(client)
 
 
 @pytest.mark.asyncio

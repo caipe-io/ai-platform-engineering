@@ -2,7 +2,7 @@
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { Button } from "@/components/ui/button";
-import { fetchChatDefaultAgentIds } from "@/lib/chat-agent-selection";
+import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
 import { cn } from "@/lib/utils";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { ChevronDown,Loader2,Plus,Search } from "lucide-react";
@@ -25,33 +25,19 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
   const [defaultAgentName, setDefaultAgentName] = useState<string>("New Chat");
   const [defaultAgentResolved, setDefaultAgentResolved] = useState(false);
 
-  // Fetch configured default agent on mount
+  // Resolve the same usable agent as the Home composer: personal Web default,
+  // platform default, then the first accessible agent. Keeping this selection
+  // in one shared resolver prevents entry points from creating different chats.
   useEffect(() => {
     let cancelled = false;
 
     async function fetchDefaultAgent() {
       try {
-        const { userDefaultAgentId, platformDefaultAgentId } =
-          await fetchChatDefaultAgentIds();
-        const agentId = userDefaultAgentId ?? platformDefaultAgentId;
+        const agent = await resolveUsableChatAgent();
 
         if (cancelled) return;
-
-        setDefaultAgentId(agentId);
-
-        if (agentId) {
-          try {
-            const agentResponse = await fetch(`/api/dynamic-agents/agents/${encodeURIComponent(agentId)}`);
-            if (agentResponse.ok) {
-              const agentData = await agentResponse.json();
-              if (!cancelled && agentData.success && agentData.data?.name) {
-                setDefaultAgentName(agentData.data.name);
-              }
-            }
-          } catch {
-            // Keep the generic label; the agent id still routes the chat correctly.
-          }
-        }
+        setDefaultAgentId(agent.id);
+        setDefaultAgentName(agent.name);
       } catch {
         if (!cancelled) {
           setDefaultAgentId(null);

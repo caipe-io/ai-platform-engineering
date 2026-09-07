@@ -2,25 +2,26 @@ from contextlib import asynccontextmanager
 import asyncio
 from io import BytesIO
 import hashlib
+import json
 import re
 import traceback
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from common import utils
 from fastapi import FastAPI, status, HTTPException, Query, Depends, Response, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from fastmcp import FastMCP
-from server.tools import AgentTools
+from server.tools import AgentTools, BUILTIN_MCP_TOOL_IDS
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, StreamingResponse
 from starlette.background import BackgroundTask
-from typing import List, Optional
+from typing import Dict, List, Optional
 import logging
 from langchain_core.documents import Document
 from common.metadata_storage import MetadataStorage
-from common.job_manager import JobManager, JobStatus
+from common.job_manager import JobManager, JobStatus, is_stale_pending_job
 from common.models.server import (
   ExploreNeighborhoodRequest,
   DocumentIngestRequest,
@@ -33,6 +34,15 @@ from common.models.server import (
   UrlReloadRequest,
   ConfluenceIngestRequest,
   ConfluenceReloadRequest,
+  SlackIngestRequest,
+  SlackReloadRequest,
+  SlackIngestorCommand,
+  JiraIngestRequest,
+  JiraReloadRequest,
+  JiraIngestorCommand,
+  WebexIngestRequest,
+  WebexReloadRequest,
+  WebexIngestorCommand,
   JobsBatchRequest,
   MCPToolInvokeRequest,
   MCPToolInvokeResponse,
@@ -43,32 +53,58 @@ from common.models.server import (
   CleanupResponse,
   QueryRequest,
   QueryResult,
+  ScrapySettings,
 )
-from common.models.rag import DataSourceInfo, IngestorInfo, StructuredEntity, StructuredEntityId, valid_metadata_keys, valid_metadata_keys_with_types, MCPToolConfig, MCPBuiltinToolsConfig
+from common.models.rag import (
+  DataSourceInfo,
+  IngestorInfo,
+  MCPBuiltinToolsConfig,
+  MCPToolConfig,
+  StructuredEntity,
+  StructuredEntityId,
+)
 from common.models.graph import Relation
 from common.models.rbac import Role, UserContext, UserInfoResponse
 from contextvars import ContextVar
 from server.rbac import (
   require_authenticated_user,
   require_role,
-  has_permission,
   get_permissions,
   get_auth_manager,
   _authenticate_from_token,
   authorize_mcp_tool_create,
+  authorize_mcp_tool_call,
   authorize_mcp_tool_manage,
   authorize_datasource_create,
+  authorize_org_admin,
   authorize_search,
   write_datasource_ownership,
   check_datasource_access,
-  derive_team_for_request,
+  check_datasource_management_access,
+  check_publication_request_apply_access,
+  check_connector_configuration_access,
+  check_datasource_or_source_access,
+  check_ingestion_source_access,
   get_accessible_datasource_ids,
+  get_accessible_ingestion_source_ids,
+  get_accessible_mcp_tool_ids,
   inject_kb_filter,
-  RBAC_TEAM_SCOPE_ENABLED,
+  is_trusted_ingestor_service,
 )
 from common.graph_db.neo4j.graph_db import Neo4jDB
 from common.graph_db.base import GraphDB
-from common.constants import DATASOURCE_ID_KEY, WEBLOADER_INGESTOR_REDIS_QUEUE, WEBLOADER_INGESTOR_NAME, WEBLOADER_INGESTOR_TYPE, CONFLUENCE_INGESTOR_REDIS_QUEUE, CONFLUENCE_INGESTOR_NAME, CONFLUENCE_INGESTOR_TYPE, DEFAULT_DATA_LABEL, DEFAULT_SCHEMA_LABEL
+from common.constants import (
+  DATASOURCE_ID_KEY,
+  WEBLOADER_INGESTOR_TYPE,
+  CONFLUENCE_INGESTOR_TYPE,
+  SLACK_INGESTOR_TYPE,
+  JIRA_INGESTOR_TYPE,
+  WEBEX_INGESTOR_TYPE,
+  REDIS_INGESTOR_PREVIEW_RESPONSE_PREFIX,
+  ingestor_request_queue,
+  DEFAULT_DATA_LABEL,
+  DEFAULT_SCHEMA_LABEL,
+)
 from common.embeddings_factory import EmbeddingsFactory
 import redis.asyncio as redis
 from langchain_milvus import BM25BuiltInFunction, Milvus
@@ -77,10 +113,12 @@ import time
 import os
 import httpx
 from server.query_service import VectorDBQueryService
+from server.doc_acl import merge_acl_filter
 from langchain_core.globals import set_verbose as set_langchain_verbose
 from server.ingestion import DocumentProcessor
 from common.utils import get_fresh_until, sanitize_url
 from pypdf import PdfReader
+from pydantic import BaseModel, Field
 
 mcp_user_context_var: ContextVar[Optional[UserContext]] = ContextVar("mcp_user_context", default=None)
 
@@ -90,6 +128,7 @@ jobmanager: Optional[JobManager] = None
 data_graph_db: Optional[GraphDB] = None
 ontology_graph_db: Optional[GraphDB] = None
 agent_tools: Optional[AgentTools] = None
+vector_db_query_service: Optional[VectorDBQueryService] = None
 
 # Initialize logger
 logger = utils.get_logger(__name__)
@@ -182,7 +221,7 @@ async def run_safe_bulk_cleanup() -> tuple[int, int, int]:
       logger.debug(f"Cleaning up stale data for datasource {ds.datasource_id}")
 
       # Clean up stale Milvus chunks for this datasource
-      expr = f"datasource_id == '{ds.datasource_id}' and fresh_until < {now}"
+      expr = f"datasource_id == {VectorDBQueryService._quote_string(ds.datasource_id)} and fresh_until < {now}"
       try:
         await vector_db.adelete(expr=expr)
       except Exception as e:
@@ -376,7 +415,7 @@ if mcp_enabled:
 
 # Tool IDs that map to the built-in seeded search tool (can update, cannot create/delete)
 # Tool IDs permanently blocked from custom tool creation (shadow built-in tools)
-RESERVED_TOOL_IDS = {"search", "fetch_document", "list_datasources_and_entity_types"}
+RESERVED_TOOL_IDS = BUILTIN_MCP_TOOL_IDS
 
 
 # Combine both lifespans - App and MCP (if enabled)
@@ -487,6 +526,382 @@ def generate_ingestor_id(ingestor_name: str, ingestor_type: str) -> str:
   return f"{ingestor_type}:{ingestor_name}"
 
 
+async def resolve_live_ingestor_id(ingestor_type: str) -> str:
+  """Resolve the `ingestor_id` of the currently-running ingestor of a given
+  type, from its heartbeat registration rather than a guessed name.
+
+  Ingestor names may be derived at runtime, so command routing must use a
+  fresh heartbeat registration rather than a guessed default name.
+  """
+  candidates = await resolve_live_ingestor_ids(ingestor_type)
+  if not candidates:
+    raise HTTPException(
+      status_code=503,
+      detail=f"No {ingestor_type} ingestor is currently registered. Ensure the {ingestor_type} ingestor is running.",
+    )
+  if len(candidates) > 1:
+    logger.warning(f"Multiple {ingestor_type} ingestors registered ({[c.ingestor_id for c in candidates]}); using the most recently seen")
+  return candidates[0].ingestor_id
+
+
+async def resolve_live_ingestor_ids(ingestor_type: str) -> List[IngestorInfo]:
+  """Return fresh logical ingestors of a type, newest heartbeat first."""
+  if not metadata_storage:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+  max_age = int(os.getenv("INGESTOR_HEARTBEAT_MAX_AGE_SECONDS", "300"))
+  cutoff = int(time.time()) - max_age
+  candidates = [
+    item
+    for item in await metadata_storage.fetch_all_ingestor_info()
+    if item.ingestor_type == ingestor_type and (item.last_seen or 0) >= cutoff
+  ]
+  candidates.sort(key=lambda item: item.last_seen or 0, reverse=True)
+  return candidates
+
+
+async def resolve_datasource_ingestor(datasource: DataSourceInfo, ingestor_type: str) -> str:
+  """Resolve a datasource assignment and repair a stale logical worker id."""
+  if not metadata_storage:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+  live = await resolve_live_ingestor_ids(ingestor_type)
+  if not live:
+    raise HTTPException(
+      status_code=503,
+      detail=f"No {ingestor_type} ingestor is currently registered. Ensure the {ingestor_type} ingestor is running.",
+    )
+  live_ids = {item.ingestor_id for item in live}
+  if datasource.ingestor_id in live_ids:
+    return datasource.ingestor_id
+  previous = datasource.ingestor_id
+  datasource.ingestor_id = live[0].ingestor_id
+  await metadata_storage.store_datasource_info(datasource)
+  logger.warning(
+    "Rebound datasource %s from stale ingestor %s to %s",
+    datasource.datasource_id,
+    previous,
+    datasource.ingestor_id,
+  )
+  return datasource.ingestor_id
+
+
+async def enqueue_ingestor_request(
+  *,
+  ingestor_type: str,
+  ingestor_id: str,
+  command: str,
+  payload: object,
+  job_id: Optional[str] = None,
+  response_key: Optional[str] = None,
+) -> None:
+  """Send a command to the queue owned by one logical ingestor id."""
+  if redis_client is None:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+  request = IngestorRequest(
+    ingestor_id=ingestor_id,
+    command=command,
+    payload=payload,
+    job_id=job_id,
+    response_key=response_key,
+  )
+  queue = ingestor_request_queue(ingestor_type, ingestor_id)
+  try:
+    await redis_client.rpush(queue, request.model_dump_json())  # type: ignore
+  except Exception as error:
+    if job_id and jobmanager:
+      await jobmanager.add_error_msg(job_id, f"Failed to enqueue command: {error}")
+      await jobmanager.upsert_job(
+        job_id,
+        status=JobStatus.FAILED,
+        message="Failed to enqueue command for ingestor",
+      )
+    raise HTTPException(status_code=503, detail="Failed to enqueue ingestion command") from error
+  logger.info(f"Queued {command} for {ingestor_id} on {queue}")
+
+
+async def request_ingestor_preview(
+  *,
+  ingestor_type: str,
+  command: str,
+  payload: object,
+) -> Dict:
+  """Run a bounded, non-persisting preview on a live connector worker."""
+  if redis_client is None:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+  ingestor_id = await resolve_live_ingestor_id(ingestor_type)
+  preview_id = str(uuid.uuid4())
+  response_key = f"{REDIS_INGESTOR_PREVIEW_RESPONSE_PREFIX}{preview_id}"
+  await enqueue_ingestor_request(
+    ingestor_type=ingestor_type,
+    ingestor_id=ingestor_id,
+    command=command,
+    payload=payload,
+    response_key=response_key,
+  )
+  timeout_seconds = max(5, min(int(os.getenv("INGESTOR_PREVIEW_TIMEOUT_SECONDS", "120")), 300))
+  try:
+    result = await redis_client.blpop([response_key], timeout=timeout_seconds)
+  except Exception as error:
+    raise HTTPException(
+      status_code=503,
+      detail="The ingestion preview service is temporarily unavailable",
+    ) from error
+  if result is None:
+    raise HTTPException(
+      status_code=504,
+      detail=f"The {ingestor_type} preview did not finish within {timeout_seconds} seconds",
+    )
+  _, raw_response = result
+  try:
+    response = json.loads(raw_response)
+  except (TypeError, json.JSONDecodeError) as error:
+    raise HTTPException(status_code=502, detail="The ingestor returned an invalid preview") from error
+  if not isinstance(response, dict) or response.get("ok") is not True:
+    detail = response.get("error") if isinstance(response, dict) else None
+    raise HTTPException(status_code=422, detail=detail or "The ingestion preview failed")
+  data = response.get("data")
+  if not isinstance(data, dict):
+    raise HTTPException(status_code=502, detail="The ingestor returned an invalid preview")
+  return data
+
+
+async def create_reload_job(datasource_id: str, resource_label: str) -> str:
+  """Create the exact PENDING job a single-datasource reload will execute."""
+  if not jobmanager:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+  await reject_if_ingestion_job_blocking(datasource_id, resource_label)
+  job_id = str(uuid.uuid4())
+  created = await jobmanager.upsert_job(
+    job_id,
+    status=JobStatus.PENDING,
+    message="Waiting for ingestor to process reload...",
+    total=0,
+    datasource_id=datasource_id,
+  )
+  if not created:
+    raise HTTPException(status_code=500, detail="Failed to create reload job")
+  return job_id
+
+
+async def queue_datasource_reload(
+  *,
+  datasource_id: str,
+  resource_label: str,
+  ingestor_type: str,
+  command: str,
+  payload: object,
+  user: UserContext,
+) -> str:
+  """Shared authorization, live-worker resolution, job creation and enqueue."""
+  if not metadata_storage or not jobmanager:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+  datasource = await metadata_storage.get_datasource_info(datasource_id)
+  if not datasource:
+    raise HTTPException(status_code=404, detail="Datasource not found")
+  await check_datasource_management_access(user, datasource_id)
+  ingestor_id = await resolve_datasource_ingestor(datasource, ingestor_type)
+  job_id = await create_reload_job(datasource_id, resource_label)
+  await enqueue_ingestor_request(
+    ingestor_type=ingestor_type,
+    ingestor_id=ingestor_id,
+    command=command,
+    payload=payload,
+    job_id=job_id,
+  )
+  return job_id
+
+
+async def queue_reload_all(*, ingestor_type: str, command: str) -> int:
+  """Fan a reload-all command out to every live logical ingestor."""
+  live = await resolve_live_ingestor_ids(ingestor_type)
+  if not live:
+    raise HTTPException(
+      status_code=503,
+      detail=f"No {ingestor_type} ingestor is currently registered. Ensure the {ingestor_type} ingestor is running.",
+    )
+  for item in live:
+    await enqueue_ingestor_request(
+      ingestor_type=ingestor_type,
+      ingestor_id=item.ingestor_id,
+      command=command,
+      payload={},
+    )
+  return len(live)
+
+
+async def authorize_ingestor_transport(
+  user: UserContext,
+  datasource_id: str,
+  claimed_ingestor_id: Optional[str] = None,
+  *,
+  allow_create: bool = False,
+) -> None:
+  """Authorize the first-party ingestion transport or a normal DS ingestor.
+
+  The configured service identity may push documents only through these
+  write-only endpoints. When a request claims an ingestor id, it must match
+  the datasource assignment so the shared credential cannot spoof a
+  different connector.
+  """
+  if is_trusted_ingestor_service(user):
+    if claimed_ingestor_id is not None:
+      if not metadata_storage:
+        raise HTTPException(status_code=500, detail="Server not initialized")
+      datasource = await metadata_storage.get_datasource_info(datasource_id)
+      if datasource is None:
+        if not allow_create:
+          raise HTTPException(status_code=404, detail="Datasource not found")
+        registered = await metadata_storage.get_ingestor_info(claimed_ingestor_id)
+        max_age = int(os.getenv("INGESTOR_HEARTBEAT_MAX_AGE_SECONDS", "300"))
+        if not registered or (registered.last_seen or 0) < int(time.time()) - max_age:
+          raise HTTPException(status_code=403, detail="Ingestor is not currently registered")
+        return
+      if datasource.ingestor_id != claimed_ingestor_id:
+        raise HTTPException(status_code=403, detail="Ingestor is not assigned to this datasource")
+    return
+  await check_datasource_access(user, datasource_id, "ingest")
+
+
+async def authorize_source_ingestion(
+  request: Request,
+  user: UserContext,
+  datasource_id: str,
+  owner_team_slug: Optional[str],
+  ownership_preprovisioned: bool,
+  existing_datasource: Optional[DataSourceInfo],
+) -> None:
+  """Authorize connector ingestion without coupling management and search grants.
+
+  A DB-backed source is preprovisioned before its first ingestion. At that
+  point an ordinary member of the selected owner team may be the creator even
+  though only team admins receive ``ingestion_source#can_manage``. Requiring
+  both configuration visibility on that exact source and the normal create
+  capability lets the creator perform the initial ingest without granting
+  ongoing Owner access.
+  Existing datasources continue through the normal connector/config gate.
+  """
+  if existing_datasource is not None:
+    await check_connector_configuration_access(user, datasource_id)
+  elif ownership_preprovisioned:
+    await check_ingestion_source_access(user, datasource_id, "can_read")
+    await authorize_datasource_create(request, user, datasource_id, owner_team_slug)
+  else:
+    await authorize_datasource_create(request, user, datasource_id, owner_team_slug)
+
+
+async def provision_legacy_datasource_ownership(
+  datasource_id: str,
+  owner_team_slug: Optional[str],
+  search_team_slugs: List[str],
+  search_user_subjects: List[str],
+  user: UserContext,
+  ownership_preprovisioned: bool,
+  existing_datasource: Optional[DataSourceInfo],
+) -> None:
+  """Project policy for direct creates before any local state is persisted.
+
+  UI-created sources reconcile the independent Owner and Search
+  graphs before calling RAG, so they must not be coupled here.
+  Legacy/direct callers still need the server to establish the initial KB and
+  datasource ownership atomically enough to fail closed on a PDP outage.
+  """
+  if existing_datasource is None and not ownership_preprovisioned:
+    if (
+      (search_team_slugs or search_user_subjects)
+      and not is_trusted_ingestor_service(user)
+    ):
+      raise HTTPException(
+        status_code=403,
+        detail=(
+          "Search publication for additional people or teams must be requested "
+          "through the platform publication workflow"
+        ),
+      )
+    await write_datasource_ownership(
+      datasource_id,
+      owner_team_slug,
+      user,
+      shared_team_slugs=search_team_slugs,
+      shared_user_subjects=search_user_subjects,
+    )
+
+
+async def authorize_job_access(user: UserContext, datasource_id: str, *, write: bool) -> None:
+  """Authorize job metadata without granting Owners indexed-data access."""
+  if is_trusted_ingestor_service(user):
+    return
+  if write:
+    await check_datasource_management_access(user, datasource_id)
+    return
+  await check_datasource_or_source_access(
+    user,
+    datasource_id,
+    "read",
+    source_relation="can_read",
+  )
+
+
+async def authorize_ingestor_job_transport(
+  request: Request,
+  user: UserContext,
+  datasource_id: str,
+) -> None:
+  """Require the assigned first-party ingestor for internal job mutation.
+
+  Owners may start, retry, inspect, or terminate lifecycle work through their
+  dedicated endpoints. Search users may inspect readable job metadata only.
+  Neither grant authorizes forging worker progress, errors, totals, or status.
+  """
+  if not is_trusted_ingestor_service(user):
+    raise HTTPException(
+      status_code=403,
+      detail="Only the assigned ingestor service may mutate job progress",
+    )
+  ingestor_type = request.headers.get("X-Ingestor-Type", "").strip()
+  ingestor_name = request.headers.get("X-Ingestor-Name", "").strip()
+  if not ingestor_type or not ingestor_name:
+    raise HTTPException(status_code=403, detail="Ingestor identity headers are required")
+  claimed_ingestor_id = generate_ingestor_id(ingestor_name, ingestor_type)
+  await authorize_ingestor_transport(
+    user,
+    datasource_id,
+    claimed_ingestor_id,
+  )
+
+
+async def reject_if_ingestion_job_blocking(datasource_id: str, resource_label: str) -> None:
+  """
+  Raises 400 if a datasource already has an active ingestion job.
+
+  A PENDING job stuck past `is_stale_pending_job`'s threshold means the
+  ingestor pod that should have dequeued it never did (crash, downtime, a
+  Redis message it silently dropped) - it is failed here so it stops
+  permanently blocking every future retry for this datasource.
+  """
+  if not jobmanager:
+    return
+  existing_jobs = await jobmanager.get_jobs_by_datasource(datasource_id)
+  if not existing_jobs:
+    return
+
+  blocking_jobs = []
+  for job in existing_jobs:
+    if job.status == JobStatus.IN_PROGRESS:
+      blocking_jobs.append(job)
+    elif job.status == JobStatus.PENDING:
+      if is_stale_pending_job(job):
+        failed = await jobmanager.fail_stale_pending_job(job.job_id)
+        if not failed:
+          current = await jobmanager.get_job(job.job_id)
+          if current and current.status in {JobStatus.PENDING, JobStatus.IN_PROGRESS}:
+            blocking_jobs.append(current)
+      else:
+        blocking_jobs.append(job)
+
+  if blocking_jobs:
+    logger.info(f"An ingestion job is already in progress or pending for datasource {datasource_id}, job ID: {blocking_jobs[0].job_id}")
+    raise HTTPException(status_code=400, detail=f"An ingestion job is already in progress or pending for this {resource_label} (job ID: {blocking_jobs[0].job_id})")
+
+
 # ============================================================================
 # User Info Endpoint
 # ============================================================================
@@ -539,22 +954,46 @@ async def get_user_info(request: Request, user: UserContext = Depends(require_au
 @app.get("/v1/ingestors")
 async def list_ingestors(user: UserContext = Depends(require_role(Role.READONLY))):
   """
-  Lists all ingestors in the database
+  List registered ingestors.
+
+  The connector type/health catalog is needed by self-service source authors,
+  but worker descriptions and metadata can contain deployment URLs and
+  connector-specific diagnostics. Only organization administrators receive
+  those fields. A denied or unavailable admin check degrades to the
+  least-privileged catalog instead of leaking details or making source
+  creation depend on admin access.
   """
   if not metadata_storage:
     raise HTTPException(status_code=500, detail="Server not initialized")
   logger.debug("Listing ingestors")
   ingestors = await metadata_storage.fetch_all_ingestor_info()
-  return JSONResponse(status_code=status.HTTP_200_OK, content=jsonable_encoder(ingestors))
+  include_metadata = False
+  try:
+    await authorize_org_admin(user)
+    include_metadata = True
+  except HTTPException as exc:
+    if exc.status_code not in (status.HTTP_403_FORBIDDEN, status.HTTP_503_SERVICE_UNAVAILABLE):
+      raise
+
+  payload = []
+  for ingestor in ingestors:
+    item = ingestor.model_dump()
+    if not include_metadata:
+      item["description"] = ""
+      item["metadata"] = {}
+    payload.append(item)
+  return JSONResponse(status_code=status.HTTP_200_OK, content=jsonable_encoder(payload))
 
 
 @app.post("/v1/ingestor/heartbeat", response_model=IngestorPingResponse, status_code=status.HTTP_200_OK)
-async def ping_ingestor(ingestor_ping: IngestorPingRequest, user: UserContext = Depends(require_role(Role.INGESTONLY))):
+async def ping_ingestor(ingestor_ping: IngestorPingRequest, user: UserContext = Depends(require_authenticated_user)):
   """
   Registers a heartbeat from a ingestor, creating or updating its entry
   """
   if not metadata_storage:
     raise HTTPException(status_code=500, detail="Server not initialized")
+  if not is_trusted_ingestor_service(user):
+    raise HTTPException(status_code=403, detail="Only the configured ingestor service may register heartbeats")
   logger.info(f"Received heartbeat from ingestor: name={ingestor_ping.ingestor_name} type={ingestor_ping.ingestor_type} (by {user.email})")
   ingestor_id = generate_ingestor_id(ingestor_ping.ingestor_name, ingestor_ping.ingestor_type)
   ingestor_info = IngestorInfo(ingestor_id=ingestor_id, ingestor_type=ingestor_ping.ingestor_type, ingestor_name=ingestor_ping.ingestor_name, description=ingestor_ping.description, metadata=ingestor_ping.metadata, last_seen=int(time.time()))
@@ -597,54 +1036,417 @@ async def upsert_datasource(
   if not metadata_storage:
     raise HTTPException(status_code=500, detail="Server not initialized")
 
-  await check_datasource_access(request, user, datasource_info.datasource_id, "ingest")
+  if is_trusted_ingestor_service(user):
+    await authorize_ingestor_transport(
+      user,
+      datasource_info.datasource_id,
+      datasource_info.ingestor_id,
+      allow_create=True,
+    )
+    existing = await metadata_storage.get_datasource_info(datasource_info.datasource_id)
+    if existing:
+      # Connector workers own ingestion state, not authorization policy. A
+      # legacy periodic worker that rebuilds DataSourceInfo must never erase
+      # or replace access metadata selected in the UI migration flow.
+      datasource_info.creator_subject = existing.creator_subject
+      datasource_info.owner_subject = existing.owner_subject
+      datasource_info.owner_team_slug = existing.owner_team_slug
+      datasource_info.shared_with_teams = existing.shared_with_teams
+      datasource_info.search_with_teams = existing.search_with_teams
+      datasource_info.search_with_users = existing.search_with_users
+  else:
+    # This endpoint replaces the entire DataSourceInfo record, including its
+    # connector assignment and source metadata. Only trusted connector workers
+    # may replace this record. Human callers use the narrow PATCH endpoint; the
+    # only normal non-ingestor caller here is the org-admin migration flow.
+    await authorize_org_admin(user)
   await metadata_storage.store_datasource_info(datasource_info)
 
   return status.HTTP_202_ACCEPTED
 
 
-from pydantic import BaseModel as _PydBaseModel, Field as _PydField  # noqa: E402
+@app.get("/v1/datasource/{datasource_id}/exists")
+async def datasource_exists(
+  datasource_id: str,
+  request: Request,
+  owner_team_slug: Optional[str] = None,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Report whether a datasource id is already in use, regardless of the
+  caller's read access to it.
 
-
-class DatasourceRenameRequest(_PydBaseModel):
-  """Request body for renaming a datasource's display label.
-
-  Only the ``name`` (display label) is mutable; ``datasource_id`` is the
-  immutable RBAC/storage key and cannot be changed via this endpoint.
+  `GET /v1/datasources` filters to the caller's accessible set, so a
+  collision probe against that list cannot see datasources the caller
+  cannot read — letting a source-create flow "create" a deterministic id
+  that already has hidden data and inherit access to it. This endpoint
+  reveals existence only (no metadata), but even that one-bit result is
+  limited to an existing source manager or a caller authorized to create a
+  source for the supplied owner team. This prevents arbitrary authenticated
+  users from enumerating predictable Jira/Confluence datasource ids.
   """
+  if not metadata_storage:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+  try:
+    await check_ingestion_source_access(user, datasource_id, "can_manage")
+  except HTTPException as exc:
+    if exc.status_code != 403:
+      raise
+    await authorize_datasource_create(
+      request,
+      user,
+      datasource_id,
+      owner_team_slug,
+    )
+  existing = await metadata_storage.get_datasource_info(datasource_id)
+  return {"datasource_id": datasource_id, "exists": existing is not None}
 
-  name: str = _PydField(..., min_length=1, max_length=120, description="New human-friendly display label. Whitespace-trimmed; must be non-empty after trimming.")
+
+class DatasourceUpdateRequest(BaseModel):
+  """Mutable source configuration mirrored from the UI's Mongo record."""
+
+  name: Optional[str] = Field(None, min_length=1, max_length=120)
+  description: Optional[str] = Field(None, max_length=2000)
+  default_chunk_size: Optional[int] = Field(None, ge=100, le=100000)
+  default_chunk_overlap: Optional[int] = Field(None, ge=0, le=10000)
+  reload_interval: Optional[int] = Field(None, ge=60)
+  lookback_days: Optional[int] = Field(None, ge=0)
+  include_bots: Optional[bool] = None
+  jql: Optional[str] = Field(None, min_length=1)
+  include_comments: Optional[bool] = None
+  include_links: Optional[bool] = None
+  custom_fields: Optional[Dict[str, str]] = None
+  get_child_pages: Optional[bool] = None
+  allowed_title_patterns: Optional[List[str]] = None
+  denied_title_patterns: Optional[List[str]] = None
+  settings: Optional[ScrapySettings] = None
+
+
+class DatasourceOwnerTeamUpdateRequest(BaseModel):
+  """Narrow persisted access-policy update used by the BFF access flow."""
+
+  owner_team_slug: Optional[str] = Field(None, min_length=1, max_length=192)
+  owner_subject: Optional[str] = Field(None, min_length=1, max_length=192)
+  search_with_teams: Optional[List[str]] = Field(None, max_length=50)
+  search_with_users: Optional[List[str]] = Field(None, max_length=50)
+
+
+@app.get("/v1/datasource/{datasource_id}/publication-state")
+async def get_datasource_publication_state(
+  datasource_id: str,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+) -> Dict[str, Optional[str]]:
+  """Return the ownership fields needed to validate an approved publication.
+
+  Owners may read this narrow projection directly. A delegated
+  publication approver may read it only while applying the request-scoped
+  capability for this exact datasource. The endpoint intentionally omits
+  connector credentials and source configuration.
+  """
+  if not metadata_storage:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  try:
+    await check_datasource_management_access(user, datasource_id)
+  except HTTPException as source_manager_error:
+    if source_manager_error.status_code != status.HTTP_403_FORBIDDEN:
+      raise
+    await check_publication_request_apply_access(
+      user,
+      request.headers.get("X-Publication-Authorization-Id"),
+      "rag_datasource",
+      datasource_id,
+    )
+
+  existing = await metadata_storage.get_datasource_info(datasource_id)
+  if not existing:
+    raise HTTPException(status_code=404, detail="Datasource not found")
+  return {
+    "datasource_id": datasource_id,
+    "owner_team_slug": existing.owner_team_slug,
+    "owner_subject": existing.owner_subject,
+    "creator_subject": existing.creator_subject,
+  }
+
+
+@app.patch("/v1/datasource/{datasource_id}/owner-team", status_code=status.HTTP_200_OK)
+async def update_datasource_owner_team(
+  datasource_id: str,
+  body: DatasourceOwnerTeamUpdateRequest,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Persist the Owner and/or independent Search teams.
+
+  The independent Owner may mirror these fields after reconciling
+  OpenFGA. Legacy datasources remain supported through the management helper's
+  fallback only when no ``ingestion_source`` policy exists. This endpoint
+  changes metadata only; enforcement remains in the independent policy graphs.
+  """
+  if not metadata_storage:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  try:
+    await check_datasource_management_access(user, datasource_id)
+  except HTTPException as source_manager_error:
+    if source_manager_error.status_code != status.HTTP_403_FORBIDDEN:
+      raise
+    # A publication request may include an ownership transfer that was held
+    # back with a material broad-publication change. The request-scoped
+    # capability is bound to this exact datasource and exists only while the
+    # BFF is atomically applying the approved state.
+    await check_publication_request_apply_access(
+      user,
+      request.headers.get("X-Publication-Authorization-Id"),
+      "rag_datasource",
+      datasource_id,
+    )
+  existing = await metadata_storage.get_datasource_info(datasource_id)
+  if not existing:
+    raise HTTPException(status_code=404, detail="Datasource not found")
+
+  owner_changed = False
+  if (
+    "owner_team_slug" in body.model_fields_set
+    and "owner_subject" in body.model_fields_set
+    and body.owner_team_slug
+    and body.owner_subject
+  ):
+    raise HTTPException(
+      status_code=400,
+      detail="A datasource can have either an owner team or a personal owner, not both",
+    )
+
+  if "owner_team_slug" in body.model_fields_set:
+    owner_team_slug = body.owner_team_slug.strip() if body.owner_team_slug else None
+    if owner_team_slug and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}", owner_team_slug):
+      raise HTTPException(status_code=400, detail="owner_team_slug must be a valid team slug")
+    owner_changed = owner_changed or existing.owner_team_slug != owner_team_slug
+    existing.owner_team_slug = owner_team_slug
+    if owner_team_slug:
+      # Team ownership replaces the personal management/query owner. The
+      # creator remains audit-only after an explicit transfer.
+      existing.owner_subject = None
+    elif "owner_subject" not in body.model_fields_set and existing.owner_subject is None:
+      existing.owner_subject = existing.creator_subject
+
+  if "owner_subject" in body.model_fields_set:
+    owner_subject = body.owner_subject.strip() if body.owner_subject else None
+    if owner_subject and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}", owner_subject):
+      raise HTTPException(status_code=400, detail="owner_subject must be a valid user subject")
+    owner_changed = owner_changed or existing.owner_subject != owner_subject
+    existing.owner_subject = owner_subject
+    if owner_subject:
+      existing.owner_team_slug = None
+
+  search_changed = False
+  if "search_with_teams" in body.model_fields_set:
+    normalized_search_teams: List[str] = []
+    seen_search_teams: set[str] = set()
+    for raw_slug in body.search_with_teams or []:
+      slug = raw_slug.strip()
+      if not slug or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}", slug):
+        raise HTTPException(status_code=400, detail="search_with_teams must contain valid team slugs")
+      if slug in seen_search_teams:
+        continue
+      seen_search_teams.add(slug)
+      normalized_search_teams.append(slug)
+    search_changed = existing.search_with_teams != normalized_search_teams
+    existing.search_with_teams = normalized_search_teams
+
+  if "search_with_users" in body.model_fields_set:
+    normalized_search_users: List[str] = []
+    seen_search_users: set[str] = set()
+    for raw_subject in body.search_with_users or []:
+      subject = raw_subject.strip()
+      if not subject or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}", subject):
+        raise HTTPException(status_code=400, detail="search_with_users must contain valid user subjects")
+      if subject in seen_search_users:
+        continue
+      seen_search_users.add(subject)
+      normalized_search_users.append(subject)
+    search_changed = search_changed or existing.search_with_users != normalized_search_users
+    existing.search_with_users = normalized_search_users
+
+  if not body.model_fields_set.intersection(
+    {"owner_team_slug", "owner_subject", "search_with_teams", "search_with_users"}
+  ):
+    raise HTTPException(status_code=400, detail="At least one access-policy field is required")
+  await metadata_storage.store_datasource_info(existing)
+  logger.info(
+    "Updated datasource access metadata datasource=%s owner_team=%s owner_subject=%s search_teams=%s search_users=%s owner_changed=%s search_changed=%s by user=%s",
+    datasource_id,
+    existing.owner_team_slug,
+    existing.owner_subject,
+    existing.search_with_teams,
+    existing.search_with_users,
+    owner_changed,
+    search_changed,
+    user.email,
+  )
+  return {
+    "datasource_id": datasource_id,
+    "owner_team_slug": existing.owner_team_slug,
+    "owner_subject": existing.owner_subject,
+    "search_with_teams": existing.search_with_teams,
+    "search_with_users": existing.search_with_users,
+    "changed": owner_changed or search_changed,
+  }
 
 
 @app.patch("/v1/datasource/{datasource_id}", status_code=status.HTTP_200_OK)
 async def rename_datasource(
   datasource_id: str,
-  body: DatasourceRenameRequest,
+  body: DatasourceUpdateRequest,
   request: Request,
   user: UserContext = Depends(require_authenticated_user),
 ):
-  """Rename a datasource's display label. The ``datasource_id`` is immutable."""
+  """Synchronize mutable source configuration. The datasource id is immutable."""
   if not metadata_storage:
     raise HTTPException(status_code=500, detail="Server not initialized")
 
-  # Authz: must have admin scope on this specific datasource
-  await check_datasource_access(request, user, datasource_id, "admin")
+  try:
+    await check_datasource_management_access(user, datasource_id)
+  except HTTPException as source_manager_error:
+    if source_manager_error.status_code != status.HTTP_403_FORBIDDEN:
+      raise
+    await check_publication_request_apply_access(
+      user,
+      request.headers.get("X-Publication-Authorization-Id"),
+      "rag_datasource",
+      datasource_id,
+    )
 
   existing = await metadata_storage.get_datasource_info(datasource_id)
   if not existing:
     raise HTTPException(status_code=404, detail="Datasource not found")
 
-  new_name = body.name.strip()
-  if not new_name:
-    raise HTTPException(status_code=400, detail="name must be non-empty after trimming")
+  changes = body.model_dump(exclude_unset=True)
+  if not changes:
+    return {"datasource_id": datasource_id, "changed": False}
 
-  if existing.name == new_name:
-    return {"datasource_id": datasource_id, "name": new_name, "changed": False}
+  connector_fields = {
+    "lookback_days",
+    "include_bots",
+    "jql",
+    "include_comments",
+    "include_links",
+    "custom_fields",
+    "get_child_pages",
+    "allowed_title_patterns",
+    "denied_title_patterns",
+    "settings",
+  }
+  allowed_connector_fields = {
+    "slack": {"lookback_days", "include_bots"},
+    "webex": {"include_bots"},
+    "jira": {"jql", "include_comments", "include_links", "custom_fields"},
+    "confluence": {"get_child_pages", "allowed_title_patterns", "denied_title_patterns"},
+    "web": {"settings"},
+  }.get(existing.source_type, set())
+  invalid_connector_fields = (set(changes) & connector_fields) - allowed_connector_fields
+  if invalid_connector_fields:
+    raise HTTPException(
+      status_code=400,
+      detail=f"Fields are not valid for {existing.source_type}: {', '.join(sorted(invalid_connector_fields))}",
+    )
 
-  existing.name = new_name
+  if "name" in changes:
+    changes["name"] = str(changes["name"]).strip()
+    if not changes["name"]:
+      raise HTTPException(status_code=400, detail="name must be non-empty after trimming")
+  final_chunk_size = int(changes.get("default_chunk_size", existing.default_chunk_size or 0))
+  final_chunk_overlap = int(changes.get("default_chunk_overlap", existing.default_chunk_overlap or 0))
+  if final_chunk_overlap >= final_chunk_size:
+    raise HTTPException(status_code=400, detail="default_chunk_overlap must be smaller than default_chunk_size")
+
+  for field_name in ("name", "description", "default_chunk_size", "default_chunk_overlap", "reload_interval"):
+    if field_name in changes:
+      setattr(existing, field_name, changes[field_name])
+
+  metadata = dict(existing.metadata or {})
+  for field_name in (
+    "lookback_days",
+    "include_bots",
+    "include_comments",
+    "include_links",
+    "custom_fields",
+    "allowed_title_patterns",
+    "denied_title_patterns",
+  ):
+    if field_name not in changes:
+      continue
+    if changes[field_name] is None:
+      metadata.pop(field_name, None)
+    else:
+      metadata[field_name] = changes[field_name]
+  if "jql" in changes:
+    if changes["jql"] is None:
+      metadata.pop("jql", None)
+    else:
+      metadata["jql"] = str(changes["jql"]).strip()
+  if existing.source_type == "slack" and "name" in changes:
+    metadata["channel_name"] = changes["name"]
+  elif existing.source_type == "webex" and "name" in changes:
+    metadata["space_name"] = changes["name"]
+  elif existing.source_type == "jira" and "name" in changes:
+    metadata["datasource_name"] = changes["name"]
+
+  nested_key = {
+    "web": "url_ingest_request",
+    "confluence": "confluence_ingest_request",
+  }.get(existing.source_type)
+  if nested_key and isinstance(metadata.get(nested_key), dict):
+    nested = dict(metadata[nested_key])
+    for field_name in ("description", "reload_interval"):
+      if field_name in changes:
+        nested[field_name] = changes[field_name]
+    if existing.source_type == "web":
+      settings = dict(nested.get("settings") or {})
+      if "settings" in changes:
+        settings = dict(changes["settings"] or {})
+      if "default_chunk_size" in changes:
+        settings["chunk_size"] = changes["default_chunk_size"]
+      if "default_chunk_overlap" in changes:
+        settings["chunk_overlap"] = changes["default_chunk_overlap"]
+      nested["settings"] = settings
+    elif existing.source_type == "confluence":
+      for field_name in ("default_chunk_size", "default_chunk_overlap"):
+        if field_name in changes:
+          if changes[field_name] is None:
+            nested.pop(field_name, None)
+          else:
+            nested[field_name] = changes[field_name]
+      for field_name in (
+        "get_child_pages",
+        "allowed_title_patterns",
+        "denied_title_patterns",
+      ):
+        if field_name in changes:
+          nested[field_name] = changes[field_name]
+      if "get_child_pages" in changes:
+        request_url = str(nested.get("url") or "")
+        page_match = re.search(r"/pages/(\d+)", request_url)
+        if page_match and isinstance(metadata.get("page_configs"), list):
+          page_id = page_match.group(1)
+          page_configs = [dict(item) for item in metadata["page_configs"]]
+          for page_config in page_configs:
+            if str(page_config.get("page_id")) == page_id:
+              if changes["get_child_pages"] is None:
+                page_config.pop("get_child_pages", None)
+              else:
+                page_config["get_child_pages"] = changes["get_child_pages"]
+          metadata["page_configs"] = page_configs
+    metadata[nested_key] = nested
+  existing.metadata = metadata
   await metadata_storage.store_datasource_info(existing)
-  logger.info(f"Renamed datasource {datasource_id} -> {new_name!r} by user={user.email}")
-  return {"datasource_id": datasource_id, "name": new_name, "changed": True}
+  logger.info("Updated datasource %s fields=%s by user=%s", datasource_id, sorted(changes), user.email)
+  return {
+    "datasource_id": datasource_id,
+    "name": existing.name,
+    "changed": True,
+    "datasource": existing,
+  }
 
 
 @app.delete("/v1/datasource", status_code=status.HTTP_200_OK)
@@ -661,7 +1463,7 @@ async def delete_datasource(
   if graph_rag_enabled and not data_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized")
 
-  await check_datasource_access(request, user, datasource_id, "admin")
+  await check_datasource_management_access(user, datasource_id)
 
   # Fetch datasource info
   datasource_info = await metadata_storage.get_datasource_info(datasource_id)
@@ -679,7 +1481,7 @@ async def delete_datasource(
     for job in jobs:
       await jobmanager.delete_job(job.job_id)
 
-  await vector_db.adelete(expr=f"datasource_id == '{datasource_id}'")
+  await vector_db.adelete(expr=f"datasource_id == {VectorDBQueryService._quote_string(datasource_id)}")
   await metadata_storage.delete_datasource_info(datasource_id)  # remove metadata
 
   if graph_rag_enabled and data_graph_db:
@@ -691,7 +1493,7 @@ async def delete_datasource(
 @app.post("/v1/datasource/{datasource_id}/cleanup", response_model=CleanupResponse)
 async def cleanup_datasource_stale(
   datasource_id: str,
-  user: UserContext = Depends(require_role(Role.ADMIN)),
+  user: UserContext = Depends(require_authenticated_user),
 ):
   """
   Delete stale chunks from a specific datasource.
@@ -703,6 +1505,8 @@ async def cleanup_datasource_stale(
   if not vector_db or not metadata_storage:
     raise HTTPException(status_code=500, detail="Server not initialized")
 
+  await check_datasource_management_access(user, datasource_id)
+
   # Verify datasource exists
   datasource_info = await metadata_storage.get_datasource_info(datasource_id)
   if not datasource_info:
@@ -711,7 +1515,7 @@ async def cleanup_datasource_stale(
   now = int(time.time())
 
   # Delete stale Milvus chunks for this datasource
-  expr = f"datasource_id == '{datasource_id}' and fresh_until < {now}"
+  expr = f"datasource_id == {VectorDBQueryService._quote_string(datasource_id)} and fresh_until < {now}"
   try:
     await vector_db.adelete(expr=expr)
   except Exception as e:
@@ -777,7 +1581,12 @@ async def list_datasources(
   ingestor_id: Optional[str] = None,
   user: UserContext = Depends(require_authenticated_user),
 ):
-  """List all stored datasources, filtered by team-KB access when enabled."""
+  """List datasource metadata visible through either independent grant graph.
+
+  Source-management visibility exposes configuration and job lifecycle only;
+  the per-row permission flags let callers keep documents/search controls
+  hidden unless the separate data-source grant allows them.
+  """
   if not metadata_storage:
     raise HTTPException(status_code=500, detail="Server not initialized")
   try:
@@ -804,20 +1613,76 @@ async def list_datasources(
           fallback=ds.datasource_id,
         )
 
-    if RBAC_TEAM_SCOPE_ENABLED and user.is_authenticated:
-      team_id = await derive_team_for_request(request, user)
-      tenant_id = request.headers.get("X-Tenant-Id") or "default"
-      accessible = await get_accessible_datasource_ids(
-        user, "read", tenant_id, team_id=team_id, request=request,
-      )
-      if "*" not in accessible:
-        datasources = [
-          ds for ds in datasources
-          if getattr(ds, "datasource_id", None) in accessible
-          or getattr(ds, "id", None) in accessible
-        ]
+    if is_trusted_ingestor_service(user):
+      serialized = [ds.model_dump() for ds in datasources]
+      return {"success": True, "datasources": serialized, "count": len(serialized)}
 
-    return {"success": True, "datasources": datasources, "count": len(datasources)}
+    ds_read, ds_ingest, ds_manage, source_read, source_manage = await asyncio.gather(
+      get_accessible_datasource_ids(user, "read"),
+      get_accessible_datasource_ids(user, "ingest"),
+      get_accessible_datasource_ids(user, "admin"),
+      get_accessible_ingestion_source_ids(user, "can_read"),
+      get_accessible_ingestion_source_ids(user, "can_manage"),
+    )
+    unrestricted = any("*" in ids for ids in (ds_read, source_read))
+    ds_read_set = set(ds_read)
+    ds_ingest_set = set(ds_ingest)
+    ds_manage_set = set(ds_manage)
+    source_read_set = set(source_read)
+    source_manage_set = set(source_manage)
+
+    serialized = []
+    for ds in datasources:
+      datasource_id = ds.datasource_id
+      if not unrestricted and datasource_id not in ds_read_set and datasource_id not in source_read_set:
+        continue
+      can_read_source_config = "*" in source_read_set or datasource_id in source_read_set
+      can_manage_query = "*" in ds_manage_set or datasource_id in ds_manage_set
+      datasource_payload = ds.model_dump()
+      if not can_read_source_config:
+        # A data_source reader may query indexed content, but that grant must
+        # not also reveal the independent ingestion-source configuration (URL,
+        # channel/space ids, JQL, refresh/chunk settings, creator subject, or
+        # worker assignment). Query managers retain only the ownership fields
+        # needed by the Search sharing flow.
+        datasource_payload = {
+          key: datasource_payload[key]
+          for key in (
+            "datasource_id",
+            "name",
+            "description",
+            "source_type",
+            "last_updated",
+          )
+          if key in datasource_payload
+        }
+        if can_manage_query:
+          datasource_payload.update(
+            {
+              "creator_subject": ds.creator_subject,
+              "owner_subject": ds.owner_subject,
+              "owner_team_slug": ds.owner_team_slug,
+              "shared_with_teams": ds.shared_with_teams,
+              "search_with_teams": ds.search_with_teams,
+              "search_with_users": ds.search_with_users,
+            }
+          )
+      serialized.append(
+        {
+          **datasource_payload,
+          "_permissions": {
+            "can_read_content": "*" in ds_read_set or datasource_id in ds_read_set,
+            "can_ingest": "*" in ds_ingest_set or datasource_id in ds_ingest_set,
+            "can_manage_query": can_manage_query,
+            "can_read_source_config": can_read_source_config,
+            "can_manage_source": "*" in source_manage_set or datasource_id in source_manage_set,
+          },
+        }
+      )
+
+    return {"success": True, "datasources": serialized, "count": len(serialized)}
+  except HTTPException:
+    raise
   except Exception as e:
     logger.error(f"Failed to list datasources: {e}")
     raise HTTPException(status_code=500, detail=str(e))
@@ -832,10 +1697,11 @@ async def list_datasource_documents(
   user: UserContext = Depends(require_role(Role.READONLY)),
 ):
   """List documents and chunks for a datasource with pagination (without content)."""
-  if not vector_db:
+  if not vector_db or not vector_db_query_service:
     raise HTTPException(status_code=500, detail="Server not initialized")
 
-  await check_datasource_access(request, user, datasource_id, "read")
+  await authorize_search(user)
+  await check_datasource_access(user, datasource_id, "read")
 
   # Validate Milvus constraint: offset + limit must be < 16384
   if offset + limit >= 16384:
@@ -846,9 +1712,11 @@ async def list_datasource_documents(
 
   try:
     # Fetch limit + 1 to determine if more chunks exist
+    filters = merge_acl_filter({"datasource_id": datasource_id}, user)
+    filter_expression = await vector_db_query_service.build_filter_expression(filters)
     results = vector_db.client.query(
       collection_name=default_collection_name_docs,
-      filter=f"datasource_id == '{datasource_id}'",
+      filter=filter_expression,
       output_fields=["id", "document_id", "title", "chunk_index", "total_chunks", "fresh_until", "document_type", "document_ingested_at", "is_structured_entity", "source"],
       offset=offset,
       limit=limit + 1,
@@ -920,14 +1788,17 @@ async def get_chunk_content(
   user: UserContext = Depends(require_role(Role.READONLY)),
 ):
   """Fetch the text content of a specific chunk."""
-  if not vector_db:
+  if not vector_db or not vector_db_query_service:
     raise HTTPException(status_code=500, detail="Server not initialized")
 
+  await authorize_search(user)
   try:
     # Query Milvus for the specific chunk by ID
+    filters = merge_acl_filter({"id": chunk_id}, user)
+    filter_expression = await vector_db_query_service.build_filter_expression(filters)
     results = vector_db.client.query(
       collection_name=default_collection_name_docs,
-      filter=f"id == '{chunk_id}'",
+      filter=filter_expression,
       output_fields=["id", "text", "datasource_id"],
       limit=1,
     )
@@ -936,7 +1807,7 @@ async def get_chunk_content(
       raise HTTPException(status_code=404, detail="Chunk not found")
 
     chunk = results[0]
-    await check_datasource_access(request, user, chunk.get("datasource_id"), "read")
+    await check_datasource_access(user, chunk.get("datasource_id"), "read")
 
     return ChunkContentResponse(
       id=chunk.get("id", chunk_id),
@@ -954,7 +1825,7 @@ async def get_chunk_content(
 # Job Endpoints
 # ============================================================================
 @app.get("/v1/job/{job_id}")
-async def get_job(request: Request, job_id: str, user: UserContext = Depends(require_role(Role.READONLY))):
+async def get_job(request: Request, job_id: str, user: UserContext = Depends(require_authenticated_user)):
   """Get the status of an ingestion job."""
   if not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
@@ -962,19 +1833,19 @@ async def get_job(request: Request, job_id: str, user: UserContext = Depends(req
   if not job_info:
     raise HTTPException(status_code=404, detail="Job not found")
 
-  await check_datasource_access(request, user, job_info.datasource_id, "ingest")
+  await authorize_job_access(user, job_info.datasource_id, write=False)
 
   logger.info(f"Returning job {job_info}")
   return job_info
 
 
 @app.get("/v1/jobs/datasource/{datasource_id}")
-async def get_jobs_by_datasource(request: Request, datasource_id: str, status_filter: Optional[JobStatus] = None, user: UserContext = Depends(require_role(Role.READONLY))):
+async def get_jobs_by_datasource(request: Request, datasource_id: str, status_filter: Optional[JobStatus] = None, user: UserContext = Depends(require_authenticated_user)):
   """Get all jobs for a specific datasource, optionally filtered by status."""
   if not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
 
-  await check_datasource_access(request, user, datasource_id, "ingest")
+  await authorize_job_access(user, datasource_id, write=False)
 
   jobs = await jobmanager.get_jobs_by_datasource(datasource_id, status_filter=status_filter)
   if jobs is None:
@@ -985,7 +1856,7 @@ async def get_jobs_by_datasource(request: Request, datasource_id: str, status_fi
 
 
 @app.post("/v1/jobs/batch")
-async def get_jobs_batch(http_request: Request, request: JobsBatchRequest, user: UserContext = Depends(require_role(Role.READONLY))):
+async def get_jobs_batch(request: JobsBatchRequest, user: UserContext = Depends(require_authenticated_user)):
   """Get jobs for multiple datasources in a single batch request.
 
   This endpoint is optimized for polling job statuses across multiple datasources,
@@ -1009,11 +1880,13 @@ async def get_jobs_batch(http_request: Request, request: JobsBatchRequest, user:
       raise HTTPException(status_code=400, detail=f"Invalid status filter: {e}")
 
   requested_datasource_ids = request.datasource_ids
-  if RBAC_TEAM_SCOPE_ENABLED and user.is_authenticated:
-    team_id = await derive_team_for_request(http_request, user)
-    tenant_id = http_request.headers.get("X-Tenant-Id") or "default"
-    accessible = await get_accessible_datasource_ids(user, "ingest", tenant_id, team_id=team_id, request=http_request)
-    if "*" not in accessible:
+  if not is_trusted_ingestor_service(user):
+    datasource_ids, source_ids = await asyncio.gather(
+      get_accessible_datasource_ids(user, "read"),
+      get_accessible_ingestion_source_ids(user, "can_read"),
+    )
+    if "*" not in datasource_ids and "*" not in source_ids:
+      accessible = set(datasource_ids) | set(source_ids)
       requested_datasource_ids = [ds_id for ds_id in requested_datasource_ids if ds_id in accessible]
 
   # Fetch jobs in batch
@@ -1028,7 +1901,7 @@ async def get_jobs_batch(http_request: Request, request: JobsBatchRequest, user:
 
 
 @app.post("/v1/job", status_code=status.HTTP_201_CREATED)
-async def create_job(request: Request, datasource_id: str, job_status: Optional[JobStatus] = None, message: Optional[str] = None, total: Optional[int] = None, user: UserContext = Depends(require_role(Role.INGESTONLY))):
+async def create_job(request: Request, datasource_id: str, job_status: Optional[JobStatus] = None, message: Optional[str] = None, total: Optional[int] = None, user: UserContext = Depends(require_authenticated_user)):
   """Create a new job for a datasource."""
   if not jobmanager or not metadata_storage:
     raise HTTPException(status_code=500, detail="Server not initialized")
@@ -1038,7 +1911,7 @@ async def create_job(request: Request, datasource_id: str, job_status: Optional[
   if not datasource_info:
     raise HTTPException(status_code=404, detail="Datasource not found")
 
-  await check_datasource_access(request, user, datasource_id, "ingest")
+  await authorize_ingestor_job_transport(request, user, datasource_id)
 
   # Generate new job ID
   job_id = str(uuid.uuid4())
@@ -1054,7 +1927,7 @@ async def create_job(request: Request, datasource_id: str, job_status: Optional[
 
 
 @app.patch("/v1/job/{job_id}", status_code=status.HTTP_200_OK)
-async def update_job(request: Request, job_id: str, job_status: Optional[JobStatus] = None, message: Optional[str] = None, total: Optional[int] = None, user: UserContext = Depends(require_role(Role.INGESTONLY))):
+async def update_job(request: Request, job_id: str, job_status: Optional[JobStatus] = None, message: Optional[str] = None, total: Optional[int] = None, user: UserContext = Depends(require_authenticated_user)):
   """Update an existing job."""
   if not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
@@ -1064,7 +1937,7 @@ async def update_job(request: Request, job_id: str, job_status: Optional[JobStat
   if not existing_job:
     raise HTTPException(status_code=404, detail="Job not found")
 
-  await check_datasource_access(request, user, existing_job.datasource_id, "ingest")
+  await authorize_ingestor_job_transport(request, user, existing_job.datasource_id)
 
   # Update job
   success = await jobmanager.upsert_job(job_id, status=job_status, message=message, total=total, datasource_id=existing_job.datasource_id)
@@ -1077,7 +1950,7 @@ async def update_job(request: Request, job_id: str, job_status: Optional[JobStat
 
 
 @app.post("/v1/job/{job_id}/terminate", status_code=status.HTTP_200_OK)
-async def terminate_job_endpoint(request: Request, job_id: str, user: UserContext = Depends(require_role(Role.ADMIN))):
+async def terminate_job_endpoint(request: Request, job_id: str, user: UserContext = Depends(require_authenticated_user)):
   """Terminate an ingestion job."""
   if not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
@@ -1086,7 +1959,7 @@ async def terminate_job_endpoint(request: Request, job_id: str, user: UserContex
   if not job_info:
     raise HTTPException(status_code=404, detail="Job not found")
 
-  await check_datasource_access(request, user, job_info.datasource_id, "ingest")
+  await authorize_job_access(user, job_info.datasource_id, write=True)
 
   success = await jobmanager.terminate_job(job_id)
   if not success:
@@ -1097,7 +1970,7 @@ async def terminate_job_endpoint(request: Request, job_id: str, user: UserContex
 
 
 @app.post("/v1/job/{job_id}/increment-progress")
-async def increment_job_progress(request: Request, job_id: str, increment: int = 1, user: UserContext = Depends(require_role(Role.INGESTONLY))):
+async def increment_job_progress(request: Request, job_id: str, increment: int = 1, user: UserContext = Depends(require_authenticated_user)):
   """Increment the progress counter for a job."""
   if not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
@@ -1106,7 +1979,7 @@ async def increment_job_progress(request: Request, job_id: str, increment: int =
   if not job_info:
     raise HTTPException(status_code=404, detail="Job not found")
 
-  await check_datasource_access(request, user, job_info.datasource_id, "ingest")
+  await authorize_ingestor_job_transport(request, user, job_info.datasource_id)
 
   new_value = await jobmanager.increment_progress(job_id, increment)
   if new_value == -1:
@@ -1117,7 +1990,7 @@ async def increment_job_progress(request: Request, job_id: str, increment: int =
 
 
 @app.post("/v1/job/{job_id}/increment-failure")
-async def increment_job_failure(request: Request, job_id: str, increment: int = 1, user: UserContext = Depends(require_role(Role.INGESTONLY))):
+async def increment_job_failure(request: Request, job_id: str, increment: int = 1, user: UserContext = Depends(require_authenticated_user)):
   """Increment the failure counter for a job."""
   if not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
@@ -1126,7 +1999,7 @@ async def increment_job_failure(request: Request, job_id: str, increment: int = 
   if not job_info:
     raise HTTPException(status_code=404, detail="Job not found")
 
-  await check_datasource_access(request, user, job_info.datasource_id, "ingest")
+  await authorize_ingestor_job_transport(request, user, job_info.datasource_id)
 
   new_value = await jobmanager.increment_failure(job_id, increment)
   if new_value == -1:
@@ -1137,7 +2010,7 @@ async def increment_job_failure(request: Request, job_id: str, increment: int = 
 
 
 @app.post("/v1/job/{job_id}/increment-document-count")
-async def increment_job_document_count(request: Request, job_id: str, increment: int = 1, user: UserContext = Depends(require_role(Role.INGESTONLY))):
+async def increment_job_document_count(request: Request, job_id: str, increment: int = 1, user: UserContext = Depends(require_authenticated_user)):
   """Increment the document count for a job."""
   if not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
@@ -1146,7 +2019,7 @@ async def increment_job_document_count(request: Request, job_id: str, increment:
   if not job_info:
     raise HTTPException(status_code=404, detail="Job not found")
 
-  await check_datasource_access(request, user, job_info.datasource_id, "ingest")
+  await authorize_ingestor_job_transport(request, user, job_info.datasource_id)
 
   new_value = await jobmanager.increment_document_count(job_id, increment)
   if new_value == -1:
@@ -1157,7 +2030,7 @@ async def increment_job_document_count(request: Request, job_id: str, increment:
 
 
 @app.post("/v1/job/{job_id}/add-errors")
-async def add_job_errors(request: Request, job_id: str, error_messages: List[str], user: UserContext = Depends(require_role(Role.INGESTONLY))):
+async def add_job_errors(request: Request, job_id: str, error_messages: List[str], user: UserContext = Depends(require_authenticated_user)):
   """Add error messages to a job."""
   if not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
@@ -1169,7 +2042,7 @@ async def add_job_errors(request: Request, job_id: str, error_messages: List[str
   if not job_info:
     raise HTTPException(status_code=404, detail="Job not found")
 
-  await check_datasource_access(request, user, job_info.datasource_id, "ingest")
+  await authorize_ingestor_job_transport(request, user, job_info.datasource_id)
 
   results = []
   for error_msg in error_messages:
@@ -1191,7 +2064,6 @@ async def add_job_errors(request: Request, job_id: str, error_messages: List[str
 @app.post("/v1/query", response_model=List[QueryResult])
 async def query_documents(
   query_request: QueryRequest,
-  request: Request,
   user: UserContext = Depends(require_authenticated_user),
 ):
   """Query for relevant documents using semantic search in the unified collection."""
@@ -1214,8 +2086,7 @@ async def query_documents(
   if not query_request.ranker_type or query_request.ranker_type == "":
     query_request.ranker_params = None
 
-  tenant_id = request.headers.get("X-Tenant-Id") or "default"
-  if await inject_kb_filter(query_request, user, tenant_id, request):
+  if await inject_kb_filter(query_request, user):
     return []
 
   results = await vector_db_query_service.query(
@@ -1381,101 +2252,27 @@ def _validate_local_file_batch(files: list[tuple[str, bytes]]) -> None:
     raise HTTPException(status_code=413, detail=f"Upload exceeds the {max_local_file_total_upload_bytes} byte batch limit")
 
 
-@app.post("/v1/ingest/local-file", status_code=status.HTTP_202_ACCEPTED)
-async def ingest_local_file(
-  request: Request,
-  files: List[UploadFile] = File(..., alias="file"),
-  description: str = Form(""),
-  owner_team_slug: Optional[str] = Form(None),
-  chunk_size: int = Form(10000),
-  chunk_overlap: int = Form(2000),
-  user: UserContext = Depends(require_authenticated_user),
-):
-  """Ingest one or more local Markdown, PDF, or text files as a new data source."""
-  if not metadata_storage or not jobmanager or not ingestor:
-    raise HTTPException(status_code=500, detail="Server not initialized")
-
-  uploads: list[tuple[UploadFile, str, bytes, str, str]] = []
-  for upload_file in files:
-    content = await upload_file.read()
-    try:
-      filename = _validate_local_file_upload(upload_file, content)
-      text, document_type = _extract_local_file_text(filename, upload_file.content_type, content)
-    except HTTPException as exc:
-      safe_filename = _safe_upload_filename(upload_file.filename)
-      logger.warning(
-        "local_file_upload rejected filename=%s content_type=%s bytes=%d status=%d detail=%s user=%s",
-        safe_filename,
-        upload_file.content_type,
-        len(content),
-        exc.status_code,
-        exc.detail,
-        user.email,
-      )
-      raise
-    uploads.append((upload_file, filename, content, text, document_type))
-
-  _validate_local_file_batch([(filename, content) for _, filename, content, _, _ in uploads])
-  total_bytes = sum(len(content) for _, _, content, _, _ in uploads)
-  datasource_id = _local_files_datasource_id([(filename, content) for _, filename, content, _, _ in uploads])
-  await authorize_datasource_create(request, user, datasource_id, owner_team_slug)
-
-  existing_datasource = await metadata_storage.get_datasource_info(datasource_id)
-  if existing_datasource:
-    raise HTTPException(status_code=400, detail="File set already ingested, please delete existing datasource before re-ingesting")
-
-  job_id = str(uuid.uuid4())
-  success = await jobmanager.upsert_job(
-    job_id,
-    status=JobStatus.IN_PROGRESS,
-    message="Ingesting uploaded file..." if len(uploads) == 1 else f"Ingesting {len(uploads)} uploaded files...",
-    total=len(uploads),
-    datasource_id=datasource_id,
-  )
-  if not success:
-    raise HTTPException(status_code=500, detail="Failed to create job")
-
+def _bound_local_file_chunk_params(chunk_size: int, chunk_overlap: int) -> tuple[int, int]:
   bounded_chunk_size = max(100, min(chunk_size, 100000))
   bounded_chunk_overlap = max(0, min(chunk_overlap, 10000, bounded_chunk_size - 1))
+  return bounded_chunk_size, bounded_chunk_overlap
+
+
+async def _ingest_local_file_uploads(
+  *,
+  job_id: str,
+  datasource_id: str,
+  uploads: list[tuple[UploadFile, str, bytes, str, str]],
+  description: str,
+  fresh_until: int,
+  chunk_size: int,
+  chunk_overlap: int,
+  user: UserContext,
+  success_message: str,
+  failure_message: str,
+) -> None:
+  """Build documents from validated uploads, ingest them, and finalize the job."""
   now = int(time.time())
-  first_filename = uploads[0][1]
-  datasource_name = first_filename if len(uploads) == 1 else f"{first_filename} + {len(uploads) - 1} files"
-  file_metadata = [
-    {
-      "filename": filename,
-      "content_type": upload_file.content_type,
-      "document_type": document_type,
-      "byte_size": len(content),
-    }
-    for upload_file, filename, content, _, document_type in uploads
-  ]
-  datasource_info = DataSourceInfo(
-    datasource_id=datasource_id,
-    name=datasource_name,
-    ingestor_id=LOCAL_FILE_INGESTOR_ID,
-    description=description or (f"Uploaded file {first_filename}" if len(uploads) == 1 else f"Uploaded {len(uploads)} files"),
-    source_type="local_file",
-    last_updated=now,
-    default_chunk_size=bounded_chunk_size,
-    default_chunk_overlap=bounded_chunk_overlap,
-    # Config is the source of truth for ownership; OpenFGA is the derived
-    # projection (spec 2026-06-03). Persist the same owner/creator the
-    # tuples below encode so the sharing panel reflects the owning team.
-    owner_team_slug=(owner_team_slug or "").strip() or None,
-    creator_subject=user.subject,
-    owner_subject=user.subject if not (owner_team_slug or "").strip() else None,
-    metadata={
-      "filename": first_filename,
-      "file_count": len(uploads),
-      "total_byte_size": total_bytes,
-      "files": file_metadata,
-    },
-  )
-
-  await metadata_storage.store_datasource_info(datasource_info)
-  await write_datasource_ownership(datasource_id, owner_team_slug, user)
-
-  fresh_until = get_fresh_until(datasource_info.reload_interval)
   documents = []
   for upload_file, filename, content, text, document_type in uploads:
     document_metadata = {
@@ -1513,13 +2310,14 @@ async def ingest_local_file(
       job_id=job_id,
       documents=documents,
       fresh_until=fresh_until,
-      chunk_overlap=bounded_chunk_overlap,
-      chunk_size=bounded_chunk_size,
+      chunk_overlap=chunk_overlap,
+      chunk_size=chunk_size,
     )
+    await jobmanager.increment_document_count(job_id, len(documents))
     await jobmanager.upsert_job(
       job_id,
       status=JobStatus.COMPLETED,
-      message="Uploaded file ingested successfully" if len(uploads) == 1 else f"Uploaded {len(uploads)} files ingested successfully",
+      message=success_message,
       total=len(uploads),
       datasource_id=datasource_id,
     )
@@ -1528,16 +2326,414 @@ async def ingest_local_file(
     await jobmanager.upsert_job(
       job_id,
       status=JobStatus.FAILED,
-      message="Uploaded file ingestion failed",
+      message=failure_message,
       datasource_id=datasource_id,
     )
     raise
+
+
+@app.post("/v1/ingest/local-file", status_code=status.HTTP_202_ACCEPTED)
+async def ingest_local_file(
+  request: Request,
+  files: List[UploadFile] = File(..., alias="file"),
+  description: str = Form(""),
+  owner_team_slug: Optional[str] = Form(None),
+  search_team_slugs: List[str] = Form(default=[]),
+  search_user_subjects: List[str] = Form(default=[]),
+  ownership_preprovisioned: bool = Form(False),
+  preprovisioned_datasource_id: Optional[str] = Form(None),
+  chunk_size: int = Form(10000),
+  chunk_overlap: int = Form(2000),
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Ingest one or more local Markdown, PDF, or text files as a new data source."""
+  if not metadata_storage or not jobmanager or not ingestor:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  uploads: list[tuple[UploadFile, str, bytes, str, str]] = []
+  for upload_file in files:
+    content = await upload_file.read()
+    try:
+      filename = _validate_local_file_upload(upload_file, content)
+      text, document_type = _extract_local_file_text(filename, upload_file.content_type, content)
+    except HTTPException as exc:
+      safe_filename = _safe_upload_filename(upload_file.filename)
+      logger.warning(
+        "local_file_upload rejected filename=%s content_type=%s bytes=%d status=%d detail=%s user=%s",
+        safe_filename,
+        upload_file.content_type,
+        len(content),
+        exc.status_code,
+        exc.detail,
+        user.email,
+      )
+      raise
+    uploads.append((upload_file, filename, content, text, document_type))
+
+  _validate_local_file_batch([(filename, content) for _, filename, content, _, _ in uploads])
+  total_bytes = sum(len(content) for _, _, content, _, _ in uploads)
+  datasource_id = _local_files_datasource_id([(filename, content) for _, filename, content, _, _ in uploads])
+  if ownership_preprovisioned and preprovisioned_datasource_id != datasource_id:
+    raise HTTPException(
+      status_code=400,
+      detail="Preprovisioned datasource id does not match the uploaded file set",
+    )
+  existing_datasource = await metadata_storage.get_datasource_info(datasource_id)
+  await authorize_source_ingestion(
+    request,
+    user,
+    datasource_id,
+    owner_team_slug,
+    ownership_preprovisioned,
+    existing_datasource,
+  )
+  if existing_datasource:
+    raise HTTPException(status_code=400, detail="File set already ingested, please delete existing datasource before re-ingesting")
+
+  await provision_legacy_datasource_ownership(
+    datasource_id,
+    owner_team_slug,
+    search_team_slugs,
+    search_user_subjects,
+    user,
+    ownership_preprovisioned,
+    existing_datasource,
+  )
+
+  job_id = str(uuid.uuid4())
+  success = await jobmanager.upsert_job(
+    job_id,
+    status=JobStatus.IN_PROGRESS,
+    message="Ingesting uploaded file..." if len(uploads) == 1 else f"Ingesting {len(uploads)} uploaded files...",
+    total=len(uploads),
+    datasource_id=datasource_id,
+  )
+  if not success:
+    raise HTTPException(status_code=500, detail="Failed to create job")
+
+  bounded_chunk_size, bounded_chunk_overlap = _bound_local_file_chunk_params(chunk_size, chunk_overlap)
+  now = int(time.time())
+  first_filename = uploads[0][1]
+  datasource_name = first_filename if len(uploads) == 1 else f"{first_filename} + {len(uploads) - 1} files"
+  file_metadata = [
+    {
+      "filename": filename,
+      "content_type": upload_file.content_type,
+      "document_type": document_type,
+      "byte_size": len(content),
+    }
+    for upload_file, filename, content, _, document_type in uploads
+  ]
+  datasource_info = DataSourceInfo(
+    datasource_id=datasource_id,
+    name=datasource_name,
+    ingestor_id=LOCAL_FILE_INGESTOR_ID,
+    description=description or (f"Uploaded file {first_filename}" if len(uploads) == 1 else f"Uploaded {len(uploads)} files"),
+    source_type="local_file",
+    last_updated=now,
+    default_chunk_size=bounded_chunk_size,
+    default_chunk_overlap=bounded_chunk_overlap,
+    # Config is the source of truth for ownership; OpenFGA is the derived
+    # projection (spec 2026-06-03). Persist the same owner/creator the
+    # tuples below encode so the sharing panel reflects the owning team.
+    owner_team_slug=(owner_team_slug or "").strip() or None,
+    creator_subject=user.subject,
+    owner_subject=user.subject if not (owner_team_slug or "").strip() else None,
+    shared_with_teams=[],
+    search_with_teams=search_team_slugs,
+    search_with_users=search_user_subjects,
+    metadata={
+      "filename": first_filename,
+      "file_count": len(uploads),
+      "total_byte_size": total_bytes,
+      "files": file_metadata,
+    },
+  )
+
+  await metadata_storage.store_datasource_info(datasource_info)
+
+  fresh_until = get_fresh_until(datasource_info.reload_interval)
+  await _ingest_local_file_uploads(
+    job_id=job_id,
+    datasource_id=datasource_id,
+    uploads=uploads,
+    description=description,
+    fresh_until=fresh_until,
+    chunk_size=bounded_chunk_size,
+    chunk_overlap=bounded_chunk_overlap,
+    user=user,
+    success_message="Uploaded file ingested successfully" if len(uploads) == 1 else f"Uploaded {len(uploads)} files ingested successfully",
+    failure_message="Uploaded file ingestion failed",
+  )
 
   return {
     "datasource_id": datasource_id,
     "job_id": job_id,
     "message": "Local file ingested successfully" if len(uploads) == 1 else "Local files ingested successfully",
   }
+
+
+@app.post("/v1/ingest/local-file/reupload", status_code=status.HTTP_202_ACCEPTED)
+async def reupload_local_file(
+  datasource_id: str = Form(...),
+  files: List[UploadFile] = File(..., alias="file"),
+  chunk_size: Optional[int] = Form(None),
+  chunk_overlap: Optional[int] = Form(None),
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Replace the content of an existing local-file data source with a new upload."""
+  if not metadata_storage or not jobmanager or not ingestor or not vector_db:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+  if graph_rag_enabled and not data_graph_db:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  existing = await metadata_storage.get_datasource_info(datasource_id)
+  if not existing:
+    raise HTTPException(status_code=404, detail="Datasource not found")
+  if existing.source_type != "local_file":
+    raise HTTPException(status_code=400, detail="Only file datasources support re-upload")
+
+  await check_datasource_management_access(user, datasource_id)
+
+  uploads: list[tuple[UploadFile, str, bytes, str, str]] = []
+  for upload_file in files:
+    content = await upload_file.read()
+    try:
+      filename = _validate_local_file_upload(upload_file, content)
+      text, document_type = _extract_local_file_text(filename, upload_file.content_type, content)
+    except HTTPException as exc:
+      safe_filename = _safe_upload_filename(upload_file.filename)
+      logger.warning(
+        "local_file_reupload rejected filename=%s content_type=%s bytes=%d status=%d detail=%s user=%s",
+        safe_filename,
+        upload_file.content_type,
+        len(content),
+        exc.status_code,
+        exc.detail,
+        user.email,
+      )
+      raise
+    uploads.append((upload_file, filename, content, text, document_type))
+
+  _validate_local_file_batch([(filename, content) for _, filename, content, _, _ in uploads])
+  total_bytes = sum(len(content) for _, _, content, _, _ in uploads)
+
+  jobs = await jobmanager.get_jobs_by_datasource(datasource_id)
+  if jobs and any(job.status == JobStatus.IN_PROGRESS for job in jobs):
+    raise HTTPException(status_code=400, detail="Cannot re-upload while an ingestion job is in progress.")
+
+  await vector_db.adelete(expr=f"datasource_id == {VectorDBQueryService._quote_string(datasource_id)}")
+  if graph_rag_enabled and data_graph_db:
+    await data_graph_db.remove_entity(None, {DATASOURCE_ID_KEY: datasource_id})
+
+  bounded_chunk_size, bounded_chunk_overlap = _bound_local_file_chunk_params(
+    chunk_size if chunk_size is not None else (existing.default_chunk_size or 10000),
+    chunk_overlap if chunk_overlap is not None else (existing.default_chunk_overlap or 2000),
+  )
+
+  job_id = str(uuid.uuid4())
+  success = await jobmanager.upsert_job(
+    job_id,
+    status=JobStatus.IN_PROGRESS,
+    message="Re-uploading file..." if len(uploads) == 1 else f"Re-uploading {len(uploads)} files...",
+    total=len(uploads),
+    datasource_id=datasource_id,
+  )
+  if not success:
+    raise HTTPException(status_code=500, detail="Failed to create job")
+
+  now = int(time.time())
+  first_filename = uploads[0][1]
+  datasource_name = first_filename if len(uploads) == 1 else f"{first_filename} + {len(uploads) - 1} files"
+  file_metadata = [
+    {
+      "filename": filename,
+      "content_type": upload_file.content_type,
+      "document_type": document_type,
+      "byte_size": len(content),
+    }
+    for upload_file, filename, content, _, document_type in uploads
+  ]
+  existing.name = datasource_name
+  existing.default_chunk_size = bounded_chunk_size
+  existing.default_chunk_overlap = bounded_chunk_overlap
+  existing.last_updated = now
+  existing.metadata = {
+    **(existing.metadata or {}),
+    "filename": first_filename,
+    "file_count": len(uploads),
+    "total_byte_size": total_bytes,
+    "files": file_metadata,
+  }
+  await metadata_storage.store_datasource_info(existing)
+
+  fresh_until = get_fresh_until(existing.reload_interval)
+  await _ingest_local_file_uploads(
+    job_id=job_id,
+    datasource_id=datasource_id,
+    uploads=uploads,
+    description=existing.description,
+    fresh_until=fresh_until,
+    chunk_size=bounded_chunk_size,
+    chunk_overlap=bounded_chunk_overlap,
+    user=user,
+    success_message="Re-uploaded file ingested successfully" if len(uploads) == 1 else f"Re-uploaded {len(uploads)} files ingested successfully",
+    failure_message="Re-uploaded file ingestion failed",
+  )
+
+  return {
+    "datasource_id": datasource_id,
+    "job_id": job_id,
+    "message": "Local file re-uploaded successfully" if len(uploads) == 1 else "Local files re-uploaded successfully",
+  }
+
+
+@app.post("/v1/ingest/webloader/preview")
+async def preview_url_ingestion(
+  url_request: UrlIngestRequest,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Crawl a bounded sample without creating a datasource, job, or documents."""
+  url_request.url = sanitize_url(
+    url_request.url,
+    url_request.settings.allow_non_public_urls,
+  )
+  datasource_id = utils.generate_datasource_id_from_url(url_request.url)
+  existing_datasource = (
+    await metadata_storage.get_datasource_info(datasource_id)
+    if metadata_storage
+    else None
+  )
+  await authorize_source_ingestion(
+    request,
+    user,
+    datasource_id,
+    url_request.owner_team_slug,
+    url_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+  return await request_ingestor_preview(
+    ingestor_type=WEBLOADER_INGESTOR_TYPE,
+    command=WebIngestorCommand.PREVIEW_URL,
+    payload=url_request.model_dump(),
+  )
+
+
+def resolve_confluence_datasource_id(
+  confluence_request: ConfluenceIngestRequest,
+  space_key: str,
+  page_id: str,
+) -> str:
+  """Resolve page-scoped identity while accepting an existing legacy ID."""
+  page_datasource_id = utils.generate_confluence_datasource_id(
+    confluence_request.url,
+    space_key,
+    page_id,
+  )
+  supplied_id = (confluence_request.preprovisioned_datasource_id or "").strip()
+  if not supplied_id:
+    return page_datasource_id
+  if not confluence_request.ownership_preprovisioned:
+    raise HTTPException(
+      status_code=400,
+      detail="preprovisioned_datasource_id requires preprovisioned ownership",
+    )
+  legacy_space_id = utils.generate_confluence_datasource_id(
+    confluence_request.url,
+    space_key,
+  )
+  if supplied_id not in {page_datasource_id, legacy_space_id}:
+    raise HTTPException(
+      status_code=400,
+      detail="Preprovisioned datasource ID does not match the Confluence page",
+    )
+  return supplied_id
+
+
+def confluence_scope_description(
+  confluence_request: ConfluenceIngestRequest,
+) -> str:
+  """Describe the concrete URL scope represented by a Confluence source."""
+  if confluence_request.get_child_pages:
+    return f"Confluence page and child pages starting at {confluence_request.url}"
+  return f"Confluence page {confluence_request.url}"
+
+
+@app.post("/v1/ingest/confluence/preview")
+async def preview_confluence_ingestion(
+  confluence_request: ConfluenceIngestRequest,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Resolve the configured Confluence root and filters without ingesting."""
+  confluence_match = re.search(r"/spaces/([^/]+)/pages/(\d+)", confluence_request.url)
+  if not confluence_match:
+    raise HTTPException(
+      status_code=400,
+      detail="Invalid Confluence URL format. Expected a /spaces/SPACE/pages/PAGE_ID URL",
+    )
+  if confluence_url:
+    submitted = urlparse(confluence_request.url)
+    configured = urlparse(confluence_url)
+    if submitted.scheme != configured.scheme or submitted.netloc != configured.netloc:
+      raise HTTPException(
+        status_code=400,
+        detail=f"URL must be from configured Confluence instance: {configured.scheme}://{configured.netloc}",
+      )
+  space_key = unquote(confluence_match.group(1))
+  page_id = confluence_match.group(2)
+  datasource_id = resolve_confluence_datasource_id(
+    confluence_request,
+    space_key,
+    page_id,
+  )
+  existing_datasource = (
+    await metadata_storage.get_datasource_info(datasource_id)
+    if metadata_storage
+    else None
+  )
+  await authorize_source_ingestion(
+    request,
+    user,
+    datasource_id,
+    confluence_request.owner_team_slug,
+    confluence_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+  return await request_ingestor_preview(
+    ingestor_type=CONFLUENCE_INGESTOR_TYPE,
+    command=ConfluenceIngestorCommand.PREVIEW_PAGE,
+    payload=confluence_request.model_dump(),
+  )
+
+
+@app.post("/v1/ingest/jira/preview")
+async def preview_jira_ingestion(
+  jira_request: JiraIngestRequest,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Run the submitted JQL as a bounded, read-only preview."""
+  datasource_id = f"jira-{jira_request.project_key.lower()}-{jira_request.source_slug}"
+  existing_datasource = (
+    await metadata_storage.get_datasource_info(datasource_id)
+    if metadata_storage
+    else None
+  )
+  await authorize_source_ingestion(
+    request,
+    user,
+    datasource_id,
+    jira_request.owner_team_slug,
+    jira_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+  return await request_ingestor_preview(
+    ingestor_type=JIRA_INGESTOR_TYPE,
+    command=JiraIngestorCommand.PREVIEW_PROJECT,
+    payload=jira_request.model_dump(),
+  )
 
 
 @app.post("/v1/ingest/webloader/url", status_code=status.HTTP_202_ACCEPTED)
@@ -1558,23 +2754,35 @@ async def ingest_url(
 
   # Generate datasource ID and create datasource
   datasource_id = utils.generate_datasource_id_from_url(url_request.url)
-  # Creating a NEW data source requires the explicit org-level author capability
-  # plus owning-team membership (spec 2026-06-03), not just per-KB ingest.
-  await authorize_datasource_create(request, user, datasource_id, url_request.owner_team_slug)
-
-  # Check if datasource already exists (for web, each URL is unique)
   existing_datasource = await metadata_storage.get_datasource_info(datasource_id)
-  if existing_datasource:
+  await authorize_source_ingestion(
+    request,
+    user,
+    datasource_id,
+    url_request.owner_team_slug,
+    url_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+  if existing_datasource and not url_request.ownership_preprovisioned:
     logger.info(f"Datasource already exists for URL {url_request.url}, datasource ID: {datasource_id}")
     raise HTTPException(status_code=400, detail="URL already ingested, please delete existing datasource before re-ingesting")
+  live_ingestor_id = (
+    await resolve_datasource_ingestor(existing_datasource, WEBLOADER_INGESTOR_TYPE)
+    if existing_datasource
+    else await resolve_live_ingestor_id(WEBLOADER_INGESTOR_TYPE)
+  )
+  await provision_legacy_datasource_ownership(
+    datasource_id,
+    url_request.owner_team_slug,
+    url_request.search_team_slugs,
+    url_request.search_user_subjects,
+    user,
+    url_request.ownership_preprovisioned,
+    existing_datasource,
+  )
 
   # Check if there is already a job for this datasource in progress or pending
-  existing_jobs = await jobmanager.get_jobs_by_datasource(datasource_id)
-  if existing_jobs:
-    existing_pending_jobs = [job for job in existing_jobs if job.status in (JobStatus.IN_PROGRESS, JobStatus.PENDING)]
-    if existing_pending_jobs:
-      logger.info(f"An ingestion job is already in progress or pending for datasource {datasource_id}, job ID: {existing_pending_jobs[0].job_id}")
-      raise HTTPException(status_code=400, detail=f"An ingestion job is already in progress or pending for this URL (job ID: {existing_pending_jobs[0].job_id})")
+  await reject_if_ingestion_job_blocking(datasource_id, "URL")
 
   # Create job with PENDING status first
   job_id = str(uuid.uuid4())
@@ -1594,42 +2802,53 @@ async def ingest_url(
   if not url_request.description:
     url_request.description = f"Web content from {url_request.url}"
 
-  # Create datasource
   # Metadata schema for source_type="web": {"url_ingest_request": UrlIngestRequest, "reload_interval": int | None}
-  datasource_info = DataSourceInfo(
-    datasource_id=datasource_id,
-    name=utils.derive_friendly_name(url=url_request.url, source_type="web"),
-    ingestor_id=generate_ingestor_id(WEBLOADER_INGESTOR_NAME, WEBLOADER_INGESTOR_TYPE),
-    description=url_request.description,
-    source_type="web",
-    last_updated=int(time.time()),
-    default_chunk_size=url_request.settings.chunk_size,
-    default_chunk_overlap=url_request.settings.chunk_overlap,
-    # Config is the source of truth for ownership; OpenFGA is the derived
-    # projection (spec 2026-06-03). Persist the same owner/creator the
-    # tuples below encode so the sharing panel reflects the owning team.
-    owner_team_slug=(url_request.owner_team_slug or "").strip() or None,
-    creator_subject=user.subject,
-    owner_subject=user.subject if not (url_request.owner_team_slug or "").strip() else None,
-    metadata={
+  if existing_datasource:
+    existing_datasource.description = url_request.description
+    existing_datasource.default_chunk_size = url_request.settings.chunk_size
+    existing_datasource.default_chunk_overlap = url_request.settings.chunk_overlap
+    if url_request.reload_interval is not None:
+      existing_datasource.reload_interval = url_request.reload_interval
+    existing_datasource.last_updated = int(time.time())
+    existing_datasource.metadata = {
+      **(existing_datasource.metadata or {}),
       "url_ingest_request": url_request.model_dump(),
-      "reload_interval": url_request.reload_interval,  # Top-level for easy access by IngestorBuilder
-    },
+      "reload_interval": url_request.reload_interval,
+    }
+    await metadata_storage.store_datasource_info(existing_datasource)
+  else:
+    datasource_info = DataSourceInfo(
+      datasource_id=datasource_id,
+      name=utils.derive_friendly_name(url=url_request.url, source_type="web"),
+      ingestor_id=live_ingestor_id,
+      description=url_request.description,
+      source_type="web",
+      last_updated=int(time.time()),
+      default_chunk_size=url_request.settings.chunk_size,
+      default_chunk_overlap=url_request.settings.chunk_overlap,
+      reload_interval=url_request.reload_interval,
+      owner_team_slug=(url_request.owner_team_slug or "").strip() or None,
+      creator_subject=user.subject,
+      owner_subject=user.subject if not (url_request.owner_team_slug or "").strip() else None,
+      shared_with_teams=[],
+      search_with_teams=url_request.search_team_slugs,
+      search_with_users=url_request.search_user_subjects,
+      metadata={
+        "url_ingest_request": url_request.model_dump(),
+        "reload_interval": url_request.reload_interval,
+        "config_managed": url_request.config_managed,
+      },
+    )
+    await metadata_storage.store_datasource_info(datasource_info)
+    logger.info(f"Created datasource: {datasource_id}")
+
+  await enqueue_ingestor_request(
+    ingestor_type=WEBLOADER_INGESTOR_TYPE,
+    ingestor_id=live_ingestor_id,
+    command=WebIngestorCommand.INGEST_URL,
+    payload=url_request.model_dump(),
+    job_id=job_id,
   )
-
-  await metadata_storage.store_datasource_info(datasource_info)
-  logger.info(f"Created datasource: {datasource_id}")
-
-  # Write ownership tuples so the owning team (or the author) gets access to
-  # the brand-new data source (spec 2026-06-03). Best-effort; non-fatal.
-  await write_datasource_ownership(datasource_id, url_request.owner_team_slug, user)
-
-  # Queue the request for the ingestor
-  ingestor_request = IngestorRequest(ingestor_id=generate_ingestor_id(WEBLOADER_INGESTOR_NAME, WEBLOADER_INGESTOR_TYPE), command=WebIngestorCommand.INGEST_URL, payload=url_request.model_dump())
-
-  # Push to Redis queue
-  await redis_client.rpush(WEBLOADER_INGESTOR_REDIS_QUEUE, ingestor_request.model_dump_json())  # type: ignore
-  logger.info(f"Queued URL ingestion request for {url_request.url} to {WEBLOADER_INGESTOR_REDIS_QUEUE}")
 
   return {"datasource_id": datasource_id, "job_id": job_id, "message": "URL ingestion request queued"}
 
@@ -1641,22 +2860,15 @@ async def reload_url(
   user: UserContext = Depends(require_authenticated_user),
 ):
   """Reloads a previously ingested URL by re-queuing it for ingestion."""
-  if not metadata_storage or not jobmanager:
-    raise HTTPException(status_code=500, detail="Server not initialized")
-
-  # Fetch existing datasource
-  datasource_info = await metadata_storage.get_datasource_info(reload_request.datasource_id)
-  if not datasource_info:
-    raise HTTPException(status_code=404, detail="Datasource not found")
-  await check_datasource_access(request, user, reload_request.datasource_id, "ingest")
-
-  # Queue the request for the ingestor
-  ingestor_request = IngestorRequest(ingestor_id=datasource_info.ingestor_id, command=WebIngestorCommand.RELOAD_DATASOURCE, payload=reload_request.model_dump())
-
-  # Push to Redis queue
-  await redis_client.rpush(WEBLOADER_INGESTOR_REDIS_QUEUE, ingestor_request.model_dump_json())  # type: ignore
-  logger.info(f"Re-queued URL ingestion request for {reload_request.datasource_id}")
-  return {"datasource_id": reload_request.datasource_id, "message": "URL reload ingestion request queued"}
+  job_id = await queue_datasource_reload(
+    datasource_id=reload_request.datasource_id,
+    resource_label="URL",
+    ingestor_type=WEBLOADER_INGESTOR_TYPE,
+    command=WebIngestorCommand.RELOAD_DATASOURCE,
+    payload=reload_request.model_dump(),
+    user=user,
+  )
+  return {"datasource_id": reload_request.datasource_id, "job_id": job_id, "message": "URL reload ingestion request queued"}
 
 
 @app.post("/v1/ingest/webloader/reload-all", status_code=status.HTTP_202_ACCEPTED)
@@ -1665,14 +2877,8 @@ async def reload_all_urls(user: UserContext = Depends(require_role(Role.ADMIN)))
   if not metadata_storage or not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
 
-  # Queue the request for the ingestor
-  ingestor_request = IngestorRequest(ingestor_id=generate_ingestor_id(WEBLOADER_INGESTOR_NAME, WEBLOADER_INGESTOR_TYPE), command=WebIngestorCommand.RELOAD_ALL, payload={})
-
-  # Push to Redis queue
-  await redis_client.rpush(WEBLOADER_INGESTOR_REDIS_QUEUE, ingestor_request.model_dump_json())  # type: ignore
-  logger.info("Re-queued URL ingestion request for all datasources")
-
-  return {"message": "Reload all URLs request queued"}
+  count = await queue_reload_all(ingestor_type=WEBLOADER_INGESTOR_TYPE, command=WebIngestorCommand.RELOAD_ALL)
+  return {"message": "Reload all URLs request queued", "ingestor_count": count}
 
 
 @app.post("/v1/ingest/confluence/page", status_code=status.HTTP_202_ACCEPTED)
@@ -1693,7 +2899,7 @@ async def ingest_confluence_page(
   if not confluence_match:
     raise HTTPException(status_code=400, detail="Invalid Confluence URL format. Expected: https://domain.atlassian.net/wiki/spaces/SPACE/pages/PAGE_ID/Title")
 
-  space_key = confluence_match.group(1)
+  space_key = unquote(confluence_match.group(1))
   page_id = confluence_match.group(2)
 
   # Validate that submitted URL matches configured Confluence instance
@@ -1705,21 +2911,49 @@ async def ingest_confluence_page(
     if submitted_parsed.scheme != configured_parsed.scheme or submitted_parsed.netloc != configured_parsed.netloc:
       raise HTTPException(status_code=400, detail=f"URL must be from configured Confluence instance: {configured_parsed.scheme}://{configured_parsed.netloc}")
 
-  # Generate space-level datasource ID
-  domain = urlparse(confluence_request.url).netloc.replace(".", "_").replace("-", "_")
-  datasource_id = f"src_confluence___{domain}__{space_key}"
+  # Page-scoped identity allows multiple independent roots in one Confluence
+  # space. Existing BFF records may explicitly retain the legacy space ID.
+  datasource_id = resolve_confluence_datasource_id(
+    confluence_request,
+    space_key,
+    page_id,
+  )
 
   # Build page config for this ingestion
   page_config = {"page_id": page_id, "source": confluence_request.url, "get_child_pages": confluence_request.get_child_pages}
 
-  # Check if datasource already exists. Appending a page to an existing space
-  # is an "ingest into KB X" operation (per-KB check); creating a NEW space is
-  # the explicit org-level author capability + owning-team gate (spec 2026-06-03).
+  # Check if the datasource already exists. Replacing or extending stored
+  # connector configuration requires Owner access; a dedicated reload reuses
+  # that configuration and therefore also requires Owner access.
+  # Creating a new space uses the org author capability + owning-team gate.
   existing_datasource = await metadata_storage.get_datasource_info(datasource_id)
-  if existing_datasource:
-    await check_datasource_access(request, user, datasource_id, "ingest")
-  else:
-    await authorize_datasource_create(request, user, datasource_id, confluence_request.owner_team_slug)
+  await authorize_source_ingestion(
+    request,
+    user,
+    datasource_id,
+    confluence_request.owner_team_slug,
+    confluence_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+  live_ingestor_id = (
+    await resolve_datasource_ingestor(existing_datasource, CONFLUENCE_INGESTOR_TYPE)
+    if existing_datasource
+    else await resolve_live_ingestor_id(CONFLUENCE_INGESTOR_TYPE)
+  )
+  await provision_legacy_datasource_ownership(
+    datasource_id,
+    confluence_request.owner_team_slug,
+    confluence_request.search_team_slugs,
+    confluence_request.search_user_subjects,
+    user,
+    confluence_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+
+  # Do not mutate an existing source's config if this request cannot start a
+  # job. This is especially important for source managers who intentionally
+  # have no indexed-content grant.
+  await reject_if_ingestion_job_blocking(datasource_id, "Confluence space")
 
   if existing_datasource:
     if not existing_datasource.metadata:
@@ -1740,6 +2974,14 @@ async def ingest_confluence_page(
       logger.info(f"Added page {page_id} to {datasource_id}")
 
     existing_datasource.metadata["page_configs"] = page_configs
+    configured_name = (confluence_request.name or "").strip()
+    if configured_name:
+      existing_datasource.name = configured_name
+    configured_description = confluence_request.description.strip()
+    if configured_description:
+      existing_datasource.description = configured_description
+    elif not existing_datasource.description or existing_datasource.description == f"Confluence space {space_key}":
+      existing_datasource.description = confluence_scope_description(confluence_request)
     # Update title filter patterns if provided
     if confluence_request.allowed_title_patterns is not None:
       existing_datasource.metadata["allowed_title_patterns"] = confluence_request.allowed_title_patterns
@@ -1750,30 +2992,37 @@ async def ingest_confluence_page(
   else:
     # Create new datasource
     if not confluence_request.description:
-      confluence_request.description = f"Confluence space {space_key}"
+      confluence_request.description = confluence_scope_description(confluence_request)
 
     confluence_url_base = confluence_request.url.split("/wiki/")[0] + "/wiki" if "/wiki/" in confluence_request.url else confluence_request.url
 
     datasource_info = DataSourceInfo(
       datasource_id=datasource_id,
-      name=utils.derive_friendly_name(source_type="confluence", space_key=space_key, url=confluence_url_base),
-      ingestor_id=generate_ingestor_id(CONFLUENCE_INGESTOR_NAME, CONFLUENCE_INGESTOR_TYPE),
+      name=(confluence_request.name or "").strip() or utils.derive_friendly_name(source_type="confluence", space_key=space_key, url=confluence_url_base),
+      ingestor_id=live_ingestor_id,
       description=confluence_request.description,
       source_type="confluence",
       last_updated=int(time.time()),
-      default_chunk_size=1000,
-      default_chunk_overlap=200,
+      default_chunk_size=confluence_request.default_chunk_size,
+      default_chunk_overlap=confluence_request.default_chunk_overlap,
+      reload_interval=confluence_request.reload_interval,
       # Config is the source of truth for ownership; OpenFGA is the derived
       # projection (spec 2026-06-03). Persist the same owner/creator the
       # tuples below encode so the sharing panel reflects the owning team.
       owner_team_slug=(confluence_request.owner_team_slug or "").strip() or None,
       creator_subject=user.subject,
       owner_subject=user.subject if not (confluence_request.owner_team_slug or "").strip() else None,
+      shared_with_teams=[],
+      search_with_teams=confluence_request.search_team_slugs,
+      search_with_users=confluence_request.search_user_subjects,
       metadata={
         "confluence_ingest_request": confluence_request.model_dump(),
         "space_key": space_key,
         "page_configs": [page_config],
+        "root_page_id": page_id,
+        "root_page_url": confluence_request.url,
         "confluence_url": confluence_url_base,
+        "config_managed": confluence_request.config_managed,
         **({"allowed_title_patterns": confluence_request.allowed_title_patterns} if confluence_request.allowed_title_patterns else {}),
         **({"denied_title_patterns": confluence_request.denied_title_patterns} if confluence_request.denied_title_patterns else {}),
       },
@@ -1781,18 +3030,6 @@ async def ingest_confluence_page(
 
     await metadata_storage.store_datasource_info(datasource_info)
     logger.info(f"Created datasource: {datasource_id}")
-
-    # Write ownership tuples for the brand-new Confluence space (spec
-    # 2026-06-03). Best-effort; non-fatal.
-    await write_datasource_ownership(datasource_id, confluence_request.owner_team_slug, user)
-
-  # Check if there is already a job for this datasource in progress or pending
-  existing_jobs = await jobmanager.get_jobs_by_datasource(datasource_id)
-  if existing_jobs:
-    existing_pending_jobs = [job for job in existing_jobs if job.status in (JobStatus.IN_PROGRESS, JobStatus.PENDING)]
-    if existing_pending_jobs:
-      logger.info(f"An ingestion job is already in progress or pending for datasource {datasource_id}, job ID: {existing_pending_jobs[0].job_id}")
-      raise HTTPException(status_code=400, detail=f"An ingestion job is already in progress or pending for this Confluence space (job ID: {existing_pending_jobs[0].job_id})")
 
   # Create job with PENDING status
   job_id = str(uuid.uuid4())
@@ -1809,12 +3046,13 @@ async def ingest_confluence_page(
 
   logger.info(f"Created job {job_id} for datasource {datasource_id}")
 
-  # Queue the request for the ingestor
-  ingestor_request = IngestorRequest(ingestor_id=generate_ingestor_id(CONFLUENCE_INGESTOR_NAME, CONFLUENCE_INGESTOR_TYPE), command=ConfluenceIngestorCommand.INGEST_PAGE, payload=confluence_request.model_dump())
-
-  # Push to Redis queue
-  await redis_client.rpush(CONFLUENCE_INGESTOR_REDIS_QUEUE, ingestor_request.model_dump_json())  # type: ignore
-  logger.info(f"Queued Confluence page ingestion request for {confluence_request.url} to {CONFLUENCE_INGESTOR_REDIS_QUEUE}")
+  await enqueue_ingestor_request(
+    ingestor_type=CONFLUENCE_INGESTOR_TYPE,
+    ingestor_id=live_ingestor_id,
+    command=ConfluenceIngestorCommand.INGEST_PAGE,
+    payload=confluence_request.model_dump(),
+    job_id=job_id,
+  )
 
   return {"datasource_id": datasource_id, "job_id": job_id, "message": "Confluence page ingestion request queued"}
 
@@ -1826,22 +3064,15 @@ async def reload_confluence_page(
   user: UserContext = Depends(require_authenticated_user),
 ):
   """Reloads a previously ingested Confluence page by re-queuing it for ingestion."""
-  if not metadata_storage or not jobmanager:
-    raise HTTPException(status_code=500, detail="Server not initialized")
-
-  # Fetch existing datasource
-  datasource_info = await metadata_storage.get_datasource_info(reload_request.datasource_id)
-  if not datasource_info:
-    raise HTTPException(status_code=404, detail="Datasource not found")
-  await check_datasource_access(request, user, reload_request.datasource_id, "ingest")
-
-  # Queue the request for the ingestor
-  ingestor_request = IngestorRequest(ingestor_id=datasource_info.ingestor_id, command=ConfluenceIngestorCommand.RELOAD_DATASOURCE, payload=reload_request.model_dump())
-
-  # Push to Redis queue
-  await redis_client.rpush(CONFLUENCE_INGESTOR_REDIS_QUEUE, ingestor_request.model_dump_json())  # type: ignore
-  logger.info(f"Re-queued Confluence page ingestion request for {reload_request.datasource_id}")
-  return {"datasource_id": reload_request.datasource_id, "message": "Confluence page reload request queued"}
+  job_id = await queue_datasource_reload(
+    datasource_id=reload_request.datasource_id,
+    resource_label="Confluence space",
+    ingestor_type=CONFLUENCE_INGESTOR_TYPE,
+    command=ConfluenceIngestorCommand.RELOAD_DATASOURCE,
+    payload=reload_request.model_dump(),
+    user=user,
+  )
+  return {"datasource_id": reload_request.datasource_id, "job_id": job_id, "message": "Confluence page reload request queued"}
 
 
 @app.post("/v1/ingest/confluence/reload-all", status_code=status.HTTP_202_ACCEPTED)
@@ -1850,14 +3081,378 @@ async def reload_all_confluence_pages(user: UserContext = Depends(require_role(R
   if not metadata_storage or not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
 
-  # Queue the request for the ingestor
-  ingestor_request = IngestorRequest(ingestor_id=generate_ingestor_id(CONFLUENCE_INGESTOR_NAME, CONFLUENCE_INGESTOR_TYPE), command=ConfluenceIngestorCommand.RELOAD_ALL, payload={})
+  count = await queue_reload_all(ingestor_type=CONFLUENCE_INGESTOR_TYPE, command=ConfluenceIngestorCommand.RELOAD_ALL)
+  return {"message": "Reload all Confluence pages request queued", "ingestor_count": count}
 
-  # Push to Redis queue
-  await redis_client.rpush(CONFLUENCE_INGESTOR_REDIS_QUEUE, ingestor_request.model_dump_json())  # type: ignore
-  logger.info("Re-queued Confluence ingestion request for all datasources")
 
-  return {"message": "Reload all Confluence pages request queued"}
+@app.post("/v1/ingest/slack/channel", status_code=status.HTTP_202_ACCEPTED)
+async def ingest_slack_channel(
+  slack_request: SlackIngestRequest,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Queue a Slack channel for on-demand ingestion by the slack ingestor."""
+  if not metadata_storage or not jobmanager:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  logger.info(f"Received Slack channel ingestion request: {slack_request.channel_id}")
+
+  datasource_id = f"slack-channel-{slack_request.channel_id}"
+
+  existing_datasource = await metadata_storage.get_datasource_info(datasource_id)
+  await authorize_source_ingestion(
+    request,
+    user,
+    datasource_id,
+    slack_request.owner_team_slug,
+    slack_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+  live_ingestor_id = (
+    await resolve_datasource_ingestor(existing_datasource, SLACK_INGESTOR_TYPE)
+    if existing_datasource
+    else await resolve_live_ingestor_id(SLACK_INGESTOR_TYPE)
+  )
+  await provision_legacy_datasource_ownership(
+    datasource_id,
+    slack_request.owner_team_slug,
+    slack_request.search_team_slugs,
+    slack_request.search_user_subjects,
+    user,
+    slack_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+
+  await reject_if_ingestion_job_blocking(datasource_id, "channel")
+
+  job_id = str(uuid.uuid4())
+  success = await jobmanager.upsert_job(
+    job_id,
+    status=JobStatus.PENDING,
+    message="Waiting for ingestor to process...",
+    total=0,
+    datasource_id=datasource_id,
+  )
+  if not success:
+    raise HTTPException(status_code=500, detail="Failed to create job")
+
+  logger.info(f"Created job {job_id} for datasource {datasource_id}")
+
+  if not existing_datasource:
+    if not slack_request.description:
+      slack_request.description = f"Slack conversations from #{slack_request.channel_name or slack_request.channel_id}"
+
+    datasource_info = DataSourceInfo(
+      datasource_id=datasource_id,
+      name=utils.derive_friendly_name(source_type="slack", channel_name=slack_request.channel_name or slack_request.channel_id),
+      ingestor_id=live_ingestor_id,
+      description=slack_request.description,
+      source_type="slack",
+      last_updated=int(time.time()),
+      default_chunk_size=slack_request.default_chunk_size,
+      default_chunk_overlap=slack_request.default_chunk_overlap,
+      reload_interval=slack_request.reload_interval,
+      owner_team_slug=(slack_request.owner_team_slug or "").strip() or None,
+      creator_subject=user.subject,
+      owner_subject=user.subject if not (slack_request.owner_team_slug or "").strip() else None,
+      shared_with_teams=[],
+      search_with_teams=slack_request.search_team_slugs,
+      search_with_users=slack_request.search_user_subjects,
+      metadata={
+        "channel_id": slack_request.channel_id,
+        "channel_name": slack_request.channel_name or slack_request.channel_id,
+        "lookback_days": slack_request.lookback_days,
+        "include_bots": slack_request.include_bots,
+        "config_managed": slack_request.config_managed,
+      },
+    )
+    await metadata_storage.store_datasource_info(datasource_info)
+    logger.info(f"Created datasource: {datasource_id}")
+
+  await enqueue_ingestor_request(
+    ingestor_type=SLACK_INGESTOR_TYPE,
+    ingestor_id=live_ingestor_id,
+    command=SlackIngestorCommand.INGEST_CHANNEL,
+    payload=slack_request.model_dump(),
+    job_id=job_id,
+  )
+
+  return {"datasource_id": datasource_id, "job_id": job_id, "message": "Slack channel ingestion request queued"}
+
+
+@app.post("/v1/ingest/slack/reload", status_code=status.HTTP_202_ACCEPTED)
+async def reload_slack_channel(
+  reload_request: SlackReloadRequest,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Reloads a previously ingested Slack channel by re-queuing it for ingestion."""
+  job_id = await queue_datasource_reload(
+    datasource_id=reload_request.datasource_id,
+    resource_label="Slack channel",
+    ingestor_type=SLACK_INGESTOR_TYPE,
+    command=SlackIngestorCommand.RELOAD_DATASOURCE,
+    payload=reload_request.model_dump(),
+    user=user,
+  )
+  return {"datasource_id": reload_request.datasource_id, "job_id": job_id, "message": "Slack channel reload request queued"}
+
+
+@app.post("/v1/ingest/slack/reload-all", status_code=status.HTTP_202_ACCEPTED)
+async def reload_all_slack_channels(user: UserContext = Depends(require_role(Role.ADMIN))):
+  """Reloads all previously ingested Slack channels by re-queuing them for ingestion."""
+  if not metadata_storage or not jobmanager:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  count = await queue_reload_all(ingestor_type=SLACK_INGESTOR_TYPE, command=SlackIngestorCommand.RELOAD_ALL)
+  return {"message": "Reload all Slack channels request queued", "ingestor_count": count}
+
+
+@app.post("/v1/ingest/jira/project", status_code=status.HTTP_202_ACCEPTED)
+async def ingest_jira_project(
+  jira_request: JiraIngestRequest,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Queue a Jira project for on-demand ingestion by the jira ingestor."""
+  if not metadata_storage or not jobmanager:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  logger.info(f"Received Jira project ingestion request: {jira_request.project_key}/{jira_request.source_slug}")
+
+  datasource_id = f"jira-{jira_request.project_key.lower()}-{jira_request.source_slug}"
+
+  existing_datasource = await metadata_storage.get_datasource_info(datasource_id)
+  await authorize_source_ingestion(
+    request,
+    user,
+    datasource_id,
+    jira_request.owner_team_slug,
+    jira_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+  live_ingestor_id = (
+    await resolve_datasource_ingestor(existing_datasource, JIRA_INGESTOR_TYPE)
+    if existing_datasource
+    else await resolve_live_ingestor_id(JIRA_INGESTOR_TYPE)
+  )
+  await provision_legacy_datasource_ownership(
+    datasource_id,
+    jira_request.owner_team_slug,
+    jira_request.search_team_slugs,
+    jira_request.search_user_subjects,
+    user,
+    jira_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+
+  await reject_if_ingestion_job_blocking(datasource_id, "project")
+
+  job_id = str(uuid.uuid4())
+  success = await jobmanager.upsert_job(
+    job_id,
+    status=JobStatus.PENDING,
+    message="Waiting for ingestor to process...",
+    total=0,
+    datasource_id=datasource_id,
+  )
+  if not success:
+    raise HTTPException(status_code=500, detail="Failed to create job")
+
+  logger.info(f"Created job {job_id} for datasource {datasource_id}")
+
+  if not existing_datasource:
+    if not jira_request.description:
+      jira_request.description = f"Jira issues: {jira_request.name} ({jira_request.project_key})"
+
+    datasource_info = DataSourceInfo(
+      datasource_id=datasource_id,
+      name=f"Jira: {jira_request.name} ({jira_request.project_key})",
+      ingestor_id=live_ingestor_id,
+      description=jira_request.description,
+      source_type="jira",
+      last_updated=int(time.time()),
+      default_chunk_size=jira_request.default_chunk_size,
+      default_chunk_overlap=jira_request.default_chunk_overlap,
+      reload_interval=jira_request.reload_interval,
+      owner_team_slug=(jira_request.owner_team_slug or "").strip() or None,
+      creator_subject=user.subject,
+      owner_subject=user.subject if not (jira_request.owner_team_slug or "").strip() else None,
+      shared_with_teams=[],
+      search_with_teams=jira_request.search_team_slugs,
+      search_with_users=jira_request.search_user_subjects,
+      metadata={
+        "project_key": jira_request.project_key,
+        "datasource_name": jira_request.name,
+        "jql": jira_request.jql,
+        "custom_fields": jira_request.custom_fields,
+        "include_comments": jira_request.include_comments,
+        "include_links": jira_request.include_links,
+        "config_managed": jira_request.config_managed,
+      },
+    )
+    await metadata_storage.store_datasource_info(datasource_info)
+    logger.info(f"Created datasource: {datasource_id}")
+
+  await enqueue_ingestor_request(
+    ingestor_type=JIRA_INGESTOR_TYPE,
+    ingestor_id=live_ingestor_id,
+    command=JiraIngestorCommand.INGEST_PROJECT,
+    payload=jira_request.model_dump(),
+    job_id=job_id,
+  )
+
+  return {"datasource_id": datasource_id, "job_id": job_id, "message": "Jira project ingestion request queued"}
+
+
+@app.post("/v1/ingest/jira/reload", status_code=status.HTTP_202_ACCEPTED)
+async def reload_jira_project(
+  reload_request: JiraReloadRequest,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Reloads a previously ingested Jira project by re-queuing it for ingestion."""
+  job_id = await queue_datasource_reload(
+    datasource_id=reload_request.datasource_id,
+    resource_label="Jira project",
+    ingestor_type=JIRA_INGESTOR_TYPE,
+    command=JiraIngestorCommand.RELOAD_DATASOURCE,
+    payload=reload_request.model_dump(),
+    user=user,
+  )
+  return {"datasource_id": reload_request.datasource_id, "job_id": job_id, "message": "Jira project reload request queued"}
+
+
+@app.post("/v1/ingest/jira/reload-all", status_code=status.HTTP_202_ACCEPTED)
+async def reload_all_jira_projects(user: UserContext = Depends(require_role(Role.ADMIN))):
+  """Reloads all previously ingested Jira projects by re-queuing them for ingestion."""
+  if not metadata_storage or not jobmanager:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  count = await queue_reload_all(ingestor_type=JIRA_INGESTOR_TYPE, command=JiraIngestorCommand.RELOAD_ALL)
+  return {"message": "Reload all Jira projects request queued", "ingestor_count": count}
+
+
+@app.post("/v1/ingest/webex/space", status_code=status.HTTP_202_ACCEPTED)
+async def ingest_webex_space(
+  webex_request: WebexIngestRequest,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Queue a Webex space for on-demand ingestion by the webex ingestor."""
+  if not metadata_storage or not jobmanager:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  logger.info(f"Received Webex space ingestion request: {webex_request.space_id}")
+
+  datasource_id = f"webex-space-{webex_request.space_id}"
+
+  existing_datasource = await metadata_storage.get_datasource_info(datasource_id)
+  await authorize_source_ingestion(
+    request,
+    user,
+    datasource_id,
+    webex_request.owner_team_slug,
+    webex_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+  live_ingestor_id = (
+    await resolve_datasource_ingestor(existing_datasource, WEBEX_INGESTOR_TYPE)
+    if existing_datasource
+    else await resolve_live_ingestor_id(WEBEX_INGESTOR_TYPE)
+  )
+  await provision_legacy_datasource_ownership(
+    datasource_id,
+    webex_request.owner_team_slug,
+    webex_request.search_team_slugs,
+    webex_request.search_user_subjects,
+    user,
+    webex_request.ownership_preprovisioned,
+    existing_datasource,
+  )
+
+  await reject_if_ingestion_job_blocking(datasource_id, "space")
+
+  job_id = str(uuid.uuid4())
+  success = await jobmanager.upsert_job(
+    job_id,
+    status=JobStatus.PENDING,
+    message="Waiting for ingestor to process...",
+    total=0,
+    datasource_id=datasource_id,
+  )
+  if not success:
+    raise HTTPException(status_code=500, detail="Failed to create job")
+
+  logger.info(f"Created job {job_id} for datasource {datasource_id}")
+
+  if not existing_datasource:
+    if not webex_request.description:
+      webex_request.description = f"Webex messages from space '{webex_request.space_name or webex_request.space_id}'"
+
+    datasource_info = DataSourceInfo(
+      datasource_id=datasource_id,
+      name=f"Webex: {webex_request.space_name or webex_request.space_id}",
+      ingestor_id=live_ingestor_id,
+      description=webex_request.description,
+      source_type="webex",
+      last_updated=int(time.time()),
+      default_chunk_size=webex_request.default_chunk_size,
+      default_chunk_overlap=webex_request.default_chunk_overlap,
+      reload_interval=webex_request.reload_interval,
+      owner_team_slug=(webex_request.owner_team_slug or "").strip() or None,
+      creator_subject=user.subject,
+      owner_subject=user.subject if not (webex_request.owner_team_slug or "").strip() else None,
+      shared_with_teams=[],
+      search_with_teams=webex_request.search_team_slugs,
+      search_with_users=webex_request.search_user_subjects,
+      metadata={
+        "space_id": webex_request.space_id,
+        "space_name": webex_request.space_name or webex_request.space_id,
+        "include_bots": webex_request.include_bots,
+        "config_managed": webex_request.config_managed,
+      },
+    )
+    await metadata_storage.store_datasource_info(datasource_info)
+    logger.info(f"Created datasource: {datasource_id}")
+
+  await enqueue_ingestor_request(
+    ingestor_type=WEBEX_INGESTOR_TYPE,
+    ingestor_id=live_ingestor_id,
+    command=WebexIngestorCommand.INGEST_SPACE,
+    payload=webex_request.model_dump(),
+    job_id=job_id,
+  )
+
+  return {"datasource_id": datasource_id, "job_id": job_id, "message": "Webex space ingestion request queued"}
+
+
+@app.post("/v1/ingest/webex/reload", status_code=status.HTTP_202_ACCEPTED)
+async def reload_webex_space(
+  reload_request: WebexReloadRequest,
+  request: Request,
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Reloads a previously ingested Webex space by re-queuing it for ingestion."""
+  job_id = await queue_datasource_reload(
+    datasource_id=reload_request.datasource_id,
+    resource_label="Webex space",
+    ingestor_type=WEBEX_INGESTOR_TYPE,
+    command=WebexIngestorCommand.RELOAD_DATASOURCE,
+    payload=reload_request.model_dump(),
+    user=user,
+  )
+  return {"datasource_id": reload_request.datasource_id, "job_id": job_id, "message": "Webex space reload request queued"}
+
+
+@app.post("/v1/ingest/webex/reload-all", status_code=status.HTTP_202_ACCEPTED)
+async def reload_all_webex_spaces(user: UserContext = Depends(require_role(Role.ADMIN))):
+  """Reloads all previously ingested Webex spaces by re-queuing them for ingestion."""
+  if not metadata_storage or not jobmanager:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  count = await queue_reload_all(ingestor_type=WEBEX_INGESTOR_TYPE, command=WebexIngestorCommand.RELOAD_ALL)
+  return {"message": "Reload all Webex spaces request queued", "ingestor_count": count}
 
 
 @app.post("/v1/ingest")
@@ -1870,18 +3465,26 @@ async def ingest_documents(
 
   if not vector_db or not metadata_storage or not ingestor or not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
-  await check_datasource_access(request, user, ingest_request.datasource_id, "ingest")
-  logger.info(f"Starting data ingestion for datasource: {ingest_request.datasource_id}")
 
   # Check if datasource exists
   datasource_info = await metadata_storage.get_datasource_info(ingest_request.datasource_id)
   if not datasource_info:
     raise HTTPException(status_code=404, detail="Datasource not found")
+  await authorize_ingestor_transport(
+    user,
+    ingest_request.datasource_id,
+    ingest_request.ingestor_id,
+  )
+  logger.info(f"Starting data ingestion for datasource: {ingest_request.datasource_id}")
 
-  # Find the current job for this datasource is IN_PROGRESS
+  if not ingest_request.job_id:
+    raise HTTPException(status_code=400, detail="job_id is required")
+  # Find the exact server-created job for this datasource.
   job_info = await jobmanager.get_job(ingest_request.job_id)
   if not job_info:
     raise HTTPException(status_code=404, detail="Job not found")
+  if job_info.datasource_id != ingest_request.datasource_id:
+    raise HTTPException(status_code=403, detail="Job is not assigned to this datasource")
 
   if job_info.status != JobStatus.IN_PROGRESS:
     raise HTTPException(status_code=400, detail="Ingestion can only be started for jobs in IN_PROGRESS status")
@@ -1920,22 +3523,35 @@ async def ingest_documents(
 # ============================================================================
 
 
-async def _get_accessible_datasource_ids_for_request(request: Request, user: UserContext, scope: str) -> Optional[List[str]]:
+async def _get_accessible_datasource_ids_for_request(user: UserContext, scope: str) -> Optional[List[str]]:
   """Resolve the caller's accessible datasource set once per request.
 
-  Returns ``None`` when the caller has unrestricted access (team-scope
-  disabled, coarse ADMIN, unrestricted service identity, or org-admin) so
-  callers can skip filtering entirely instead of comparing against a
-  sentinel list.
+  Returns ``None`` for the explicit unsafe bypass or an OpenFGA org admin, so
+  callers can skip filtering
+  entirely instead of comparing against a sentinel list.
   """
-  if not RBAC_TEAM_SCOPE_ENABLED or not user.is_authenticated:
+  if not user.is_authenticated:
     return None
-  team_id = await derive_team_for_request(request, user)
-  tenant_id = request.headers.get("X-Tenant-Id") or "default"
-  accessible = await get_accessible_datasource_ids(user, scope, tenant_id, team_id=team_id, request=request)
+  accessible = await get_accessible_datasource_ids(user, scope)
   if "*" in accessible:
     return None
   return accessible
+
+
+async def _require_unrestricted_ontology_access(user: UserContext) -> None:
+  """Allow global ontology reads only when the caller can search every source.
+
+  Ontology nodes and relations do not carry datasource provenance, so there is
+  no safe way to filter the global ontology for a caller with a bounded source
+  grant.  Such callers can still use the provenance-tagged data graph.
+  """
+  await authorize_search(user)
+  accessible = await _get_accessible_datasource_ids_for_request(user, "read")
+  if accessible is not None:
+    raise HTTPException(
+      status_code=403,
+      detail="Ontology graph access requires unrestricted datasource access",
+    )
 
 
 def _entity_datasource_id(entity: StructuredEntity) -> Optional[str]:
@@ -1945,14 +3561,13 @@ def _entity_datasource_id(entity: StructuredEntity) -> Optional[str]:
 def _filter_entities_by_datasource(entities: List[StructuredEntity], accessible: Optional[List[str]]) -> List[StructuredEntity]:
   """Drop entities whose tagged datasource is outside the accessible set.
 
-  Entities without a tagged datasource (e.g. records created outside the
-  per-document ingestion path) are kept, since there is nothing to scope
-  them by.
+  Untagged entities have no trustworthy provenance and therefore fail closed
+  for restricted callers.
   """
   if accessible is None:
     return entities
   accessible_set = set(accessible)
-  return [e for e in entities if _entity_datasource_id(e) is None or _entity_datasource_id(e) in accessible_set]
+  return [e for e in entities if _entity_datasource_id(e) in accessible_set]
 
 
 async def _filter_relations_by_datasource(relations: List[Relation], accessible: Optional[List[str]]) -> List[Relation]:
@@ -1962,7 +3577,8 @@ async def _filter_relations_by_datasource(relations: List[Relation], accessible:
   ontology-building pipeline creates them, and it does not carry that tag —
   see agent_ontology/relation_manager.py). Resolve each unique endpoint via
   the existing single-entity lookup and require both sides to be accessible
-  (or untagged) since this is a graph-DB read, not a PDP call. Only pays this
+  since this is a graph-DB read, not a PDP call. Untagged or missing endpoints
+  fail closed. Only pays this
   cost for callers who are actually team-scope-restricted.
   """
   if accessible is None or not relations or not data_graph_db:
@@ -1976,7 +3592,7 @@ async def _filter_relations_by_datasource(relations: List[Relation], accessible:
 
   def _endpoint_accessible(entity_id: StructuredEntityId) -> bool:
     ds_id = datasource_by_endpoint.get((entity_id.entity_type, entity_id.primary_key))
-    return ds_id is None or ds_id in accessible_set
+    return ds_id is not None and ds_id in accessible_set
 
   return [r for r in relations if _endpoint_accessible(r.from_entity) and _endpoint_accessible(r.to_entity)]
 
@@ -1984,15 +3600,20 @@ async def _filter_relations_by_datasource(relations: List[Relation], accessible:
 @app.get("/v1/graph/explore/entity_type")
 async def list_entity_types(user: UserContext = Depends(require_role(Role.READONLY))):
   """
-  Lists all entity types in the database.
+  Lists entity types visible to the caller.
 
-  Not filtered by datasource: entity type names are schema-level metadata
-  (e.g. "Incident", "Service"), not per-datasource instance data.
+  The ontology is global and has no datasource provenance. Restricted callers
+  therefore derive their type list from the provenance-tagged data graph.
   """
-  if not ontology_graph_db:
+  if not ontology_graph_db or not data_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await authorize_search(user)
   logger.debug("Listing entity types")
-  e = await ontology_graph_db.get_all_entity_types()
+  accessible = await _get_accessible_datasource_ids_for_request(user, "read")
+  if accessible is None:
+    e = await ontology_graph_db.get_all_entity_types()
+  else:
+    e = await data_graph_db.get_all_entity_types(datasource_ids=accessible)
   return JSONResponse(status_code=status.HTTP_200_OK, content=e)
 
 
@@ -2001,7 +3622,6 @@ async def list_entity_types(user: UserContext = Depends(require_role(Role.READON
 # ====
 @app.get("/v1/graph/explore/data/entities/batch")
 async def fetch_data_entities_batch(
-  request: Request,
   offset: int = Query(0, description="Number of entities to skip (for pagination)", ge=0),
   limit: int = Query(100, description="Maximum number of entities to return", ge=1, le=1000),
   entity_type: Optional[str] = Query(None, description="Optional filter by entity type"),
@@ -2014,6 +3634,7 @@ async def fetch_data_entities_batch(
   """
   if not data_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await authorize_search(user)
 
   # Enforce max limit of 1000
   if limit > 1000:
@@ -2021,8 +3642,13 @@ async def fetch_data_entities_batch(
 
   logger.debug(f"Fetching data entities batch: offset={offset}, limit={limit}, entity_type={entity_type}")
 
-  accessible = await _get_accessible_datasource_ids_for_request(request, user, "read")
-  entities = await data_graph_db.fetch_entities_batch(offset=offset, limit=limit, entity_type=entity_type)
+  accessible = await _get_accessible_datasource_ids_for_request(user, "read")
+  entities = await data_graph_db.fetch_entities_batch(
+    offset=offset,
+    limit=limit,
+    entity_type=entity_type,
+    datasource_ids=accessible,
+  )
   entities = _filter_entities_by_datasource(entities, accessible)
 
   return JSONResponse(status_code=status.HTTP_200_OK, content={"entities": jsonable_encoder(entities), "count": len(entities), "offset": offset, "limit": limit})
@@ -2030,7 +3656,6 @@ async def fetch_data_entities_batch(
 
 @app.get("/v1/graph/explore/data/relations/batch")
 async def fetch_data_relations_batch(
-  request: Request,
   offset: int = Query(0, description="Number of relations to skip (for pagination)", ge=0),
   limit: int = Query(100, description="Maximum number of relations to return", ge=1, le=1000),
   relation_name: Optional[str] = Query(None, description="Optional filter by relation name"),
@@ -2043,6 +3668,7 @@ async def fetch_data_relations_batch(
   """
   if not data_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await authorize_search(user)
 
   # Enforce max limit of 1000
   if limit > 1000:
@@ -2050,21 +3676,27 @@ async def fetch_data_relations_batch(
 
   logger.debug(f"Fetching data relations batch: offset={offset}, limit={limit}, relation_name={relation_name}")
 
-  accessible = await _get_accessible_datasource_ids_for_request(request, user, "read")
-  relations = await data_graph_db.fetch_relations_batch(offset=offset, limit=limit, relation_name=relation_name)
+  accessible = await _get_accessible_datasource_ids_for_request(user, "read")
+  relations = await data_graph_db.fetch_relations_batch(
+    offset=offset,
+    limit=limit,
+    relation_name=relation_name,
+    datasource_ids=accessible,
+  )
   relations = await _filter_relations_by_datasource(relations, accessible)
 
   return JSONResponse(status_code=status.HTTP_200_OK, content={"relations": jsonable_encoder(relations), "count": len(relations), "offset": offset, "limit": limit})
 
 
 @app.post("/v1/graph/explore/data/entity/neighborhood")
-async def explore_data_entity_neighborhood(http_request: Request, request: ExploreNeighborhoodRequest, user: UserContext = Depends(require_role(Role.READONLY))):
+async def explore_data_entity_neighborhood(request: ExploreNeighborhoodRequest, user: UserContext = Depends(require_role(Role.READONLY))):
   """
   Explore an entity and its neighborhood in the data graph up to a specified depth.
   Depth 0 returns just the entity, depth 1 includes direct neighbors, etc.
   """
   if not data_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await authorize_search(user)
 
   logger.debug(f"Exploring data neighborhood for entity_type={request.entity_type}, entity_pk={request.entity_pk}, depth={request.depth}")
 
@@ -2073,13 +3705,13 @@ async def explore_data_entity_neighborhood(http_request: Request, request: Explo
   if result["entity"] is None:
     return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": "Entity not found"})
 
+  accessible = await _get_accessible_datasource_ids_for_request(user, "read")
   # The starting entity itself is a single-entity fetch: deny outright rather
-  # than silently filtering, matching check_datasource_access's 403 pattern.
+  # than silently filtering. Untagged entities fail closed for restricted users.
   start_datasource_id = _entity_datasource_id(result["entity"])
-  if start_datasource_id is not None:
-    await check_datasource_access(http_request, user, start_datasource_id, "read")
+  if accessible is not None and start_datasource_id not in set(accessible):
+    raise HTTPException(status_code=403, detail="Access denied for this graph entity")
 
-  accessible = await _get_accessible_datasource_ids_for_request(http_request, user, "read")
   result["entities"] = _filter_entities_by_datasource(result["entities"], accessible)
   result["relations"] = await _filter_relations_by_datasource(result["relations"], accessible)
 
@@ -2087,21 +3719,19 @@ async def explore_data_entity_neighborhood(http_request: Request, request: Explo
 
 
 @app.get("/v1/graph/explore/data/entity/start")
-async def get_random_start_nodes(request: Request, n: int = Query(10, description="Number of random nodes to fetch", ge=1, le=100), user: UserContext = Depends(require_role(Role.READONLY))):
+async def get_random_start_nodes(n: int = Query(10, description="Number of random nodes to fetch", ge=1, le=100), user: UserContext = Depends(require_role(Role.READONLY))):
   """
   Fetch random starting nodes from the data graph.
   Useful for initializing graph visualization or exploration.
   """
   if not data_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await authorize_search(user)
 
   logger.debug(f"Fetching {n} random nodes from data graph")
 
-  accessible = await _get_accessible_datasource_ids_for_request(request, user, "read")
-  # Over-fetch when scope-restricted so filtering still tends to return close
-  # to the requested count instead of starving small samples.
-  fetch_count = n if accessible is None else min(n * 5, 1000)
-  entities = await data_graph_db.fetch_random_entities(count=fetch_count)
+  accessible = await _get_accessible_datasource_ids_for_request(user, "read")
+  entities = await data_graph_db.fetch_random_entities(count=n, datasource_ids=accessible)
   entities = _filter_entities_by_datasource(entities, accessible)[:n]
 
   return JSONResponse(status_code=status.HTTP_200_OK, content=jsonable_encoder(entities))
@@ -2110,19 +3740,16 @@ async def get_random_start_nodes(request: Request, n: int = Query(10, descriptio
 @app.get("/v1/graph/explore/data/stats")
 async def get_data_graph_stats(user: UserContext = Depends(require_role(Role.READONLY))):
   """
-  Get statistics about the data graph (node count, relation count).
-
-  Not filtered by datasource: GraphDB.get_graph_stats() returns a global
-  aggregate with no per-datasource breakdown, and approximating it via a
-  full entity/relation scan on every request would be far more expensive
-  than the aggregate counts are sensitive (counts only, no entity content).
+  Get statistics about the caller's accessible portion of the data graph.
   """
   if not data_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await authorize_search(user)
 
   logger.debug("Fetching data graph statistics")
 
-  stats = await data_graph_db.get_graph_stats()
+  accessible = await _get_accessible_datasource_ids_for_request(user, "read")
+  stats = await data_graph_db.get_graph_stats(datasource_ids=accessible)
 
   return JSONResponse(status_code=status.HTTP_200_OK, content=stats)
 
@@ -2130,12 +3757,10 @@ async def get_data_graph_stats(user: UserContext = Depends(require_role(Role.REA
 # ====
 # Ontology Graph Endpoints
 # ====
-# Not filtered by datasource: the ontology graph holds schema/type-level
-# definitions (entity types, relation types, their properties) produced by
-# the ontology-building agent, not per-datasource instance data. There is no
-# `_datasource_id` tag on ontology nodes/relations to filter by (see
-# agent_ontology/relation_manager.py), and nothing here exposes document or
-# entity content — same reasoning as list_entity_types above.
+# The ontology graph is deployment-global and has no `_datasource_id` tag on
+# nodes or relations (see agent_ontology/relation_manager.py). Until ontology
+# provenance exists, bounded callers must fail closed rather than receive
+# schema and relationship information learned from sources they cannot read.
 
 
 @app.get("/v1/graph/explore/ontology/entities/batch")
@@ -2152,6 +3777,7 @@ async def fetch_ontology_entities_batch(
   """
   if not ontology_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await _require_unrestricted_ontology_access(user)
 
   # Enforce max limit of 1000
   if limit > 1000:
@@ -2178,6 +3804,7 @@ async def fetch_ontology_relations_batch(
   """
   if not ontology_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await _require_unrestricted_ontology_access(user)
 
   # Enforce max limit of 1000
   if limit > 1000:
@@ -2198,6 +3825,7 @@ async def explore_ontology_entity_neighborhood(request: ExploreNeighborhoodReque
   """
   if not ontology_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await _require_unrestricted_ontology_access(user)
 
   logger.debug(f"Exploring ontology neighborhood for entity_type={request.entity_type}, entity_pk={request.entity_pk}, depth={request.depth}")
 
@@ -2217,6 +3845,7 @@ async def get_random_ontology_start_nodes(n: int = Query(10, description="Number
   """
   if not ontology_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await _require_unrestricted_ontology_access(user)
 
   logger.debug(f"Fetching {n} random nodes from ontology graph")
 
@@ -2232,6 +3861,7 @@ async def get_ontology_graph_stats(user: UserContext = Depends(require_role(Role
   """
   if not ontology_graph_db:
     raise HTTPException(status_code=500, detail="Server not initialized, or graph RAG is disabled")
+  await _require_unrestricted_ontology_access(user)
 
   logger.debug("Fetching ontology graph statistics")
 
@@ -2248,8 +3878,8 @@ async def _reverse_proxy(request: Request):
   Reverse proxy to ontology agent service, which runs a separate FastAPI instance,
   and is responsible for handling ontology related requests.
 
-  Read-only operations (GET /status) require READONLY role.
-  Write operations (POST/DELETE) require ADMIN role.
+  Read-only operations require the RAG search capability.
+  Write operations require OpenFGA organization administration.
 
   This acts as a security gateway - the ontology agent service doesn't need
   its own RBAC implementation since it's only accessible through this proxy.
@@ -2259,16 +3889,16 @@ async def _reverse_proxy(request: Request):
   auth_manager = get_auth_manager()
   user = await require_authenticated_user(request, auth_manager)
 
-  # Determine required role based on method and path
-  # GET /status endpoints are read-only, allow READONLY access
-  # All other operations (POST/DELETE) require ADMIN
+  # The ontology is deployment-global and has no datasource provenance. Even
+  # its status message can name the relation currently being evaluated, so
+  # every read must use the same unrestricted-source gate as ontology explore.
+  # Every mutating operation remains org-admin only.
   is_status_endpoint = request.url.path.endswith("/status")
   is_read_only = request.method == "GET" and is_status_endpoint
-
-  required_role = Role.READONLY if is_read_only else Role.ADMIN
-
-  if not has_permission(user.role, required_role):
-    raise HTTPException(status_code=403, detail=f"Insufficient permissions. Required role: {required_role}, your role: {user.role}")
+  if is_read_only:
+    await _require_unrestricted_ontology_access(user)
+  else:
+    await authorize_org_admin(user)
 
   logger.info(f"Ontology agent request by {user.email} to {request.url.path}")
 
@@ -2300,7 +3930,7 @@ async def liveness():
 
 @app.get("/healthz")
 async def health_check(response: Response):
-  """Health check endpoint — returns 503 if any required service is not initialized."""
+  """Readiness probe with no deployment or indexed-data diagnostics."""
   health_status = "healthy"
   health_details = {}
 
@@ -2310,34 +3940,16 @@ async def health_check(response: Response):
     health_details["error"] = "One or more services are not initialized"
     logger.error("healthz: One or more services are not initialized")
 
-  config = {
-    "graph_rag_enabled": graph_rag_enabled,
-    "cleanup": {
-      "enabled": cleanup_enabled,
-      "interval_seconds": clean_up_interval,
-      "last_cleanup": last_cleanup_timestamp,
-    },
-    "search": {
-      "keys": valid_metadata_keys(),
-      "filter_keys": valid_metadata_keys_with_types(),
-    },
-    "vector_db": {"milvus": {"uri": milvus_uri, "collections": [default_collection_name_docs], "index_params": {"dense": dense_index_params, "sparse": sparse_index_params}}},
-    "embeddings": {"model": embeddings_model},
-    "metadata_storage": {"redis": {"url": redis_url}},
-    "ui_url": ui_url,
-  }
-
-  if graph_rag_enabled:
-    if data_graph_db and ontology_graph_db:
-      config["graph_db"] = {
-        "data_graph": {"type": data_graph_db.database_type, "query_language": data_graph_db.query_language, "uri": neo4j_addr, "tenant_label": data_graph_db.tenant_label},
-        "ontology_graph": {"type": ontology_graph_db.database_type, "query_language": ontology_graph_db.query_language, "uri": neo4j_addr, "tenant_label": ontology_graph_db.tenant_label},
-        "structured_entity_types": await data_graph_db.get_all_entity_types() if data_graph_db else [],
-      }
-
   if health_status == "unhealthy":
     response.status_code = 503
-  return {"status": health_status, "timestamp": int(time.time()), "details": health_details, "config": config}
+  return {
+    "status": health_status,
+    "timestamp": int(time.time()),
+    "details": health_details,
+    # This feature flag is intentionally public: the UI uses it only to
+    # select available surfaces, and it contains no resource or topology data.
+    "config": {"graph_rag_enabled": graph_rag_enabled},
+  }
 
 
 async def init_tests(logger: logging.Logger, redis_client: redis.Redis, embeddings: EmbeddingsFactory, milvus_uri: str):
@@ -2467,6 +4079,9 @@ async def list_mcp_tools(user: UserContext = Depends(require_role(Role.READONLY)
   if not metadata_storage:
     raise HTTPException(status_code=500, detail="Server not initialized")
   tools = await metadata_storage.fetch_all_mcp_tool_configs()
+  accessible = await get_accessible_mcp_tool_ids(user, "can_read")
+  if "*" not in accessible:
+    tools = [tool for tool in tools if tool.tool_id in accessible]
   return JSONResponse(status_code=status.HTTP_200_OK, content=jsonable_encoder(tools))
 
 
@@ -2475,8 +4090,7 @@ async def create_mcp_tool(config: MCPToolConfig, user: UserContext = Depends(req
   """Create a new custom MCP search tool. The tool_id must be unique and not reserved.
 
   Authorization is OpenFGA-based (spec 2026-06-03-unified-shareable-resource-rbac):
-  the caller must be an org admin or a member of the owner team. Coarse-ADMIN
-  service principals are still permitted for backward compatibility.
+  the caller must be an org admin or a member of the owner team.
   """
   await authorize_mcp_tool_create(user, getattr(config, "owner_team_slug", None))
   if not metadata_storage:
@@ -2500,8 +4114,7 @@ async def update_mcp_tool(tool_id: str, config: MCPToolConfig, user: UserContext
   """Update an existing MCP search tool configuration (including the seeded 'search' tool).
 
   Authorization is OpenFGA-based: the caller must hold `mcp_tool#can_manage`
-  (owner, owner-team admin, or org admin). Coarse-ADMIN service principals are
-  still permitted for backward compatibility.
+  (owner, owner-team admin, or org admin).
   """
   await authorize_mcp_tool_manage(user, tool_id)
   if not metadata_storage:
@@ -2526,8 +4139,7 @@ async def delete_mcp_tool(tool_id: str, user: UserContext = Depends(require_auth
   """Delete a custom MCP search tool. Reserved tool IDs (e.g. 'search') cannot be deleted.
 
   Authorization is OpenFGA-based: the caller must hold `mcp_tool#can_manage`
-  (owner, owner-team admin, or org admin). Coarse-ADMIN service principals are
-  still permitted for backward compatibility.
+  (owner, owner-team admin, or org admin).
   """
   await authorize_mcp_tool_manage(user, tool_id)
   if not metadata_storage:
@@ -2553,10 +4165,11 @@ async def get_mcp_builtin_config(user: UserContext = Depends(require_role(Role.R
 
 
 @app.put("/v1/mcp/builtin-tools", tags=["MCP Tools"])
-async def update_mcp_builtin_config(config: MCPBuiltinToolsConfig, user: UserContext = Depends(require_role(Role.ADMIN))):
+async def update_mcp_builtin_config(config: MCPBuiltinToolsConfig, user: UserContext = Depends(require_authenticated_user)):
   """Update the built-in MCP tools enable/disable toggles (fetch_document, fetch_datasources, graph_tools)."""
   if not metadata_storage:
     raise HTTPException(status_code=500, detail="Server not initialized")
+  await authorize_org_admin(user)
   await metadata_storage.store_mcp_builtin_config(config)
   logger.info(f"Updated MCPBuiltinToolsConfig (by {user.email}): {config}")
   await _reload_mcp_tools()
@@ -2584,9 +4197,16 @@ async def get_mcp_tool_schemas(user: UserContext = Depends(require_role(Role.REA
 
   # Get all registered tools from FastMCP
   registered_tools = await mcp.list_tools()
+  accessible_custom_tools = await get_accessible_mcp_tool_ids(user, "can_read")
 
   tools_with_schemas = []
   for tool in registered_tools:
+    if (
+      tool.name not in BUILTIN_MCP_TOOL_IDS
+      and "*" not in accessible_custom_tools
+      and tool.name not in accessible_custom_tools
+    ):
+      continue
     tools_with_schemas.append(
       {
         "name": tool.name,
@@ -2630,6 +4250,9 @@ async def invoke_mcp_tool(request: MCPToolInvokeRequest, user: UserContext = Dep
   if not tool:
     raise HTTPException(status_code=404, detail=f"MCP tool '{request.tool_name}' not found")
 
+  if request.tool_name not in BUILTIN_MCP_TOOL_IDS:
+    await authorize_mcp_tool_call(user, request.tool_name)
+
   try:
     # Invoke the tool using tool.run()
     token = mcp_user_context_var.set(user)
@@ -2646,15 +4269,11 @@ async def invoke_mcp_tool(request: MCPToolInvokeRequest, user: UserContext = Dep
       first_content = result.content[0]
       if hasattr(first_content, "text"):
         try:
-          import json
-
           raw_result = json.loads(first_content.text)
         except (json.JSONDecodeError, TypeError):
           raw_result = first_content.text
       elif isinstance(first_content, dict) and "text" in first_content:
         try:
-          import json
-
           raw_result = json.loads(first_content["text"])
         except (json.JSONDecodeError, TypeError):
           raw_result = first_content["text"]

@@ -8,6 +8,7 @@ const mockCheckPermission = jest.fn();
 const mockCheckOpenFgaTuple = jest.fn();
 const mockCheckUniversalRebacRelationship = jest.fn();
 const mockReadOpenFgaTuples = jest.fn();
+const mockListOpenFgaObjects = jest.fn();
 const mockWriteOpenFgaTuples = jest.fn();
 const mockAuditQuery = jest.fn();
 // Phase 3 (spec 2026-05-24-derive-team-from-channel) removed the
@@ -29,6 +30,7 @@ jest.mock("@/lib/rbac/openfga", () => ({
   checkUniversalRebacRelationship: (...args: unknown[]) =>
     mockCheckUniversalRebacRelationship(...args),
   readOpenFgaTuples: (...args: unknown[]) => mockReadOpenFgaTuples(...args),
+  listOpenFgaObjects: (...args: unknown[]) => mockListOpenFgaObjects(...args),
   writeOpenFgaTuples: (...args: unknown[]) => mockWriteOpenFgaTuples(...args),
 }));
 
@@ -132,6 +134,10 @@ function matchesFilter(row: unknown, filter: Record<string, unknown>): boolean {
 function createMockCollection(rows: unknown[]) {
   return {
     rows,
+    insertOne: jest.fn(async (row: unknown) => {
+      rows.push(row);
+      return { acknowledged: true };
+    }),
     find: jest.fn((filter: Record<string, unknown> = {}) => {
       const matching = rows.filter((row) => matchesFilter(row, filter));
       return {
@@ -197,11 +203,31 @@ beforeEach(() => {
   mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
   mockCheckUniversalRebacRelationship.mockResolvedValue({ allowed: true });
   mockReadOpenFgaTuples.mockResolvedValue({ tuples: [], continuationToken: undefined });
+  mockListOpenFgaObjects.mockResolvedValue({ objects: [] });
   mockWriteOpenFgaTuples.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
   // Phase 3 (spec 2026-05-24-derive-team-from-channel): no team
   // client-scope mocks to reset — the helpers are gone.
   mockEnsureSlackBotOboPermissions.mockResolvedValue(undefined);
-  mockCallSlackBotAdmin.mockResolvedValue({ reloaded: "all" });
+  mockCallSlackBotAdmin.mockImplementation(
+    async (path: string, options?: { body?: { channel_id?: string } }) => {
+      if (path === "/admin/slack/channels/inspect") {
+        const inspectedChannelId = options?.body?.channel_id ?? channelId;
+        const channelName =
+          inspectedChannelId === "CNEWMISSING"
+            ? "new-alerts"
+            : inspectedChannelId === "CCHANGED"
+              ? "sri-local-test-4"
+              : "incidents";
+        return {
+          workspace_id: workspaceId,
+          channel_id: inspectedChannelId,
+          channel_name: channelName,
+          member_count: 10,
+        };
+      }
+      return { reloaded: "all" };
+    },
+  );
   process.env.SLACK_DEFAULT_TEAM_SLUG = "platform-engineering";
   process.env.SLACK_DEFAULT_AGENT_ID = "incident-agent";
   mockCollections.channel_team_mappings = createMockCollection([
@@ -214,6 +240,12 @@ beforeEach(() => {
     },
   ]);
   mockCollections.slack_channel_grants = createMockCollection([]);
+  mockCollections.platform_config = createMockCollection([
+    {
+      _id: "platform_settings",
+      publication_approval: { require_slack_onboarding_approval: false },
+    },
+  ]);
 });
 
 afterEach(() => {
@@ -1031,7 +1063,7 @@ describe("Slack channel ReBAC APIs", () => {
         $set: expect.objectContaining({
           team_id: "team-1",
           team_slug: "platform-engineering",
-          updated_by: "api",
+          updated_by: "alice@example.com",
         }),
       })
     );
@@ -1280,6 +1312,10 @@ describe("Slack channel ReBAC APIs", () => {
 
     expect(response.status).toBe(200);
     expect(body.data.summary).toMatchObject({
+      pending: 0,
+      onboarded: 1,
+    });
+    expect(body.data.applied[0].result.summary).toMatchObject({
       channels_seen: 1,
       channels_discovered: 1,
       channels_onboarded: 1,
@@ -1394,6 +1430,10 @@ describe("Slack channel ReBAC APIs", () => {
 
     expect(response.status).toBe(200);
     expect(body.data.summary).toMatchObject({
+      pending: 0,
+      onboarded: 1,
+    });
+    expect(body.data.applied[0].result.summary).toMatchObject({
       channel_grants_replaced: 1,
       routes_replaced: 1,
     });
@@ -1408,7 +1448,7 @@ describe("Slack channel ReBAC APIs", () => {
       expect.objectContaining({
         $set: expect.objectContaining({
           status: "deleted",
-          updated_by: "api",
+          updated_by: "alice@example.com",
         }),
       })
     );
@@ -1423,7 +1463,7 @@ describe("Slack channel ReBAC APIs", () => {
         $set: expect.objectContaining({
           enabled: false,
           status: "deleted",
-          updated_by: "api",
+          updated_by: "alice@example.com",
         }),
       })
     );

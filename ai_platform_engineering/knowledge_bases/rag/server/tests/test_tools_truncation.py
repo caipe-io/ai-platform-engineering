@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -77,13 +77,20 @@ def _make_single_label_config(label: str = "semantic_results"):
 
 
 def _make_tools():
-  """Create an AgentTools instance with all I/O dependencies mocked out."""
+  """Create an authorized AgentTools instance with all I/O mocked out.
+
+  These tests isolate result formatting, not MCP authentication. The live
+  implementation deliberately fails closed when no middleware-provided caller
+  exists, so model that already-authorized boundary explicitly here.
+  """
   from server.tools import AgentTools
-  return AgentTools(
+  tools = AgentTools(
     redis_client=MagicMock(),
     vector_db_query_service=MagicMock(),
     metadata_storage=MagicMock(),
   )
+  tools._resolve_accessible_datasource_ids = AsyncMock(return_value=None)
+  return tools
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +188,7 @@ class TestTruncationMarkers:
   @pytest.mark.asyncio
   async def test_marker_contains_correct_document_id(self):
     """The truncation marker embeds the exact document_id from result metadata."""
-    doc_id = "caipe-deployment-guide-v2"
+    doc_id = "example-deployment-guide-v2"
     at = _make_tools()
     at.vector_db_query_service.query = AsyncMock(return_value=[
       _make_result(_long(), document_id=doc_id),

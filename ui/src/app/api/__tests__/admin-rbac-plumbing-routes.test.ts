@@ -88,10 +88,7 @@ import {
 } from "../admin/role-mappings/route";
 import { DELETE as roleMappingDELETE } from "../admin/role-mappings/[id]/route";
 import { GET as slackUsersGET } from "../admin/slack/users/route";
-import {
-  POST as slackUserPOST,
-  DELETE as slackUserDELETE,
-} from "../admin/slack/users/[id]/route";
+import { DELETE as slackUserDELETE } from "../admin/slack/users/[id]/route";
 
 function makeRequest(path: string, init: RequestInit = {}): NextRequest {
   return new NextRequest(new URL(path, "http://localhost:3000"), init);
@@ -196,13 +193,6 @@ describe("admin RBAC plumbing routes", () => {
       slackUsersGET(makeRequest("/api/admin/slack/users", {
         headers: { Authorization: "Bearer bob" },
       })),
-      "admin_ui#admin",
-    );
-    await expectPdpDenied(
-      slackUserPOST(makeRequest("/api/admin/slack/users/kc-user-1", {
-        method: "POST",
-        headers: { Authorization: "Bearer bob" },
-      }), { params: Promise.resolve({ id: "kc-user-1" }) }),
       "admin_ui#admin",
     );
     await expectPdpDenied(

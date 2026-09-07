@@ -1,0 +1,108 @@
+---
+id: openfga-authz-bridge-chart
+sidebar_label: openfga-authz-bridge
+---
+
+:::caution Auto-generated
+This page is auto-generated from the Helm chart source. Do not edit directly.
+Regenerate with `make docs-helm-charts`.
+:::
+
+# openfga-authz-bridge
+
+Envoy ext_authz bridge that adapts AgentGateway authorization checks to OpenFGA
+
+| | |
+|---|---|
+| **Version** | `0.5.68` |
+| **Type** | application |
+
+## Quick Start
+
+```bash
+# Add and install the chart
+helm install openfga-authz-bridge oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5.68
+
+# Upgrade an existing release
+helm upgrade openfga-authz-bridge oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5.68
+```
+
+## Customizing Values
+
+Override default values using `--set` flags or a custom values file:
+
+```bash
+# Override individual values
+helm install openfga-authz-bridge oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5.68 \
+  --set replicaCount=2
+
+# Use a custom values file
+helm install openfga-authz-bridge oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5.68 \
+  -f custom-values.yaml
+
+# Show all configurable values
+helm show values oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5.68
+```
+
+## Reading the Values Table
+
+| Column | Meaning |
+|--------|---------|
+| **Key** | Dot-separated path into `values.yaml` (e.g. `image.repository`) |
+| **Type** | Go/Helm data type (`string`, `int`, `bool`, `object`, `list`) |
+| **Default** | Value used when not overridden |
+| **Description** | What the parameter controls |
+
+## Values
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| affinity | object | `{}` |  |
+| agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
+| agentContext.existingSecret.name | string | `""` |  |
+| audit.enabled | bool | `true` |  |
+| audit.serviceUrl | string | `"http://{{ .Release.Name }}-audit-service:8010"` |  |
+| audit.subjectSalt | string | `"caipe-098-audit"` |  |
+| audit.tenantId | string | `"default"` |  |
+| callerToolCheck.enabled | bool | `false` |  |
+| fullnameOverride | string | `""` |  |
+| image.pullPolicy | string | `"IfNotPresent"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/openfga-authz-bridge"` |  |
+| image.tag | string | `""` |  |
+| nameOverride | string | `""` |  |
+| nodeSelector | object | `{}` |  |
+| openfga.bypassSubs | string | `""` |  |
+| openfga.httpUrl | string | `"http://openfga:8080"` |  |
+| openfga.object | string | `"mcp_gateway:list"` |  |
+| openfga.relation | string | `"can_call"` |  |
+| openfga.storeId | string | `""` |  |
+| openfga.storeName | string | `"caipe-openfga"` |  |
+| organizationKey | string | `"caipe"` |  |
+| podAnnotations | object | `{}` |  |
+| podSecurityContext.fsGroup | int | `1001` |  |
+| podSecurityContext.runAsGroup | int | `1001` |  |
+| podSecurityContext.runAsNonRoot | bool | `true` |  |
+| podSecurityContext.runAsUser | int | `1001` |  |
+| replicaCount | int | `1` |  |
+| resources.limits.cpu | string | `"250m"` |  |
+| resources.limits.memory | string | `"256Mi"` |  |
+| resources.requests.cpu | string | `"50m"` |  |
+| resources.requests.memory | string | `"128Mi"` |  |
+| restrictedMcpServers | list | `[]` |  |
+| securityContext.allowPrivilegeEscalation | bool | `false` |  |
+| securityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| securityContext.readOnlyRootFilesystem | bool | `false` |  |
+| securityContext.runAsGroup | int | `1001` |  |
+| securityContext.runAsNonRoot | bool | `true` |  |
+| securityContext.runAsUser | int | `1001` |  |
+| securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
+| service.port | int | `9100` |  |
+| service.type | string | `"ClusterIP"` |  |
+| serviceAccount.annotations | object | `{}` |  |
+| serviceAccount.create | bool | `true` |  |
+| serviceAccount.name | string | `""` |  |
+| tokenValidation.algorithms[0] | string | `"RS256"` |  |
+| tokenValidation.audiences | list | `[]` |  |
+| tokenValidation.issuer | string | `""` |  |
+| tokenValidation.jwksUrl | string | `""` |  |
+| tolerations | list | `[]` |  |

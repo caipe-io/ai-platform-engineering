@@ -1,16 +1,16 @@
 "use client";
 
 import SearchView from "@/components/rag/SearchView";
+import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 
 function SearchPage() {
   const router = useRouter();
-
   const handleExploreEntity = useCallback((entityType: string, primaryKey: string) => {
     // Navigate to graph view with query params
-    router.push(`/knowledge-bases/graph?entityType=${encodeURIComponent(entityType)}&primaryKey=${encodeURIComponent(primaryKey)}`);
+    pushWithNavigationProgress(router,`/knowledge-bases/graph?entityType=${encodeURIComponent(entityType)}&primaryKey=${encodeURIComponent(primaryKey)}`);
   }, [router]);
 
   return (

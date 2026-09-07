@@ -8,7 +8,7 @@ You have just learned the **basics of CAIPE (Community AI Platform Engineering)*
 
 CAIPE has **much more to offer**!
 
-Anything **unclear** or **buggy** in this tutorial? [Please report it!](https://github.com/cnoe-io/ai-platform-engineering/issues)
+Anything **unclear** or **buggy** in this tutorial? [Please report it!](https://github.com/caipe-io/ai-platform-engineering/issues)
 
 ## What's next?
 

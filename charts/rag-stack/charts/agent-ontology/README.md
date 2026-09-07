@@ -8,17 +8,17 @@ A Helm chart for Kubernetes
 
 | | |
 |---|---|
-| **Version** | `0.2.38` |
+| **Version** | `0.5.68` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install agent-ontology oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.2.38
+helm install agent-ontology oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.5.68
 
 # Upgrade an existing release
-helm upgrade agent-ontology oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.2.38
+helm upgrade agent-ontology oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.5.68
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install agent-ontology oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.2.38 \
+helm install agent-ontology oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.5.68 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install agent-ontology oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.2.38 \
+helm install agent-ontology oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.5.68 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.2.38
+helm show values oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.5.68
 ```
 
 ## Reading the Values Table
@@ -62,7 +62,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.2.38
 | env | object | `{}` |  |
 | fullnameOverride | string | `"agent-ontology"` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-rag-agent-ontology"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-rag-agent-ontology"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | ingress.annotations | object | `{}` |  |
@@ -73,9 +73,9 @@ helm show values oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.2.38
 | ingress.hosts[0].paths[0].pathType | string | `"Prefix"` |  |
 | ingress.tls | list | `[]` |  |
 | livenessProbe.failureThreshold | int | `3` |  |
-| livenessProbe.initialDelaySeconds | int | `30` |  |
+| livenessProbe.httpGet.path | string | `"/health"` |  |
+| livenessProbe.httpGet.port | string | `"http"` |  |
 | livenessProbe.periodSeconds | int | `10` |  |
-| livenessProbe.tcpSocket.port | string | `"http"` |  |
 | livenessProbe.timeoutSeconds | int | `5` |  |
 | llmSecrets.create | bool | `false` |  |
 | llmSecrets.data | object | `{}` |  |
@@ -92,18 +92,23 @@ helm show values oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.2.38
 | nodeSelector | object | `{}` |  |
 | podAnnotations | object | `{}` |  |
 | podLabels | object | `{}` |  |
-| podSecurityContext | object | `{}` |  |
+| podSecurityContext.runAsNonRoot | bool | `true` |  |
 | readinessProbe.failureThreshold | int | `3` |  |
-| readinessProbe.initialDelaySeconds | int | `5` |  |
+| readinessProbe.httpGet.path | string | `"/v1/graph/ontology/agent/status"` |  |
+| readinessProbe.httpGet.port | string | `"http"` |  |
 | readinessProbe.periodSeconds | int | `5` |  |
-| readinessProbe.tcpSocket.port | string | `"http"` |  |
 | readinessProbe.timeoutSeconds | int | `3` |  |
 | replicaCount | int | `1` |  |
 | resources | object | `{}` |  |
 | revisionHistoryLimit | int | `3` |  |
 | secrets.data | object | `{}` |  |
 | secrets.secretName | string | `"llm-secret"` |  |
-| securityContext | object | `{}` |  |
+| securityContext.allowPrivilegeEscalation | bool | `false` |  |
+| securityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| securityContext.readOnlyRootFilesystem | bool | `false` |  |
+| securityContext.runAsNonRoot | bool | `true` |  |
+| securityContext.runAsUser | int | `1001` |  |
+| securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | serverPort | int | `8098` |  |
 | service.port | int | `8098` |  |
 | service.type | string | `"ClusterIP"` |  |
@@ -111,8 +116,21 @@ helm show values oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.2.38
 | serviceAccount.automount | bool | `true` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
+| startupProbe.failureThreshold | int | `30` |  |
+| startupProbe.httpGet.path | string | `"/health"` |  |
+| startupProbe.httpGet.port | string | `"http"` |  |
+| startupProbe.initialDelaySeconds | int | `10` |  |
+| startupProbe.periodSeconds | int | `10` |  |
+| startupProbe.timeoutSeconds | int | `5` |  |
 | syncInterval | int | `259200` |  |
 | tolerations | list | `[]` |  |
 | volumeMounts | list | `[]` |  |
 | volumes | list | `[]` |  |
-
+| vpa.controlledResources[0] | string | `"cpu"` |  |
+| vpa.controlledResources[1] | string | `"memory"` |  |
+| vpa.controlledValues | string | `"RequestsAndLimits"` |  |
+| vpa.enabled | bool | `false` |  |
+| vpa.maxAllowed | object | `{}` |  |
+| vpa.minAllowed.cpu | string | `"50m"` |  |
+| vpa.minAllowed.memory | string | `"128Mi"` |  |
+| vpa.updateMode | string | `"InPlaceOrRecreate"` |  |

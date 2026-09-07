@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Hub ingest skill-scanner hook + Mongo ``skill_scan_findings`` (T056, SC-009)."""
 

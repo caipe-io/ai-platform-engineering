@@ -22,7 +22,6 @@ import React from "react";
 interface BuiltinToolsPickerProps {
   value: BuiltinToolsConfig | undefined;
   onChange: (value: BuiltinToolsConfig) => void;
-  allowedTools: Record<string, string[] | boolean>;
   disabled?: boolean;
 }
 
@@ -90,13 +89,11 @@ function ToolConfig({
   definition,
   config,
   onChange,
-  allowedTools,
   disabled,
 }: {
   definition: BuiltinToolDefinition;
   config: GenericToolConfig | undefined;
   onChange: (config: GenericToolConfig) => void;
-  allowedTools: Record<string, string[] | boolean>;
   disabled?: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(false);
@@ -339,7 +336,7 @@ function ConfigField({
   return null;
 }
 
-export function BuiltinToolsPicker({ value, onChange, allowedTools, disabled }: BuiltinToolsPickerProps) {
+export function BuiltinToolsPicker({ value, onChange, disabled }: BuiltinToolsPickerProps) {
   const { definitions, loading, error } = useBuiltinToolDefinitions();
 
   // Track whether we've initialized defaults for the current definitions.
@@ -456,7 +453,6 @@ export function BuiltinToolsPicker({ value, onChange, allowedTools, disabled }: 
             definition={definition}
             config={(value as Record<string, GenericToolConfig | undefined>)?.[definition.id]}
             onChange={(config) => handleToolChange(definition.id, config)}
-            allowedTools={allowedTools}
             disabled={disabled}
           />
         ))}

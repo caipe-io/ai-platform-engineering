@@ -233,6 +233,32 @@ describe('requireConversationAccess — admin audit', () => {
     expect(result.conversation).toEqual(conv);
   });
 
+  it('returns access_level admin_audit when canViewAdmin=true session is provided', async () => {
+    const conv = {
+      _id: CONV_ID,
+      owner_id: 'owner@example.com',
+      title: 'Test',
+      sharing: { shared_with: [], shared_with_teams: [] },
+    };
+    const convsCol = createMockCollection();
+    convsCol.findOne.mockResolvedValue(conv);
+    mockCollections['conversations'] = convsCol;
+
+    const sharingAccessCol = createMockCollection();
+    sharingAccessCol.findOne.mockResolvedValue(null);
+    mockCollections['sharing_access'] = sharingAccessCol;
+
+    const result = await requireConversationAccess(
+      CONV_ID,
+      'auditor@example.com',
+      mockGetCollection,
+      { role: 'user', canViewAdmin: true }
+    );
+
+    expect(result.access_level).toBe('admin_audit');
+    expect(result.conversation).toEqual(conv);
+  });
+
   it('throws 403 when non-admin non-shared non-owner user without session', async () => {
     const conv = {
       _id: CONV_ID,

@@ -14,17 +14,17 @@ A Helm chart for Kubernetes
 
 | | |
 |---|---|
-| **Version** | `0.2.38` |
+| **Version** | `0.5.68` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.2.38
+helm install rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.5.68
 
 # Upgrade an existing release
-helm upgrade rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.2.38
+helm upgrade rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.5.68
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.2.38 \
+helm install rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.5.68 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.2.38 \
+helm install rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.5.68 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.2.38
+helm show values oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.5.68
 ```
 
 ## Reading the Values Table
@@ -79,7 +79,6 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.2.38
 | livenessProbe.exec.command[0] | string | `"redis-cli"` |  |
 | livenessProbe.exec.command[1] | string | `"ping"` |  |
 | livenessProbe.failureThreshold | int | `3` |  |
-| livenessProbe.initialDelaySeconds | int | `30` |  |
 | livenessProbe.periodSeconds | int | `10` |  |
 | livenessProbe.timeoutSeconds | int | `5` |  |
 | nameOverride | string | `""` |  |
@@ -90,24 +89,34 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.2.38
 | persistence.storageClass | string | `""` |  |
 | podAnnotations | object | `{}` |  |
 | podLabels | object | `{}` |  |
-| podSecurityContext | object | `{}` |  |
+| podSecurityContext.fsGroup | int | `999` |  |
+| podSecurityContext.runAsNonRoot | bool | `true` |  |
 | readinessProbe.exec.command[0] | string | `"redis-cli"` |  |
 | readinessProbe.exec.command[1] | string | `"ping"` |  |
 | readinessProbe.failureThreshold | int | `3` |  |
-| readinessProbe.initialDelaySeconds | int | `5` |  |
 | readinessProbe.periodSeconds | int | `5` |  |
 | readinessProbe.timeoutSeconds | int | `3` |  |
 | replicaCount | int | `1` |  |
 | resources | object | `{}` |  |
 | revisionHistoryLimit | int | `3` |  |
-| securityContext | object | `{}` |  |
+| securityContext.allowPrivilegeEscalation | bool | `false` |  |
+| securityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| securityContext.readOnlyRootFilesystem | bool | `false` |  |
+| securityContext.runAsNonRoot | bool | `true` |  |
+| securityContext.runAsUser | int | `999` |  |
+| securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | service.port | int | `6379` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.annotations | object | `{}` |  |
 | serviceAccount.automount | bool | `true` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
+| startupProbe.exec.command[0] | string | `"redis-cli"` |  |
+| startupProbe.exec.command[1] | string | `"ping"` |  |
+| startupProbe.failureThreshold | int | `12` |  |
+| startupProbe.initialDelaySeconds | int | `5` |  |
+| startupProbe.periodSeconds | int | `5` |  |
+| startupProbe.timeoutSeconds | int | `5` |  |
 | tolerations | list | `[]` |  |
 | volumeMounts | list | `[]` |  |
 | volumes | list | `[]` |  |
-

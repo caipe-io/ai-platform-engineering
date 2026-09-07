@@ -12,7 +12,6 @@ import {
   isSlackIntegrationEnabled,
   isWebexIntegrationEnabled,
 } from "@/lib/integration-config";
-import { getRequestOrigin } from "@/app/api/skills/_lib/request-origin";
 import {
   createJsonResponseCacheStore,
   envTtlMs,
@@ -37,6 +36,7 @@ interface CapabilityResult {
   description: string;
   detail: string;
   latency_ms: number | null;
+  version: string | null;
 }
 
 interface AuditServiceStatusPayload {
@@ -84,6 +84,11 @@ function envValue(name: string): string | null {
 function envExplicitlyDisabled(name: string): boolean {
   const value = process.env[name]?.trim().toLowerCase();
   return value ? DISABLED_VALUES.has(value) : false;
+}
+
+function componentVersion(componentId: string): string | null {
+  const componentEnvName = `PLATFORM_COMPONENT_VERSION_${componentId.toUpperCase().replace(/-/g, "_")}`;
+  return envValue(componentEnvName) ?? envValue("CAIPE_RELEASE_VERSION");
 }
 
 function envPort(name: string, defaultPort: number): number {
@@ -137,6 +142,7 @@ function disabledCapability(input: {
     required: false,
     description: input.description,
     latency_ms: null,
+    version: componentVersion(input.id),
   };
 }
 
@@ -187,6 +193,7 @@ async function probeHttpCapability({
             description,
             detail: `${failureLabel} returned unhealthy status`,
             latency_ms: latencyMs,
+            version: componentVersion(id),
           };
         }
       }
@@ -199,6 +206,7 @@ async function probeHttpCapability({
         description,
         detail: healthyDetail,
         latency_ms: latencyMs,
+        version: componentVersion(id),
       };
     }
     return {
@@ -210,6 +218,7 @@ async function probeHttpCapability({
       description,
       detail: `${failureLabel} returned HTTP ${response.status}`,
       latency_ms: latencyMs,
+      version: componentVersion(id),
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "request failed";
@@ -226,6 +235,7 @@ async function probeHttpCapability({
       description,
       detail,
       latency_ms: Date.now() - startedAt,
+      version: componentVersion(id),
     };
   } finally {
     clearTimeout(timeoutId);
@@ -335,7 +345,7 @@ async function probeOpenFgaBootstrap(openfgaUrl: string): Promise<DiagnosticProb
   const storeName = envValue("OPENFGA_STORE_NAME") || "caipe-openfga";
   const remediation = {
     label: "OpenFGA",
-    href: "/admin?cat=security&tab=openfga",
+    href: "/admin/security/access-explorer",
     description: "Inspect OpenFGA connectivity and seeded authorization model.",
   };
 
@@ -424,7 +434,7 @@ async function probeOpenFgaBootstrap(openfgaUrl: string): Promise<DiagnosticProb
 async function probeKeycloakBootstrap(): Promise<DiagnosticProbeResult> {
   const remediation = {
     label: "Keycloak Health",
-    href: "/admin?cat=security&tab=keycloak",
+    href: "/admin/security/keycloak",
     description: "Inspect Keycloak realm, credentials, and reconciliation status.",
   };
   try {
@@ -484,7 +494,7 @@ async function probeKeycloakBootstrap(): Promise<DiagnosticProbeResult> {
 async function probeRebacMigrations(): Promise<DiagnosticProbeResult> {
   const remediation = {
     label: "Migration Assistant",
-    href: "/admin?cat=security&tab=migrations",
+    href: "/admin/security/migrations",
     description: "Open the migration assistant to review and apply required schema migrations.",
   };
   try {
@@ -584,7 +594,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
       target: `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/certs`,
       remediation: {
         label: "Keycloak Health",
-        href: "/admin?cat=security&tab=keycloak",
+        href: "/admin/security/keycloak",
         description: "Inspect Keycloak realm, credentials, and reconciliation status.",
       },
     }),
@@ -595,7 +605,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
       target: `${openfgaUrl}/healthz`,
       remediation: {
         label: "OpenFGA",
-        href: "/admin?cat=security&tab=openfga",
+        href: "/admin/security/access-explorer",
         description: "Inspect OpenFGA connectivity and seeded authorization model.",
       },
     }),
@@ -627,7 +637,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
       },
       remediation: {
         label: "AgentGateway",
-        href: "/admin?cat=platform&tab=health",
+        href: "/admin/operations/health",
         description: "Check AgentGateway config bridge logs and target sync token configuration.",
       },
     }),
@@ -638,7 +648,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
       target: agentgatewayAdminUrl,
       remediation: {
         label: "AgentGateway",
-        href: "/admin?cat=platform&tab=health",
+        href: "/admin/operations/health",
         description: "Check AgentGateway listener and static target configuration.",
       },
     }),
@@ -658,7 +668,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
       failureDetailPrefix: "optional audit path unavailable",
       remediation: {
         label: "Audit Service",
-        href: "/admin?cat=platform&tab=health",
+        href: "/admin/operations/health",
         description: "Check audit-service logs, queue status, and local/S3 storage configuration.",
       },
     }),
@@ -810,6 +820,7 @@ async function probeAuditServiceCapability(auditBackend: string): Promise<Capabi
       description: "Collects and serves durable audit events.",
       detail: `AUDIT_LOG_BACKEND=${auditBackend} is unsupported by the UI; use service`,
       latency_ms: null,
+      version: componentVersion("audit-service"),
     };
   }
 
@@ -836,6 +847,7 @@ async function probeAuditServiceCapability(auditBackend: string): Promise<Capabi
         description: "Collects and serves durable audit events.",
         detail: `audit-service returned HTTP ${response.status}`,
         latency_ms: latencyMs,
+        version: componentVersion("audit-service"),
       };
     }
 
@@ -878,6 +890,7 @@ async function probeAuditServiceCapability(auditBackend: string): Promise<Capabi
           ? `${issues.join("; ")}; ${auditStatusDetail(payload)}`
           : auditStatusDetail(payload),
       latency_ms: latencyMs,
+      version: componentVersion("audit-service"),
     };
   } catch (error) {
     return {
@@ -889,6 +902,7 @@ async function probeAuditServiceCapability(auditBackend: string): Promise<Capabi
       description: "Collects and serves durable audit events.",
       detail: `audit-service failed: ${error instanceof Error ? error.message : "request failed"}`,
       latency_ms: Date.now() - startedAt,
+      version: componentVersion("audit-service"),
     };
   } finally {
     clearTimeout(timeoutId);
@@ -940,6 +954,7 @@ async function probeSlackIntegration(): Promise<CapabilityResult | null> {
     description: "Checks Slack integration availability.",
     detail: issues.length > 0 ? issues.join("; ") : "Slack ready",
     latency_ms: Date.now() - startedAt,
+    version: componentVersion("slack-integration"),
   };
 }
 
@@ -984,6 +999,7 @@ async function probeWebexIntegration(): Promise<CapabilityResult | null> {
     description: "Checks Webex integration availability.",
     detail: issues.length > 0 ? issues.join("; ") : "Webex ready",
     latency_ms: Date.now() - startedAt,
+    version: componentVersion("webex-integration"),
   };
 }
 
@@ -999,7 +1015,10 @@ export async function GET(request: NextRequest): Promise<Response> {
 async function getPlatformHealth(request: NextRequest): Promise<NextResponse> {
   const config = getServerConfig();
   const serverOnly = getServerOnlyConfig();
-  const selfBase = getRequestOrigin(request);
+  const dynamicAgentsUrl = trimTrailingSlash(config.dynamicAgentsUrl);
+  const ragServerUrl = trimTrailingSlash(
+    envValue("RAG_SERVER_URL") || envValue("NEXT_PUBLIC_RAG_URL") || "http://rag-server:9446",
+  );
   const includeDiagnostics = new URL(request.url).searchParams.get("diagnostics") === "1";
   const capabilityResults = await Promise.all([
     probeHttpCapability({
@@ -1018,7 +1037,7 @@ async function getPlatformHealth(request: NextRequest): Promise<NextResponse> {
           id: "dynamic-agents",
           label: "Dynamic Agents",
           group: "runtime",
-          target: `${selfBase}/api/dynamic-agents/health`,
+          target: `${dynamicAgentsUrl}/healthz`,
           required: true,
           description: "Checks Dynamic Agents when custom agent runtime is enabled.",
           healthyDetail: "Runtime reachable",
@@ -1040,7 +1059,7 @@ async function getPlatformHealth(request: NextRequest): Promise<NextResponse> {
           id: "knowledge-bases",
           label: "Knowledge Bases",
           group: "knowledge",
-          target: `${selfBase}/api/rag/healthz`,
+          target: `${ragServerUrl}/healthz`,
           required: false,
           description: "Checks the RAG API used by Knowledge Bases.",
           healthyDetail: "RAG API reachable",
@@ -1064,6 +1083,7 @@ async function getPlatformHealth(request: NextRequest): Promise<NextResponse> {
       description: "Reads the UI SSO configuration.",
       detail: config.ssoEnabled ? "SSO enabled" : "SSO disabled",
       latency_ms: null,
+      version: componentVersion("authentication"),
     } satisfies CapabilityResult),
     Promise.resolve({
       id: "metrics",
@@ -1074,6 +1094,7 @@ async function getPlatformHealth(request: NextRequest): Promise<NextResponse> {
       description: "Reads the UI Prometheus configuration.",
       detail: serverOnly.prometheusUrl ? "Prometheus configured" : "Prometheus not configured",
       latency_ms: null,
+      version: componentVersion("metrics"),
     } satisfies CapabilityResult),
     probeAuditServiceCapability(config.auditLogBackend),
     probeSlackIntegration(),

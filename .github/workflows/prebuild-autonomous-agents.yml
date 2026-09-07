@@ -1,0 +1,189 @@
+name: "[Prebuild] Autonomous Agents Docker Build and Push"
+description: "Build and push Autonomous Agents Docker image for prebuild branches"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'ai_platform_engineering/autonomous_agents/**'
+      - 'build/Dockerfile.autonomous-agents'
+  workflow_call:
+    inputs:
+      pr_number:
+        description: 'PR number to publish prebuild for'
+        required: true
+        type: number
+      head_ref:
+        description: 'PR head branch ref'
+        required: true
+        type: string
+      head_sha:
+        description: 'PR head commit SHA'
+        required: true
+        type: string
+      base_ref:
+        description: 'PR base branch ref'
+        required: true
+        type: string
+      base_sha:
+        description: 'PR base commit SHA'
+        required: false
+        type: string
+        default: ''
+
+env:
+  IMAGE_NAME: ${{ github.repository_owner }}/caipe-autonomous-agents
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    if: |
+      (github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]') &&
+      (
+        startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+        github.event.action != 'closed'
+      )
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ inputs.head_sha || github.ref }}
+          fetch-depth: 0
+
+      - name: Check build eligibility
+        id: eligibility
+        shell: bash
+        env:
+          BASE_REF: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+        run: |
+          git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            BASE="$BASE_SHA"
+          else
+            BASE="origin/${BASE_REF}"
+          fi
+
+          if git diff --name-only "$BASE..HEAD" -- \
+              ai_platform_engineering/autonomous_agents \
+              build/Dockerfile.autonomous-agents | grep -q .; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.eligibility.outputs.should_build == 'true'
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Log in to GitHub Container Registry
+        if: steps.eligibility.outputs.should_build == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Compute prebuild tag
+        if: steps.eligibility.outputs.should_build == 'true'
+        id: compute_tag
+        shell: bash
+        env:
+          BRANCH: ${{ inputs.head_ref || github.head_ref }}
+          BASE_REF: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+        run: |
+          BRANCH_NO_PREFIX="${BRANCH#prebuild/}"
+          BRANCH_SANITIZED="${BRANCH_NO_PREFIX//\//-}"
+          git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            BASE_COMMIT="$BASE_SHA"
+          else
+            BASE_COMMIT="origin/${BASE_REF}"
+          fi
+          COMMIT_COUNT=$(git rev-list --count "${BASE_COMMIT}..HEAD")
+          PREBUILD_TAG="${BRANCH_SANITIZED}-${COMMIT_COUNT}"
+          echo "BRANCH_BARE=${BRANCH_SANITIZED}" >> "$GITHUB_ENV"
+          echo "PREBUILD_TAG=${PREBUILD_TAG}" >> "$GITHUB_ENV"
+          echo "prebuild_tag=${PREBUILD_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload building prebuild status
+        if: steps.eligibility.outputs.should_build == 'true'
+        uses: ./.github/actions/prebuild-status
+        with:
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          head_sha: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+          head_ref: ${{ inputs.head_ref || github.head_ref }}
+          source: autonomous-agents
+          type: docker
+          name: caipe-autonomous-agents
+          repository: ghcr.io/${{ env.IMAGE_NAME }}
+          tag: ${{ steps.compute_tag.outputs.prebuild_tag }}
+          ref: ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.compute_tag.outputs.prebuild_tag }}
+          status: building
+          artifact_suffix: start
+
+      - name: Extract metadata for Docker
+        if: steps.eligibility.outputs.should_build == 'true'
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ghcr.io/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ env.PREBUILD_TAG }}
+          labels: |
+            io.cnoe.prebuild.branch=${{ env.BRANCH_BARE }}
+
+      - name: Set up QEMU
+        if: steps.eligibility.outputs.should_build == 'true'
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+
+      - name: Build and Push Autonomous Agents Docker image
+        if: steps.eligibility.outputs.should_build == 'true'
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: ai_platform_engineering/autonomous_agents
+          file: build/Dockerfile.autonomous-agents
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false
+
+      - name: Upload final prebuild status
+        if: ${{ always() && steps.compute_tag.outputs.prebuild_tag != '' }}
+        uses: ./.github/actions/prebuild-status
+        with:
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          head_sha: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+          head_ref: ${{ inputs.head_ref || github.head_ref }}
+          source: autonomous-agents
+          type: docker
+          name: caipe-autonomous-agents
+          repository: ghcr.io/${{ env.IMAGE_NAME }}
+          tag: ${{ steps.compute_tag.outputs.prebuild_tag }}
+          ref: ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.compute_tag.outputs.prebuild_tag }}
+          status: ${{ steps.build.outcome == 'success' && 'published' || 'failed' }}
+          artifact_suffix: final

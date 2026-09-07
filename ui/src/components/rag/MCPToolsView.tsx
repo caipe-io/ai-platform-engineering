@@ -1,5 +1,6 @@
 "use client";
 
+import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import { TeamOwnershipFields } from "@/components/rbac/TeamOwnershipFields";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ type ParallelSearch,
 } from "@/lib/rag-api";
 import { cn } from "@/lib/utils";
 import { AnimatePresence,motion } from "framer-motion";
+import { MetadataFilterKeyPicker } from "./MetadataFilterKeyPicker";
 import {
 AlertCircle,
 ChevronDown,
@@ -310,17 +312,12 @@ function ExtraFiltersEditor({ value, onChange, validFilterKeys, filterKeyTypes }
       {/* Add filter row */}
       <div className="flex flex-wrap items-center gap-2">
         {!showCustomInput ? (
-          <select
+          <MetadataFilterKeyPicker
+            keys={validFilterKeys}
             value={selectedKey}
-            onChange={(e) => handleKeyChange(e.target.value)}
-            className="h-7 rounded border border-border bg-background px-2 text-xs focus:border-primary focus:outline-none text-foreground min-w-[140px]"
-          >
-            <option value="">Add filter...</option>
-            {validFilterKeys.map((key) => (
-              <option key={key} value={key}>{key}</option>
-            ))}
-            <option value="__custom__">Custom key (metadata.*)</option>
-          </select>
+            onChange={handleKeyChange}
+            triggerClassName="h-7 min-w-[140px] px-2 text-xs"
+          />
         ) : (
           <div className="flex items-center gap-1">
             <input
@@ -698,13 +695,12 @@ function ToolFormDialog({ open, onClose, onSave, initial, isEdit }: ToolFormDial
             }}
             shareHelpText={
               <>
-                Teams you share with can invoke this tool. Each selected team
-                gets <code>can_call</code> on the tool in OpenFGA.
+                Teams you share with can invoke this tool.
               </>
             }
             renderGrantDetail={(slug) => (
               <>
-                members of <code>team:{slug}</code> can call this tool.
+                Members of <strong>{slug}</strong> can invoke this tool.
               </>
             )}
           />
@@ -738,9 +734,8 @@ function ToolFormDialog({ open, onClose, onSave, initial, isEdit }: ToolFormDial
                 Share with the whole organization
               </Label>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Every organization member gets <code>can_call</code> on this tool
-                (grants <code>organization#member</code> reader/user/caller in OpenFGA).
-                Useful for shared knowledge-base search tools.
+                Every organization member can invoke this tool. This is useful
+                for shared knowledge-base search tools.
               </p>
             </div>
           </div>
@@ -1252,18 +1247,8 @@ export default function MCPToolsView() {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-border/50 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg gradient-primary-br flex items-center justify-center shadow-md shadow-primary/20">
-            <Wrench className="h-4 w-4 text-white" />
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold">MCP Tools</h1>
-            <p className="text-xs text-muted-foreground">Configure search tools exposed to the MCP client</p>
-          </div>
-        </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <WorkspacePageActions>
         <Button
           variant="outline"
           size="sm"
@@ -1274,11 +1259,11 @@ export default function MCPToolsView() {
           <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
           Refresh
         </Button>
-      </div>
+      </WorkspacePageActions>
 
       {/* Body */}
-      <ScrollArea className="flex-1">
-        <div className="px-6 py-4 space-y-6 max-w-2xl">
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="max-w-2xl space-y-6 px-6 py-4">
           {loading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />

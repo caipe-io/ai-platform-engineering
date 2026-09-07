@@ -1,0 +1,215 @@
+name: Clean up prebuild images
+description: Delete branch-tagged prebuild manifests and their untagged architecture manifests.
+
+inputs:
+  owner:
+    description: GitHub organization that owns the container package.
+    required: true
+  package_name:
+    description: Container package path beneath the organization.
+    required: true
+  head_ref:
+    description: Closed prebuild branch ref.
+    required: true
+  registry_username:
+    description: GitHub Container Registry username.
+    required: true
+  registry_token:
+    description: Token with package read and delete access.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        registry: ghcr.io
+        username: ${{ inputs.registry_username }}
+        password: ${{ inputs.registry_token }}
+
+    - name: Delete branch image versions
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        OWNER: ${{ inputs.owner }}
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        HEAD_REF: ${{ inputs.head_ref }}
+      with:
+        github-token: ${{ inputs.registry_token }}
+        script: |
+          const owner = process.env.OWNER;
+          const packageName = process.env.PACKAGE_NAME;
+          const rawBranch = process.env.HEAD_REF || '';
+          const branchNoPrefix = rawBranch.startsWith('prebuild/')
+            ? rawBranch.substring('prebuild/'.length)
+            : rawBranch;
+          const branchSanitized = branchNoPrefix.replace(/\//g, '-');
+          const prefix = `${branchSanitized}-`;
+          const packageType = 'container';
+          const isBranchTag = tag =>
+            tag.startsWith(prefix) && /^\d+$/.test(tag.substring(prefix.length));
+
+          const inspectChildren = async (tag) => {
+            const imageRef = `ghcr.io/${owner}/${packageName}:${tag}`;
+            let lastError = '';
+            for (let attempt = 1; attempt <= 3; attempt += 1) {
+              const result = await exec.getExecOutput(
+                'docker',
+                ['buildx', 'imagetools', 'inspect', '--raw', imageRef],
+                {ignoreReturnCode: true, silent: true},
+              );
+              if (result.exitCode === 0) {
+                const manifest = JSON.parse(result.stdout);
+                return new Set((manifest.manifests || []).map(item => item.digest));
+              }
+              lastError = result.stderr || result.stdout || `exit ${result.exitCode}`;
+              if (attempt < 3) {
+                await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+              }
+            }
+            throw new Error(`Could not inspect ${imageRef}: ${lastError}`);
+          };
+
+          const inspectBranchLabel = async (digest) => {
+            const imageRef = `ghcr.io/${owner}/${packageName}@${digest}`;
+            const result = await exec.getExecOutput(
+              'docker',
+              ['buildx', 'imagetools', 'inspect', '--format', '{{json .Image}}', imageRef],
+              {ignoreReturnCode: true, silent: true},
+            );
+            if (result.exitCode !== 0) {
+              throw new Error(
+                `Could not inspect image config for ${imageRef}: ` +
+                (result.stderr || result.stdout || `exit ${result.exitCode}`)
+              );
+            }
+            const image = JSON.parse(result.stdout);
+            const config = image?.config || image?.Config || {};
+            const labels = config.Labels || config.labels || {};
+            return labels['io.cnoe.prebuild.branch'] || '';
+          };
+
+          const inspectOrphan = async (digest) => {
+            let branch = await inspectBranchLabel(digest);
+            if (branch) return {branch, children: new Set()};
+
+            // An untagged multi-architecture index has no image config of its
+            // own. Use one child config to recover the prebuild branch label.
+            const imageRef = `ghcr.io/${owner}/${packageName}@${digest}`;
+            const result = await exec.getExecOutput(
+              'docker',
+              ['buildx', 'imagetools', 'inspect', '--raw', imageRef],
+              {ignoreReturnCode: true, silent: true},
+            );
+            if (result.exitCode !== 0) {
+              throw new Error(
+                `Could not inspect manifest for ${imageRef}: ` +
+                (result.stderr || result.stdout || `exit ${result.exitCode}`)
+              );
+            }
+            const manifest = JSON.parse(result.stdout);
+            const children = new Set((manifest.manifests || []).map(item => item.digest));
+            if (children.size > 0) {
+              branch = await inspectBranchLabel(children.values().next().value);
+            }
+            return {branch, children};
+          };
+
+          try {
+            const versions = await github.paginate(
+              github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
+              {
+                org: owner,
+                package_type: packageType,
+                package_name: packageName,
+                per_page: 100,
+              },
+            );
+            const tagsFor = version => version.metadata?.container?.tags || [];
+            const targetParents = versions.filter(version =>
+              tagsFor(version).some(isBranchTag)
+            );
+            if (targetParents.length === 0) {
+              core.info(
+                `No tagged versions found for ${packageName} with tag prefix ${prefix}; ` +
+                'checking for architecture digests from failed or canceled builds.'
+              );
+            }
+
+            const mixedParents = targetParents.filter(version =>
+              tagsFor(version).some(tag => !isBranchTag(tag))
+            );
+            if (mixedParents.length > 0) {
+              throw new Error(
+                `Refusing to delete ${mixedParents.length} ${packageName} version(s) ` +
+                'that also carry a non-prebuild-branch tag.'
+              );
+            }
+
+            const targetChildren = new Set();
+            for (const version of targetParents) {
+              const tag = tagsFor(version).find(isBranchTag);
+              for (const digest of await inspectChildren(tag)) {
+                targetChildren.add(digest);
+              }
+            }
+
+            // Do not remove a child manifest that is still referenced by any
+            // retained tag in the package, even if two builds deduplicated it.
+            const retainedChildren = new Set();
+            const retainedParents = versions.filter(version =>
+              !targetParents.some(target => target.id === version.id) && tagsFor(version).length > 0
+            );
+            for (const version of retainedParents) {
+              for (const digest of await inspectChildren(tagsFor(version)[0])) {
+                retainedChildren.add(digest);
+              }
+            }
+
+            // A failed or canceled architecture build may never acquire a
+            // final branch tag. Its explicit branch label lets cleanup find
+            // and remove that otherwise orphaned package version.
+            const orphanDigests = new Set();
+            const untaggedVersions = versions.filter(version => tagsFor(version).length === 0);
+            for (const version of untaggedVersions) {
+              const orphan = await inspectOrphan(version.name);
+              if (orphan.branch !== branchSanitized) continue;
+              orphanDigests.add(version.name);
+              for (const digest of orphan.children) orphanDigests.add(digest);
+            }
+
+            const deletableDigests = new Set([...targetChildren, ...orphanDigests]);
+            const childVersions = versions.filter(version =>
+              deletableDigests.has(version.name) && !retainedChildren.has(version.name)
+            );
+            const ordered = [...targetParents, ...childVersions];
+            const seen = new Set();
+            for (const version of ordered) {
+              if (seen.has(version.id)) continue;
+              seen.add(version.id);
+              try {
+                await github.rest.packages.deletePackageVersionForOrg({
+                  org: owner,
+                  package_type: packageType,
+                  package_name: packageName,
+                  package_version_id: version.id,
+                });
+              } catch (error) {
+                // Deleting a manifest list can also remove an untagged child.
+                if (error.status !== 404) throw error;
+              }
+            }
+            core.info(
+              `Deleted ${targetParents.length} tagged and ${childVersions.length} ` +
+              `untagged version(s) for ${packageName} with tag prefix ${prefix}`
+            );
+          } catch (error) {
+            if (error.status === 404) {
+              core.info(`Package ${packageName} not found in org ${owner}, skipping.`);
+            } else {
+              throw error;
+            }
+          }

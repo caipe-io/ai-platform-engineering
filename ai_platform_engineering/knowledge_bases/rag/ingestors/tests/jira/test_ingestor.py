@@ -18,10 +18,7 @@ os.environ before the import so the module loads without raising ValueError.
 
 from __future__ import annotations
 
-import enum
 import os
-import sys
-import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -36,92 +33,9 @@ os.environ.setdefault("ATLASSIAN_TOKEN", "test-token")
 os.environ.setdefault("JIRA_PROJECTS", '{"PROJ": [{"name": "My Project", "jql": "project = PROJ AND updated >= -30d ORDER BY updated DESC"}]}')
 
 # ---------------------------------------------------------------------------
-# Stub common.* packages so tests run without the full RAG server installed
-# ---------------------------------------------------------------------------
-
-def _make_stub(name: str, **attrs) -> types.ModuleType:
-    mod = types.ModuleType(name)
-    for k, v in attrs.items():
-        setattr(mod, k, v)
-    return mod
-
-
-# common.ingestor
-_mock_client_cls = MagicMock()
-_mock_builder = MagicMock()
-_mock_builder.name.return_value = _mock_builder
-_mock_builder.type.return_value = _mock_builder
-_mock_builder.description.return_value = _mock_builder
-_mock_builder.metadata.return_value = _mock_builder
-_mock_builder.sync_with_fn.return_value = _mock_builder
-_mock_builder.every.return_value = _mock_builder
-_mock_builder.with_init_delay.return_value = _mock_builder
-_ingestor_builder_cls = MagicMock(return_value=_mock_builder)
-
-_common_ingestor = _make_stub("common.ingestor", IngestorBuilder=_ingestor_builder_cls, Client=_mock_client_cls)
-
-# common.models.rag
-class _DataSourceInfo:
-    def __init__(self, **kwargs):
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-
-    def model_dump(self):
-        return self.__dict__
-
-
-class _DocumentMetadata:
-    def __init__(self, **kwargs):
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-
-    def model_dump(self):
-        return self.__dict__
-
-
-_common_models_rag = _make_stub(
-    "common.models.rag",
-    DataSourceInfo=_DataSourceInfo,
-    DocumentMetadata=_DocumentMetadata,
-)
-
-# common.job_manager -- mirror the real JobStatus values exactly
-class _JobStatus(str, enum.Enum):
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    TERMINATED = "terminated"
-    PENDING = "pending"
-
-_common_job_manager = _make_stub("common.job_manager", JobStatus=_JobStatus)
-
-# common.utils
-_common_utils = _make_stub(
-    "common.utils",
-    get_logger=MagicMock(return_value=MagicMock()),
-    get_fresh_until=lambda reload_interval: int(__import__("time").time()) + int(reload_interval * 1.5),
-)
-
-# common (parent)
-_common = _make_stub("common")
-_common.ingestor = _common_ingestor
-_common.models = _make_stub("common.models")
-_common.models.rag = _common_models_rag
-_common.job_manager = _common_job_manager
-_common.utils = _common_utils
-
-for name, mod in [
-    ("common", _common),
-    ("common.ingestor", _common_ingestor),
-    ("common.models", _common.models),
-    ("common.models.rag", _common_models_rag),
-    ("common.job_manager", _common_job_manager),
-    ("common.utils", _common_utils),
-]:
-    sys.modules.setdefault(name, mod)
-
-# ---------------------------------------------------------------------------
-# Now import the module under test
+# Import the module under test -- `common` is a real installed dependency
+# (see pyproject.toml [tool.uv.sources]), so no sys.modules stubbing is
+# needed here.
 # ---------------------------------------------------------------------------
 import ingestors.jira.ingestor as ingestor_module  # noqa: E402
 from ingestors.jira.ingestor import (  # noqa: E402
@@ -129,8 +43,11 @@ from ingestors.jira.ingestor import (  # noqa: E402
     _format_adf_field,
     _format_date,
     _build_issue_document,
+    preview_project_ingestion,
     sync_jira_projects,
 )
+from common.models.server import JiraIngestRequest  # noqa: E402
+from common.job_manager import JobStatus as _JobStatus  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +110,49 @@ def make_adf_doc(text: str) -> dict:
             }
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_preview_project_is_bounded_and_does_not_ingest() -> None:
+    jira = MagicMock()
+    jira.preview_issues.return_value = (
+        [
+            make_issue(
+                key="EXAMPLE-1",
+                summary="Preview item",
+                issue_type="Task",
+                status="Open",
+            )
+        ],
+        True,
+    )
+    rag_client = MagicMock()
+    rag_client.ingest_documents = AsyncMock()
+    request = JiraIngestRequest(
+        project_key="EXAMPLE",
+        source_slug="preview",
+        name="Example preview",
+        jql="project = EXAMPLE",
+        reload_interval=86400,
+    )
+
+    with patch.object(ingestor_module, "JiraClient", return_value=jira):
+        result = await preview_project_ingestion(rag_client, request)
+
+    jira.preview_issues.assert_called_once_with(
+        "project = EXAMPLE",
+        ingestor_module.PREVIEW_MAX_ITEMS,
+    )
+    assert result["truncated"] is True
+    assert result["items"] == [
+        {
+            "id": "EXAMPLE-1",
+            "title": "EXAMPLE-1: Preview item",
+            "url": "https://example.atlassian.net/browse/EXAMPLE-1",
+            "detail": "Task · Open",
+        }
+    ]
+    rag_client.ingest_documents.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

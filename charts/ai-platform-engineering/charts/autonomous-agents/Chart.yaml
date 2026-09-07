@@ -1,0 +1,9 @@
+apiVersion: v2
+name: autonomous-agents
+description: A Helm chart for Autonomous Agents - Standalone scheduler that fires tasks (cron / interval / webhook) at the CAIPE supervisor over A2A
+# Application chart that can be packaged and deployed
+type: application
+# Chart version - automatically updated by release workflow
+version: 1.0.1-dev.4 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+# Application version - automatically updated by release workflow
+appVersion: 1.0.1-dev.4 # Do NOT modify. It will be updated automatically using the release workflow

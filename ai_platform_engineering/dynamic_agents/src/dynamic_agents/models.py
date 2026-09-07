@@ -48,6 +48,11 @@ class UserContext(BaseModel):
     email: str
     sub: str | None = None
     name: str | None = None
+    # Keycloak subject (UUID). OpenFGA/CAS key subjects by ``sub``, so this is
+    # what agent-use authorization evaluates against. For autonomous
+    # (unattended) runs the scheduler puts the task owner's sub here so the
+    # decision is made on the owner, not the service principal.
+    sub: str | None = None
     groups: list[str] = []
     is_admin: bool = False
     raw_claims: dict[str, Any] = {}
@@ -576,6 +581,25 @@ class DynamicAgentConfigBase(BaseModel):
         default_factory=list,
         description="Skill document IDs from agent_skills collection",
     )
+    datasource_ids: list[str] | None = Field(
+        None,
+        description=(
+            "RAG datasource ids (== source_id == knowledge_base_id) this agent's "
+            "search tool is pinned to. Narrows, never widens: the runtime "
+            "intersects this list with the caller's RBAC-accessible datasources, "
+            "so None preserves the legacy 'search everything the caller can see' "
+            "behavior, while an explicit empty list keeps RAG tools available "
+            "with no indexed content in scope."
+        ),
+    )
+    rag_collection_ids: list[str] | None = Field(
+        None,
+        description=(
+            "RAG collection ids expanded from MongoDB at tool-call time. "
+            "The resulting datasource ids are unioned with datasource_ids; "
+            "the RAG server still intersects them with caller authorization."
+        ),
+    )
     builtin_tools: BuiltinToolsConfig | None = Field(
         None,
         description="Configuration for built-in tools (fetch_url, etc.)",
@@ -682,6 +706,13 @@ class ChatRequest(BaseModel):
     agent_id: str = Field(..., description="Dynamic agent config ID")
     protocol: str = Field("custom", pattern=r"^(custom|agui)$", description="Wire protocol: 'custom' or 'agui'")
     trace_id: str | None = Field(None, description="Optional trace ID for Langfuse tracing")
+    autonomous: bool = Field(
+        False,
+        description=(
+            "True when the scheduler/webhook runtime drives this call unattended. "
+            "Requires autonomous team entitlement in addition to agent use access."
+        ),
+    )
     client_context: ClientContext | None = Field(None, description="Opaque client context for system prompt rendering")
     memory_enabled: bool = Field(True, description="Whether memory retrieval/tools are enabled for this run")
     project_id: str | None = Field(

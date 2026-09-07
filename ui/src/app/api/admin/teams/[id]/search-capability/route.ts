@@ -12,6 +12,7 @@ writeOpenFgaTuples,
 type OpenFgaTupleKey,
 } from '@/lib/rbac/openfga';
 import { organizationObjectId } from '@/lib/rbac/organization';
+import { requireResourcePermission } from '@/lib/rbac/resource-authz';
 import { ObjectId } from 'mongodb';
 import { NextRequest,NextResponse } from 'next/server';
 
@@ -100,11 +101,12 @@ export const GET = withErrorHandler(
     const params = await context.params;
     validateTeamId(params.id);
 
-    // Viewing the capability requires admin-UI view access (org admin or the
-    // admin dashboard). Mutations are gated more tightly below.
-    await requireRbacPermission(session, 'admin_ui', 'view');
-
     const teamSlug = await resolveTeamSlug(params.id);
+    await requireResourcePermission(
+      session,
+      { type: 'team', id: teamSlug, action: 'read' },
+      { bypassForOrgAdmin: true },
+    );
     const enabled = await teamHoldsCapability(teamSlug);
 
     return successResponse({

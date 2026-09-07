@@ -3,24 +3,99 @@ id: slack-bot-chart
 sidebar_label: slack-bot
 ---
 
+:::caution Auto-generated
+This page is auto-generated from the Helm chart source. Do not edit directly.
+Regenerate with `make docs-helm-charts`.
+:::
+
 # slack-bot
 
-Deploys the CAIPE Slack bot surface.
+Slack bot integration for AI Platform Engineering using the CAIPE UI BFF
 
-Slack routes CAIPE requests through the UI/BFF using `CAIPE_API_URL`; the BFF
-applies authz and streams through Dynamic Agents.
-
-## Common Values
-
-| Key | Purpose |
+| | |
 |---|---|
-| `config.CAIPE_API_URL` | UI/BFF URL |
-| `config.SLACK_BOT_MODE` | `socket` or `http` |
-| `config.SLACK_AGENT_ROUTES_MODE` | Route source mode |
-| `config.SLACK_DEFAULT_AGENT_ID` | Default dynamic-agent ID for auto-assignment |
-| `existingSecret` | Slack tokens and sensitive env vars |
-| `keycloakBot.clientSecretFromSecret` | Keycloak OBO client secret reference |
-| `serviceAccount` | Pod service account |
+| **Version** | `0.5.68` |
+| **Type** | application |
 
-Use `charts/ai-platform-engineering/charts/slack-bot/values.yaml` for the
-complete value schema.
+## Quick Start
+
+```bash
+# Add and install the chart
+helm install slack-bot oci://ghcr.io/cnoe-io/charts/slack-bot --version 0.5.68
+
+# Upgrade an existing release
+helm upgrade slack-bot oci://ghcr.io/cnoe-io/charts/slack-bot --version 0.5.68
+```
+
+## Customizing Values
+
+Override default values using `--set` flags or a custom values file:
+
+```bash
+# Override individual values
+helm install slack-bot oci://ghcr.io/cnoe-io/charts/slack-bot --version 0.5.68 \
+  --set replicaCount=2
+
+# Use a custom values file
+helm install slack-bot oci://ghcr.io/cnoe-io/charts/slack-bot --version 0.5.68 \
+  -f custom-values.yaml
+
+# Show all configurable values
+helm show values oci://ghcr.io/cnoe-io/charts/slack-bot --version 0.5.68
+```
+
+## Reading the Values Table
+
+| Column | Meaning |
+|--------|---------|
+| **Key** | Dot-separated path into `values.yaml` (e.g. `image.repository`) |
+| **Type** | Go/Helm data type (`string`, `int`, `bool`, `object`, `list`) |
+| **Default** | Value used when not overridden |
+| **Description** | What the parameter controls |
+
+## Values
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| affinity | object | `{}` |  |
+| botConfig | object | `{}` | Structured channel configuration rendered as a YAML file and volume-mounted at /etc/caipe/bot-config.yaml. Only mounted when non-empty. Structure: channel_id -> channel config (same format as config_models.py expects). Example:   C012345678:     name: "#my-channel"     ai_enabled: true     agent_id: "my-agent"     qanda:       enabled: true       overthink: true     ai_alerts:       enabled: false     other:       jira:         project_key: MYPROJ         issue_type: Bug |
+| config | object | `{"APP_NAME":"CAIPE","CAIPE_API_URL":"","CAIPE_PLATFORM_AUDIENCE":"caipe-platform","MONGODB_DATABASE":"caipe","SLACK_ADMIN_ALLOWED_CLIENT_IDS":"caipe-ui","SLACK_ADMIN_API_ENABLED":"false","SLACK_ADMIN_API_HOST":"0.0.0.0","SLACK_ADMIN_API_PORT":"3001","SLACK_ADMIN_JWT_AUDIENCE":"caipe-slack-bot-admin","SLACK_ADMIN_JWT_ISSUER":"","SLACK_AGENT_ROUTES_MODE":"db_prefer","SLACK_AUTO_ASSIGN_UNMAPPED_CHANNELS":"false","SLACK_BOT_MODE":"socket","SLACK_DEFAULT_AGENT_ID":"","SLACK_DEFAULT_TEAM_SLUG":"","SLACK_JIT_ALLOWED_EMAIL_DOMAINS":"","SLACK_JIT_CREATE_USER":"true","SLACK_WORKSPACE_ALIAS":"CAIPE"}` | Flat key-value map of environment variables. Each key-value pair is injected as a flat environment variable via ConfigMap (envFrom → configMapRef). Put ALL non-sensitive env vars here — no separate env: block needed.  Common keys:   APP_NAME:                          Display name used in Slack messages (default: CAIPE)   SLACK_BOT_MODE:                    "socket" (WebSocket) or "http" (webhooks)   CAIPE_API_URL:                     Next.js gateway URL the bot routes requests through   SLACK_WORKSPACE_URL:               e.g. "https://mycompany.slack.com" for permalink deep links   SLACK_WORKSPACE_ALIAS:             Canonical workspace alias used for Slack ReBAC/routes   MONGODB_URI:                       MongoDB connection string   MONGODB_DATABASE:                  MongoDB database name (default: caipe)   SLACK_INTEGRATION_ENABLE_AUTH:     "true" to enable OAuth2 Client Credentials   OAUTH2_TOKEN_URL:                  OIDC token endpoint   OAUTH2_CLIENT_ID:                  OAuth2 client ID   OAUTH2_SCOPE:                      OAuth2 scope (optional)   OAUTH2_AUDIENCE:                   OAuth2 audience (optional)   SLACK_INTEGRATION_PROMPT_RESPONSE_STYLE:  Override response style prompt   SLACK_INTEGRATION_PROMPT_QANDA:           Override Q&A prompt   SLACK_INTEGRATION_PROMPT_OVERTHINK_QANDA: Override overthink Q&A prompt   SLACK_INTEGRATION_PROMPT_MENTION:         Override mention prompt   SLACK_INTEGRATION_PROMPT_HUMBLE_FOLLOWUP: Override humble followup prompt   SLACK_INTEGRATION_PROMPT_AI_ALERTS:       Override AI alerts prompt   SLACK_AGENT_ROUTES_MODE:                  Route source: "db_prefer" (default),                                             "config", or "db_only"   SLACK_AUTO_ASSIGN_UNMAPPED_CHANNELS:      "true" to map first-message channels                                             to SLACK_DEFAULT_TEAM_SLUG and                                             SLACK_DEFAULT_AGENT_ID   SLACK_DEFAULT_TEAM_SLUG:                  Team slug used for auto-assignment   SLACK_DEFAULT_AGENT_ID:                   Agent id used for auto-assignment   SLACK_ADMIN_API_ENABLED:                  "true" to expose the internal route admin API   SLACK_ADMIN_API_PORT:                     Internal admin API port   SLACK_ADMIN_JWT_ISSUER:                   Expected issuer for UI BFF service tokens   SLACK_ADMIN_JWT_AUDIENCE:                 Expected audience for UI BFF service tokens   SLACK_ADMIN_ALLOWED_CLIENT_IDS:           Comma-separated client IDs allowed to call admin API   CAIPE_PLATFORM_AUDIENCE:                  OBO audience for bot → CAIPE UI BFF access checks  Spec 103 (Just-In-Time Keycloak user creation):   SLACK_JIT_CREATE_USER:               "true" (default) auto-creates a                                        federated-only Keycloak shell user                                        on first Slack DM when no Keycloak                                        user with the Slack profile email                                        exists yet. "false" falls back to                                        sending the existing HMAC-signed                                        linking URL so the user onboards                                        via the web UI before Slack use.                                        Provisioning (and all other Keycloak                                        user access) flows through the CAIPE                                        UI BFF using the bot's own service                                        account — no Keycloak Admin credential                                        to wire on the bot.   SLACK_JIT_ALLOWED_EMAIL_DOMAINS:     Optional comma-separated allowlist                                        of email domains eligible for JIT                                        (e.g. "corp.com,acme.io"). Empty =>                                        any domain. Recommended for prod                                        when the federated IdP can return                                        non-corporate emails. |
+| existingSecret | string | `"slack-bot-secrets"` | Reference to a pre-existing Kubernetes Secret. All keys in the secret are injected as env vars via envFrom → secretRef. Typically contains: SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET, and optionally OAUTH2_CLIENT_SECRET. |
+| externalSecrets | object | `{"apiVersion":"v1beta1","data":[],"enabled":false,"secretStoreRef":{"kind":"ClusterSecretStore","name":"vault"}}` | External Secrets configuration for sensitive data (Slack tokens, OAuth2 client secret, etc.) |
+| fullnameOverride | string | `""` |  |
+| image.pullPolicy | string | `"Always"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-slack-bot"` |  |
+| image.tag | string | `""` |  |
+| keycloakBot | object | `{"clientSecretFromSecret":{"key":"KC_BOT_CLIENT_SECRET","name":""}}` | Cross-chart binding to the Keycloak bot client_secret used by the Slack bot's RFC 8693 OBO exchange helper. In umbrella installs this usually points at the same Secret/key as oauth2.clientSecretFromSecret. |
+| nameOverride | string | `""` |  |
+| nodeSelector | object | `{}` |  |
+| oauth2 | object | `{"clientSecretFromSecret":{"key":"KC_BOT_CLIENT_SECRET","name":""}}` | Cross-chart binding to the Keycloak bot client_secret. When set, the pod's OAUTH2_CLIENT_SECRET env var is sourced via secretKeyRef from the named Secret instead of (or in addition to) the `existingSecret`/`externalSecrets` flat map. This is the recommended wiring when you install the umbrella chart: the keycloak subchart creates ``release`-keycloak-bot` (random in dev, ESO-managed in prod) AND configures Keycloak to use that exact value as the client_secret, so both ends of the OAuth flow stay in sync without duplication.  For umbrella installs, just set:   slack-bot:     oauth2:       clientSecretFromSecret:         name: `release`-keycloak-bot         # key: KC_BOT_CLIENT_SECRET    # default — only override if you renamed it |
+| podAnnotations | object | `{}` |  |
+| podDisruptionBudget.enabled | bool | `false` |  |
+| podDisruptionBudget.minAvailable | int | `1` |  |
+| podSecurityContext.runAsNonRoot | bool | `true` |  |
+| replicaCount | int | `1` |  |
+| resources.limits.cpu | string | `"500m"` |  |
+| resources.limits.memory | string | `"512Mi"` |  |
+| resources.requests.cpu | string | `"100m"` |  |
+| resources.requests.memory | string | `"256Mi"` |  |
+| securityContext.allowPrivilegeEscalation | bool | `false` |  |
+| securityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| securityContext.readOnlyRootFilesystem | bool | `false` |  |
+| securityContext.runAsNonRoot | bool | `true` |  |
+| securityContext.runAsUser | int | `1001` |  |
+| securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
+| serviceAccount.annotations | object | `{}` |  |
+| serviceAccount.create | bool | `true` |  |
+| serviceAccount.name | string | `""` |  |
+| tolerations | list | `[]` |  |
+| volumeMounts | list | `[]` |  |
+| volumes | list | `[]` |  |
+| vpa.controlledResources[0] | string | `"cpu"` |  |
+| vpa.controlledResources[1] | string | `"memory"` |  |
+| vpa.controlledValues | string | `"RequestsAndLimits"` |  |
+| vpa.enabled | bool | `false` |  |
+| vpa.maxAllowed | object | `{}` |  |
+| vpa.minAllowed.cpu | string | `"50m"` |  |
+| vpa.minAllowed.memory | string | `"128Mi"` |  |
+| vpa.updateMode | string | `"InPlaceOrRecreate"` |  |

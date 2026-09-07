@@ -51,17 +51,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
-      # Fork-triggered pull_request runs never receive repo secrets (GitHub
-      # security boundary), so CI_SECURITY_APP_ID/PRIVATE_KEY resolve empty
-      # there and create-github-app-token hard-fails. The default GITHUB_TOKEN
-      # is also forced read-only for fork PRs regardless of declared
-      # permissions, so security-events: write is unavailable either way.
-      # Detect that case and skip the app-token + SARIF upload, but still run
-      # the scan itself so contributors get results in the job log.
+      # Fork-triggered pull_request runs never receive repository secrets and
+      # their GITHUB_TOKEN is read-only, so security-events: write is
+      # unavailable. Dependabot PRs from this repository do receive the
+      # workflow permission above, so use the built-in token for those runs
+      # instead of a secret-backed GitHub App token. Detect external forks and
+      # skip only their SARIF upload, but still run the scan itself so
+      # contributors get results in the job log.
       - name: 🔍 Determine fork status
         id: fork-check
         env:
@@ -75,15 +75,6 @@ jobs:
             echo "is_fork=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 🔑 Generate GitHub App token
-        id: app-token
-        if: steps.fork-check.outputs.is_fork != 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ secrets.CI_SECURITY_APP_ID }}
-          private-key: ${{ secrets.CI_SECURITY_APP_PRIVATE_KEY }}
-          permission-security-events: write
-
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
@@ -91,7 +82,7 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.tag || github.ref }}
 
       - name: Run Grype scan
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         id: scan
         with:
           path: "."
@@ -100,7 +91,7 @@ jobs:
           output-format: sarif
 
       - name: Upload SARIF to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         if: ${{ always() && steps.scan.outputs.sarif != '' && steps.fork-check.outputs.is_fork != 'true' }}
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
@@ -114,8 +105,7 @@ jobs:
           # merge-ref analysis is not matched against the PR head check run.
           ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.pull_request.number) || github.ref }}
           sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          token: ${{ github.token }}
 
       - name: ℹ️ Note SARIF upload skipped for fork PR
         if: ${{ always() && steps.fork-check.outputs.is_fork == 'true' }}
@@ -159,7 +149,7 @@ jobs:
           - mcp-webex
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -183,16 +173,16 @@ jobs:
           fi
 
       - name: Run Grype scan on container image
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         id: scan
         with:
-          image: "ghcr.io/cnoe-io/${{ matrix.image }}:${{ steps.tag.outputs.tag }}"
+          image: "ghcr.io/caipe-io/${{ matrix.image }}:${{ steps.tag.outputs.tag }}"
           fail-build: false
           severity-cutoff: high
           output-format: sarif
 
       - name: Upload SARIF to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         if: ${{ always() && steps.scan.outputs.sarif != '' }}
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}

@@ -1,4 +1,354 @@
-## 0.5.67-dev.1-chart.1 (2026-08-06)
+## 1.0.0-dev.24 (2026-09-04)
+
+### Fix
+
+- **autonomous-agents**: address code quality review
+- **docs**: version historical internal links (#2641)
+
+## 1.0.0 (2026-09-03)
+
+## 1.0.0-dev.23 (2026-09-03)
+
+### Feat
+
+- add timezone support and userhub metadata
+- **agentic-apps**: add Weather reference runtime
+- **ui**: add config-driven hosted application runtime
+
+## 1.0.0-dev.22 (2026-09-02)
+
+## 1.0.0-rc.7 (2026-09-02)
+
+## 1.0.0-dev.21 (2026-09-02)
+
+### Fix
+
+- **rbac**: allow self-service read access to Webex bot picker
+
+## 1.0.0-dev.20 (2026-09-02)
+
+### Feat
+
+- **ui**: add re-upload modal for file datasources
+- **rag**: add file datasource re-upload endpoint
+
+### Fix
+
+- **rag**: preserve job history across file datasource re-uploads
+
+## 1.0.0-dev.19 (2026-09-02)
+
+### Feat
+
+- **scheduler**: min interval restriction
+
+### Fix
+
+- **ci**: use built-in token for Dependabot Grype scans (#2628)
+- Update README.md (#2542)
+
+## 1.0.0-dev.18 (2026-09-01)
+
+## 1.0.0-rc.6 (2026-09-01)
+
+## 1.0.0-dev.17 (2026-09-01)
+
+### Feat
+
+- **ui**: add an API section to Insights Statistics
+- **ui**: add a Webex section to Insights Statistics, mirroring Slack
+
+### Fix
+
+- **ui**: force client_type to 'api' for non-first-party Bearer callers
+- **audit**: attach real identity to bridge authz-decision audit events
+- **webex**: stop agent-flash on pinned threads; exclude DMs from Top Spaces
+- **ui**: exclude Webex conversations from the default sidebar listing
+- **ui**: stop the picker chevron from shifting when a value is cleared
+- **ui**: stop wide line charts from stretching data points and text
+- **audit**: capture openfga_rebac events at standard verbosity
+- **audit**: return a clean error instead of a bare 500 on retention failures
+- **webex**: redirect to sign-in instead of a bare 401 on webex-link/start
+- **ui**: fix chart hover misalignment on wide line charts
+- **ui**: make DAU/MAU "Today"/"This Month" cards rolling windows
+- **ui**: show a Webex source option in the Insights stats picker
+- **webex**: tag Webex message turns with source "webex" for Insights
+- **ui**: clear the ?request= param after approving/rejecting it
+- **ui**: paginate the Default agents picker's accessible-agents fetch
+- **webex**: pin threads to their first-responding agent
+
+### Perf
+
+- **audit**: parallelize S3 list/fetch calls in the audit-service read path
+
+## 1.0.0-dev.16 (2026-09-01)
+
+## 1.0.0-rc.5 (2026-09-01)
+
+## 1.0.0-dev.15 (2026-09-01)
+
+## 1.0.0-dev.14 (2026-08-31)
+
+### Feat
+
+- **ui**: add owner team editor to Webex configured space detail
+- **ui**: add Webex Advanced admin tab and harden Slack/Webex parity
+- **ui**: unify Webex/Slack DM default-agent settings
+- **rag**: show collection id in the collections detail pane
+- **rag**: filter search MCP tool by collection_id
+
+### Fix
+
+- **ui**: skip unused runtime-status fetch, filter malformed direct-user rows
+- **webex-bot**: silence linked users on disabled DMs, recognize legacy reply marker
+- **ui**: fix stale-response race and double-fetch in Webex 1:1 panel
+- **rbac**: revoke stale team grant and avoid duplicate Webex space mapping
+- **webex-bot**: stop nesting bold and italic in agent-reply footer
+- **rbac**: require bot_id on Webex team-space assignments
+- **ui**: use public origin for Webex link callback redirect
+
+### Perf
+
+- **ui**: paginate and search the 1:1 Messages admin tab
+
+## 1.0.0-dev.13 (2026-08-28)
+
+## 1.0.0-rc.4 (2026-08-28)
+
+## 1.0.0-dev.12 (2026-08-28)
+
+### Refactor
+
+- **ui**: remove Webex legacy migration tab and backend
+
+## 1.0.0-dev.11 (2026-08-27)
+
+### Feat
+
+- **charts**: wire self-service Webex identity-linking vars into caipe-ui chart
+
+### Fix
+
+- **ui**: revert prior Webex fix, correct e2e tests to match intended tab order
+- **ui**: restore Webex onboard default tab and listen-mode diagnostic fix
+- **integrations**: remove insecure Slack HMAC identity-link mechanism
+- **ui**: align accent theming and navigation state (#2605)
+
+### Refactor
+
+- **ui**: standardize reusable selection controls (#2597)
+
+## 1.0.0-dev.10 (2026-08-27)
+
+## 1.0.0-rc.3 (2026-08-27)
+
+## 1.0.0-dev.9 (2026-08-26)
+
+### Fix
+
+- **platform**: align RAG access and application controls (#2599)
+
+## 1.0.0-dev.8 (2026-08-26)
+
+## 1.0.0-rc.2 (2026-08-26)
+
+## 1.0.0-dev.7 (2026-08-26)
+
+### Feat
+
+- **ui**: add global command palette (#2463)
+- **autonomous**: remove redundent max retires and timeout
+- **autonomous**: webhook to be in a single chat with each run having "continue this run" button to chat on that particular run
+
+### Fix
+
+- **ui**: show deployed version in about, refresh homepage, and consolidate release docs (#2595)
+- **ui**: hide API-created conversations from chat history (#2588)
+- **ui**: test
+
+## 1.0.0-dev.6 (2026-08-26)
+
+### Feat
+
+- **ui**: add global platform health notifications (#2416)
+
+## 1.0.0-dev.5 (2026-08-25)
+
+### Feat
+
+- **ui**: restore feature-gated feedback shortcut (#2435)
+- **ui**: add agent completion browser alerts (#2413)
+
+### Fix
+
+- **ui**: redirect personal insights to filtered admin statistics (#2586)
+- **ui**: align new chat agent resolution (#2464)
+- **ui**: support legacy conversation identifiers (#2466)
+
+## 1.0.0-dev.4 (2026-08-25)
+
+### Feat
+
+- **ui**: improve global navigation and breadcrumbs (#2407)
+- **ui**: standardize searchable agent pickers (#2403)
+
+## 1.0.0-dev.3 (2026-08-25)
+
+## 1.0.0-dev.2 (2026-08-25)
+
+### Feat
+
+- **ui**: customizable Home page with Quick Start and optional widgets (#2408)
+
+### Fix
+
+- update README.md (#2472)
+- **ci**: remove unused Helm publish app token (#2399)
+
+### Refactor
+
+- **ui**: retire legacy agent builder (#2443)
+
+## 1.0.0-dev.1 (2026-08-24)
+
+## 1.0.0-rc.1 (2026-08-24)
+
+### Fix
+
+- **docs**: replace restricted star history embed (#2471)
+- **ci**: support RC versions in manual releases
+
+## 0.6.0-dev.8 (2026-08-24)
+
+### Fix
+
+- **ci**: restore RBAC and Playwright checks
+
+## 0.6.0-dev.7 (2026-08-24)
+
+## 0.6.0-dev.6 (2026-08-24)
+
+## 0.6.0-dev.4 (2026-08-24)
+
+## 0.6.0-dev.2 (2026-08-24)
+
+## 0.6.0-dev.1 (2026-08-24)
+
+### Feat
+
+- **webex**: add self-service Webex identity linking in settings
+
+### Fix
+
+- **webex**: disable Relink button while an unlink request is in flight
+- **webex**: fall back to raw id in admin panel when no email captured
+- **auth**: enforce max age on signed OAuth state cookies
+- **webex**: close check-then-write race on identity link claim
+- **webex**: resolve false revision-conflict on publication approval
+- **webex**: show linked account email instead of raw id in admin panel
+
+## 0.6.0 (2026-08-21)
+
+## 0.5.69-dev.4 (2026-08-20)
+
+### Fix
+
+- **security**: resolve dependency vulnerabilities (#2415)
+
+### Refactor
+
+- **dynamic-agents**: use immutable prompt rendering (#2369)
+
+## 0.5.69-dev.2 (2026-08-20)
+
+### Feat
+
+- **docs**: up to date autonomous agent docs
+
+### Fix
+
+- **autonomous**: webhook secret ffs
+
+## 0.5.69-dev.1 (2026-08-19)
+
+### Feat
+
+- **autonomous**: add min run interval (configurable) and wehook should NOT appear in the chat
+- **ui**: autonomous and schedule chats in separate sections to history
+
+### Fix
+
+- **skills**: repair zip import ownership and file access
+- **autonomous**: add webhook limits and address security concerns
+- **autonomous**: better admin tab and remove task oversight
+- **autonomous**: secret should be secretly handled
+- **ui**: autonomous page scroll issue
+
+## 0.5.69 (2026-08-18)
+
+## 0.5.68-dev.8 (2026-08-18)
+
+### Feat
+
+- **autonomous**: simply team access and separate admin control to a tab
+
+## 0.5.68-dev.7 (2026-08-17)
+
+### Feat
+
+- **rag**: refactor knowledge bases (#2324)
+
+### Fix
+
+- **helm**: make chart docs generation portable (#2383)
+
+### Refactor
+
+- **ci**: use native architecture prebuilds (#2385)
+
+## 0.5.68-dev.6 (2026-08-13)
+
+### Fix
+
+- **helm**: pin third-party MCP image versions (#2381)
+- **ui**: add workflows breadcrumbs (#2379)
+
+## 0.5.68-dev.5 (2026-08-12)
+
+### Fix
+
+- **ui**: prevent sidebar collapse flash (#2378)
+
+## 0.5.68-dev.4 (2026-08-12)
+
+### Feat
+
+- **ui**: unify application navigation and settings (#2235)
+
+## 0.5.68-dev.3 (2026-08-12)
+
+### Fix
+
+- **docs**: migrate canonical links to caipe.io (#2374)
+- **ci**: skip UI test comments for fork PRs (#2376)
+- **ui**: stop failed conversation deletes from silently reappearing (#2371)
+
+## 0.5.68-dev.2 (2026-08-12)
+
+### Fix
+
+- **auth**: enforce catalog credential boundaries (#2375)
+- **ci**: rag prebuild wrong the whole time
+- try again???
+- **docs**: show mobile navigation menu (#2364)
+- **docs**: make site responsive across viewports (#2362)
+- **docs**: publish site at caipe.io root (#2361)
+- ci-rag was wrong the entire time. this is great. this is life
+- **ci**: PR comment with prebuild images permission was broken...............
+
+## 0.5.68-dev.1 (2026-08-08)
+
+## 0.5.68 (2026-08-06)
 
 ### Feat
 
@@ -46,6 +396,13 @@
 ### Feat
 
 - **ui**: allow chat title edit and open links in a new tab
+- **dynamic-agents**: offload multimodal attachment bytes to object store
+- **dynamic-agents**: name model in skip warning, notify the model, and cap input attachments
+- **dynamic-agents**: declare per-model input capabilities and degrade cleanly
+- **ui**: show uploaded attachments in the chat transcript
+- **ui**: attach files to chat messages as multimodal input
+- **slack-bot**: forward Slack attachments as multimodal chat input
+- **dynamic-agents**: support multimodal file+text chat input
 
 ### Fix
 
@@ -55,6 +412,10 @@
 - **dynamic-agents**: don't double-add Anthropic prompt-caching middleware
 - **dynamic-agents**: use native prompt-caching middleware for Bedrock
 - **dynamic-agents**: declare boto3 without a version pin
+- **dynamic-agents**: pin boto3==1.43.16 to match cnoe-agent-utils
+- **dynamic-agents**: thread files into _stream_impl so attachments reach the model
+- **dev**: clear OIDC_AUDIENCE for dynamic-agents so OBO tokens validate
+- **slack**: reject Slack files:read login-page HTML before sending to model
 
 ## 0.5.63-dev.2 (2026-07-28)
 
@@ -63,10 +424,6 @@
 ### Feat
 
 - **rag**: self-service RAG ingestion-source config store (PR1/7) (#2286)
-
-### Fix
-
-- **dynamic-agents**: pin boto3==1.43.16 to match cnoe-agent-utils
 
 ## 0.5.63 (2026-07-28)
 
@@ -108,20 +465,10 @@
 
 ## 0.5.60-dev.4 (2026-07-23)
 
-### Feat
-
-- **docs**: include info on UI admin access to update scheduler ediotr agent
-- **helm**: change restrictedMcpServers default to none and update docs on how to restrict scheduler to admin only
-- **scheduler**: allow admin to modify default schedule editor agent in the ui
-- **dynamic-agents**: offload multimodal attachment bytes to object store
-
 ### Fix
 
 - **webex**: add per-user OAuth token support via X-CAIPE-Provider-Token
 - **confluence**: add OAuth Bearer auth for Atlassian 3LO tokens
-- fix scheduler ui tab acceess
-- **scheduler**: if admin only access do not make scheduler tab visible for normal users
-- **dynamic-agents**: thread files into _stream_impl so attachments reach the model
 
 ## 0.5.60-dev.3 (2026-07-23)
 
@@ -134,7 +481,14 @@
 ### Feat
 
 - **ui**: link feedback trends to daily feedback (#2283)
-- **dynamic-agents**: name model in skip warning, notify the model, and cap input attachments
+- **docs**: include info on UI admin access to update scheduler ediotr agent
+- **helm**: change restrictedMcpServers default to none and update docs on how to restrict scheduler to admin only
+- **scheduler**: allow admin to modify default schedule editor agent in the ui
+
+### Fix
+
+- fix scheduler ui tab acceess
+- **scheduler**: if admin only access do not make scheduler tab visible for normal users
 
 ## 0.5.60-dev.1 (2026-07-23)
 
@@ -216,6 +570,7 @@
 ### Fix
 
 - **insights**: refresh stats and restore user activity (#2259)
+- **autonomous-agents**: gate unpublished chat links
 
 ## 0.5.56 (2026-07-21)
 
@@ -256,15 +611,13 @@
 
 - **auth**: OIDC_GROUP_INCLUDELIST and OIDC_GROUP_EXCLUDELIST for AD group sync filtering (#2237)
 - **ci**: link failed CIs and initiated gh user in the release draft to take action
-- **dynamic-agents**: declare per-model input capabilities and degrade cleanly
 
 ### Fix
 
 - **e2e**: drive the MCP tool picker as a combobox, not a <select>
 - **service-accounts**: let org admins manage service accounts outside their own team
 - **service-accounts**: org admins see all SAs; add search + pagination
-- **dev**: clear OIDC_AUDIENCE for dynamic-agents so OBO tokens validate
-- **slack**: reject Slack files:read login-page HTML before sending to model
+- **autonomous-agents**: authenticate dynamic agent calls
 
 ### Refactor
 
@@ -277,10 +630,6 @@
 ### Feat
 
 - support multiple Webex bots and 1:1  (#2184)
-- **ui**: show uploaded attachments in the chat transcript
-- **ui**: attach files to chat messages as multimodal input
-- **slack-bot**: forward Slack attachments as multimodal chat input
-- **dynamic-agents**: support multimodal file+text chat input
 
 ## 0.5.54-dev.2 (2026-07-16)
 
@@ -370,6 +719,10 @@
 
 ## 0.5.51-dev.4 (2026-07-15)
 
+### Fix
+
+- address autonomous agents review feedback
+
 ## 0.5.51-dev.3 (2026-07-15)
 
 ### Fix
@@ -413,6 +766,7 @@
 - **idp-sync**: yield the event loop during synchronous member passes
 - **idp-sync**: bootstrap baseline access before team apply and parallelize member resolution
 - **rbac**: bootstrap member baseline for directory-synced users
+- **autonomous-ui**: remove duplicate Sparkles import from merge
 
 ## 0.5.50 (2026-07-10)
 
@@ -803,11 +1157,19 @@
 ### Feat
 
 - **admin**: make OpenFGA the source of truth for team resource access and declutter team UI (#2021)
+- **admin**: add access explorer and rbac self check
+- **admin**: drop team_kb_ownership for OpenFGA-sourced KB grants and split Agents/MCPs tabs
+- **admin**: make OpenFGA the source of truth for team resource access and declutter team UI
+- **autonomous-agents**: restore Autonomous UI on the dynamic-agents architecture (Stage 2)
 
 ### Fix
 
 - **setup-caipe**: update configBridge.bff to configBridge.ui secret path (#2058)
 - **ui-admin**: remove knowledge bases settings tab
+
+### Refactor
+
+- **autonomous-agents**: route tasks through dynamic-agents, drop supervisor
 
 ## 0.5.26-dev.6 (2026-06-27)
 
@@ -873,7 +1235,6 @@
 ### Feat
 
 - **mcp**: add mcpSecrets alias with deprecation of agentSecrets
-- **admin**: add access explorer and rbac self check
 
 ### Fix
 
@@ -897,11 +1258,6 @@
 - **slack-bot**: skip Keycloak identity resolution in middleware for bot messages (SDPL-1984)
 
 ## 0.5.23 (2026-06-25)
-
-### Feat
-
-- **admin**: drop team_kb_ownership for OpenFGA-sourced KB grants and split Agents/MCPs tabs
-- **admin**: make OpenFGA the source of truth for team resource access and declutter team UI
 
 ### Fix
 
@@ -1151,6 +1507,7 @@
 
 ### Fix
 
+- **autonomous-agents**: enforce run-history ownership and add admin-only access gate
 - **ui**: prefer exact changelog release prompts
 - **admin**: align superadmin access surfaces
 - **rbac**: unblock superadmin conversations and tool grants
@@ -2416,6 +2773,7 @@ realm cleanup.
 - **ci**: prebuild comment to be merged to one not per img
 - **overthink**: replace ambiguous "the bot" with mechanism description
 - **overthink**: rewrite boilerplate as stepwise prompt with explicit precedence
+- **victorops**: consolidate to v2 reporting incidents, drop slim projections
 
 ### Fix
 
@@ -2440,19 +2798,23 @@ realm cleanup.
 - **skills**: remove pagination from quick-install catalog URL
 - **charts**: exclude caipe-ui from ServiceMonitor scraping
 - **charts**: exclude non-metrics services from ServiceMonitor scraping
-
-## 0.4.10-dev.1 (2026-05-09)
-
-### Feat
-
-- **victorops**: consolidate to v2 reporting incidents, drop slim projections
-
-### Fix
-
 - **docs**: replace relative RUN.md link with GitHub URL in 0.3.x migration guide
 - **ci**: add permissions: contents: read to docs-build-check workflow
 - **docs**: escape MDX angle bracket in spec plan + add PR build check
 - **victorops**: drop unused typing imports from chat tool
+- **lint**: remove unused import, variable, and bare f-string
+- **autonomous-agents**: follow-up route verifies signatures with global secret + github wire shape
+- **ui/autonomous**: preserve dynamic_agent_id on form round-trip
+- **autonomous-agents**: stream dynamic-agent runs so chat threads render the full breakdown
+
+### Refactor
+
+- **webex**: integrate Webex functionality into autonomous-agents service
+- **config**: modify Settings initialization to prevent dotenv interference
+- **config**: update Settings initialization to handle legacy cors_origins
+- **tests**: unify test file structures and clean up code
+
+## 0.4.10-dev.1 (2026-05-09)
 
 ## 0.4.10 (2026-05-08)
 
@@ -2580,6 +2942,7 @@ longer include layout/format/fragment fields and the agent catalog has
 
 - **setup-caipe**: UX improvements — Docker install, back-nav, upgrade detection, agent selection (#1336)
 - **dynamic-agents**: add memory management with shared clients and lazy provider loading
+- **autonomous**: gate feature surfaces behind flag
 
 ### Fix
 
@@ -2589,12 +2952,14 @@ longer include layout/format/fragment fields and the agent catalog has
 - **dynamic-agents**: update uv.lock for pinned memray
 - **dynamic-agents**: pin memray dependency to 1.19.3
 - **dynamic-agents**: reduce Retry-After from 10s to 5s
+- **compose**: make webex-bot env vars optional to allow startup without profile
 
 ### Refactor
 
 - **dynamic-agents**: simplify llm_clients and reduce runtime TTL to 60s
 - **dynamic-agents**: remove provider guard, use cnoe-agent-utils 0.4.0 lazy imports
 - **dynamic-agents**: simplify memory management — remove gunicorn and adaptive sizing
+- **webex_bot**: split app.py into focused modules
 
 ## 0.4.5-dev.1 (2026-04-30)
 
@@ -2662,11 +3027,37 @@ longer include layout/format/fragment fields and the agent catalog has
 ### Feat
 
 - **doc**: new cicd diagram and details
+- **webex**: enhance webhook registration logic for Webex bot
+- **webex**: further optimize Webex inbound bridge service for message tracking
+- **webex**: enhance Webex inbound bridge service for improved message tracking
+- **webex**: optimize Webex inbound bridge service for enhanced message tracking
+- **webex**: further enhance Webex inbound bridge service for message tracking
+- **webex**: refine Webex inbound bridge service for improved message tracking
+- **webex**: enhance Webex inbound bridge service functionality
+- **webex**: add Webex inbound bridge service
+- **webex**: improve Webex thread mapping for task execution
+- **webex**: enhance Webex thread mapping functionality
+- **webex**: implement Webex thread mapping for task runs
+- **autonomous**: add follow-up context handling for webhook tasks
+- **autonomous**: implement follow-up context for webhook tasks
+- **ui**: add agent dropdown selector in autonomous task form
+- **supervisor**: canonical webhook-task prompt templates (issue triage, PR review, push notify)
+- **supervisor**: create_autonomous_task returns callback_url + auto-generates webhook secret
+- **supervisor**: GitHub webhook management tools for chat-driven setup
 
 ### Fix
 
 - **skills**: fix caipe-skills.py 404, add auth fallback, simplify gateway UI (#1286)
+- **webex**: handle empty string secret in Webex signature verification
+- **autonomous**: ignore GitHub webhook pings
+- **ui**: finalize replayed autonomous timelines
+- **autonomous-agents**: tolerate empty CORS_ORIGINS from Docker env
+- **ui**: repair merge fallout for autonomous chat flows
 - **docs**: escape bare < in plan.md to fix MDX build error (#1285)
+
+### Refactor
+
+- **ui**: enhance TaskFormDialog agent selection styling
 
 ## 0.4.1 (2026-04-24)
 
@@ -2696,11 +3087,16 @@ longer include layout/format/fragment fields and the agent catalog has
 
 ## 0.3.11 (2026-04-22)
 
+### Feat
+
+- **ci**: new release management & versioning strategy
+
 ### Fix
 
 - **slack**: add escalation policy field and fix humble followup prompt (#1277)
-- **admin**: correct feedback dedup, user linkage, and top user display (#1273)
 - **ci**: detect image changes, chart changes and irrelevant changes
+- **docker**: normalize caipe-ui entrypoint for Windows CRLF checkouts
+- **admin**: correct feedback dedup, user linkage, and top user display (#1273)
 
 ## 0.3.10 (2026-04-21)
 
@@ -2710,14 +3106,25 @@ longer include layout/format/fragment fields and the agent catalog has
 
 ## 0.3.9 (2026-04-21)
 
+### Feat
+
+- **supervisor**: re-register autonomous-task management tools on unified deep_agent.py
+- **supervisor**: port autonomous-agents preflight handler to unified agent_executor.py
+
 ### Fix
 
 - **helm**: single-node MCP ServiceAccounts and configurable name prefix (#1267)
+- **ui**: allow local autonomous admin access
+- **ui**: restore chat-store type safety
 - **supervisor**: stream curl tool responses to client (#1255)
 - **security**: resolve CodeQL source code alerts and update GitHub Actions (#1252)
 - **docker**: upgrade base images, binaries, and patch system CVEs (#1251)
 - **deps**: bump pypdf, python-multipart, authlib, langsmith to fix CVEs
 - **deps**: bump langchain-openai, langchain-core, langchain-text-splitters to fix CVEs (#1248)
+
+### Refactor
+
+- **autonomous-agents**: centralize MongoDB and require it at startup
 
 ## 0.3.8 (2026-04-17)
 
@@ -2798,7 +3205,6 @@ longer include layout/format/fragment fields and the agent catalog has
 ### Feat
 
 - **rag**: add Jira issue ingestor and UI read-only datasource support (#988)
-- **ci**: new release management & versioning strategy
 
 ### Fix
 
@@ -2818,6 +3224,30 @@ longer include layout/format/fragment fields and the agent catalog has
 - **ui**: add /auth/reauth-complete page for new-tab OIDC re-auth flow
 - **ci**: add weekly security CVE tracking issue workflow (#1191)
 - **ui**: upgrade UI dependencies and components for v0.2.0 (#1171)
+- **ui**: chat-driven task creation from "+ New Chat" on Autonomous tab
+- **supervisor**: autonomous-task management tools (Phase 3)
+- **autonomous-agents+ui**: scheduled fires render full A2A timeline (Phase B)
+- **autonomous-agents+ui**: bidirectional autonomous chat (typed messages share supervisor context with scheduled fires)
+- **ui**: autonomous tab as real chat conversations (no Mongo required)
+- **ui+autonomous-agents**: pre-flight badge, per-task chat link, live next-run
+- **autonomous-agents**: per-task chat threads with typed message kinds
+- **autonomous-agents**: supervisor preflight ack on task create/update
+- **autonomous_agents**: pin sub-agent routing via in-band prompt directive (IMP-06)
+- **compose**: wire autonomous-agents service for one-command end-to-end testing
+- **autonomous_agents**: admin-gate the UI proxy and hide writes from view-only users (IMP-19)
+- **ui/autonomous**: deep-link run rows to chat conversations (IMP-18)
+- **autonomous_agents**: publish autonomous runs into UI chat history (IMP-13)
+- **autonomous_agents**: circuit breaker around supervisor A2A call (IMP-16) (#9)
+- **autonomous-agents**: harden webhook signing (global secret + replay window) (#7)
+- **autonomous-agents**: add UI tab for managing autonomous tasks (#6)
+- **autonomous-agents**: TaskStore + full CRUD + scheduler hot-reload + CORS hardening (#5)
+- **autonomous-agents**: per-task timeout and max_retries overrides
+- **autonomous-agents**: retry transient supervisor failures with exponential backoff
+- **autonomous-agents**: add MongoDB settings and run_store factory
+- **autonomous-agents**: add MongoRunStore implementation
+- **autonomous-agents**: add RunStore protocol with in-memory impl
+- **autonomous-agents**: fix lint, add uv.lock and README
+- starting new feature for cron autonomous agents
 - **github-mcp**: add template support to create_repository tool (#1155)
 - Default enable metrics endpoints (#1064)
 - **dynamic-agents**: add ModelRetryMiddleware to dynamic agent runtime
@@ -2872,6 +3302,29 @@ longer include layout/format/fragment fields and the agent catalog has
 - **slack-bot**: add missing default field in test_config_loaded_from_file_path (#1165)
 - **github-mcp**: bump Go builder image to 1.25-alpine (#1170)
 - OIDC group display, task builder tools, and supervisor response format (#1140)
+- **ui**: scheduled-run chat messages render plan + tools timeline (replay)
+- **ui**: autonomous chat thread auto-appends new scheduled runs (15s poll)
+- **ui**: "All" sidebar view shows autonomous chats with AUTO badge
+- **autonomous-agents+ui**: runs failed with 'str' has no get; agent now optional; upcoming-runs stats bar
+- **supervisor**: harden prompt_config loader (utf-8, env override, dict guard)
+- **autonomous-agents**: use UUIDv5 contextId for supervisor A2A calls
+- **compose**: make autonomous-agents profile self-contained and harden prod
+- **autonomous_agents**: normalise+sanitise agent hint once, use everywhere
+- **autonomous-ui**: unblock MongoDB-promoted admins and clear stuck loading state
+- **autonomous_agents**: address PR #10 bot feedback — redact context, harden indexes, resilient startup
+- **autonomous-agents**: reject inf/NaN on TaskDefinition.timeout_seconds
+- **autonomous-agents**: construct motor client with UTC-aware datetimes
+- **autonomous-agents**: add started_at index for global run listing
+- **autonomous-agents**: preserve full per-task run history in /tasks/{id}/runs
+- **autonomous-agents**: isolate run-store failures from task execution
+- **autonomous-agents**: add pythonpath = ["src"] to pytest config
+- **autonomous-agents**: use Literal types for discriminated union triggers
+- **autonomous-agents**: address critical bugs and review feedback
+- **autonomous-agents**: address critical bugs and review feedback
+- **autonomous-agents**: use uv sync --locked in Dockerfile
+- **autonomous-agents**: add history fallback and blocking config to A2A client
+- **autonomous-agents**: address code review nits
+- **autonomous-agents**: address all critical and medium review feedback
 - code scanning alert no. 1832: Artifact poisoning (#1159)
 - **slack-bot**: mount botConfig as file, add PDB and maxUnavailable=0 (#1154)
 - **ci**: do not prebuild rag on .github file changes
@@ -2906,9 +3359,17 @@ longer include layout/format/fragment fields and the agent catalog has
 
 ### Refactor
 
+- **autonomous-agents+ui**: autonomous chat IS regular chat (one A2A pipeline, full timeline)
+- **autonomous-agents**: multi-stage non-root Dockerfile + hardening docs (#8)
+- **autonomous-agents**: drop redundant run_id index and reword motor import
+- **autonomous-agents**: wire scheduler and tasks routes to RunStore
 - **rag**: rename graph entity to structured entity
 - consolidate A2A server into shared abstraction (#1116)
 - **subagent**: make _truncate_any shape-agnostic
+
+### Perf
+
+- **autonomous-agents**: reuse a single httpx client across A2A retries
 
 ## 0.2.43 (2026-04-02)
 

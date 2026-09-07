@@ -37,6 +37,8 @@ export interface AgentAvatarProps {
   gradientTheme?: string | null;
   /** Override custom theme config (used when agent is null, e.g. editor live preview) */
   customThemeConfig?: CustomThemeConfig | null;
+  /** Use the user's global accent for application-level avatar treatments. */
+  useGlobalTheme?: boolean;
   /** Border radius — exact Tailwind class (e.g. "rounded-full", "rounded-xl") */
   rounded?: string;
   /** Container size — exact Tailwind classes (e.g. "w-9 h-9") */
@@ -57,6 +59,7 @@ export function AgentAvatar({
   agent,
   gradientTheme: gradientThemeOverride,
   customThemeConfig: customThemeConfigOverride,
+  useGlobalTheme = false,
   rounded = "rounded-xl",
   size = "w-9 h-9",
   iconSize = "h-4 w-4",
@@ -82,10 +85,12 @@ export function AgentAvatar({
   const resolvedGradientTheme = gradientThemeOverride ?? agent?.ui?.gradient_theme ?? agent?.gradient_theme ?? null;
   const resolvedCustomThemeConfig = customThemeConfigOverride ?? agent?.ui?.custom_theme_config ?? agent?.custom_theme_config ?? null;
 
-  const gradientStyle = resolvedGradientTheme
+  const gradientStyle = !useGlobalTheme && resolvedGradientTheme
     ? getGradientStyle(resolvedGradientTheme, resolvedCustomThemeConfig)
     : null;
-  const iconColor = resolvedGradientTheme
+  const iconColor = useGlobalTheme
+    ? "white"
+    : resolvedGradientTheme
     ? (getAccentColor(resolvedGradientTheme, resolvedCustomThemeConfig) || "white")
     : null;
 
@@ -109,9 +114,11 @@ export function AgentAvatar({
         "flex items-center justify-center shrink-0",
         rounded,
         size,
-        isDefault
-          ? "bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600"
-          : "shadow-sm",
+        useGlobalTheme
+          ? "gradient-primary-br text-white shadow-sm"
+          : isDefault
+            ? "bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600"
+            : "shadow-sm",
         isStreaming && "animate-pulse",
         className,
       )}

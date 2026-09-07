@@ -2,12 +2,22 @@ import type { Document } from "mongodb";
 import { NextRequest } from "next/server";
 
 import {
-ApiError,
-getAuthFromBearerOrSession,
-successResponse,
-withErrorHandler,
+  ApiError,
+  getAuthFromBearerOrSession,
+  successResponse,
+  withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import {
+  createPublicationRequest,
+  listPublicationActorTeamSlugs,
+  planConnectorPublication,
+  publicationActorFromSession,
+  publicationResourceRevision,
+  recordAutoApprovedPublication,
+  replacePendingConnectorPublicationRequest,
+} from "@/lib/publication-approval.server";
+import { getPublicationApprovalSettings } from "@/lib/publication-approval-settings";
 import { ensureSlackBotOboPermissions } from "@/lib/rbac/keycloak-admin";
 import {
 OnboardingDefaultsValidationError,
@@ -15,18 +25,27 @@ readOnboardingDefaults,
 writeOnboardingDefaults,
 } from "@/lib/rbac/onboarding-defaults";
 import { writeOpenFgaTuples } from "@/lib/rbac/openfga";
-import { slackWorkspaceRef } from "@/lib/rbac/slack-channel-grant-store";
+import { requireAdminSurfaceManage } from "@/lib/rbac/require-openfga";
+import { requireResourcePermission } from "@/lib/rbac/resource-authz";
+import { configuredSlackChannelsById } from "@/lib/rbac/slack-channel-configured-directory";
 import {
-slackChannelGrantRelationship,
-slackChannelTeamVisibilityRelationships,
+  slackChannelSubjectId,
+  slackWorkspaceRef,
+} from "@/lib/rbac/slack-channel-grant-store";
+import {
+  slackChannelGrantRelationship,
+  slackChannelTeamVisibilityRelationships,
 } from "@/lib/rbac/slack-channel-rebac";
 import { buildUniversalRebacTupleDiff } from "@/lib/rbac/tuple-builders";
 import { callSlackBotAdmin } from "@/lib/slack-bot-admin";
 import type { UniversalRebacRelationship } from "@/types/rbac-universal";
 
-import { withSlackChannelRebacManageAuth,withSlackChannelRebacViewAuth } from "../_lib";
+import {
+  withSlackChannelRebacManageAuth,
+  withSlackChannelRebacViewAuth,
+} from "../_lib";
 
-interface SlackMigrationDefaultsRequest {
+export interface SlackMigrationDefaultsRequest {
   team_slug?: unknown;
   agent_id?: unknown;
   create_routes?: unknown;
@@ -112,6 +131,7 @@ interface DiscoveredSlackChannel {
   workspace_id: string;
   channel_id: string;
   channel_name: string;
+  member_count?: number;
 }
 
 interface SlackChannelImportDefault extends DiscoveredSlackChannel {
@@ -124,6 +144,13 @@ interface SlackRuntimeReloadResult {
   ok: boolean;
   result?: unknown;
   error?: string;
+}
+
+interface InspectedSlackChannel {
+  workspace_id: string;
+  channel_id: string;
+  channel_name: string;
+  member_count?: number;
 }
 
 function readRequiredString(value: unknown, field: string): string {
@@ -160,6 +187,11 @@ function normalizeDiscoveredChannels(value: unknown): DiscoveredSlackChannel[] {
       workspace_id: workspaceId,
       channel_id: channelId,
       channel_name: channelName,
+      ...(typeof record.member_count === "number" && record.member_count >= 0
+        ? { member_count: record.member_count }
+        : typeof record.num_members === "number" && record.num_members >= 0
+          ? { member_count: record.num_members }
+          : {}),
     });
   }
   return Array.from(byKey.values());
@@ -192,6 +224,11 @@ function normalizeChannelDefaults(
       channel_name: channelName,
       team_slug: teamSlug,
       agent_id: agentId,
+      ...(typeof record.member_count === "number" && record.member_count >= 0
+        ? { member_count: record.member_count }
+        : typeof record.num_members === "number" && record.num_members >= 0
+          ? { member_count: record.num_members }
+          : {}),
     });
   }
   return Array.from(byKey.values());
@@ -213,9 +250,10 @@ async function reloadSlackRuntime(): Promise<SlackRuntimeReloadResult> {
   }
 }
 
-export const POST = withErrorHandler(async (request: NextRequest) =>
-  withSlackChannelRebacManageAuth(request, async () => {
-    const body = (await request.json()) as SlackMigrationDefaultsRequest;
+export async function applySlackChannelOnboarding(
+  body: SlackMigrationDefaultsRequest,
+  actorInput = "api",
+) {
     const teamSlug = readRequiredString(body.team_slug, "team_slug");
     const agentId = readRequiredString(body.agent_id, "agent_id");
     const createRoutes = Boolean(body.create_routes);
@@ -234,7 +272,7 @@ export const POST = withErrorHandler(async (request: NextRequest) =>
             agent_id: agentId,
           }));
     const hasChannelScopedDefaults = channelDefaults.length > 0;
-    const actor = "api";
+    const actor = actorInput.trim() || "api";
     const now = new Date().toISOString();
 
     const [teams, agents, mappings, grants, routes] = await Promise.all([
@@ -576,16 +614,18 @@ export const POST = withErrorHandler(async (request: NextRequest) =>
 
     const openfga = await writeOpenFgaTuples(
       buildUniversalRebacTupleDiff({ writes, deletes: deleteRelationships })
-    ).catch((error) => ({
-      enabled: false,
-      writes: 0,
-      deletes: 0,
-      error: error instanceof Error ? error.message : "OpenFGA tuple write failed",
-    }));
+    );
+    if (!openfga.enabled) {
+      throw new ApiError(
+        "Slack channel onboarding requires OpenFGA reconciliation",
+        503,
+        "OPENFGA_RECONCILIATION_REQUIRED",
+      );
+    }
 
     const runtimeReload = await reloadSlackRuntime();
 
-    return successResponse({
+    return {
       summary: {
         channels_seen: channels.length,
         channels_discovered: channelDefaults.length,
@@ -605,6 +645,196 @@ export const POST = withErrorHandler(async (request: NextRequest) =>
       },
       openfga,
       runtime_reload: runtimeReload,
-    });
-  })
+    };
+}
+
+export const POST = withErrorHandler(async (request: NextRequest) =>
+  {
+    const { session } = await getAuthFromBearerOrSession(request);
+    const body = (await request.json()) as SlackMigrationDefaultsRequest;
+    const canManageSurface = await requireAdminSurfaceManage(session, "slack").then(
+      () => true,
+      () => false,
+    );
+    const hasExplicitSelfServiceSelection = Array.isArray(body.channel_defaults);
+    if (canManageSurface && !hasExplicitSelfServiceSelection) {
+      // Legacy bulk migration/reconciliation has no newly selected channel to
+      // publish. Explicit channel onboarding below follows the same approval
+      // policy for administrators and members; trusted-publisher policy is the
+      // configurable bypass.
+      return successResponse(await applySlackChannelOnboarding(
+        body,
+        session.user?.email ?? "api",
+      ));
+    }
+
+    const fallbackTeamSlug = readRequiredString(body.team_slug, "team_slug");
+    const fallbackAgentId = readRequiredString(body.agent_id, "agent_id");
+    const channels = normalizeChannelDefaults(
+      body.channel_defaults,
+      fallbackTeamSlug,
+      fallbackAgentId,
+    );
+    if (channels.length === 0) {
+      throw new ApiError(
+        "Select at least one Slack channel for self-service onboarding",
+        400,
+        "CHANNEL_SELECTION_REQUIRED",
+      );
+    }
+    const verifiedChannels = await Promise.all(
+      channels.map(async (channel): Promise<SlackChannelImportDefault> => {
+        const provider = await callSlackBotAdmin<InspectedSlackChannel>(
+          "/admin/slack/channels/inspect",
+          {
+            method: "POST",
+            body: { channel_id: channel.channel_id },
+          },
+        );
+        if (
+          provider.channel_id !== channel.channel_id ||
+          !provider.workspace_id?.trim() ||
+          !provider.channel_name?.trim()
+        ) {
+          throw new ApiError(
+            "Slack returned inconsistent channel metadata",
+            502,
+            "SLACK_CHANNEL_METADATA_INVALID",
+          );
+        }
+        const verified: SlackChannelImportDefault = {
+          workspace_id: slackWorkspaceRef(provider.workspace_id),
+          channel_id: channel.channel_id,
+          channel_name: provider.channel_name.trim(),
+          team_slug: channel.team_slug,
+          agent_id: channel.agent_id,
+        };
+        if (
+          typeof provider.member_count === "number" &&
+          Number.isFinite(provider.member_count) &&
+          provider.member_count >= 0
+        ) {
+          verified.member_count = provider.member_count;
+        }
+        return verified;
+      }),
+    );
+    const configuredById = await configuredSlackChannelsById(
+      verifiedChannels.map((channel) => channel.channel_id),
+    );
+    const conflict = verifiedChannels.find((channel) =>
+      configuredById.has(channel.channel_id),
+    );
+    if (conflict) {
+      const configured = configuredById.get(conflict.channel_id);
+      const team = configured?.teamName ?? configured?.teamSlug ?? "another team";
+      throw new ApiError(
+        `#${conflict.channel_name.replace(/^#/, "")} is already configured by ${team}`,
+        409,
+        "CHANNEL_ALREADY_CONFIGURED",
+      );
+    }
+    if (!canManageSurface) {
+      await Promise.all(
+        verifiedChannels.flatMap((channel) => [
+          requireResourcePermission(session, {
+            type: "team",
+            id: channel.team_slug,
+            action: "use",
+          }),
+          requireResourcePermission(session, {
+            type: "agent",
+            id: channel.agent_id,
+            action: "use",
+          }),
+        ]),
+      );
+    }
+
+    const actor = publicationActorFromSession(session);
+    const [settings, requesterTeamSlugs] = await Promise.all([
+      getPublicationApprovalSettings(),
+      listPublicationActorTeamSlugs(actor),
+    ]);
+    const pending = [];
+    const applied = [];
+    for (const channel of verifiedChannels) {
+      const requestedState = {
+        team_slug: channel.team_slug,
+        agent_id: channel.agent_id,
+        create_routes: body.create_routes !== false,
+        channel_defaults: [channel],
+      };
+      const plan = planConnectorPublication({
+        settings,
+        requester: actor,
+        requesterTeamSlugs,
+        resourceKind: "slack_channel",
+        requestedState,
+        targetTeamSlug: channel.team_slug,
+        memberCount: channel.member_count,
+      });
+      const resource = {
+        kind: "slack_channel" as const,
+        id: slackChannelSubjectId(channel.workspace_id, channel.channel_id),
+        label: `Slack: #${channel.channel_name.replace(/^#/, "")}`,
+      };
+      const revision = publicationResourceRevision({
+        status: "not_onboarded",
+        requested_state: requestedState,
+      });
+      await replacePendingConnectorPublicationRequest(
+        resource,
+        actor,
+        "A newer Slack onboarding request replaced this proposal.",
+      );
+      if (plan.requires_approval) {
+        const publicationRequest = await createPublicationRequest({
+          resource,
+          resourceRevision: revision,
+          requestedState,
+          effectiveState: {},
+          riskFacts: plan.risk_facts,
+          requester: actor,
+          requesterTeamSlugs,
+          approverTeamSlugs: plan.approver_team_slugs,
+          approverUserSubjects: plan.approver_user_subjects,
+        });
+        pending.push({
+          id: publicationRequest._id,
+          item_id: channel.channel_id,
+          resource,
+          status: publicationRequest.status,
+          reason: plan.reason,
+          approver_team_slugs: publicationRequest.approver_team_slugs,
+          approver_user_subjects: publicationRequest.approver_user_subjects ?? [],
+        });
+      } else {
+        const result = await applySlackChannelOnboarding(
+          requestedState,
+          actor.email ?? actor.subject,
+        );
+        applied.push({ item_id: channel.channel_id, resource, result });
+        await recordAutoApprovedPublication({
+          resource,
+          resourceRevision: revision,
+          requestedState,
+          effectiveState: requestedState,
+          riskFacts: plan.risk_facts,
+          requester: actor,
+          requesterTeamSlugs,
+          approverTeamSlugs: plan.approver_team_slugs,
+          approverUserSubjects: plan.approver_user_subjects,
+        });
+      }
+    }
+    return successResponse(
+      {
+        summary: { pending: pending.length, onboarded: applied.length },
+        publication_requests: pending,
+        applied,
+      },
+      pending.length > 0 ? 202 : 200,
+    );
+  }
 );

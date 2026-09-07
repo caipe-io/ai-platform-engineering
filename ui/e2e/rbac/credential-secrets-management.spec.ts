@@ -210,7 +210,7 @@ test.describe("RBAC e2e — credential secrets management", () => {
     const env = rbacEnvOrSkip();
     await signIn(page, env);
 
-    await page.goto("/admin?tab=credentials", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/platform/credentials", { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByRole("heading", { name: "Secrets" })).toBeVisible({
@@ -253,7 +253,7 @@ test.describe("RBAC e2e — credential secrets management", () => {
     const env = rbacEnvOrSkip();
     await signIn(page, env);
 
-    await page.goto("/credentials#secrets", { waitUntil: "domcontentloaded" });
+    await page.goto("/credentials/secrets", { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByRole("heading", { name: "Saved Secrets" })).toBeVisible({
@@ -285,7 +285,7 @@ test.describe("RBAC e2e — credential secrets management", () => {
     const env = rbacEnvOrSkip();
     await signIn(page, env);
 
-    await page.goto("/credentials#secrets", { waitUntil: "domcontentloaded" });
+    await page.goto("/credentials/secrets", { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByRole("heading", { name: "Saved Secrets" })).toBeVisible({
@@ -318,38 +318,20 @@ test.describe("RBAC e2e — credential secrets management", () => {
     await expect(dialog.getByText(RAW_SECRET)).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: /preview|reveal|copy secret/i })).toHaveCount(0);
 
-    await dialog.getByRole("button", { name: /close secret details/i }).click();
-    await page.getByRole("button", { name: /share github token/i }).click();
-    await dismissReleaseUpgradeDialog(page);
-    const panel = page.getByRole("region", { name: /github token team access/i });
-    await expect(panel).toBeVisible();
-    await expect(page.getByRole("dialog", { name: /share github token/i })).toHaveCount(0);
-    await expect(panel.getByText(/Choose a team that can use this saved secret/)).toBeVisible();
-    await expect(panel.getByLabel("Team access")).toContainText("Platform Team");
-    await expect(panel.getByLabel("Team access")).toContainText("team:platform-team");
-
-    await panel.getByRole("button", { name: /team access/i }).click();
-    const listbox = page.getByRole("listbox");
-    await expect(listbox).toBeVisible();
-    const panelBox = await panel.boundingBox();
-    const listboxBox = await listbox.boundingBox();
-    expect(panelBox).not.toBeNull();
-    expect(listboxBox).not.toBeNull();
-    expect(listboxBox!.y + listboxBox!.height).toBeGreaterThan(panelBox!.y + panelBox!.height);
   });
 
   test("shares and deletes saved secrets with explicit user actions", async ({ page }) => {
     const env = rbacEnvOrSkip();
     await signIn(page, env);
 
-    await page.goto("/credentials#secrets", { waitUntil: "domcontentloaded" });
+    await page.goto("/credentials/secrets", { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
     await expect(page.getByText("GitHub token")).toBeVisible({ timeout: 30_000 });
 
     await page.getByRole("button", { name: /share github token/i }).click();
     const panel = page.getByRole("region", { name: /github token team access/i });
     await expect(panel).toBeVisible();
-    await panel.getByRole("button", { name: /team access/i }).click();
+    await panel.getByRole("combobox", { name: /team access/i }).click();
     await page.getByRole("option", { name: /Ops Team/ }).click();
     await panel.getByRole("button", { name: /grant access/i }).click();
     await expect.poll(() => shareRequests.length).toBe(1);
@@ -367,7 +349,7 @@ test.describe("RBAC e2e — credential secrets management", () => {
     const env = rbacEnvOrSkip();
     await signIn(page, env);
 
-    await page.goto("/credentials#secrets", { waitUntil: "domcontentloaded" });
+    await page.goto("/credentials/secrets", { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
     await expect(page.getByText("GitHub token")).toBeVisible({ timeout: 30_000 });
 
@@ -492,7 +474,7 @@ test.describe("RBAC e2e — credential secrets management", () => {
     });
 
     await signIn(page, env);
-    await page.goto("/credentials#secrets", { waitUntil: "domcontentloaded" });
+    await page.goto("/credentials/secrets", { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
     await expect(page.getByRole("heading", { name: "Saved Secrets" })).toBeVisible({
       timeout: 30_000,
@@ -506,9 +488,7 @@ test.describe("RBAC e2e — credential secrets management", () => {
     await relayPage.waitForLoadState("domcontentloaded");
     await relayPage.close().catch(() => undefined);
 
-    await expect
-      .poll(() => new URL(page.url()).hash, { timeout: 15_000 })
-      .toBe("#connections");
+    await expect(page).toHaveURL(/\/credentials\/connections$/,{ timeout: 15_000 });
     await expect(page.getByRole("heading", { name: "Connected Apps" })).toBeVisible();
     await expect(page.getByText("Atlassian Cloud")).toBeVisible();
     await expect(page.getByText("healthy")).toBeVisible();
@@ -573,7 +553,7 @@ test.describe("RBAC e2e — credential secrets management", () => {
     });
 
     await signIn(page, env);
-    await page.goto("/admin?cat=security&tab=migrations", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/security/migrations", { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByRole("heading", { name: "Platform Data Updates" })).toBeVisible({

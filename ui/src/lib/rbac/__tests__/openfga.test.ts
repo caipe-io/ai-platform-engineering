@@ -437,7 +437,6 @@ describe("OpenFGA team resource tuple reconciliation", () => {
     ).toEqual([
       { user: "user:alice-sub", relation: "owner", object: "knowledge_base:kb-team" },
       { user: "team:platform#member", relation: "reader", object: "knowledge_base:kb-team" },
-      { user: "team:platform#member", relation: "ingestor", object: "knowledge_base:kb-team" },
       { user: "team:platform#admin", relation: "manager", object: "knowledge_base:kb-team" },
     ]);
   });

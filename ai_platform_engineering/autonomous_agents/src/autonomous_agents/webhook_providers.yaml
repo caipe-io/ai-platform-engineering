@@ -1,0 +1,113 @@
+# =============================================================================
+# Webhook provider adapters
+# =============================================================================
+# Tells the autonomous-agents service how to verify HMAC signatures, parse
+# replay-protection timestamps, and identify ping/health-check deliveries
+# for each upstream that posts to /api/v1/hooks/{task_id}.
+#
+# A WebhookTrigger picks an adapter via the per-task ``provider`` field.
+# At startup the service loads this file once via services.webhook_adapters.load_adapters;
+# the operator can override the file path with WEBHOOK_PROVIDERS_FILE.
+#
+# Schema reference (see services/webhook_adapters.py for the parser):
+#
+#   providers:
+#     <provider_id>:
+#       signature:
+#         header: <HTTP header name carrying the signature>
+#         scheme: prefixed_hex | kv_csv | raw_base64
+#         prefix: "<sha256=>"      # for prefixed_hex
+#         signature_keys: [v1]     # for kv_csv (one or more)
+#         timestamp_key: t         # for kv_csv when timestamp lives inside
+#         algorithm: sha256 | sha1 | sha512
+#         encoding: hex | base64   # output of HMAC; default hex
+#       timestamp:                 # optional block
+#         header: <header name>
+#         format: unix_seconds
+#         tolerance_seconds: <int> # provider-mandated default
+#         required: true|false     # when true, missing ts is 401
+#         bind_into_payload: true  # github-style: only sign ts.body when window>0
+#       payload_template: "{body}" # default
+#       timestamped_payload_template: "{timestamp}.{body}"  # used when ts is bound
+#       ping:                      # optional short-circuit
+#         header: <header>
+#         value: <case-insensitive match>
+#       dedup_header: <header>     # default per-delivery id (overridable per task)
+# =============================================================================
+
+providers:
+  github:
+    signature:
+      header: X-Hub-Signature-256
+      scheme: prefixed_hex
+      prefix: "sha256="
+      algorithm: sha256
+      encoding: hex
+    timestamp:
+      header: X-Webhook-Timestamp
+      format: unix_seconds
+      bind_into_payload: true
+      required: false
+    payload_template: "{body}"
+    timestamped_payload_template: "{timestamp}.{body}"
+    ping:
+      header: X-GitHub-Event
+      value: ping
+    dedup_header: X-GitHub-Delivery
+
+  slack:
+    signature:
+      header: X-Slack-Signature
+      scheme: prefixed_hex
+      prefix: "v0="
+      algorithm: sha256
+      encoding: hex
+    timestamp:
+      header: X-Slack-Request-Timestamp
+      format: unix_seconds
+      tolerance_seconds: 300
+      required: true
+    payload_template: "v0:{timestamp}:{body}"
+
+  pagerduty:
+    signature:
+      header: X-PagerDuty-Signature
+      scheme: kv_csv
+      signature_keys: [v1]
+      algorithm: sha256
+      encoding: hex
+    payload_template: "{body}"
+
+  jira:
+    signature:
+      header: X-Hub-Signature
+      scheme: prefixed_hex
+      prefix: "sha256="
+      algorithm: sha256
+      encoding: hex
+    payload_template: "{body}"
+    dedup_header: X-Atlassian-Webhook-Identifier
+
+  webex:
+    signature:
+      header: X-Spark-Signature
+      scheme: prefixed_hex
+      prefix: ""
+      algorithm: sha1
+      encoding: hex
+    payload_template: "{body}"
+
+  generic_hmac:
+    signature:
+      header: X-Webhook-Signature-256
+      scheme: prefixed_hex
+      prefix: "sha256="
+      algorithm: sha256
+      encoding: hex
+    timestamp:
+      header: X-Webhook-Timestamp
+      format: unix_seconds
+      bind_into_payload: true
+      required: false
+    payload_template: "{body}"
+    timestamped_payload_template: "{timestamp}.{body}"

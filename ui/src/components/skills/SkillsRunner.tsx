@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
 import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
 import { getConfig } from "@/lib/config";
+import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import { getMarkdownComponents } from "@/lib/markdown-components";
 import { createStreamAdapter,type StreamAdapter,type StreamCallbacks } from "@/lib/streaming";
 import type { InputFieldDefinition } from "@/lib/streaming/types";
@@ -344,7 +346,7 @@ function UserInputForm({
             )}
             
             {field.type === "select" && field.options ? (
-              <select
+              <Select
                 value={formData[field.name] || ""}
                 onChange={(e) => {
                   setFormData(prev => ({ ...prev, [field.name]: e.target.value }));
@@ -361,7 +363,7 @@ function UserInputForm({
                 {field.options.map(opt => (
                   <option key={opt} value={opt}>{opt}</option>
                 ))}
-              </select>
+              </Select>
             ) : field.type === "boolean" ? (
               <div className="flex gap-4">
                 {["Yes", "No"].map(opt => (
@@ -1517,7 +1519,7 @@ export function SkillsRunner({
           <Button 
             variant="ghost" 
             size="icon" 
-            onClick={() => router.push('/')}
+            onClick={() => pushWithNavigationProgress(router,'/')}
             title="Go to home page"
           >
             <LayoutGrid className="h-5 w-5" />
@@ -1526,7 +1528,7 @@ export function SkillsRunner({
           <Button 
             variant="ghost" 
             size="icon" 
-            onClick={() => router.push('/skills')}
+            onClick={() => pushWithNavigationProgress(router,'/skills')}
             title="Back to Skills"
           >
             <ArrowLeft className="h-5 w-5" />

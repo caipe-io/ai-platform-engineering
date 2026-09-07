@@ -28,7 +28,6 @@ The Webloader must run **alongside the RAG server** with access to the **same Re
 
 ## Optional Environment Variables
 
-- `WEBLOADER_CHECK_INTERVAL` - How often to check if datasources need reloading, in seconds (default: `600` = 10 minutes)
 - `WEBLOADER_MAX_INGESTION_TASKS` - Max concurrent ingestion tasks (default: `5`)
 - `LOG_LEVEL` - Logging level (default: `INFO`)
 
@@ -58,7 +57,7 @@ In addition to `ScrapySettings`, the URL ingestion request supports:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `reload_interval` | `null` | Per-datasource auto-reload interval in seconds. If not set, uses global `WEBLOADER_RELOAD_INTERVAL`. Minimum: 60 seconds. |
+| `reload_interval` | required | Per-datasource auto-reload interval in seconds. Minimum: 60 seconds. |
 
 **Example request with custom reload interval:**
 ```json

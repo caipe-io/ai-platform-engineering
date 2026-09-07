@@ -3,7 +3,7 @@
 **Feature Branch**: `ai-platform-engineering-feat-comprehensive-rbac`
 **Created**: 2026-05-18
 **Status**: Draft
-**Input**: User description: "add https://github.com/cnoe-io/ai-platform-engineering/pull/1329 and https://github.com/cnoe-io/ai-platform-engineering/pull/1038 as webex bot integration and setup with the same RBAC UI capabilities as slack, Webex spaces instead of channels"
+**Input**: User description: "add https://github.com/caipe-io/ai-platform-engineering/pull/1329 and https://github.com/caipe-io/ai-platform-engineering/pull/1038 as webex bot integration and setup with the same RBAC UI capabilities as slack, Webex spaces instead of channels"
 
 ## Clarifications
 

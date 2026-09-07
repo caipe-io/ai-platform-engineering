@@ -1,4 +1,5 @@
 import { ApiError,requireRbacPermission } from "@/lib/api-middleware";
+import { isEveryoneTeamSlug } from "@/lib/rbac/reserved-teams";
 import { findUserRoleInTeam } from "@/lib/rbac/team-membership-store";
 
 /**
@@ -11,6 +12,20 @@ import { findUserRoleInTeam } from "@/lib/rbac/team-membership-store";
  */
 interface TeamLike {
   slug?: string;
+}
+
+/**
+ * The Everyone team controls defaults that may affect every user. A scoped
+ * team-admin grant is therefore insufficient for mutations; only a platform
+ * admin may change it.
+ */
+export async function requireReservedTeamMutationPermission(
+  session: { accessToken?: string; sub?: string; org?: string; user?: { email?: string } },
+  team: TeamLike,
+): Promise<void> {
+  if (isEveryoneTeamSlug(team.slug)) {
+    await requireRbacPermission(session, "admin_ui", "admin");
+  }
 }
 
 /**
@@ -34,6 +49,11 @@ export async function requireTeamMembershipManagementPermission(
   actorEmail: string | undefined,
   team: TeamLike
 ): Promise<"platform_admin" | "team_admin"> {
+  if (isEveryoneTeamSlug(team.slug)) {
+    await requireRbacPermission(session, "admin_ui", "admin");
+    return "platform_admin";
+  }
+
   try {
     await requireRbacPermission(session, "admin_ui", "admin");
     return "platform_admin";

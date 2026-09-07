@@ -9,7 +9,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from dynamic_agents.auth.auth import get_user_context
-from dynamic_agents.auth.authz import require_agent_use_permission
+from dynamic_agents.auth.authz import (
+    require_agent_use_permission,
+    require_autonomous_permission,
+)
 from dynamic_agents.config import get_settings
 from dynamic_agents.log_config import conversation_id_var
 from dynamic_agents.models import ChatRequest, ClientContext, DynamicAgentConfig, InputFile, UserContext
@@ -27,6 +30,18 @@ from dynamic_agents.services.runtime_cache import (
 from dynamic_agents.services.stream_encoders import StreamEncoder, get_encoder
 
 logger = logging.getLogger(__name__)
+
+
+async def _enforce_chat_authz(*, agent_id: str, user_sub: str | None, autonomous: bool) -> None:
+    """Authorize a chat call.
+
+    Every caller needs access to the selected agent. Autonomous calls also
+    require the user to belong to at least one autonomous-enabled team.
+    """
+    await require_agent_use_permission(agent_id, delegated_user_sub=user_sub)
+    if autonomous:
+        await require_autonomous_permission(delegated_user_sub=user_sub)
+
 
 # Fields that CANNOT be overridden via config_override
 _REJECTED_OVERRIDE_FIELDS: set[str] = {
@@ -450,7 +465,11 @@ async def chat_start_stream(
     # Set conversation context for logging
     conversation_id_var.set(request.conversation_id)
 
-    await require_agent_use_permission(request.agent_id)
+    await _enforce_chat_authz(
+        agent_id=request.agent_id,
+        user_sub=getattr(user, "sub", None),
+        autonomous=getattr(request, "autonomous", False),
+    )
 
     # Get agent config after the runtime policy check passes.
     agent = mongo.get_agent(request.agent_id)
@@ -588,7 +607,11 @@ async def chat_resume_stream(
     # Set conversation context for logging
     conversation_id_var.set(request.conversation_id)
 
-    await require_agent_use_permission(request.agent_id)
+    await _enforce_chat_authz(
+        agent_id=request.agent_id,
+        user_sub=getattr(user, "sub", None),
+        autonomous=getattr(request, "autonomous", False),
+    )
 
     # Get agent config after the runtime policy check passes.
     agent = mongo.get_agent(request.agent_id)
@@ -653,7 +676,11 @@ async def chat_invoke(
     # Set conversation context for logging
     conversation_id_var.set(request.conversation_id)
 
-    await require_agent_use_permission(request.agent_id)
+    await _enforce_chat_authz(
+        agent_id=request.agent_id,
+        user_sub=getattr(user, "sub", None),
+        autonomous=getattr(request, "autonomous", False),
+    )
 
     # Get agent config after the runtime policy check passes.
     agent = mongo.get_agent(request.agent_id)

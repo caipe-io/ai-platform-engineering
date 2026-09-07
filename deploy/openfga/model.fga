@@ -89,12 +89,19 @@ type organization
     # per-tool `mcp_tool#can_call` and per-datasource `data_source#can_read`
     # checks; holding `can_call` alone does NOT grant search.
     # assisted-by Cursor claude-opus-4.8
-    define searcher: [team#member, team#admin]
+    # Service accounts receive this implementation-level baseline when their
+    # owner delegates at least one datasource. The datasource reader tuples
+    # remain the actual content boundary; users never manage this separately.
+    define searcher: [service_account, team#member, team#admin]
+    # Autonomous eligibility is a user capability inherited from membership in
+    # any enabled team. Agent access remains independently gated by can_use.
+    define automation_eligible: [team#member, team#admin]
     define can_use: member or admin
     define can_manage: admin
     define can_audit: auditor or admin
     define can_ingest: ingestor or admin
     define can_search: searcher or admin
+    define can_automate: automation_eligible or admin
     define can_read_self: member or admin
     define can_manage_self: member or admin
     define can_search_directory: member or admin
@@ -259,6 +266,25 @@ type tool
 #   3. `can_manage` resolves through `manager` (team admin) and/or `owner`.
 #   4. The authored .fga and the chart JSON forms match for that type.
 # ───────────────────────────────────────────────────────────────────────────
+type rag_collection
+  relations
+    define creator: [user]
+    define owner: [user, service_account]
+    define reader: [user, user:*, service_account, team#member, team#admin, external_group#member, slack_channel, webex_space]
+    define publisher: [user, service_account, team#member, team#admin]
+    define manager: [user, service_account, team#admin, organization#admin]
+    define auditor: [user, service_account, team#admin]
+    # Collection maintenance and query access are deliberately independent.
+    # Owners/publishers/managers can discover the control-plane object, but
+    # indexed content flows only through an explicit reader relationship.
+    define can_discover: can_read or can_publish or can_manage
+    define can_read: reader
+    define can_use: can_read
+    define can_write: can_publish
+    define can_publish: publisher or can_manage or owner
+    define can_manage: manager or owner
+    define can_audit: auditor or can_manage
+
 type knowledge_base
   relations
     define creator: [user]
@@ -267,8 +293,12 @@ type knowledge_base
     define ingestor: [user, service_account, team#member, team#admin, external_group#member]
     define manager: [user, service_account, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
+    # A source may belong to several RAG collections. Collections confer only
+    # query/read access; connector management and ingestion remain source-level
+    # grants so publishing a source never lets readers mutate it.
+    define parent_collection: [rag_collection]
     define can_discover: can_read
-    define can_read: reader or can_ingest or can_manage or owner
+    define can_read: reader or can_ingest or can_manage or owner or can_read from parent_collection
     define can_use: can_read
     define can_write: can_ingest
     define can_ingest: ingestor or can_manage or owner
@@ -424,7 +454,7 @@ type policy
   relations
     define reader: [user, service_account, team#admin]
     define writer: [user, service_account, team#admin]
-    define approver: [user, service_account, team#admin]
+    define approver: [user, service_account, team#member, team#admin]
     define manager: [user, service_account, team#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read

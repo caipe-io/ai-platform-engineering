@@ -58,3 +58,7 @@ Create the name of the service account to use.
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{- define "openfga.platformClientTokenUrl" -}}
+{{- .Values.init.platformClient.tokenUrl | default (printf "http://%s-keycloak:8080/realms/caipe/protocol/openid-connect/token" .Release.Name) -}}
+{{- end }}

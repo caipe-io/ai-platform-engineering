@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 # ruff: noqa: E402
 """
@@ -129,11 +129,7 @@ RBAC_ENABLED = os.environ.get("SLACK_RBAC_ENABLED", "false").lower() == "true"
 if RBAC_ENABLED:
     from utils.identity_linker import (
         resolve_slack_user,
-        generate_linking_url,
         auto_bootstrap_slack_user,
-        SLACK_FORCE_LINK,
-        should_preauth_prompt,
-        mark_preauth_prompted,
     )
     from utils.channel_team_resolver import (
         resolve_channel_team,
@@ -161,8 +157,7 @@ if RBAC_ENABLED:
         """
         keycloak_user_id = await resolve_slack_user(slack_user_id)
         if keycloak_user_id is None:
-            if not SLACK_FORCE_LINK:
-                keycloak_user_id = await auto_bootstrap_slack_user(slack_user_id)
+            keycloak_user_id = await auto_bootstrap_slack_user(slack_user_id)
             if keycloak_user_id is None:
                 return "unlinked"
 
@@ -1212,13 +1207,22 @@ def rbac_global_middleware(body, context, next, logger):
             bot_loop = asyncio.new_event_loop()
             unlinked_token = bot_loop.run_until_complete(_mint_unlinked_obo_token())
         except Exception as exc:
-            logger.warning("[{}] rbac_global_middleware: unlinked SA mint failed for bot={}: {}", event.get("ts"), bot_slack_user_id, exc)
+            logger.warning(
+                "[%s] rbac_global_middleware: unlinked SA mint failed for bot=%s: %s",
+                event.get("ts"),
+                bot_slack_user_id,
+                exc,
+            )
             unlinked_token = None
         finally:
             if bot_loop is not None:
                 bot_loop.close()
         if unlinked_token is None:
-            logger.warning("[{}] rbac_global_middleware: no unlinked SA available, dropping bot message from {}", event.get("ts"), bot_slack_user_id)
+            logger.warning(
+                "[%s] rbac_global_middleware: no unlinked SA available, dropping bot message from %s",
+                event.get("ts"),
+                bot_slack_user_id,
+            )
             return _HANDLED_200
         context["obo_token"] = unlinked_token
         context["unlinked_fallback"] = True
@@ -1291,12 +1295,6 @@ def rbac_global_middleware(body, context, next, logger):
         async def _mint_wrapper() -> str | None:
             return await _mint_unlinked_obo_token()
 
-        async def _linking_url_wrapper(uid: str) -> str | None:
-            try:
-                return await generate_linking_url(uid)
-            except Exception:
-                return None
-
         fallback_loop = None
         try:
             fallback_loop = asyncio.new_event_loop()
@@ -1307,7 +1305,7 @@ def rbac_global_middleware(body, context, next, logger):
                     channel=channel,
                     context=context,
                     mint_fn=_mint_wrapper,
-                    linking_url_fn=_linking_url_wrapper,
+                    linking_url_fn=None,
                     last_sent=last_sent,
                     linking_prompt_cooldown=_LINKING_PROMPT_COOLDOWN,
                     is_dm_channel_fn=is_dm_channel,
@@ -1977,52 +1975,6 @@ def handle_dm_message(event, say, client, context=None):
     if not message_text or not message_text.strip():
       say(text="Please include a question or message!", thread_ts=thread_ts)
       return
-
-    # 098 RBAC: Check if user needs pre-auth prompt on first message
-    if RBAC_ENABLED:
-      try:
-        should_prompt = asyncio.run(should_preauth_prompt(user_id))
-        if should_prompt:
-          linking_url = generate_linking_url(user_id)
-          asyncio.run(mark_preauth_prompted(user_id))
-
-          say(
-            blocks=[
-              {
-                "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": f"Hi {user_name}! 👋\n\nBefore I can help you, I need to authenticate your account.",
-                },
-              },
-              {
-                "type": "actions",
-                "elements": [
-                  {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Authenticate Now"},
-                    "style": "primary",
-                    "url": linking_url,
-                  },
-                ],
-              },
-              {
-                "type": "context",
-                "elements": [
-                  {
-                    "type": "mrkdwn",
-                    "text": "This is a one-time setup. After authentication, I'll be able to answer your questions.",
-                  },
-                ],
-              },
-            ],
-            text=f"Hi {user_name}, please authenticate to proceed.",
-            thread_ts=thread_ts,
-          )
-          logger.info(f"[{thread_ts}] Sent pre-auth prompt to unlinked user {user_id}")
-          return
-      except Exception as e:
-        logger.warning(f"[{thread_ts}] Error checking preauth status: {e}")
 
     bot_info = client.auth_test()
     bot_user_id = bot_info.get("user_id")

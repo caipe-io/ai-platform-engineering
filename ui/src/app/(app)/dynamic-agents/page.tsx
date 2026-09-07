@@ -5,19 +5,25 @@
 import { AuthGuard } from "@/components/auth-guard";
 import { ConversationsTab } from "@/components/dynamic-agents/ConversationsTab";
 import { DynamicAgentsTab } from "@/components/dynamic-agents/DynamicAgentsTab";
+import { LLMModelsTab } from "@/components/dynamic-agents/LLMModelsTab";
 import { LLMProvidersTab } from "@/components/dynamic-agents/LLMProvidersTab";
 import { MCPServersTab } from "@/components/dynamic-agents/MCPServersTab";
 import { isAgentSetupStep,type AgentSetupStep } from "@/components/dynamic-agents/deep-linking";
+import {
+  BASE_DYNAMIC_AGENT_TABS,
+  buildDynamicAgentNavigationGroups,
+} from "@/components/dynamic-agents/navigation";
+import {
+  WorkspaceNavigationList,
+} from "@/components/layout/WorkspaceNavigation";
+import { WorkspacePageHeader } from "@/components/layout/WorkspacePageHeader";
+import { WorkspaceShell } from "@/components/layout/WorkspaceShell";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs,TabsContent,TabsList,TabsTrigger } from "@/components/ui/tabs";
 import { useAdminTabGates } from "@/hooks/useAdminTabGates";
 import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
-import { Bot,Cpu,MessageSquare,Server } from "lucide-react";
 import { usePathname,useRouter,useSearchParams } from "next/navigation";
 import React from "react";
 
-const BASE_VISIBLE_TABS = ["agents", "mcp-servers", "llm-models"] as const;
 const RESOURCE_QUERY_KEYS = ["agent", "server", "model", "step"] as const;
 
 function DynamicAgentsPageContent() {
@@ -27,7 +33,11 @@ function DynamicAgentsPageContent() {
   const { gates } = useAdminTabGates();
   const showConversations = Boolean(gates.dynamic_agent_conversations);
   const visibleTabs = React.useMemo(
-    () => new Set<string>(showConversations ? [...BASE_VISIBLE_TABS, "conversations"] : BASE_VISIBLE_TABS),
+    () => new Set<string>(
+      showConversations
+        ? [...BASE_DYNAMIC_AGENT_TABS, "conversations"]
+        : BASE_DYNAMIC_AGENT_TABS,
+    ),
     [showConversations],
   );
 
@@ -55,11 +65,15 @@ function DynamicAgentsPageContent() {
     RESOURCE_QUERY_KEYS.forEach((key) => params.delete(key));
   }
 
-  function performTabSwitch(tab: string) {
+  function hrefForTab(tab: string): string {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", tab);
     clearResourceSelection(params);
-    router.push(hrefFor(params));
+    return hrefFor(params);
+  }
+
+  function performTabSwitch(tab: string) {
+    router.push(hrefForTab(tab));
   }
 
   function selectResource(tab: "agents" | "mcp-servers" | "llm-models", key: "agent" | "server" | "model", id: string | null) {
@@ -103,73 +117,106 @@ function DynamicAgentsPageContent() {
     setPendingTab(null);
   }
 
+  const navigationGroups = buildDynamicAgentNavigationGroups({
+    destinationForTab: (tab) => ({
+      onSelect: () => setActiveTab(tab),
+    }),
+    showConversations,
+  });
+  const activeNavigationItem = navigationGroups
+    .flatMap((group) => group.items)
+    .flatMap((item) => item.children ?? [item])
+    .find((item) => item.id === activeTab)!;
+  const activeDescription = {
+    agents: "Build agents and choose the instructions, tools, and model they use.",
+    conversations: "Review agent conversations and manage their checkpoint history.",
+    "llm-models": "Register the provider and model identifiers available to agents.",
+    "mcp-servers": "Configure MCP connections and authorize each tool call through AgentGateway.",
+    "model-providers": "Save the provider credentials agents need to use each model.",
+  }[activeTab] ?? activeNavigationItem.description ?? "";
+  const agentHomeHref = hrefForTab("agents");
+  const modelsHref = hrefForTab("model-providers");
+  const currentHref = hrefFor(new URLSearchParams(searchParams.toString()));
+  const switchFromBreadcrumb = (
+    tab: string,
+  ): React.MouseEventHandler<HTMLAnchorElement> => (event) => {
+    if (
+      event.button !== 0
+      || event.metaKey
+      || event.ctrlKey
+      || event.shiftKey
+      || event.altKey
+    ) return;
+    event.preventDefault();
+    setActiveTab(tab);
+  };
+
   return (
-    <div className="flex-1 overflow-hidden">
-      <ScrollArea className="h-full">
-        <div className="p-6 space-y-6 max-w-7xl mx-auto">
-          {/* Header */}
-          <div className="space-y-1">
-            <h1 className="text-2xl font-bold tracking-tight">Agents</h1>
-            <p className="text-muted-foreground">
-              Create and configure custom AI agents with MCP tool integrations.
-            </p>
-          </div>
+    <>
+      <WorkspaceShell
+        header={(
+          <WorkspacePageHeader
+            breadcrumbs={[
+              { label: "Home",href: "/" },
+              ...(activeTab === "agents"
+                ? [{ label: "Agents",href: currentHref }]
+                : [{
+                    label: "Agents",
+                    href: agentHomeHref,
+                    onClick: switchFromBreadcrumb("agents"),
+                  }]),
+              ...(activeTab === "model-providers" || activeTab === "llm-models"
+                ? [{
+                    label: "Models",
+                    href: modelsHref,
+                    onClick: switchFromBreadcrumb("model-providers"),
+                  }]
+                : []),
+              ...(activeTab === "agents"
+                ? []
+                : [{ label: activeNavigationItem.label,href: currentHref }]),
+            ]}
+            description={activeDescription}
+            title={activeNavigationItem.label}
+          />
+        )}
+        navigation={(
+          <WorkspaceNavigationList
+            activeItemId={activeTab}
+            ariaLabel="Agent sections"
+            groups={navigationGroups}
+          />
+        )}
+        navigationAreaKey="dynamic-agents"
+        navigationVersion={`${activeTab}:${showConversations}:${searchParams.toString()}`}
+      >
+        {activeTab === "agents" ? (
+          <DynamicAgentsTab
+            selectedAgentId={selectedAgentId}
+            initialStep={agentStep}
+            onSelectedAgentChange={(id) => selectResource("agents", "agent", id)}
+            onStepChange={setAgentStep}
+          />
+        ) : null}
 
-          {/* Tabs */}
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-            <TabsList className={`grid w-full max-w-xl ${showConversations ? "grid-cols-4" : "grid-cols-3"}`}>
-              <TabsTrigger value="agents" className="gap-2">
-                <Bot className="h-4 w-4" />
-                Agents
-              </TabsTrigger>
-              <TabsTrigger value="mcp-servers" className="gap-2">
-                <Server className="h-4 w-4" />
-                MCP Servers
-              </TabsTrigger>
-              <TabsTrigger value="llm-models" className="gap-2">
-                <Cpu className="h-4 w-4" />
-                LLM Models
-              </TabsTrigger>
-              {showConversations && (
-                <TabsTrigger value="conversations" className="gap-2">
-                  <MessageSquare className="h-4 w-4" />
-                  Conversations
-                </TabsTrigger>
-              )}
-            </TabsList>
+        {activeTab === "mcp-servers" ? (
+          <MCPServersTab
+            selectedServerId={selectedServerId}
+            onSelectedServerChange={(id) => selectResource("mcp-servers", "server", id)}
+          />
+        ) : null}
 
-            <TabsContent value="agents" className="space-y-4">
-              <DynamicAgentsTab
-                selectedAgentId={selectedAgentId}
-                initialStep={agentStep}
-                onSelectedAgentChange={(id) => selectResource("agents", "agent", id)}
-                onStepChange={setAgentStep}
-              />
-            </TabsContent>
+        {activeTab === "model-providers" ? <LLMProvidersTab /> : null}
 
-            <TabsContent value="mcp-servers" className="space-y-4">
-              <MCPServersTab
-                selectedServerId={selectedServerId}
-                onSelectedServerChange={(id) => selectResource("mcp-servers", "server", id)}
-              />
-            </TabsContent>
+        {activeTab === "llm-models" ? (
+          <LLMModelsTab
+            selectedModelId={selectedModelId}
+            onSelectedModelChange={(id) => selectResource("llm-models", "model", id)}
+          />
+        ) : null}
 
-            <TabsContent value="llm-models" className="space-y-4">
-              <LLMProvidersTab
-                selectedModelId={selectedModelId}
-                onSelectedModelChange={(id) => selectResource("llm-models", "model", id)}
-              />
-            </TabsContent>
-
-            {showConversations && (
-              <TabsContent value="conversations" className="space-y-4">
-                <ConversationsTab />
-              </TabsContent>
-            )}
-
-          </Tabs>
-        </div>
-      </ScrollArea>
+        {showConversations && activeTab === "conversations" ? <ConversationsTab /> : null}
+      </WorkspaceShell>
 
       <UnsavedChangesDialog
         open={pendingTab !== null}
@@ -178,7 +225,7 @@ function DynamicAgentsPageContent() {
         title="Unsaved changes"
         description="You have unsaved changes in the agent editor. They will be lost if you switch tabs."
       />
-    </div>
+    </>
   );
 }
 

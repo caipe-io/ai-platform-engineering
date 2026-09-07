@@ -2,7 +2,7 @@ import socket
 
 import pytest
 
-from common.utils import sanitize_url
+from common.utils import generate_confluence_datasource_id, sanitize_url
 
 
 def _patch_dns(monkeypatch, records: dict[str, list[str]]) -> None:
@@ -79,3 +79,26 @@ def test_sanitize_url_allows_private_when_flag_set(monkeypatch):
 
   result = sanitize_url("https://internal.example.com/docs", allow_non_public_urls=True)
   assert result == "https://internal.example.com/docs"
+
+
+def test_generate_confluence_datasource_id_preserves_legacy_space_identity():
+  assert generate_confluence_datasource_id(
+    "https://wiki.example.com/confluence",
+    "ENG",
+  ) == "src_confluence___wiki_example_com__ENG"
+
+
+def test_generate_confluence_datasource_id_scopes_ui_source_to_root_page():
+  assert generate_confluence_datasource_id(
+    "https://wiki.example.com/confluence",
+    "ENG",
+    "123456",
+  ) == "src_confluence___wiki_example_com__ENG__123456"
+
+
+def test_generate_confluence_datasource_id_makes_page_source_safe_for_managed_access():
+  assert generate_confluence_datasource_id(
+    "https://wiki.example.com:8090/confluence",
+    "Control Plane",
+    "123456",
+  ) == "src_confluence___wiki_example_com_8090__Control_Plane__123456"

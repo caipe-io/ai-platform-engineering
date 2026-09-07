@@ -67,6 +67,10 @@ import {
   TEAM_KB_OWNERSHIP_COLLECTION,
   type DropTeamKbOwnershipInputs,
 } from "./drop-team-kb-ownership";
+import {
+  ZIP_IMPORT_OWNER_BACKFILL_CONFIRMATION,
+  ZIP_IMPORT_OWNER_BACKFILL_MIGRATION_ID,
+} from "./zip-import-owner-backfill";
 import { schemaAreasNeedingVersionBootstrap } from "./schema-bootstrap";
 export {
   getUnclassifiedSchemaAreas,
@@ -450,6 +454,21 @@ export const MIGRATION_DEFINITIONS: MigrationDefinition[] = [
     confirmation: "MIGRATE agent_skills TO v2",
     required: true,
     implemented: true,
+  },
+  {
+    id: ZIP_IMPORT_OWNER_BACKFILL_MIGRATION_ID,
+    release: RELEASE_060,
+    schema_area: "agent_skills",
+    from_version: 2,
+    to_version: 3,
+    kind: "explicit",
+    title: "ZIP-imported skill owner backfill",
+    description:
+      "Writes missing owner and creator tuples for existing non-system skills created by ZIP import. It does not alter team, writer, manager, or global grants.",
+    confirmation: ZIP_IMPORT_OWNER_BACKFILL_CONFIRMATION,
+    required: true,
+    implemented: true,
+    dependencies: [AGENT_SKILL_OPENFGA_RECONCILE_MIGRATION_ID],
   },
   {
     id: TEAM_TOOL_WILDCARD_SLASH_MIGRATION_ID,
@@ -1853,7 +1872,7 @@ export function deriveMessagingRebacPlan(input: {
       if (!botId) {
         legacyRoutesRequiringBotAssignment += 1;
         warnings.push(
-          `Skipping legacy Webex route for ${workspaceId}--${resourceOwnerId}; assign a bot in the Webex Legacy migration tab.`,
+          `Skipping legacy Webex route for ${workspaceId}--${resourceOwnerId}; set bot_id on the route to migrate it.`,
         );
         continue;
       }
@@ -2170,11 +2189,6 @@ const MESSAGING_REBAC_INDEX_SPECS: NonNullable<MigrationRuntimePlan["indexes"]> 
     collection: "webex_space_grants",
     keys: { workspace_id: 1, space_id: 1, "resource.type": 1, "resource.id": 1, status: 1 },
     options: { name: "webex_space_grant_lookup" },
-  },
-  {
-    collection: "webex_link_nonces",
-    keys: { expires_at: 1 },
-    options: { expireAfterSeconds: 0, name: "webex_link_nonce_expiry" },
   },
 ];
 
@@ -3068,6 +3082,12 @@ export async function planMigration(migrationId: string, now = new Date().toISOS
     );
     return planAgentSkillOpenFgaReconcileMigration();
   }
+  if (migrationId === ZIP_IMPORT_OWNER_BACKFILL_MIGRATION_ID) {
+    const { planZipImportOwnerBackfillMigration } = await import(
+      "./zip-import-owner-backfill"
+    );
+    return planZipImportOwnerBackfillMigration();
+  }
   if (migrationId === TEAM_TOOL_WILDCARD_SLASH_MIGRATION_ID) {
     const { teams, toolTuples } = await loadTeamToolWildcardInputs();
     // The migration reads only `_id` + `resources.tools[]`; the loader returns
@@ -3369,6 +3389,21 @@ export async function applyMigration(input: {
       await import("./agent-skill-openfga-reconcile");
     const plan = await planAgentSkillOpenFgaReconcileMigration();
     const result = await applyAgentSkillOpenFgaReconcileMigration({
+      plan,
+      actor: input.actor,
+      now,
+    });
+    await recordCompletedMigration({ definition, result, now, actor: input.actor });
+    return result;
+  }
+
+  if (input.migrationId === ZIP_IMPORT_OWNER_BACKFILL_MIGRATION_ID) {
+    const {
+      planZipImportOwnerBackfillMigration,
+      applyZipImportOwnerBackfillMigration,
+    } = await import("./zip-import-owner-backfill");
+    const plan = await planZipImportOwnerBackfillMigration();
+    const result = await applyZipImportOwnerBackfillMigration({
       plan,
       actor: input.actor,
       now,

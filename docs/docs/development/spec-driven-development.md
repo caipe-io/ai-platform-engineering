@@ -79,11 +79,11 @@ Agents read these files at the start of every session to load project context:
 
 | File | Purpose |
 |------|---------|
-| [`.specify/memory/constitution.md`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.specify/memory/constitution.md) | Governing principles (10 core principles) |
-| [`.specify/ARCHITECTURE.md`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.specify/ARCHITECTURE.md) | Repo layout, key decisions, data flow |
-| [`.specify/TESTING.md`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.specify/TESTING.md) | 7-gate quality framework |
-| [`.specify/SKILLS.md`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.specify/SKILLS.md) | Skills inventory and sourcing policy |
-| [`.specify/SPECS.md`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.specify/SPECS.md) | Spec/plan conventions and lifecycle |
+| [`.specify/memory/constitution.md`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.specify/memory/constitution.md) | Governing principles (10 core principles) |
+| [`.specify/ARCHITECTURE.md`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.specify/ARCHITECTURE.md) | Repo layout, key decisions, data flow |
+| [`.specify/TESTING.md`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.specify/TESTING.md) | 7-gate quality framework |
+| [`.specify/SKILLS.md`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.specify/SKILLS.md) | Skills inventory and sourcing policy |
+| [`.specify/SPECS.md`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.specify/SPECS.md) | Spec/plan conventions and lifecycle |
 
 ## Quick start: your first feature
 
@@ -204,7 +204,7 @@ prebuild/docs/update-architecture  # Documentation
 prebuild/chore/dependency-update   # Maintenance
 ```
 
-Branches without the `prebuild/` prefix will **not** produce testable Docker images or Helm charts. See the [Constitution](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.specify/memory/constitution.md) for full CI pipeline details.
+Branches without the `prebuild/` prefix will **not** produce testable Docker images or Helm charts. See the [Constitution](https://github.com/caipe-io/ai-platform-engineering/blob/main/.specify/memory/constitution.md) for full CI pipeline details.
 
 ## Bug handling
 
@@ -245,7 +245,7 @@ make test            # Backend, runtime, and integration tests
 make caipe-ui-tests  # UI Jest tests
 ```
 
-See [`.specify/TESTING.md`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.specify/TESTING.md) for the complete 7-gate quality framework.
+See [`.specify/TESTING.md`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.specify/TESTING.md) for the complete 7-gate quality framework.
 
 ## Agent autonomy levels
 
@@ -268,5 +268,5 @@ Based on [The 8 Levels of Agentic Engineering](https://www.bassimeledath.com/blo
 - [Spec-Driven Development](https://github.com/github/spec-kit/blob/main/spec-driven.md) — the methodology CAIPE implements
 - [agentskills.io](https://agentskills.io/specification) — the skills standard
 - [spec-kit](https://github.com/github/spec-kit) — the upstream framework
-- [`.specify/memory/constitution.md`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.specify/memory/constitution.md) — CAIPE's governing principles
+- [`.specify/memory/constitution.md`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.specify/memory/constitution.md) — CAIPE's governing principles
 - [Contributing Guide](../contributing/index.md) — contribution workflow and standards

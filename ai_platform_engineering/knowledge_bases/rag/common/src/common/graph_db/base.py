@@ -50,9 +50,15 @@ class GraphDB(ABC):
     raise NotImplementedError("Subclasses must implement this method.")
 
   @abstractmethod
-  async def get_all_entity_types(self, max_results=1000) -> List[str]:
+  async def get_all_entity_types(
+    self,
+    max_results: int = 1000,
+    datasource_ids: List[str] | None = None,
+  ) -> List[str]:
     """
     Returns all entity types in the graph database
+    :param max_results: maximum number of distinct types to return
+    :param datasource_ids: optional allowed datasource ids; an empty list returns no types
     :return: list of all entity types
     """
     raise NotImplementedError("Subclasses must implement this method.")
@@ -85,13 +91,20 @@ class GraphDB(ABC):
     raise NotImplementedError("Subclasses must implement this method.")
 
   @abstractmethod
-  async def fetch_entities_batch(self, offset: int = 0, limit: int = 10000, entity_type: str | None = None) -> List[StructuredEntity]:
+  async def fetch_entities_batch(
+    self,
+    offset: int = 0,
+    limit: int = 10000,
+    entity_type: str | None = None,
+    datasource_ids: List[str] | None = None,
+  ) -> List[StructuredEntity]:
     """
     Fetch entities in batches for efficient bulk processing.
 
     :param offset: Number of entities to skip (for pagination)
     :param limit: Maximum number of entities to return
     :param entity_type: Optional filter by entity type
+    :param datasource_ids: Optional allowed datasource ids; an empty list returns no entities
     :return: List of entities in the batch
     """
     raise NotImplementedError("Subclasses must implement this method.")
@@ -145,13 +158,20 @@ class GraphDB(ABC):
     raise NotImplementedError("Subclasses must implement this method.")
 
   @abstractmethod
-  async def fetch_relations_batch(self, offset: int = 0, limit: int = 10000, relation_name: str | None = None) -> List[Relation]:
+  async def fetch_relations_batch(
+    self,
+    offset: int = 0,
+    limit: int = 10000,
+    relation_name: str | None = None,
+    datasource_ids: List[str] | None = None,
+  ) -> List[Relation]:
     """
     Fetch relations in batches for efficient bulk processing.
 
     :param offset: Number of relations to skip (for pagination)
     :param limit: Maximum number of relations to return
     :param relation_name: Optional filter by relation name
+    :param datasource_ids: Optional allowed datasource ids for both endpoints
     :return: List of relations in the batch
     """
     raise NotImplementedError("Subclasses must implement this method.")
@@ -362,7 +382,7 @@ class GraphDB(ABC):
     raise NotImplementedError("Subclasses must implement this method.")
 
   @abstractmethod
-  async def get_graph_stats(self) -> dict:
+  async def get_graph_stats(self, datasource_ids: List[str] | None = None) -> dict:
     """
     Get statistics about the graph database.
 
@@ -373,12 +393,18 @@ class GraphDB(ABC):
     raise NotImplementedError("Subclasses must implement this method.")
 
   @abstractmethod
-  async def fetch_random_entities(self, count: int = 10, entity_type: str | None = None) -> List[StructuredEntity]:
+  async def fetch_random_entities(
+    self,
+    count: int = 10,
+    entity_type: str | None = None,
+    datasource_ids: List[str] | None = None,
+  ) -> List[StructuredEntity]:
     """
     Fetch random entities from the graph database.
 
     :param count: Number of random entities to fetch
     :param entity_type: Optional filter by entity type
+    :param datasource_ids: Optional allowed datasource ids; an empty list returns no entities
     :return: List of random entities
     """
     raise NotImplementedError("Subclasses must implement this method.")

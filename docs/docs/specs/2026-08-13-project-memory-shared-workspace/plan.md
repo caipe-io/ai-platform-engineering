@@ -1,7 +1,7 @@
 # Implementation Plan: Projects, Project Memory, Shared Files, and Project Chat History
 
-**Status**: Implemented  
-**Date**: 2026-08-13  
+**Status**: Implemented
+**Date**: 2026-08-13
 **Supersedes**: The dynamic `namespace_source` and `namespace_scoped_tools` design in the
 2026-08-05 memory refactor plan. The global, agent, structured-record, read-only-source, and
 DeepAgents middleware portions of that plan remain.

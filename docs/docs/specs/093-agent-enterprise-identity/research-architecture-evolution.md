@@ -1,6 +1,6 @@
 # CAIPE Architecture Evolution
 
-This document tracks the architecture evolution roadmap for the Cisco AI Platform Engineering (CAIPE) system, from the current static distributed model through dynamic agent unification and persona-based profiles. Pulled from [PR #975](https://github.com/cnoe-io/ai-platform-engineering/pull/975) for spec 093 (`093-agent-enterprise-identity`).
+This document tracks the architecture evolution roadmap for the Cisco AI Platform Engineering (CAIPE) system, from the current static distributed model through dynamic agent unification and persona-based profiles. Pulled from [PR #975](https://github.com/caipe-io/ai-platform-engineering/pull/975) for spec 093 (`093-agent-enterprise-identity`).
 
 ## Roadmap
 

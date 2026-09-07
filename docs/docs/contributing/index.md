@@ -2,7 +2,7 @@
 
 ## How to Contribute
 
-We welcome contributions to CAIPE! To get started, please review our [Contributing Guide](https://github.com/cnoe-io/ai-platform-engineering/blob/main/CONTRIBUTING.md). It outlines the process for submitting issues, proposing changes, and creating pull requests.
+We welcome contributions to CAIPE! To get started, please review our [Contributing Guide](https://github.com/caipe-io/ai-platform-engineering/blob/main/CONTRIBUTING.md). It outlines the process for submitting issues, proposing changes, and creating pull requests.
 
 ### Steps to Contribute
 
@@ -14,13 +14,13 @@ We welcome contributions to CAIPE! To get started, please review our [Contributi
 
 ### Code of Conduct
 
-Please adhere to our [Code of Conduct](https://github.com/cnoe-io/ai-platform-engineering/blob/main/CODE_OF_CONDUCT.md) to ensure a welcoming and inclusive environment for all contributors.
+Please adhere to our [Code of Conduct](https://github.com/caipe-io/ai-platform-engineering/blob/main/CODE_OF_CONDUCT.md) to ensure a welcoming and inclusive environment for all contributors.
 
 ---
 
 ## 🏅 Contribution Badges
 
-CAIPE uses a gamified badge system to celebrate your contributions and learning journey. Earn badges as you go deeper into building and operating AI Platform Engineering. See the full announcement in [GitHub Discussions #245](https://github.com/cnoe-io/ai-platform-engineering/discussions/245).
+CAIPE uses a gamified badge system to celebrate your contributions and learning journey. Earn badges as you go deeper into building and operating AI Platform Engineering. See the full announcement in [GitHub Discussions #245](https://github.com/caipe-io/ai-platform-engineering/discussions/245).
 
 ### Level 1 — CAIPE Explorer 🧑‍🚀
 

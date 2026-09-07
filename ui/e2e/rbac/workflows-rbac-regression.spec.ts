@@ -35,6 +35,12 @@ test.describe("mocked workflows RBAC and MCP regression", () => {
     });
 
     await page.goto("/workflows", { waitUntil: "domcontentloaded" });
+    const breadcrumb = page.getByRole("navigation",{ name: "Breadcrumb" });
+    await expect(breadcrumb.getByRole("link",{ name: "Home" })).toHaveAttribute("href","/");
+    await expect(breadcrumb.getByRole("link",{ name: "Workflows" })).toHaveAttribute(
+      "href",
+      "/workflows",
+    );
     await expect(page.getByText("Platform team workflow")).toBeVisible();
     await expect(page.getByText("Global SRE workflow")).toBeVisible();
     await expect(page.getByText("Member private workflow")).toBeVisible();

@@ -54,7 +54,7 @@ KC_CONTAINER="kc-platform-reconcile-test-$$"
 # picks the first one that resolves, with a local build as a last resort.
 INIT_IMAGE_CANDIDATES=(
   "${INIT_IMAGE:-}"
-  "ghcr.io/cnoe-io/pre-release/keycloak-init:0.5.1-rc.25"
+  "ghcr.io/cnoe-io/keycloak-init:0.5.1-rc.25"
   "ghcr.io/cnoe-io/keycloak-init:latest"
 )
 INIT_IMAGE_LOCAL_BUILD="caipe/keycloak-init:local-test"
