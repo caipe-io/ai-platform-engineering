@@ -184,20 +184,22 @@ config:
   CREDENTIAL_KMS_CMK_ID: ""
   CREDENTIAL_KMS_REGION: ""
 
-# OAuth client used by Autonomous Agents to authenticate its calls to Dynamic
-# Agents. The standalone chart keeps this disabled because it cannot assume an
-# identity provider or Secret name. The umbrella chart enables it for the
-# bundled Keycloak caipe-platform client.
+# OAuth client used by Autonomous Agents to mint task-owner bearers for calls
+# to Dynamic Agents. The standalone chart keeps this disabled because it cannot
+# assume an identity provider or Secret name. The umbrella chart enables it for
+# the bundled Keycloak scheduler-runner client.
 dynamicAgentsAuth:
   enabled: false
-  # Defaults to the bundled Keycloak token endpoint for this Helm release.
-  # Set an explicit URL when using an external identity provider.
+  # The client must be allowed to perform RFC 8693 requested_subject token
+  # exchange. This mints the task owner's bearer for caller-scoped MCP access.
+  # Defaults match the bundled Keycloak scheduler-runner client.
   tokenUrl: ""
-  clientId: "caipe-platform"
-  scope: "openid profile email"
+  clientId: "caipe-scheduler-runner"
+  audience: "caipe-platform"
+  scope: ""
   clientSecretRef:
     name: ""
-    key: "OIDC_CLIENT_SECRET"
+    key: "KC_SCHEDULER_CLIENT_SECRET"
 
 # Pre-existing secret with sensitive values:
 #   MONGODB_URI            (required -- same MongoDB the CAIPE UI uses)

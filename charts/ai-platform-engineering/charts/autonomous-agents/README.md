@@ -68,11 +68,12 @@ helm show values oci://ghcr.io/cnoe-io/charts/autonomous-agents --version 0.4.10
 | config.WEBHOOK_MAX_PENDING_PER_OWNER | string | `"500"` |  |
 | config.WEBHOOK_MAX_PENDING_PER_TASK | string | `"100"` |  |
 | config.WEBHOOK_MAX_PAYLOAD_BYTES | string | `"1048576"` |  |
-| dynamicAgentsAuth.clientId | string | `"caipe-platform"` |  |
-| dynamicAgentsAuth.clientSecretRef.key | string | `"OIDC_CLIENT_SECRET"` |  |
+| dynamicAgentsAuth.audience | string | `"caipe-platform"` |  |
+| dynamicAgentsAuth.clientId | string | `"caipe-scheduler-runner"` |  |
+| dynamicAgentsAuth.clientSecretRef.key | string | `"KC_SCHEDULER_CLIENT_SECRET"` |  |
 | dynamicAgentsAuth.clientSecretRef.name | string | `""` |  |
 | dynamicAgentsAuth.enabled | bool | `false` |  |
-| dynamicAgentsAuth.scope | string | `"openid profile email"` |  |
+| dynamicAgentsAuth.scope | string | `""` |  |
 | dynamicAgentsAuth.tokenUrl | string | `""` |  |
 | existingSecret | string | `""` |  |
 | externalSecrets.apiVersion | string | `"v1beta1"` |  |

@@ -278,6 +278,7 @@ class TestRunStoreWiring:
             dynamic_agent_id="agent-x",
             prompt="run the custom thing",
             trigger=CronTrigger(schedule="0 9 * * *"),
+            owner_sub="task-owner-sub",
         )
 
         invoke_da = AsyncMock(return_value=("custom agent answer", []))
@@ -295,6 +296,7 @@ class TestRunStoreWiring:
         assert run.response_full == "custom agent answer"
         invoke_da.assert_awaited_once()
         assert invoke_da.await_args.kwargs["agent_id"] == "agent-x"
+        assert invoke_da.await_args.kwargs["owner_sub"] == "task-owner-sub"
         assert invoke_da.await_args.kwargs["context"] == {
             "event": "message.created",
             "roomId": "room-123",

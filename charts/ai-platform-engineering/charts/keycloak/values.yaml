@@ -323,8 +323,9 @@ webexTokenExchange:
       property: ""
 
 # ---------- Token exchange for the scheduler runner (RFC 8693 / impersonation) ----------
-# Mirrors tokenExchange above. Used by the BFF to mint a schedule owner's bearer
-# for cron fires. The generated Secret key is KC_SCHEDULER_CLIENT_SECRET.
+# Mirrors tokenExchange above. Used by scheduled and autonomous runners to mint
+# an owner's bearer for unattended execution. The generated Secret key is
+# KC_SCHEDULER_CLIENT_SECRET.
 # When `enabled` is omitted, inherits tokenExchange.enabled.
 schedulerTokenExchange:
   enabled: true

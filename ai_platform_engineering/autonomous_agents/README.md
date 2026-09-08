@@ -44,10 +44,12 @@ it through that custom agent (its tools / system prompt / model / middleware).
 
 Identity and access:
 
-- Each run carries the task owner's identity in the gateway `X-User-Context`
-  header, so the dynamic-agents service attributes the conversation to the
-  owner and enforces per-user / per-group authorization (OpenFGA) on the
-  target agent.
+- Each run uses a short-lived owner bearer obtained through RFC 8693
+  `requested_subject` token exchange and carries the same identity in
+  `X-User-Context`. Dynamic
+  Agents therefore authorizes the owner and resolves the owner's connected
+  provider credentials for MCP tools. No user access token is stored on the
+  task.
 - A missing or unauthorized agent surfaces as a failed run with a clear
   error rather than silently doing nothing.
 - Cron/interval tasks execute directly from APScheduler. Webhook deliveries
@@ -162,6 +164,11 @@ tasks:
 | `DYNAMIC_AGENTS_TIMEOUT_SECONDS` | `300` | Deployment-wide timeout for each dynamic-agents streaming call. |
 | `DYNAMIC_AGENTS_PREFLIGHT_TIMEOUT_SECONDS` | `10` | Timeout budget for the preflight check. |
 | `DYNAMIC_AGENTS_SYSTEM_EMAIL` | `autonomous@system` | Fallback identity for tasks created before per-user ownership existed. |
+| `DYNAMIC_AGENTS_OAUTH2_TOKEN_URL` | `None` | OAuth token endpoint used for owner token exchange. |
+| `DYNAMIC_AGENTS_OAUTH2_CLIENT_ID` | `None` | Confidential client permitted to perform `requested_subject` token exchange. |
+| `DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET` | `None` | Secret for the token-exchange client. |
+| `DYNAMIC_AGENTS_OAUTH2_AUDIENCE` | `caipe-platform` | Audience requested for the minted owner bearer. |
+| `DYNAMIC_AGENTS_OAUTH2_SCOPE` | `None` | Optional scope requested during owner token exchange. |
 | `MINIMUM_SCHEDULE_INTERVAL_SECONDS` | `1800` | Minimum allowed gap between cron/interval fires. Webhook triggers are exempt. |
 | `LLM_PROVIDER` | `anthropic-claude` | Informational default; the dynamic agent's own model config governs execution. |
 | `HOST` | `0.0.0.0` | Server bind host |

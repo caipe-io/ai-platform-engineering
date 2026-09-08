@@ -1180,17 +1180,19 @@ autonomous-agents:
     pullPolicy: "IfNotPresent"
   service:
     port: 8002
-  # Authenticate scheduled calls to Dynamic Agents with the bundled Keycloak
-  # platform client. Override tokenUrl and the Secret reference when using an
-  # external identity provider or a custom platform-client Secret.
+  # Mint the task owner's bearer with the bundled Keycloak scheduler-runner
+  # client. Dynamic Agents uses that identity for both authorization and
+  # caller-scoped MCP credentials. External IdPs must support RFC 8693
+  # requested_subject token exchange.
   dynamicAgentsAuth:
     enabled: true
     tokenUrl: ""
-    clientId: "caipe-platform"
-    scope: "openid profile email"
+    clientId: "caipe-scheduler-runner"
+    audience: "caipe-platform"
+    scope: ""
     clientSecretRef:
-      name: "caipe-platform-secret"
-      key: "OIDC_CLIENT_SECRET"
+      name: ""
+      key: "KC_SCHEDULER_CLIENT_SECRET"
   # ConfigMap for non-sensitive configuration.
   # DYNAMIC_AGENTS_URL defaults to the in-release dynamic-agents Service in the
   # autonomous-agents subchart helper. Set it here only to override that default.

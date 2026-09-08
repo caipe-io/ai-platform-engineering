@@ -9,9 +9,9 @@ Notes on the wire contract:
 
 * The dynamic-agents service exposes plain HTTP ``/api/v1/chat/invoke``
   (sync) and ``/api/v1/chat/stream/start`` (SSE).
-* It expects a gateway-injected ``X-User-Context`` header carrying the task
-  owner's identity. Each scheduled run is system-driven, so we mint that
-  header from the task's ``owner_id`` here (per-user attribution + access).
+* It receives the task owner's identity in ``X-User-Context`` for attribution
+  and a short-lived owner bearer minted through token exchange. The bearer is
+  what downstream authorization and caller-scoped MCP credential exchange use.
 * Preflight is config-level only: the service exposes no read-only agent
   endpoint, so we verify configuration and defer existence / authorization
   to run time (``mongo.get_agent`` + ``require_agent_use_permission`` on the
@@ -36,7 +36,14 @@ from autonomous_agents.models import Acknowledgement
 
 logger = logging.getLogger("autonomous_agents")
 
-_service_token_cache: tuple[str, float] | None = None
+_TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
+_ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
+
+# Owner impersonation tokens are isolated by subject. A single cached service
+# token would make provider-connection lookup run as the scheduler service
+# account, so user-owned MCP credentials (GitHub, Jira, and similar) would be
+# unavailable to autonomous runs.
+_owner_token_cache: dict[str, tuple[str, float]] = {}
 
 __all__ = [
     "DynamicAgentsClientError",
@@ -145,47 +152,78 @@ def _task_headers(owner_email: str, owner_sub: str | None = None) -> dict[str, s
     }
 
 
-async def _mint_service_bearer_token(timeout: float) -> str | None:
-    """Mint a service-to-service token for dynamic-agents, if configured.
+async def _mint_owner_bearer_token(
+    owner_sub: str | None, timeout: float
+) -> str | None:
+    """Mint the task owner's bearer for an unattended Dynamic Agents call.
 
-    Dynamic-agents can run with ``DA_REQUIRE_BEARER=true``. In that mode the
-    legacy trusted ``X-User-Context`` header is not enough; the scheduler must
-    authenticate as a service principal and then let downstream ReBAC decide
-    whether that principal may use the requested agent.
+    When OAuth is configured, autonomous execution must use Keycloak token
+    exchange with the server-stamped task owner. The resulting JWT drives both
+    Dynamic Agents authorization and caller-scoped MCP credential exchange.
+    Falling back to a client-credentials token here would silently execute as
+    the scheduler service account and hide the owner's connected providers.
+
+    OAuth remains optional for local deployments that use the legacy trusted
+    header path. A partially configured OAuth client fails closed.
     """
-    global _service_token_cache
-
     settings = get_settings()
     token_url = settings.dynamic_agents_oauth2_token_url
     client_id = settings.dynamic_agents_oauth2_client_id
     client_secret = settings.dynamic_agents_oauth2_client_secret
-    if not token_url or not client_id or not client_secret:
+    configured = (token_url, client_id, client_secret)
+    if not any(configured):
         return None
+    if not all(configured):
+        raise DynamicAgentsClientError(
+            "Dynamic Agents owner authentication is partially configured; "
+            "token URL, client ID, and client secret are all required."
+        )
+    if not owner_sub:
+        raise DynamicAgentsClientError(
+            "Autonomous task has no owner subject; recreate the task so it can "
+            "invoke Dynamic Agents and user-connected MCP tools as its owner."
+        )
 
     now = time.monotonic()
-    if _service_token_cache and _service_token_cache[1] > now + 30:
-        return _service_token_cache[0]
+    cached = _owner_token_cache.get(owner_sub)
+    if cached:
+        if cached[1] > now:
+            return cached[0]
+        _owner_token_cache.pop(owner_sub, None)
 
     form = {
-        "grant_type": "client_credentials",
+        "grant_type": _TOKEN_EXCHANGE_GRANT,
         "client_id": client_id,
         "client_secret": client_secret,
+        "requested_subject": owner_sub,
+        "requested_token_type": _ACCESS_TOKEN_TYPE,
+        "audience": settings.dynamic_agents_oauth2_audience,
     }
     if settings.dynamic_agents_oauth2_scope:
         form["scope"] = settings.dynamic_agents_oauth2_scope
 
-    async with httpx.AsyncClient(timeout=min(timeout, 15.0)) as client:
-        response = await client.post(token_url, data=form)
-    response.raise_for_status()
-    payload = response.json()
-    token = payload.get("access_token")
+    try:
+        async with httpx.AsyncClient(timeout=min(timeout, 15.0)) as client:
+            response = await client.post(token_url, data=form)
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        status = (
+            f" (HTTP {exc.response.status_code})"
+            if isinstance(exc, httpx.HTTPStatusError)
+            else ""
+        )
+        raise DynamicAgentsClientError(
+            f"Could not mint an owner bearer for autonomous execution{status}."
+        ) from exc
+    token = payload.get("access_token") if isinstance(payload, dict) else None
     if not isinstance(token, str) or not token:
         raise DynamicAgentsClientError(
-            "Dynamic-agents service-token endpoint returned no access_token."
+            "Dynamic Agents owner token exchange returned no access_token."
         )
-    expires_in = payload.get("expires_in")
+    expires_in = payload.get("expires_in") if isinstance(payload, dict) else None
     ttl = float(expires_in) if isinstance(expires_in, (int, float)) else 300.0
-    _service_token_cache = (token, now + max(ttl - 30.0, 30.0))
+    _owner_token_cache[owner_sub] = (token, now + max(ttl - 30.0, 0.0))
     return token
 
 
@@ -193,7 +231,7 @@ async def _task_headers_with_auth(
     owner_email: str, timeout: float, owner_sub: str | None = None
 ) -> dict[str, str]:
     headers = _task_headers(owner_email, owner_sub)
-    token = await _mint_service_bearer_token(timeout)
+    token = await _mint_owner_bearer_token(owner_sub, timeout)
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers

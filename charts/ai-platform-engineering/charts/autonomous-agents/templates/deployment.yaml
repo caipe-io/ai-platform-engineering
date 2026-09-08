@@ -59,6 +59,8 @@ spec:
               value: {{ include "autonomous-agents.dynamicAgentsTokenUrl" . | quote }}
             - name: DYNAMIC_AGENTS_OAUTH2_CLIENT_ID
               value: {{ required "dynamicAgentsAuth.clientId is required when dynamicAgentsAuth.enabled=true" .Values.dynamicAgentsAuth.clientId | quote }}
+            - name: DYNAMIC_AGENTS_OAUTH2_AUDIENCE
+              value: {{ required "dynamicAgentsAuth.audience is required when dynamicAgentsAuth.enabled=true" .Values.dynamicAgentsAuth.audience | quote }}
             {{- with .Values.dynamicAgentsAuth.scope }}
             - name: DYNAMIC_AGENTS_OAUTH2_SCOPE
               value: {{ . | quote }}
@@ -66,7 +68,7 @@ spec:
             - name: DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "dynamicAgentsAuth.clientSecretRef.name is required when dynamicAgentsAuth.enabled=true" .Values.dynamicAgentsAuth.clientSecretRef.name | quote }}
+                  name: {{ include "autonomous-agents.dynamicAgentsClientSecretName" . | quote }}
                   key: {{ required "dynamicAgentsAuth.clientSecretRef.key is required when dynamicAgentsAuth.enabled=true" .Values.dynamicAgentsAuth.clientSecretRef.key | quote }}
           {{- else }}
           env: []

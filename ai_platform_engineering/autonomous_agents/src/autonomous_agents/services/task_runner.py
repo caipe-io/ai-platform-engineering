@@ -360,12 +360,10 @@ async def execute_task(
     # owner_id field was introduced (backward compat).
     from autonomous_agents.config import get_settings as _get_settings
     _owner_email = task.owner_id or _get_settings().dynamic_agents_system_email
-    # Keycloak subject (UUID) of the owner — the identifier OpenFGA/CAS key
-    # subjects by. The dynamic-agents runtime authorizes the run against this
-    # (not the email) so agent-use is decided as the owner, respecting group
-    # sharing and revocation. None for legacy tasks; dynamic-agents then falls
-    # back to the service-principal decision (which will deny unless separately
-    # granted), so such tasks must be recreated to be authorized per-owner.
+    # Keycloak subject (UUID) of the owner — the identifier OpenFGA/CAS and MCP
+    # credential lookup key by. The Dynamic Agents client exchanges its scoped
+    # runner credential for a short-lived owner bearer. When OAuth is enabled,
+    # a legacy task without this field fails closed and must be recreated.
     _owner_sub = task.owner_sub
 
     run = TaskRun(

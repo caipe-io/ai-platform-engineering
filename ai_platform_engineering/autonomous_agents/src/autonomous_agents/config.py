@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     dynamic_agents_oauth2_token_url: str | None = None
     dynamic_agents_oauth2_client_id: str | None = None
     dynamic_agents_oauth2_client_secret: str | None = None
+    dynamic_agents_oauth2_audience: str = "caipe-platform"
     dynamic_agents_oauth2_scope: str | None = None
 
     @field_validator(

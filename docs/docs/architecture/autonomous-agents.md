@@ -73,10 +73,18 @@ The user-facing **Autonomous** page:
   inspection.
 - Does not contain an admin configuration tab or task-oversight view.
 
-Every run is authorized again by Dynamic Agents as the task owner. If the
-owner loses Autonomous eligibility or access to the target agent, the run
-fails and the task is automatically disabled. Restoring access does not
-automatically re-enable the task.
+Every run uses a short-lived bearer obtained through RFC 8693
+`requested_subject` token exchange for the server-stamped task owner. Tokens
+are cached per owner only until shortly before expiry. Dynamic Agents uses that
+bearer for agent authorization, Autonomous eligibility, AgentGateway, and
+caller-scoped MCP credential exchange. This lets an unattended run use the
+owner's connected providers without storing a Keycloak access token on the
+task.
+
+If owner token exchange fails, or the owner loses Autonomous eligibility or
+access to the target agent, the run fails closed. Authorization revocation also
+automatically disables the task; restoring access does not automatically
+re-enable it. Tasks created before `owner_sub` was persisted must be recreated.
 
 ## Scheduling
 
@@ -238,10 +246,12 @@ autonomous-agents:
     CHAT_HISTORY_PUBLISH_ENABLED: "false"
   dynamicAgentsAuth:
     enabled: true
-    clientId: caipe-platform
+    clientId: caipe-scheduler-runner
+    audience: caipe-platform
     clientSecretRef:
-      name: caipe-platform-secret
-      key: OIDC_CLIENT_SECRET
+      # Empty defaults to <release>-keycloak-scheduler-runner.
+      name: ""
+      key: KC_SCHEDULER_CLIENT_SECRET
 ```
 
 `autonomous-agents-secret` must provide `MONGODB_URI`. Add
