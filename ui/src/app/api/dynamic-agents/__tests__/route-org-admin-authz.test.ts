@@ -12,6 +12,7 @@ const mockGetCollection = jest.fn();
 const mockReconcileAgentRelationships = jest.fn();
 const mockIsPlatformDefaultAgent = jest.fn();
 const mockCheckOpenFgaTuple = jest.fn();
+const mockValidatePersistedAgentMcpDependencies = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -107,6 +108,11 @@ jest.mock("@/lib/rbac/shareable-resource", () => ({
   })),
 }));
 
+jest.mock("@/lib/rbac/agent-mcp-dependency-scope", () => ({
+  validatePersistedAgentMcpDependencies: (...args: unknown[]) =>
+    mockValidatePersistedAgentMcpDependencies(...args),
+}));
+
 jest.mock("@/lib/rbac/platform-default", () => ({
   isPlatformDefaultAgent: (...args: unknown[]) => mockIsPlatformDefaultAgent(...args),
 }));
@@ -137,6 +143,7 @@ describe("dynamic-agents PUT with real requireAgentPermission", () => {
     process.env.CAIPE_ORG_KEY = "caipe";
     mockReconcileAgentRelationships.mockResolvedValue(undefined);
     mockIsPlatformDefaultAgent.mockResolvedValue(false);
+    mockValidatePersistedAgentMcpDependencies.mockResolvedValue(undefined);
   });
 
   it("allows org admins to update a team agent through its per-agent manager grant", async () => {

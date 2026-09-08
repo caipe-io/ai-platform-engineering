@@ -30,11 +30,22 @@ export type VisibilityType = 'private' | 'team' | 'global';
  */
 export type LegacyVisibilityType = VisibilityType;
 
+export type AuthzSyncState = "pending" | "ready" | "error";
+
+export interface AuthzSyncMetadata {
+  authz_revision?: number;
+  authz_sync_state?: AuthzSyncState;
+  authz_last_synced_revision?: number;
+  authz_last_error_code?: string;
+  authz_sync_started_at?: string;
+  authz_previous_state?: Record<string, unknown>;
+}
+
 // =============================================================================
 // MCP Server Types
 // =============================================================================
 
-export interface MCPServerConfig {
+export interface MCPServerConfig extends AuthzSyncMetadata {
   _id: string;
   name: string;
   description?: string;
@@ -390,7 +401,7 @@ export type ResumeData =
   | { type: "tool_approval"; decision: "edit"; edited_args: Record<string, unknown> }
   | { type: "tool_approval"; decisions: Array<{ decision: string; tool_name?: string; edited_args?: Record<string, unknown> }> };
 
-export interface DynamicAgentConfig {
+export interface DynamicAgentConfig extends AuthzSyncMetadata {
   _id: string;
   name: string;
   description?: string;

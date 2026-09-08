@@ -59,21 +59,19 @@ export async function authorizeMany(
   ctx: DecisionContext = {},
   trustedContext?: AuthorizeRequest["trustedContext"],
 ): Promise<Map<string, AuthorizeResult>> {
-  if (trustedContext && (action === "use" || action === "invoke" || action === "call")) {
-    const entries = await Promise.all(ids.map(async (id) => [
-      id,
-      await authorize({
-        subject,
-        action,
-        resource: { type: resourceType, id },
-        trustedContext,
-      }, ctx),
-    ] as const));
-    return new Map(entries);
-  }
-  const results = await engine.batchCheck(subject, action, resourceType, ids);
+  const { privateResourceBatchPreChecks } = await import("./domains/private-resource");
+  const preChecks = await privateResourceBatchPreChecks({
+    subject,
+    action,
+    resourceType,
+    ids,
+    trustedContext,
+  });
+  const uncheckedIds = ids.filter((id) => !preChecks.has(id));
+  const results = await engine.batchCheck(subject, action, resourceType, uncheckedIds);
+  for (const [id, decision] of preChecks) results.set(id, decision);
   for (const [id, result] of results) {
-    emitDecisionAudit(subject, { type: resourceType, id }, action, result, ctx);
+    emitDecisionAudit(subject, { type: resourceType, id }, action, result, ctx, trustedContext);
   }
   return results;
 }

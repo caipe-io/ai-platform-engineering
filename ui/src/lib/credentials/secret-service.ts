@@ -1,6 +1,14 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import { ApiError } from "@/lib/api-error";
+import {
+  authzRevisionFilter,
+  AuthzSyncSupersededError,
+  hasActiveAuthzSync,
+  nextAuthzRevision,
+  runRevisionedAuthzSync,
+  type AuthzSyncDocument,
+} from "@/lib/authz/resource-sync";
 import type { ResourceAuthzSession } from "@/lib/rbac/resource-authz";
 
 import { writeCredentialAuditEvent } from "./audit";
@@ -33,7 +41,7 @@ export interface SecretUsageReference {
   detail?: string;
 }
 
-export interface SecretRefDocument {
+export interface SecretRefDocument extends AuthzSyncDocument {
   id: string;
   owner: CredentialOwnerRef;
   createdBy?: SecretActorRef;
@@ -45,6 +53,7 @@ export interface SecretRefDocument {
   createdAt: Date;
   updatedAt: Date;
   rotatedAt?: Date;
+  authz_previous_state?: Record<string, unknown>;
 }
 
 export interface SecretMetadata {
@@ -62,6 +71,10 @@ export interface SecretMetadata {
   createdAt: string;
   updatedAt: string;
   rotatedAt?: string;
+  authzRevision?: number;
+  authzSyncState?: "pending" | "ready" | "error";
+  authzLastSyncedRevision?: number;
+  authzLastErrorCode?: string;
 }
 
 interface SecretRefsCollection {
@@ -242,6 +255,10 @@ function toMetadata(
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
     rotatedAt: doc.rotatedAt?.toISOString(),
+    authzRevision: doc.authz_revision,
+    authzSyncState: doc.authz_sync_state,
+    authzLastSyncedRevision: doc.authz_last_synced_revision,
+    authzLastErrorCode: doc.authz_last_error_code,
   };
 }
 
@@ -291,6 +308,9 @@ export class SecretService {
       createdAt: now,
       updatedAt: now,
       rotatedAt: now,
+      authz_revision: 1,
+      authz_sync_state: "ready",
+      authz_last_synced_revision: 1,
     };
 
     await this.payloadStore.putSecret({ secretRefId: id, plaintext, maskedPreview });
@@ -531,31 +551,99 @@ export class SecretService {
   }
 
   async shareSecret(input: SecretShareInput): Promise<void> {
-    await this.getSecretRef(input.secretId);
+    const doc = await this.getSecretRef(input.secretId);
     await this.authorize(input.session, { type: "secret_ref", id: input.secretId, action: "share" });
     const teamId = requireNonEmptyString(input.teamId, "teamId");
-    await this.reconcileShare(input.secretId, teamId);
-    await this.secretRefsCollection.updateOne(
-      { id: input.secretId },
-      { $addToSet: { sharedWithTeams: teamId }, $set: { visibility: "team" } },
-    );
+    await this.updateSecretShareAuthorization({ doc, teamId, revoke: false });
   }
 
   async revokeSecretShare(input: SecretShareInput): Promise<void> {
-    await this.getSecretRef(input.secretId);
+    const doc = await this.getSecretRef(input.secretId);
     await this.authorize(input.session, { type: "secret_ref", id: input.secretId, action: "share" });
     const teamId = requireNonEmptyString(input.teamId, "teamId");
-    await this.deleteShare(input.secretId, teamId);
-    await this.secretRefsCollection.updateOne(
-      { id: input.secretId },
-      { $pull: { sharedWithTeams: teamId } },
-    );
-    const updated = await this.getSecretRef(input.secretId);
-    if (updated.owner.type === "user" && updated.sharedWithTeams.length === 0) {
-      await this.secretRefsCollection.updateOne(
-        { id: input.secretId },
-        { $set: { visibility: "private" } },
+    await this.updateSecretShareAuthorization({ doc, teamId, revoke: true });
+  }
+
+  private async updateSecretShareAuthorization(input: {
+    doc: SecretRefDocument;
+    teamId: string;
+    revoke: boolean;
+  }): Promise<void> {
+    if (hasActiveAuthzSync(input.doc)) {
+      throw new ApiError(
+        "This credential's authorization is already being reconciled. Retry shortly.",
+        409,
+        "AUTHZ_SYNC_PENDING",
       );
+    }
+    const nextTeams = input.revoke
+      ? normalizedTeamIds(input.doc.sharedWithTeams).filter((team) => team !== input.teamId)
+      : normalizedTeamIds([...input.doc.sharedWithTeams, input.teamId]);
+    const revision = nextAuthzRevision(input.doc);
+    const pendingResult = await this.secretRefsCollection.updateOne(
+      { id: input.doc.id, ...authzRevisionFilter(input.doc) },
+      {
+        $set: {
+          sharedWithTeams: nextTeams,
+          visibility: input.doc.owner.type === "user" && nextTeams.length === 0
+            ? "private"
+            : "team",
+          authz_revision: revision,
+          authz_sync_state: "pending",
+          authz_sync_started_at: this.now().toISOString(),
+          authz_previous_state: input.doc.authz_previous_state ?? {
+            sharedWithTeams: input.doc.sharedWithTeams,
+            visibility: input.doc.visibility,
+          },
+        },
+        $unset: { authz_last_error_code: "" },
+      },
+    );
+    if (pendingResult.matchedCount === 0) {
+      throw new ApiError(
+        "This credential changed while authorization was being prepared. Retry the update.",
+        409,
+        "AUTHZ_SYNC_SUPERSEDED",
+      );
+    }
+
+    try {
+      await runRevisionedAuthzSync({
+        reconcile: () => input.revoke
+          ? this.deleteShare(input.doc.id, input.teamId)
+          : this.reconcileShare(input.doc.id, input.teamId),
+        markError: async (errorCode) => {
+          await this.secretRefsCollection.updateOne(
+            { id: input.doc.id, authz_revision: revision, authz_sync_state: "pending" },
+            {
+              $set: { authz_sync_state: "error", authz_last_error_code: errorCode },
+              $unset: { authz_sync_started_at: "" },
+            },
+          );
+        },
+        markReady: async () => {
+          const result = await this.secretRefsCollection.updateOne(
+            { id: input.doc.id, authz_revision: revision, authz_sync_state: "pending" },
+            {
+              $set: {
+                authz_sync_state: "ready",
+                authz_last_synced_revision: revision,
+              },
+              $unset: {
+                authz_last_error_code: "",
+                authz_previous_state: "",
+                authz_sync_started_at: "",
+              },
+            },
+          );
+          return result.matchedCount === 0 ? null : result;
+        },
+      });
+    } catch (error) {
+      if (error instanceof AuthzSyncSupersededError) {
+        throw new ApiError(error.message, 409, "AUTHZ_SYNC_SUPERSEDED");
+      }
+      throw error;
     }
   }
 

@@ -16,7 +16,9 @@ export type ReasonCode =
   | "NOT_AUTHENTICATED"// caller token missing or invalid
   | "AUTHZ_UNAVAILABLE"// PDP error, retriable
   | "INVALID_REQUEST"  // bad id or malformed input
-  | "PRIVATE_RESOURCE_CONTEXT_DENIED"; // private use outside web/personal or a verified DM
+  | "PRIVATE_RESOURCE_CONTEXT_DENIED" // private use outside web/personal or a verified DM
+  | "AUTHZ_SYNC_PENDING" // persisted ownership is awaiting OpenFGA reconciliation
+  | "AUTHZ_SYNC_ERROR"; // reconciliation failed and requires a retry/repair
 
 export interface Subject {
   type: SubjectType;

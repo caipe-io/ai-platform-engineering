@@ -6,6 +6,7 @@
 
 import {
   writeOpenFgaTupleDiff,
+  verifyOpenFgaTupleDiff,
   isOpenFgaReconciliationEnabled,
   type OpenFgaReconcileResult,
   type TeamResourceTupleDiff,
@@ -20,6 +21,8 @@ export interface TupleReconcileContext extends DecisionContext {
   caller?: Subject;
   /** Short label for the audit tab (e.g. mcp_server_create, team_resources). */
   source?: string;
+  /** Verify changed direct tuples using OpenFGA's higher-consistency read mode. */
+  verifyHigherConsistency?: boolean;
 }
 
 export class OpenFgaReconcileRequiredError extends Error {
@@ -75,6 +78,17 @@ export async function reconcileTupleDiff(
 
   if (result.enabled && (result.writes > 0 || result.deletes > 0)) {
     invalidateDecisionCache();
+  }
+  if (ctx.verifyHigherConsistency && result.enabled) {
+    try {
+      await verifyOpenFgaTupleDiff(diff);
+    } catch (error) {
+      emitReconcileAudit(diff, result, ctx, {
+        outcome: "error",
+        reasonCode: error instanceof Error ? error.name : "PDP_VERIFY_FAILED",
+      });
+      throw error;
+    }
   }
   emitReconcileAudit(diff, result, ctx);
   return result;
