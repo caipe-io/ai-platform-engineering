@@ -250,7 +250,7 @@ function HeroSection() {
               <Link className={styles.heroPrimary} to="/docs/getting-started/quick-start">
                 Get Started →
               </Link>
-              <Link className={styles.heroSecondary} href="https://app.vidcast.io/share/embed/e0033e26-46bf-4298-8c20-0a2fd1746073">
+              <Link className={styles.heroSecondary} href="https://app.vidcast.io/share/b46e063b-6530-4d04-90b6-064dbbcdc613">
                 Watch a Demo ▶
               </Link>
               <Link className={styles.heroSecondary} href="https://github.com/caipe-io/ai-platform-engineering">
@@ -462,7 +462,7 @@ function VideoSection() {
         </div>
         <div style={{position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', borderRadius: '12px'}}>
           <iframe
-            src="https://app.vidcast.io/share/embed/e0033e26-46bf-4298-8c20-0a2fd1746073"
+            src="https://app.vidcast.io/share/embed/b46e063b-6530-4d04-90b6-064dbbcdc613"
             style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0}}
             allowFullScreen
             title="CAIPE Demo"
