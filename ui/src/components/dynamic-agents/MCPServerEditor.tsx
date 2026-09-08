@@ -2,6 +2,7 @@
 
 // assisted-by Codex Codex-sonnet-4-6
 
+import { AuthorizationSyncStatus } from "@/components/shared/AuthorizationSyncStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
@@ -663,6 +664,12 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
                 : "Configure a new MCP server connection"}
             </CardDescription>
           </div>
+          <AuthorizationSyncStatus
+            document={server}
+            busy={loading}
+            canRetry={!readOnly}
+            className="ml-auto"
+          />
         </div>
       </CardHeader>
       <CardContent>

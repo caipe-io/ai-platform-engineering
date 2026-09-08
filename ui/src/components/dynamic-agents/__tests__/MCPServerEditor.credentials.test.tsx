@@ -118,6 +118,27 @@ describe("MCPServerEditor credential sources", () => {
     expect(screen.queryByText("Share with teams")).not.toBeInTheDocument();
   });
 
+  it("shows pending authorization reconciliation beside the MCP builder", () => {
+    render(
+      <MCPServerEditor
+        server={{
+          _id: "syncing-tools",
+          name: "Syncing Tools",
+          transport: "http",
+          endpoint: "https://mcp.example.test/mcp",
+          visibility: "private",
+          authz_sync_state: "pending",
+          authz_revision: 2,
+          authz_last_synced_revision: 1,
+        }}
+        onSave={jest.fn()}
+        onCancel={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Syncing access");
+  });
+
   it("creates header and environment secret refs from selectable secrets", async () => {
     const user = userEvent.setup();
     render(<MCPServerEditor server={null} onSave={jest.fn()} onCancel={jest.fn()} />);

@@ -12,6 +12,7 @@ buildLastReview,
 useAiReview,
 } from "@/components/ai-review";
 import { TeamOwnershipFields } from "@/components/rbac/TeamOwnershipFields";
+import { AuthorizationSyncStatus } from "@/components/shared/AuthorizationSyncStatus";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
 import { Button } from "@/components/ui/button";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
@@ -1197,14 +1198,23 @@ export function DynamicAgentEditor({
                 : "Configure a new custom AI agent"}
             </CardDescription>
           </div>
-          <AgentAvatar
-            gradientTheme={gradientTheme}
-            customThemeConfig={gradientTheme === "custom" ? customThemeConfig : undefined}
-            rounded="rounded-lg"
-            size="ml-auto h-9 w-9"
-            iconSize="h-5 w-5"
-            className="transition-all"
-          />
+          <div className="ml-auto flex items-center gap-3">
+            <AuthorizationSyncStatus
+              document={agent}
+              busy={loading}
+              canRetry={!readOnly}
+            />
+            <AgentAvatar
+              gradientTheme={gradientTheme}
+              customThemeConfig={
+                gradientTheme === "custom" ? customThemeConfig : undefined
+              }
+              rounded="rounded-lg"
+              size="h-9 w-9"
+              iconSize="h-5 w-5"
+              className="transition-all"
+            />
+          </div>
         </div>
       </CardHeader>
       <CardContent>
