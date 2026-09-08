@@ -973,6 +973,11 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
         }
         updateData.owner_team_slug = nextOwnerTeamSlug;
         updateData.owner_team_id = teamIdString(destinationTeam) ?? undefined;
+      } else {
+        // Private ownership is represented by the absence of team-owner fields.
+        // Keep these paths out of $set because the private update unsets them.
+        delete updateData.owner_team_slug;
+        delete updateData.owner_team_id;
       }
     }
 

@@ -1003,6 +1003,64 @@ describe("dynamic agents RBAC routes", () => {
     );
   });
 
+  it("converts a team-owned agent to private without conflicting Mongo update paths", async () => {
+    const existingAgent = {
+      _id: "agent-personal-helper",
+      name: "Personal Helper",
+      owner_team_slug: "primary",
+      owner_team_id: "primary-id",
+      owner_subject: "alice-sub",
+      shared_with_teams: [],
+      allowed_tools: {},
+      visibility: "team",
+    };
+    const findOneAndUpdate = jest.fn().mockResolvedValue({
+      ...existingAgent,
+      owner_team_slug: undefined,
+      owner_team_id: undefined,
+      visibility: "private",
+    });
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(existingAgent),
+      findOneAndUpdate,
+    });
+    const { PUT } = await import("../route");
+
+    const response = await PUT(
+      request("/api/dynamic-agents?id=agent-personal-helper", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility: "private" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: "agent-personal-helper" },
+      {
+        $set: expect.objectContaining({
+          visibility: "private",
+          shared_with_teams: [],
+        }),
+        $unset: { owner_team_slug: "", owner_team_id: "" },
+      },
+      { returnDocument: "after" },
+    );
+    const mongoUpdate = findOneAndUpdate.mock.calls[0][1] as {
+      $set: Record<string, unknown>;
+    };
+    expect(mongoUpdate.$set).not.toHaveProperty("owner_team_slug");
+    expect(mongoUpdate.$set).not.toHaveProperty("owner_team_id");
+    expect(mockReconcileAgentRelationships).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agent-personal-helper",
+        ownerTeamSlug: null,
+        previousOwnerTeamSlug: "primary",
+        personalOwnerAccess: true,
+      }),
+    );
+  });
+
   it("rejects private agent creation while the rollout flag is disabled", async () => {
     process.env.PRIVATE_RESOURCES_ENABLED = "false";
     const insertOne = jest.fn();
