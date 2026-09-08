@@ -460,13 +460,25 @@ function VideoSection() {
             Watch the demo
           </Heading>
         </div>
-        <div style={{position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', borderRadius: '12px'}}>
-          <iframe
-            src="https://app.vidcast.io/share/embed/b46e063b-6530-4d04-90b6-064dbbcdc613"
-            style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0}}
-            allowFullScreen
-            title="CAIPE Demo"
+        <div className={styles.demoFrame}>
+          <img
+            alt="CAIPE product tour showing chat, skills, knowledge bases, autonomous agents, credentials, and admin settings"
+            className={styles.demoGif}
+            decoding="async"
+            loading="lazy"
+            src="/img/caipe-product-tour.gif"
           />
+        </div>
+        <div className={styles.demoFooter}>
+          <span>Explore the platform in action.</span>
+          <Link
+            className={styles.demoLink}
+            href="https://app.vidcast.io/share/b46e063b-6530-4d04-90b6-064dbbcdc613"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Watch the full demo ↗
+          </Link>
         </div>
       </div>
     </section>
