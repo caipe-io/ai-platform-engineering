@@ -102,6 +102,20 @@ class CustomStreamEncoder(StreamEncoder):
     def on_warning(self, message: str) -> list[str]:
         return [_sse_frame("warning", {"message": message, "namespace": []})]
 
+    def on_structured_output(
+        self, payload: dict[str, Any], schema_id: str | None = None
+    ) -> list[str]:
+        """Emit app-requested structured output before the terminal done event."""
+        return [
+            _sse_frame(
+                "structured_output",
+                {
+                    "payload": payload,
+                    "schema_id": schema_id,
+                },
+            )
+        ]
+
     def on_input_required(
         self,
         interrupt_id: str,

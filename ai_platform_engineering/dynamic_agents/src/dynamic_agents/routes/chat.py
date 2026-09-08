@@ -224,6 +224,13 @@ async def _collect_invoke_response(
     ):
         pass
 
+    get_structured_response = getattr(runtime, "get_structured_response", None)
+    get_structured_response_schema_id = getattr(runtime, "get_structured_response_schema_id", None)
+    structured_output = get_structured_response() if callable(get_structured_response) else None
+    structured_output_schema_id = (
+        get_structured_response_schema_id() if callable(get_structured_response_schema_id) else None
+    )
+
     interrupt = await runtime.has_pending_interrupt(request.conversation_id)
     if interrupt:
         return JSONResponse(
@@ -246,6 +253,8 @@ async def _collect_invoke_response(
         "success": True,
         "content": encoder.get_accumulated_content(),
         "thinking": encoder.get_thinking_content() or None,
+        "structured_output": structured_output,
+        "structured_output_schema_id": structured_output_schema_id,
         "agent_id": agent.id,
         "conversation_id": request.conversation_id,
         "trace_id": request.trace_id,
