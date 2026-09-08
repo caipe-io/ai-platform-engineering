@@ -7,6 +7,10 @@ import styles from './index.module.css';
 
 const CURL_CMD = 'bash <(curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh)';
 const HELM_CMD = 'helm upgrade --install ai-platform-engineering \\\n    oci://ghcr.io/caipe-io/charts/ai-platform-engineering \\\n    --version 1.0.1 -f your-values.yaml';
+const DEMO_GIF = 'https://raw.githubusercontent.com/wiki/caipe-io/ai-platform-engineering/caipe-product-tour.gif';
+const DEMO_VIDCAST_URL = 'https://app.vidcast.io/share/b46e063b-6530-4d04-90b6-064dbbcdc613';
+const DEMO_VIDCAST_EMBED_URL = 'https://app.vidcast.io/share/embed/b46e063b-6530-4d04-90b6-064dbbcdc613?disableAMA=1';
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -212,7 +216,7 @@ function TypewriterAudience() {
   );
 }
 
-function HeroSection() {
+function HeroSection({ onOpenTour }: { onOpenTour: () => void }) {
   const [stars, setStars] = useState<string | null>(null);
   useEffect(() => {
     fetch('https://api.github.com/repos/caipe-io/ai-platform-engineering')
@@ -250,7 +254,7 @@ function HeroSection() {
               <Link className={styles.heroPrimary} to="/docs/getting-started/quick-start">
                 Get Started →
               </Link>
-              <Link className={styles.heroSecondary} href="https://app.vidcast.io/share/embed/e0033e26-46bf-4298-8c20-0a2fd1746073">
+              <Link className={styles.heroSecondary} href={DEMO_VIDCAST_URL}>
                 Watch a Demo ▶
               </Link>
               <Link className={styles.heroSecondary} href="https://github.com/caipe-io/ai-platform-engineering">
@@ -260,6 +264,20 @@ function HeroSection() {
 
             <InstallWidget />
           </div>
+          <button
+            aria-label="Expand the CAIPE product tour"
+            className={styles.heroDemo}
+            onClick={onOpenTour}
+            type="button"
+          >
+            <img
+              alt="CAIPE product tour showing chat, skills, knowledge bases, autonomous agents, credentials, and admin settings"
+              className={styles.heroDemoGif}
+              decoding="async"
+              src={DEMO_GIF}
+            />
+            <span className={styles.heroDemoHint}>Click to expand product tour</span>
+          </button>
         </div>
 
         {/* Stats row */}
@@ -450,7 +468,7 @@ function VisionSection() {
 }
 
 
-function VideoSection() {
+function VideoSection({ onOpenTour }: { onOpenTour: () => void }) {
   return (
     <section className={styles.quickstart}>
       <div className={styles.quickstartInner}>
@@ -460,16 +478,81 @@ function VideoSection() {
             Watch the demo
           </Heading>
         </div>
-        <div style={{position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', borderRadius: '12px'}}>
-          <iframe
-            src="https://app.vidcast.io/share/embed/e0033e26-46bf-4298-8c20-0a2fd1746073"
-            style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0}}
-            allowFullScreen
-            title="CAIPE Demo"
-          />
+        <div className={styles.demoFrame}>
+          <div className={styles.demoEmbed}>
+            <iframe
+              src={DEMO_VIDCAST_EMBED_URL}
+              title="CAIPE.io Demo"
+              loading="lazy"
+              allow="fullscreen *;autoplay *;clipboard-write *;"
+              allowFullScreen
+            />
+          </div>
+        </div>
+        <div className={styles.demoFooter}>
+          <span>Explore the platform in action.</span>
+          <div className={styles.demoActions}>
+            <button className={styles.demoLink} onClick={onOpenTour} type="button">
+              Watch the full demo ↗
+            </button>
+            <Link
+              className={styles.demoLink}
+              href={DEMO_VIDCAST_URL}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              Watch on Vidcast ↗
+            </Link>
+          </div>
         </div>
       </div>
     </section>
+  );
+}
+
+function DemoLightbox({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className={styles.modalBackdrop} onClick={onClose} role="presentation">
+      <div
+        aria-labelledby="demo-lightbox-title"
+        aria-modal="true"
+        className={styles.modalDialog}
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <button aria-label="Close product tour" className={styles.modalClose} onClick={onClose} type="button">
+          ×
+        </button>
+        <img
+          alt="CAIPE product tour showing chat, skills, knowledge bases, autonomous agents, credentials, and admin settings"
+          className={styles.modalGif}
+          src={DEMO_GIF}
+        />
+        <div className={styles.modalFooter}>
+          <Heading as="h2" className={styles.modalTitle} id="demo-lightbox-title">
+            CAIPE product tour
+          </Heading>
+          <Link
+            className={styles.heroPrimary}
+            href={DEMO_VIDCAST_URL}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Watch the full demo on Vidcast ↗
+          </Link>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -493,20 +576,22 @@ function CtaSection() {
 
 export default function Home() {
   const {siteConfig} = useDocusaurusContext();
+  const [isTourOpen, setIsTourOpen] = useState(false);
   return (
     <Layout
       title={siteConfig.title}
       description="Open Source AI Platform for All. Build, govern, and operate secure AI agents and agentic workflows for enterprises and individuals."
     >
       <main>
-        <HeroSection />
-        <VideoSection />
+        <HeroSection onOpenTour={() => setIsTourOpen(true)} />
+        <VideoSection onOpenTour={() => setIsTourOpen(true)} />
         <InTheWildSection />
         <VisionSection />
         <FeaturesSection />
         <AgentsSection />
         <CtaSection />
       </main>
+      {isTourOpen && <DemoLightbox onClose={() => setIsTourOpen(false)} />}
     </Layout>
   );
 }
