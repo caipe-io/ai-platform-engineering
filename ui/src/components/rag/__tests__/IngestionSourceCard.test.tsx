@@ -92,14 +92,23 @@ describe("<IngestionSourceCard />", () => {
     await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(1));
   });
 
-  it("renders the config-driven badge", () => {
+  it("renders config-driven sources as view only", async () => {
+    const user = userEvent.setup();
+    const onEdit = jest.fn();
     render(
       <IngestionSourceCard
         source={makeSource({ config_driven: true })}
-        onEdit={jest.fn()}
+        onEdit={onEdit}
         onDelete={jest.fn()}
+        onRetry={jest.fn()}
       />,
     );
     expect(screen.getByText("Config")).toBeInTheDocument();
+    expect(screen.queryByTitle("Edit")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Delete source")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Retry ingestion")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "View example-channel" }));
+    expect(onEdit).toHaveBeenCalledTimes(1);
   });
 });

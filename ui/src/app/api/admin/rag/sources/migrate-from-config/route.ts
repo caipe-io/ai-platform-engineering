@@ -4,9 +4,8 @@
  * config rows (spec 2026-07-21-rag-source-config-db, US5 / rag-source-mgmt-ui
  * migrate workstream).
  *
- * The BFF cannot read ingestor-pod env vars (spec FR-007 blocker), so
- * "migrate" means "adopt what has already ingested" rather than "import
- * declared-but-not-yet-ingested YAML config": the preview enumerates the
+ * "Migrate" adopts what has already ingested rather than importing
+ * declarative application config. The preview enumerates the
  * Redis `DataSourceInfo` records the BFF already reads via the RAG server's
  * `GET /v1/datasources` (same fetch pattern as `loadOwnerFromConfig` in
  * `kbs/[id]/sharing/route.ts`), and cross-references each `datasource_id`

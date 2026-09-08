@@ -6,10 +6,10 @@
  * 2026-07-21-rag-source-config-db, US5) — mirrors
  * `ImportAgentsFromConfigCard.tsx`, adapted for `rag_ingestion_sources`
  * where the preview is sourced from the RAG server's `DataSourceInfo`
- * records (the BFF cannot read ingestor-pod env vars) and skips carry a
+ * records and skips carry a
  * `reason`.
  *
- * Flow: the preview lists sources originating in environment configuration,
+ * Flow: the preview lists existing unmanaged sources,
  * including disabled rows for prior imports. Applying creates editable
  * settings where supported and adds the sources to the selected collection
  * without changing that collection's Owner or Search access.
