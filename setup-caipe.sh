@@ -292,6 +292,20 @@ tty_read() { read "$@" <&3; }
 # Returns 0 (true) when the user wants to go back — accepts "b", "back", "0"
 _is_back() { local _v; _v="$(echo "$1" | tr '[:upper:]' '[:lower:]')"; [[ "$_v" == "b" || "$_v" == "back" || "$1" == "0" ]]; }
 
+# Sanitise an interactive answer: strip CR/LF/tabs, trim surrounding spaces, and
+# drop a single leading backslash. When run via "curl | bash", prompts are read
+# from /dev/tty while bash still consumes the script on stdin; a stray keystroke
+# (e.g. a shell line-continuation "\") can prepend "\" or a trailing CR to the
+# value, so "1" arrives as "\1". Menu / version / model reads route through here.
+_trim_input() {
+  local s="$1"
+  s="${s//$'\r'/}"; s="${s//$'\n'/}"; s="${s//$'\t'/}"
+  s="${s#"${s%%[![:space:]]*}"}"   # ltrim
+  s="${s%"${s##*[![:space:]]}"}"   # rtrim
+  s="${s#\\}"                      # drop one leading backslash
+  printf '%s' "$s"
+}
+
 ask_yn() {
   local question="$1" default="${2:-y}"
   if $AUTO_YES; then return 0; fi
@@ -882,9 +896,10 @@ choose_cluster() {
   local default_choice=1
   prompt "Select an option ${CYAN}[${default_choice}]${NC}${BOLD}: "
   tty_read -r choice
+  choice="$(_trim_input "$choice")"
   choice="${choice:-$default_choice}"
 
-  if [[ "$choice" -lt 1 || "$choice" -gt "${#options[@]}" ]]; then
+  if [[ ! "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 || "$choice" -gt "${#options[@]}" ]]; then
     err "Invalid choice"
     exit 1
   fi
@@ -908,11 +923,55 @@ choose_cluster() {
           exit 1
         fi
       fi
-      prompt "Enter a name for the new cluster ${CYAN}[caipe]${NC}${BOLD}: "
-      tty_read -r CLUSTER_NAME
-      CLUSTER_NAME="${CLUSTER_NAME:-caipe}"
-      log "Creating Kind cluster '${CLUSTER_NAME}'..."
-      kind create cluster --name "$CLUSTER_NAME" </dev/null
+      # `kind create cluster` fails hard ("node(s) already exist for a cluster
+      # with the name ...") when the name is taken, which aborts the whole
+      # script under `set -e`. Detect the collision first and let the user
+      # reuse / recreate / rename instead.
+      local _want _existing
+      while :; do
+        prompt "Enter a name for the new cluster ${CYAN}[caipe]${NC}${BOLD}: "
+        tty_read -r _want
+        _want="$(_trim_input "$_want")"
+        _want="${_want:-caipe}"
+
+        if kind get clusters 2>/dev/null | grep -qxF "$_want"; then
+          warn "A Kind cluster named '${_want}' already exists."
+          echo -e "    ${BOLD}1)${NC} Reuse it"
+          echo -e "    ${BOLD}2)${NC} Delete and recreate it  ${DIM}(destroys everything in it)${NC}"
+          echo -e "    ${BOLD}3)${NC} Pick a different name"
+          prompt "Select an option ${CYAN}[1]${NC}${BOLD}: "
+          tty_read -r _existing
+          _existing="$(_trim_input "$_existing")"
+          case "${_existing:-1}" in
+            1)
+              CLUSTER_NAME="$_want"
+              kubectl config use-context "kind-${CLUSTER_NAME}" 2>/dev/null \
+                || kind export kubeconfig --name "$CLUSTER_NAME" 2>/dev/null || true
+              log "Reusing existing Kind cluster '${CLUSTER_NAME}'"
+              break
+              ;;
+            2)
+              log "Deleting Kind cluster '${_want}'..."
+              kind delete cluster --name "$_want" \
+                || { err "Could not delete Kind cluster '${_want}'"; return 1; }
+              CLUSTER_NAME="$_want"
+              ;;
+            3) continue ;;
+            *) warn "Enter 1, 2, or 3."; continue ;;
+          esac
+        else
+          CLUSTER_NAME="$_want"
+        fi
+
+        # Reached with a fresh name, or after deleting the old cluster.
+        log "Creating Kind cluster '${CLUSTER_NAME}'..."
+        if ! kind create cluster --name "$CLUSTER_NAME" </dev/null; then
+          err "Kind cluster creation failed for '${CLUSTER_NAME}'."
+          if ask_yn "Try a different name?" "y"; then continue; fi
+          return 1
+        fi
+        break
+      done
       kubectl config use-context "kind-${CLUSTER_NAME}" 2>/dev/null || true
       log "Context set to kind-${CLUSTER_NAME}"
       ;;
@@ -1602,7 +1661,17 @@ _collect_ollama_config() {
     echo -e "  ${DIM}arcee-ai/arcee-agent: https://ollama.com/arcee-ai/arcee-agent${NC}"
     prompt "Ollama model to use ${CYAN}[${OLLAMA_MODEL}]${NC}${BOLD}: "
     tty_read -r input
+    input="$(_trim_input "$input")"
     OLLAMA_MODEL="${input:-$OLLAMA_MODEL}"
+
+    # Soft validation only — the Ollama init container can pull anything from the
+    # registry, but a typo here costs a multi-GB pull and a crash-looping agent
+    # before it's noticed. Warn on an unrecognised name and echo the final value.
+    local _known_ollama=" qwen3:0.6b qwen3:1.7b qwen2.5:1.5b lfm2.5 arcee-ai/arcee-agent qwen2.5:7b qwen2.5:14b mistral:7b ministral3:3b phi4-mini smollm2:1.7b smollm2:360m smollm2:135m gemma3 llama3.2 "
+    if [[ "$_known_ollama" != *" ${OLLAMA_MODEL} "* ]]; then
+      warn "'${OLLAMA_MODEL}' is not in the suggested model list — will attempt to pull it as-is."
+    fi
+    log "Ollama model: ${OLLAMA_MODEL}"
   fi
 
   # Ollama runs in-cluster; use the FQDN so DNS resolution works regardless of
@@ -7788,6 +7857,7 @@ choose_setup_target() {
 
   local choice
   tty_read -r choice
+  choice="$(_trim_input "$choice")"
   choice="${choice:-1}"
   choice="$(echo "$choice" | tr '[:upper:]' '[:lower:]')"
 
