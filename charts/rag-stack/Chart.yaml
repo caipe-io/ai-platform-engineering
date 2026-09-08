@@ -2,19 +2,19 @@ apiVersion: v2
 name: rag-stack
 description: A complete RAG stack including server, agents, Redis, Neo4j and Milvus
 type: application
-version: 1.0.1-dev.6 # Do NOT bump this. It will be updated automatically using the PR or release workflow
-appVersion: 1.0.1-dev.6 # Do NOT modify. It will be updated automatically using the release workflow
+version: 1.0.1-dev.7 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+appVersion: 1.0.1-dev.7 # Do NOT modify. It will be updated automatically using the release workflow
 dependencies:
   - name: rag-server
-    version: 1.0.1-dev.6 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.7 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     repository: "file://./charts/rag-server"
     condition: rag-server.enabled
   - name: agent-ontology
-    version: 1.0.1-dev.6 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.7 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     repository: "file://./charts/agent-ontology"
     condition: agent-ontology.enabled
   - name: rag-ingestors
-    version: 1.0.1-dev.6 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.7 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     repository: "file://./charts/rag-ingestors"
     condition: rag-ingestors.enabled
   - name: neo4j
@@ -23,7 +23,7 @@ dependencies:
     alias: neo4j
     condition: neo4j.enabled
   - name: rag-redis
-    version: 1.0.1-dev.6 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.7 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     repository: "file://./charts/rag-redis"
     condition: rag-redis.enabled
   - name: milvus
