@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from '@docusaurus/Link';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './features.module.css';
@@ -171,6 +172,9 @@ const FEATURES = [
 ];
 
 export default function FeaturesPage() {
+  const {siteConfig} = useDocusaurusContext();
+  const currentDocsPrefix = siteConfig.customFields?.currentDocsPrefix ?? '/docs';
+
   return (
     <Layout
       title="Features · CAIPE"
@@ -207,8 +211,11 @@ export default function FeaturesPage() {
         <section className={styles.grid}>
           <div className={styles.gridInner}>
             {FEATURES.map((f) => {
+              const target = f.title === 'Agent Builder'
+                ? `${currentDocsPrefix}/features/agent-builder`
+                : f.to;
               const card = (
-                <div key={f.title} className={styles.card} style={f.to ? {cursor: 'pointer'} : undefined}>
+                <div key={f.title} className={styles.card} style={target ? {cursor: 'pointer'} : undefined}>
                   <div className={styles.cardHeader} style={{'--card-color': f.color} as React.CSSProperties}>
                     <span className={styles.cardIcon}>{f.icon}</span>
                     <Heading as="h2" className={styles.cardTitle}>{f.title}</Heading>
@@ -220,8 +227,8 @@ export default function FeaturesPage() {
                   </ul>
                 </div>
               );
-              return f.to
-                ? <Link key={f.title} to={f.to} style={{textDecoration: 'none', color: 'inherit'}}>{card}</Link>
+              return target
+                ? <Link key={f.title} to={target} style={{textDecoration: 'none', color: 'inherit'}}>{card}</Link>
                 : card;
             })}
           </div>
