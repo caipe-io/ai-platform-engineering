@@ -29,18 +29,25 @@ jest.mock("@/lib/api-middleware", () => {
   return {
     ApiError,
     getUserTeamIds: (...args: unknown[]) => mockGetUserTeamIds(...args),
-    requireRbacPermission: (...args: unknown[]) => mockRequireRbacPermission(...args),
-    successResponse: (data: unknown, status = 200) => Response.json({ success: true, data }, { status }),
-    withAuth: async (_request: NextRequest, handler: (...args: unknown[]) => Promise<Response>) =>
-      handler(_request, user, session),
+    requireRbacPermission: (...args: unknown[]) =>
+      mockRequireRbacPermission(...args),
+    successResponse: (data: unknown, status = 200) =>
+      Response.json({ success: true, data }, { status }),
+    withAuth: async (
+      _request: NextRequest,
+      handler: (...args: unknown[]) => Promise<Response>,
+    ) => handler(_request, user, session),
     withErrorHandler:
-      <T,>(handler: (request: NextRequest) => Promise<T>) =>
+      <T>(handler: (request: NextRequest) => Promise<T>) =>
       async (request: NextRequest) => {
         try {
           return await handler(request);
         } catch (error) {
           return Response.json(
-            { success: false, error: error instanceof Error ? error.message : "error" },
+            {
+              success: false,
+              error: error instanceof Error ? error.message : "error",
+            },
             { status: (error as { statusCode?: number }).statusCode ?? 500 },
           );
         }
@@ -49,8 +56,10 @@ jest.mock("@/lib/api-middleware", () => {
 });
 
 jest.mock("@/lib/rbac/resource-authz", () => ({
-  filterResourcesByPermission: (...args: unknown[]) => mockFilterResourcesByPermission(...args),
-  requireResourcePermission: (...args: unknown[]) => mockRequireResourcePermission(...args),
+  filterResourcesByPermission: (...args: unknown[]) =>
+    mockFilterResourcesByPermission(...args),
+  requireResourcePermission: (...args: unknown[]) =>
+    mockRequireResourcePermission(...args),
   subjectFromSession: () => "alice-sub",
 }));
 
@@ -63,11 +72,15 @@ jest.mock("@/lib/server/workflow-cas-authz", () => ({
   workflowAccessAllowed: jest.fn().mockResolvedValue(false),
   requireWorkflowAccess: jest.fn(),
   requireWorkflowRunAccess: jest.fn(),
-  workflowSubjectFromSession: jest.fn(() => ({ type: "user", id: "alice-sub" })),
+  workflowSubjectFromSession: jest.fn(() => ({
+    type: "user",
+    id: "alice-sub",
+  })),
 }));
 
-const mockFilterAccessibleWorkflowConfigs = jest.requireMock("@/lib/server/workflow-cas-authz")
-  .filterAccessibleWorkflowConfigs as jest.Mock;
+const mockFilterAccessibleWorkflowConfigs = jest.requireMock(
+  "@/lib/server/workflow-cas-authz",
+).filterAccessibleWorkflowConfigs as jest.Mock;
 
 function request(path: string): NextRequest {
   return new NextRequest(new URL(path, "http://localhost:3000"));
@@ -79,17 +92,33 @@ describe("workflow config RBAC cutover", () => {
     mockGetUserTeamIds.mockResolvedValue(["legacy-team"]);
     mockRequireRbacPermission.mockRejectedValue(new Error("not admin"));
     mockRequireResourcePermission.mockResolvedValue(undefined);
-    mockFilterResourcesByPermission.mockImplementation(async (_session, items) => items);
-    mockFilterAccessibleWorkflowConfigs.mockImplementation(async (_session, items) => items);
+    mockFilterResourcesByPermission.mockImplementation(
+      async (_session, items) => items,
+    );
+    mockFilterAccessibleWorkflowConfigs.mockImplementation(
+      async (_session, items) => items,
+    );
   });
 
-  it("loads workflow configs through OpenFGA task discover instead of legacy team visibility", async () => {
+  it("hides another user's private workflow before OpenFGA discovery", async () => {
     const configs = [
-      { _id: "wf-openfga", name: "OpenFGA Workflow", visibility: "private", owner_id: "bob@example.com" },
-      { _id: "wf-global", name: "Global Workflow", visibility: "global", owner_id: "system" },
+      {
+        _id: "wf-openfga",
+        name: "OpenFGA Workflow",
+        visibility: "private",
+        owner_id: "bob@example.com",
+      },
+      {
+        _id: "wf-global",
+        name: "Global Workflow",
+        visibility: "global",
+        owner_id: "system",
+      },
     ];
-    mockFilterAccessibleWorkflowConfigs.mockResolvedValue([configs[0]]);
-    const sort = jest.fn().mockReturnValue({ toArray: jest.fn().mockResolvedValue(configs) });
+    mockFilterAccessibleWorkflowConfigs.mockResolvedValue([configs[1]]);
+    const sort = jest
+      .fn()
+      .mockReturnValue({ toArray: jest.fn().mockResolvedValue(configs) });
     const find = jest.fn().mockReturnValue({ sort });
     const teamsCollection = {
       find: jest.fn().mockReturnValue({
@@ -111,16 +140,13 @@ describe("workflow config RBAC cutover", () => {
     expect(find).toHaveBeenCalledWith({});
     expect(mockFilterAccessibleWorkflowConfigs).toHaveBeenCalledWith(
       expect.objectContaining({ sub: "alice-sub" }),
-      configs,
+      [configs[1]],
       expect.any(Function),
       "read",
     );
     expect(body).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ _id: "wf-openfga" }),
-        expect.objectContaining({ _id: "wf-global" }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ _id: "wf-global" })]),
     );
-    expect(body).toHaveLength(2);
+    expect(body).toHaveLength(1);
   });
 });

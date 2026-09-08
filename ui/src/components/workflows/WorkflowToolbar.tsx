@@ -1,12 +1,28 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { AuthorizationSyncStatus } from "@/components/shared/AuthorizationSyncStatus";
 import { Input } from "@/components/ui/input";
-import { TeamMultiPicker, type TeamPickerOption } from "@/components/ui/team-picker";
+import {
+  TeamMultiPicker,
+  type TeamPickerOption,
+} from "@/components/ui/team-picker";
 import { cn } from "@/lib/utils";
 import type { WorkflowConfigVisibility } from "@/types/workflow-config";
-import { ArrowLeft,Copy,Download,Globe,Lock,Play,Save,Trash2,Upload,Users } from "lucide-react";
-import React,{ useEffect,useMemo,useRef,useState } from "react";
+import type { AuthzSyncMetadata } from "@/types/authz-sync";
+import {
+  ArrowLeft,
+  Copy,
+  Download,
+  Globe,
+  Lock,
+  Play,
+  Save,
+  Trash2,
+  Upload,
+  Users,
+} from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import YAML from "yaml";
 
@@ -42,14 +58,18 @@ interface WorkflowToolbarProps {
   sharedWithTeams: string[];
   onSharedWithTeamsChange: (teams: string[]) => void;
   teams: Team[];
+  authzDocument?: AuthzSyncMetadata | null;
 }
 
-const VISIBILITY_CONFIG: Record<WorkflowConfigVisibility, {
-  icon: React.ReactNode;
-  label: string;
-  description: string;
-  color: string;
-}> = {
+const VISIBILITY_CONFIG: Record<
+  WorkflowConfigVisibility,
+  {
+    icon: React.ReactNode;
+    label: string;
+    description: string;
+    color: string;
+  }
+> = {
   private: {
     icon: <Lock className="h-3.5 w-3.5" />,
     label: "Private",
@@ -86,7 +106,10 @@ function VisibilityPopover({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [dropdownCoords, setDropdownCoords] = useState<{ top: number; left: number } | null>(null);
+  const [dropdownCoords, setDropdownCoords] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -111,7 +134,8 @@ function VisibilityPopover({
       if (
         buttonRef.current?.contains(target) ||
         dropdownRef.current?.contains(target)
-      ) return;
+      )
+        return;
       setOpen(false);
     };
     document.addEventListener("mousedown", handler);
@@ -132,66 +156,79 @@ function VisibilityPopover({
     [teams],
   );
 
-  const dropdown = open && dropdownCoords ? createPortal(
-    <div
-      ref={dropdownRef}
-      style={{ position: "fixed", top: dropdownCoords.top, left: dropdownCoords.left }}
-      className="z-[200] w-72 rounded-lg border border-border bg-card shadow-lg p-2"
-      onPointerDown={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {(["global", "team", "private"] as WorkflowConfigVisibility[]).map((v) => {
-        const opt = VISIBILITY_CONFIG[v];
-        return (
-          <button
-            key={v}
-            type="button"
-            onClick={() => {
-              onVisibilityChange(v);
-              if (v !== "team") setOpen(false);
+  const dropdown =
+    open && dropdownCoords
+      ? createPortal(
+          <div
+            ref={dropdownRef}
+            style={{
+              position: "fixed",
+              top: dropdownCoords.top,
+              left: dropdownCoords.left,
             }}
-            className={cn(
-              "w-full flex items-start gap-2.5 p-2 rounded-md text-left transition-colors",
-              visibility === v
-                ? "bg-primary/5 border border-primary/30"
-                : "hover:bg-muted/50 border border-transparent",
-            )}
+            className="z-[200] w-72 rounded-lg border border-border bg-card shadow-lg p-2"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
-            <span className={cn("mt-0.5", VISIBILITY_CONFIG[v].color)}>{opt.icon}</span>
-            <div>
-              <div className="text-xs font-medium">{opt.label}</div>
-              <div className="text-[10px] text-muted-foreground">{opt.description}</div>
-            </div>
-          </button>
-        );
-      })}
+            {(["global", "team", "private"] as WorkflowConfigVisibility[]).map(
+              (v) => {
+                const opt = VISIBILITY_CONFIG[v];
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => {
+                      onVisibilityChange(v);
+                      if (v !== "team") setOpen(false);
+                    }}
+                    className={cn(
+                      "w-full flex items-start gap-2.5 p-2 rounded-md text-left transition-colors",
+                      visibility === v
+                        ? "bg-primary/5 border border-primary/30"
+                        : "hover:bg-muted/50 border border-transparent",
+                    )}
+                  >
+                    <span className={cn("mt-0.5", VISIBILITY_CONFIG[v].color)}>
+                      {opt.icon}
+                    </span>
+                    <div>
+                      <div className="text-xs font-medium">{opt.label}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {opt.description}
+                      </div>
+                    </div>
+                  </button>
+                );
+              },
+            )}
 
-      {visibility === "team" && (
-        <div className="mt-2 pt-2 border-t border-border px-0.5">
-          {teamOptions.length === 0 ? (
-            <p className="text-[10px] text-muted-foreground italic px-1">
-              No teams available.
-            </p>
-          ) : (
-            <TeamMultiPicker
-              options={teamOptions}
-              selected={sharedWithTeams}
-              onChange={onSharedWithTeamsChange}
-              disabled={disabled}
-              ariaLabel="Share workflow with teams"
-              placeholder="Share with teams…"
-              searchPlaceholder="Search teams…"
-              emptyLabel="No teams match"
-              triggerChipCap={1}
-              contentClassName="z-[210]"
-            />
-          )}
-        </div>
-      )}
-    </div>,
-    document.body,
-  ) : null;
+            {visibility === "team" && (
+              <div className="mt-2 pt-2 border-t border-border px-0.5">
+                {teamOptions.length === 0 ? (
+                  <p className="text-[10px] text-muted-foreground italic px-1">
+                    No teams available.
+                  </p>
+                ) : (
+                  <TeamMultiPicker
+                    options={teamOptions}
+                    selected={sharedWithTeams}
+                    onChange={onSharedWithTeamsChange}
+                    disabled={disabled}
+                    ariaLabel="Share workflow with teams"
+                    placeholder="Share with teams…"
+                    searchPlaceholder="Search teams…"
+                    emptyLabel="No teams match"
+                    triggerChipCap={1}
+                    contentClassName="z-[210]"
+                  />
+                )}
+              </div>
+            )}
+          </div>,
+          document.body,
+        )
+      : null;
 
   return (
     <div className="relative">
@@ -241,6 +278,7 @@ export function WorkflowToolbar({
   sharedWithTeams,
   onSharedWithTeamsChange,
   teams,
+  authzDocument,
 }: WorkflowToolbarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -271,7 +309,12 @@ export function WorkflowToolbar({
     <div className="px-4 py-3 border-b border-border bg-card/80 backdrop-blur-sm shrink-0">
       {/* Single row: Back | Name & Desc | Actions */}
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={onBack} className="gap-1.5 h-8 px-2.5 shrink-0">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onBack}
+          className="gap-1.5 h-8 px-2.5 shrink-0"
+        >
           <ArrowLeft className="h-4 w-4" />
           Exit
         </Button>
@@ -329,6 +372,11 @@ export function WorkflowToolbar({
           onSharedWithTeamsChange={onSharedWithTeamsChange}
           teams={teams}
           disabled={readOnly}
+        />
+        <AuthorizationSyncStatus
+          document={authzDocument}
+          busy={isSaving}
+          canRetry={!readOnly}
         />
 
         <div className="h-5 w-px bg-border shrink-0" />
@@ -409,7 +457,9 @@ export function WorkflowToolbar({
           <Button
             size="sm"
             onClick={onSave}
-            disabled={isSaving || !name || stepCount === 0 || (readOnly && !saveAsCopy)}
+            disabled={
+              isSaving || !name || stepCount === 0 || (readOnly && !saveAsCopy)
+            }
             title={readOnly && !saveAsCopy ? readOnlyHint : undefined}
             className="gap-1.5 h-8 text-xs px-4 gradient-primary text-white disabled:opacity-40"
           >

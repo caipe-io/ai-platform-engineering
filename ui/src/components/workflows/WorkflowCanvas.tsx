@@ -7,34 +7,34 @@ import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
 import { useWorkflowConfigStore } from "@/store/workflow-config-store";
 import { useWorkflowExecStore } from "@/store/workflow-exec-store";
 import type {
-CreateWorkflowConfigInput,
-UpdateWorkflowConfigInput,
-WorkflowConfig,
-WorkflowStep,
+  CreateWorkflowConfigInput,
+  UpdateWorkflowConfigInput,
+  WorkflowConfig,
+  WorkflowStep,
 } from "@/types/workflow-config";
 import { createBlankStep } from "@/types/workflow-config";
 import {
-Background,
-BackgroundVariant,
-Panel,
-ReactFlow,
-ReactFlowProvider,
-useReactFlow,
-type Edge,
-type Node,
-type NodeMouseHandler,
+  Background,
+  BackgroundVariant,
+  Panel,
+  ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
+  type Edge,
+  type Node,
+  type NodeMouseHandler,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Lock } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useCallback,useEffect,useMemo,useRef,useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import YAML from "yaml";
 import {
-AddButtonNode,
-WorkflowStepNode,
-type AddButtonNodeData,
-type WorkflowStepNodeData,
+  AddButtonNode,
+  WorkflowStepNode,
+  type AddButtonNodeData,
+  type WorkflowStepNodeData,
 } from "./WorkflowStepNode";
 import { WorkflowStepSidebar } from "./WorkflowStepSidebar";
 import { WorkflowToolbar } from "./WorkflowToolbar";
@@ -90,17 +90,15 @@ function useDynamicAgents() {
         const res = await fetch("/api/dynamic-agents/available");
         if (!res.ok) throw new Error("Failed to fetch agents");
         const data = await res.json();
-        const list = (Array.isArray(data)
-          ? data
-          : Array.isArray(data.data)
-            ? data.data
-            : []) as Array<{
-              _id?: string;
-              id?: string;
-              name?: string;
-              description?: string;
-              ui?: AgentAvatarAgent["ui"];
-            }>;
+        const list = (
+          Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : []
+        ) as Array<{
+          _id?: string;
+          id?: string;
+          name?: string;
+          description?: string;
+          ui?: AgentAvatarAgent["ui"];
+        }>;
         if (!cancelled) {
           setAgents(
             list.map((a) => ({
@@ -156,8 +154,12 @@ function buildNodes(steps: WorkflowStep[], agents: AgentInfo[]): Node[] {
 
     // "+" button after each step
     const isLastStep = i === steps.length - 1;
-    const btnSize = isLastStep ? ADD_BUTTON_APPEND_SIZE : ADD_BUTTON_INSERT_SIZE;
-    const btnYOffset = hasBadge ? ADD_BUTTON_Y_OFFSET_WITH_BADGE : ADD_BUTTON_Y_OFFSET;
+    const btnSize = isLastStep
+      ? ADD_BUTTON_APPEND_SIZE
+      : ADD_BUTTON_INSERT_SIZE;
+    const btnYOffset = hasBadge
+      ? ADD_BUTTON_Y_OFFSET_WITH_BADGE
+      : ADD_BUTTON_Y_OFFSET;
     nodes.push({
       id: `add-${i}`,
       type: "addButton",
@@ -241,19 +243,48 @@ function CanvasControls() {
     <Panel position="bottom-left">
       <div className="flex flex-col gap-0.5 bg-card border border-border rounded-lg p-1 shadow-lg">
         <button onClick={() => zoomIn()} className={btnClass} title="Zoom in">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+          >
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
         </button>
         <button onClick={() => zoomOut()} className={btnClass} title="Zoom out">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+          >
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
         </button>
         <div className="h-px bg-border my-0.5" />
-        <button onClick={() => fitView({ padding: 0.3 })} className={btnClass} title="Fit view">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <button
+          onClick={() => fitView({ padding: 0.3 })}
+          className={btnClass}
+          title="Fit view"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
           </svg>
         </button>
@@ -293,8 +324,14 @@ function WorkflowCanvasInner({
   initialSteps,
   onBack,
 }: WorkflowCanvasProps) {
-  const { createConfig, updateConfig, deleteConfig, closeEditor, loadConfigs, openEditor } =
-    useWorkflowConfigStore();
+  const {
+    createConfig,
+    updateConfig,
+    deleteConfig,
+    closeEditor,
+    loadConfigs,
+    openEditor,
+  } = useWorkflowConfigStore();
   const { data: authSession } = useSession();
   const { executeWorkflow } = useWorkflowExecStore();
   const {
@@ -316,7 +353,9 @@ function WorkflowCanvasInner({
 
   const seedSteps = useMemo(() => {
     if (existingConfig) {
-      return existingConfig.steps.filter((s): s is WorkflowStep => s.type === "step");
+      return existingConfig.steps.filter(
+        (s): s is WorkflowStep => s.type === "step",
+      );
     }
     return initialSteps && initialSteps.length > 0 ? initialSteps : [];
   }, [existingConfig, initialSteps]);
@@ -344,12 +383,13 @@ function WorkflowCanvasInner({
 
   useEffect(() => {
     fetch("/api/dynamic-agents/teams")
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data?.success && Array.isArray(data.data)) {
           setAvailableTeams(
             data.data.filter(
-              (team: { slug?: string }) => typeof team.slug === "string" && team.slug.length > 0,
+              (team: { slug?: string }) =>
+                typeof team.slug === "string" && team.slug.length > 0,
             ),
           );
         }
@@ -359,11 +399,17 @@ function WorkflowCanvasInner({
 
   // Legacy workflows stored Mongo team _id in shared_with_teams; normalize to slug in UI.
   useEffect(() => {
-    if (!existingConfig?.shared_with_teams?.length || availableTeams.length === 0) return;
+    if (
+      !existingConfig?.shared_with_teams?.length ||
+      availableTeams.length === 0
+    )
+      return;
     setSharedWithTeams((current) => {
       const normalized = existingConfig.shared_with_teams!.map((ref) => {
         const refLower = ref.trim().toLowerCase();
-        const bySlug = availableTeams.find((t) => t.slug.toLowerCase() === refLower);
+        const bySlug = availableTeams.find(
+          (t) => t.slug.toLowerCase() === refLower,
+        );
         if (bySlug) return bySlug.slug;
         const byId = availableTeams.find((t) => t._id === ref);
         return byId?.slug ?? refLower;
@@ -430,10 +476,14 @@ function WorkflowCanvasInner({
     (_event, node) => {
       if (node.type === "addButton") {
         if (isReadOnly) {
-          toast("This workflow is config-driven and cannot be edited", "warning");
+          toast(
+            "This workflow is config-driven and cannot be edited",
+            "warning",
+          );
           return;
         }
-        const insertIndex = (node.data as unknown as AddButtonNodeData).insertIndex;
+        const insertIndex = (node.data as unknown as AddButtonNodeData)
+          .insertIndex;
         markDirty();
         const newStep = createBlankStep();
         setSteps((prev) => {
@@ -460,9 +510,10 @@ function WorkflowCanvasInner({
   // Selected step
   // -----------------------------------------------------------------------
 
-  const selectedStep = selectedStepIndex >= 0 && selectedStepIndex < steps.length
-    ? steps[selectedStepIndex]
-    : null;
+  const selectedStep =
+    selectedStepIndex >= 0 && selectedStepIndex < steps.length
+      ? steps[selectedStepIndex]
+      : null;
 
   // -----------------------------------------------------------------------
   // Step mutations (called from sidebar)
@@ -473,7 +524,9 @@ function WorkflowCanvasInner({
       if (selectedStepIndex < 0) return;
       markDirty();
       setSteps((prev) =>
-        prev.map((s, i) => (i === selectedStepIndex ? { ...s, ...updates } : s)),
+        prev.map((s, i) =>
+          i === selectedStepIndex ? { ...s, ...updates } : s,
+        ),
       );
     },
     [selectedStepIndex, markDirty],
@@ -484,7 +537,8 @@ function WorkflowCanvasInner({
       markDirty();
       setSteps((prev) => prev.filter((_, i) => i !== stepIndex));
       if (selectedStepIndex === stepIndex) setSelectedStepIndex(-1);
-      else if (selectedStepIndex > stepIndex) setSelectedStepIndex((i) => i - 1);
+      else if (selectedStepIndex > stepIndex)
+        setSelectedStepIndex((i) => i - 1);
     },
     [selectedStepIndex, markDirty],
   );
@@ -554,12 +608,18 @@ function WorkflowCanvasInner({
   }, [existingConfig, openEditor, guardAction]);
 
   const handleNameChange = useCallback(
-    (v: string) => { markDirty(); setName(v); },
+    (v: string) => {
+      markDirty();
+      setName(v);
+    },
     [markDirty],
   );
 
   const handleDescriptionChange = useCallback(
-    (v: string) => { markDirty(); setDescription(v); },
+    (v: string) => {
+      markDirty();
+      setDescription(v);
+    },
     [markDirty],
   );
 
@@ -567,23 +627,51 @@ function WorkflowCanvasInner({
   // Save
   // -----------------------------------------------------------------------
 
-  const persistWorkflow = useCallback(async (
-    overrides?: Pick<CreateWorkflowConfigInput, "visibility" | "shared_with_teams">,
-  ): Promise<string | null> => {
-    if (!name || steps.length === 0) {
-      toast("Workflow name and at least one step are required", "error");
-      return null;
-    }
+  const persistWorkflow = useCallback(
+    async (
+      overrides?: Pick<
+        CreateWorkflowConfigInput,
+        "visibility" | "shared_with_teams"
+      >,
+    ): Promise<string | null> => {
+      if (!name || steps.length === 0) {
+        toast("Workflow name and at least one step are required", "error");
+        return null;
+      }
 
-    const effectiveVisibility = overrides?.visibility ?? visibility;
-    const effectiveSharedWithTeams =
-      effectiveVisibility === "team"
-        ? overrides?.shared_with_teams ?? sharedWithTeams
-        : undefined;
+      const effectiveVisibility = overrides?.visibility ?? visibility;
+      const effectiveSharedWithTeams =
+        effectiveVisibility === "team"
+          ? (overrides?.shared_with_teams ?? sharedWithTeams)
+          : undefined;
 
-    if (existingConfig?.config_driven) {
+      if (existingConfig?.config_driven) {
+        const input: CreateWorkflowConfigInput = {
+          name: `${name.trim()} (editable)`,
+          description: description.trim() || undefined,
+          steps,
+          visibility: effectiveVisibility,
+          shared_with_teams: effectiveSharedWithTeams,
+        };
+        const newId = await createConfig(input);
+        openEditor("edit", newId);
+        return newId;
+      }
+
+      if (existingConfig) {
+        const updates: UpdateWorkflowConfigInput = {
+          name: name.trim(),
+          description: description.trim() || undefined,
+          steps,
+          visibility: effectiveVisibility,
+          shared_with_teams: effectiveSharedWithTeams,
+        };
+        await updateConfig(existingConfig._id, updates);
+        return existingConfig._id;
+      }
+
       const input: CreateWorkflowConfigInput = {
-        name: `${name.trim()} (editable)`,
+        name: name.trim(),
         description: description.trim() || undefined,
         steps,
         visibility: effectiveVisibility,
@@ -592,67 +680,48 @@ function WorkflowCanvasInner({
       const newId = await createConfig(input);
       openEditor("edit", newId);
       return newId;
-    }
-
-    if (existingConfig) {
-      const updates: UpdateWorkflowConfigInput = {
-        name: name.trim(),
-        description: description.trim() || undefined,
-        steps,
-        visibility: effectiveVisibility,
-        shared_with_teams: effectiveSharedWithTeams,
-      };
-      await updateConfig(existingConfig._id, updates);
-      return existingConfig._id;
-    }
-
-    const input: CreateWorkflowConfigInput = {
-      name: name.trim(),
-      description: description.trim() || undefined,
+    },
+    [
+      name,
+      description,
       steps,
-      visibility: effectiveVisibility,
-      shared_with_teams: effectiveSharedWithTeams,
-    };
-    const newId = await createConfig(input);
-    openEditor("edit", newId);
-    return newId;
-  }, [
-    name,
-    description,
-    steps,
-    visibility,
-    sharedWithTeams,
-    existingConfig,
-    createConfig,
-    updateConfig,
-    openEditor,
-    toast,
-  ]);
+      visibility,
+      sharedWithTeams,
+      existingConfig,
+      createConfig,
+      updateConfig,
+      openEditor,
+      toast,
+    ],
+  );
 
-  const doSave = useCallback(async (successMsg?: string) => {
-    setIsSaving(true);
-    try {
-      const savedId = await persistWorkflow();
-      if (!savedId) return;
-      isDirtyRef.current = false;
-      setUnsaved(false);
-      toast(
-        successMsg ??
-          (existingConfig?.config_driven
-            ? "Saved as a new editable workflow"
-            : "Workflow saved"),
-        "success",
-      );
-    } catch (error) {
-      console.error("Failed to save workflow config:", error);
-      toast(
-        error instanceof Error ? error.message : "Failed to save workflow",
-        "error",
-      );
-    } finally {
-      setIsSaving(false);
-    }
-  }, [persistWorkflow, existingConfig?.config_driven, setUnsaved, toast]);
+  const doSave = useCallback(
+    async (successMsg?: string) => {
+      setIsSaving(true);
+      try {
+        const savedId = await persistWorkflow();
+        if (!savedId) return;
+        isDirtyRef.current = false;
+        setUnsaved(false);
+        toast(
+          successMsg ??
+            (existingConfig?.config_driven
+              ? "Saved as a new editable workflow"
+              : "Workflow saved"),
+          "success",
+        );
+      } catch (error) {
+        console.error("Failed to save workflow config:", error);
+        toast(
+          error instanceof Error ? error.message : "Failed to save workflow",
+          "error",
+        );
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [persistWorkflow, existingConfig?.config_driven, setUnsaved, toast],
+  );
 
   const handleSave = useCallback(async () => {
     if (visibility !== "private") {
@@ -661,13 +730,19 @@ function WorkflowCanvasInner({
         const res = await fetch("/api/workflow-configs/check-agent-access", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ steps, visibility, shared_with_teams: sharedWithTeams }),
+          body: JSON.stringify({
+            steps,
+            visibility,
+            shared_with_teams: sharedWithTeams,
+          }),
         });
         if (res.ok) {
           const data = await res.json();
           gaps = data.gaps ?? [];
         }
-      } catch { /* non-fatal — proceed to save */ }
+      } catch {
+        /* non-fatal — proceed to save */
+      }
       if (gaps.length > 0) {
         setAgentAccessGaps(gaps);
         setShowAccessModal(true);
@@ -694,7 +769,10 @@ function WorkflowCanvasInner({
   const handleSaveAsPrivate = useCallback(async () => {
     setIsSaving(true);
     try {
-      const savedId = await persistWorkflow({ visibility: "private", shared_with_teams: [] });
+      const savedId = await persistWorkflow({
+        visibility: "private",
+        shared_with_teams: [],
+      });
       if (!savedId) return;
       setVisibility("private");
       setSharedWithTeams([]);
@@ -802,7 +880,9 @@ function WorkflowCanvasInner({
         : {}),
       steps,
     };
-    const blob = new Blob([YAML.stringify(config)], { type: "application/x-yaml" });
+    const blob = new Blob([YAML.stringify(config)], {
+      type: "application/x-yaml",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -817,15 +897,23 @@ function WorkflowCanvasInner({
       const obj = parsed as Record<string, unknown>;
       if (typeof obj.name === "string") setName(obj.name);
       if (typeof obj.description === "string") setDescription(obj.description);
-      if (obj.visibility === "private" || obj.visibility === "team" || obj.visibility === "global") {
+      if (
+        obj.visibility === "private" ||
+        obj.visibility === "team" ||
+        obj.visibility === "global"
+      ) {
         setVisibility(obj.visibility);
       }
       if (Array.isArray(obj.shared_with_teams)) {
-        const refs = (obj.shared_with_teams as string[]).map((ref) => ref.trim().toLowerCase());
+        const refs = (obj.shared_with_teams as string[]).map((ref) =>
+          ref.trim().toLowerCase(),
+        );
         setSharedWithTeams(
           refs
             .map((ref) => {
-              const bySlug = availableTeams.find((t) => t.slug.toLowerCase() === ref);
+              const bySlug = availableTeams.find(
+                (t) => t.slug.toLowerCase() === ref,
+              );
               if (bySlug) return bySlug.slug;
               const byId = availableTeams.find((t) => t._id === ref);
               return byId?.slug ?? ref;
@@ -843,7 +931,13 @@ function WorkflowCanvasInner({
 
   // Agent objects for the sidebar (with _id, name, description, ui)
   const sidebarAgents = useMemo(
-    () => agents.map((a) => ({ _id: a.value, name: a.label, description: a.description, ui: a.ui })),
+    () =>
+      agents.map((a) => ({
+        _id: a.value,
+        name: a.label,
+        description: a.description,
+        ui: a.ui,
+      })),
     [agents],
   );
 
@@ -874,7 +968,9 @@ function WorkflowCanvasInner({
     if (selectedStepIndex < 0) return nodes;
     const selectedId = `step-${selectedStepIndex}`;
     return nodes.map((n) =>
-      n.id === selectedId ? { ...n, selected: true } : { ...n, selected: false },
+      n.id === selectedId
+        ? { ...n, selected: true }
+        : { ...n, selected: false },
     );
   }, [nodes, selectedStepIndex]);
 
@@ -900,16 +996,25 @@ function WorkflowCanvasInner({
         readOnlyHint={readOnlyHint}
         onCloneToEdit={existingConfig ? handleCloneToEdit : undefined}
         visibility={visibility}
-        onVisibilityChange={(v) => { setVisibility(v); markDirty(); }}
+        onVisibilityChange={(v) => {
+          setVisibility(v);
+          markDirty();
+        }}
         sharedWithTeams={sharedWithTeams}
-        onSharedWithTeamsChange={(t) => { setSharedWithTeams(t); markDirty(); }}
+        onSharedWithTeamsChange={(t) => {
+          setSharedWithTeams(t);
+          markDirty();
+        }}
         teams={availableTeams}
+        authzDocument={existingConfig}
       />
 
       {isReadOnly && readOnlyHint && (
         <div className="px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/20 flex items-start gap-2 shrink-0">
           <Lock className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">{readOnlyHint}</p>
+          <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
+            {readOnlyHint}
+          </p>
         </div>
       )}
 
@@ -944,12 +1049,16 @@ function WorkflowCanvasInner({
           stepIndex={selectedStepIndex}
           onChange={handleStepChange}
           onDelete={handleDeleteStep}
-          onAddStep={isReadOnly ? undefined : () => {
-            markDirty();
-            const newStep = createBlankStep();
-            setSteps((prev) => [...prev, newStep]);
-            setSelectedStepIndex(0);
-          }}
+          onAddStep={
+            isReadOnly
+              ? undefined
+              : () => {
+                  markDirty();
+                  const newStep = createBlankStep();
+                  setSteps((prev) => [...prev, newStep]);
+                  setSelectedStepIndex(0);
+                }
+          }
           agents={sidebarAgents}
           agentsLoading={agentsLoading}
           readOnly={isReadOnly}
@@ -970,7 +1079,10 @@ function WorkflowCanvasInner({
           visibility={visibility}
           onGrantAndSave={handleGrantAndSave}
           onSaveAsPrivate={handleSaveAsPrivate}
-          onCancel={() => { setShowAccessModal(false); setAgentAccessGaps([]); }}
+          onCancel={() => {
+            setShowAccessModal(false);
+            setAgentAccessGaps([]);
+          }}
         />
       )}
 
@@ -978,9 +1090,12 @@ function WorkflowCanvasInner({
       {showDeleteDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-card border border-border rounded-lg p-6 shadow-xl max-w-sm mx-4">
-            <h3 className="text-sm font-bold text-foreground mb-2">Delete workflow</h3>
+            <h3 className="text-sm font-bold text-foreground mb-2">
+              Delete workflow
+            </h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Are you sure you want to delete &ldquo;{name}&rdquo;? This cannot be undone.
+              Are you sure you want to delete &ldquo;{name}&rdquo;? This cannot
+              be undone.
             </p>
             <div className="flex justify-end gap-2">
               <button

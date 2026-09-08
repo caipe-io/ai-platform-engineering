@@ -2,6 +2,9 @@
  * TypeScript types for Dynamic Agents feature.
  */
 
+import type { AuthzSyncMetadata } from "./authz-sync";
+export type { AuthzSyncMetadata, AuthzSyncState } from "./authz-sync";
+
 // =============================================================================
 // Enums
 // =============================================================================
@@ -29,17 +32,6 @@ export type VisibilityType = 'private' | 'team' | 'global';
  * surfaces a deprecation warning in the response.
  */
 export type LegacyVisibilityType = VisibilityType;
-
-export type AuthzSyncState = "pending" | "ready" | "error";
-
-export interface AuthzSyncMetadata {
-  authz_revision?: number;
-  authz_sync_state?: AuthzSyncState;
-  authz_last_synced_revision?: number;
-  authz_last_error_code?: string;
-  authz_sync_started_at?: string;
-  authz_previous_state?: Record<string, unknown>;
-}
 
 // =============================================================================
 // MCP Server Types

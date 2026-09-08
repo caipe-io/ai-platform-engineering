@@ -7,8 +7,8 @@ import type { AgentSkill } from "@/types/agent-skill";
  * Load a single agent_skills row by id.
  *
  * Authorization is enforced by callers with concrete OpenFGA checks. Mongo
- * stores `visibility` and `owner_id` as metadata; team shares are OpenFGA-only
- * and exposed on API responses via {@link hydrateAgentSkillTeamShares}.
+ * stores the desired visibility/share state so failed reconciliation can be
+ * retried without treating stale OpenFGA tuples as the source of truth.
  */
 export async function getAgentSkillVisibleToUser(
   id: string,
@@ -25,6 +25,7 @@ export async function hydrateAgentSkillTeamShares(skill: AgentSkill): Promise<Ag
   if (skill.visibility !== "team") {
     return { ...skill, shared_with_teams: undefined };
   }
+  if (Array.isArray(skill.shared_with_teams)) return skill;
   const slugs = await readSkillSharedTeamSlugsFromOpenFga(skill.id);
   return {
     ...skill,

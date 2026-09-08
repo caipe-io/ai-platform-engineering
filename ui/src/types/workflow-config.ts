@@ -1,3 +1,5 @@
+import type { AuthzSyncMetadata } from "./authz-sync";
+
 /**
  * Workflow Config Types
  *
@@ -52,7 +54,7 @@ export type StepEntry = WorkflowStep | ParallelGroup;
 // Workflow Config (MongoDB document)
 // ---------------------------------------------------------------------------
 
-export interface WorkflowConfig {
+export interface WorkflowConfig extends AuthzSyncMetadata {
   /** Unique identifier (MongoDB _id), e.g. "wf-<timestamp>-<random>" */
   _id: string;
   /** Workflow name (unique) */
@@ -63,6 +65,8 @@ export interface WorkflowConfig {
   steps: StepEntry[];
   /** Creator's email */
   owner_id: string;
+  /** Stable OIDC subject used for ownership checks and reconciliation. */
+  owner_subject?: string;
   /** Visibility level */
   visibility: WorkflowConfigVisibility;
   /** Team IDs when visibility is "team" */
@@ -100,7 +104,9 @@ export interface UpdateWorkflowConfigInput {
 // ---------------------------------------------------------------------------
 
 /** Create a blank WorkflowStep with sensible defaults */
-export function createBlankStep(overrides?: Partial<WorkflowStep>): WorkflowStep {
+export function createBlankStep(
+  overrides?: Partial<WorkflowStep>,
+): WorkflowStep {
   return {
     type: "step",
     display_text: "",
@@ -115,7 +121,7 @@ export function createBlankStep(overrides?: Partial<WorkflowStep>): WorkflowStep
 
 /** Flatten StepEntry[] into a flat list of (globalIndex, WorkflowStep) tuples */
 export function flattenStepEntries(
-  entries: StepEntry[]
+  entries: StepEntry[],
 ): { index: number; step: WorkflowStep }[] {
   const result: { index: number; step: WorkflowStep }[] = [];
   let idx = 0;

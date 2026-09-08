@@ -33,7 +33,10 @@ import {
 filterAgentsByOwnershipScopeForSession,
 isPrivateAgentOwner,
 } from "@/lib/rbac/agent-ownership-scope";
-import { validatePersistedAgentMcpDependencies } from "@/lib/rbac/agent-mcp-dependency-scope";
+import {
+validatePersistedAgentMcpDependencies,
+validatePersistedAgentResourceDependencies,
+} from "@/lib/rbac/agent-mcp-dependency-scope";
 import { caipeOrgKey } from "@/lib/rbac/organization";
 import { getPlatformDefaultAgentId,isPlatformDefaultAgent } from "@/lib/rbac/platform-default";
 import {
@@ -787,10 +790,23 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       agent: {
         visibility,
         ownerSubject,
+        ownerEmail: user.email,
         ownerTeamSlug,
         sharedTeamSlugs,
       },
       allowedTools: doc.allowed_tools,
+    });
+    await validatePersistedAgentResourceDependencies({
+      session,
+      agent: {
+        visibility,
+        ownerSubject,
+        ownerEmail: user.email,
+        ownerTeamSlug,
+        sharedTeamSlugs,
+      },
+      skillIds: doc.skills ?? [],
+      workflowIds: doc.builtin_tools?.workflows ?? [],
     });
 
     await reconcileAgentRelationships({
@@ -1035,10 +1051,26 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       agent: {
         visibility: finalVisibility,
         ownerSubject: stableOwnerSubject,
+        ownerEmail: agent.owner_id,
         ownerTeamSlug: nextOwnerTeamSlug,
         sharedTeamSlugs,
       },
       allowedTools: finalAllowedTools,
+    });
+    const finalSkills = (updateData.skills ?? agent.skills ?? []) as string[];
+    const finalBuiltinTools = (updateData.builtin_tools ??
+      agent.builtin_tools) as DynamicAgentConfig["builtin_tools"] | undefined;
+    await validatePersistedAgentResourceDependencies({
+      session,
+      agent: {
+        visibility: finalVisibility,
+        ownerSubject: stableOwnerSubject,
+        ownerEmail: agent.owner_id,
+        ownerTeamSlug: nextOwnerTeamSlug,
+        sharedTeamSlugs,
+      },
+      skillIds: finalSkills,
+      workflowIds: finalBuiltinTools?.workflows ?? [],
     });
     // Resolve the unlinked SA grant state whenever the wildcard grant is being
     // written OR revoked — the delete path needs the exact sub too, so we

@@ -7,6 +7,11 @@ jest.mock("@/lib/authz", () => ({
   authorizeMany: jest.fn(),
 }));
 
+const mockFindSkill = jest.fn();
+jest.mock("@/lib/mongodb", () => ({
+  getCollection: jest.fn(async () => ({ findOne: mockFindSkill })),
+}));
+
 import { ApiError } from "@/lib/api-error";
 
 import {
@@ -27,6 +32,7 @@ describe("resource-authz org-admin bypass", () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv, CAIPE_ORG_KEY: "caipe" };
+    mockFindSkill.mockResolvedValue(null);
   });
 
   afterAll(() => {
@@ -232,6 +238,23 @@ describe("resource-authz org-admin bypass", () => {
         relation: "can_manage",
         object: "admin_surface:skills",
       });
+    });
+
+    it("does not let an app admin bypass another user's private skill", async () => {
+      mockFindSkill.mockResolvedValue({
+        id: "skill-private",
+        visibility: "private",
+        owner_subject: "owner-sub",
+      });
+      const check = jest.fn(async () => ({ allowed: true }));
+
+      await expect(requireSkillPermission(
+        { sub: "admin-sub", role: "admin", user: { email: "admin@example.com" } },
+        "skill-private",
+        "read",
+        { check },
+      )).rejects.toMatchObject({ statusCode: 403 });
+      expect(check).not.toHaveBeenCalled();
     });
   });
 });

@@ -34,7 +34,11 @@ describe("private resource persisted-state prechecks", () => {
       subject: { type: "user", id: "user-a" },
       action: "discover",
       trustedContext: {
-        interaction: { source: "web", conversationKind: "personal", verified: false },
+        interaction: {
+          source: "web",
+          conversationKind: "personal",
+          verified: false,
+        },
       },
       resourceType: "agent",
       ids: ["pending", "failed", "ready", "legacy"],
@@ -45,4 +49,33 @@ describe("private resource persisted-state prechecks", () => {
     expect(decisions.has("ready")).toBe(false);
     expect(decisions.has("legacy")).toBe(false);
   });
+
+  it.each([
+    [
+      "skill" as const,
+      "invoke" as const,
+      { id: "pending", authz_sync_state: "pending" },
+    ],
+    [
+      "task" as const,
+      "read" as const,
+      { _id: "pending", authz_sync_state: "pending" },
+    ],
+  ])(
+    "applies the sync gate to %s resources",
+    async (resourceType, action, row) => {
+      mockGetCollection.mockResolvedValue({
+        find: jest.fn(() => ({ toArray: jest.fn(async () => [row]) })),
+      });
+
+      const decisions = await privateResourceBatchPreChecks({
+        subject: { type: "user", id: "user-a" },
+        action,
+        resourceType,
+        ids: ["pending"],
+      });
+
+      expect(decisions.get("pending")?.reason).toBe("AUTHZ_SYNC_PENDING");
+    },
+  );
 });

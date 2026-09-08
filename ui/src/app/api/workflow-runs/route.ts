@@ -9,63 +9,85 @@
  */
 
 import {
-ApiError,
-getAuthFromBearerOrSession,
-successResponse,
-withAuth,
-withErrorHandler,
+  ApiError,
+  getAuthFromBearerOrSession,
+  successResponse,
+  withAuth,
+  withErrorHandler,
 } from "@/lib/api-middleware";
-import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
+import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import {
-detectStaleRun,
-startWorkflowRun,
-type WorkflowRunDocument,
+  detectStaleRun,
+  startWorkflowRun,
+  type WorkflowRunDocument,
 } from "@/lib/server/workflow-engine";
-import { deleteEventsByRun,readEventsByRun } from "@/lib/server/event-store";
+import { deleteEventsByRun, readEventsByRun } from "@/lib/server/event-store";
 import {
-filterAccessibleWorkflowConfigs,
-requireWorkflowRunAccess,
-workflowSubjectFromSession,
-type WorkflowAuthzSession,
+  filterAccessibleWorkflowConfigs,
+  requireWorkflowRunAccess,
+  workflowSubjectFromSession,
+  type WorkflowAuthzSession,
 } from "@/lib/server/workflow-cas-authz";
 import {
-buildTeamRefToSlugMap,
-filterWorkflowConfigsByRunAccess,
-mergeWorkflowConfigsById,
-requireWorkflowConfigRunAccess,
-requireWorkflowConfigRunViewAccess,
-resolveUserTeamSlugsForWorkflow,
-type WorkflowConfigRebacSnapshot,
+  buildTeamRefToSlugMap,
+  filterWorkflowConfigsByRunAccess,
+  mergeWorkflowConfigsById,
+  requireWorkflowConfigRunAccess,
+  requireWorkflowConfigRunViewAccess,
+  resolveUserTeamSlugsForWorkflow,
+  type WorkflowConfigRebacSnapshot,
 } from "@/lib/rbac/workflow-config-rebac";
 import type { WorkflowConfig } from "@/types/workflow-config";
-import { NextRequest,NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const STORAGE_TYPE = isMongoDBConfigured ? "mongodb" : "none";
 
 /** Days to retain workflow runs before auto-cleanup. 0 = disabled. */
-const RETENTION_DAYS = parseInt(process.env.WORKFLOW_RUN_RETENTION_DAYS ?? "7", 10);
+const RETENTION_DAYS = parseInt(
+  process.env.WORKFLOW_RUN_RETENTION_DAYS ?? "7",
+  10,
+);
 
 /** Throttle cleanup to run at most once per 30 minutes */
 let lastCleanupAt = 0;
 const CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
 
-function ownerMatchesSession(run: WorkflowRunDocument, session: WorkflowAuthzSession): boolean {
+function ownerMatchesSession(
+  run: WorkflowRunDocument,
+  session: WorkflowAuthzSession,
+): boolean {
   const subject = workflowSubjectFromSession(session);
   if (!subject) return false;
-  return run.owner_subject?.type === subject.type && run.owner_subject.id === subject.id;
+  return (
+    run.owner_subject?.type === subject.type &&
+    run.owner_subject.id === subject.id
+  );
 }
 
-function filterRunsForOwner<T extends WorkflowRunDocument>(runs: T[], session: WorkflowAuthzSession): T[] {
-  return runs.filter((run) => !run.owner_subject || ownerMatchesSession(run, session));
+function filterRunsForOwner<T extends WorkflowRunDocument>(
+  runs: T[],
+  session: WorkflowAuthzSession,
+): T[] {
+  return runs.filter(
+    (run) => !run.owner_subject || ownerMatchesSession(run, session),
+  );
 }
 
-function workflowRunAccessConfig(config: WorkflowConfig): WorkflowConfigRebacSnapshot {
+function workflowRunAccessConfig(
+  config: WorkflowConfig,
+): WorkflowConfigRebacSnapshot {
   return {
     _id: String(config._id),
     owner_id: config.owner_id,
+    owner_subject: config.owner_subject,
     visibility: config.visibility,
     shared_with_teams: config.shared_with_teams,
     config_driven: config.config_driven,
+    authz_revision: config.authz_revision,
+    authz_sync_state: config.authz_sync_state,
+    authz_last_synced_revision: config.authz_last_synced_revision,
+    authz_last_error_code: config.authz_last_error_code,
+    authz_sync_started_at: config.authz_sync_started_at,
   };
 }
 
@@ -104,24 +126,34 @@ async function cleanupExpiredRuns(): Promise<void> {
       const runId = run._id as string;
       // Clean up files (best-effort)
       try {
-        const fsNamespace = JSON.stringify([run.workflow_config_id, runId, "filesystem"]);
+        const fsNamespace = JSON.stringify([
+          run.workflow_config_id,
+          runId,
+          "filesystem",
+        ]);
         await fetch(
           `${daUrl}/api/v1/files/namespace?fs_namespace=${encodeURIComponent(fsNamespace)}`,
           { method: "DELETE" },
         );
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
 
       // Clean up events (best-effort)
       try {
         await deleteEventsByRun(runId);
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
     }
 
     // Bulk delete the run documents
     const ids = expiredRuns.map((r) => r._id);
     await col.deleteMany({ _id: { $in: ids } });
 
-    console.log(`[workflow-cleanup] Deleted ${expiredRuns.length} expired workflow runs (retention: ${RETENTION_DAYS}d)`);
+    console.log(
+      `[workflow-cleanup] Deleted ${expiredRuns.length} expired workflow runs (retention: ${RETENTION_DAYS}d)`,
+    );
   } catch (err) {
     console.warn("[workflow-cleanup] Error during cleanup:", err);
   }
@@ -154,7 +186,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Start uses the same visibility ∪ authorization semantics as workflow config
   // reads, so global/team/owner-visible workflows remain runnable before every
   // legacy row has been projected into OpenFGA.
-  const userTeamSlugs = await resolveUserTeamSlugsForWorkflow(user.email, session);
+  const userTeamSlugs = await resolveUserTeamSlugsForWorkflow(
+    user.email,
+    session,
+  );
   await requireWorkflowConfigRunAccess(
     session,
     workflowRunAccessConfig(config),
@@ -168,18 +203,21 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // run-owner's token.
   const authHeaders: Record<string, string> = {};
   const incomingAuth = request.headers.get("Authorization");
-  const sessionAccessToken = typeof (session as { accessToken?: unknown }).accessToken === "string"
-    ? (session as { accessToken?: string }).accessToken
-    : undefined;
+  const sessionAccessToken =
+    typeof (session as { accessToken?: unknown }).accessToken === "string"
+      ? (session as { accessToken?: string }).accessToken
+      : undefined;
   if (incomingAuth) {
     authHeaders["Authorization"] = incomingAuth;
   } else if (sessionAccessToken) {
     authHeaders["Authorization"] = `Bearer ${sessionAccessToken}`;
   }
-  authHeaders["X-User-Context"] = Buffer.from(JSON.stringify({
-    email: user.email,
-    name: user.name,
-  })).toString("base64");
+  authHeaders["X-User-Context"] = Buffer.from(
+    JSON.stringify({
+      email: user.email,
+      name: user.name,
+    }),
+  ).toString("base64");
 
   // Enrich trigger_info with user context
   const enrichedTriggerInfo = {
@@ -196,7 +234,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     workflowSubjectFromSession(session),
   );
 
-  return NextResponse.json({ run_id: runId, status: "running" }, { status: 201 });
+  return NextResponse.json(
+    { run_id: runId, status: "running" },
+    { status: 201 },
+  );
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -262,7 +303,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     if (!config) {
       return NextResponse.json([]) as NextResponse;
     }
-    const userTeamSlugs = await resolveUserTeamSlugsForWorkflow(user.email, session);
+    const userTeamSlugs = await resolveUserTeamSlugsForWorkflow(
+      user.email,
+      session,
+    );
     try {
       await requireWorkflowConfigRunViewAccess(
         session,
@@ -288,9 +332,23 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const configCol = await getCollection<WorkflowConfig>("workflow_configs");
   const configCandidates = (await configCol
     .find({})
-    .project({ _id: 1, owner_id: 1, visibility: 1, shared_with_teams: 1, config_driven: 1 })
+    .project({
+      _id: 1,
+      owner_id: 1,
+      visibility: 1,
+      shared_with_teams: 1,
+      config_driven: 1,
+      authz_revision: 1,
+      authz_sync_state: 1,
+      authz_last_synced_revision: 1,
+      authz_last_error_code: 1,
+      authz_sync_started_at: 1,
+    })
     .toArray()) as WorkflowConfigRebacSnapshot[];
-  const userTeamSlugs = await resolveUserTeamSlugsForWorkflow(user.email, session);
+  const userTeamSlugs = await resolveUserTeamSlugsForWorkflow(
+    user.email,
+    session,
+  );
   const teamRefToSlug = await buildTeamRefToSlugMap();
   const byVisibility = filterWorkflowConfigsByRunAccess(
     configCandidates,
@@ -350,7 +408,10 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
 
     await col.updateOne({ _id: id }, { $set: body });
 
-    return successResponse({ id, message: "Workflow run updated successfully" });
+    return successResponse({
+      id,
+      message: "Workflow run updated successfully",
+    });
   });
 });
 
@@ -383,16 +444,22 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     // Clean up GridFS files via backend
     try {
       const daUrl = process.env.DYNAMIC_AGENTS_URL || "http://localhost:8100";
-      const fsNamespace = JSON.stringify([run.workflow_config_id, id, "filesystem"]);
+      const fsNamespace = JSON.stringify([
+        run.workflow_config_id,
+        id,
+        "filesystem",
+      ]);
       await fetch(
         `${daUrl}/api/v1/files/namespace?fs_namespace=${encodeURIComponent(fsNamespace)}`,
         {
           method: "DELETE",
           headers: {
-            "X-User-Context": Buffer.from(JSON.stringify({
-              email: user.email,
-              name: user.name,
-            })).toString("base64"),
+            "X-User-Context": Buffer.from(
+              JSON.stringify({
+                email: user.email,
+                name: user.name,
+              }),
+            ).toString("base64"),
           },
         },
       );
@@ -410,6 +477,9 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     // Delete the run document
     await col.deleteOne({ _id: id });
 
-    return successResponse({ id, message: "Workflow run deleted successfully" });
+    return successResponse({
+      id,
+      message: "Workflow run deleted successfully",
+    });
   });
 });

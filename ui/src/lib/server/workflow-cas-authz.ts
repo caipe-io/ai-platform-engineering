@@ -14,8 +14,18 @@
 // one shared decision core + cache + audit.
 
 import { ApiError } from "@/lib/api-error";
-import { authorize, authorizeMany, type AuthorizeResult, type DecisionContext, type Subject } from "@/lib/authz";
+import {
+  authorize,
+  authorizeMany,
+  type AuthorizeResult,
+  type DecisionContext,
+  type Subject,
+} from "@/lib/authz";
 import { emitDecisionAudit } from "@/lib/authz/audit";
+import {
+  authzSyncPreCheck,
+  type AuthzSyncDocument,
+} from "@/lib/authz/resource-sync";
 
 const ORG_KEY = process.env.CAIPE_ORG_KEY ?? "caipe";
 
@@ -29,14 +39,24 @@ export interface WorkflowAuthzSession {
   org?: string;
 }
 
-export function workflowSubjectFromSession(session: WorkflowAuthzSession): Subject | null {
+export function workflowSubjectFromSession(
+  session: WorkflowAuthzSession,
+): Subject | null {
   const sub = typeof session.sub === "string" ? session.sub.trim() : "";
   if (!sub) return null;
-  return { type: session.isServiceAccount === true ? "service_account" : "user", id: sub };
+  return {
+    type: session.isServiceAccount === true ? "service_account" : "user",
+    id: sub,
+  };
 }
 
 function ctxFromSession(session: WorkflowAuthzSession): DecisionContext {
-  return { tenantId: typeof session.org === "string" && session.org.trim() ? session.org.trim() : undefined };
+  return {
+    tenantId:
+      typeof session.org === "string" && session.org.trim()
+        ? session.org.trim()
+        : undefined,
+  };
 }
 
 async function workflowAccessDecision(
@@ -45,15 +65,23 @@ async function workflowAccessDecision(
   action: WorkflowAction,
 ): Promise<AuthorizeResult> {
   const subject = workflowSubjectFromSession(session);
-  if (!subject) return { decision: "DENY", reason: "NOT_AUTHENTICATED", retriable: false };
+  if (!subject)
+    return { decision: "DENY", reason: "NOT_AUTHENTICATED", retriable: false };
   const ctx = ctxFromSession(session);
   const orgAdmin = await authorize(
-    { subject, resource: { type: "organization", id: ORG_KEY }, action: "manage" },
+    {
+      subject,
+      resource: { type: "organization", id: ORG_KEY },
+      action: "manage",
+    },
     ctx,
   );
   if (orgAdmin.decision === "ALLOW") return orgAdmin;
   if (orgAdmin.reason === "AUTHZ_UNAVAILABLE") return orgAdmin;
-  return authorize({ subject, resource: { type: "task", id: configId }, action }, ctx);
+  return authorize(
+    { subject, resource: { type: "task", id: configId }, action },
+    ctx,
+  );
 }
 
 function unavailableError(): ApiError {
@@ -76,8 +104,14 @@ function workflowRunForbiddenError(): ApiError {
   );
 }
 
-function ownerMatches(run: WorkflowRunAccessDocument, subject: Subject): boolean {
-  return run.owner_subject?.type === subject.type && run.owner_subject.id === subject.id;
+function ownerMatches(
+  run: WorkflowRunAccessDocument,
+  subject: Subject,
+): boolean {
+  return (
+    run.owner_subject?.type === subject.type &&
+    run.owner_subject.id === subject.id
+  );
 }
 
 function workflowActionForRunAction(
@@ -188,7 +222,11 @@ export async function requireWorkflowRunAccess(
   if (run.owner_subject) {
     const ctx = ctxFromSession(session);
     const orgAdmin = await authorize(
-      { subject, resource: { type: "organization", id: ORG_KEY }, action: "manage" },
+      {
+        subject,
+        resource: { type: "organization", id: ORG_KEY },
+        action: "manage",
+      },
       ctx,
     );
     if (orgAdmin.reason === "AUTHZ_UNAVAILABLE" || orgAdmin.retriable) {
@@ -244,21 +282,29 @@ export async function filterAccessibleWorkflowConfigs<T>(
   if (!subject) return [];
   if (configs.length === 0) return [];
   const ctx = ctxFromSession(session);
+  const reconciledConfigs = configs.filter(
+    (config) => !authzSyncPreCheck(config as AuthzSyncDocument),
+  );
+  if (reconciledConfigs.length === 0) return [];
   const orgAdmin = await authorize(
-    { subject, resource: { type: "organization", id: ORG_KEY }, action: "manage" },
+    {
+      subject,
+      resource: { type: "organization", id: ORG_KEY },
+      action: "manage",
+    },
     ctx,
   );
-  if (orgAdmin.decision === "ALLOW") return configs;
+  if (orgAdmin.decision === "ALLOW") return reconciledConfigs;
   if (orgAdmin.reason === "AUTHZ_UNAVAILABLE" || orgAdmin.retriable) {
     throw unavailableError();
   }
 
-  const ids = configs.map(getId);
+  const ids = reconciledConfigs.map(getId);
   const results = await authorizeMany(subject, action, "task", ids, ctx);
   for (const result of results.values()) {
-    if (result.reason === "AUTHZ_UNAVAILABLE" || result.retriable) {
-      throw unavailableError();
-    }
+    if (result.reason === "AUTHZ_UNAVAILABLE") throw unavailableError();
   }
-  return configs.filter((config) => results.get(getId(config))?.decision === "ALLOW");
+  return reconciledConfigs.filter(
+    (config) => results.get(getId(config))?.decision === "ALLOW",
+  );
 }

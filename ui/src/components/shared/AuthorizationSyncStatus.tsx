@@ -7,7 +7,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { AuthzSyncMetadata } from "@/types/dynamic-agent";
+import type { AuthzSyncMetadata } from "@/types/authz-sync";
 import { Loader2, ShieldAlert, ShieldCheck } from "lucide-react";
 
 type AuthorizationSyncPresentation = {
@@ -38,7 +38,7 @@ function syncPresentation(
   const rawRevision = document?.authz_revision;
   const revision =
     Number.isSafeInteger(rawRevision) && (rawRevision ?? -1) >= 0
-      ? rawRevision ?? 0
+      ? (rawRevision ?? 0)
       : 0;
   const revisionMismatch =
     document?.authz_sync_state === "ready" &&
@@ -96,7 +96,10 @@ export function AuthorizationSyncStatus({
             )}
           >
             <Icon
-              className={cn("h-3.5 w-3.5", presentation.animate && "animate-spin")}
+              className={cn(
+                "h-3.5 w-3.5",
+                presentation.animate && "animate-spin",
+              )}
               aria-hidden="true"
             />
             <span className="hidden sm:inline">{presentation.label}</span>

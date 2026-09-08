@@ -26,6 +26,7 @@ const mockFilterAgentsByOwnershipScopeForSession = jest.fn();
 const mockResolveUnlinkedServiceAccountSub = jest.fn();
 const mockResolveUnlinkedServiceAccountGrantState = jest.fn();
 const mockValidatePersistedAgentMcpDependencies = jest.fn();
+const mockValidatePersistedAgentResourceDependencies = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -116,6 +117,8 @@ jest.mock("@/lib/rbac/agent-ownership-scope", () => ({
 jest.mock("@/lib/rbac/agent-mcp-dependency-scope", () => ({
   validatePersistedAgentMcpDependencies: (...args: unknown[]) =>
     mockValidatePersistedAgentMcpDependencies(...args),
+  validatePersistedAgentResourceDependencies: (...args: unknown[]) =>
+    mockValidatePersistedAgentResourceDependencies(...args),
 }));
 
 jest.mock("@/lib/rbac/unlinked-service-account", () => ({

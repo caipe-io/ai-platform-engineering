@@ -155,8 +155,9 @@ async function withMcpServerToolWildcardBackfill(
 
 export async function reconcileShareableResource(
   input: ShareableResourceInput,
+  ctx?: TupleReconcileContext,
 ): Promise<OpenFgaReconcileResult> {
-  return reconcileOwnedResource(buildShareableResourceTupleDiff(input));
+  return reconcileOwnedResource(buildShareableResourceTupleDiff(input), ctx);
 }
 
 export async function reconcileMcpServerRelationships(
@@ -291,6 +292,45 @@ async function readAllTuplesForObject(object: string): Promise<OpenFgaTupleKey[]
     continuationToken = page.continuationToken;
   } while (continuationToken);
   return tuples;
+}
+
+async function deleteAllRelationshipTuplesForObject(
+  object: string,
+  source: string,
+  ctx?: TupleReconcileContext,
+): Promise<OpenFgaReconcileResult> {
+  if (!isOpenFgaReconciliationEnabled()) {
+    throw new OpenFgaReconcileRequiredError();
+  }
+  const deletes = await readAllTuplesForObject(object);
+  const diff = {
+    writes: [] as OpenFgaTupleKey[],
+    deletes: uniqueTuples(deletes),
+  };
+  assertReconciliationEnabled(diff);
+  return reconcileTupleDiff(diff, { ...ctx, source: ctx?.source ?? source });
+}
+
+export async function deleteAllSkillRelationshipTuples(
+  skillId: string,
+  ctx?: TupleReconcileContext,
+): Promise<OpenFgaReconcileResult> {
+  return deleteAllRelationshipTuplesForObject(
+    `skill:${skillId}`,
+    "skill_delete",
+    ctx,
+  );
+}
+
+export async function deleteAllWorkflowRelationshipTuples(
+  workflowId: string,
+  ctx?: TupleReconcileContext,
+): Promise<OpenFgaReconcileResult> {
+  return deleteAllRelationshipTuplesForObject(
+    `task:${workflowId}`,
+    "workflow_delete",
+    ctx,
+  );
 }
 
 /**

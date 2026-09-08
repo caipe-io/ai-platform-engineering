@@ -1,32 +1,40 @@
 import {
-ApiError,
-successResponse,
-withAuth,
-withErrorHandler,
+  ApiError,
+  successResponse,
+  withAuth,
+  withErrorHandler,
 } from "@/lib/api-middleware";
-import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
+import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import {
-filterAccessibleWorkflowConfigs,
-workflowAccessAllowed,
+  AuthzSyncSupersededError,
+  authzRevisionFilter,
+  hasActiveAuthzSync,
+  nextAuthzRevision,
+  runRevisionedAuthzSync,
+} from "@/lib/authz/resource-sync";
+import { deleteAllWorkflowRelationshipTuples } from "@/lib/rbac/openfga-owned-resources-reconcile";
+import { validateWorkflowAgentDependencies } from "@/lib/rbac/workflow-agent-dependency-scope";
+import {
+  filterAccessibleWorkflowConfigs,
 } from "@/lib/server/workflow-cas-authz";
 import {
-buildTeamRefToSlugMap,
-filterWorkflowConfigsByRunAccess,
-mergeWorkflowConfigsById,
-normalizeSharedWithTeamSlugs,
-reconcileWorkflowConfigAccess,
-requireWorkflowConfigRunAccess,
-requireWorkflowConfigWriteAccess,
-resolveUserTeamSlugsForWorkflow,
+  buildTeamRefToSlugMap,
+  filterWorkflowConfigsByRunAccess,
+  mergeWorkflowConfigsById,
+  normalizeSharedWithTeamSlugs,
+  reconcileWorkflowConfigAccess,
+  requireWorkflowConfigRunAccess,
+  requireWorkflowConfigWriteAccess,
+  resolveUserTeamSlugsForWorkflow,
 } from "@/lib/rbac/workflow-config-rebac";
 import type {
-CreateWorkflowConfigInput,
-StepEntry,
-UpdateWorkflowConfigInput,
-WorkflowConfig,
-WorkflowConfigVisibility,
+  CreateWorkflowConfigInput,
+  StepEntry,
+  UpdateWorkflowConfigInput,
+  WorkflowConfig,
+  WorkflowConfigVisibility,
 } from "@/types/workflow-config";
-import { NextRequest,NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 /**
  * Workflow Config API Routes
@@ -37,7 +45,11 @@ import { NextRequest,NextResponse } from "next/server";
  */
 
 const STORAGE_TYPE = isMongoDBConfigured ? "mongodb" : "none";
-const VALID_VISIBILITIES: WorkflowConfigVisibility[] = ["private", "team", "global"];
+const VALID_VISIBILITIES: WorkflowConfigVisibility[] = [
+  "private",
+  "team",
+  "global",
+];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,7 +63,7 @@ function validateSteps(steps: StepEntry[]): void {
     if (entry.type === "parallel") {
       throw new ApiError(
         "Parallel groups are not supported in v1. All steps must have type 'step'.",
-        400
+        400,
       );
     }
     if (entry.type !== "step") {
@@ -61,13 +73,16 @@ function validateSteps(steps: StepEntry[]): void {
     if (!entry.display_text || !entry.agent_id || !entry.prompt) {
       throw new ApiError(
         "Each step must have display_text, agent_id, and prompt",
-        400
+        400,
       );
     }
-    if (entry.on_error === "retry" && (!entry.retry || entry.retry.max_attempts < 1)) {
+    if (
+      entry.on_error === "retry" &&
+      (!entry.retry || entry.retry.max_attempts < 1)
+    ) {
       throw new ApiError(
         "Steps with on_error='retry' must have retry.max_attempts >= 1",
-        400
+        400,
       );
     }
   }
@@ -75,31 +90,91 @@ function validateSteps(steps: StepEntry[]): void {
 
 function validateVisibility(
   visibility: WorkflowConfigVisibility | undefined,
-  sharedWithTeams: string[] | undefined
+  sharedWithTeams: string[] | undefined,
 ): void {
   if (visibility !== undefined) {
     if (!VALID_VISIBILITIES.includes(visibility)) {
       throw new ApiError(
         `Invalid visibility: ${visibility}. Must be one of: ${VALID_VISIBILITIES.join(", ")}`,
-        400
+        400,
       );
     }
-    if (visibility === "team" && (!sharedWithTeams || sharedWithTeams.length === 0)) {
+    if (
+      visibility === "team" &&
+      (!sharedWithTeams || sharedWithTeams.length === 0)
+    ) {
       throw new ApiError(
         "At least one team must be selected when visibility is 'team'",
-        400
+        400,
       );
     }
   }
 }
 
+function stableSessionSubject(session: { sub?: unknown }): string {
+  const subject = typeof session.sub === "string" ? session.sub.trim() : "";
+  if (!subject) {
+    throw new ApiError(
+      "A stable user subject is required to own a workflow",
+      401,
+    );
+  }
+  return subject;
+}
+
+function normalizeTeamSet(values: string[] | null | undefined): string[] {
+  return [
+    ...new Set(
+      (values ?? []).map((value) => value.trim().toLowerCase()).filter(Boolean),
+    ),
+  ];
+}
+
+function sameStringSet(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((value) => rightSet.has(value));
+}
+
+function workflowAuthzSnapshot(
+  config: WorkflowConfig,
+): Record<string, unknown> {
+  return {
+    visibility: config.visibility,
+    shared_with_teams: normalizeTeamSet(config.shared_with_teams),
+    owner_subject: config.owner_subject,
+  };
+}
+
+function previousWorkflowAuthzState(config: WorkflowConfig): WorkflowConfig {
+  return config.authz_previous_state
+    ? ({
+        ...config,
+        ...config.authz_previous_state,
+        authz_previous_state: undefined,
+      } as WorkflowConfig)
+    : config;
+}
+
+function isPrivateWorkflowOwner(
+  config: WorkflowConfig,
+  userEmail: string,
+  sessionSubject: string,
+): boolean {
+  if (config.visibility !== "private") return true;
+  if (config.owner_subject) return config.owner_subject === sessionSubject;
+  return (
+    config.owner_id.trim().toLowerCase() === userEmail.trim().toLowerCase()
+  );
+}
+
 async function getVisibleConfigs(): Promise<WorkflowConfig[]> {
   const collection = await getCollection<WorkflowConfig>("workflow_configs");
 
-  return collection
-    .find({})
-    .sort({ name: 1 })
-    .toArray();
+  return collection.find({}).sort({ name: 1 }).toArray();
 }
 
 async function getVisibleConfigById(
@@ -123,45 +198,32 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const id = searchParams.get("id");
 
   return await withAuth(request, async (_req, user, session) => {
-    // Admins can see all workflow configs
-    if (user.role === "admin") {
-      const collection = await getCollection<WorkflowConfig>("workflow_configs");
-      if (id) {
-        const config = await collection.findOne({ _id: id });
-        if (!config) throw new ApiError("Workflow config not found", 404);
-        return NextResponse.json(config) as NextResponse;
-      }
-      const configs = await collection.find({}).sort({ name: 1 }).toArray();
-      return NextResponse.json(configs) as NextResponse;
-    }
-
-    const userTeamSlugs = await resolveUserTeamSlugsForWorkflow(user.email, session);
+    const sessionSubject = stableSessionSubject(session);
+    const userTeamSlugs = await resolveUserTeamSlugsForWorkflow(
+      user.email,
+      session,
+    );
 
     if (id) {
       const config = await getVisibleConfigById(id);
       if (!config) {
         throw new ApiError("Workflow config not found", 404);
       }
-      // Additive CAS read (Phase 2) — mirrors the list's "visibility ∪ FGA read"
-      // semantics: if CAS grants task#read (org-admin bypass included) serve it;
-      // otherwise fall back to the legacy visibility check unchanged.
-      if (!(await workflowAccessAllowed(session, String(config._id), "read"))) {
-        await requireWorkflowConfigRunAccess(
-          session,
-          {
-            _id: String(config._id),
-            owner_id: config.owner_id,
-            visibility: config.visibility,
-            shared_with_teams: config.shared_with_teams,
-          },
-          user.email,
-          userTeamSlugs,
-        );
+      if (!isPrivateWorkflowOwner(config, user.email, sessionSubject)) {
+        throw new ApiError("Workflow config not found", 404);
       }
+      await requireWorkflowConfigRunAccess(
+        session,
+        config,
+        user.email,
+        userTeamSlugs,
+      );
       return NextResponse.json(config) as NextResponse;
     }
 
-    const configs = await getVisibleConfigs();
+    const configs = (await getVisibleConfigs()).filter((config) =>
+      isPrivateWorkflowOwner(config, user.email, sessionSubject),
+    );
     const teamRefToSlug = await buildTeamRefToSlugMap();
     const byVisibility = filterWorkflowConfigsByRunAccess(
       configs,
@@ -209,6 +271,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
     const id = `wf-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const now = new Date();
+    const ownerSubject = stableSessionSubject(session);
 
     const config: WorkflowConfig = {
       _id: id,
@@ -216,18 +279,51 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       description: body.description,
       steps: body.steps,
       owner_id: user.email,
+      owner_subject: ownerSubject,
       visibility,
-      shared_with_teams: sharedWithTeams,
+      shared_with_teams: sharedWithTeams ?? [],
+      authz_revision: 1,
+      authz_sync_state: "ready",
+      authz_last_synced_revision: 1,
       created_at: now,
       updated_at: now,
     };
 
+    await validateWorkflowAgentDependencies({
+      session,
+      workflow: { visibility, ownerSubject, ownerEmail: user.email },
+      steps: body.steps,
+    });
+
     const collection = await getCollection<WorkflowConfig>("workflow_configs");
-    await collection.insertOne(config);
+    await reconcileWorkflowConfigAccess(session, config, null, {
+      ownerSubject,
+      context: {
+        caller: { type: "user", id: ownerSubject },
+        source: "workflow_create",
+        verifyHigherConsistency: true,
+      },
+    });
+    try {
+      await collection.insertOne(config);
+    } catch (error) {
+      await deleteAllWorkflowRelationshipTuples(id, {
+        caller: { type: "user", id: ownerSubject },
+        source: "workflow_create_rollback",
+        verifyHigherConsistency: true,
+      }).catch((cleanupError) => {
+        console.warn(
+          "[workflow-configs] Failed to clean up authorization after create failure",
+          cleanupError,
+        );
+      });
+      throw error;
+    }
 
-    await reconcileWorkflowConfigAccess(session, config);
-
-    return successResponse({ id, message: "Workflow config created successfully" }, 201);
+    return successResponse(
+      { id, message: "Workflow config created successfully" },
+      201,
+    );
   });
 });
 
@@ -260,21 +356,41 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       throw new ApiError("Workflow config not found", 404);
     }
     if (existing.config_driven) {
-      throw new ApiError("Cannot modify a config-driven workflow. Edit app-config.yaml instead.", 403);
-    }
-
-    if (user.role !== "admin") {
-      await requireWorkflowConfigWriteAccess(
-        session,
-        {
-          _id: id,
-          owner_id: existing.owner_id,
-          visibility: existing.visibility,
-          shared_with_teams: existing.shared_with_teams,
-        },
-        user.email,
+      throw new ApiError(
+        "Cannot modify a config-driven workflow. Edit app-config.yaml instead.",
+        403,
       );
     }
+    const sessionSubject = stableSessionSubject(session);
+    if (!isPrivateWorkflowOwner(existing, user.email, sessionSubject)) {
+      throw new ApiError("Workflow config not found", 404);
+    }
+    if (hasActiveAuthzSync(existing)) {
+      throw new ApiError(
+        "This workflow's authorization is already being reconciled. Retry shortly.",
+        409,
+        "AUTHZ_SYNC_PENDING",
+      );
+    }
+    const previousAuthzState = previousWorkflowAuthzState(existing);
+    const ownerSubject =
+      existing.owner_subject ??
+      (existing.owner_id.trim().toLowerCase() ===
+      user.email.trim().toLowerCase()
+        ? sessionSubject
+        : null);
+
+    await requireWorkflowConfigWriteAccess(
+      session,
+      {
+        _id: id,
+        owner_id: existing.owner_id,
+        owner_subject: existing.owner_subject,
+        visibility: existing.visibility,
+        shared_with_teams: existing.shared_with_teams,
+      },
+      user.email,
+    );
 
     if (body.steps) {
       validateSteps(body.steps);
@@ -286,48 +402,159 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       }
     }
     if (body.shared_with_teams?.length) {
-      body.shared_with_teams = await normalizeSharedWithTeamSlugs(body.shared_with_teams);
+      body.shared_with_teams = await normalizeSharedWithTeamSlugs(
+        body.shared_with_teams,
+      );
     }
 
     const mergedVisibility = body.visibility ?? existing.visibility;
     let mergedSharedWithTeams =
       mergedVisibility === "team"
-        ? body.shared_with_teams ?? existing.shared_with_teams
+        ? (body.shared_with_teams ?? existing.shared_with_teams)
         : mergedVisibility !== undefined
           ? undefined
           : existing.shared_with_teams;
 
     if (mergedVisibility === "team" && mergedSharedWithTeams?.length) {
       mergedSharedWithTeams =
-        (await normalizeSharedWithTeamSlugs(mergedSharedWithTeams)) ?? undefined;
+        (await normalizeSharedWithTeamSlugs(mergedSharedWithTeams)) ??
+        undefined;
     }
 
     const updateFields: Record<string, unknown> = {
       ...body,
+      visibility: mergedVisibility,
+      shared_with_teams: mergedSharedWithTeams ?? [],
+      ...(ownerSubject ? { owner_subject: ownerSubject } : {}),
       updated_at: new Date(),
     };
-    if (mergedVisibility === "team") {
-      updateFields.shared_with_teams = mergedSharedWithTeams;
-    } else if (
-      body.visibility !== undefined &&
-      (mergedVisibility === "private" || mergedVisibility === "global")
-    ) {
-      updateFields.shared_with_teams = undefined;
-    }
-
-    await collection.updateOne({ _id: id }, { $set: updateFields });
-
     const merged = {
       ...existing,
-      ...body,
+      ...updateFields,
       _id: id,
       visibility: mergedVisibility,
-      shared_with_teams: mergedSharedWithTeams,
-    };
+      shared_with_teams: mergedSharedWithTeams ?? [],
+    } as WorkflowConfig;
+    await validateWorkflowAgentDependencies({
+      session,
+      workflow: {
+        visibility: mergedVisibility,
+        ownerSubject: ownerSubject ?? sessionSubject,
+        ownerEmail: existing.owner_id,
+      },
+      steps: merged.steps,
+    });
+    const previousVisibility = previousAuthzState.visibility;
+    const previousTeams = normalizeTeamSet(
+      previousAuthzState.shared_with_teams,
+    );
+    const nextTeams = normalizeTeamSet(merged.shared_with_teams);
+    const reconcile = (verifyHigherConsistency: boolean) =>
+      reconcileWorkflowConfigAccess(session, merged, previousAuthzState, {
+        ownerSubject,
+        context: {
+          caller: { type: "user", id: sessionSubject },
+          source: "workflow_update",
+          verifyHigherConsistency,
+        },
+      });
+    const authzMutationRequired =
+      existing.authz_sync_state !== "ready" ||
+      existing.authz_revision !== existing.authz_last_synced_revision ||
+      !existing.owner_subject ||
+      mergedVisibility !== previousVisibility ||
+      !sameStringSet(previousTeams, nextTeams);
 
-    await reconcileWorkflowConfigAccess(session, merged, existing);
+    let updated: WorkflowConfig | null;
+    if (!authzMutationRequired) {
+      await reconcile(false);
+      updated = await collection.findOneAndUpdate(
+        { _id: id },
+        { $set: updateFields },
+        { returnDocument: "after" },
+      );
+    } else {
+      const revision = nextAuthzRevision(existing);
+      const pending = await collection.findOneAndUpdate(
+        { _id: id, ...authzRevisionFilter(existing) },
+        {
+          $set: {
+            ...updateFields,
+            authz_revision: revision,
+            authz_sync_state: "pending",
+            authz_sync_started_at: new Date().toISOString(),
+            authz_previous_state:
+              existing.authz_previous_state ?? workflowAuthzSnapshot(existing),
+          },
+          $unset: { authz_last_error_code: "" },
+        },
+        { returnDocument: "after" },
+      );
+      if (!pending) {
+        throw new ApiError(
+          "This workflow changed while authorization was being prepared. Retry the save.",
+          409,
+          "AUTHZ_SYNC_SUPERSEDED",
+        );
+      }
+      try {
+        updated = await runRevisionedAuthzSync({
+          reconcile: async () => {
+            await reconcile(true);
+          },
+          markError: async (errorCode) => {
+            await collection.findOneAndUpdate(
+              {
+                _id: id,
+                authz_revision: revision,
+                authz_sync_state: "pending",
+              },
+              {
+                $set: {
+                  authz_sync_state: "error",
+                  authz_last_error_code: errorCode,
+                },
+                $unset: { authz_sync_started_at: "" },
+              },
+            );
+          },
+          markReady: () =>
+            collection.findOneAndUpdate(
+              {
+                _id: id,
+                authz_revision: revision,
+                authz_sync_state: "pending",
+              },
+              {
+                $set: {
+                  authz_sync_state: "ready",
+                  authz_last_synced_revision: revision,
+                },
+                $unset: {
+                  authz_last_error_code: "",
+                  authz_previous_state: "",
+                  authz_sync_started_at: "",
+                },
+              },
+              { returnDocument: "after" },
+            ),
+        });
+      } catch (error) {
+        if (error instanceof AuthzSyncSupersededError) {
+          throw new ApiError(error.message, 409, "AUTHZ_SYNC_SUPERSEDED");
+        }
+        throw error;
+      }
+    }
+    if (!updated) throw new ApiError("Failed to update workflow config", 500);
 
-    return successResponse({ id, message: "Workflow config updated successfully" });
+    return successResponse({
+      id,
+      message: "Workflow config updated successfully",
+      authz_revision: updated.authz_revision,
+      authz_sync_state: updated.authz_sync_state,
+      authz_last_synced_revision: updated.authz_last_synced_revision,
+    });
   });
 });
 
@@ -354,23 +581,36 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
       throw new ApiError("Workflow config not found", 404);
     }
     if (existing.config_driven) {
-      throw new ApiError("Cannot delete a config-driven workflow. Remove it from app-config.yaml instead.", 403);
-    }
-
-    if (user.role !== "admin") {
-      await requireWorkflowConfigWriteAccess(
-        session,
-        {
-          _id: id,
-          owner_id: existing.owner_id,
-          visibility: existing.visibility,
-          shared_with_teams: existing.shared_with_teams,
-        },
-        user.email,
+      throw new ApiError(
+        "Cannot delete a config-driven workflow. Remove it from app-config.yaml instead.",
+        403,
       );
     }
+    const sessionSubject = stableSessionSubject(session);
+    if (!isPrivateWorkflowOwner(existing, user.email, sessionSubject)) {
+      throw new ApiError("Workflow config not found", 404);
+    }
+    await requireWorkflowConfigWriteAccess(
+      session,
+      {
+        _id: id,
+        owner_id: existing.owner_id,
+        owner_subject: existing.owner_subject,
+        visibility: existing.visibility,
+        shared_with_teams: existing.shared_with_teams,
+      },
+      user.email,
+    );
 
+    await deleteAllWorkflowRelationshipTuples(id, {
+      caller: { type: "user", id: sessionSubject },
+      source: "workflow_delete",
+      verifyHigherConsistency: true,
+    });
     await collection.deleteOne({ _id: id });
-    return successResponse({ id, message: "Workflow config deleted successfully" });
+    return successResponse({
+      id,
+      message: "Workflow config deleted successfully",
+    });
   });
 });

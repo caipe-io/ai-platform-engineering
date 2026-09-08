@@ -29,19 +29,40 @@ interface VisibilityDocument extends AuthzSyncDocument {
   visibility?: string;
   owner?: { type?: string };
   sharedWithTeams?: string[];
+  owner_id?: string;
+  owner_subject?: string;
 }
 
-async function loadResourceState(req: AuthorizeRequest): Promise<VisibilityDocument | null> {
+function shouldSyncGate(resourceType: ResourceType, action: Action): boolean {
+  return (
+    AUTHZ_SYNC_GATED_ACTIONS.has(action) ||
+    ((resourceType === "skill" || resourceType === "task") && action === "read")
+  );
+}
+
+async function loadResourceState(
+  req: AuthorizeRequest,
+): Promise<VisibilityDocument | null> {
   let document: VisibilityDocument | null = null;
   if (req.resource.type === "agent") {
-    const collection = await getCollection<VisibilityDocument>("dynamic_agents");
+    const collection =
+      await getCollection<VisibilityDocument>("dynamic_agents");
     document = await collection.findOne({ _id: req.resource.id });
   } else if (req.resource.type === "mcp_server") {
     const collection = await getCollection<VisibilityDocument>("mcp_servers");
     document = await collection.findOne({ _id: req.resource.id });
   } else if (req.resource.type === "secret_ref") {
-    const collection = await getCollection<VisibilityDocument>(CREDENTIAL_COLLECTIONS.secretRefs);
+    const collection = await getCollection<VisibilityDocument>(
+      CREDENTIAL_COLLECTIONS.secretRefs,
+    );
     document = await collection.findOne({ id: req.resource.id });
+  } else if (req.resource.type === "skill") {
+    const collection = await getCollection<VisibilityDocument>("agent_skills");
+    document = await collection.findOne({ id: req.resource.id });
+  } else if (req.resource.type === "task") {
+    const collection =
+      await getCollection<VisibilityDocument>("workflow_configs");
+    document = await collection.findOne({ _id: req.resource.id });
   } else {
     return null;
   }
@@ -54,16 +75,29 @@ async function loadResourceStates(
 ): Promise<VisibilityDocument[]> {
   if (ids.length === 0) return [];
   if (resourceType === "agent") {
-    return getCollection<VisibilityDocument>("dynamic_agents")
-      .then((collection) => collection.find({ _id: { $in: ids } }).toArray());
+    return getCollection<VisibilityDocument>("dynamic_agents").then(
+      (collection) => collection.find({ _id: { $in: ids } }).toArray(),
+    );
   }
   if (resourceType === "mcp_server") {
-    return getCollection<VisibilityDocument>("mcp_servers")
-      .then((collection) => collection.find({ _id: { $in: ids } }).toArray());
+    return getCollection<VisibilityDocument>("mcp_servers").then((collection) =>
+      collection.find({ _id: { $in: ids } }).toArray(),
+    );
   }
   if (resourceType === "secret_ref") {
-    return getCollection<VisibilityDocument>(CREDENTIAL_COLLECTIONS.secretRefs)
-      .then((collection) => collection.find({ id: { $in: ids } }).toArray());
+    return getCollection<VisibilityDocument>(
+      CREDENTIAL_COLLECTIONS.secretRefs,
+    ).then((collection) => collection.find({ id: { $in: ids } }).toArray());
+  }
+  if (resourceType === "skill") {
+    return getCollection<VisibilityDocument>("agent_skills").then(
+      (collection) => collection.find({ id: { $in: ids } }).toArray(),
+    );
+  }
+  if (resourceType === "task") {
+    return getCollection<VisibilityDocument>("workflow_configs").then(
+      (collection) => collection.find({ _id: { $in: ids } }).toArray(),
+    );
   }
   return [];
 }
@@ -73,26 +107,40 @@ function visibilityFromDocument(
   document: VisibilityDocument | null,
 ): ResourceVisibility {
   if (!document) return null;
-  if (document.visibility === "private" || document.visibility === "team" || document.visibility === "global") {
+  if (
+    document.visibility === "private" ||
+    document.visibility === "team" ||
+    document.visibility === "global"
+  ) {
     return document.visibility;
   }
   if (req.resource.type === "secret_ref") {
-    return document.owner?.type === "user" && (document.sharedWithTeams?.length ?? 0) === 0
+    return document.owner?.type === "user" &&
+      (document.sharedWithTeams?.length ?? 0) === 0
       ? "private"
       : "team";
   }
   return null;
 }
 
-export async function privateResourcePreCheck(req: AuthorizeRequest): Promise<AuthorizeResult | null> {
-  if (!AUTHZ_SYNC_GATED_ACTIONS.has(req.action) && !PRIVATE_DATA_ACTIONS.has(req.action)) return null;
+export async function privateResourcePreCheck(
+  req: AuthorizeRequest,
+): Promise<AuthorizeResult | null> {
+  if (
+    !shouldSyncGate(req.resource.type, req.action) &&
+    !PRIVATE_DATA_ACTIONS.has(req.action)
+  )
+    return null;
   const document = await loadResourceState(req);
   if (!document) return null;
-  const syncDecision = AUTHZ_SYNC_GATED_ACTIONS.has(req.action)
+  const syncDecision = shouldSyncGate(req.resource.type, req.action)
     ? authzSyncPreCheck(document)
     : null;
   if (syncDecision || !isPrivateResourcesEnabled()) return syncDecision;
-  return evaluatePrivateResourceContext(req, visibilityFromDocument(req, document));
+  return evaluatePrivateResourceContext(
+    req,
+    visibilityFromDocument(req, document),
+  );
 }
 
 export async function privateResourceBatchPreChecks(input: {
@@ -104,21 +152,26 @@ export async function privateResourceBatchPreChecks(input: {
 }): Promise<Map<string, AuthorizeResult>> {
   const decisions = new Map<string, AuthorizeResult>();
   if (
-    !AUTHZ_SYNC_GATED_ACTIONS.has(input.action)
-    && !PRIVATE_DATA_ACTIONS.has(input.action)
-  ) return decisions;
+    !shouldSyncGate(input.resourceType, input.action) &&
+    !PRIVATE_DATA_ACTIONS.has(input.action)
+  )
+    return decisions;
   const documents = await loadResourceStates(input.resourceType, input.ids);
   for (const document of documents) {
-    const id = input.resourceType === "secret_ref" ? document.id : document._id;
+    const id =
+      input.resourceType === "secret_ref" || input.resourceType === "skill"
+        ? document.id
+        : document._id;
     if (!id) continue;
-    const syncDecision = AUTHZ_SYNC_GATED_ACTIONS.has(input.action)
+    const syncDecision = shouldSyncGate(input.resourceType, input.action)
       ? authzSyncPreCheck(document)
       : null;
     if (syncDecision) {
       decisions.set(id, syncDecision);
       continue;
     }
-    if (!isPrivateResourcesEnabled() || !PRIVATE_DATA_ACTIONS.has(input.action)) continue;
+    if (!isPrivateResourcesEnabled() || !PRIVATE_DATA_ACTIONS.has(input.action))
+      continue;
     const request: AuthorizeRequest = {
       subject: input.subject,
       action: input.action,

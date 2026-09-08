@@ -2,6 +2,7 @@ import {
 getAuthFromBearerOrSession,
 withErrorHandler,
 } from "@/lib/api-middleware";
+import { authzSyncPreCheck } from "@/lib/authz/resource-sync";
 import type { SkillHubDoc } from "@/lib/hub-crawl";
 import { checkOpenFgaTuple,type OpenFgaCheckResult,type OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import { organizationObjectId } from "@/lib/rbac/organization";
@@ -40,6 +41,14 @@ export interface CatalogSkill {
   description: string;
   source: "default" | "agent_skills" | "hub";
   source_id: string | null;
+  owner_id?: string | null;
+  owner_subject?: string;
+  visibility?: "private" | "team" | "global";
+  authz_revision?: number;
+  authz_sync_state?: "pending" | "ready" | "error";
+  authz_last_synced_revision?: number;
+  authz_last_error_code?: string;
+  authz_sync_started_at?: string;
   content: string | null;
   metadata: Record<string, unknown>;
   /**
@@ -269,6 +278,7 @@ type SkillOpenFgaMode = "read" | "use";
 
 interface FilterSkillsByOpenFgaOptions {
   subject?: string | null;
+  ownerEmail?: string | null;
   mode: SkillOpenFgaMode;
   isAdmin?: boolean;
   check?: (tuple: OpenFgaTupleKey) => Promise<OpenFgaCheckResult>;
@@ -278,9 +288,6 @@ export async function filterSkillsByOpenFga(
   skills: CatalogSkill[],
   options: FilterSkillsByOpenFgaOptions,
 ): Promise<CatalogSkill[]> {
-  if (options.isAdmin) return skills;
-  if (!options.subject) return [];
-
   const relation = options.mode === "use" ? "can_use" : "can_read";
   const check = options.check ?? checkOpenFgaTuple;
   let baselineUseAllowed: boolean | null = null;
@@ -301,6 +308,26 @@ export async function filterSkillsByOpenFga(
 
   const decisions = await Promise.all(
     skills.map(async (skill) => {
+      if (skill.source === "agent_skills") {
+        if (authzSyncPreCheck(skill)) return null;
+        const visibility =
+          skill.visibility ??
+          (skill.metadata.visibility as CatalogSkill["visibility"] | undefined);
+        if (visibility === "private") {
+          const subject = options.subject?.replace(/^user:/, "");
+          const ownsBySubject = Boolean(
+            subject && skill.owner_subject && subject === skill.owner_subject,
+          );
+          const ownsLegacyRow = Boolean(
+            options.ownerEmail &&
+              skill.owner_id &&
+              options.ownerEmail.toLowerCase() === skill.owner_id.toLowerCase(),
+          );
+          return ownsBySubject || ownsLegacyRow ? skill : null;
+        }
+      }
+      if (options.isAdmin) return skill;
+      if (!options.subject) return null;
       if (options.mode === "read" && skill.source === "default") return skill;
       if (options.mode === "use" && skill.source === "default" && await hasBaselineUseAccess()) {
         return skill;
@@ -443,6 +470,7 @@ async function aggregateLocally(
               skill_template: 1,
               tasks: 1,
               owner_id: 1,
+              owner_subject: 1,
               visibility: 1,
               is_system: 1,
               category: 1,
@@ -457,6 +485,11 @@ async function aggregateLocally(
               // can render the audit trail without an extra round
               // trip. Absent on docs without an override.
               scan_override: 1,
+              authz_revision: 1,
+              authz_sync_state: 1,
+              authz_last_synced_revision: 1,
+              authz_last_error_code: 1,
+              authz_sync_started_at: 1,
             },
           },
         )
@@ -472,6 +505,32 @@ async function aggregateLocally(
           description: String(doc.description).slice(0, 1024),
           source: "agent_skills",
           source_id: doc.owner_id ?? null,
+          owner_id: doc.owner_id ? String(doc.owner_id) : null,
+          ...(typeof doc.owner_subject === "string"
+            ? { owner_subject: doc.owner_subject }
+            : {}),
+          ...(doc.visibility === "private" ||
+          doc.visibility === "team" ||
+          doc.visibility === "global"
+            ? { visibility: doc.visibility }
+            : {}),
+          ...(typeof doc.authz_revision === "number"
+            ? { authz_revision: doc.authz_revision }
+            : {}),
+          ...(doc.authz_sync_state === "pending" ||
+          doc.authz_sync_state === "ready" ||
+          doc.authz_sync_state === "error"
+            ? { authz_sync_state: doc.authz_sync_state }
+            : {}),
+          ...(typeof doc.authz_last_synced_revision === "number"
+            ? { authz_last_synced_revision: doc.authz_last_synced_revision }
+            : {}),
+          ...(typeof doc.authz_last_error_code === "string"
+            ? { authz_last_error_code: doc.authz_last_error_code }
+            : {}),
+          ...(typeof doc.authz_sync_started_at === "string"
+            ? { authz_sync_started_at: doc.authz_sync_started_at }
+            : {}),
           content: includeContent ? content : null,
           metadata: {
             ...doc.metadata,
@@ -681,6 +740,7 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
   const params = parseQueryParams(req);
   const skillAuth = {
     subject: typeof session?.sub === "string" ? `user:${session.sub}` : null,
+    ownerEmail: user.email,
     mode: params.includeContent ? ("use" as const) : ("read" as const),
     isAdmin: user.role === "admin" || session?.role === "admin",
   };
