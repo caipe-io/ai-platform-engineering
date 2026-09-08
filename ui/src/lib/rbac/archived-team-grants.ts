@@ -14,8 +14,13 @@
 //
 // What we KEEP: the membership roster itself — `user:<sub> member team:<slug>`
 // (the team is the OBJECT there, never the subject). Keeping the roster means
-// un-archiving a team can restore its grants by replaying resource
-// reconciliation, and the admin UI still shows who was on the team.
+// the admin UI still shows who was on the team, and identity-group-sync can
+// later flip `team.status` back to "active" if the group regains membership.
+// It does NOT mean grants are auto-restored on unarchive: resource-team
+// assignment is read live from OpenFGA with no other durable record (the
+// legacy `team.resources` Mongo array was intentionally dropped), so once
+// stripped here there is nothing to replay from — an admin must re-grant
+// resources via the Team Resources UI after unarchiving.
 //
 // Deletes go through `deleteExactOpenFgaTuples` with keys read straight from
 // the store. Userset tuples (`team:<slug>#member ...`) MUST be deleted this
