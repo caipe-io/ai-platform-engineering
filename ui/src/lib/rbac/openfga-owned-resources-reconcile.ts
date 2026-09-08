@@ -187,9 +187,22 @@ export async function reconcileMcpServerRelationships(
 export async function reconcileConfigDrivenMcpServerRelationships(
   input: ConfigDrivenMcpServerRelationshipInput,
 ): Promise<OpenFgaReconcileResult> {
+  const baseDiff = buildConfigDrivenMcpServerRelationshipTupleDiff(input);
+  const existingServerTuples = await readAllTuplesForObject(
+    `mcp_server:${input.serverId}`,
+  );
+  const staleOwnerTuples = existingServerTuples.filter(
+    (tuple) => tuple.relation === "owner",
+  );
   const diff = await withMcpServerToolWildcardBackfill(
     input.serverId,
-    buildConfigDrivenMcpServerRelationshipTupleDiff(input),
+    {
+      writes: baseDiff.writes,
+      // A config-driven server can replace a formerly user-owned server with
+      // the same id. Direct owner tuples make the gateway treat that global
+      // route as private, so remove them while preserving creator provenance.
+      deletes: uniqueTuples([...baseDiff.deletes, ...staleOwnerTuples]),
+    },
   );
   return reconcileOwnedResource(diff);
 }
