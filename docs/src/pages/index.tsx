@@ -7,7 +7,7 @@ import styles from './index.module.css';
 
 const CURL_CMD = 'bash <(curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh)';
 const HELM_CMD = 'helm upgrade --install ai-platform-engineering \\\n    oci://ghcr.io/caipe-io/charts/ai-platform-engineering \\\n    --version 1.0.1 -f your-values.yaml';
-const DEMO_GIF = '/img/caipe-product-tour.gif';
+const DEMO_GIF = 'https://raw.githubusercontent.com/wiki/caipe-io/ai-platform-engineering/caipe-product-tour.gif';
 const DEMO_VIDCAST_URL = 'https://app.vidcast.io/share/b46e063b-6530-4d04-90b6-064dbbcdc613';
 const DEMO_VIDCAST_EMBED_URL = 'https://app.vidcast.io/share/embed/b46e063b-6530-4d04-90b6-064dbbcdc613?disableAMA=1';
 
