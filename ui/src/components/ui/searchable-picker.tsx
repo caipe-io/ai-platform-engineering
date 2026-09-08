@@ -277,6 +277,7 @@ export function SearchablePicker<Option>({
               "inline-flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm",
               "hover:bg-muted/40 focus:outline-none focus:ring-1 focus:ring-ring",
               "disabled:cursor-not-allowed disabled:opacity-60",
+              "pr-8",
               canClear && "pr-14",
               triggerClassName,
             )}
@@ -290,9 +291,12 @@ export function SearchablePicker<Option>({
                 <span className="truncate text-muted-foreground">{placeholder}</span>
               )}
             </span>
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           </button>
         </PopoverTrigger>
+        <ChevronDown
+          className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+          aria-hidden="true"
+        />
         {canClear && (
           <button
             type="button"

@@ -81,7 +81,7 @@ function createState(): SettingsMockState {
       platform_default_agent_id: null,
       slack_default_agent_id: null,
       web_default_agent_id: null,
-      webex_default_agent_id: null,
+      webex_bots: [],
     },
     userPreferenceWrites: [],
   };

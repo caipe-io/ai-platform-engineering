@@ -31,10 +31,17 @@ function mergeSectionData(
 ): AdminStatsData {
   const next = { ...current, ...incoming };
 
-  // The Slack section is optional when no Slack data exists. A successful
-  // refresh with no key must clear stale data from the prior filter selection.
+  // The Slack/Webex sections are optional when no data exists for that
+  // source. A successful refresh with no key must clear stale data from the
+  // prior filter selection.
   if (section === 'slack' && !Object.hasOwn(incoming, 'slack')) {
     delete next.slack;
+  }
+  if (section === 'webex' && !Object.hasOwn(incoming, 'webex')) {
+    delete next.webex;
+  }
+  if (section === 'api' && !Object.hasOwn(incoming, 'api')) {
+    delete next.api;
   }
 
   return next;

@@ -12,13 +12,13 @@ from pymongo import MongoClient
 from pymongo.collection import Collection
 from pymongo.errors import PyMongoError
 
-from .keycloak_admin import get_user_by_email
+from .keycloak_admin import get_user_by_id
 from .webex_bot_catalog import WebexDmAccessMode, configured_webex_bot
 
 logger = logging.getLogger("caipe.webex_bot.webex_direct_users")
 
 CollectionFactory = Callable[[], Optional[Collection[Any]]]
-UserByEmail = Callable[[str], Awaitable[Optional[dict[str, Any]]]]
+UserById = Callable[[str], Awaitable[Optional[dict[str, Any]]]]
 
 
 @dataclass(frozen=True)
@@ -41,10 +41,10 @@ class WebexDirectUserResolver:
         self,
         *,
         collection_factory: CollectionFactory | None = None,
-        user_by_email: UserByEmail = get_user_by_email,
+        user_by_id: UserById = get_user_by_id,
     ) -> None:
         self._collection_factory = collection_factory
-        self._user_by_email = user_by_email
+        self._user_by_id = user_by_id
         self._client: MongoClient | None = None
         self._db_name = os.environ.get("MONGODB_DATABASE", "caipe")
 
@@ -67,19 +67,17 @@ class WebexDirectUserResolver:
         *,
         bot_id: str,
         webex_user_id: str,
-        person_email: str,
     ) -> dict[str, Any] | None:
         collection = self._collection()
         if collection is None:
             return None
-        base = {"bot_id": bot_id}
         try:
-            route = collection.find_one({**base, "webex_user_id": webex_user_id})
-            if route is None and person_email:
-                route = collection.find_one(
-                    {**base, "expected_webex_email": person_email}
-                )
-            return route
+            # webex_user_id is Webex's immutable person.id, set only via a
+            # completed OAuth link. Never fall back to matching on
+            # expected_webex_email/person_email: that's a self-reported,
+            # unverified value an attacker can set to spoof another user's
+            # pre-provisioned route.
+            return collection.find_one({"bot_id": bot_id, "webex_user_id": webex_user_id})
         except PyMongoError as exc:
             logger.warning(
                 "Webex direct-user route lookup failed (type=%s)",
@@ -92,7 +90,7 @@ class WebexDirectUserResolver:
         *,
         bot_id: str,
         webex_user_id: str,
-        person_email: str | None,
+        keycloak_user_id: str | None,
     ) -> WebexDirectUserAccess:
         bot = configured_webex_bot(bot_id)
         mode = bot.direct_messages_access_mode if bot is not None else "disabled"
@@ -100,11 +98,9 @@ class WebexDirectUserResolver:
             reason = "disabled" if bot is not None else "unknown_bot"
             return WebexDirectUserAccess(False, None, None, reason)
 
-        email = (person_email or "").strip().lower()
         route_args = {
             "bot_id": bot_id,
             "webex_user_id": webex_user_id,
-            "person_email": email,
         }
         route = (
             self._route(**route_args)
@@ -114,12 +110,12 @@ class WebexDirectUserResolver:
         if route is not None:
             if route.get("status") != "active":
                 return WebexDirectUserAccess(False, None, None, "explicit_deny")
-            keycloak_user_id = str(route.get("keycloak_user_id") or "").strip()
+            route_user_id = str(route.get("keycloak_user_id") or "").strip()
             agent_id = str(route.get("agent_id") or "").strip()
-            if keycloak_user_id and agent_id:
+            if route_user_id and agent_id:
                 return WebexDirectUserAccess(
                     True,
-                    keycloak_user_id,
+                    route_user_id,
                     agent_id,
                     "allowlist_route"
                     if mode == "allowlist"
@@ -130,10 +126,10 @@ class WebexDirectUserResolver:
         if mode == "allowlist":
             return WebexDirectUserAccess(False, None, None, "not_onboarded")
 
-        if not email:
-            return WebexDirectUserAccess(False, None, None, "email_missing")
+        if not keycloak_user_id:
+            return WebexDirectUserAccess(False, None, None, "not_linked")
         try:
-            user = await self._user_by_email(email)
+            user = await self._user_by_id(keycloak_user_id)
         except Exception as exc:  # noqa: BLE001 - identity lookup fails closed
             logger.warning(
                 "Webex direct-user deployment lookup failed (type=%s)",
@@ -147,13 +143,10 @@ class WebexDirectUserResolver:
                 False, None, None, "not_deployment_user"
             )
 
-        user_id = str(user.get("id") or "").strip()
-        if not user_id:
-            return WebexDirectUserAccess(False, None, None, "user_id_missing")
         assert bot is not None
         return WebexDirectUserAccess(
             True,
-            user_id,
+            keycloak_user_id,
             bot.direct_messages.default_agent_id,
             "all_users",
         )

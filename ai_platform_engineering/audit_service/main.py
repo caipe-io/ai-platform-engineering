@@ -13,7 +13,12 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from ai_platform_engineering.audit_service.config import Settings
 from ai_platform_engineering.audit_service.models import AuditEvent, IngestResponse, QueryResponse
 from ai_platform_engineering.audit_service.queue_service import AuditQueueService
-from ai_platform_engineering.audit_service.storage import AuditQuery, LocalAuditStore, S3AuditStore
+from ai_platform_engineering.audit_service.storage import (
+    AuditQuery,
+    LocalAuditStore,
+    S3AuditStore,
+    S3RetentionError,
+)
 from ai_platform_engineering.audit_service.verbosity import (
     PRESET_DESCRIPTIONS,
     PRESET_LABELS,
@@ -377,7 +382,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="days must be an integer") from exc
         if days < 0:
             raise HTTPException(status_code=400, detail="days must be >= 0 (use 0 to disable lifecycle rule)")
-        await asyncio.to_thread(store.set_s3_retention_days, days)
+        try:
+            await asyncio.to_thread(store.set_s3_retention_days, days)
+        except S3RetentionError as exc:
+            _logger.exception(
+                "failed to update S3 audit retention: bucket=%s days=%d", current_settings.s3_bucket, days
+            )
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         _logger.info("S3 audit retention updated: bucket=%s days=%d", current_settings.s3_bucket, days)
         return {
             "backend": "s3",

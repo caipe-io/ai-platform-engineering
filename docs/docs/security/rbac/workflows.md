@@ -1403,11 +1403,11 @@ sequenceDiagram
 
 ---
 
-## Slack Identity Linking (Auto-Bootstrap + JIT + Forced Link)
+## Slack Identity Linking (Auto-Bootstrap + JIT)
 
-There are three onboarding paths, in priority order: **(1) auto-link to existing Keycloak user**, **(2) JIT-create a new shell user** (spec 103), **(3) HMAC-signed link URL** as fallback.
+There are two onboarding paths, in priority order: **(1) auto-link to existing Keycloak user**, **(2) JIT-create a new shell user** (spec 103).
 
-### 1. Auto-bootstrap (default, `SLACK_FORCE_LINK=false`)
+### 1. Auto-bootstrap
 
 On the user's first Slack message the bot:
 
@@ -1424,25 +1424,15 @@ When no existing Keycloak user matches the Slack email, and JIT is enabled, the 
 2. **POSTs to the BFF `/api/admin/users/provision-shell`** with its `caipe-slack-bot` service-account token (gated `writer admin_surface:user_provisioning` in OpenFGA). The BFF — not the bot — calls Keycloak Admin to create-or-resolve the user.
 3. The created user is **federated-only**: no password, no required actions, `emailVerified=true`, with attributes `slack_user_id`, `created_by=slack-bot:jit`, `created_at=<RFC3339>` (the BFF owns the `created_by`/`created_at` stamping).
 4. **Race-safe**: an HTTP 409 from a concurrent create is resolved by re-querying the email and returning the surviving UUID (handled BFF-side).
-5. **On failure** (4xx/5xx/network), the bot logs `event=jit_failed error_kind=<auth_failure|forbidden|server_error|network_error|unexpected>` and falls through to step 3.
+5. **On failure** (4xx/5xx/network), the bot logs `event=jit_failed error_kind=<auth_failure|forbidden|server_error|network_error|unexpected>` and the user is treated as unlinked.
 
-JIT is **default ON in dev** so first-time DMs work without an admin handshake. **Set `SLACK_JIT_CREATE_USER=false` in production** if you want web-UI onboarding to be a hard prerequisite — in which case all unknown emails go to the link URL below.
+JIT is **default ON in dev** so first-time DMs work without an admin handshake. **Set `SLACK_JIT_CREATE_USER=false` in production** if you want web-UI onboarding to be a hard prerequisite — in which case an unmatched user is treated as unlinked and told to contact an admin.
 
 > **First-party-BFF design.** The bot holds no Keycloak Admin credentials: provisioning (and every other Keycloak user operation) goes through the BFF authenticated by the bot's `caipe-slack-bot` service-account token and authorized by an OpenFGA grant (`writer admin_surface:user_provisioning`). Realm-management privilege lives only in the BFF. All JIT actions are logged with stable `event=jit_*` tokens for SIEM. This superseded spec 103's earlier single-credential design (which reused the `caipe-platform` admin client directly from the bot) — see spec [2026-06-09-slack-bot-remove-direct-keycloak-admin](../../specs/2026-06-09-slack-bot-remove-direct-keycloak-admin/plan.md).
 
-### 3. Explicit link URL (fallback or `SLACK_FORCE_LINK=true`)
+There is no interactive/bearer-link onboarding path: a signed link is redeemable by whoever holds it, not provably by the intended Slack user, so it was removed as a security hole. When auto-link returns no user **and** JIT is disabled / domain not allow-listed / JIT failed, the user is treated as unlinked (minimum-access fallback, contact-admin messaging) rather than offered a link.
 
-Whenever auto-link returns no user **and** JIT is disabled / domain not allow-listed / JIT failed, the bot DMs an HMAC-signed URL:
-
-```
-/api/auth/slack-link?slack_user_id=U09TC6RR8KX&ts=1713196400&sig=<HMAC-SHA256>
-```
-
-The HMAC signature uses `SLACK_LINK_HMAC_SECRET`, prevents forged links, and is time-bound (TTL enforced server-side). After OIDC login, the server writes `slack_user_id` to the Keycloak user via the Admin API.
-
-The user **always** gets an actionable path forward — the previous "contact your admin" dead-end was removed in spec 103 (FR-007).
-
-In all three modes, once the link is established, all future Slack messages carry the user's Keycloak identity automatically — no repeated login.
+In both modes, once the link is established, all future Slack messages carry the user's Keycloak identity automatically — no repeated login.
 
 ### Privacy in logs
 

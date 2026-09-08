@@ -8,10 +8,8 @@
  * Tests for the /api/autonomous/[...path] proxy under the per-user
  * ownership model (plan section 4.1).
  *
- * The proxy no longer gates by OIDC role at the Next.js boundary.
- * Authentication is still required (no anonymous traffic), but every
- * authenticated user is allowed to make requests; the autonomous-agents
- * FastAPI service decides per-task ownership using the injected
+ * The proxy gates on user-level Autonomous team entitlement, then the
+ * autonomous-agents FastAPI service decides per-task ownership using the injected
  * `X-Authenticated-User-Email` / `X-Authenticated-User-Is-Admin` headers.
  *
  * What we assert here:
@@ -55,6 +53,14 @@ jest.mock('@/lib/config', () => ({
     if (key === 'autonomousAgentsEnabled') return mockAutonomousAgentsEnabled;
     return undefined;
   },
+}));
+
+const mockCheckOpenFgaTuple = jest.fn();
+jest.mock('@/lib/rbac/openfga', () => ({
+  checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
+}));
+jest.mock('@/lib/rbac/organization', () => ({
+  organizationObjectId: () => 'organization:caipe',
 }));
 
 // Upstream HTTP client -- the proxy uses global `fetch`. We replace it
@@ -106,6 +112,7 @@ function paramsFor(path: string) {
 function adminSession() {
   return {
     user: { email: 'admin@example.com', name: 'Admin' },
+    sub: 'admin-sub',
     role: 'admin',
     canViewAdmin: true,
   };
@@ -114,6 +121,7 @@ function adminSession() {
 function plainUserSession() {
   return {
     user: { email: 'user@example.com', name: 'User' },
+    sub: 'user-sub',
     role: 'user',
     canViewAdmin: false,
   };
@@ -129,6 +137,7 @@ function okJsonResponse(body: unknown) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockAutonomousAgentsEnabled = true;
+  mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -148,6 +157,16 @@ describe('GET /api/autonomous/[...path] — deployment + auth guards', () => {
     mockGetServerSession.mockResolvedValue(null);
     const res = await GET(makeRequest('GET', 'tasks'), paramsFor('tasks'));
     expect(res.status).toBe(401);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('403 when the caller belongs to no Autonomous-enabled team', async () => {
+    mockGetServerSession.mockResolvedValue(plainUserSession());
+    mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
+
+    const res = await GET(makeRequest('GET', 'tasks'), paramsFor('tasks'));
+
+    expect(res.status).toBe(403);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });

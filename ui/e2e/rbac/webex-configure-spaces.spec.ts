@@ -243,6 +243,31 @@ function webexConfigureHandler(state: WebexConfigureState): MockRouteHandler {
       return true;
     }
 
+    if (path === "/api/admin/webex/direct-users" && method === "GET") {
+      await fulfillJson(route, {
+        success: true,
+        data: {
+          users: [
+            {
+              keycloak_user_id: "user-1",
+              email: "user@example.com",
+              display_name: "Example User",
+              linked: false,
+              enabled: false,
+              configured: false,
+              inherited: false,
+              state: "not_allowed",
+              agent_id: "",
+            },
+          ],
+          bot_id: webexBot.id,
+          dm_access_mode: "allowlist",
+          default_agent_id: null,
+        },
+      });
+      return true;
+    }
+
     if (path === "/api/dynamic-agents/teams" && method === "GET") {
       await fulfillJson(route, { success: true, data: teams });
       return true;
@@ -307,6 +332,9 @@ async function gotoConfigureSpaces(page: Page) {
   await page.goto("/admin/integrations/webex", {
     waitUntil: "domcontentloaded",
   });
+  // Default landing tab is "Configured spaces" (matches Slack's tab order);
+  // switch to "Configure spaces" for onboarding coverage.
+  await page.getByRole("tab", { name: "Configure spaces" }).click();
   await expect(
     page.getByRole("region", { name: "Configure spaces" }),
   ).toBeVisible();
@@ -342,7 +370,7 @@ test.describe("mocked Webex Configure spaces UI", () => {
 
     await ttlInput.fill("30");
     await page.getByTestId("discovery-cache-ttl-save-webex").click();
-    await expect(page.getByText("Saved")).toBeVisible();
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
     expect(state.platformConfigPatches).toContainEqual({
       webex_discovery_cache_ttl_minutes: 30,
     });
@@ -372,8 +400,8 @@ test.describe("mocked Webex Configure spaces UI", () => {
     await gotoConfigureSpaces(page);
 
     // Webex admin uses the single-panel switcher: two tabs ("Configure spaces"
-    // ↔ "Configured spaces"), not the full three-view tab bar. Landing tab is
-    // Configure spaces.
+    // ↔ "Configured spaces"), not the full three-view tab bar.
+    // gotoConfigureSpaces already switched to Configure spaces above.
     const adminViews = page.getByRole("tablist", { name: "Webex admin views" });
     await expect(adminViews.getByRole("tab", { name: "Configure spaces" })).toBeVisible();
     await expect(adminViews.getByRole("tab", { name: "Configured spaces" })).toBeVisible();

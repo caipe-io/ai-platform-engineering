@@ -5,7 +5,6 @@ import { getErrorMessage } from "@/lib/error-utils";
 import { IngestCapabilityToggle } from "@/components/admin/shared/IngestCapabilityToggle";
 import { SaveButton } from "@/components/admin/shared/SaveButton";
 import { SearchCapabilityToggle } from "@/components/admin/shared/SearchCapabilityToggle";
-import { AutomationCapabilityToggle } from "@/components/admin/shared/AutomationCapabilityToggle";
 import { TeamKbAssignmentPanel } from "@/components/admin/teams/TeamKbAssignmentPanel";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -108,6 +107,7 @@ interface SlackChannelsPayload {
 }
 
 interface TeamWebexSpace {
+  bot_id?: string;
   webex_space_id: string;
   space_name: string;
   webex_workspace_id?: string;
@@ -1447,16 +1447,6 @@ export function TeamDetailsDialog({
               Grant this team access to <span className="font-medium text-foreground">dynamic agents</span>{" "}
               — who can chat with (Use) or manage each agent. Changes apply to every member of this team.
             </p>
-
-            {/* Autonomous eligibility — org-admin gate
-                for whether this team may operate autonomous agents at all. Team
-                admins then enable individual agents from the agent list. */}
-            <div className="shrink-0">
-              <AutomationCapabilityToggle
-                teamId={currentTeam._id}
-                teamName={currentTeam.name}
-              />
-            </div>
 
             {resourcesNotice && (
               <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3">

@@ -29,7 +29,7 @@ const CHANNELS = [
     title: 'Meeting Recordings',
     description: 'Catch up on past community meetings and demos.',
     cta: 'Watch recordings',
-    href: 'https://www.youtube.com/@cnoe-community',
+    href: 'https://www.youtube.com/@caipe-io',
     note: null,
     noteHref: null,
   },

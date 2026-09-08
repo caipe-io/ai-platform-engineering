@@ -63,6 +63,8 @@ spec:
               value: {{ index .Values.config "CREDENTIAL_API_URL" | default (printf "http://%s-caipe-ui:3000/api/credentials" .Release.Name) | quote }}
             - name: CAIPE_API_URL
               value: {{ index .Values.config "CAIPE_API_URL" | default (printf "http://%s-caipe-ui:3000" .Release.Name) | quote }}
+            - name: AUTHZ_SERVICE_URL
+              value: {{ index .Values.config "AUTHZ_SERVICE_URL" | default (printf "http://%s-caipe-ui:3000" .Release.Name) | quote }}
             - name: AUDIT_SERVICE_URL
               value: {{ index .Values.config "AUDIT_SERVICE_URL" | default (printf "http://%s-audit-service:8010" .Release.Name) | quote }}
             {{- if .Values.agentContext.existingSecret.name }}

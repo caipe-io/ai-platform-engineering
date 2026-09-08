@@ -925,6 +925,75 @@ def _strip_openfga_object_prefix(value: str, object_type: str) -> str:
   return value[len(prefix):] if value.startswith(prefix) else value
 
 
+async def _openfga_read_related_objects(
+  object_type: str,
+  relation: str,
+  user: str,
+) -> List[str]:
+  """Return every ``object_type`` id with a direct ``(user, relation, object)`` tuple.
+
+  Unlike ``_openfga_list_objects`` (a caller-centric ``list-objects`` call), this
+  walks the raw ``/read`` endpoint with a partial tuple filter. It resolves a
+  structural edge — e.g. "which knowledge_base objects point at this
+  rag_collection via parent_collection" — rather than a user's effective
+  permissions, so it intentionally takes no ``UserContext``.
+  """
+  base_url = _openfga_http_url()
+  if not base_url:
+    return []
+
+  ids: List[str] = []
+  continuation_token = ""
+  async with httpx.AsyncClient(timeout=5.0) as client:
+    store_id = await _get_openfga_store_id(client, base_url)
+    while True:
+      body: Dict[str, Any] = {
+        "tuple_key": {"object": f"{object_type}:", "relation": relation, "user": user},
+        "page_size": 100,
+      }
+      if continuation_token:
+        body["continuation_token"] = continuation_token
+      response = await client.post(
+        f"{base_url}/stores/{store_id}/read",
+        headers={"Content-Type": "application/json"},
+        json=body,
+      )
+      response.raise_for_status()
+      payload = response.json()
+      for entry in payload.get("tuples", []):
+        obj = entry.get("key", {}).get("object", "")
+        if obj.startswith(f"{object_type}:"):
+          ids.append(_strip_openfga_object_prefix(obj, object_type))
+      continuation_token = payload.get("continuation_token", "")
+      if not continuation_token:
+        break
+  return ids
+
+
+async def get_datasource_ids_for_collection(collection_id: str) -> List[str]:
+  """Resolve the datasource ids that belong to ``rag_collection:<collection_id>``.
+
+  A source's ``knowledge_base:<id>`` object records the ``parent_collection``
+  edge (see ``deploy/openfga/model.fga``), and ``data_source`` shares its id
+  with its ``knowledge_base`` (``data_source.parent_kb`` is a 1:1, same-id
+  edge), so the resolved knowledge_base ids double as the collection's
+  datasource ids. Returns an empty list for an unknown or empty collection —
+  callers should treat that as "narrows to nothing", not an error.
+  """
+  if not collection_id:
+    return []
+  try:
+    return await _openfga_read_related_objects(
+      "knowledge_base", "parent_collection", f"rag_collection:{collection_id}"
+    )
+  except Exception as exc:
+    logger.warning("OpenFGA parent_collection read failed for collection %s: %s", collection_id, exc)
+    raise HTTPException(
+      status_code=503,
+      detail="Authorization service is temporarily unavailable",
+    ) from exc
+
+
 async def get_accessible_datasource_ids(
   user_context: UserContext,
   scope: str,

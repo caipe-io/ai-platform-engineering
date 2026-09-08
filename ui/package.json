@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "jest",
+    "test:external-app-examples": "node --test examples/external-apps/weather/test/*.test.mjs",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "init-credential-indexes": "ts-node --project tsconfig.json ../scripts/init-credential-mongo-indexes.ts",

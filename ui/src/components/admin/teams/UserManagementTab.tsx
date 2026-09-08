@@ -27,7 +27,7 @@ const UM_SLACK = "umSlack";
 const UM_WEBEX = "umWebex";
 const UM_ENABLED = "umEnabled";
 
-type SlackFilter = "all" | "linked" | "pending" | "unlinked";
+type SlackFilter = "all" | "linked" | "unlinked";
 type WebexFilter = "all" | "linked" | "unlinked";
 type EnabledFilter = "all" | "enabled" | "disabled";
 
@@ -39,7 +39,7 @@ interface AdminUserRow {
   lastName: string;
   enabled: boolean;
   attributes: Record<string, string[]>;
-  slack_link_status?: "linked" | "pending" | "unlinked";
+  slack_link_status?: "linked" | "unlinked";
   webex_link_status?: "linked" | "unlinked";
 }
 
@@ -66,8 +66,8 @@ function isSlackLinked(u: AdminUserRow): boolean {
   return slackStatusForUser(u) !== "unlinked";
 }
 
-function slackStatusForUser(u: AdminUserRow): "linked" | "pending" | "unlinked" {
-  if (u.slack_link_status === "linked" || u.slack_link_status === "pending") {
+function slackStatusForUser(u: AdminUserRow): "linked" | "unlinked" {
+  if (u.slack_link_status === "linked" || u.slack_link_status === "unlinked") {
     return u.slack_link_status;
   }
   const sid = u.attributes?.slack_user_id;
@@ -248,7 +248,7 @@ export function UserManagementTab({
         const q = searchFromUrl.trim();
         if (q) qs.set("search", q);
         if (teamsFilter.length >= 1) qs.set("team", teamsFilter[0]);
-        if (slackFilter === "linked" || slackFilter === "pending" || slackFilter === "unlinked") {
+        if (slackFilter === "linked" || slackFilter === "unlinked") {
           qs.set("slackStatus", slackFilter);
         }
         if (webexFilter === "linked" || webexFilter === "unlinked") {
@@ -353,7 +353,6 @@ export function UserManagementTab({
           >
             <option value="all">All</option>
             <option value="linked">Linked</option>
-            <option value="pending">Pending</option>
             <option value="unlinked">Unlinked</option>
           </Select>
         </div>
@@ -424,7 +423,6 @@ export function UserManagementTab({
                     [u.firstName, u.lastName].filter(Boolean).join(" ") ||
                     u.username ||
                     "—";
-                  const slackStatus = slackStatusForUser(u);
                   const linked = isSlackLinked(u);
                   const webexStatus = webexStatusForUser(u);
                   return (
@@ -440,11 +438,7 @@ export function UserManagementTab({
                         {u.email || "—"}
                       </td>
                       <td className="px-4 py-2.5">
-                        {slackStatus === "pending" ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-800 dark:text-amber-400 border border-amber-500/25">
-                            Pending
-                          </span>
-                        ) : linked ? (
+                        {linked ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25">
                             Linked
                           </span>

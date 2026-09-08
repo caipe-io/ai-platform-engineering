@@ -26,6 +26,8 @@ interface AccessibleAgentsResponse {
   error?: string;
 }
 
+const PAGE_SIZE = 100;
+
 /** Fetch the signed-in user's available agents for all personal-default pickers. */
 export function useAccessibleAgents(): UseAccessibleAgentsState {
   const [agents, setAgents] = useState<AccessibleAgent[]>([]);
@@ -36,21 +38,31 @@ export function useAccessibleAgents(): UseAccessibleAgentsState {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/user/accessible-agents?page_size=100", {
-        method: "GET",
-        credentials: "same-origin",
-      });
-      const json = (await response.json()) as AccessibleAgentsResponse;
-      if (!response.ok || !json.success) {
-        setError(
-          typeof json.error === "string"
-            ? json.error
-            : `Failed to load agents (HTTP ${response.status})`,
+      const collected: AccessibleAgent[] = [];
+      let page = 1;
+      let total = Infinity;
+      while (collected.length < total) {
+        const response = await fetch(
+          `/api/user/accessible-agents?page=${page}&page_size=${PAGE_SIZE}`,
+          { method: "GET", credentials: "same-origin" },
         );
-        setAgents([]);
-        return;
+        const json = (await response.json()) as AccessibleAgentsResponse;
+        if (!response.ok || !json.success) {
+          setError(
+            typeof json.error === "string"
+              ? json.error
+              : `Failed to load agents (HTTP ${response.status})`,
+          );
+          setAgents([]);
+          return;
+        }
+        const pageItems = json.data?.agents ?? [];
+        collected.push(...pageItems);
+        total = json.data?.total ?? collected.length;
+        if (pageItems.length === 0) break;
+        page += 1;
       }
-      setAgents(json.data?.agents ?? []);
+      setAgents(collected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load agents");
       setAgents([]);

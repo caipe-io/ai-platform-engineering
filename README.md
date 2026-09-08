@@ -2,7 +2,7 @@
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
-🚀 [Getting Started](https://caipe.io/docs/getting-started/quick-start) | 🎥 [Meeting Recordings](https://caipe.io/docs/community/meeting-recordings) | 🏛️ [Governance](https://github.com/caipe-io/governance) | 🗺️ [Roadmap](https://github.com/orgs/cnoe-io/projects/9)
+🚀 [Getting Started](https://caipe.io/docs/getting-started/quick-start) | 🎥 [Meeting Recordings](https://caipe.io/docs/community/meeting-recordings) | 🏛️ [Governance](https://github.com/caipe-io/governance) | 🗺️ [Roadmap](https://caipe.io/roadmap)
 
 ## What is CAIPE?
 

@@ -597,6 +597,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 
 | scheduler.image.pullPolicy | string | `"IfNotPresent"` |  |
 | scheduler.image.repository | string | `"ghcr.io/caipe-io/caipe-scheduler"` |  |
 | scheduler.image.tag | string | `""` |  |
+| scheduler.limits.minimumScheduleIntervalSeconds | int | `1800` | Minimum permitted gap, in seconds, between recurring cron fires. |
 | scheduler.mongo.database | string | `"caipe"` |  |
 | scheduler.mongo.existingSecret | string | `""` |  |
 | scheduler.mongo.existingSecretKey | string | `"uri"` |  |

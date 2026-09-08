@@ -79,6 +79,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
 | imagePullSecrets | list | `[]` |  |
 | limits.maxMessageChars | int | `2000` |  |
 | limits.maxSchedulesPerOwner | int | `50` |  |
+| limits.minimumScheduleIntervalSeconds | int | `1800` | Minimum permitted gap, in seconds, between recurring cron fires. |
 | livenessProbe.failureThreshold | int | `3` |  |
 | livenessProbe.httpGet.path | string | `"/healthz"` |  |
 | livenessProbe.httpGet.port | string | `"http"` |  |

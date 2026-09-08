@@ -6,7 +6,7 @@ import Heading from '@theme/Heading';
 import styles from './index.module.css';
 
 const CURL_CMD = 'bash <(curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh)';
-const HELM_CMD = 'helm upgrade --install ai-platform-engineering \\\n    oci://ghcr.io/caipe-io/charts/ai-platform-engineering \\\n    --version 1.0.0 -f your-values.yaml';
+const HELM_CMD = 'helm upgrade --install ai-platform-engineering \\\n    oci://ghcr.io/caipe-io/charts/ai-platform-engineering \\\n    --version 1.0.1 -f your-values.yaml';
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -90,12 +90,12 @@ const HOME_FEATURES = [
   {
     icon: '🎨',
     title: 'Rich Web UI',
-    description: 'Streaming chat, agent builder, skills gateway, and admin controls.',
+    description: 'Streaming chat, Agent Builder, Skills Gateway, and admin controls.',
     to: '/features',
   },
   {
     icon: '🧠',
-    title: 'Integrated Knowledge Bases',
+    title: 'Knowledge Bases',
     description: 'Hybrid RAG and optional Graph RAG across web, AWS, Kubernetes, Jira, GitHub, Slack, and more.',
     to: '/features',
   },
@@ -119,14 +119,14 @@ const HOME_FEATURES = [
   },
   {
     icon: '⚙️',
-    title: 'Deterministic Workflows',
-    description: 'Multi-step dynamic-agent pipelines with persisted run history and artifacts.',
+    title: 'Workflows',
+    description: 'Ordered agent steps with persisted run history and artifacts.',
     to: '/features',
   },
   {
     icon: '🛠️',
-    title: 'Custom Agents',
-    description: 'Build agents with custom prompts, tools, and personas. No boilerplate.',
+    title: 'Agent Builder',
+    description: 'Build governed agents with configured models, tools, knowledge, and guardrails.',
     to: '/features',
   },
   {
@@ -382,7 +382,7 @@ function QuickStartSection() {
               <span className={styles.codePrompt}>$</span>{' '}
               {'helm upgrade --install ai-platform-engineering \\'}{'\n'}
               {'    oci://ghcr.io/caipe-io/charts/ai-platform-engineering \\'}{'\n'}
-              {'    --version 1.0.0 -f your-values.yaml'}
+              {'    --version 1.0.1 -f your-values.yaml'}
             </code>
           </pre>
         </div>

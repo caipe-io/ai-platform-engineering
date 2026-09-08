@@ -112,6 +112,9 @@ helm show values oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68
 | config.WEBEX_BOT_ADMIN_AUDIENCE | string | `"caipe-webex-bot-admin"` |  |
 | config.WEBEX_BOT_ADMIN_CLIENT_ID | string | `"caipe-ui"` |  |
 | config.WEBEX_BOT_ADMIN_URL | string | `""` |  |
+| config.WEBEX_LINK_ALLOWED_ORG_ID | string | `""` |  |
+| config.WEBEX_LINK_CLIENT_ID | string | `""` |  |
+| config.WEBEX_LINK_REDIRECT_URI | string | `""` |  |
 | config.WEBEX_THREAD_CONTEXT_ENABLED | string | `"true"` |  |
 | config.WEBEX_THREAD_CONTEXT_MAX_CHARS | string | `"4000"` |  |
 | config.WEBEX_THREAD_CONTEXT_MAX_MESSAGES | string | `"10"` |  |

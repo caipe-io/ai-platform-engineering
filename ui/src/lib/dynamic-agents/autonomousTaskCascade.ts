@@ -2,19 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Keeps the autonomous-agents service in sync with dynamic-agent lifecycle
- * events that would otherwise orphan autonomous tasks:
+ * Keeps the autonomous-agents service in sync when a dynamic agent is deleted.
+ * Its tasks must be hard-deleted too, otherwise a later agent recreated with
+ * the same id silently re-adopts the orphaned, still-scheduled task.
  *
- *   - An agent is deleted: its tasks must be hard-deleted too, otherwise a
- *     later agent recreated with the same (deterministic, name-derived) id
- *     silently re-adopts the orphaned, still-scheduled task.
- *   - A team's automator/eligibility grant on an agent is revoked: the
- *     agent's tasks keep firing and failing forever with no visible
- *     "paused" state (autonomous authz is enforced per-run, not by
- *     disabling the task), so they're flipped to `enabled: false` instead.
- *
- * Calls the autonomous-agents service directly, the same way
- * `ui/src/app/api/autonomous/oversight/route.ts` does: no
+ * Calls the autonomous-agents service directly with no
  * `X-Authenticated-User-*` headers, which the service treats as a trusted
  * "direct service call without gateway" and answers with the full
  * unfiltered task list / unconditional per-task access (see
@@ -83,46 +75,4 @@ export async function cascadeDeleteAutonomousTasksForAgent(
     deleted++;
   }
   return { attempted: tasks.length, deleted };
-}
-
-export interface CascadePauseResult {
-  attempted: number;
-  paused: number;
-}
-
-/**
- * Pause (`enabled: false`) every currently-enabled autonomous task owned by
- * any of `agentIds`. Fail-open per task: a failed pause is logged and
- * skipped so the rest of the batch still gets attempted. This is
- * best-effort cleanup, not a security boundary -- the live per-run authz
- * check in the dynamic-agents service already blocks execution regardless
- * of whether the task's `enabled` flag gets flipped. A list-call failure
- * still propagates, since without the list there's nothing to attempt.
- */
-export async function cascadePauseAutonomousTasksForAgents(
-  agentIds: string[],
-): Promise<CascadePauseResult> {
-  const tasks = await fetchTasksForAgentIds(new Set(agentIds));
-  const enabledTasks = tasks.filter((t) => t.enabled);
-
-  let paused = 0;
-  for (const task of enabledTasks) {
-    try {
-      const res = await fetch(`${autonomousAgentsBaseUrl()}/api/v1/tasks/${task.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...task, enabled: false }),
-      });
-      if (res.ok) {
-        paused++;
-      } else {
-        console.warn(
-          `[autonomous-task-cascade] pause failed for task ${task.id}: HTTP ${res.status}`,
-        );
-      }
-    } catch (err) {
-      console.warn(`[autonomous-task-cascade] pause failed for task ${task.id}:`, err);
-    }
-  }
-  return { attempted: enabledTasks.length, paused };
 }

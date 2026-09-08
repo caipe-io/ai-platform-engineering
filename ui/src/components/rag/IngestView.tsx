@@ -61,7 +61,6 @@ import {
   Settings,
   StopCircle,
   Trash2,
-  Upload,
   X,
 } from "lucide-react";
 import React, {
@@ -93,10 +92,12 @@ import {
   sourceConfigFilterProjection,
   type DatasourceViewState,
 } from "./datasource-view-state";
-import { mergeSelectedUploadFiles } from "./file-upload-selection";
+import { FileUploadDropzone } from "./FileUploadDropzone";
 import { IngestionSourceCard } from "./IngestionSourceCard";
 import { IngestionSourceForm } from "./IngestionSourceForm";
 import { KbSharingPanel } from "./KbSharingPanel";
+import { ReuploadFileModal } from "./ReuploadFileModal";
+import { useFileUploadSelection } from "./useFileUploadSelection";
 import type { DataSourceInfo, IngestionJob, IngestorInfo } from "./Models";
 import type {
   ChunkInfo,
@@ -117,6 +118,7 @@ import {
   ingestUrl,
   reloadDataSource,
   renameDataSource,
+  reuploadLocalFile,
   terminateJob,
 } from "./api/index";
 import {
@@ -125,6 +127,7 @@ import {
   ingestTypeConfigs,
   isIngestTypeAvailable,
   isIngestorOnline,
+  supportsReupload,
   supportsScheduledReload,
 } from "./typeConfig";
 
@@ -152,12 +155,6 @@ const IconRenderer = ({
       style={{ display: "inline-block" }}
     />
   );
-};
-
-const formatUploadFileSize = (bytes: number): string => {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 // Status badge component with consistent styling
@@ -348,58 +345,20 @@ export default function IngestView() {
 
   // Ingestion state
   const [url, setUrl] = useState("");
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [ingestorLimits, setIngestorLimits] = useState<RagIngestorLimits>(() =>
     normalizeRagIngestorLimits(undefined),
   );
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const {
+    selectedFiles,
+    addFiles: updateSelectedFiles,
+    removeFile: removeSelectedFile,
+    reset: resetSelectedFiles,
+  } = useFileUploadSelection(ingestorLimits.file);
   const ingestSectionRef = useRef<HTMLElement | null>(null);
   const [description, setDescription] = useState("");
   const [includeSubPages, setIncludeSubPages] = useState(false);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const selectedManagedSourceType = ingestTypeConfigs[ingestType]?.sourceType;
-
-  const updateSelectedFiles = useCallback(
-    (files: File[]) => {
-      const result = mergeSelectedUploadFiles(
-        selectedFiles,
-        files,
-        ingestorLimits.file,
-      );
-      if (result.unsupportedCount > 0) {
-        toast(
-          `${result.unsupportedCount} unsupported ${result.unsupportedCount === 1 ? "file was" : "files were"} skipped. Choose PDF, Markdown, or text files.`,
-          "error",
-        );
-      }
-      if (result.oversizedCount > 0) {
-        toast(
-          `${result.oversizedCount} ${result.oversizedCount === 1 ? "file exceeds" : "files exceed"} the ${ingestorLimits.file.max_file_size_mb} MiB platform limit.`,
-          "error",
-        );
-      }
-      if (result.duplicateCount > 0) {
-        toast(
-          `${result.duplicateCount} ${result.duplicateCount === 1 ? "file was" : "files were"} already selected.`,
-          "info",
-        );
-      }
-      if (result.countRejectedCount > 0) {
-        toast(
-          `Only ${ingestorLimits.file.max_files_per_upload} files may be ingested at once.`,
-          "error",
-        );
-      }
-      if (result.totalSizeRejectedCount > 0) {
-        toast(
-          `The selected files exceed the ${ingestorLimits.file.max_total_upload_size_mb} MiB total upload limit.`,
-          "error",
-        );
-      }
-      setSelectedFiles(result.files);
-    },
-    [ingestorLimits.file, selectedFiles, toast],
-  );
 
   // Scrapy settings state (for web ingest type)
   const [crawlMode, setCrawlMode] = useState<
@@ -529,6 +488,10 @@ export default function IngestView() {
   const [isReIngesting, setIsReIngesting] = useState(false);
   const [isCleaningUp, setIsCleaningUp] = useState(false);
   const [reIngestError, setReIngestError] = useState<string | null>(null);
+  const [showReuploadModal, setShowReuploadModal] = useState<string | null>(
+    null,
+  );
+  const [isReuploading, setIsReuploading] = useState(false);
 
   const itemsPerPage = 10;
 
@@ -1556,7 +1519,7 @@ export default function IngestView() {
         toast("Files ingested.", "success");
       }
       setUrl("");
-      setSelectedFiles([]);
+      resetSelectedFiles();
       setDescription("");
       setIngestOwnerTeamSlug("");
       setIngestSearchTeamSlugs(
@@ -1621,6 +1584,25 @@ export default function IngestView() {
     } finally {
       setIsReIngesting(false);
       setShowReIngestConfirm(null);
+    }
+  };
+
+  const handleReuploadFile = async (datasourceId: string, files: File[]) => {
+    setIsReuploading(true);
+    try {
+      await reuploadLocalFile(datasourceId, files);
+      await fetchDataSources();
+      await fetchJobsForDataSource(datasourceId);
+      toast("File re-uploaded.", "success");
+      setShowReuploadModal(null);
+    } catch (error) {
+      console.error("Error re-uploading file:", error);
+      toast(
+        `Re-upload failed: ${getErrorMessage(error, "") || "unknown error"}`,
+        "error",
+      );
+    } finally {
+      setIsReuploading(false);
     }
   };
 
@@ -1879,106 +1861,14 @@ export default function IngestView() {
               ) : (
                 <>
                   {/* File source input */}
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-muted-foreground mb-2">
-                      Files
-                    </label>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".md,.markdown,.pdf,.txt,text/markdown,text/plain,application/pdf"
-                      multiple
-                      className="sr-only"
-                      aria-label="Choose files to ingest"
-                      onChange={(event) => {
-                        updateSelectedFiles(
-                          Array.from(event.currentTarget.files ?? []),
-                        );
-                        event.currentTarget.value = "";
-                      }}
-                    />
-                    <div
-                      className="rounded-lg border-2 border-dashed border-border bg-muted/20 px-4 py-5 transition-colors hover:border-primary/50 hover:bg-muted/30"
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        updateSelectedFiles(
-                          Array.from(event.dataTransfer.files),
-                        );
-                      }}
-                    >
-                      <div className="flex flex-col items-center justify-center gap-3 text-center sm:flex-row sm:text-left">
-                        <div className="rounded-full bg-primary/10 p-2.5 text-primary">
-                          <Upload className="h-5 w-5" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-foreground">
-                            Drop files here or choose them from your computer
-                          </p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            PDF, Markdown, and plain text. Up to{" "}
-                            {ingestorLimits.file.max_files_per_upload} files,{" "}
-                            {ingestorLimits.file.max_file_size_mb} MiB each, and{" "}
-                            {ingestorLimits.file.max_total_upload_size_mb} MiB
-                            total.
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="shrink-0 gap-2"
-                        >
-                          <Upload className="h-4 w-4" />
-                          Choose files
-                        </Button>
-                      </div>
-                    </div>
+                  <FileUploadDropzone
+                    selectedFiles={selectedFiles}
+                    limits={ingestorLimits.file}
+                    onFilesSelected={updateSelectedFiles}
+                    onRemoveFile={removeSelectedFile}
+                  />
 
-                    {selectedFiles.length > 0 && (
-                      <div className="mt-3 space-y-2" aria-live="polite">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {selectedFiles.length}{" "}
-                          {selectedFiles.length === 1 ? "file" : "files"}{" "}
-                          selected
-                        </p>
-                        <div className="max-h-36 space-y-1.5 overflow-y-auto">
-                          {selectedFiles.map((file, index) => (
-                            <div
-                              key={`${file.name}-${file.lastModified}-${index}`}
-                              className="flex items-center gap-2 rounded-md border border-border/60 bg-background px-3 py-2"
-                            >
-                              <FileText className="h-4 w-4 shrink-0 text-primary" />
-                              <span
-                                className="min-w-0 flex-1 truncate text-sm"
-                                title={file.name}
-                              >
-                                {file.name}
-                              </span>
-                              <span className="shrink-0 text-xs text-muted-foreground">
-                                {formatUploadFileSize(file.size)}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setSelectedFiles((current) =>
-                                    current.filter(
-                                      (_, itemIndex) => itemIndex !== index,
-                                    ),
-                                  )
-                                }
-                                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                aria-label={`Remove ${file.name}`}
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Quick options - Crawl Mode for web */}
+                  {/* Quick options - Crawl Mode for web */}
                     {ingestType === "web" && (
                       <div className="flex items-center gap-4 mt-2 ml-1">
                         <span className="text-sm text-muted-foreground">
@@ -2040,7 +1930,6 @@ export default function IngestView() {
                         className="w-full"
                       />
                     </div>
-                  </div>
 
                   {/* Advanced settings - Animated Collapsible */}
                   <div>
@@ -2861,6 +2750,9 @@ export default function IngestView() {
                       const supportsReload = supportsScheduledReload(
                         ds.source_type,
                       );
+                      const supportsFileReupload = supportsReupload(
+                        ds.source_type,
+                      );
                       // Helm-seeded config rows (`config_driven: true`) are immutable via
                       // the source-management API until they are adopted.
                       const isConfigDriven = Boolean(
@@ -3137,12 +3029,18 @@ export default function IngestView() {
                                       variant="ghost"
                                       size="sm"
                                       onClick={() =>
-                                        setShowReIngestConfirm(ds.datasource_id)
+                                        supportsFileReupload
+                                          ? setShowReuploadModal(
+                                              ds.datasource_id,
+                                            )
+                                          : setShowReIngestConfirm(
+                                              ds.datasource_id,
+                                            )
                                       }
                                       disabled={
                                         loadingJobs ||
                                         hasActiveJob ||
-                                        !supportsReload ||
+                                        !(supportsReload || supportsFileReupload) ||
                                         isConfigDriven
                                       }
                                       className="h-7 w-7 p-0"
@@ -3151,11 +3049,13 @@ export default function IngestView() {
                                           ? "Loading job status"
                                           : isConfigDriven
                                           ? "Managed by ingestor config"
-                                          : !supportsReload
+                                          : !supportsReload && !supportsFileReupload
                                             ? "Re-ingest not supported"
                                             : hasActiveJob
                                               ? "Job in progress"
-                                              : "Re-ingest"
+                                              : supportsFileReupload
+                                                ? "Re-upload file"
+                                                : "Re-ingest"
                                       }
                                     >
                                       <RotateCcw className="h-3.5 w-3.5" />
@@ -4648,6 +4548,17 @@ export default function IngestView() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <ReuploadFileModal
+        open={Boolean(showReuploadModal)}
+        limits={ingestorLimits.file}
+        isSubmitting={isReuploading}
+        onClose={() => setShowReuploadModal(null)}
+        onSubmit={(files) => {
+          if (!showReuploadModal) return;
+          return handleReuploadFile(showReuploadModal, files);
+        }}
+      />
 
       {/* Re-ingest Error Dialog */}
       <Dialog

@@ -46,6 +46,7 @@ const APPLICATION_SECTION_LABELS: Record<string,string> = {
   "agent-builder": "Agent Builder",
   admin: "Admin",
   autonomous: "Autonomous",
+  apps: "Apps",
   chat: "Chat",
   credentials: "Credentials",
   "dynamic-agents": "Agents",

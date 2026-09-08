@@ -9,6 +9,8 @@ export const ADMIN_STATS_SECTIONS = [
   'hourly_heatmap',
   'completed_workflows',
   'slack',
+  'webex',
+  'api',
 ] as const;
 
 export type AdminStatsSection = typeof ADMIN_STATS_SECTIONS[number];
@@ -46,6 +48,55 @@ export interface AdminSlackStats {
     channel_name: string;
     interactions: number;
   }>;
+}
+
+export interface AdminWebexStats {
+  total_interactions: number;
+  unique_users: number;
+  configured_spaces?: number;
+  configured_spaces_daily?: Array<{
+    date: string;
+    total: number;
+  }>;
+  daily: Array<{
+    date: string;
+    interactions: number;
+    unique_users: number;
+  }>;
+  top_spaces: Array<{
+    space_name: string;
+    interactions: number;
+  }>;
+}
+
+export interface AdminApiStats {
+  total_interactions: number;
+  unique_users: number;
+  daily: Array<{
+    date: string;
+    interactions: number;
+    unique_users: number;
+  }>;
+  // Direct MCP Activity — sourced from the audit-service (agent_gateway
+  // OK_LOCAL_AGENT_CONTEXT events), not the conversations/messages Mongo
+  // collections. Admin-only (see admin/stats/route.ts): omitted entirely for
+  // a non-admin caller rather than returned empty, so a scoped view can never
+  // reveal platform-wide MCP caller identities.
+  mcp_activity?: {
+    total_events: number;
+    unique_users: number;
+    daily: Array<{
+      date: string;
+      events: number;
+      unique_users: number;
+    }>;
+    // True when the audit-service could not be reached/queried for this
+    // request — the rest of the `api` section still renders normally.
+    unavailable?: boolean;
+    // True when the selected dashboard range exceeds the audit-service's
+    // query cap and was clamped to its most recent 31 days.
+    range_capped?: boolean;
+  };
 }
 
 export interface AdminStats {
@@ -113,6 +164,8 @@ export interface AdminStats {
     avg_steps_per_workflow: number;
   };
   slack: AdminSlackStats;
+  webex: AdminWebexStats;
+  api: AdminApiStats;
   available_channels: string[];
   available_agents: Array<{ id: string; name: string }>;
 }

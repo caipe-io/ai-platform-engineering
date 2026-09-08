@@ -15,6 +15,15 @@
 
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  if (process.env.AGENTIC_APPS_INSTALL_ENABLED === "true") {
+    const { loadConfiguredAgenticApps } = await import("./lib/agentic-apps/config");
+    const { validateAgenticAppTokenConfiguration } = await import(
+      "./lib/agentic-apps/tokens"
+    );
+    const apps = loadConfiguredAgenticApps();
+    validateAgenticAppTokenConfiguration();
+    console.log(`[external-apps] Validated ${apps.length} configured App(s)`);
+  }
   const { applySeedConfig } = await import("./lib/seed-config");
   await applySeedConfig();
 

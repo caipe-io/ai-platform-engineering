@@ -12,10 +12,19 @@ from typing import Any
 import pytest
 
 from ai_platform_engineering.integrations.webex_bot.app import WebexMessageResult
-from ai_platform_engineering.integrations.webex_bot.a2a_client import SSEEvent, SSEEventType
+from ai_platform_engineering.integrations.webex_bot.a2a_client import (
+    AgentAccessDeniedError,
+    SSEEvent,
+    SSEEventType,
+)
+from ai_platform_engineering.integrations.webex_bot.utils.thread_ownership import ThreadOwnerCache
 from ai_platform_engineering.integrations.webex_bot.webex_responder import (
     WebexResponder,
     WebexThreadedStreamDispatcher,
+    _BOT_REPLY_MARKER,
+    _agent_reply_markdown,
+    _format_thread_context,
+    _is_webex_bot_reply,
 )
 
 
@@ -80,14 +89,31 @@ class FakeSseClient:
     events: list[SSEEvent]
     calls: list[dict[str, Any]] = field(default_factory=list)
     conversations: list[dict[str, Any]] = field(default_factory=list)
+    conversation_metadata: dict[str, Any] = field(default_factory=dict)
+    metadata_updates: list[dict[str, Any]] = field(default_factory=list)
+    messages: list[dict[str, Any]] = field(default_factory=list)
 
     def create_conversation(self, **kwargs: Any) -> dict[str, Any]:
         self.conversations.append(kwargs)
-        return {"conversation_id": "server-conversation-id", "created": True}
+        return {
+            "conversation_id": "server-conversation-id",
+            "created": True,
+            "metadata": self.conversation_metadata,
+        }
 
     def stream_chat(self, **kwargs: Any):
         self.calls.append(kwargs)
         yield from self.events
+
+    def update_conversation_metadata(
+        self, conversation_id: str, metadata: dict[str, Any], bearer_token: str | None = None
+    ) -> None:
+        self.metadata_updates.append(
+            {"conversation_id": conversation_id, "metadata": metadata, "bearer_token": bearer_token}
+        )
+
+    def add_message(self, **kwargs: Any) -> None:
+        self.messages.append(kwargs)
 
 
 class FailingThreadContextWebexApi(FakeWebexApi):
@@ -334,6 +360,65 @@ def test_unlinked_user_dm_failure_does_not_post_signed_link_publicly(
     assert "webex-link" not in api.created[0]["markdown"]
 
 
+def test_unlinked_explicit_mention_gets_fallback_text_when_linking_url_mint_fails() -> None:
+    api = FakeWebexApi()
+    responder = WebexResponder(webex_api=api)
+    event = {
+        "data": {
+            "id": "message-public-id",
+            "webexRoomId": "room-public-id",
+            "personId": "person-public-id",
+        }
+    }
+    result = WebexMessageResult(
+        allowed=False,
+        dispatched=False,
+        ignored=False,
+        reason_code="WEBEX_USER_NOT_LINKED",
+        deny_message="Your Webex account is not linked.",
+        linking_url=None,
+        explicit_invocation=True,
+    )
+
+    asyncio.run(responder.reply_to_result(event, result))
+
+    assert api.created == [
+        {
+            "room_id": "room-public-id",
+            "parent_id": "message-public-id",
+            "markdown": (
+                "Your Webex account could not be linked because the bot is "
+                "not configured to mint linking URLs. Please contact your admin."
+            ),
+        }
+    ]
+
+
+def test_unlinked_passive_message_stays_silent_when_linking_url_mint_fails() -> None:
+    api = FakeWebexApi()
+    responder = WebexResponder(webex_api=api)
+    event = {
+        "data": {
+            "id": "message-public-id",
+            "webexRoomId": "room-public-id",
+            "personId": "person-public-id",
+        }
+    }
+    result = WebexMessageResult(
+        allowed=False,
+        dispatched=False,
+        ignored=False,
+        reason_code="WEBEX_USER_NOT_LINKED",
+        deny_message="Your Webex account is not linked.",
+        linking_url=None,
+        explicit_invocation=False,
+    )
+
+    asyncio.run(responder.reply_to_result(event, result))
+
+    assert api.created == []
+
+
 def test_reason_code_fallback_is_user_friendly() -> None:
     api = FakeWebexApi()
     responder = WebexResponder(webex_api=api)
@@ -399,10 +484,9 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
             "room_id": "room-public-id",
             "parent_id": "message-public-id",
             "markdown": (
-                "**Agent:** `incident-agent`\n\n"
                 "Working on it...\n\n"
-                "_Reply in this Webex thread to continue with this agent. If the route only "
-                "listens to mentions, mention the bot in your reply._"
+                "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+                f"{_BOT_REPLY_MARKER}"
             ),
         }
     ]
@@ -410,10 +494,9 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
         "message_id": "created-1",
         "room_id": "room-public-id",
         "markdown": (
-            "**Agent:** `incident-agent`\n\n"
             "hello world\n\n"
-            "_Reply in this Webex thread to continue with this agent. If the route only "
-            "listens to mentions, mention the bot in your reply._"
+            "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+            f"{_BOT_REPLY_MARKER}"
         ),
     }
     assert sse.conversations == [
@@ -426,6 +509,7 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
                 "webex_space_id": "6f91b070-531a-11f1-926d-6fd3c20dfdc4",
                 "webex_message_id": "message-public-id",
                 "webex_room_id": "room-public-id",
+                "webex_is_direct": False,
             },
             "bearer_token": "obo-access-token",
         }
@@ -442,6 +526,117 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
         "channel_id": "6f91b070-531a-11f1-926d-6fd3c20dfdc4",
         "surface_kind": "channel",
     }
+
+
+def test_threaded_stream_dispatcher_tags_message_turns_with_webex_source() -> None:
+    """A successful Webex dispatch records source="webex" message turns.
+
+    Mirrors the Slack bot's equivalent per-turn tagging (source="slack") so
+    Insights can count Webex activity the same way as web and Slack.
+    """
+    api = FakeWebexApi()
+    sse = FakeSseClient(
+        events=[
+            SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="hello"),
+            SSEEvent(SSEEventType.RUN_FINISHED),
+        ]
+    )
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api,
+        sse_client=sse,
+        update_every_chars=1,
+    )
+
+    asyncio.run(
+        dispatcher(
+            {
+                "space_id": "space-id",
+                "webex_room_id": "room-id",
+                "message_id": "trigger-message-id",
+                "text": "neo-coder hello",
+                "agent_id": "incident-agent",
+                "obo_token": "obo-access-token",
+            }
+        )
+    )
+
+    assert len(sse.messages) == 2
+    user_turn, assistant_turn = sse.messages
+    assert user_turn["conversation_id"] == "server-conversation-id"
+    assert user_turn["message_id"] == "webex-server-conversation-id-trigger-message-id-user"
+    assert user_turn["role"] == "user"
+    assert user_turn["metadata"]["source"] == "webex"
+    assert user_turn["metadata"]["agent_id"] == "incident-agent"
+    assert user_turn["metadata"]["webex_space_id"] == "space-id"
+    assert user_turn["metadata"]["webex_room_id"] == "room-id"
+    assert user_turn["metadata"]["webex_thread_parent_id"] == "trigger-message-id"
+    assert user_turn["metadata"]["webex_message_id"] == "trigger-message-id"
+    assert user_turn["metadata"]["webex_is_direct"] is False
+    assert user_turn["bearer_token"] == "obo-access-token"
+
+    assert assistant_turn["role"] == "assistant"
+    assert assistant_turn["metadata"]["source"] == "webex"
+    assert assistant_turn["metadata"]["is_final"] is True
+    assert isinstance(assistant_turn["metadata"]["latency_ms"], int)
+
+
+def test_threaded_stream_dispatcher_tags_direct_messages_as_is_direct() -> None:
+    """A Webex 1:1 DM propagates ``is_direct`` into conversation and turn metadata.
+
+    Insights must be able to tell DM conversations apart from real spaces so it
+    can exclude them from the Top Spaces / Configured Spaces breakdowns while
+    still counting their activity in aggregate totals.
+    """
+    api = FakeWebexApi()
+    sse = FakeSseClient(events=[SSEEvent(SSEEventType.RUN_FINISHED)])
+    dispatcher = WebexThreadedStreamDispatcher(webex_api=api, sse_client=sse)
+
+    asyncio.run(
+        dispatcher(
+            {
+                "space_id": "dm-space-id",
+                "webex_room_id": "dm-room-id",
+                "message_id": "dm-message-id",
+                "text": "neo-coder hello",
+                "agent_id": "incident-agent",
+                "obo_token": "obo-access-token",
+                "is_direct": True,
+            }
+        )
+    )
+
+    assert sse.conversations[0]["metadata"]["webex_is_direct"] is True
+    user_turn, _assistant_turn = sse.messages
+    assert user_turn["metadata"]["webex_is_direct"] is True
+
+
+def test_threaded_stream_dispatcher_does_not_tag_message_turns_on_denied_agent() -> None:
+    """No message-turn rows are recorded when the agent access is denied."""
+
+    class DenyingSseClient(FakeSseClient):
+        def stream_chat(self, **kwargs: Any):
+            self.calls.append(kwargs)
+            raise AgentAccessDeniedError("incident-agent")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+
+    api = FakeWebexApi()
+    sse = DenyingSseClient(events=[])
+    dispatcher = WebexThreadedStreamDispatcher(webex_api=api, sse_client=sse)
+
+    asyncio.run(
+        dispatcher(
+            {
+                "space_id": "space-id",
+                "webex_room_id": "room-id",
+                "message_id": "trigger-message-id",
+                "text": "neo-coder hello",
+                "agent_id": "incident-agent",
+                "obo_token": "obo-access-token",
+            }
+        )
+    )
+
+    assert sse.messages == []
 
 
 def test_threaded_stream_dispatcher_reuses_root_parent_for_thread_replies() -> None:
@@ -470,10 +665,9 @@ def test_threaded_stream_dispatcher_reuses_root_parent_for_thread_replies() -> N
         "room_id": "room-public-id",
         "parent_id": "root-message-public-id",
         "markdown": (
-            "**Agent:** `incident-agent`\n\n"
             "Working on it...\n\n"
-            "_Reply in this Webex thread to continue with this agent. If the route only "
-            "listens to mentions, mention the bot in your reply._"
+            "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+            f"{_BOT_REPLY_MARKER}"
         ),
     }
     assert sse.conversations[0]["idempotency_key"] == (
@@ -490,6 +684,199 @@ def test_threaded_stream_dispatcher_reuses_root_parent_for_thread_replies() -> N
         "surface_kind": "channel",
         "thread_ts": "root-message-public-id",
     }
+
+
+def test_threaded_stream_dispatcher_pins_new_thread_to_first_responding_agent() -> None:
+    """The first agent to respond in a thread claims ownership.
+
+    Ownership is persisted to conversation metadata so a later change to
+    the space's agent route does not redirect this thread — mirroring
+    Slack's thread-owner pinning.
+    """
+    api = FakeWebexApi()
+    sse = FakeSseClient(events=[SSEEvent(SSEEventType.RUN_FINISHED)])
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api,
+        sse_client=sse,
+        thread_owner_cache=ThreadOwnerCache(),
+    )
+
+    asyncio.run(
+        dispatcher(
+            {
+                "space_id": "space-id",
+                "webex_room_id": "room-public-id",
+                "message_id": "reply-message-id",
+                "thread_parent_id": "root-message-id",
+                "text": "neo-coder show my jira profile",
+                "agent_id": "incident-agent",
+                "obo_token": "obo-access-token",
+            }
+        )
+    )
+
+    assert sse.calls[0]["agent_id"] == "incident-agent"
+    assert sse.metadata_updates == [
+        {
+            "conversation_id": "server-conversation-id",
+            "metadata": {"thread_owner_agent_id": "incident-agent"},
+            "bearer_token": "obo-access-token",
+        }
+    ]
+
+
+def test_threaded_stream_dispatcher_pins_root_message_to_its_agent() -> None:
+    """A root (non-reply) message also claims ownership for its thread."""
+    api = FakeWebexApi()
+    sse = FakeSseClient(events=[SSEEvent(SSEEventType.RUN_FINISHED)])
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api,
+        sse_client=sse,
+        thread_owner_cache=ThreadOwnerCache(),
+    )
+
+    asyncio.run(
+        dispatcher(
+            {
+                "space_id": "space-id",
+                "webex_room_id": "room-public-id",
+                "message_id": "root-message-id",
+                "text": "neo-coder hello",
+                "agent_id": "incident-agent",
+                "obo_token": "obo-access-token",
+            }
+        )
+    )
+
+    assert sse.metadata_updates == [
+        {
+            "conversation_id": "server-conversation-id",
+            "metadata": {"thread_owner_agent_id": "incident-agent"},
+            "bearer_token": "obo-access-token",
+        }
+    ]
+
+
+def test_threaded_stream_dispatcher_overrides_reconfigured_space_route_for_existing_thread() -> None:
+    """A follow-up in an already-owned thread stays with the original agent.
+
+    Simulates an admin changing the space's agent route between the first
+    and second message in the same Webex thread: the runtime gate resolves
+    the new route (``agent_id="new-agent"``), but the conversation already
+    carries a persisted ``thread_owner_agent_id`` from the first reply, so
+    the dispatcher must override back to the original owner *before* the
+    placeholder is created — the owner should be shown from the very first
+    message, with no create-then-correct flash.
+    """
+    api = FakeWebexApi()
+    sse = FakeSseClient(
+        events=[SSEEvent(SSEEventType.RUN_FINISHED)],
+        conversation_metadata={"thread_owner_agent_id": "original-agent"},
+    )
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api,
+        sse_client=sse,
+        thread_owner_cache=ThreadOwnerCache(),
+    )
+
+    asyncio.run(
+        dispatcher(
+            {
+                "space_id": "space-id",
+                "webex_room_id": "room-public-id",
+                "message_id": "reply-message-id",
+                "thread_parent_id": "root-message-id",
+                "text": "neo-coder follow up",
+                "agent_id": "new-agent",
+                "obo_token": "obo-access-token",
+            }
+        )
+    )
+
+    assert sse.calls[0]["agent_id"] == "original-agent"
+    # Placeholder reply was created with the owner's agent from the start —
+    # never shows the requested/reconfigured agent, so nothing needs correcting.
+    assert len(api.created) == 1
+    assert api.created[0]["markdown"].startswith(
+        "Working on it...\n\n_Agent: original-agent_"
+    )
+    assert api.updated[-1]["markdown"].startswith("Done.\n\n_Agent: original-agent_")
+    # Ownership was already persisted — no redundant metadata write.
+    assert sse.metadata_updates == []
+
+
+def test_threaded_stream_dispatcher_posts_fresh_error_when_conversation_setup_fails() -> None:
+    """A failure while resolving ownership/conversation setup still notifies the user.
+
+    Because ownership is now resolved before the placeholder is created, a
+    failure in that earlier step (e.g. conversation creation) means no
+    placeholder exists yet. The dispatcher must post a fresh error message
+    instead of trying to edit a message_id that was never created.
+    """
+
+    class FailingConversationSseClient(FakeSseClient):
+        def create_conversation(self, **kwargs: Any) -> dict[str, Any]:
+            raise AgentAccessDeniedError("incident-agent")
+
+    api = FakeWebexApi()
+    sse = FailingConversationSseClient(events=[])
+    dispatcher = WebexThreadedStreamDispatcher(webex_api=api, sse_client=sse)
+
+    asyncio.run(
+        dispatcher(
+            {
+                "space_id": "space-id",
+                "webex_room_id": "room-id",
+                "message_id": "trigger-message-id",
+                "text": "neo-coder hello",
+                "agent_id": "incident-agent",
+                "obo_token": "obo-access-token",
+            }
+        )
+    )
+
+    # No placeholder was ever created, so the error is posted as a fresh
+    # message rather than an update to a nonexistent message_id.
+    assert api.updated == []
+    assert len(api.created) == 1
+    assert api.created[0]["room_id"] == "room-id"
+    assert api.created[0]["parent_id"] == "trigger-message-id"
+    assert "don't have permission" in api.created[0]["markdown"]
+
+
+def test_threaded_stream_dispatcher_uses_in_memory_owner_cache_before_server_metadata() -> None:
+    """The in-memory cache resolves ownership on the hot path.
+
+    A second reply in the same thread is pinned to the agent recorded by
+    the first reply's in-memory claim, even though the fake SSE client's
+    conversation metadata never reflects a persisted owner (it is only
+    updated in a real deployment after a successful PATCH).
+    """
+    api = FakeWebexApi()
+    sse = FakeSseClient(events=[SSEEvent(SSEEventType.RUN_FINISHED)])
+    cache = ThreadOwnerCache()
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api,
+        sse_client=sse,
+        thread_owner_cache=cache,
+    )
+
+    first_payload = {
+        "space_id": "space-id",
+        "webex_room_id": "room-public-id",
+        "message_id": "reply-1",
+        "thread_parent_id": "root-message-id",
+        "text": "neo-coder first",
+        "agent_id": "agent-a",
+        "obo_token": "obo-access-token",
+    }
+    second_payload = {**first_payload, "message_id": "reply-2", "agent_id": "agent-b"}
+
+    asyncio.run(dispatcher(first_payload))
+    asyncio.run(dispatcher(second_payload))
+
+    assert sse.calls[0]["agent_id"] == "agent-a"
+    assert sse.calls[1]["agent_id"] == "agent-a"
 
 
 def test_threaded_stream_dispatcher_includes_bounded_thread_context_in_agent_prompt() -> None:
@@ -518,9 +905,9 @@ def test_threaded_stream_dispatcher_includes_bounded_thread_context_in_agent_pro
                 "id": "bot-reply-public-id",
                 "parentId": "root-message-public-id",
                 "markdown": (
-                    "**Agent:** `incident-agent`\n\n"
                     "prior bot answer\n\n"
-                    "_Reply in this Webex thread to continue with this agent._"
+                    "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+                    f"{_BOT_REPLY_MARKER}"
                 ),
                 "personEmail": "bot@example.com",
             },
@@ -624,3 +1011,34 @@ def test_thread_context_fetch_failure_falls_back_to_current_message() -> None:
     )
 
     assert sse.calls[0]["message"] == "continue without history"
+
+
+def test_bot_reply_recognized_after_app_name_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_NAME", "OldName")
+    reply_markdown = _agent_reply_markdown("incident-agent", "prior bot answer")
+
+    monkeypatch.setenv("APP_NAME", "NewName")
+
+    message = {"markdown": reply_markdown, "personEmail": "bot@example.com"}
+    assert _is_webex_bot_reply(message) is True
+    assert _format_thread_context([message]) == ""
+
+
+def test_bot_reply_recognized_via_legacy_app_name_pattern_pre_upgrade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replies the bot posted before the marker was introduced only contain
+    the old ``Mention @{app_name} to continue`` pattern — those must still be
+    recognized as bot replies during the transition to marker-based
+    detection, or they'll be mistaken for user messages in thread context."""
+    monkeypatch.setenv("APP_NAME", "CAIPE")
+    legacy_markdown = (
+        "prior bot answer\n\n_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+    )
+    assert _BOT_REPLY_MARKER not in legacy_markdown
+
+    message = {"markdown": legacy_markdown, "personEmail": "bot@example.com"}
+    assert _is_webex_bot_reply(message) is True
+    assert _format_thread_context([message]) == ""

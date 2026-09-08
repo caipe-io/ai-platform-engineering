@@ -84,6 +84,12 @@ def _authz_service_url() -> str | None:
     return url or None
 
 
+def _organization_key() -> str:
+    """Return the organization id shared with the UI/OpenFGA model."""
+    configured = os.getenv("CAIPE_ORG_KEY", "caipe").strip()
+    return configured if _is_valid_id(configured) else "caipe"
+
+
 class _CasMetaError(Exception):
     """A CAS non-200 response. Carries the upstream status so the caller can
     distinguish a definitive 4xx (not-retriable — bad request / unauthorized /
@@ -94,13 +100,18 @@ class _CasMetaError(Exception):
         self.status_code = status_code
 
 
-async def _decide_agent_action(
-    subject_type: str, subject: str, agent_id: str, bearer: str, action: str = "use"
+async def _decide_action(
+    subject_type: str,
+    subject: str,
+    resource_type: str,
+    resource_id: str,
+    bearer: str,
+    action: str,
 ) -> bool:
-    """Ask CAS whether `subject` may perform `action` on `agent_id`.
+    """Ask CAS whether ``subject`` may perform ``action`` on a resource.
 
-    ``action`` is a CAS verb (e.g. ``use`` for interactive chat, ``schedule`` for
-    unattended/autonomous runs). Forwards the caller's bearer (OBO) so CAS's
+    ``action`` is a CAS verb (for example ``use`` or ``automate``). Forwards
+    the caller's bearer (OBO) so CAS's
     subject-binding (caller == subject) is satisfied; CAS evaluates the capability
     and the org-admin bypass. A DENY is a 200 with ``decision: DENY``; any non-200
     raises ``_CasMetaError`` (carrying the upstream status) and missing config
@@ -114,7 +125,7 @@ async def _decide_agent_action(
         headers["traceparent"] = traceparent
     body = {
         "subject": {"type": subject_type, "id": subject},
-        "resource": {"type": "agent", "id": agent_id},
+        "resource": {"type": resource_type, "id": resource_id},
         "action": action,
     }
     async with httpx.AsyncClient(timeout=5.0) as client:
@@ -126,15 +137,17 @@ async def _decide_agent_action(
 
 async def _decide_agent_use(subject_type: str, subject: str, agent_id: str, bearer: str) -> bool:
     """Back-compat thin alias for the ``use`` action."""
-    return await _decide_agent_action(subject_type, subject, agent_id, bearer, action="use")
+    return await _decide_action(subject_type, subject, "agent", agent_id, bearer, "use")
 
 
-async def _require_agent_action(
-    agent_id: str, action: str, deny_code: str, delegated_user_sub: str | None = None
+async def _require_action(
+    resource_type: str,
+    resource_id: str,
+    action: str,
+    deny_code: str,
+    delegated_user_sub: str | None = None,
 ) -> None:
-    """Require the current bearer's subject to be allowed to perform ``action`` on
-    ``agent_id``. Shared body for :func:`require_agent_use_permission` (action
-    ``use``) and :func:`require_agent_schedule_permission` (action ``schedule``).
+    """Require the current bearer's subject to perform an action on a resource.
 
     Delegates the decision to CAS (the single PDP). Raises ``HTTPException`` with a
     structured detail on deny (403, code ``deny_code``) or any meta-failure
@@ -150,8 +163,8 @@ async def _require_agent_action(
     itself hold ``can_audit`` on the org, or CAS rejects it. An interactive
     (user) bearer may never assert a different subject — the delegation branch is
     gated on the bearer being a service account."""
-    if not _is_valid_id(agent_id):
-        _raise_authz(400, "Invalid agent identifier", "invalid_agent_id", "invalid_request", "fix_request")
+    if not _is_valid_id(resource_id):
+        _raise_authz(400, "Invalid resource identifier", "invalid_resource_id", "invalid_request", "fix_request")
 
     token = current_user_token.get()
     if not token:
@@ -177,14 +190,27 @@ async def _require_agent_action(
         subject_type, subject = "user", delegated_user_sub
 
     try:
-        allowed = await _decide_agent_action(subject_type, subject, agent_id, token, action=action)
+        allowed = await _decide_action(
+            subject_type,
+            subject,
+            resource_type,
+            resource_id,
+            token,
+            action,
+        )
     except _CasMetaError as exc:
         # A definitive 4xx from CAS (e.g. 403 subject-binding, 400 bad request, 401)
         # is not transient — surface it as the same status so the caller sees a
         # real "denied / misconfigured" signal instead of a misleading
         # "retry later". Transient 5xx (and anything else below) stays 503/retry.
         if 400 <= exc.status_code < 500:
-            logger.warning("CAS agent-%s rejected request for agent=%s: HTTP %s", action, agent_id, exc.status_code)
+            logger.warning(
+                "CAS %s-%s rejected request for resource=%s: HTTP %s",
+                resource_type,
+                action,
+                resource_id,
+                exc.status_code,
+            )
             _raise_authz(
                 exc.status_code,
                 "Authorization was refused for this request.",
@@ -192,7 +218,7 @@ async def _require_agent_action(
                 "pdp_rejected",
                 "contact_admin",
             )
-        logger.warning("CAS agent-%s decision unavailable for agent=%s: %s", action, agent_id, exc)
+        logger.warning("CAS %s-%s decision unavailable for resource=%s: %s", resource_type, action, resource_id, exc)
         _raise_authz(
             503,
             "Authorization service is temporarily unavailable. Please try again in a moment.",
@@ -201,7 +227,7 @@ async def _require_agent_action(
             "retry",
         )
     except Exception as exc:  # noqa: BLE001 — any other failure to get a decision fails closed
-        logger.warning("CAS agent-%s decision unavailable for agent=%s: %s", action, agent_id, exc)
+        logger.warning("CAS %s-%s decision unavailable for resource=%s: %s", resource_type, action, resource_id, exc)
         _raise_authz(
             503,
             "Authorization service is temporarily unavailable. Please try again in a moment.",
@@ -211,22 +237,30 @@ async def _require_agent_action(
         )
 
     if not allowed:
-        logger.info("CAS denied agent-%s: agent=%s", action, agent_id)
+        logger.info("CAS denied %s-%s: resource=%s", resource_type, action, resource_id)
         _raise_authz(403, "Permission denied", deny_code, "pdp_denied", "contact_admin")
 
-    logger.debug("CAS allowed agent-%s: agent=%s", action, agent_id)
+    logger.debug("CAS allowed %s-%s: resource=%s", resource_type, action, resource_id)
 
 
 async def require_agent_use_permission(
     agent_id: str, delegated_user_sub: str | None = None
 ) -> None:
     """Require the current bearer's subject to be allowed to use ``agent_id``"""
-    await _require_agent_action(agent_id, "use", "agent#use", delegated_user_sub)
+    await _require_action("agent", agent_id, "use", "agent#use", delegated_user_sub)
 
 
-async def require_agent_schedule_permission(
-    agent_id: str, delegated_user_sub: str | None = None
-) -> None:
-    """Require the current bearer's subject to be allowed to *schedule* ``agent_id``
-    for autonomous execution."""
-    await _require_agent_action(agent_id, "schedule", "agent#schedule", delegated_user_sub)
+async def require_autonomous_permission(delegated_user_sub: str | None = None) -> None:
+    """Require membership in any autonomous-enabled team (or org admin).
+
+    Agent access is checked separately with :func:`require_agent_use_permission`.
+    This makes Autonomous a user entitlement instead of an agent-owner-team
+    grant while still re-evaluating both permissions on every unattended run.
+    """
+    await _require_action(
+        "organization",
+        _organization_key(),
+        "automate",
+        "organization#automate",
+        delegated_user_sub,
+    )

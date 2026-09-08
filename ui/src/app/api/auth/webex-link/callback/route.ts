@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { getRequestOrigin } from "@/app/api/skills/_lib/request-origin";
 import { ApiError, getAuthFromBearerOrSession, withErrorHandler } from "@/lib/api-middleware";
 import { BUILT_IN_OAUTH_CONNECTORS } from "@/lib/credentials/built-in-oauth-connectors";
 import { exchangeOAuthToken } from "@/lib/credentials/oauth-service-factory";
@@ -49,7 +50,7 @@ function readCookie(request: NextRequest, name: string): string | undefined {
 }
 
 function settingsRedirect(request: NextRequest, params: Record<string, string>): NextResponse {
-  const url = new URL(SETTINGS_PATH, new URL(request.url).origin);
+  const url = new URL(SETTINGS_PATH, getRequestOrigin(request));
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
   }

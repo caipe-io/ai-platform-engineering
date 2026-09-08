@@ -356,6 +356,8 @@ services:
       - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-caipe-platform-dev-secret}
       # Workflow runner - set WORKFLOW_RUNNER_ENABLED=true to show Run Workflow button and Multi-Step Workflows
       - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
+      # Projects - set PROJECTS_ENABLED=true to show the Projects workspace
+      - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       # Top-level workflows and schedules are independent, opt-in navigation surfaces.
       - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
@@ -542,6 +544,7 @@ services:
       # Centralized Authorization Service. Dynamic Agents delegates agent-use
       # decisions to the UI BFF and fails closed with 503 if this is unset.
       - AUTHZ_SERVICE_URL=${AUTHZ_SERVICE_URL:-http://caipe-ui:3000}
+      - CAIPE_ORG_KEY=${CAIPE_ORG_KEY:-caipe}
       # Tracing (Langfuse)
       - ENABLE_TRACING=${ENABLE_TRACING:-false}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}

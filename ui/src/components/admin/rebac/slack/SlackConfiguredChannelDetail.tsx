@@ -414,12 +414,12 @@ function SlackRouteEditorDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+      <DialogContent className="grid h-[85vh] max-h-[720px] max-w-5xl grid-rows-[auto_minmax(0,1fr)] overflow-visible">
         <DialogHeader>
           <DialogTitle>{editingRoute ? `Edit agent:${editingRoute.agent_id}` : `Add Agent${selected ? ` to ${selected.item_name || selected.item_id}` : ""}`}</DialogTitle>
           <DialogDescription>Configure how this Slack channel routes messages to a Dynamic Agent. Optional response and escalation settings stay hidden until enabled.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-5">
+        <div className="space-y-5 overflow-y-auto">
           <section className="space-y-3">
             <div className="max-w-48 space-y-2">
               <Label htmlFor="connector-route-priority" className="block">Priority</Label>
@@ -488,13 +488,13 @@ function SlackRouteEditorDialog({
             <h4 className="text-sm font-semibold">Escalation</h4>
             <EscalationEditor enabled={routeDraft.escalationEnabled} onToggleEnabled={(value) => setRouteDraft((prev) => ({ ...prev, escalationEnabled: value }))} escalation={routeDraft.escalation} onChange={(next) => setRouteDraft((prev) => ({ ...prev, escalation: next }))} disabled={formDisabled} errors={visibleErrors} />
           </section>
-          <DialogFooter className="border-t pt-4">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>Cancel</Button>
-            <Button type="button" onClick={() => { setSubmitAttempted(true); if (!hasErrors) void saveRoute(); }} disabled={formDisabled || loading}>
-              {loading ? "Saving..." : editingRoute ? "Update Agent" : "Add Agent"}
-            </Button>
-          </DialogFooter>
         </div>
+        <DialogFooter className="border-t pt-4">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>Cancel</Button>
+          <Button type="button" onClick={() => { setSubmitAttempted(true); if (!hasErrors) void saveRoute(); }} disabled={formDisabled || loading}>
+            {loading ? "Saving..." : editingRoute ? "Update Agent" : "Add Agent"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -4,16 +4,14 @@ import {
 import { getCollection, isMongoDBConfigured } from '@/lib/mongodb';
 import { readOpenFgaTuples, writeOpenFgaTuples, type OpenFgaTupleKey } from '@/lib/rbac/openfga';
 import { organizationObjectId } from '@/lib/rbac/organization';
-import { revokeTeamAutomatorGrants } from '@/lib/rbac/autonomous-cascade';
-import { cascadePauseAutonomousTasksForAgents } from '@/lib/dynamic-agents/autonomousTaskCascade';
 import { ObjectId } from 'mongodb';
 import { NextRequest, NextResponse } from 'next/server';
 
 /**
  * Team autonomous-eligibility. Writes/reads the tuple
  *   team:<slug>#member -> automation_eligible -> organization:<key>
- * Org-admin-only mutation. DELETE cascades (see autonomous-cascade) to revoke the
- * team's per-agent automator grants. Distinct from per-agent automator.
+ * Org-admin-only mutation. Membership in any eligible team grants a user the
+ * Autonomous capability; access to each agent is checked independently.
  */
 function requireMongoDB(): NextResponse | null {
   if (!isMongoDBConfigured) {
@@ -78,18 +76,6 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: { p
     const result = await writeOpenFgaTuples({ writes: [], deletes: [automationEligibilityTuple(teamSlug)] });
     if (!result.enabled) throw new ApiError('OpenFGA is not configured; eligibility cannot be revoked', 503);
   }
-  const { count, agentIds } = await revokeTeamAutomatorGrants(teamSlug);
-  console.log(`[Admin] Autonomous eligibility REVOKED from team=${teamSlug} by ${user.email} (cascaded ${count} agent grants)`);
-  // Best-effort: pause each affected agent's autonomous tasks so they stop
-  // firing (and failing) instead of running forever with no visible
-  // "paused" state. Never blocks the revoke response -- the live per-run
-  // authz check in dynamic-agents already enforces the revocation
-  // regardless of whether this cleanup succeeds. Re-granting eligibility
-  // does NOT auto-resume these tasks; an operator re-enables them manually.
-  if (agentIds.length > 0) {
-    await cascadePauseAutonomousTasksForAgents(agentIds).catch((err) =>
-      console.warn('[admin] autonomous-task pause cascade failed:', err),
-    );
-  }
-  return successResponse({ team_id: params.id, team_slug: teamSlug, automation_eligible: false, cascaded_agent_grants: count });
+  console.log(`[Admin] Autonomous eligibility REVOKED from team=${teamSlug} by ${user.email}`);
+  return successResponse({ team_id: params.id, team_slug: teamSlug, automation_eligible: false });
 });

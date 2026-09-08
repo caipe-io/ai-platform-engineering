@@ -16,11 +16,16 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
-import type { AutonomousTask, TaskFormState, TriggerType } from "./types";
-import { fromFormState, toFormState } from "./formState";
+import type { AutonomousTask, TaskFormState, TaskSaveResult, TriggerType } from "./types";
+import {
+  DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS,
+  formatScheduleInterval,
+  fromFormState,
+  toFormState,
+} from "./formState";
+import { WebhookSetupStep } from "./WebhookSetupStep";
 
 const WEBHOOK_PROVIDER_OPTIONS = [
-  { value: "generic_hmac", label: "Generic HMAC" },
   { value: "github", label: "GitHub" },
   { value: "jira", label: "Jira" },
   { value: "slack", label: "Slack" },
@@ -44,7 +49,9 @@ interface TaskFormDialogProps {
    * without preventing.
    */
   existingNames?: string[];
-  onSubmit: (task: AutonomousTask) => Promise<void>;
+  minimumScheduleIntervalSeconds?: number;
+  onSubmit: (task: AutonomousTask) => Promise<TaskSaveResult>;
+  onSaveWebhookSecret: (task: AutonomousTask, secret: string) => Promise<AutonomousTask>;
 }
 
 function seededFormState(
@@ -58,11 +65,24 @@ function seededFormState(
   return state;
 }
 
-export function TaskFormDialog({ open, onOpenChange, task, initialAgentId, existingNames = [], onSubmit }: TaskFormDialogProps) {
+export function TaskFormDialog({
+  open,
+  onOpenChange,
+  task,
+  initialAgentId,
+  existingNames = [],
+  minimumScheduleIntervalSeconds = DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS,
+  onSubmit,
+  onSaveWebhookSecret,
+}: TaskFormDialogProps) {
   const isEdit = Boolean(task);
   const [form, setForm] = useState<TaskFormState>(() => seededFormState(task, initialAgentId));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [webhookSetup, setWebhookSetup] = useState<{
+    task: AutonomousTask;
+    generatedSecret?: string;
+  } | null>(null);
 
   // Reset whenever the dialog opens or the underlying task changes.
   // Without this, editing task A then opening "create" would inherit
@@ -72,6 +92,7 @@ export function TaskFormDialog({ open, onOpenChange, task, initialAgentId, exist
       setForm(seededFormState(task, initialAgentId));
       setError(null);
       setSubmitting(false);
+      setWebhookSetup(null);
     }
   }, [open, task, initialAgentId]);
 
@@ -101,15 +122,19 @@ export function TaskFormDialog({ open, onOpenChange, task, initialAgentId, exist
       );
       return;
     }
-    const result = fromFormState(form);
+    const result = fromFormState(form, minimumScheduleIntervalSeconds);
     if ("error" in result) {
       setError(result.error);
       return;
     }
     setSubmitting(true);
     try {
-      await onSubmit(result.task);
-      onOpenChange(false);
+      const saved = await onSubmit(result.task);
+      if (saved.task.trigger.type === "webhook" && (!isEdit || saved.webhookSetupRequired)) {
+        setWebhookSetup({ task: saved.task, generatedSecret: saved.webhookSetupSecret });
+      } else {
+        onOpenChange(false);
+      }
     } catch (err) {
       // Mirror the API client's error shape — `.message` already
       // carries the FastAPI ``detail`` string when available.
@@ -119,12 +144,16 @@ export function TaskFormDialog({ open, onOpenChange, task, initialAgentId, exist
     }
   };
 
+  const webhookUrl = webhookSetup
+    ? `${typeof window === "undefined" ? "" : window.location.origin}/api/v1/hooks/${encodeURIComponent(webhookSetup.task.id)}`
+    : "";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit task" : "New autonomous task"}</DialogTitle>
-          <DialogDescription>
+          <DialogTitle>{webhookSetup ? "Configure webhook" : isEdit ? "Edit task" : "New autonomous task"}</DialogTitle>
+          {!webhookSetup && <DialogDescription>
             Tasks are scheduled via the autonomous-agents service and dispatched to
             CAIPE supervisor over A2A. Cron and interval tasks fire automatically;{" "}
             {isEdit ? (
@@ -133,15 +162,23 @@ export function TaskFormDialog({ open, onOpenChange, task, initialAgentId, exist
                 <code className="text-xs">/api/v1/hooks/{form.id}</code>.
               </>
             ) : (
-              <>
-                webhook tasks fire when a POST hits the hook URL shown on the task row
-                once it is created.
-              </>
+              <>webhook setup continues here after the task is created.</>
             )}
-          </DialogDescription>
+          </DialogDescription>}
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        {webhookSetup ? (
+          <WebhookSetupStep
+            task={webhookSetup.task}
+            generatedSecret={webhookSetup.generatedSecret}
+            webhookUrl={webhookUrl}
+            onSaveProviderSecret={async (secret) => {
+              const updated = await onSaveWebhookSecret(webhookSetup.task, secret);
+              setWebhookSetup((current) => current ? { ...current, task: updated } : current);
+            }}
+            onDone={() => onOpenChange(false)}
+          />
+        ) : <form onSubmit={handleSubmit} className="space-y-4">
           {/* Create mode has no ID field at all -- the server generates the id
               -- so Name takes the full width. Edit mode shows the id as
               read-only text because operators need it for the webhook URL. */}
@@ -238,7 +275,8 @@ export function TaskFormDialog({ open, onOpenChange, task, initialAgentId, exist
                   required
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  Standard 5-field cron expression (minute hour dom month dow).
+                  Standard 5-field cron expression (minute hour dom month dow). Runs
+                  must be at least {formatScheduleInterval(minimumScheduleIntervalSeconds)} apart.
                 </p>
               </div>
             )}
@@ -279,13 +317,14 @@ export function TaskFormDialog({ open, onOpenChange, task, initialAgentId, exist
                 </div>
                 <p className="text-[11px] text-muted-foreground">
                   Fill in at least one field; empty fields count as 0. Values
-                  add up (e.g. 1 hour + 30 minutes = every 90 minutes).
+                  add up (e.g. 1 hour + 30 minutes = every 90 minutes). Minimum: {" "}
+                  {formatScheduleInterval(minimumScheduleIntervalSeconds)}.
                 </p>
               </div>
             )}
 
             {form.triggerType === "webhook" && (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-3">
                 <div className="space-y-1">
                   <Label htmlFor="task-webhook-provider">Provider</Label>
                   <Select
@@ -308,50 +347,33 @@ export function TaskFormDialog({ open, onOpenChange, task, initialAgentId, exist
                     ))}
                   </Select>
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="task-webhook-secret">HMAC secret (optional)</Label>
-                  <Input
-                    id="task-webhook-secret"
-                    value={form.webhookSecret}
-                    onChange={(e) => update("webhookSecret", e.target.value)}
-                    type="password"
-                    placeholder={
-                      isEdit && task?.trigger.type === "webhook" && task.trigger.has_secret
-                        ? "secret already configured — type to replace"
-                        : "leave blank to accept unsigned payloads"
-                    }
-                  />
-                  {isEdit && task?.trigger.type === "webhook" && task.trigger.has_secret && (
-                    <p className="text-xs text-muted-foreground">
-                      The existing secret is hidden for security. Leave this field blank to keep it unchanged.
-                    </p>
-                  )}
-                </div>
+                {isEdit && ["slack", "pagerduty"].includes(form.webhookProvider) ? (
+                  <div className="space-y-1">
+                    <Label htmlFor="task-webhook-secret">
+                      {form.webhookProvider === "slack" ? "Slack" : "PagerDuty"} signing secret
+                    </Label>
+                    <Input
+                      id="task-webhook-secret"
+                      value={form.webhookSecret}
+                      onChange={(e) => update("webhookSecret", e.target.value)}
+                      type="password"
+                      placeholder="Paste a new provider-issued secret to rotate it"
+                    />
+                    {task?.trigger.type === "webhook" && task.trigger.has_secret && (
+                      <p className="text-xs text-muted-foreground">
+                        A signing secret is securely stored. Leave this blank to keep it unchanged.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {form.webhookProvider === "slack" || form.webhookProvider === "pagerduty"
+                      ? "After creation, paste the signing secret issued by this provider."
+                      : "A strong signing secret will be generated automatically and shown once after creation."}
+                  </p>
+                )}
               </div>
             )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label htmlFor="task-timeout">Timeout (seconds, optional)</Label>
-              <Input
-                id="task-timeout"
-                value={form.timeoutSeconds}
-                onChange={(e) => update("timeoutSeconds", e.target.value)}
-                inputMode="decimal"
-                placeholder="defaults to A2A_TIMEOUT_SECONDS"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="task-retries">Max retries (optional)</Label>
-              <Input
-                id="task-retries"
-                value={form.maxRetries}
-                onChange={(e) => update("maxRetries", e.target.value)}
-                inputMode="numeric"
-                placeholder="defaults to A2A_MAX_RETRIES"
-              />
-            </div>
           </div>
 
           <label className="flex items-center gap-2 text-sm">
@@ -383,7 +405,7 @@ export function TaskFormDialog({ open, onOpenChange, task, initialAgentId, exist
               {submitting ? "Saving…" : isEdit ? "Save changes" : "Create task"}
             </Button>
           </DialogFooter>
-        </form>
+        </form>}
       </DialogContent>
     </Dialog>
   );
