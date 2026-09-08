@@ -451,11 +451,13 @@ describe("MCPServersTab AgentGateway repair", () => {
 
   it("loads a directly linked MCP server and reports when its editor closes", async () => {
     const onSelectedServerChange = jest.fn();
+    const onSelectedServerNameChange = jest.fn();
 
     render(
       <MCPServersTab
         selectedServerId="jira"
         onSelectedServerChange={onSelectedServerChange}
+        onSelectedServerNameChange={onSelectedServerNameChange}
       />,
     );
 
@@ -464,9 +466,11 @@ describe("MCPServersTab AgentGateway repair", () => {
       "/api/mcp-servers?id=jira",
       { cache: "no-store" },
     );
+    expect(onSelectedServerNameChange).toHaveBeenCalledWith("Jira");
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onSelectedServerChange).toHaveBeenCalledWith(null);
+    expect(onSelectedServerNameChange).toHaveBeenCalledWith(null);
   });
 
   it("keeps the selected row open when the page adds the server ID to the URL", async () => {

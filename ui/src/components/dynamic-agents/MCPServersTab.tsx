@@ -77,6 +77,7 @@ interface FetchServersOptions {
 interface MCPServersTabProps {
   selectedServerId?: string | null;
   onSelectedServerChange?: (serverId: string | null) => void;
+  onSelectedServerNameChange?: (serverName: string | null) => void;
 }
 
 interface ToolTestResult {
@@ -201,6 +202,7 @@ function toolHealthDotClass(status: ToolHealthStatus): string {
 export function MCPServersTab({
   selectedServerId,
   onSelectedServerChange,
+  onSelectedServerNameChange,
 }: MCPServersTabProps = {}) {
   const [servers, setServers] = React.useState<MCPServerConfigWithPermissions[]>([]);
   const [listCapabilities, setListCapabilities] = React.useState(DEFAULT_LIST_CAPABILITIES);
@@ -270,7 +272,10 @@ export function MCPServersTab({
   }, [fetchServers]);
 
   React.useEffect(() => {
-    if (selectedServerId === undefined) return;
+    if (selectedServerId === undefined) {
+      onSelectedServerNameChange?.(null);
+      return;
+    }
 
     const requestId = ++selectionRequestRef.current;
     if (!selectedServerId) {
@@ -278,6 +283,7 @@ export function MCPServersTab({
       setEditingServer(null);
       setSelectionError(null);
       setSelectionLoading(false);
+      onSelectedServerNameChange?.(null);
       return;
     }
 
@@ -289,6 +295,7 @@ export function MCPServersTab({
 
     setSelectionLoading(true);
     setSelectionError(null);
+    onSelectedServerNameChange?.(null);
     void (async () => {
       try {
         const response = await fetch(`/api/mcp-servers?id=${encodeURIComponent(selectedServerId)}`, {
@@ -304,12 +311,14 @@ export function MCPServersTab({
             ...data.data,
             permissions: data.data.permissions ?? DEFAULT_ROW_PERMISSIONS,
           });
+          onSelectedServerNameChange?.(data.data.name ?? null);
         }
       } catch (err: unknown) {
         if (selectionRequestRef.current === requestId) {
           loadedSelectionIdRef.current = null;
           setEditingServer(null);
           setSelectionError(errorMessage(err, "Failed to load MCP server"));
+          onSelectedServerNameChange?.(null);
         }
       } finally {
         if (selectionRequestRef.current === requestId) {
@@ -317,7 +326,7 @@ export function MCPServersTab({
         }
       }
     })();
-  }, [selectedServerId]);
+  }, [onSelectedServerNameChange, selectedServerId]);
 
   React.useEffect(() => {
     const refreshFromBackend = () => {
@@ -555,6 +564,7 @@ export function MCPServersTab({
     setSelectionError(null);
     setEditingServer(server);
     onSelectedServerChange?.(server._id);
+    onSelectedServerNameChange?.(server.name);
   };
 
   const closeServerEditor = () => {
@@ -565,6 +575,7 @@ export function MCPServersTab({
     setCatalogInitialValues(null);
     setSelectionError(null);
     setSelectionLoading(false);
+    onSelectedServerNameChange?.(null);
     onSelectedServerChange?.(null);
   };
 
