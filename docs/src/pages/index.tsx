@@ -88,12 +88,6 @@ const HOME_FEATURES = [
     to: '/features',
   },
   {
-    icon: '🎨',
-    title: 'Rich Web UI',
-    description: 'Streaming chat, Agent Builder, Skills Gateway, and admin controls.',
-    to: '/features',
-  },
-  {
     icon: '🧠',
     title: 'Knowledge Bases',
     description: 'Hybrid RAG and optional Graph RAG across web, AWS, Kubernetes, Jira, GitHub, Slack, and more.',
@@ -144,7 +138,7 @@ const HOME_FEATURES = [
   {
     icon: '💻',
     title: 'Multiple Clients',
-    description: 'Web UI, Chat CLI, Slack Bot, and Webex Bot.',
+    description: 'Rich Web UI for streaming chat, Agent Builder, Skills Gateway, and admin controls — plus Chat CLI, Slack, and Webex.',
     to: '/features',
   },
 ];
@@ -173,8 +167,50 @@ const USE_CASES = [
 const AGENTS = [
   'ArgoCD', 'PagerDuty', 'GitHub', 'GitLab', 'Jira', 'Confluence',
   'Kubernetes', 'Slack', 'Webex', 'Splunk', 'VictorOps', 'Komodor',
-  'Backstage', 'AWS', 'Weather',
+  'Backstage', 'AWS',
 ];
+
+const HERO_AUDIENCES = ['enterprises.', 'individuals.', 'you.', 'teams.'];
+
+function TypewriterAudience() {
+  const [audienceIndex, setAudienceIndex] = useState(0);
+  const [displayedAudience, setDisplayedAudience] = useState(HERO_AUDIENCES[0]);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const audience = HERO_AUDIENCES[audienceIndex];
+
+  useEffect(() => {
+    const isComplete = displayedAudience === audience;
+    const delay = isDeleting ? 45 : isComplete ? 3800 : 65;
+    const timer = window.setTimeout(() => {
+      if (isDeleting) {
+        setDisplayedAudience((current) => current.slice(0, -1));
+        if (displayedAudience.length === 1) {
+          setAudienceIndex((current) => (current + 1) % HERO_AUDIENCES.length);
+          setIsDeleting(false);
+        }
+        return;
+      }
+
+      if (isComplete) {
+        setIsDeleting(true);
+        return;
+      }
+
+      setDisplayedAudience(audience.slice(0, displayedAudience.length + 1));
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [audience, displayedAudience, isDeleting]);
+
+  return (
+    <>
+      <span aria-hidden="true" className={styles.typewriterAudience}>
+        {displayedAudience}
+      </span>
+      <span className={styles.screenReaderOnly}>enterprises, individuals, you, and teams.</span>
+    </>
+  );
+}
 
 function HeroSection() {
   const [stars, setStars] = useState<string | null>(null);
@@ -200,14 +236,11 @@ function HeroSection() {
               <span className={styles.heroAccent}>All</span>
             </Heading>
             <p className={styles.heroSubtitle}>
-              <span className={styles.heroLine}>
-                Build, govern, and operate secure AI agents and agentic workflows
-              </span>{' '}
-              <span className={styles.heroLine}>for enterprises and individuals</span>
+              Build, govern, and operate secure AI agents and workflows for <TypewriterAudience />
             </p>
             <p className={styles.heroPronunciation}>
               <span className={styles.heroLine}>
-                💡 Pronounced like <strong>cape</strong> 🦸 — just as a cape empowers a superhero,
+                💡 Pronounced <strong>cape</strong> 🦸 — just as a cape empowers a superhero,
               </span>{' '}
               <span className={styles.heroLine}>
                 CAIPE empowers teams with 🤖 agentic AI automation.
@@ -260,8 +293,7 @@ function FeaturesSection() {
           Built for teams of all sizes
         </Heading>
         <p className={styles.sectionSubtitle}>
-          Everything you need to run agents in production, plus the controls to
-          let your whole team help themselves safely.
+          Everything you need to run agents in production, plus the controls to let your whole team help themselves safely.
         </p>
       </div>
       <div className={styles.featuresGrid}>
@@ -346,7 +378,7 @@ function QuickStartSection() {
   return (
     <section className={styles.quickstart}>
       <div className={styles.quickstartInner}>
-        <div className={styles.sectionHeader} style={{textAlign: 'left', marginBottom: '1.5rem'}}>
+        <div className={styles.sectionHeader} style={{marginBottom: '1.5rem'}}>
           <p className={styles.sectionLabel}>Quick Install</p>
           <Heading as="h2" className={styles.sectionTitle}>
             Up and running in minutes
@@ -422,7 +454,7 @@ function VideoSection() {
   return (
     <section className={styles.quickstart}>
       <div className={styles.quickstartInner}>
-        <div className={styles.sectionHeader} style={{textAlign: 'left', marginBottom: '1.5rem'}}>
+        <div className={styles.sectionHeader} style={{marginBottom: '1.5rem'}}>
           <p className={styles.sectionLabel}>See It In Action</p>
           <Heading as="h2" className={styles.sectionTitle}>
             Watch the demo

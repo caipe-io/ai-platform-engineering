@@ -62,6 +62,7 @@ const FEATURES = [
     title: 'Multi-Agent Orchestration',
     icon: '🤖',
     color: '#0284c7',
+    to: '/docs/agents/',
     items: [
       'Multi-agent and deep agent interactions with access to multiple tools and sub-agents based on customizable system prompts',
       '10+ first-party curated sub-agents and MCP servers',
@@ -99,6 +100,7 @@ const FEATURES = [
     title: 'Agent Memory',
     icon: '💾',
     color: '#059669',
+    to: '/docs/api/chat-conversations',
     items: [
       'Chat persistence memory with multi-turn conversation',
       'Fact extraction across chats for a user',
@@ -108,6 +110,7 @@ const FEATURES = [
     title: 'Scheduled Runs & External Triggers',
     icon: '📡',
     color: '#d97706',
+    to: '/docs/architecture/autonomous-agents',
     items: [
       'Webhook-based agent triggers for event-driven workflows',
       'Scheduled/cron-based agent runs',
@@ -119,6 +122,7 @@ const FEATURES = [
     title: 'Agent and Tool Communications',
     icon: '🔗',
     color: '#d97706',
+    to: '/docs/api/dynamic-agents-mcp',
     items: [
       'MCP (Model Context Protocol)',
       'Dynamic Agents API',
@@ -130,6 +134,7 @@ const FEATURES = [
     title: 'Enterprise Security',
     icon: '🔒',
     color: '#dc2626',
+    to: '/docs/security/',
     items: [
       'OAuth 2.0 integration with OIDC compatible IdPs',
       'OIDC/Okta groups base RBAC',
@@ -141,6 +146,7 @@ const FEATURES = [
     title: 'Deployment',
     icon: '🚀',
     color: '#2563eb',
+    to: '/docs/installation/',
     items: [
       'Kubernetes based Helm charts',
       'Docker/Containerized Agents and MCP servers',
@@ -154,6 +160,7 @@ const FEATURES = [
     title: 'Integrations',
     icon: '🔌',
     color: '#0891b2',
+    to: '/docs/getting-started/user-interfaces',
     items: [
       'Web UI — rich chat interface with live agent/tool status via streaming',
       'Slack Bot — conversational interface for your team\'s existing workflow',
