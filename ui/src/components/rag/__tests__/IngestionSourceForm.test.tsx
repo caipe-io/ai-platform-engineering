@@ -350,6 +350,29 @@ describe("<IngestionSourceForm /> — edit", () => {
     expect(screen.queryByText(/^global$/i)).not.toBeInTheDocument();
   });
 
+  it("renders a config-driven source as view only", () => {
+    const onSave = jest.fn();
+    render(
+      <IngestionSourceForm
+        open
+        onClose={jest.fn()}
+        onSave={onSave}
+        initial={{ ...initial, config_driven: true }}
+      />,
+    );
+
+    expect(screen.getByText("View Datasource")).toBeInTheDocument();
+    expect(
+      screen.getByText(/managed in app-config\.yaml and is view only/i),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/^name/i)).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /save changes/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Close" })).not.toHaveLength(0);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it("submits only mutable fields on save (no identity/source_type)", async () => {
     const user = userEvent.setup();
     const onSave = jest.fn().mockResolvedValue(undefined);

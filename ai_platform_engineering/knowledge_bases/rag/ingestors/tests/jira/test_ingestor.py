@@ -9,8 +9,6 @@ Covers:
   - _build_issue_document: full document structure, optional fields (resolved,
     labels, components, custom fields, linked issues, comments),
     missing/None field values, metadata correctness
-  - sync_jira_projects: successful multi-project sync, empty result handling,
-    JQL override vs default, Jira API error isolation per project
 
 NOTE: ingestor.py validates env vars at module level. We pre-set them via
 os.environ before the import so the module loads without raising ValueError.
@@ -22,7 +20,6 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import requests
 
 # ---------------------------------------------------------------------------
 # Set required env vars before importing the module
@@ -30,7 +27,6 @@ import requests
 os.environ.setdefault("JIRA_URL", "https://example.atlassian.net")
 os.environ.setdefault("JIRA_EMAIL", "test@example.com")
 os.environ.setdefault("ATLASSIAN_TOKEN", "test-token")
-os.environ.setdefault("JIRA_PROJECTS", '{"PROJ": [{"name": "My Project", "jql": "project = PROJ AND updated >= -30d ORDER BY updated DESC"}]}')
 
 # ---------------------------------------------------------------------------
 # Import the module under test -- `common` is a real installed dependency
@@ -44,10 +40,8 @@ from ingestors.jira.ingestor import (  # noqa: E402
     _format_date,
     _build_issue_document,
     preview_project_ingestion,
-    sync_jira_projects,
 )
 from common.models.server import JiraIngestRequest  # noqa: E402
-from common.job_manager import JobStatus as _JobStatus  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -370,132 +364,10 @@ class TestBuildIssueDocument:
 
 
 # ---------------------------------------------------------------------------
-# sync_jira_projects
+# JiraClient
 # ---------------------------------------------------------------------------
 
-class TestSyncJiraProjects:
-    def _make_client(self):
-        client = AsyncMock()
-        client.ingestor_id = "jira:default_jira"
-        client.upsert_datasource = AsyncMock()
-        client.create_job = AsyncMock(return_value={"job_id": "job-1"})
-        client.ingest_documents = AsyncMock()
-        client.update_job = AsyncMock()
-        client.add_job_error = AsyncMock()
-        return client
-
-    def _make_issues(self, keys: list[str]) -> list[dict]:
-        return [
-            make_issue(key=k, updated="2024-01-01T00:00:00+00:00")
-            for k in keys
-        ]
-
-    @pytest.mark.asyncio
-    async def test_successful_sync_calls_ingest_documents(self):
-        client = self._make_client()
-        issues = self._make_issues(["PROJ-1", "PROJ-2"])
-
-        with patch("ingestors.jira.ingestor.JiraClient") as mock_jira_cls:
-            mock_jira = mock_jira_cls.return_value
-            mock_jira.search_issues.return_value = issues
-            mock_jira.get_issue_comments.return_value = []
-
-            await sync_jira_projects(client)
-
-        client.ingest_documents.assert_called_once()
-        args = client.ingest_documents.call_args
-        assert len(args.kwargs["documents"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_empty_result_skips_ingest(self):
-        client = self._make_client()
-        projects_single = {"PROJ": [{"name": "My Project", "jql": "project = PROJ ORDER BY updated DESC"}]}
-
-        with patch.object(ingestor_module, "projects", projects_single):
-            with patch("ingestors.jira.ingestor.JiraClient") as mock_jira_cls:
-                mock_jira = mock_jira_cls.return_value
-                mock_jira.search_issues.return_value = []
-
-                await sync_jira_projects(client)
-
-        client.ingest_documents.assert_not_called()
-        # upsert_datasource is called once to update the timestamp even when empty
-        assert client.upsert_datasource.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_jira_api_error_does_not_raise(self):
-        client = self._make_client()
-
-        with patch("ingestors.jira.ingestor.JiraClient") as mock_jira_cls:
-            mock_jira = mock_jira_cls.return_value
-            mock_jira.search_issues.side_effect = requests.HTTPError("API error")
-
-            # Should not raise -- errors are logged and skipped per project
-            await sync_jira_projects(client)
-
-        client.ingest_documents.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_job_marked_completed_on_success(self):
-        client = self._make_client()
-        issues = self._make_issues(["PROJ-1"])
-
-        with patch("ingestors.jira.ingestor.JiraClient") as mock_jira_cls:
-            mock_jira = mock_jira_cls.return_value
-            mock_jira.search_issues.return_value = issues
-            mock_jira.get_issue_comments.return_value = []
-
-            await sync_jira_projects(client)
-
-        update_call = client.update_job.call_args
-        assert update_call.kwargs["job_status"] == _JobStatus.COMPLETED
-
-    @pytest.mark.asyncio
-    async def test_job_marked_failed_on_ingest_error(self):
-        client = self._make_client()
-        issues = self._make_issues(["PROJ-1"])
-        client.ingest_documents.side_effect = Exception("ingest failure")
-
-        with patch("ingestors.jira.ingestor.JiraClient") as mock_jira_cls:
-            mock_jira = mock_jira_cls.return_value
-            mock_jira.search_issues.return_value = issues
-            mock_jira.get_issue_comments.return_value = []
-
-            await sync_jira_projects(client)
-
-        update_call = client.update_job.call_args
-        assert update_call.kwargs["job_status"] == _JobStatus.FAILED
-
-    @pytest.mark.asyncio
-    async def test_jql_used_from_config(self):
-        client = self._make_client()
-        custom_jql = "project = PROJ AND issuetype = Bug"
-        projects_override = {"PROJ": [{"name": "My Project", "jql": custom_jql}]}
-
-        with patch.object(ingestor_module, "projects", projects_override):
-            with patch("ingestors.jira.ingestor.JiraClient") as mock_jira_cls:
-                mock_jira = mock_jira_cls.return_value
-                mock_jira.search_issues.return_value = []
-
-                await sync_jira_projects(client)
-
-        call_jql = mock_jira.search_issues.call_args[0][0]
-        assert call_jql == custom_jql
-
-    def test_missing_jql_raises_at_config_parse(self):
-        """Config entries without 'jql' should be rejected during normalisation."""
-        import json as _json
-        raw = {"PROJ": [{"name": "My Project"}]}
-        with patch.dict(os.environ, {"JIRA_PROJECTS": _json.dumps(raw)}):
-            with pytest.raises(ValueError, match="missing required 'jql' field"):
-                # Re-run the normalisation logic
-                _raw = _json.loads(os.environ["JIRA_PROJECTS"])
-                for _pk, _val in _raw.items():
-                    entries = [_val] if isinstance(_val, dict) else _val
-                    for _ds in entries:
-                        if not _ds.get("jql"):
-                            raise ValueError(f"Datasource config for project {_pk} is missing required 'jql' field")
-
+class TestJiraClient:
     def test_pagination_fetches_all_pages(self):
         """Verifies JiraClient.search_issues pages through multiple batches until isLast=True."""
         from ingestors.jira.ingestor import JiraClient

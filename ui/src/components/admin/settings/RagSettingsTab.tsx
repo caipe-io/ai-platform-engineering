@@ -32,7 +32,7 @@ interface RagSettingsTabProps {
   readOnly?: boolean;
 }
 
-/** Platform defaults and the one-time env-config migration for RAG. */
+/** Platform defaults and the one-time import for existing RAG datasources. */
 export function RagSettingsTab({
   isAdmin,
   readOnly = false,

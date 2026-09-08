@@ -608,6 +608,7 @@ export interface IngestionSourceFormProps {
   onPublicationRequestWithdrawn?: () => void | Promise<void>;
   defaultSourceType?: IngestionSourceType;
   displayMode?: "dialog" | "inline";
+  readOnly?: boolean;
 }
 
 export function IngestionSourceForm({
@@ -619,8 +620,10 @@ export function IngestionSourceForm({
   onPublicationRequestWithdrawn,
   defaultSourceType,
   displayMode = "dialog",
+  readOnly = false,
 }: IngestionSourceFormProps) {
   const isEdit = Boolean(initial);
+  const isReadOnly = readOnly || initial?.config_driven === true;
   const [values, setValues] = useState<IngestionSourceFormValues>(
     initial
       ? valuesFromSourceWithPendingSearch(initial, pendingPublicationRequest)
@@ -714,10 +717,12 @@ export function IngestionSourceForm({
   }, [open, initial, pendingPublicationRequest, defaultSourceType, isEdit]);
 
   const canSave =
+    !isReadOnly &&
     values.name.trim().length > 0 &&
     (isEdit || identityFieldsValid(values));
 
   const handleSave = async (opts?: { forceConfirmNotMember?: boolean }) => {
+    if (isReadOnly) return;
     setSaving(true);
     setError(null);
     setTransferNeedsServerConfirm(false);
@@ -914,7 +919,7 @@ export function IngestionSourceForm({
 
   const formFields = (
     <>
-        <div className="space-y-4 py-2">
+        <fieldset disabled={isReadOnly} className="space-y-4 py-2">
           {displayMode === "dialog" && (
           <div className="space-y-1.5">
             <Label htmlFor="source-type">Source Type</Label>
@@ -1602,7 +1607,7 @@ export function IngestionSourceForm({
               </div>
             )}
           />
-        </div>
+        </fieldset>
 
         {error && (
           <div
@@ -1627,13 +1632,15 @@ export function IngestionSourceForm({
         <DialogFooter>
           {displayMode === "dialog" && (
             <Button variant="outline" onClick={onClose} disabled={saving}>
-              Cancel
+              {isReadOnly ? "Close" : "Cancel"}
             </Button>
           )}
-          <Button onClick={() => void handleSave()} disabled={saving || !canSave}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            {isEdit ? "Save Changes" : displayMode === "inline" ? "Ingest Source" : "Create Source"}
-          </Button>
+          {!isReadOnly && (
+            <Button onClick={() => void handleSave()} disabled={saving || !canSave}>
+              {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {isEdit ? "Save Changes" : displayMode === "inline" ? "Ingest Source" : "Create Source"}
+            </Button>
+          )}
         </DialogFooter>
     </>
   );
@@ -1666,9 +1673,17 @@ export function IngestionSourceForm({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="h-[82vh] max-h-[720px] w-[95vw] grid-rows-[auto_minmax(0,1fr)] overflow-visible sm:max-w-[960px]">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Manage Datasource" : "New Ingestion Source"}</DialogTitle>
+          <DialogTitle>
+            {isReadOnly
+              ? "View Datasource"
+              : isEdit
+                ? "Manage Datasource"
+                : "New Ingestion Source"}
+          </DialogTitle>
           <DialogDescription>
-            {isEdit
+            {isReadOnly
+              ? "This datasource is managed in app-config.yaml and is view only."
+              : isEdit
               ? "Update this source's connector settings and access."
               : "Configure the source and who can manage it."}
           </DialogDescription>

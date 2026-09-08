@@ -1060,7 +1060,7 @@ export default function IngestView() {
       cachedConfig: IngestionSourceConfigWithPermissions | undefined,
       canManageConfig: boolean,
     ) => {
-      if (cachedConfig && canManageConfig) {
+      if (cachedConfig && (canManageConfig || cachedConfig.config_driven)) {
         setEditingSourceConfig(cachedConfig);
         setSourceDialogOpen(true);
         return;
@@ -2753,8 +2753,8 @@ export default function IngestView() {
                       const supportsFileReupload = supportsReupload(
                         ds.source_type,
                       );
-                      // Helm-seeded config rows (`config_driven: true`) are immutable via
-                      // the source-management API until they are adopted.
+                      // Application-config rows (`config_driven: true`) are
+                      // immutable via the source-management API until adopted.
                       const isConfigDriven = Boolean(
                         sourceConfig?.config_driven,
                       );
@@ -2879,7 +2879,7 @@ export default function IngestView() {
                                           ? `${ds.datasource_id.substring(0, 60)}\u2026`
                                           : ds.datasource_id)}
                                     </span>
-                                    {canManageDatasource && (
+                                    {canManageDatasource && !isConfigDriven && (
                                       <Button
                                         size="sm"
                                         variant="ghost"
@@ -2900,8 +2900,8 @@ export default function IngestView() {
                                     variant="ghost"
                                     size="sm"
                                     className="h-5 w-5 p-0 text-muted-foreground hover:text-foreground shrink-0"
-                                    title="Manage Datasource"
-                                    aria-label="Manage Datasource"
+                                    title={isConfigDriven ? "View Datasource" : "Manage Datasource"}
+                                    aria-label={isConfigDriven ? "View Datasource" : "Manage Datasource"}
                                     disabled={
                                       openingSourceConfigId === ds.datasource_id
                                     }
@@ -3019,7 +3019,7 @@ export default function IngestView() {
                                 </>
                               )}
 
-                              {(canRunLifecycle || canManageDatasource) && (
+                              {!isConfigDriven && (canRunLifecycle || canManageDatasource) && (
                                 <div
                                   className="flex gap-1"
                                   onClick={(e) => e.stopPropagation()}
@@ -4631,6 +4631,7 @@ export default function IngestView() {
         }}
         onSave={handleSaveSourceConfig}
         initial={editingSourceConfig}
+        readOnly={editingSourceConfig?.config_driven === true}
         pendingPublicationRequest={editingSourceConfig
           ? pendingPublicationRequests.get(editingSourceConfig.source_id)
           : null}

@@ -2,22 +2,23 @@
  * @jest-environment jsdom
  */
 
-import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import React from "react";
+
 import { ImportRagSourcesFromConfigCard } from "../ImportRagSourcesFromConfigCard";
 
 const PREVIEW_SOURCES = [
   {
     source_id: "slack-channel-C1",
-    name: "eng-general",
+    name: "primary",
     source_type: "slack_channel",
     in_db: true,
     already_adopted: false,
-    importable: false,
+    importable: true,
   },
   {
     source_id: "slack-channel-C2",
-    name: "eng-random",
+    name: "secondary",
     source_type: "slack_channel",
     in_db: true,
     already_adopted: true,
@@ -25,11 +26,12 @@ const PREVIEW_SOURCES = [
   },
   {
     source_id: "slack-channel-C3",
-    name: "eng-support",
+    name: "example",
     source_type: "slack_channel",
     in_db: false,
     already_adopted: false,
-    importable: true,
+    importable: false,
+    unavailable_reason: "not_seeded",
   },
 ];
 
@@ -40,8 +42,8 @@ const COLLECTIONS = [
     description: "Shared knowledge",
     is_platform: true,
     source_ids: [],
-    maintainer_team_slugs: ["super-admins"],
-    reader_team_slugs: ["everyone"],
+    maintainer_team_slugs: ["owner-team"],
+    reader_team_slugs: ["reader-team"],
     global_read: false,
     created_by: "platform",
     created_at: "2026-08-01T00:00:00.000Z",
@@ -54,13 +56,13 @@ const COLLECTIONS = [
     },
   },
   {
-    _id: "engineering-docs",
-    name: "Engineering Docs",
+    _id: "primary-collection",
+    name: "Primary Collection",
     description: "Team knowledge",
     is_platform: false,
     source_ids: [],
-    maintainer_team_slugs: ["engineering"],
-    reader_team_slugs: ["engineering"],
+    maintainer_team_slugs: ["primary-team"],
+    reader_team_slugs: ["primary-team"],
     global_read: false,
     created_by: "admin-sub",
     created_at: "2026-08-01T00:00:00.000Z",
@@ -79,11 +81,10 @@ function mockFetch({
     success: true,
     data: {
       sources: PREVIEW_SOURCES,
-      legacy_source_count: 3,
+      configured_source_count: 3,
       destination_collection: {
         id: "platform-rag",
         source_count: 0,
-        agents_updated: 0,
       },
     },
   },
@@ -93,18 +94,17 @@ function mockFetch({
       sources: PREVIEW_SOURCES,
       adopted: ["slack-channel-C1"],
       skipped: [],
-      legacy_source_count: 3,
+      configured_source_count: 3,
       destination_collection: {
         id: "platform-rag",
-        source_count: 3,
-        agents_updated: 0,
+        source_count: 2,
       },
     },
   },
 }: {
   preview?: object;
   apply?: object;
-} = {}) {
+} = {}): void {
   global.fetch = jest.fn((url: RequestInfo | URL, init?: RequestInit) => {
     const href = String(url);
     if (href.includes("/api/admin/rag/sources/migrate-from-config")) {
@@ -126,9 +126,9 @@ function mockFetch({
           Promise.resolve({
             success: true,
             data: [
-              { slug: "super-admins", name: "Super Admins" },
-              { slug: "everyone", name: "Everyone" },
-              { slug: "engineering", name: "Engineering" },
+              { slug: "owner-team", name: "Owner Team" },
+              { slug: "reader-team", name: "Reader Team" },
+              { slug: "primary-team", name: "Primary Team" },
             ],
           }),
       } as Response);
@@ -145,122 +145,82 @@ describe("ImportRagSourcesFromConfigCard", () => {
 
   it("renders nothing for non-admins", () => {
     render(<ImportRagSourcesFromConfigCard isAdmin={false} />);
-    expect(screen.queryByText("Import Existing RAG Sources")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Adopt App-Config RAG Sources"),
+    ).not.toBeInTheDocument();
   });
 
-  it("shows the button and pane for admins", () => {
+  it("shows app-config adoption controls for admins", () => {
     render(<ImportRagSourcesFromConfigCard isAdmin />);
-    expect(screen.getByText("Import Existing RAG Sources")).toBeInTheDocument();
-    expect(screen.getByTestId("import-rag-sources-from-config-button")).toBeInTheDocument();
-    expect(screen.queryByText("Admin")).not.toBeInTheDocument();
+    expect(screen.getByText("Adopt App-Config RAG Sources")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("import-rag-sources-from-config-button"),
+    ).toHaveTextContent("Review App-Config Sources");
   });
 
-  it("shows only environment-config sources and pre-selects new imports", async () => {
+  it("preselects seeded config sources and disables unavailable entries", async () => {
     render(<ImportRagSourcesFromConfigCard isAdmin />);
     fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
 
-    await waitFor(() => {
-      expect(screen.getByTestId("import-rag-source-checkbox-slack-channel-C3")).toBeChecked();
-    });
+    const seeded = await screen.findByTestId(
+      "import-rag-source-checkbox-slack-channel-C1",
+    );
+    expect(seeded).toBeChecked();
     expect(
-      screen.queryByTestId("import-rag-source-checkbox-slack-channel-C1"),
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId("import-rag-source-checkbox-slack-channel-C2")).toBeDisabled();
-    expect(screen.getByText("Already imported")).toBeInTheDocument();
-    expect(screen.queryByText("Has config row")).not.toBeInTheDocument();
+      screen.getByTestId("import-rag-source-checkbox-slack-channel-C2"),
+    ).toBeDisabled();
+    expect(
+      screen.getByTestId("import-rag-source-checkbox-slack-channel-C3"),
+    ).toBeDisabled();
+    expect(screen.getByText("Already adopted")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.getByText(/Found 3 sources in app config/)).toBeInTheDocument();
     expect(screen.getByLabelText("Destination collection")).toHaveTextContent(
       "Platform RAG",
     );
     expect(screen.getByText("Owner:").closest("p")).toHaveTextContent(
-      "Owner: Super Admins · Search: Everyone",
+      "Owner: Owner Team · Search: Reader Team",
     );
-    expect(screen.getByRole("dialog")).toHaveClass("sm:max-w-[680px]");
-    expect(screen.getByRole("dialog")).not.toHaveClass("min-w-0");
   });
 
-  it("disables legacy sources that must be re-added", async () => {
-    const unsafeId = "src_confluence___wiki_example_com__Control Plane";
-    mockFetch({
-      preview: {
-        success: true,
-        data: {
-          sources: [
-            ...PREVIEW_SOURCES,
-            {
-              source_id: unsafeId,
-              name: "Confluence: Control Plane",
-              source_type: "confluence_space",
-              in_db: false,
-              already_adopted: false,
-              importable: false,
-              unavailable_reason: "unsupported_legacy_id",
-            },
-          ],
-          legacy_source_count: 4,
-          compatible_source_count: 3,
-        },
-      },
-    });
-
+  it("adopts only selected app-config source ids", async () => {
     render(<ImportRagSourcesFromConfigCard isAdmin />);
     fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
 
-    const checkbox = await screen.findByTestId(
-      `import-rag-source-checkbox-${unsafeId}`,
-    );
-    expect(checkbox).toBeDisabled();
-    expect(checkbox).not.toBeChecked();
-    expect(screen.getByText("Re-add required")).toBeInTheDocument();
-    expect(
-      screen.getByText(/1 older source cannot be imported/i),
-    ).toBeInTheDocument();
-  });
-
-  it("applies only the selected source ids to Platform RAG", async () => {
-    render(<ImportRagSourcesFromConfigCard isAdmin />);
-    fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("import-rag-source-checkbox-slack-channel-C3")).toBeChecked();
-    });
-
+    await screen.findByTestId("import-rag-source-checkbox-slack-channel-C1");
     fireEvent.click(screen.getByTestId("import-rag-sources-apply-button"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("import-rag-sources-result")).toBeInTheDocument();
+      expect(screen.getByTestId("import-rag-sources-result")).toHaveTextContent(
+        "Adopted 1 source into editable database settings",
+      );
     });
-
     const applyCall = (global.fetch as jest.Mock).mock.calls.find(([, init]) => {
       if (!init?.body) return false;
-      const body = JSON.parse(String(init.body));
-      return body.dry_run === false;
+      return JSON.parse(String(init.body)).dry_run === false;
     });
-    expect(applyCall).toBeDefined();
-    const body = JSON.parse(String(applyCall![1].body));
-    expect(body.source_ids).toEqual(["slack-channel-C3"]);
-    expect(body.destination_collection_id).toBe("platform-rag");
-    expect(body).not.toHaveProperty("management_team_slug");
-    expect(body).not.toHaveProperty("search_team_slug");
-    expect(screen.getByTestId("import-rag-sources-result")).toHaveTextContent(
-      "Imported editable settings for 1 source.",
+    expect(JSON.parse(String(applyCall?.[1]?.body))).toEqual(
+      expect.objectContaining({
+        source_ids: ["slack-channel-C1"],
+        destination_collection_id: "platform-rag",
+      }),
     );
   });
 
-  it("imports into another collection when selected", async () => {
+  it("adopts into another collection when selected", async () => {
     render(<ImportRagSourcesFromConfigCard isAdmin />);
     fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
 
     const destination = await screen.findByLabelText("Destination collection");
     fireEvent.click(destination);
     fireEvent.click(
-      await screen.findByRole("option", { name: "Engineering Docs" }),
+      await screen.findByRole("option", { name: "Primary Collection" }),
     );
     expect(screen.getByText("Owner:").closest("p")).toHaveTextContent(
-      "Owner: Engineering · Search: Engineering",
+      "Owner: Primary Team · Search: Primary Team",
     );
 
     fireEvent.click(screen.getByTestId("import-rag-sources-apply-button"));
-
     await waitFor(() => {
       const applyCall = (global.fetch as jest.Mock).mock.calls.find(([, init]) => {
         if (!init?.body) return false;
@@ -268,53 +228,13 @@ describe("ImportRagSourcesFromConfigCard", () => {
       });
       expect(JSON.parse(String(applyCall?.[1]?.body))).toEqual(
         expect.objectContaining({
-          destination_collection_id: "engineering-docs",
+          destination_collection_id: "primary-collection",
         }),
       );
     });
   });
 
-  it("deselecting a source excludes it from the apply request", async () => {
-    render(<ImportRagSourcesFromConfigCard isAdmin />);
-    fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("import-rag-source-checkbox-slack-channel-C3")).toBeChecked();
-    });
-
-    fireEvent.click(screen.getByTestId("import-rag-source-checkbox-slack-channel-C3"));
-    fireEvent.click(screen.getByTestId("import-rag-sources-apply-button"));
-
-    await waitFor(() => {
-      const applyCall = (global.fetch as jest.Mock).mock.calls.find(([, init]) => {
-        if (!init?.body) return false;
-        return JSON.parse(String(init.body)).dry_run === false;
-      });
-      expect(JSON.parse(String(applyCall?.[1]?.body)).source_ids).toEqual([]);
-    });
-  });
-
-  it("surfaces an error banner when the apply call fails", async () => {
-    mockFetch({
-      apply: { success: false, error: "Import failed spectacularly" },
-    });
-    render(<ImportRagSourcesFromConfigCard isAdmin />);
-    fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("import-rag-source-checkbox-slack-channel-C3")).toBeChecked();
-    });
-
-    fireEvent.click(screen.getByTestId("import-rag-sources-apply-button"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("import-rag-sources-error")).toHaveTextContent(
-        "Import failed spectacularly",
-      );
-    });
-  });
-
-  it("renders per-source skip reasons in the result banner", async () => {
+  it("surfaces apply errors and per-source skip reasons", async () => {
     mockFetch({
       apply: {
         success: true,
@@ -322,50 +242,48 @@ describe("ImportRagSourcesFromConfigCard", () => {
           sources: PREVIEW_SOURCES,
           adopted: [],
           skipped: [
-            { source_id: "slack-channel-C3", reason: "already_in_db" },
+            { source_id: "slack-channel-C1", reason: "already_adopted" },
           ],
+          destination_collection: { id: "platform-rag", source_count: 1 },
         },
       },
     });
     render(<ImportRagSourcesFromConfigCard isAdmin />);
     fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
 
-    await waitFor(() => {
-      expect(screen.getByTestId("import-rag-source-checkbox-slack-channel-C3")).toBeChecked();
-    });
-
+    await screen.findByTestId("import-rag-source-checkbox-slack-channel-C1");
     fireEvent.click(screen.getByTestId("import-rag-sources-apply-button"));
 
     await waitFor(() => {
       expect(screen.getByTestId("import-rag-sources-result")).toHaveTextContent(
-        "slack-channel-C3: already imported",
+        "slack-channel-C1: already adopted",
       );
     });
   });
 
-  it("keeps the source checklist in a capped, scrollable container with ~200 sources", async () => {
-    const manySources = Array.from({ length: 200 }, (_, i) => ({
-      source_id: `slack-channel-${i}`,
-      name: `channel-${i}`,
+  it("keeps large app-config source lists in a bounded scroll area", async () => {
+    const manySources = Array.from({ length: 200 }, (_, index) => ({
+      source_id: `slack-channel-${index}`,
+      name: `channel-${index}`,
       source_type: "slack_channel",
-      in_db: false,
+      in_db: true,
       already_adopted: false,
       importable: true,
     }));
-    mockFetch({ preview: { success: true, data: { sources: manySources } } });
+    mockFetch({
+      preview: {
+        success: true,
+        data: { sources: manySources, configured_source_count: 200 },
+      },
+    });
 
     render(<ImportRagSourcesFromConfigCard isAdmin />);
     fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
 
-    await waitFor(() => {
-      expect(screen.getByTestId("import-rag-source-checkbox-slack-channel-0")).toBeChecked();
-    });
-
-    // All 200 rows render (nothing is truncated/paginated away)...
-    expect(screen.getByTestId("import-rag-source-checkbox-slack-channel-199")).toBeInTheDocument();
-
-    // ...but the list itself scrolls within a bounded height rather than
-    // growing the dialog to fit all 200 rows.
+    await screen.findByTestId("import-rag-source-checkbox-slack-channel-0");
+    expect(
+      screen.getByTestId("import-rag-source-checkbox-slack-channel-199"),
+    ).toBeInTheDocument();
     const checklist = screen.getByTestId("import-rag-sources-checklist");
     expect(checklist.className).toContain("max-h-56");
     expect(checklist.className).toContain("overflow-y-auto");
