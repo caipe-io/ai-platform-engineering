@@ -8290,7 +8290,6 @@ BANNER
   echo -e "${BLUE}${BOLD}║${NC}                                                                      ${BLUE}${BOLD}║${NC}"
   echo -e "${BLUE}${BOLD}║${NC}  ${DIM}https://github.com/caipe-io/ai-platform-engineering${NC}                 ${BLUE}${BOLD}║${NC}"
   echo -e "${BLUE}${BOLD}╚══════════════════════════════════════════════════════════════════════╝${NC}"
-  echo -e "${BLUE}${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
   echo ""
 
   # On hosts where kubectl is a k3s symlink (/usr/local/bin/kubectl -> k3s),
