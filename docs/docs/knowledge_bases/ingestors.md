@@ -38,6 +38,13 @@ model:
 The ingestors reload only persisted sources. They do not read channel, space,
 project, or page selections from environment variables.
 
+Application-config sources are seeded into the database automatically and stay
+read-only while configuration remains the source of truth. An administrator can
+use **Admin → Settings → RAG → Adopt App-Config RAG Sources** to transfer selected
+sources to editable database management and add them to a collection. Adoption
+does not re-ingest indexed content; subsequent application-config changes no
+longer overwrite an adopted source.
+
 ## Available Ingestors
 
 ### Web Loader
