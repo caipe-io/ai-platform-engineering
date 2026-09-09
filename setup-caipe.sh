@@ -199,6 +199,7 @@ CAIPE_DOMAIN_DEFAULT="${CAIPE_DOMAIN_DEFAULT:-caipe.localtest.me}"
 CAIPE_DOMAIN=""
 TLS_CERT_FILE=""
 TLS_KEY_FILE=""
+TLS_SELF_SIGNED=false   # true when setup generates the cert (no --tls-cert)
 ENV_FILE=""
 UI_ENV_FILE=""
 COMPOSE_ENV_FILE=""
@@ -2187,6 +2188,7 @@ setup_tls() {
       -subj "/CN=${CAIPE_DOMAIN}/O=CAIPE" \
       -addext "subjectAltName=${_san}" \
       2>/dev/null
+    TLS_SELF_SIGNED=true
     log "Self-signed cert generated (valid 365 days)"
   fi
 
@@ -4218,6 +4220,19 @@ post_deploy_patches() {
     else
       log "rag-server: No OIDC config found in caipe-ui-secret — skipping OIDC patch (no-SSO deployment)"
     fi
+
+    # Self-signed cert: pin rag-server's OIDC discovery / JWKS to the in-cluster
+    # HTTP Keycloak so token validation (ui + ingestor providers) doesn't fetch
+    # from the untrusted public https issuer and 500 on CERTIFICATE_VERIFY_FAILED.
+    if [[ "${TLS_SELF_SIGNED:-false}" == true ]]; then
+      local _kc_int="http://caipe-keycloak:8080/realms/caipe"
+      kubectl set env deployment/rag-server -n caipe \
+        OIDC_DISCOVERY_URL="${_kc_int}/.well-known/openid-configuration" \
+        OIDC_JWKS_URL="${_kc_int}/protocol/openid-connect/certs" \
+        INGESTOR_OIDC_DISCOVERY_URL="${_kc_int}/.well-known/openid-configuration" \
+        INGESTOR_OIDC_JWKS_URL="${_kc_int}/protocol/openid-connect/certs" &>/dev/null \
+        && log "rag-server: OIDC discovery/JWKS pinned to in-cluster Keycloak (self-signed cert)"
+    fi
   fi
 
   # ── 6. caipe-ui: raise Node.js HTTP header size limit ──
@@ -4232,6 +4247,18 @@ post_deploy_patches() {
     kubectl set env deployment/caipe-caipe-ui -n caipe \
       NODE_OPTIONS="--max-http-header-size=65536" &>/dev/null \
       && log "caipe-ui: NODE_OPTIONS set to --max-http-header-size=65536"
+  fi
+
+  # ── 6b. caipe-ui: trust the generated self-signed cert for server-side OIDC ──
+  # NextAuth does the OIDC token exchange / JWKS fetch server-side against the
+  # public HTTPS domain (KC_HOSTNAME). With a setup-generated self-signed cert
+  # Node.js rejects it (DEPTH_ZERO_SELF_SIGNED_CERT -> OAUTH_CALLBACK_ERROR) and
+  # login silently bounces back to the sign-in page. Local dev only — skipped
+  # entirely when a real cert was supplied via --tls-cert.
+  if [[ "${TLS_SELF_SIGNED:-false}" == true ]]; then
+    kubectl set env deployment/caipe-caipe-ui -n caipe \
+      NODE_TLS_REJECT_UNAUTHORIZED=0 &>/dev/null \
+      && log "caipe-ui: NODE_TLS_REJECT_UNAUTHORIZED=0 (self-signed cert, local dev only)"
   fi
 
   # ── 7. MongoDB for dynamic-agents ──
@@ -5721,12 +5748,21 @@ _write_rbac_runtime_values() {
   # discovery via the in-cluster service still resolves to public endpoints),
   # and register the public NextAuth callback on the caipe-ui client. Skipped
   # for IP domains (Ingress host must be a DNS name) and local installs.
+  # With a setup-generated self-signed cert, server-to-server OIDC (rag-server
+  # JWKS, web-ingestor token fetch, ...) against the public HTTPS issuer fails
+  # cert verification. hostname-backchannel-dynamic keeps the browser-facing
+  # issuer public but lets in-cluster callers that hit http://caipe-keycloak:8080
+  # get back plain-HTTP token/JWKS endpoints, so the self-signed cert never
+  # enters back-channel flows.
+  local _kc_backchannel=""
+  [[ "${TLS_SELF_SIGNED:-false}" == true ]] && _kc_backchannel=$'\n    KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"'
+
   local _kc_public_yaml=""
   if [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     _kc_public_yaml=$(cat <<KCPUB
   env:
     KC_HOSTNAME: "https://${CAIPE_DOMAIN}"
-    KC_PROXY_HEADERS: "xforwarded"
+    KC_PROXY_HEADERS: "xforwarded"${_kc_backchannel}
   ingress:
     enabled: true
     className: "nginx"
