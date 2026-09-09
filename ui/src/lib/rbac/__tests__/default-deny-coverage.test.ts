@@ -16,6 +16,10 @@ jest.mock("@/lib/authz", () => ({
   authorizeMany: jest.fn(),
 }));
 
+jest.mock("@/lib/mongodb", () => ({
+  getCollection: jest.fn(),
+}));
+
 import { requireResourcePermission } from "../resource-authz";
 import { UNIVERSAL_REBAC_RESOURCE_TYPES } from "../resource-model";
 import { isUnsafeRbacBypassEnabled } from "../bypass";

@@ -91,6 +91,7 @@ export async function reconcileSecretRefOwnerRelationships(input: {
   }, {
     caller: input.ownerSubject ? { type: "user", id: input.ownerSubject } : undefined,
     source: "secret_ref_owner_reconcile",
+    verifyHigherConsistency: true,
   });
 }
 
@@ -98,14 +99,14 @@ export async function reconcileSecretRefShare(secretId: string, teamId: string):
   await reconcileTupleDiff({
     writes: buildSecretRefShareTuples(secretId, teamId),
     deletes: [],
-  }, { source: "secret_ref_share" });
+  }, { source: "secret_ref_share", verifyHigherConsistency: true });
 }
 
 export async function deleteSecretRefShare(secretId: string, teamId: string): Promise<void> {
   await reconcileTupleDiff({
     writes: [],
     deletes: buildSecretRefShareTuples(secretId, teamId),
-  }, { source: "secret_ref_share_revoke" });
+  }, { source: "secret_ref_share_revoke", verifyHigherConsistency: true });
 }
 
 export async function deleteAllSecretRefRelationships(secretId: string): Promise<void> {

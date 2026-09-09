@@ -317,10 +317,10 @@ describe("MCP server per-resource RBAC", () => {
         personalOwnerAccess: false,
         nextSharedTeamSlugs: [],
       },
-      {
+      expect.objectContaining({
         caller: { type: "service_account", id: "bot-client-id" },
         source: "mcp_server_create",
-      },
+      }),
     );
     expect(insertOne).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -498,10 +498,10 @@ describe("MCP server per-resource RBAC", () => {
         personalOwnerAccess: true,
         nextSharedTeamSlugs: [],
       },
-      {
+      expect.objectContaining({
         caller: { type: "user", id: "alice-sub" },
         source: "mcp_server_create",
-      },
+      }),
     );
     expect(insertOne).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -607,10 +607,10 @@ describe("MCP server per-resource RBAC", () => {
         personalOwnerAccess: false,
         nextSharedTeamSlugs: [],
       },
-      {
+      expect.objectContaining({
         caller: { type: "user", id: "alice-sub" },
         source: "mcp_server_create",
-      },
+      }),
     );
     expect(insertOne).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -645,6 +645,54 @@ describe("MCP server per-resource RBAC", () => {
       expect.objectContaining({ sub: "alice-sub", role: "user" }),
       { type: "mcp_server", id: "mcp-visible", action: "manage" },
     );
+  });
+
+  it("converts a team MCP server to private when owner_team_slug is explicitly null", async () => {
+    const server = {
+      _id: "mcp-visible",
+      name: "Visible",
+      transport: "http",
+      endpoint: "https://mcp.example.test/mcp",
+      config_driven: false,
+      visibility: "team" as const,
+      owner_team_slug: "primary",
+      creator_subject: "alice-sub",
+      shared_with_teams: [],
+    };
+    const findOneAndUpdate = jest.fn().mockResolvedValue({
+      ...server,
+      visibility: "private",
+      owner_subject: "alice-sub",
+    });
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(server),
+      findOneAndUpdate,
+    });
+    const { PUT } = await import("../mcp-servers/route");
+
+    const response = await PUT(request("/api/mcp-servers?id=mcp-visible", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ visibility: "private", owner_team_slug: null }),
+    }));
+
+    expect(response.status).toBe(200);
+    const pendingUpdate = findOneAndUpdate.mock.calls[0][1] as {
+      $set: Record<string, unknown>;
+      $unset: Record<string, unknown>;
+    };
+    expect(pendingUpdate.$set).not.toHaveProperty("owner_team_slug");
+    expect(pendingUpdate.$unset).toMatchObject({ owner_team_slug: "" });
+    expect(pendingUpdate.$set).toMatchObject({
+      authz_revision: 1,
+      authz_sync_state: "pending",
+    });
+    expect(findOneAndUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      mockReconcileMcpServerRelationships.mock.invocationCallOrder[0],
+    );
+    expect(findOneAndUpdate.mock.calls[1][1]).toMatchObject({
+      $set: { authz_last_synced_revision: 1, authz_sync_state: "ready" },
+    });
   });
 
   it("keeps a global MCP server global on an unrelated update", async () => {

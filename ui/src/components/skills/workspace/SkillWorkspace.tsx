@@ -25,48 +25,46 @@
  */
 
 import {
-ArrowLeft,
-ArrowRight,
-Copy,
-Download,
-Eye,
-FileCode,
-History as HistoryIcon,
-Loader2,
-Save,
-Settings as SettingsIcon,
-ShieldCheck,
-Wrench,
+  ArrowLeft,
+  ArrowRight,
+  Copy,
+  Download,
+  Eye,
+  FileCode,
+  History as HistoryIcon,
+  Loader2,
+  Save,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  Wrench,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import React,{ useCallback,useEffect,useMemo,useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-Dialog,
-DialogContent,
-DialogDescription,
-DialogFooter,
-DialogHeader,
-DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
-import {
-Tabs,
-TabsContent,
-TabsList,
-TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { getConfig } from "@/lib/config";
 import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import { cn } from "@/lib/utils";
 
-import { buildBlockingMessage,buildLastReview,useAiReview } from "@/components/ai-review";
-import { SkillScanStatusIndicator } from "@/components/skills/SkillScanStatusIndicator";
 import {
-useSkillForm,
-} from "@/components/skills/workspace/use-skill-form";
+  buildBlockingMessage,
+  buildLastReview,
+  useAiReview,
+} from "@/components/ai-review";
+import { AuthorizationSyncStatus } from "@/components/shared/AuthorizationSyncStatus";
+import { SkillScanStatusIndicator } from "@/components/skills/SkillScanStatusIndicator";
+import { useSkillForm } from "@/components/skills/workspace/use-skill-form";
 import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
 import type { AgentSkill } from "@/types/agent-skill";
 
@@ -89,11 +87,7 @@ import { VersionsTab } from "@/components/skills/workspace/tabs/VersionsTab";
  * the Files step) so old bookmarks don't 404 the editor.
  */
 export type SkillWorkspaceTabId =
-  | "overview"
-  | "files"
-  | "tools"
-  | "versions"
-  | "history";
+  "overview" | "files" | "tools" | "versions" | "history";
 
 export interface SkillWorkspaceProps {
   /** Existing saved skill (omit for new). */
@@ -221,17 +215,14 @@ export function SkillWorkspace({
         // the Scan tab polls for status on mount, so we don't need to
         // await it here.
         try {
-          void fetch(
-            `/api/skills/configs/${encodeURIComponent(id)}/scan`,
-            { method: "POST" },
-          );
+          void fetch(`/api/skills/configs/${encodeURIComponent(id)}/scan`, {
+            method: "POST",
+          });
         } catch {
           // Non-fatal — the Scan tab also exposes a manual "Scan now"
           // button. We deliberately swallow rather than block navigation.
         }
-        router.push(
-          `/skills/workspace/${encodeURIComponent(id)}?tab=scan`,
-        );
+        router.push(`/skills/workspace/${encodeURIComponent(id)}?tab=scan`);
       }
       // For updates we stay on the workspace so the user can keep editing.
     },
@@ -329,8 +320,8 @@ export function SkillWorkspace({
       form.guardedClose();
       return;
     }
-    pushWithNavigationProgress(router,backHref);
-  }, [form,router,backHref,trackDirty]);
+    pushWithNavigationProgress(router, backHref);
+  }, [form, router, backHref, trackDirty]);
 
   // Confirm + navigate. Prefer the pending external href (application-navigation click)
   // over `backHref` — when the user clicks "Chat" in the global header and
@@ -339,11 +330,9 @@ export function SkillWorkspace({
   const confirmDiscardAndNavigate = useCallback(() => {
     form.confirmDiscard();
     setUnsaved(false);
-    const externalHref = pendingNavigationHref
-      ? confirmNavigation()
-      : null;
+    const externalHref = pendingNavigationHref ? confirmNavigation() : null;
     const target = externalHref || backHref;
-    pushWithNavigationProgress(router,target);
+    pushWithNavigationProgress(router, target);
   }, [
     form,
     router,
@@ -503,8 +492,7 @@ export function SkillWorkspace({
       ? visibleSteps[currentIndex + 1]
       : null;
   const isFinalStep = nextStep === null;
-  const currentStepIsFullWidth =
-    visibleSteps[currentIndex]?.fullWidth ?? false;
+  const currentStepIsFullWidth = visibleSteps[currentIndex]?.fullWidth ?? false;
 
   // ---------------------------------------------------------------------
   // Save / Next gating — when AI Review is configured as `blocking` for
@@ -599,6 +587,11 @@ export function SkillWorkspace({
             {existingConfig && (
               <SkillScanStatusIndicator config={existingConfig} />
             )}
+            <AuthorizationSyncStatus
+              document={existingConfig}
+              busy={form.isSubmitting}
+              canRetry={!readOnly}
+            />
             {form.isDirty && !readOnly && (
               <Badge variant="secondary" className="text-[10px]">
                 Unsaved changes
@@ -726,9 +719,7 @@ export function SkillWorkspace({
                     <span
                       className={cn(
                         "hidden sm:inline-flex items-center gap-1 text-[11px] font-medium whitespace-nowrap",
-                        isActive
-                          ? "text-foreground"
-                          : "text-muted-foreground",
+                        isActive ? "text-foreground" : "text-muted-foreground",
                       )}
                     >
                       <Icon className="h-3 w-3 shrink-0" />
@@ -740,9 +731,7 @@ export function SkillWorkspace({
                       aria-hidden
                       className={cn(
                         "h-px flex-1 transition-colors",
-                        idx < currentIndex
-                          ? "bg-primary/40"
-                          : "bg-border/60",
+                        idx < currentIndex ? "bg-primary/40" : "bg-border/60",
                       )}
                     />
                   )}
@@ -882,8 +871,8 @@ export function SkillWorkspace({
           <DialogHeader>
             <DialogTitle>Discard unsaved changes?</DialogTitle>
             <DialogDescription>
-              You have unsaved edits to this skill. Leaving now will
-              discard them. This action cannot be undone.
+              You have unsaved edits to this skill. Leaving now will discard
+              them. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

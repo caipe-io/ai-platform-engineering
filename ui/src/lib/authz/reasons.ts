@@ -13,6 +13,8 @@ const REASON_META: Record<ReasonCode, ReasonMeta> = {
   NO_CAPABILITY:    { retriable: false, httpStatusHint: 200, userActionHint: "contact_admin" },
   NOT_AUTHENTICATED:{ retriable: false, httpStatusHint: 401, userActionHint: "sign_in" },
   AUTHZ_UNAVAILABLE:{ retriable: true,  httpStatusHint: 503, userActionHint: "retry" },
+  AUTHZ_SYNC_PENDING:{ retriable: true, httpStatusHint: 409, userActionHint: "retry" },
+  AUTHZ_SYNC_ERROR:  { retriable: true, httpStatusHint: 503, userActionHint: "contact_admin" },
   INVALID_REQUEST:  { retriable: false, httpStatusHint: 400, userActionHint: "fix_request" },
   PRIVATE_RESOURCE_CONTEXT_DENIED: {
     retriable: false,

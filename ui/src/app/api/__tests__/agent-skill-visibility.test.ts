@@ -83,22 +83,25 @@ jest.mock("@/lib/agent-skill-visibility", () => ({
 }));
 
 function createMockCollection() {
-  const findReturnValue = {
-    project: jest.fn().mockReturnValue({
-      toArray: jest.fn().mockResolvedValue([]),
-    }),
-    sort: jest.fn().mockReturnValue({
-      toArray: jest.fn().mockResolvedValue([]),
-    }),
-    toArray: jest.fn().mockResolvedValue([]),
-  };
+  const findReturnValue: Record<string, jest.Mock> = {};
+  findReturnValue.project = jest.fn().mockReturnValue(findReturnValue);
+  findReturnValue.sort = jest.fn().mockReturnValue(findReturnValue);
+  findReturnValue.limit = jest.fn().mockReturnValue(findReturnValue);
+  findReturnValue.toArray = jest.fn().mockResolvedValue([]);
 
   return {
     find: jest.fn().mockReturnValue(findReturnValue),
     findOne: jest.fn().mockResolvedValue(null),
+    findOneAndUpdate: jest.fn().mockImplementation(
+      async (_filter: unknown, update: { $set?: Record<string, unknown> }) => ({
+        id: "config-1",
+        ...(update.$set ?? {}),
+      }),
+    ),
     insertOne: jest.fn().mockResolvedValue({ insertedId: "test-id" }),
     updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1, acknowledged: true }),
     deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
+    deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
     countDocuments: jest.fn().mockResolvedValue(0),
   };
 }
@@ -151,7 +154,7 @@ describe("POST /api/skills/configs - visibility", () => {
     const collection = await mockGetCollection("agent_skills");
     const insertedConfig = collection.insertOne.mock.calls[0][0];
     expect(insertedConfig.visibility).toBe("private");
-    expect(insertedConfig.shared_with_teams).toBeUndefined();
+    expect(insertedConfig.shared_with_teams).toEqual([]);
   });
 
   it("should create with 'global' visibility", async () => {
@@ -172,7 +175,7 @@ describe("POST /api/skills/configs - visibility", () => {
     const collection = await mockGetCollection("agent_skills");
     const insertedConfig = collection.insertOne.mock.calls[0][0];
     expect(insertedConfig.visibility).toBe("global");
-    expect(insertedConfig.shared_with_teams).toBeUndefined();
+    expect(insertedConfig.shared_with_teams).toEqual([]);
   });
 
   it("should create with 'team' visibility and shared_with_teams", async () => {
@@ -194,7 +197,7 @@ describe("POST /api/skills/configs - visibility", () => {
     const collection = await mockGetCollection("agent_skills");
     const insertedConfig = collection.insertOne.mock.calls[0][0];
     expect(insertedConfig.visibility).toBe("team");
-    expect(insertedConfig.shared_with_teams).toBeUndefined();
+    expect(insertedConfig.shared_with_teams).toEqual(["team-1", "team-2"]);
   });
 
   it("should reject 'team' visibility without shared_with_teams", async () => {
@@ -269,7 +272,7 @@ describe("POST /api/skills/configs - visibility", () => {
     const collection = await mockGetCollection("agent_skills");
     const insertedConfig = collection.insertOne.mock.calls[0][0];
     expect(insertedConfig.visibility).toBe("global");
-    expect(insertedConfig.shared_with_teams).toBeUndefined();
+    expect(insertedConfig.shared_with_teams).toEqual([]);
   });
 });
 
@@ -407,8 +410,7 @@ describe("PUT /api/skills/configs - visibility updates", () => {
     const response = await PUT(request);
     expect(response.status).toBe(200);
 
-    const updateCall = configsCollection.updateOne.mock.calls[0][1];
-    expect(updateCall.$set.shared_with_teams).toBeUndefined();
-    expect(updateCall.$unset).toEqual({ shared_with_teams: "" });
+    const updateCall = configsCollection.findOneAndUpdate.mock.calls[0][1];
+    expect(updateCall.$set.shared_with_teams).toEqual([]);
   });
 });

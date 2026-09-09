@@ -35,7 +35,12 @@ class MemorySecretRefsCollection {
   async findOne(query: Record<string, unknown>) {
     return (
       this.docs.find((doc) =>
-        Object.entries(query).every(([key, value]) => doc[key] === value),
+        Object.entries(query).every(([key, value]) => {
+          if (value && typeof value === "object" && "$exists" in value) {
+            return (key in doc) === Boolean(value.$exists);
+          }
+          return doc[key] === value;
+        }),
       ) ?? null
     );
   }
@@ -46,11 +51,13 @@ class MemorySecretRefsCollection {
       $set?: Record<string, unknown>;
       $addToSet?: { sharedWithTeams?: string };
       $pull?: { sharedWithTeams?: string };
+      $unset?: Record<string, unknown>;
     },
   ) {
     const doc = await this.findOne(query);
     if (!doc) return { matchedCount: 0, modifiedCount: 0 };
     Object.assign(doc, update.$set ?? {});
+    for (const key of Object.keys(update.$unset ?? {})) delete doc[key];
     if (update.$addToSet?.sharedWithTeams) {
       doc.sharedWithTeams = [...new Set([...(doc.sharedWithTeams ?? []), update.$addToSet.sharedWithTeams])];
     }
@@ -396,6 +403,32 @@ describe("SecretService", () => {
     expect(deleteShare).toHaveBeenCalledWith("secret-1", "platform-team");
     expect(deleteAllRelationships).toHaveBeenCalledWith("secret-1");
     expect(refs.docs).toEqual([]);
+  });
+
+  it("persists a failed share reconciliation as an error revision", async () => {
+    const { refs, reconcileShare, service } = createService();
+    await service.createSecret({
+      session: { sub: "alice-sub" },
+      owner: { type: "user", id: "alice-sub" },
+      name: "Example token",
+      type: "bearer_token",
+      plaintext: "example-token-value",
+    });
+    reconcileShare.mockRejectedValueOnce(new Error("OpenFGA unavailable"));
+
+    await expect(service.shareSecret({
+      session: { sub: "alice-sub" },
+      secretId: "secret-1",
+      teamId: "primary",
+    })).rejects.toThrow("OpenFGA unavailable");
+
+    expect(refs.docs[0]).toMatchObject({
+      authz_revision: 2,
+      authz_sync_state: "error",
+      authz_last_error_code: "OPENFGA_RECONCILIATION_FAILED",
+      sharedWithTeams: ["primary"],
+      visibility: "team",
+    });
   });
 
   it("supports admin listing and metadata edits without exposing plaintext", async () => {

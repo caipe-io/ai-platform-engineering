@@ -12,6 +12,7 @@ const mockGetCollection = jest.fn();
 const mockReconcileAgentRelationships = jest.fn();
 const mockIsPlatformDefaultAgent = jest.fn();
 const mockCheckOpenFgaTuple = jest.fn();
+const mockValidatePersistedAgentMcpDependencies = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -26,15 +27,26 @@ jest.mock("@/lib/api-middleware", () => {
 
   return {
     ApiError,
-    getAuthFromBearerOrSession: (...args: unknown[]) => mockGetAuthFromBearerOrSession(...args),
+    getAuthFromBearerOrSession: (...args: unknown[]) =>
+      mockGetAuthFromBearerOrSession(...args),
     getPaginationParams: () => ({ page: 1, pageSize: 20, skip: 0 }),
     getUserTeamIds: jest.fn().mockResolvedValue([]),
-    paginatedResponse: (items: unknown[], total: number, page: number, pageSize: number) =>
-      Response.json({ success: true, data: items, pagination: { total, page, pageSize } }),
+    paginatedResponse: (
+      items: unknown[],
+      total: number,
+      page: number,
+      pageSize: number,
+    ) =>
+      Response.json({
+        success: true,
+        data: items,
+        pagination: { total, page, pageSize },
+      }),
     requireRbacPermission: jest.fn().mockResolvedValue(undefined),
-    successResponse: (data: unknown, status = 200) => Response.json({ success: true, data }, { status }),
+    successResponse: (data: unknown, status = 200) =>
+      Response.json({ success: true, data }, { status }),
     withErrorHandler:
-      <T,>(handler: (request: NextRequest) => Promise<T>) =>
+      <T>(handler: (request: NextRequest) => Promise<T>) =>
       async (request: NextRequest) => {
         try {
           return await handler(request);
@@ -57,7 +69,10 @@ jest.mock("@/lib/mongodb", () => ({
 }));
 
 jest.mock("@/lib/rbac/openfga", () => {
-  const actual = jest.requireActual<typeof import("@/lib/rbac/openfga")>("@/lib/rbac/openfga");
+  const actual =
+    jest.requireActual<typeof import("@/lib/rbac/openfga")>(
+      "@/lib/rbac/openfga",
+    );
   return {
     ...actual,
     checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
@@ -65,7 +80,9 @@ jest.mock("@/lib/rbac/openfga", () => {
 });
 
 jest.mock("@/lib/rbac/resource-authz", () => {
-  const actual = jest.requireActual<typeof import("@/lib/rbac/resource-authz")>("@/lib/rbac/resource-authz");
+  const actual = jest.requireActual<typeof import("@/lib/rbac/resource-authz")>(
+    "@/lib/rbac/resource-authz",
+  );
   return {
     ...actual,
     requireAgentPermission: async (
@@ -80,7 +97,9 @@ jest.mock("@/lib/rbac/resource-authz", () => {
         object: `agent:${agentId}`,
       });
       if (!result.allowed) {
-        const error = new Error("You do not have permission to access this resource.") as Error & {
+        const error = new Error(
+          "You do not have permission to access this resource.",
+        ) as Error & {
           statusCode: number;
           code: string;
         };
@@ -93,9 +112,11 @@ jest.mock("@/lib/rbac/resource-authz", () => {
 });
 
 jest.mock("@/lib/rbac/openfga-agent-tools", () => ({
-  allowedToolsFromAgent: (agent: { allowed_tools?: Record<string, string[]> }) =>
-    agent.allowed_tools ?? {},
-  reconcileAgentRelationships: (...args: unknown[]) => mockReconcileAgentRelationships(...args),
+  allowedToolsFromAgent: (agent: {
+    allowed_tools?: Record<string, string[]>;
+  }) => agent.allowed_tools ?? {},
+  reconcileAgentRelationships: (...args: unknown[]) =>
+    mockReconcileAgentRelationships(...args),
 }));
 
 jest.mock("@/lib/rbac/shareable-resource", () => ({
@@ -107,8 +128,15 @@ jest.mock("@/lib/rbac/shareable-resource", () => ({
   })),
 }));
 
+jest.mock("@/lib/rbac/agent-mcp-dependency-scope", () => ({
+  validatePersistedAgentMcpDependencies: (...args: unknown[]) =>
+    mockValidatePersistedAgentMcpDependencies(...args),
+  validatePersistedAgentResourceDependencies: jest.fn(),
+}));
+
 jest.mock("@/lib/rbac/platform-default", () => ({
-  isPlatformDefaultAgent: (...args: unknown[]) => mockIsPlatformDefaultAgent(...args),
+  isPlatformDefaultAgent: (...args: unknown[]) =>
+    mockIsPlatformDefaultAgent(...args),
 }));
 
 function request(path: string, init?: RequestInit): NextRequest {
@@ -119,16 +147,17 @@ const orgAdminSession = { sub: "admin-sub", role: "admin" };
 const memberSession = { sub: "alice-sub", role: "user" };
 
 function mockOpenFgaAgentWrite(allowAgentWrite: boolean) {
-  mockCheckOpenFgaTuple.mockImplementation(async (tuple: {
-    user: string;
-    relation: string;
-    object: string;
-  }) => {
-    if (tuple.object === "agent:hello-world" && tuple.relation === "can_write") {
-      return { allowed: allowAgentWrite };
-    }
-    return { allowed: false };
-  });
+  mockCheckOpenFgaTuple.mockImplementation(
+    async (tuple: { user: string; relation: string; object: string }) => {
+      if (
+        tuple.object === "agent:hello-world" &&
+        tuple.relation === "can_write"
+      ) {
+        return { allowed: allowAgentWrite };
+      }
+      return { allowed: false };
+    },
+  );
 }
 
 describe("dynamic-agents PUT with real requireAgentPermission", () => {
@@ -137,10 +166,13 @@ describe("dynamic-agents PUT with real requireAgentPermission", () => {
     process.env.CAIPE_ORG_KEY = "caipe";
     mockReconcileAgentRelationships.mockResolvedValue(undefined);
     mockIsPlatformDefaultAgent.mockResolvedValue(false);
+    mockValidatePersistedAgentMcpDependencies.mockResolvedValue(undefined);
   });
 
   it("allows org admins to update a team agent through its per-agent manager grant", async () => {
-    mockGetAuthFromBearerOrSession.mockResolvedValue({ session: orgAdminSession });
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      session: orgAdminSession,
+    });
     mockOpenFgaAgentWrite(true);
 
     const findOneAndUpdate = jest.fn().mockResolvedValue({
@@ -179,7 +211,9 @@ describe("dynamic-agents PUT with real requireAgentPermission", () => {
   });
 
   it("denies non-org-admins without agent write access", async () => {
-    mockGetAuthFromBearerOrSession.mockResolvedValue({ session: memberSession });
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      session: memberSession,
+    });
     mockOpenFgaAgentWrite(false);
 
     mockGetCollection.mockResolvedValue({

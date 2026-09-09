@@ -135,11 +135,17 @@ describe("filterSkillsByOpenFga", () => {
     expect(filtered.map((s) => s.id)).toEqual(["builtin-1", "my-custom-skill"]);
   });
 
-  it("does not call OpenFGA and returns all skills for admins", async () => {
+  it("does not call OpenFGA and returns non-private skills for admins", async () => {
     const check = jest.fn(async () => ({ allowed: false }));
     const skills: CatalogSkill[] = [
-      { ...baseSkill, id: "admin-visible-a" },
-      { ...baseSkill, id: "admin-visible-b" },
+      { ...baseSkill, id: "admin-visible-a", visibility: "global" },
+      { ...baseSkill, id: "admin-visible-b", visibility: "team" },
+      {
+        ...baseSkill,
+        id: "other-private",
+        visibility: "private",
+        owner_subject: "other-sub",
+      },
     ];
 
     const filtered = await filterSkillsByOpenFga(skills, {
@@ -150,6 +156,48 @@ describe("filterSkillsByOpenFga", () => {
     });
 
     expect(filtered.map((skill) => skill.id)).toEqual(["admin-visible-a", "admin-visible-b"]);
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("returns a private skill only to its stable owner", async () => {
+    const privateSkill: CatalogSkill = {
+      ...baseSkill,
+      id: "private-owned",
+      visibility: "private",
+      owner_subject: "owner-sub",
+    };
+    const owner = await filterSkillsByOpenFga([privateSkill], {
+      subject: "user:owner-sub",
+      mode: "use",
+      check: jest.fn(),
+    });
+    const otherAdmin = await filterSkillsByOpenFga([privateSkill], {
+      subject: "user:admin-sub",
+      mode: "read",
+      isAdmin: true,
+      check: jest.fn(),
+    });
+
+    expect(owner).toEqual([privateSkill]);
+    expect(otherAdmin).toEqual([]);
+  });
+
+  it("fails closed for skills with unreconciled authorization state", async () => {
+    const check = jest.fn(async () => ({ allowed: true }));
+    const filtered = await filterSkillsByOpenFga(
+      [
+        {
+          ...baseSkill,
+          visibility: "global",
+          authz_revision: 3,
+          authz_sync_state: "ready",
+          authz_last_synced_revision: 2,
+        },
+      ],
+      { subject: "user:owner-sub", mode: "read", isAdmin: true, check },
+    );
+
+    expect(filtered).toEqual([]);
     expect(check).not.toHaveBeenCalled();
   });
 

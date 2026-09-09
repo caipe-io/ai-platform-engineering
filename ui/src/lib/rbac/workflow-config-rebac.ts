@@ -9,6 +9,11 @@
 
 import { getCollection } from "@/lib/mongodb";
 import { ApiError } from "@/lib/api-error";
+import {
+  authzSyncPreCheck,
+  type AuthzSyncDocument,
+} from "@/lib/authz/resource-sync";
+import type { TupleReconcileContext } from "@/lib/authz";
 import type { OpenFgaReconcileResult } from "./openfga";
 import { reconcileShareableResource } from "./openfga-owned-resources-reconcile";
 import { listUserTeamSlugs } from "./openfga-team-membership";
@@ -19,11 +24,12 @@ import {
 } from "./resource-authz";
 import type { WorkflowConfigVisibility } from "@/types/workflow-config";
 
-export interface WorkflowConfigRebacSnapshot {
+export interface WorkflowConfigRebacSnapshot extends AuthzSyncDocument {
   _id: string;
   visibility?: WorkflowConfigVisibility | null;
   shared_with_teams?: string[] | null;
   owner_id: string;
+  owner_subject?: string;
   config_driven?: boolean;
 }
 
@@ -32,14 +38,22 @@ export interface WorkflowConfigRebacSnapshot {
  * `visibility`; platform-seeded workflows (`owner_id: system`) default to global.
  */
 export function effectiveWorkflowVisibility(
-  config: Pick<WorkflowConfigRebacSnapshot, "visibility" | "owner_id" | "config_driven">,
+  config: Pick<
+    WorkflowConfigRebacSnapshot,
+    "visibility" | "owner_id" | "config_driven"
+  >,
 ): WorkflowConfigVisibility {
   const raw =
-    typeof config.visibility === "string" ? config.visibility.trim().toLowerCase() : "";
+    typeof config.visibility === "string"
+      ? config.visibility.trim().toLowerCase()
+      : "";
   if (raw === "global" || raw === "team" || raw === "private") {
     return raw;
   }
-  if (config.owner_id?.trim().toLowerCase() === "system" || config.config_driven) {
+  if (
+    config.owner_id?.trim().toLowerCase() === "system" ||
+    config.config_driven
+  ) {
     return "global";
   }
   return "private";
@@ -79,7 +93,9 @@ export function resolveSharedTeamSlugs(
   const resolved = refs.map((ref) => {
     const trimmed = ref.trim();
     if (!trimmed) return "";
-    const fromMap = teamRefToSlug?.get(trimmed) ?? teamRefToSlug?.get(normalizeTeamSlug(trimmed));
+    const fromMap =
+      teamRefToSlug?.get(trimmed) ??
+      teamRefToSlug?.get(normalizeTeamSlug(trimmed));
     if (fromMap) return fromMap;
     return normalizeTeamSlug(trimmed);
   });
@@ -149,7 +165,10 @@ export function workflowRunAllowedByVisibility(
       return true;
     }
 
-    const shared = resolveSharedTeamSlugs(config.shared_with_teams, teamRefToSlug);
+    const shared = resolveSharedTeamSlugs(
+      config.shared_with_teams,
+      teamRefToSlug,
+    );
     if (shared.length === 0) {
       return false;
     }
@@ -159,6 +178,17 @@ export function workflowRunAllowedByVisibility(
 
   const owner = config.owner_id?.trim().toLowerCase();
   return Boolean(owner && owner === userEmail.trim().toLowerCase());
+}
+
+function privateWorkflowOwnerMatches(
+  config: WorkflowConfigRebacSnapshot,
+  session: ResourceAuthzSession,
+  userEmail: string,
+): boolean {
+  if (effectiveWorkflowVisibility(config) !== "private") return true;
+  const subject = typeof session.sub === "string" ? session.sub.trim() : "";
+  if (config.owner_subject) return Boolean(subject && config.owner_subject === subject);
+  return config.owner_id.trim().toLowerCase() === userEmail.trim().toLowerCase();
 }
 
 export async function resolveUserTeamSlugsForWorkflow(
@@ -183,20 +213,31 @@ export async function resolveUserTeamSlugsForWorkflow(
       .find({ "members.user_id": userEmail })
       .project({ slug: 1 })
       .toArray();
-    return rows.map((team) => team.slug?.trim()).filter((slug): slug is string => Boolean(slug));
+    return rows
+      .map((team) => team.slug?.trim())
+      .filter((slug): slug is string => Boolean(slug));
   } catch {
     return [];
   }
 }
 
-export function filterWorkflowConfigsByRunAccess<T extends WorkflowConfigRebacSnapshot>(
+export function filterWorkflowConfigsByRunAccess<
+  T extends WorkflowConfigRebacSnapshot,
+>(
   configs: T[],
   userEmail: string,
   userTeamSlugs: string[],
   teamRefToSlug?: TeamRefToSlugMap,
 ): T[] {
-  return configs.filter((config) =>
-    workflowRunAllowedByVisibility(config, userEmail, userTeamSlugs, teamRefToSlug),
+  return configs.filter(
+    (config) =>
+      authzSyncPreCheck(config) === null &&
+      workflowRunAllowedByVisibility(
+        config,
+        userEmail,
+        userTeamSlugs,
+        teamRefToSlug,
+      ),
   );
 }
 
@@ -214,11 +255,27 @@ export function mergeWorkflowConfigsById<T extends { _id: string }>(
 
 export async function reconcileWorkflowConfigAccess(
   session: ResourceAuthzSession,
-  config: Pick<WorkflowConfigRebacSnapshot, "_id" | "visibility" | "shared_with_teams">,
-  previous?: Pick<WorkflowConfigRebacSnapshot, "visibility" | "shared_with_teams"> | null,
+  config: Pick<
+    WorkflowConfigRebacSnapshot,
+    "_id" | "visibility" | "shared_with_teams" | "owner_subject"
+  >,
+  previous?: Pick<
+    WorkflowConfigRebacSnapshot,
+    "visibility" | "shared_with_teams" | "owner_subject"
+  > | null,
+  options: {
+    ownerSubject?: string | null;
+    context?: TupleReconcileContext;
+  } = {},
 ): Promise<OpenFgaReconcileResult> {
-  const creatorSubject = subjectFromSession(session);
-  if (!creatorSubject) {
+  const sessionSubject =
+    typeof session.sub === "string" ? session.sub.trim() : "";
+  const ownerSubject =
+    options.ownerSubject === undefined
+      ? (config.owner_subject ?? (sessionSubject || null))
+      : options.ownerSubject;
+  const creatorSubject = ownerSubject ?? (sessionSubject || null);
+  if (!creatorSubject && !ownerSubject) {
     return { enabled: false, writes: 0, deletes: 0 };
   }
 
@@ -227,11 +284,12 @@ export async function reconcileWorkflowConfigAccess(
       ? await buildTeamRefToSlugMap()
       : undefined;
 
-  return reconcileShareableResource({
+  const resource = {
     objectType: "task",
     objectId: config._id,
     creatorSubject,
-    ownerSubject: creatorSubject,
+    ownerSubject,
+    previousOwnerSubject: previous?.owner_subject,
     memberRelations: ["reader", "user"],
     sharedWithOrg: config.visibility === "global",
     previousSharedWithOrg: previous?.visibility === "global",
@@ -243,12 +301,30 @@ export async function reconcileWorkflowConfigAccess(
       previous?.visibility === "team"
         ? resolveSharedTeamSlugs(previous.shared_with_teams, teamRefToSlug)
         : [],
-  });
+  };
+  return options.context
+    ? reconcileShareableResource(resource, options.context)
+    : reconcileShareableResource(resource);
+}
+
+function requireWorkflowAuthorizationReady(config: AuthzSyncDocument): void {
+  const decision = authzSyncPreCheck(config);
+  if (!decision) return;
+  throw new ApiError(
+    "Workflow access is still being synchronized. Retry shortly.",
+    503,
+    decision.reason,
+    "pdp_unavailable",
+    "retry",
+  );
 }
 
 /** Who may edit/delete a workflow (stricter than run). */
 export function workflowWriteAllowedByVisibility(
-  config: Pick<WorkflowConfigRebacSnapshot, "visibility" | "shared_with_teams" | "owner_id">,
+  config: Pick<
+    WorkflowConfigRebacSnapshot,
+    "visibility" | "shared_with_teams" | "owner_id"
+  >,
   userEmail: string,
 ): boolean {
   const owner = config.owner_id?.trim().toLowerCase();
@@ -304,10 +380,16 @@ export async function canViewWorkflowRunsForConfig(
   userTeamSlugs?: string[],
   teamRefToSlug?: TeamRefToSlugMap,
 ): Promise<boolean> {
-  const slugs = userTeamSlugs ?? (await resolveUserTeamSlugsForWorkflow(userEmail, session));
+  if (authzSyncPreCheck(config)) return false;
+  if (!privateWorkflowOwnerMatches(config, session, userEmail)) return false;
+  const slugs =
+    userTeamSlugs ??
+    (await resolveUserTeamSlugsForWorkflow(userEmail, session));
   const map =
     teamRefToSlug ??
-    (effectiveWorkflowVisibility(config) === "team" ? await buildTeamRefToSlugMap() : undefined);
+    (effectiveWorkflowVisibility(config) === "team"
+      ? await buildTeamRefToSlugMap()
+      : undefined);
 
   if (workflowRunAllowedByVisibility(config, userEmail, slugs, map)) {
     return true;
@@ -335,7 +417,14 @@ export async function requireWorkflowConfigRunViewAccess(
   userEmail: string,
   userTeamSlugs?: string[],
 ): Promise<void> {
-  if (await canViewWorkflowRunsForConfig(session, config, userEmail, userTeamSlugs)) {
+  if (
+    await canViewWorkflowRunsForConfig(
+      session,
+      config,
+      userEmail,
+      userTeamSlugs,
+    )
+  ) {
     return;
   }
   throw new ApiError(
@@ -354,9 +443,23 @@ export async function requireWorkflowConfigRunAccess(
   userEmail: string,
   userTeamSlugs?: string[],
 ): Promise<void> {
-  const slugs = userTeamSlugs ?? (await resolveUserTeamSlugsForWorkflow(userEmail, session));
+  requireWorkflowAuthorizationReady(config);
+  if (!privateWorkflowOwnerMatches(config, session, userEmail)) {
+    throw new ApiError(
+      "You do not have permission to run this private workflow.",
+      403,
+      "task#use",
+      "pdp_denied",
+      "contact_admin",
+    );
+  }
+  const slugs =
+    userTeamSlugs ??
+    (await resolveUserTeamSlugsForWorkflow(userEmail, session));
   const teamRefToSlug =
-    effectiveWorkflowVisibility(config) === "team" ? await buildTeamRefToSlugMap() : undefined;
+    effectiveWorkflowVisibility(config) === "team"
+      ? await buildTeamRefToSlugMap()
+      : undefined;
 
   if (workflowRunAllowedByVisibility(config, userEmail, slugs, teamRefToSlug)) {
     return;
@@ -386,7 +489,8 @@ export async function requireWorkflowConfigRunAccess(
  * Safe to run on UI startup after seed.
  */
 export async function repairWorkflowConfigTeamSlugRefs(): Promise<number> {
-  const collection = await getCollection<WorkflowConfigRebacSnapshot>("workflow_configs");
+  const collection =
+    await getCollection<WorkflowConfigRebacSnapshot>("workflow_configs");
   const map = await buildTeamRefToSlugMap();
   const teamConfigs = await collection.find({ visibility: "team" }).toArray();
   let repaired = 0;

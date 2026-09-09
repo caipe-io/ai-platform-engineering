@@ -16,6 +16,13 @@ withErrorHandler,
 import { getCollection } from "@/lib/mongodb";
 import { dynamicAgentForBrowser,dynamicAgentsForBrowser } from "@/lib/dynamic-agent-response";
 import { trustedInteractionFromRequest } from "@/lib/authz/trusted-interaction";
+import {
+  authzRevisionFilter,
+  AuthzSyncSupersededError,
+  hasActiveAuthzSync,
+  nextAuthzRevision,
+  runRevisionedAuthzSync,
+} from "@/lib/authz/resource-sync";
 import { isPrivateResourcesEnabled } from "@/lib/feature-flags/private-resources";
 import {
 allowedToolsFromAgent,
@@ -26,6 +33,10 @@ import {
 filterAgentsByOwnershipScopeForSession,
 isPrivateAgentOwner,
 } from "@/lib/rbac/agent-ownership-scope";
+import {
+validatePersistedAgentMcpDependencies,
+validatePersistedAgentResourceDependencies,
+} from "@/lib/rbac/agent-mcp-dependency-scope";
 import { caipeOrgKey } from "@/lib/rbac/organization";
 import { getPlatformDefaultAgentId,isPlatformDefaultAgent } from "@/lib/rbac/platform-default";
 import {
@@ -44,11 +55,10 @@ import type {
 DynamicAgentConfig,
 DynamicAgentConfigWithPermissions,
 LegacyVisibilityType,
-MCPServerConfig,
 SubAgentRef,
 VisibilityType,
 } from "@/types/dynamic-agent";
-import { Collection,ObjectId } from "mongodb";
+import { Collection,ObjectId,type UpdateFilter } from "mongodb";
 import { NextRequest } from "next/server";
 
 const PLATFORM_DEFAULT_VISIBILITY_ERROR =
@@ -68,6 +78,45 @@ const AGENT_SORT_FIELDS = new Set<AgentSortField>([
   "grade",
   "status",
 ]);
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  const normalizedLeft = [...new Set(left)].sort();
+  const normalizedRight = [...new Set(right)].sort();
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
+
+function sameAllowedTools(
+  left: Record<string, string[] | boolean>,
+  right: Record<string, string[] | boolean>,
+): boolean {
+  const normalize = (value: Record<string, string[] | boolean>) => Object.fromEntries(
+    Object.entries(value)
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .map(([key, tools]) => [key, Array.isArray(tools) ? [...tools].sort() : tools]),
+  );
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+}
+
+function previousAgentAuthzState(agent: DynamicAgentConfig): DynamicAgentConfig {
+  const previous = agent.authz_previous_state;
+  return previous && typeof previous === "object" && !Array.isArray(previous)
+    ? { ...agent, ...previous, authz_previous_state: undefined }
+    : agent;
+}
+
+function agentAuthzSnapshot(agent: DynamicAgentConfig): Record<string, unknown> {
+  return {
+    visibility: agent.visibility,
+    allowed_tools: agent.allowed_tools ?? {},
+    owner_subject: agent.owner_subject,
+    owner_id: agent.owner_id,
+    creator_subject: agent.creator_subject,
+    owner_team_slug: agent.owner_team_slug,
+    owner_team_id: agent.owner_team_id,
+    shared_with_teams: agent.shared_with_teams ?? [],
+  };
+}
 
 interface TeamOwnershipDoc {
   _id?: unknown;
@@ -456,27 +505,6 @@ async function validateSubagentVisibility(
   return { valid: true };
 }
 
-async function validateMcpVisibility(
-  agentVisibility: VisibilityType,
-  allowedTools: Record<string, string[] | boolean>,
-  ownerSubject: string,
-): Promise<void> {
-  const serverIds = Object.keys(allowedTools);
-  if (serverIds.length === 0) return;
-  const servers = await getCollection<MCPServerConfig>("mcp_servers");
-  const docs = await servers.find({ _id: { $in: serverIds } }).toArray();
-  for (const server of docs) {
-    if (server.visibility !== "private") continue;
-    if (agentVisibility !== "private" || server.owner_subject !== ownerSubject) {
-      throw new ApiError(
-        `Private MCP server "${server.name}" can only be attached to a private agent owned by the same user.`,
-        400,
-        "PRIVATE_DEPENDENCY_SCOPE_MISMATCH",
-      );
-    }
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════
 // GET — list agents
 // ═══════════════════════════════════════════════════════════════
@@ -745,6 +773,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       creator_subject: ownerSubject,
       is_system: false,
       config_driven: false,
+      authz_revision: 1,
+      authz_sync_state: "ready",
+      authz_last_synced_revision: 1,
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
     };
@@ -754,7 +785,29 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const unlinkedServiceAccountSub =
       visibility === "global" ? await resolveUnlinkedServiceAccountSub() : null;
 
-    await validateMcpVisibility(visibility, doc.allowed_tools, ownerSubject);
+    await validatePersistedAgentMcpDependencies({
+      session,
+      agent: {
+        visibility,
+        ownerSubject,
+        ownerEmail: user.email,
+        ownerTeamSlug,
+        sharedTeamSlugs,
+      },
+      allowedTools: doc.allowed_tools,
+    });
+    await validatePersistedAgentResourceDependencies({
+      session,
+      agent: {
+        visibility,
+        ownerSubject,
+        ownerEmail: user.email,
+        ownerTeamSlug,
+        sharedTeamSlugs,
+      },
+      skillIds: doc.skills ?? [],
+      workflowIds: doc.builtin_tools?.workflows ?? [],
+    });
 
     await reconcileAgentRelationships({
       agentId,
@@ -775,6 +828,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // Also grant the unlinked SA `can_use` so callers with no linked user
       // identity (Slack/Webex bots) are treated as "everyone" too.
       unlinkedServiceAccountSub,
+      verifyHigherConsistency: true,
     });
 
     try {
@@ -818,6 +872,14 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     }
     requirePrivateAgentOwner(agent, session);
     await requireAgentWritePermission(session, id);
+    if (hasActiveAuthzSync(agent)) {
+      throw new ApiError(
+        "This agent's authorization is already being reconciled. Retry shortly.",
+        409,
+        "AUTHZ_SYNC_PENDING",
+      );
+    }
+    const previousAuthzState = previousAgentAuthzState(agent);
 
     // Config-driven guard
     if (agent.config_driven) {
@@ -895,8 +957,8 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     // caller did not include `shared_with_teams` in the patch, keep the
     // existing value unchanged (do NOT clear it — that would silently
     // revoke team grants on every metadata-only update).
-    const previousSharedRaw = Array.isArray(agent.shared_with_teams)
-      ? (agent.shared_with_teams as string[])
+    const previousSharedRaw = Array.isArray(previousAuthzState.shared_with_teams)
+      ? (previousAuthzState.shared_with_teams as string[])
       : [];
     const { slugs: previousSharedTeamSlugs } =
       await resolveSharedTeamSlugs(previousSharedRaw);
@@ -931,6 +993,9 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     // its own org-admin/tool-caller tuples via `reconcileAgentRelationships`,
     // so we use the resolver for the decision only and apply persistence here.
     const previousOwnerTeamSlug = normalizeString(agent.owner_team_slug);
+    const previousReconciledOwnerTeamSlug = normalizeString(
+      previousAuthzState.owner_team_slug,
+    );
     const resolvedOwnership = finalVisibility === "private" ? {
       ownerTeamSlug: null,
       sharedTeamSlugs: [],
@@ -962,9 +1027,6 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       },
     );
     const nextOwnerTeamSlug = resolvedOwnership.ownerTeamSlug;
-    const transferPreviousOwner = resolvedOwnership.transferred
-      ? resolvedOwnership.previousOwnerTeamSlug ?? undefined
-      : undefined;
     if (resolvedOwnership.transferred) {
       if (nextOwnerTeamSlug) {
         const destinationTeam = await loadOwnerTeam({ slug: nextOwnerTeamSlug });
@@ -973,13 +1035,43 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
         }
         updateData.owner_team_slug = nextOwnerTeamSlug;
         updateData.owner_team_id = teamIdString(destinationTeam) ?? undefined;
+      } else {
+        // Private ownership is represented by the absence of team-owner fields.
+        // Keep these paths out of $set because the private update unsets them.
+        delete updateData.owner_team_slug;
+        delete updateData.owner_team_id;
       }
     }
 
     const finalAllowedTools = (updateData.allowed_tools ??
       agent.allowed_tools ??
-      {}) as Record<string, string[]>;
-    await validateMcpVisibility(finalVisibility, finalAllowedTools, stableOwnerSubject);
+      {}) as Record<string, string[] | boolean>;
+    await validatePersistedAgentMcpDependencies({
+      session,
+      agent: {
+        visibility: finalVisibility,
+        ownerSubject: stableOwnerSubject,
+        ownerEmail: agent.owner_id,
+        ownerTeamSlug: nextOwnerTeamSlug,
+        sharedTeamSlugs,
+      },
+      allowedTools: finalAllowedTools,
+    });
+    const finalSkills = (updateData.skills ?? agent.skills ?? []) as string[];
+    const finalBuiltinTools = (updateData.builtin_tools ??
+      agent.builtin_tools) as DynamicAgentConfig["builtin_tools"] | undefined;
+    await validatePersistedAgentResourceDependencies({
+      session,
+      agent: {
+        visibility: finalVisibility,
+        ownerSubject: stableOwnerSubject,
+        ownerEmail: agent.owner_id,
+        ownerTeamSlug: nextOwnerTeamSlug,
+        sharedTeamSlugs,
+      },
+      skillIds: finalSkills,
+      workflowIds: finalBuiltinTools?.workflows ?? [],
+    });
     // Resolve the unlinked SA grant state whenever the wildcard grant is being
     // written OR revoked — the delete path needs the exact sub too, so we
     // can't skip resolution just because the agent is being demoted.
@@ -988,20 +1080,23 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     // override, so the unlinked SA keeps `can_use` on an agent it was
     // explicitly granted.
     const { sub: unlinkedServiceAccountSub, explicitAgentIds } =
-      finalVisibility === "global" || currentVisibility === "global"
+      finalVisibility === "global" || previousAuthzState.visibility === "global"
         ? await resolveUnlinkedServiceAccountGrantState()
         : { sub: null, explicitAgentIds: new Set<string>() };
-    await reconcileAgentRelationships({
+    const previousVisibilityForReconcile = previousAuthzState.visibility;
+    const reconcile = (verifyHigherConsistency: boolean) => reconcileAgentRelationships({
       agentId: id,
-      previousAllowedTools: allowedToolsFromAgent(agent),
+      previousAllowedTools: allowedToolsFromAgent(previousAuthzState),
       nextAllowedTools: finalAllowedTools,
       ownerSubject: agent.owner_subject ?? agent.owner_id,
       creatorSubject: stableCreatorSubject,
       personalOwnerAccess: finalVisibility === "private",
-      previousPersonalOwnerAccess: currentVisibility === "private",
+      previousPersonalOwnerAccess: previousVisibilityForReconcile === "private",
       organizationId: caipeOrgKey(),
       ownerTeamSlug: nextOwnerTeamSlug,
-      previousOwnerTeamSlug: transferPreviousOwner,
+      previousOwnerTeamSlug: previousReconciledOwnerTeamSlug !== nextOwnerTeamSlug
+        ? previousReconciledOwnerTeamSlug
+        : undefined,
       nextSharedTeamSlugs: sharedTeamSlugs,
       previousSharedTeamSlugs,
       // Keep the wildcard `user:* user agent:<id>` grant in sync with
@@ -1010,21 +1105,100 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       // so non-owner-team members keep `can_use` (the SRE-agent leak).
       // Only an exact 'global' match counts as a previous wildcard grant.
       globalUserAccess: finalVisibility === "global",
-      previousGlobalUserAccess: currentVisibility === "global",
+      previousGlobalUserAccess: previousVisibilityForReconcile === "global",
       // Keep the unlinked SA's grant in sync with the same promote/demote
       // transition so callers with no linked user identity gain/lose
       // access exactly when "everyone" does.
       unlinkedServiceAccountSub,
       unlinkedGrantIsExplicit: explicitAgentIds.has(id),
+      verifyHigherConsistency,
     });
 
-    const updated = await collection.findOneAndUpdate(
-      { _id: id },
-      finalVisibility === "private"
-        ? { $set: { ...updateData, shared_with_teams: [] }, $unset: { owner_team_slug: "", owner_team_id: "" } }
-        : { $set: updateData },
-      { returnDocument: "after" },
-    );
+    const mongoSet = finalVisibility === "private"
+      ? { ...updateData, shared_with_teams: [] }
+      : updateData;
+    const mongoUnset: Record<string, ""> | undefined = finalVisibility === "private"
+      ? { owner_team_slug: "", owner_team_id: "" }
+      : undefined;
+    const mongoUpdate: UpdateFilter<DynamicAgentConfig> = mongoUnset
+      ? { $set: mongoSet, $unset: mongoUnset }
+      : { $set: mongoSet };
+    const authzMutationRequired = agent.authz_sync_state === "pending"
+      || agent.authz_sync_state === "error"
+      || finalVisibility !== currentVisibility
+      || previousOwnerTeamSlug !== nextOwnerTeamSlug
+      || !sameStringSet(previousSharedTeamSlugs, sharedTeamSlugs)
+      || !sameAllowedTools(allowedToolsFromAgent(agent), finalAllowedTools);
+
+    let updated: DynamicAgentConfig | null;
+    if (!authzMutationRequired) {
+      await reconcile(false);
+      updated = await collection.findOneAndUpdate(
+        { _id: id },
+        mongoUpdate,
+        { returnDocument: "after" },
+      );
+    } else {
+      const revision = nextAuthzRevision(agent);
+      const pending = await collection.findOneAndUpdate(
+        { _id: id, ...authzRevisionFilter(agent) },
+        {
+          $set: {
+            ...mongoSet,
+            authz_revision: revision,
+            authz_sync_state: "pending",
+            authz_sync_started_at: new Date().toISOString(),
+            authz_previous_state: agent.authz_previous_state ?? agentAuthzSnapshot(agent),
+          },
+          ...(mongoUnset
+            ? { $unset: { ...mongoUnset, authz_last_error_code: "" } }
+            : { $unset: { authz_last_error_code: "" } }),
+        },
+        { returnDocument: "after" },
+      );
+      if (!pending) {
+        throw new ApiError(
+          "This agent changed while authorization was being prepared. Retry the save.",
+          409,
+          "AUTHZ_SYNC_SUPERSEDED",
+        );
+      }
+
+      try {
+        updated = await runRevisionedAuthzSync({
+          reconcile: async () => { await reconcile(true); },
+          markError: async (errorCode) => {
+            await collection.findOneAndUpdate(
+              { _id: id, authz_revision: revision, authz_sync_state: "pending" },
+              {
+                $set: { authz_sync_state: "error", authz_last_error_code: errorCode },
+                $unset: { authz_sync_started_at: "" },
+              },
+            );
+          },
+          markReady: () => collection.findOneAndUpdate(
+            { _id: id, authz_revision: revision, authz_sync_state: "pending" },
+            {
+              $set: {
+                authz_sync_state: "ready",
+                authz_last_synced_revision: revision,
+              },
+              $unset: {
+                authz_last_error_code: "",
+                authz_previous_state: "",
+                authz_sync_started_at: "",
+              },
+            },
+            { returnDocument: "after" },
+          ),
+        });
+      } catch (error) {
+        if (error instanceof AuthzSyncSupersededError) {
+          throw new ApiError(error.message, 409, "AUTHZ_SYNC_SUPERSEDED");
+        }
+        throw error;
+      }
+    }
 
     if (!updated) {
       throw new ApiError("Failed to update agent", 500);

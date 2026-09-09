@@ -44,16 +44,24 @@ jest.mock("@/lib/mongodb", () => ({
   isMongoDBConfigured: true,
 }));
 
+jest.mock("@/lib/rbac/skill-team-grants", () => ({
+  reconcileSkillTeamShares: jest.fn().mockResolvedValue({
+    teamSlugs: [],
+    writesPlanned: 0,
+    writesApplied: 0,
+    deletesPlanned: 0,
+    deletesApplied: 0,
+    enabled: false,
+  }),
+  readSkillSharedTeamSlugsFromOpenFga: jest.fn().mockResolvedValue([]),
+}));
+
 function createMockCollection() {
-  const findReturnValue = {
-    project: jest.fn().mockReturnValue({
-      toArray: jest.fn().mockResolvedValue([]),
-    }),
-    sort: jest.fn().mockReturnValue({
-      toArray: jest.fn().mockResolvedValue([]),
-    }),
-    toArray: jest.fn().mockResolvedValue([]),
-  };
+  const findReturnValue: Record<string, jest.Mock> = {};
+  findReturnValue.project = jest.fn().mockReturnValue(findReturnValue);
+  findReturnValue.sort = jest.fn().mockReturnValue(findReturnValue);
+  findReturnValue.limit = jest.fn().mockReturnValue(findReturnValue);
+  findReturnValue.toArray = jest.fn().mockResolvedValue([]);
 
   return {
     find: jest.fn().mockReturnValue(findReturnValue),
@@ -61,6 +69,7 @@ function createMockCollection() {
     insertOne: jest.fn().mockResolvedValue({ insertedId: "test-id" }),
     updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1, acknowledged: true }),
     deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
+    deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
     countDocuments: jest.fn().mockResolvedValue(0),
   };
 }
@@ -73,6 +82,7 @@ function userSession(email = "user@example.com") {
   return {
     user: { email, name: "Test User" },
     role: "user",
+    sub: "user-sub",
   };
 }
 
@@ -373,7 +383,7 @@ def hello():
     expect(insertedConfig.skill_content).toBe(SAMPLE_SKILL_CONTENT);
     expect(insertedConfig.is_quick_start).toBe(true);
     expect(insertedConfig.visibility).toBe("team");
-    expect(insertedConfig.shared_with_teams).toBeUndefined();
+    expect(insertedConfig.shared_with_teams).toEqual(["team-sre", "team-devops"]);
   });
 });
 

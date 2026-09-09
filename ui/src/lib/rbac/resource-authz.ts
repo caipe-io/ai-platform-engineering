@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api-error";
+import { getCollection } from "@/lib/mongodb";
 import { authorize, authorizeMany, type Action, type Subject, type TrustedAuthorizeContext } from "@/lib/authz";
 import type { UniversalRebacResourceType } from "@/types/rbac-universal";
 
@@ -261,6 +262,29 @@ export async function requireSkillPermission(
       "session_expired",
       "sign_in",
     );
+  }
+
+  const skill = await getCollection<{
+    id: string;
+    visibility?: string;
+    owner_id?: string;
+    owner_subject?: string;
+  }>("agent_skills").then((collection) => collection.findOne({ id: skillId }));
+  if (skill?.visibility === "private") {
+    const stableSubject = typeof session.sub === "string" ? session.sub.trim() : "";
+    const email = session.user?.email?.trim().toLowerCase() ?? "";
+    const ownerMatches = skill.owner_subject
+      ? skill.owner_subject === stableSubject
+      : Boolean(email && skill.owner_id?.trim().toLowerCase() === email);
+    if (!ownerMatches) {
+      throw new ApiError(
+        "You do not have permission to access this private skill.",
+        403,
+        `skill#${action}`,
+        "pdp_denied",
+        "contact_admin",
+      );
+    }
   }
 
   if (!isOrgAdminBypassKillSwitchEnabled() && (await isOrgAdmin(subject, casSubject, options))) {

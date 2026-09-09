@@ -16,15 +16,31 @@ import type { WorkflowConfig } from "@/types/workflow-config";
 export function workflowConfigAccessSnapshot(
   config: Pick<
     WorkflowConfig,
-    "_id" | "owner_id" | "visibility" | "shared_with_teams" | "config_driven"
+    | "_id"
+    | "owner_id"
+    | "owner_subject"
+    | "visibility"
+    | "shared_with_teams"
+    | "config_driven"
+    | "authz_revision"
+    | "authz_sync_state"
+    | "authz_last_synced_revision"
+    | "authz_last_error_code"
+    | "authz_sync_started_at"
   >,
 ): WorkflowConfigRebacSnapshot {
   return {
     _id: String(config._id),
     owner_id: config.owner_id,
+    owner_subject: config.owner_subject,
     visibility: config.visibility,
     shared_with_teams: config.shared_with_teams,
     config_driven: config.config_driven,
+    authz_revision: config.authz_revision,
+    authz_sync_state: config.authz_sync_state,
+    authz_last_synced_revision: config.authz_last_synced_revision,
+    authz_last_error_code: config.authz_last_error_code,
+    authz_sync_started_at: config.authz_sync_started_at,
   };
 }
 

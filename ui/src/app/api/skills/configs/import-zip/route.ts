@@ -15,7 +15,10 @@ import {
 filterResourcesByPermission,
 requireSkillPermission,
 } from "@/lib/rbac/resource-authz";
-import { reconcileSkillTeamShares } from "@/lib/rbac/skill-team-grants";
+import {
+readSkillSharedTeamSlugsFromOpenFga,
+reconcileSkillTeamShares,
+} from "@/lib/rbac/skill-team-grants";
 import {
 generateSkillIdFromName,
 type ImportConflictAction,
@@ -231,7 +234,7 @@ export async function runZipImport(
     .filter((skill) => skill.outcome === "created" || skill.outcome === "overwritten")
     .map((skill) => skill.skillId)
     .filter(Boolean);
-  if (teamRefs.length > 0 && grantSkillIds.length > 0 && args.grantTeamAccess) {
+  if (grantSkillIds.length > 0 && args.grantTeamAccess) {
     await args.grantTeamAccess(teamRefs, grantSkillIds);
   }
 
@@ -616,6 +619,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
     const buffer = await file.arrayBuffer();
     const teamRefs = parseTeamRefsFromForm(form);
+    const ownerSubject =
+      typeof session?.sub === "string" ? session.sub.trim() : "";
+    if (!ownerSubject) {
+      throw new ApiError(
+        "A stable user subject is required to import a skill.",
+        401,
+      );
+    }
 
     let resolutions: ImportConflictDecision[] | undefined;
     const rawResolutions = form.get("resolutions");
@@ -643,11 +654,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // CRUD route.
     const collection = await getCollection<AgentSkill>("agent_skills");
     const candidates = await collection.find({}).toArray();
-    const visible = await filterResourcesByPermission(session, candidates, {
+    const scopedCandidates = candidates.filter((skill) => {
+      if ((skill.visibility ?? "private") !== "private") return true;
+      return skill.owner_subject
+        ? skill.owner_subject === ownerSubject
+        : skill.owner_id.trim().toLowerCase() === user.email.toLowerCase();
+    });
+    const visible = await filterResourcesByPermission(session, scopedCandidates, {
       type: "skill",
       action: "discover",
       id: (skill) => skill.id,
     });
+    const previousById = new Map(candidates.map((skill) => [skill.id, skill]));
 
     const result = await runZipImport({
       buffer,
@@ -659,27 +677,53 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         await requireSkillPermission(session, skill.id, "write");
       },
       grantTeamAccess: async (refs, skillIds) => {
-        const ownerSubject =
-          typeof session?.sub === "string" && session.sub.trim() ? session.sub.trim() : null;
         for (const skillId of skillIds) {
+          const previous = previousById.get(skillId);
+          const current = await collection.findOne({ id: skillId });
+          if (!current) continue;
+          const previousTeamRefs =
+            previous?.visibility === "team"
+              ? previous.shared_with_teams?.length
+                ? previous.shared_with_teams
+                : await readSkillSharedTeamSlugsFromOpenFga(skillId)
+              : [];
+          const nextTeamRefs =
+            current.visibility === "team"
+              ? current.shared_with_teams?.length
+                ? current.shared_with_teams
+                : refs
+              : [];
           await reconcileSkillTeamShares({
             skillId,
             ownerSubject,
-            previousTeamRefs: [],
-            nextTeamRefs: refs,
-            nextVisibility: refs.length > 0 ? "team" : "private",
+            previousTeamRefs,
+            nextTeamRefs,
+            nextVisibility: current.visibility ?? "private",
+            previousVisibility: previous?.visibility ?? "private",
           });
         }
       },
       persistSkill: async (skill, mode) => {
-        const mongoRow = { ...skill };
-        delete mongoRow.shared_with_teams;
+        const previous = previousById.get(skill.id);
+        const persistedTeamRefs =
+          skill.visibility === "team"
+            ? teamRefs.length > 0
+              ? teamRefs
+              : previous?.shared_with_teams ??
+                (await readSkillSharedTeamSlugsFromOpenFga(skill.id))
+            : [];
+        const mongoRow: AgentSkill = {
+          ...skill,
+          owner_subject:
+            skill.owner_subject ?? previous?.owner_subject ?? ownerSubject,
+          shared_with_teams: persistedTeamRefs,
+        };
         if (mode === "create") {
-          await collection.insertOne(mongoRow as AgentSkill);
+          await collection.insertOne(mongoRow);
         } else {
           await collection.updateOne(
             { id: skill.id },
-            { $set: mongoRow, $unset: { shared_with_teams: "" } },
+            { $set: mongoRow },
           );
         }
       },

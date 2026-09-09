@@ -60,6 +60,7 @@ export interface OpenFgaReadOptions {
   tuple?: Partial<OpenFgaTupleKey>;
   pageSize?: number;
   continuationToken?: string;
+  consistency?: "MINIMIZE_LATENCY" | "HIGHER_CONSISTENCY";
 }
 
 export interface OpenFgaReadResult {
@@ -432,6 +433,7 @@ async function tupleExistsInStore(
   baseUrl: string,
   storeId: string,
   tuple: OpenFgaTupleKey,
+  consistency?: OpenFgaReadOptions["consistency"],
 ): Promise<boolean> {
   const filter = tupleKeyFilter(tuple);
   if (!filter?.user || !filter.relation || !filter.object) {
@@ -440,7 +442,11 @@ async function tupleExistsInStore(
   const response = await fetch(`${baseUrl}/stores/${storeId}/read`, {
     method: "POST",
     headers: openFgaHeaders(),
-    body: JSON.stringify({ tuple_key: filter, page_size: 1 }),
+    body: JSON.stringify({
+      tuple_key: filter,
+      page_size: 1,
+      ...(consistency ? { consistency } : {}),
+    }),
   });
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");
@@ -593,6 +599,7 @@ export async function readOpenFgaTuples(options: OpenFgaReadOptions = {}): Promi
     ...(tupleKeyFilter(options.tuple) ? { tuple_key: tupleKeyFilter(options.tuple) } : {}),
     page_size: pageSize,
     ...(options.continuationToken ? { continuation_token: options.continuationToken } : {}),
+    ...(options.consistency ? { consistency: options.consistency } : {}),
   };
 
   const response = await fetch(`${baseUrl}/stores/${storeId}/read`, {
@@ -993,6 +1000,33 @@ export async function writeOpenFgaTupleDiff(diff: TeamResourceTupleDiff): Promis
     return { enabled: false, writes: 0, deletes: 0 };
   }
   return writeOpenFgaTuples(diff);
+}
+
+export class OpenFgaVerificationError extends Error {
+  constructor() {
+    super("OpenFGA did not reflect the reconciled tuple state");
+    this.name = "OpenFgaVerificationError";
+  }
+}
+
+/** Verify direct tuple writes and revocations using OpenFGA's primary-read mode. */
+export async function verifyOpenFgaTupleDiff(diff: TeamResourceTupleDiff): Promise<void> {
+  if (!isOpenFgaReconciliationEnabled()) return;
+  const tuples = [...diff.writes, ...diff.deletes];
+  if (tuples.length === 0) return;
+  const baseUrl = openFgaHttpUrl();
+  if (!baseUrl) throw new Error("OPENFGA_HTTP is not set");
+  const storeId = await getOpenFgaStoreId();
+  const present = await mapWithConcurrency(
+    tuples,
+    openFgaReadConcurrency(),
+    (tuple) => tupleExistsInStore(baseUrl, storeId, tuple, "HIGHER_CONSISTENCY"),
+  );
+  const writesVerified = diff.writes.every((_, index) => present[index] === true);
+  const deletesVerified = diff.deletes.every(
+    (_, index) => present[diff.writes.length + index] === false,
+  );
+  if (!writesVerified || !deletesVerified) throw new OpenFgaVerificationError();
 }
 
 export async function writeUniversalRebacTupleDiff(

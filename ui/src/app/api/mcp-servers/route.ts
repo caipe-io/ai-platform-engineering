@@ -15,6 +15,13 @@ withErrorHandler,
 import { getCollection } from "@/lib/mongodb";
 import { CREDENTIAL_COLLECTIONS } from "@/lib/credentials/collections";
 import { trustedInteractionFromRequest } from "@/lib/authz/trusted-interaction";
+import {
+  authzRevisionFilter,
+  AuthzSyncSupersededError,
+  hasActiveAuthzSync,
+  nextAuthzRevision,
+  runRevisionedAuthzSync,
+} from "@/lib/authz/resource-sync";
 import { isPrivateResourcesEnabled } from "@/lib/feature-flags/private-resources";
 import { agentGatewayMcpEndpointUrl } from "@/lib/rbac/agentgateway-mcp-discovery";
 import {
@@ -40,6 +47,7 @@ MCPServerConfigWithPermissions,
 TransportType,
 } from "@/types/dynamic-agent";
 import { NextRequest, NextResponse } from "next/server";
+import type { UpdateFilter } from "mongodb";
 
 const COLLECTION_NAME = "mcp_servers";
 
@@ -52,6 +60,31 @@ const MCP_SERVER_SORT_FIELDS = new Set<McpServerSortField>([
   "endpoint",
   "status",
 ]);
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  const normalizedLeft = [...new Set(left)].sort();
+  const normalizedRight = [...new Set(right)].sort();
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
+
+function previousMcpAuthzState(server: MCPServerConfig): MCPServerConfig {
+  const previous = server.authz_previous_state;
+  return previous && typeof previous === "object" && !Array.isArray(previous)
+    ? { ...server, ...previous, authz_previous_state: undefined }
+    : server;
+}
+
+function mcpAuthzSnapshot(server: MCPServerConfig): Record<string, unknown> {
+  return {
+    visibility: normalizedMcpServerVisibility(server),
+    owner_subject: server.owner_subject,
+    owner_subject_kind: server.owner_subject_kind,
+    creator_subject: server.creator_subject,
+    owner_team_slug: server.owner_team_slug,
+    shared_with_teams: server.shared_with_teams ?? [],
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Helpers
@@ -610,6 +643,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       shared_with_teams: sharedTeamSlugs,
       // Server-controlled — never from request body
       config_driven: false,
+      authz_revision: 1,
+      authz_sync_state: "ready",
+      authz_last_synced_revision: 1,
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
     };
@@ -628,10 +664,22 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       {
         caller: { type: ownerSubjectKind, id: ownerSubject },
         source: "mcp_server_create",
+        verifyHigherConsistency: true,
       },
     );
 
-    await collection.insertOne(doc);
+    try {
+      await collection.insertOne(doc);
+    } catch (error) {
+      await deleteAllMcpServerRelationshipTuples(serverId, {
+        caller: { type: ownerSubjectKind, id: ownerSubject },
+        source: "mcp_server_create_rollback",
+        verifyHigherConsistency: true,
+      }).catch((cleanupError) => {
+        console.warn("[mcp-servers] failed to clean up OpenFGA tuples after create failure", cleanupError);
+      });
+      throw error;
+    }
 
     return successResponse(doc, 201);
 });
@@ -669,6 +717,14 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       action: "manage" as const,
     };
     await requireResourcePermission(session, updateTarget);
+    if (hasActiveAuthzSync(server)) {
+      throw new ApiError(
+        "This MCP server's authorization is already being reconciled. Retry shortly.",
+        409,
+        "AUTHZ_SYNC_PENDING",
+      );
+    }
+    const previousAuthzState = previousMcpAuthzState(server);
 
     // Config-driven guard
     if (isLockedConfigDrivenServer(server)) {
@@ -726,6 +782,11 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     for (const slug of nextSharedTeamSlugs) await requireOwnerTeamMembership(session, slug);
     updateData.visibility = nextVisibility;
     updateData.shared_with_teams = nextSharedTeamSlugs;
+    if (nextVisibility !== "team") {
+      // Never target the same ownership path from both MongoDB operators.
+      // JSON clients may explicitly send null even though the UI omits it.
+      delete updateData.owner_team_slug;
+    }
     const nextTransport = (updateData.transport as TransportType | undefined) ?? server.transport;
     if (isNetworkTransport(nextTransport)) {
       const gatewayManaged = await normalizeNetworkServerForAgentGateway({
@@ -754,65 +815,140 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     updateData.updated_at = new Date().toISOString();
 
     const ownerSubject = requireStableSubject(session);
-    const storedOwnerSubject = server.owner_subject ?? ownerSubject;
+    const storedOwnerSubject = server.owner_subject
+      ?? previousAuthzState.owner_subject
+      ?? ownerSubject;
     const storedOwnerSubjectKind = server.owner_subject_kind
-      ?? (server.owner_subject === ownerSubject && session.isServiceAccount === true
+      ?? previousAuthzState.owner_subject_kind
+      ?? (storedOwnerSubject === ownerSubject && session.isServiceAccount === true
         ? "service_account"
         : "user");
-    const previousPersonalOwnerAccess = previousVisibility === "private"
-      || (server.visibility === undefined && Boolean(server.owner_subject));
+    const previousVisibilityForReconcile = normalizedMcpServerVisibility(previousAuthzState);
+    const previousPersonalOwnerAccess = previousVisibilityForReconcile === "private"
+      || (previousAuthzState.visibility === undefined && Boolean(previousAuthzState.owner_subject));
     await validateCredentialScopes({
       visibility: nextVisibility,
       ownerSubject: nextVisibility === "private" ? ownerSubject : storedOwnerSubject,
       credentialSources: (updateData.credential_sources ?? server.credential_sources) as MCPCredentialSource[] | undefined,
     });
-    await reconcileMcpServerRelationships(
+    const reconcile = (verifyHigherConsistency: boolean) => reconcileMcpServerRelationships(
       {
         serverId: id,
         ownerSubject: nextVisibility === "private"
           ? ownerSubject
-          : previousPersonalOwnerAccess ? storedOwnerSubject : null,
+          : previousPersonalOwnerAccess
+            ? previousAuthzState.owner_subject ?? storedOwnerSubject
+            : null,
         ownerSubjectKind: nextVisibility === "private" ? "user" : storedOwnerSubjectKind,
         ownerTeamSlug: nextOwnerTeamSlug,
-        previousOwnerTeamSlug: server.owner_team_slug,
+        previousOwnerTeamSlug: previousAuthzState.owner_team_slug,
         creatorSubject: server.creator_subject
           ?? (storedOwnerSubjectKind === "user" ? storedOwnerSubject : null),
         personalOwnerAccess: nextVisibility === "private",
         previousPersonalOwnerAccess,
         nextSharedTeamSlugs,
-        previousSharedTeamSlugs: server.shared_with_teams ?? [],
+        previousSharedTeamSlugs: previousAuthzState.shared_with_teams ?? [],
         globalOrganizationAccess: nextVisibility === "global",
-        previousGlobalOrganizationAccess: previousVisibility === "global",
+        previousGlobalOrganizationAccess: previousVisibilityForReconcile === "global",
       },
       {
         caller: { type: session.isServiceAccount === true ? "service_account" : "user", id: ownerSubject },
         source: "mcp_server_update",
+        verifyHigherConsistency,
       },
     );
 
-    const updated = await collection.findOneAndUpdate(
-      { _id: id },
-      nextVisibility === "private"
-        ? {
-            $set: {
-              ...updateData,
-              owner_subject: ownerSubject,
-              owner_subject_kind: "user",
-              shared_with_teams: [],
-            },
-            $unset: { owner_team_slug: "" },
-          }
-        : nextVisibility === "team"
-          ? {
-            $set: { ...updateData, owner_team_slug: nextOwnerTeamSlug },
-            $unset: { owner_subject: "", owner_subject_kind: "" },
-          }
-          : {
-            $set: { ...updateData, visibility: "global", shared_with_teams: [] },
-            $unset: { owner_subject: "", owner_subject_kind: "", owner_team_slug: "" },
+    const mongoSet = nextVisibility === "private"
+      ? {
+          ...updateData,
+          owner_subject: ownerSubject,
+          owner_subject_kind: "user" as const,
+          shared_with_teams: [],
+        }
+      : nextVisibility === "team"
+        ? { ...updateData, owner_team_slug: nextOwnerTeamSlug }
+        : { ...updateData, visibility: "global" as const, shared_with_teams: [] };
+    const mongoUnset: Record<string, ""> = nextVisibility === "private"
+      ? { owner_team_slug: "" }
+      : nextVisibility === "team"
+        ? { owner_subject: "", owner_subject_kind: "" }
+        : { owner_subject: "", owner_subject_kind: "", owner_team_slug: "" };
+    const mongoUpdate: UpdateFilter<MCPServerConfig> = {
+      $set: mongoSet,
+      $unset: mongoUnset,
+    };
+    const authzMutationRequired = server.authz_sync_state === "pending"
+      || server.authz_sync_state === "error"
+      || nextVisibility !== previousVisibility
+      || nextOwnerTeamSlug !== normalizeString(server.owner_team_slug)
+      || !sameStringSet(server.shared_with_teams ?? [], nextSharedTeamSlugs);
+
+    let updated: MCPServerConfig | null;
+    if (!authzMutationRequired) {
+      await reconcile(false);
+      updated = await collection.findOneAndUpdate(
+        { _id: id },
+        mongoUpdate,
+        { returnDocument: "after" },
+      );
+    } else {
+      const revision = nextAuthzRevision(server);
+      const pending = await collection.findOneAndUpdate(
+        { _id: id, ...authzRevisionFilter(server) },
+        {
+          $set: {
+            ...mongoSet,
+            authz_revision: revision,
+            authz_sync_state: "pending",
+            authz_sync_started_at: new Date().toISOString(),
+            authz_previous_state: server.authz_previous_state ?? mcpAuthzSnapshot(server),
           },
-      { returnDocument: "after" },
-    );
+          $unset: { ...mongoUnset, authz_last_error_code: "" },
+        },
+        { returnDocument: "after" },
+      );
+      if (!pending) {
+        throw new ApiError(
+          "This MCP server changed while authorization was being prepared. Retry the save.",
+          409,
+          "AUTHZ_SYNC_SUPERSEDED",
+        );
+      }
+      try {
+        updated = await runRevisionedAuthzSync({
+          reconcile: async () => { await reconcile(true); },
+          markError: async (errorCode) => {
+            await collection.findOneAndUpdate(
+              { _id: id, authz_revision: revision, authz_sync_state: "pending" },
+              {
+                $set: { authz_sync_state: "error", authz_last_error_code: errorCode },
+                $unset: { authz_sync_started_at: "" },
+              },
+            );
+          },
+          markReady: () => collection.findOneAndUpdate(
+            { _id: id, authz_revision: revision, authz_sync_state: "pending" },
+            {
+              $set: {
+                authz_sync_state: "ready",
+                authz_last_synced_revision: revision,
+              },
+              $unset: {
+                authz_last_error_code: "",
+                authz_previous_state: "",
+                authz_sync_started_at: "",
+              },
+            },
+            { returnDocument: "after" },
+          ),
+        });
+      } catch (error) {
+        if (error instanceof AuthzSyncSupersededError) {
+          throw new ApiError(error.message, 409, "AUTHZ_SYNC_SUPERSEDED");
+        }
+        throw error;
+      }
+    }
 
     if (!updated) {
       throw new ApiError("Failed to update MCP server", 500);

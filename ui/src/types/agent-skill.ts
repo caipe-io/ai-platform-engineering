@@ -1,6 +1,8 @@
+import type { AuthzSyncMetadata } from "./authz-sync";
+
 /**
  * Agent skill types (catalog source: agent_skills)
- * 
+ *
  * These types define the structure for both:
  * - Agent workflows with multiple tasks (based on task_config.yaml)
  * - Quick-start templates (formerly "Use Cases") - single-step prompts
@@ -58,15 +60,15 @@ export interface AgentSkillTask {
 /**
  * Available subagent types that can execute tasks
  */
-export type AgentSkillSubagent = 
-  | "user_input"  // User input collection via forms
-  | "github"    // GitHub operations via gh CLI
-  | "aws"       // AWS resource provisioning
-  | "argocd"    // ArgoCD deployments
+export type AgentSkillSubagent =
+  | "user_input" // User input collection via forms
+  | "github" // GitHub operations via gh CLI
+  | "aws" // AWS resource provisioning
+  | "argocd" // ArgoCD deployments
   | "aigateway" // LLM API key management
-  | "webex"     // Webex notifications
-  | "jira"      // Jira ticket operations
-  | string;     // Allow custom subagents
+  | "webex" // Webex notifications
+  | "jira" // Jira ticket operations
+  | string; // Allow custom subagents
 
 /**
  * Categories for organizing agent skills
@@ -183,7 +185,7 @@ export type PersistedScanStatus = ScanStatus;
  * Main agent skill interface
  * Represents both multi-task workflows and quick-start templates
  */
-export interface AgentSkill {
+export interface AgentSkill extends AuthzSyncMetadata {
   /** Unique identifier */
   id: string;
   /** Display name (e.g., "Create GitHub Repo") */
@@ -196,6 +198,8 @@ export interface AgentSkill {
   tasks: AgentSkillTask[];
   /** Owner's email address (for user-created skills) */
   owner_id: string;
+  /** Stable OIDC subject used for ownership checks and reconciliation. */
+  owner_subject?: string;
   /** Whether this is a system/built-in skill row in MongoDB (may be edited or removed; restore via import/seed) */
   is_system: boolean;
   /** Creation timestamp */
@@ -204,7 +208,7 @@ export interface AgentSkill {
   updated_at: Date;
   /** Additional metadata */
   metadata?: AgentSkillMetadata;
-  
+
   // Quick-start template fields (for single-step workflows)
   /** Whether this is a quick-start template (single prompt, executes in chat) */
   is_quick_start?: boolean;
@@ -220,7 +224,7 @@ export interface AgentSkill {
   visibility?: SkillVisibility;
   /**
    * Team slugs/refs shared via OpenFGA when `visibility` is `team`.
-   * Populated on API read only — not stored in MongoDB.
+   * Persisted as the desired authorization state and hydrated from OpenFGA on read.
    */
   shared_with_teams?: string[];
   /**
@@ -308,12 +312,12 @@ export interface UpdateAgentSkillInput {
 /**
  * Execution status for a task step
  */
-export type TaskExecutionStatus = 
-  | "pending"     // Not yet started
+export type TaskExecutionStatus =
+  | "pending" // Not yet started
   | "in_progress" // Currently executing
-  | "completed"   // Successfully finished
-  | "failed"      // Execution failed
-  | "skipped";    // Skipped due to condition
+  | "completed" // Successfully finished
+  | "failed" // Execution failed
+  | "skipped"; // Skipped due to condition
 
 /**
  * Runtime state for a task during execution
@@ -378,10 +382,10 @@ export function extractPromptVariables(prompt: string): PromptVariable[] {
   const singleBracePattern = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
   // Capture inner content which may contain "name:default"
   const doubleBracePattern = /\{\{([^}]+)\}\}/g;
-  
+
   const variables: PromptVariable[] = [];
   const seen = new Set<string>();
-  
+
   let match;
   while ((match = singleBracePattern.exec(prompt)) !== null) {
     const name = match[1];
@@ -390,7 +394,7 @@ export function extractPromptVariables(prompt: string): PromptVariable[] {
       variables.push({ name, required: true });
     }
   }
-  
+
   while ((match = doubleBracePattern.exec(prompt)) !== null) {
     const inner = match[1].trim();
     if (!inner) continue;
@@ -411,7 +415,7 @@ export function extractPromptVariables(prompt: string): PromptVariable[] {
       }
     }
   }
-  
+
   return variables;
 }
 
@@ -420,11 +424,11 @@ export function extractPromptVariables(prompt: string): PromptVariable[] {
  */
 export function generateInputFormFromPrompt(
   prompt: string,
-  title: string
+  title: string,
 ): WorkflowInputForm | null {
   const variables = extractPromptVariables(prompt);
   if (variables.length === 0) return null;
-  
+
   const fields: WorkflowInputField[] = variables.map((variable) => {
     // Convert variable name to label
     let label = variable.name
@@ -433,13 +437,13 @@ export function generateInputFormFromPrompt(
       .replace(/([A-Z])/g, " $1")
       .replace(/\s+/g, " ")
       .trim();
-    
+
     // Capitalize first letter of each word
     label = label
       .split(" ")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
       .join(" ");
-    
+
     // Determine field type based on name
     let type: "text" | "url" | "number" = "text";
     const nameLower = variable.name.toLowerCase();
@@ -448,7 +452,7 @@ export function generateInputFormFromPrompt(
     } else if (nameLower.includes("count") || nameLower.includes("number")) {
       type = "number";
     }
-    
+
     return {
       name: variable.name,
       label,
@@ -460,7 +464,7 @@ export function generateInputFormFromPrompt(
       defaultValue: variable.defaultValue,
     };
   });
-  
+
   return {
     title,
     description: `Please provide the following information`,
@@ -473,42 +477,69 @@ export function generateInputFormFromPrompt(
  * Parse a task_config.yaml style object into AgentSkill array
  */
 export function parseTaskConfigObject(
-  config: Record<string, { tasks: Array<{ display_text: string; llm_prompt: string; subagent: string }> }>,
-  ownerId: string = "system"
+  config: Record<
+    string,
+    {
+      tasks: Array<{
+        display_text: string;
+        llm_prompt: string;
+        subagent: string;
+      }>;
+    }
+  >,
+  ownerId: string = "system",
 ): AgentSkill[] {
   const now = new Date();
-  
+
   return Object.entries(config).map(([name, value]) => {
     // Infer category from name
     let category: AgentSkillCategory = "Custom";
-    if (name.toLowerCase().includes("github") || name.toLowerCase().includes("repo")) {
+    if (
+      name.toLowerCase().includes("github") ||
+      name.toLowerCase().includes("repo")
+    ) {
       category = "GitHub Operations";
-    } else if (name.toLowerCase().includes("aws") || name.toLowerCase().includes("ec2") || name.toLowerCase().includes("eks") || name.toLowerCase().includes("s3")) {
+    } else if (
+      name.toLowerCase().includes("aws") ||
+      name.toLowerCase().includes("ec2") ||
+      name.toLowerCase().includes("eks") ||
+      name.toLowerCase().includes("s3")
+    ) {
       category = "AWS Operations";
-    } else if (name.toLowerCase().includes("argocd") || name.toLowerCase().includes("deploy")) {
+    } else if (
+      name.toLowerCase().includes("argocd") ||
+      name.toLowerCase().includes("deploy")
+    ) {
       category = "ArgoCD Operations";
-    } else if (name.toLowerCase().includes("llm") || name.toLowerCase().includes("api key") || name.toLowerCase().includes("aigateway")) {
+    } else if (
+      name.toLowerCase().includes("llm") ||
+      name.toLowerCase().includes("api key") ||
+      name.toLowerCase().includes("aigateway")
+    ) {
       category = "AI Gateway Operations";
-    } else if (name.toLowerCase().includes("group") || name.toLowerCase().includes("user")) {
+    } else if (
+      name.toLowerCase().includes("group") ||
+      name.toLowerCase().includes("user")
+    ) {
       category = "Group Management";
     }
-    
+
     // Extract env vars from prompts
     const envVarPattern = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
     const envVars = new Set<string>();
-    value.tasks.forEach(task => {
+    value.tasks.forEach((task) => {
       let match;
       while ((match = envVarPattern.exec(task.llm_prompt)) !== null) {
         envVars.add(match[1]);
       }
     });
-    
+
     return {
       id: `config-${name.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}`,
       name,
       description: `Workflow for: ${name}`,
       category,
-      tasks: value.tasks.map(task => ({
+      tasks: value.tasks.map((task) => ({
         display_text: task.display_text,
         llm_prompt: task.llm_prompt,
         subagent: task.subagent as AgentSkillSubagent,

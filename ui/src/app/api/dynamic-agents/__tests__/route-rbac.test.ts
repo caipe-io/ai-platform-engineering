@@ -25,6 +25,8 @@ const mockGetPlatformDefaultAgentId = jest.fn();
 const mockFilterAgentsByOwnershipScopeForSession = jest.fn();
 const mockResolveUnlinkedServiceAccountSub = jest.fn();
 const mockResolveUnlinkedServiceAccountGrantState = jest.fn();
+const mockValidatePersistedAgentMcpDependencies = jest.fn();
+const mockValidatePersistedAgentResourceDependencies = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -112,6 +114,13 @@ jest.mock("@/lib/rbac/agent-ownership-scope", () => ({
     mockFilterAgentsByOwnershipScopeForSession(...args),
 }));
 
+jest.mock("@/lib/rbac/agent-mcp-dependency-scope", () => ({
+  validatePersistedAgentMcpDependencies: (...args: unknown[]) =>
+    mockValidatePersistedAgentMcpDependencies(...args),
+  validatePersistedAgentResourceDependencies: (...args: unknown[]) =>
+    mockValidatePersistedAgentResourceDependencies(...args),
+}));
+
 jest.mock("@/lib/rbac/unlinked-service-account", () => ({
   resolveUnlinkedServiceAccountSub: (...args: unknown[]) => mockResolveUnlinkedServiceAccountSub(...args),
   resolveUnlinkedServiceAccountGrantState: (...args: unknown[]) =>
@@ -148,6 +157,7 @@ describe("dynamic agents RBAC routes", () => {
     mockRequireResourcePermission.mockResolvedValue(undefined);
     mockRequireAgentPermission.mockResolvedValue(undefined);
     mockCanTransferResourceOwnership.mockResolvedValue(true);
+    mockValidatePersistedAgentMcpDependencies.mockResolvedValue(undefined);
     mockReconcileAgentRelationships.mockResolvedValue(undefined);
     mockDeleteAllAgentToolTuples.mockResolvedValue(undefined);
     mockWriteOpenFgaTuples.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
@@ -739,7 +749,7 @@ describe("dynamic agents RBAC routes", () => {
     );
     // The persisted shared_with_teams should be canonical slugs only.
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-shared-agent" },
+      expect.objectContaining({ _id: "agent-shared-agent" }),
       expect.objectContaining({
         $set: expect.objectContaining({ shared_with_teams: ["sre"] }),
       }),
@@ -1001,6 +1011,140 @@ describe("dynamic agents RBAC routes", () => {
     expect(insertOne).toHaveBeenCalledWith(
       expect.objectContaining({ visibility: "private", shared_with_teams: [] }),
     );
+  });
+
+  it("rejects an agent before persistence when an MCP dependency has a narrower audience", async () => {
+    const insertOne = jest.fn();
+    mockValidatePersistedAgentMcpDependencies.mockRejectedValueOnce(
+      Object.assign(new Error("MCP dependency scope mismatch"), {
+        statusCode: 400,
+        code: "PRIVATE_RESOURCE_DEPENDENCY_DENIED",
+      }),
+    );
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(null),
+      insertOne,
+    });
+    const { POST } = await import("../route");
+
+    const response = await POST(request("/api/dynamic-agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Shared Helper",
+        system_prompt: "Help the team",
+        model: { id: "example-model", provider: "example-provider" },
+        visibility: "private",
+        allowed_tools: { "mcp-private": true },
+      }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(insertOne).not.toHaveBeenCalled();
+    expect(mockReconcileAgentRelationships).not.toHaveBeenCalled();
+  });
+
+  it("converts a team-owned agent to private without conflicting Mongo update paths", async () => {
+    const existingAgent = {
+      _id: "agent-personal-helper",
+      name: "Personal Helper",
+      owner_team_slug: "primary",
+      owner_team_id: "primary-id",
+      owner_subject: "alice-sub",
+      shared_with_teams: [],
+      allowed_tools: {},
+      visibility: "team",
+    };
+    const findOneAndUpdate = jest.fn().mockResolvedValue({
+      ...existingAgent,
+      owner_team_slug: undefined,
+      owner_team_id: undefined,
+      visibility: "private",
+    });
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(existingAgent),
+      findOneAndUpdate,
+    });
+    const { PUT } = await import("../route");
+
+    const response = await PUT(
+      request("/api/dynamic-agents?id=agent-personal-helper", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility: "private" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "agent-personal-helper" }),
+      {
+        $set: expect.objectContaining({
+          visibility: "private",
+          shared_with_teams: [],
+        }),
+        $unset: expect.objectContaining({ owner_team_slug: "", owner_team_id: "" }),
+      },
+      { returnDocument: "after" },
+    );
+    const mongoUpdate = findOneAndUpdate.mock.calls[0][1] as {
+      $set: Record<string, unknown>;
+    };
+    expect(mongoUpdate.$set).not.toHaveProperty("owner_team_slug");
+    expect(mongoUpdate.$set).not.toHaveProperty("owner_team_id");
+    expect(findOneAndUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      mockReconcileAgentRelationships.mock.invocationCallOrder[0],
+    );
+    expect(findOneAndUpdate.mock.calls[0][1]).toMatchObject({
+      $set: { authz_revision: 1, authz_sync_state: "pending" },
+    });
+    expect(findOneAndUpdate.mock.calls[1][1]).toMatchObject({
+      $set: { authz_last_synced_revision: 1, authz_sync_state: "ready" },
+    });
+    expect(mockReconcileAgentRelationships).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agent-personal-helper",
+        ownerTeamSlug: null,
+        previousOwnerTeamSlug: "primary",
+        personalOwnerAccess: true,
+      }),
+    );
+  });
+
+  it("keeps a failed private transition in a retriable authorization error state", async () => {
+    const existingAgent = {
+      _id: "agent-personal-helper",
+      name: "Personal Helper",
+      owner_team_slug: "primary",
+      owner_subject: "alice-sub",
+      shared_with_teams: [],
+      allowed_tools: {},
+      visibility: "team",
+    };
+    const findOneAndUpdate = jest.fn().mockResolvedValue(existingAgent);
+    mockReconcileAgentRelationships.mockRejectedValueOnce(new Error("OpenFGA unavailable"));
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(existingAgent),
+      findOneAndUpdate,
+    });
+    const { PUT } = await import("../route");
+
+    const response = await PUT(request("/api/dynamic-agents?id=agent-personal-helper", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ visibility: "private" }),
+    }));
+
+    expect(response.status).toBe(500);
+    expect(findOneAndUpdate.mock.calls[0][1]).toMatchObject({
+      $set: { authz_sync_state: "pending" },
+    });
+    expect(findOneAndUpdate.mock.calls[1][1]).toMatchObject({
+      $set: {
+        authz_sync_state: "error",
+        authz_last_error_code: "OPENFGA_RECONCILIATION_FAILED",
+      },
+    });
   });
 
   it("rejects private agent creation while the rollout flag is disabled", async () => {

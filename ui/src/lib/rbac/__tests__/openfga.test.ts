@@ -30,6 +30,7 @@ import {
   isOpenFgaReconciliationEnabled,
   readOpenFgaTuples,
   resetOpenFgaStoreIdCacheForTests,
+  verifyOpenFgaTupleDiff,
   writeOpenFgaTupleDiff,
   writeUniversalRebacTupleDiff,
 } from "../openfga";
@@ -618,6 +619,37 @@ describe("OpenFGA team resource tuple reconciliation", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({
       page_size: 100,
     });
+  });
+
+  it("verifies writes and deletes with higher-consistency tuple reads", async () => {
+    process.env.OPENFGA_RECONCILE_ENABLED = "true";
+    process.env.OPENFGA_HTTP = "http://openfga:8080";
+    process.env.OPENFGA_STORE_NAME = "caipe-openfga";
+    const written = { user: "user:alice", relation: "owner", object: "agent:example" };
+    const deleted = { user: "team:primary#member", relation: "user", object: "agent:example" };
+    const fetchMock = jest.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/stores")) {
+        return { ok: true, json: async () => ({ stores: [{ id: "store-1", name: "caipe-openfga" }] }) };
+      }
+      const body = JSON.parse(String(init?.body));
+      return {
+        ok: true,
+        json: async () => ({
+          tuples: body.tuple_key.user === written.user ? [{ key: written }] : [],
+        }),
+      };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(verifyOpenFgaTupleDiff({
+      writes: [written],
+      deletes: [deleted],
+    })).resolves.toBeUndefined();
+    for (const [, init] of fetchMock.mock.calls.slice(1)) {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        consistency: "HIGHER_CONSISTENCY",
+      });
+    }
   });
 
   it("builds universal relationship tuple diffs using base writable relations", () => {

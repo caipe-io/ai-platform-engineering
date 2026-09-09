@@ -8,10 +8,12 @@ const mockWriteOpenFgaTupleDiff = jest.fn();
 const mockIsOpenFgaReconciliationEnabled = jest.fn();
 const mockEmitReconcileAudit = jest.fn();
 const mockInvalidateDecisionCache = jest.fn();
+const mockVerifyOpenFgaTupleDiff = jest.fn();
 
 jest.mock("@/lib/rbac/openfga", () => ({
   writeOpenFgaTupleDiff: (...args: unknown[]) => mockWriteOpenFgaTupleDiff(...args),
   isOpenFgaReconciliationEnabled: () => mockIsOpenFgaReconciliationEnabled(),
+  verifyOpenFgaTupleDiff: (...args: unknown[]) => mockVerifyOpenFgaTupleDiff(...args),
 }));
 
 jest.mock("../audit", () => ({
@@ -37,6 +39,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockIsOpenFgaReconciliationEnabled.mockReturnValue(true);
   mockWriteOpenFgaTupleDiff.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
+  mockVerifyOpenFgaTupleDiff.mockResolvedValue(undefined);
 });
 
 describe("reconcileTupleDiff", () => {
@@ -53,6 +56,23 @@ describe("reconcileTupleDiff", () => {
       result,
       expect.objectContaining({ source: "mcp_server_create" }),
     );
+  });
+
+  it("verifies the intended tuple state at higher consistency when requested", async () => {
+    const diff = { writes: [sampleWrite], deletes: [] };
+
+    await reconcileTupleDiff(diff, { verifyHigherConsistency: true });
+
+    expect(mockVerifyOpenFgaTupleDiff).toHaveBeenCalledWith(diff);
+  });
+
+  it("fails closed when higher-consistency verification fails", async () => {
+    mockVerifyOpenFgaTupleDiff.mockRejectedValue(new Error("verification lag"));
+
+    await expect(reconcileTupleDiff(
+      { writes: [sampleWrite], deletes: [] },
+      { verifyHigherConsistency: true },
+    )).rejects.toThrow("verification lag");
   });
 
   it("does not invalidate cache when the filtered diff is a no-op", async () => {

@@ -110,6 +110,24 @@ describe("filterAccessibleWorkflowConfigs", () => {
     expect(mockAuthorizeMany).not.toHaveBeenCalled();
   });
 
+  it("does not let the org-admin bypass restore an unreconciled workflow", async () => {
+    mockAuthorize.mockResolvedValueOnce(ALLOW);
+    const pendingConfigs = [
+      { _id: "wf-ready", authz_sync_state: "ready", authz_revision: 2, authz_last_synced_revision: 2 },
+      { _id: "wf-pending", authz_sync_state: "pending", authz_revision: 3, authz_last_synced_revision: 2 },
+    ];
+
+    const out = await filterAccessibleWorkflowConfigs(
+      session,
+      pendingConfigs,
+      getId,
+      "read",
+    );
+
+    expect(out).toEqual([pendingConfigs[0]]);
+    expect(mockAuthorizeMany).not.toHaveBeenCalled();
+  });
+
   it("filters non-admins to the accessible subset via one batch call", async () => {
     mockAuthorize.mockResolvedValueOnce(DENY); // not admin
     mockAuthorizeMany.mockResolvedValue(

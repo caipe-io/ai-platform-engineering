@@ -2,6 +2,9 @@
  * TypeScript types for Dynamic Agents feature.
  */
 
+import type { AuthzSyncMetadata } from "./authz-sync";
+export type { AuthzSyncMetadata, AuthzSyncState } from "./authz-sync";
+
 // =============================================================================
 // Enums
 // =============================================================================
@@ -34,7 +37,7 @@ export type LegacyVisibilityType = VisibilityType;
 // MCP Server Types
 // =============================================================================
 
-export interface MCPServerConfig {
+export interface MCPServerConfig extends AuthzSyncMetadata {
   _id: string;
   name: string;
   description?: string;
@@ -390,7 +393,7 @@ export type ResumeData =
   | { type: "tool_approval"; decision: "edit"; edited_args: Record<string, unknown> }
   | { type: "tool_approval"; decisions: Array<{ decision: string; tool_name?: string; edited_args?: Record<string, unknown> }> };
 
-export interface DynamicAgentConfig {
+export interface DynamicAgentConfig extends AuthzSyncMetadata {
   _id: string;
   name: string;
   description?: string;

@@ -10,12 +10,14 @@ const mockListUserTeamSlugs = jest.fn();
 const mockGetCollection = jest.fn();
 
 jest.mock("@/lib/rbac/resource-authz", () => ({
-  requireResourcePermission: (...args: unknown[]) => mockRequireResourcePermission(...args),
+  requireResourcePermission: (...args: unknown[]) =>
+    mockRequireResourcePermission(...args),
   subjectFromSession: () => "alice-sub",
 }));
 
 jest.mock("@/lib/rbac/openfga-owned-resources-reconcile", () => ({
-  reconcileShareableResource: (...args: unknown[]) => mockReconcileShareableResource(...args),
+  reconcileShareableResource: (...args: unknown[]) =>
+    mockReconcileShareableResource(...args),
 }));
 
 jest.mock("@/lib/rbac/openfga-team-membership", () => ({
@@ -38,7 +40,11 @@ import {
 describe("workflow-config-rebac", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockReconcileShareableResource.mockResolvedValue({ enabled: true, writes: 2, deletes: 0 });
+    mockReconcileShareableResource.mockResolvedValue({
+      enabled: true,
+      writes: 2,
+      deletes: 0,
+    });
     mockListUserTeamSlugs.mockResolvedValue(["platform-eng"]);
   });
 
@@ -84,7 +90,11 @@ describe("workflow-config-rebac", () => {
     it("allows any user for global workflows", () => {
       expect(
         workflowRunAllowedByVisibility(
-          { visibility: "global", shared_with_teams: null, owner_id: "owner@example.com" },
+          {
+            visibility: "global",
+            shared_with_teams: null,
+            owner_id: "owner@example.com",
+          },
           "bob@example.com",
           [],
         ),
@@ -94,7 +104,12 @@ describe("workflow-config-rebac", () => {
     it("allows any user for system-seeded workflows without a visibility field", () => {
       expect(
         workflowRunAllowedByVisibility(
-          { visibility: undefined, shared_with_teams: null, owner_id: "system", config_driven: true },
+          {
+            visibility: undefined,
+            shared_with_teams: null,
+            owner_id: "system",
+            config_driven: true,
+          },
           "bob@example.com",
           [],
         ),
@@ -165,19 +180,43 @@ describe("workflow-config-rebac", () => {
     it("allows only the owner for private workflows", () => {
       expect(
         workflowRunAllowedByVisibility(
-          { visibility: "private", shared_with_teams: null, owner_id: "alice@example.com" },
+          {
+            visibility: "private",
+            shared_with_teams: null,
+            owner_id: "alice@example.com",
+          },
           "alice@example.com",
           [],
         ),
       ).toBe(true);
       expect(
         workflowRunAllowedByVisibility(
-          { visibility: "private", shared_with_teams: null, owner_id: "alice@example.com" },
+          {
+            visibility: "private",
+            shared_with_teams: null,
+            owner_id: "alice@example.com",
+          },
           "bob@example.com",
           [],
         ),
       ).toBe(false);
     });
+  });
+
+  it("fails closed when workflow authorization reconciliation is pending", async () => {
+    await expect(
+      requireWorkflowConfigRunAccess(
+        { sub: "alice-sub" },
+        {
+          _id: "wf-pending",
+          owner_id: "alice@example.com",
+          visibility: "private",
+          authz_sync_state: "pending",
+        },
+        "alice@example.com",
+        [],
+      ),
+    ).rejects.toMatchObject({ statusCode: 503, code: "AUTHZ_SYNC_PENDING" });
   });
 
   it("skips OpenFGA when global visibility allows run", async () => {
@@ -199,7 +238,9 @@ describe("workflow-config-rebac", () => {
   });
 
   it("allows the documented owner when OpenFGA use is denied", async () => {
-    mockRequireResourcePermission.mockRejectedValue(new ApiError("denied", 403));
+    mockRequireResourcePermission.mockRejectedValue(
+      new ApiError("denied", 403),
+    );
 
     await expect(
       requireWorkflowConfigRunAccess(
@@ -221,7 +262,11 @@ describe("workflow-config-rebac", () => {
   it("allows write only for the workflow owner (not system-owned)", () => {
     expect(
       workflowWriteAllowedByVisibility(
-        { visibility: "global", shared_with_teams: null, owner_id: "alice@example.com" },
+        {
+          visibility: "global",
+          shared_with_teams: null,
+          owner_id: "alice@example.com",
+        },
         "alice@example.com",
       ),
     ).toBe(true);
@@ -233,7 +278,11 @@ describe("workflow-config-rebac", () => {
     ).toBe(false);
     expect(
       workflowWriteAllowedByVisibility(
-        { visibility: "global", shared_with_teams: null, owner_id: "other@example.com" },
+        {
+          visibility: "global",
+          shared_with_teams: null,
+          owner_id: "other@example.com",
+        },
         "alice@example.com",
       ),
     ).toBe(false);
@@ -261,7 +310,11 @@ describe("workflow-config-rebac", () => {
       },
     ];
 
-    const visible = filterWorkflowConfigsByRunAccess(configs, "bob@example.com", ["platform-eng"]);
+    const visible = filterWorkflowConfigsByRunAccess(
+      configs,
+      "bob@example.com",
+      ["platform-eng"],
+    );
     expect(visible.map((c) => c._id)).toEqual(["wf-global", "wf-team"]);
   });
 });

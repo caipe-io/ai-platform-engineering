@@ -159,4 +159,23 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     expect(option).not.toHaveTextContent("user:*");
     expect(option).not.toHaveTextContent("OpenFGA");
   });
+
+  it("shows authorization reconciliation beside the agent builder", async () => {
+    mockFetch(null);
+    render(
+      <DynamicAgentEditor
+        agent={{
+          ...editAgent,
+          authz_sync_state: "ready",
+          authz_revision: 2,
+          authz_last_synced_revision: 2,
+        }}
+        onCancel={jest.fn()}
+        onSave={jest.fn()}
+      />,
+    );
+    await flushAsync();
+
+    expect(screen.getByRole("status")).toHaveTextContent("Access synced");
+  });
 });

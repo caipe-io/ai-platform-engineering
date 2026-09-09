@@ -107,6 +107,7 @@ export interface AgentToolTupleDiffInput {
 
 export interface ReconcileAgentToolTuplesInput extends AgentToolTupleDiffInput {
   failClosed?: boolean;
+  verifyHigherConsistency?: boolean;
 }
 
 const OPENFGA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
@@ -365,6 +366,7 @@ export async function reconcileAgentRelationships(
     return await reconcileTupleDiff(diff, {
       caller: input.ownerSubject ? { type: "user", id: input.ownerSubject } : undefined,
       source: "agent_relationship_reconcile",
+      verifyHigherConsistency: input.verifyHigherConsistency,
     });
   } catch (error) {
     if (input.failClosed ?? true) {
