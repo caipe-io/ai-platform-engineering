@@ -8488,6 +8488,21 @@ BANNER
     fi
     kubectl apply -f "$_ollama_yaml" 2>&1 \
       | grep -v "^$" | while IFS= read -r line; do log "$line"; done
+
+    # deploy/kind/ollama.yaml reads OPENAI_MODEL_NAME/EMBEDDINGS_MODEL from
+    # llm-secret. In LiteLLM proxy mode _finalize_litellm_mode has already
+    # rewritten those to the proxy aliases (caipe-chat / caipe-embeddings), so
+    # the pod would `ollama pull caipe-chat` (fails) and its readiness probe
+    # `ollama show caipe-chat` would loop forever. Pin the pod's env to the real
+    # Ollama model names instead.
+    if $LLM_VIA_LITELLM; then
+      local _real_embed="${LITELLM_EMBED_MODEL_REAL:-${EMBEDDINGS_MODEL:-}}"
+      kubectl set env deployment/ollama -n caipe --containers='*' \
+        "OPENAI_MODEL_NAME=${OLLAMA_MODEL}" \
+        ${_real_embed:+"EMBEDDINGS_MODEL=${_real_embed}"} >/dev/null 2>&1 \
+        && log "Ollama pod pinned to real model '${OLLAMA_MODEL}' (llm-secret holds the LiteLLM alias)"
+    fi
+
     log "Waiting for Ollama to be ready (model pull may take several minutes on first run)..."
     kubectl rollout status deployment/ollama -n caipe --timeout=10m 2>&1 \
       | while IFS= read -r line; do log "$line"; done
