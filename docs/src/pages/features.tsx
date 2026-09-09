@@ -64,6 +64,19 @@ const FEATURES = [
     ],
   },
   {
+    title: 'External Apps',
+    icon: '🧩',
+    color: '#9333ea',
+    to: '/docs/features/agentic-apps',
+    items: [
+      'Publish independently deployed web apps in the CAIPE Apps hub',
+      'Reuse the signed-in CAIPE session for app-scoped access',
+      'Protect routes with explicit roles and token scopes',
+      'Keep app data, UI, and domain authorization independent',
+      'Same-origin hosting with a short-lived identity token per request',
+    ],
+  },
+  {
     title: 'Credentials & Secrets',
     icon: '🔑',
     color: '#0d9488',
@@ -99,6 +112,32 @@ const FEATURES = [
       'Share chat with teams · Archive/Delete chats',
       'Agent Builder',
       'Skills Gateway — AI Assist, API access, security scanner, GitHub crawling',
+    ],
+  },
+  {
+    title: 'Skills',
+    icon: '🧰',
+    color: '#7c3aed',
+    to: '/docs/features/skills/',
+    items: [
+      'Browse and reuse focused procedures stored as SKILL.md files',
+      'Import, revise, and attach skills to agents',
+      'Scan skills for prompt injection and unsafe tool behavior',
+      'Use scan gates to warn or block flagged skills',
+      'Install catalog skills into supported coding agents through the Gateway',
+    ],
+  },
+  {
+    title: 'Settings & Admin',
+    icon: '⚙️',
+    color: '#475569',
+    to: '/docs/features/admin-settings',
+    items: [
+      'Set personal defaults for chat, agents, appearance, and notifications',
+      'Review platform health and component status',
+      'Manage users, teams, resources, integrations, and credentials',
+      'Review audit, metrics, security policy, and migrations',
+      'Keep administrative controls separate from personal preferences',
     ],
   },
   {
@@ -272,7 +311,9 @@ export default function FeaturesPage() {
             {FEATURES.map((f) => {
               const target = f.title === 'Agent Builder'
                 ? `${currentDocsPrefix}/features/agent-builder`
-                : f.to;
+                : f.to?.startsWith('/docs/')
+                  ? `${currentDocsPrefix}${f.to.slice('/docs'.length)}`
+                  : f.to;
               const card = (
                 <div key={f.title} className={styles.card} style={target ? {cursor: 'pointer'} : undefined}>
                   <div className={styles.cardHeader} style={{'--card-color': f.color} as React.CSSProperties}>

@@ -150,7 +150,7 @@ Key fields for security architects:
 | PDP outage fail-open | AgentGateway `extAuthz.failureMode.denyWithStatus=403` fails closed if OpenFGA/bridge is unavailable |
 | AgentGateway admin exposure | Only the data-plane listener (`4000`) should be ingress-exposed; the admin listener (`15000`) remains private inside the cluster |
 | Unlinked Slack/Webex users bypassing RBAC | Bot runtime gates block unlinked users before any backend agent is called |
-| `AUTH_ENABLED=false` in production | Startup log emits a `WARNING` when auth is disabled; also documented in [Architecture › Dynamic Agents env vars](./architecture.md#key-environment-variables-2) |
+| `AUTH_ENABLED=false` in production | Startup log emits a `WARNING` when auth is disabled; also documented in [RBAC architecture](./architecture.md#key-environment-variables) |
 | Bootstrap admin left permanently enabled | No automatic enforcement — documented operational risk; must be removed post-setup |
 
 ---

@@ -8,17 +8,17 @@ OpenFGA authorization service for CAIPE relationship-based access control
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install openfga oci://ghcr.io/cnoe-io/charts/openfga --version 0.5.68
+helm install openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade openfga oci://ghcr.io/cnoe-io/charts/openfga --version 0.5.68
+helm upgrade openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install openfga oci://ghcr.io/cnoe-io/charts/openfga --version 0.5.68 \
+helm install openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install openfga oci://ghcr.io/cnoe-io/charts/openfga --version 0.5.68 \
+helm install openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/openfga --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -72,6 +72,12 @@ helm show values oci://ghcr.io/cnoe-io/charts/openfga --version 0.5.68
 | init.image.pullPolicy | string | `"IfNotPresent"` |  |
 | init.image.repository | string | `"python"` |  |
 | init.image.tag | string | `"3.13-slim"` |  |
+| init.platformClient.clientId | string | `"caipe-platform"` |  |
+| init.platformClient.clientSecretRef.key | string | `"OIDC_CLIENT_SECRET"` |  |
+| init.platformClient.clientSecretRef.name | string | `""` |  |
+| init.platformClient.enabled | bool | `false` |  |
+| init.platformClient.orgObject | string | `"organization:caipe"` |  |
+| init.platformClient.tokenUrl | string | `""` |  |
 | init.seedSub | string | `""` |  |
 | init.seedTuples | list | `[]` |  |
 | init.storeName | string | `"caipe-openfga"` |  |

@@ -12,6 +12,19 @@ organizational knowledge, reusable skills, and runtime guardrails.
 [Dynamic Agents Helm chart](../installation/helm-charts/ai-platform-engineering/dynamic-agents-chart) ·
 [Developer guide](../development/creating-an-agent)
 
+## What you can do
+
+- Create an agent for a focused job, such as answering team questions or
+  investigating an operational issue.
+- Give it a clear identity, instructions, model, approved tools, knowledge,
+  and reusable skills.
+- Test changes immediately in Chat before sharing the agent with a team.
+- Limit who can discover, use, or manage the agent with team or global sharing.
+
+Agent Builder is the no-code path for managed agents. Choose the [developer
+guide](../development/creating-an-agent.md) when you need to package an agent
+as application code or control its deployment yourself.
+
 ## Watch the demo
 
 <a href="https://app.vidcast.io/share/70f22189-0a44-42d3-b601-b5730504a8e3">
@@ -71,6 +84,9 @@ the caller's access to both the agent and the resources it uses.
 
 ## Build an agent
 
+To create an agent, open **Agents → Create Agent**, complete the steps below,
+and select **Create Agent**. You can return to earlier steps before saving.
+
 Agent Builder guides you through six steps:
 
 | Step | Configure |
@@ -84,6 +100,20 @@ Agent Builder guides you through six steps:
 
 After you save an agent, you can test it in chat without redeploying the runtime.
 You can also clone it, enable or disable it, and export it as YAML.
+
+### A practical first agent
+
+1. Give the agent a specific name and describe the job it should perform.
+2. Write instructions that define its role, boundaries, and expected response.
+3. Select a model and add only the tools it needs.
+4. Attach a data source or collection when answers should use organizational
+   information.
+5. Add a skill when the agent should follow a repeatable procedure.
+6. Save it, test a representative request in Chat, then share it with the
+   intended team.
+
+Start with the smallest useful capability set. You can add tools, knowledge,
+and skills later without rebuilding the agent.
 
 ## Knowledge and tool scope
 

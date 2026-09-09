@@ -46,7 +46,7 @@ Or via Helm directly:
 ```bash
 helm upgrade --install ai-platform-engineering \
     oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \
-    --version 0.4.8 -f your-values.yaml
+    --version 1.0.0 -f your-values.yaml
 ```
 
 See [Getting Started → Quick Start](/docs/getting-started/quick-start) for a full walkthrough.

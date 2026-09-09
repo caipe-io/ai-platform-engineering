@@ -8,6 +8,32 @@ reusable collections, and resource-level access control.
 [Architecture](architecture.md) · [Ingestors](ingestors.md) ·
 [MCP tools](mcp-tools.md) · [Authentication](authentication-overview.md)
 
+## What you can do
+
+- Bring files, web pages, and connected collaboration sources into one search
+  experience.
+- Search across the content you are allowed to read, using meaning and exact
+  terms together.
+- Group related sources into collections so agents can reuse a stable scope.
+- Attach a source or collection to an agent in Agent Builder.
+- Explore relationships between entities when Graph RAG is enabled.
+
+## A practical workflow
+
+1. Open **Knowledge Bases → Data Sources** and add a source, or ask an operator
+   to enable a deployment-managed ingestor.
+2. Wait for ingestion to finish, then use **Search** to confirm the content and
+   metadata look right.
+3. Create a **Collection** when several sources belong together or should be
+   reused by multiple agents.
+4. Share the source or collection with the people and teams who should search
+   it. Search access is separate from who manages ingestion.
+5. In [Agent Builder](../features/agent-builder.md), select the source or
+   collection in the **Knowledge** step and test the agent with a real question.
+
+If a result is missing, check ingestion status and your search access first.
+Selecting knowledge for an agent does not grant a person access to that data.
+
 ## Watch the demo
 
 <a href="https://app.vidcast.io/share/e4c72165-7164-4dde-9e3d-7f0087b6bc13">

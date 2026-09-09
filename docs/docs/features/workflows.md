@@ -12,6 +12,29 @@ a failure policy to each step, and records the complete run timeline.
 [CAIPE UI Helm chart](../installation/helm-charts/ai-platform-engineering/caipe-ui-chart) ·
 [Workflow RBAC](../security/rbac/workflows)
 
+## When to use a workflow
+
+Use a workflow when a task has several predictable stages, needs a handoff
+between agents, or should pause for a person before continuing. Examples
+include gathering release evidence, reviewing it, and publishing a summary;
+or collecting an approval before a change is made.
+
+## Create and run a workflow
+
+1. Open **Workflows** and choose **Create Workflow**.
+2. Add the agents in the order they should run and give each step a focused
+   prompt.
+3. Decide what should happen when a step fails: stop, skip, or retry.
+4. Add an approval or input step when a person must review the work.
+5. Save the workflow, then run it from the UI or expose it to an agent with
+   the `workflows` built-in tool.
+6. Open the run timeline to review responses, tool calls, approvals, errors,
+   and generated files.
+
+Workflows coordinate existing agents; they do not copy their instructions or
+permissions. The person or service starting the run must have access to both
+the workflow and the agents or resources it uses.
+
 ## How it works
 
 ```mermaid

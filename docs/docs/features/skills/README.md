@@ -10,6 +10,19 @@ A CAIPE skill is a reusable `SKILL.md` file that describes one focused
 capability such as reviewing a pull request, preparing a release, or
 investigating an incident.
 
+## What you can do
+
+- **Find a procedure:** browse the Skills Gallery and read its description and
+  scan status before using it.
+- **Use it in Chat:** attach an approved skill to an agent in Agent Builder.
+- **Make it yours:** clone or import a skill, edit its instructions, and keep a
+  version that fits your team's process.
+- **Share it safely:** use scanning to identify prompt injection or unsafe tool
+  behavior before the skill reaches an agent.
+
+The Gallery is for skills used inside CAIPE. The Skills Gateway is for
+installing catalog skills into supported coding agents outside the CAIPE UI.
+
 ## Where Skills Are Used
 
 | Surface | Purpose |
