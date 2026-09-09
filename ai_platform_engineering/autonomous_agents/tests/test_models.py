@@ -4,12 +4,13 @@ import pytest
 
 from autonomous_agents.models import (
     CronTrigger,
-    GitHubWebhookFilter,
     IntervalTrigger,
     TaskDefinition,
     TaskRun,
     TaskStatus,
     TriggerType,
+    WebhookDeliveryFilter,
+    WebhookFilterCondition,
     WebhookTrigger,
 )
 
@@ -43,33 +44,50 @@ class TestTriggerTypes:
         trigger_no_secret = WebhookTrigger()
         assert trigger_no_secret.secret is None
 
-    def test_github_webhook_filter_normalizes_event_and_actions(self):
-        """GitHub filter values are canonical and duplicate actions collapse."""
-        webhook_filter = GitHubWebhookFilter(
-            event=" Pull_Request ",
-            actions=[" Closed ", "closed"],
+    def test_webhook_filter_normalizes_and_deduplicates_values(self):
+        webhook_filter = WebhookDeliveryFilter(
+            conditions=[
+                WebhookFilterCondition(
+                    source="payload",
+                    field=" event.type ",
+                    values=[" closed ", "closed"],
+                )
+            ],
         )
-        trigger = WebhookTrigger(provider="github", filter=webhook_filter)
+        trigger = WebhookTrigger(provider="jira", filter=webhook_filter)
 
         assert trigger.filter is not None
-        assert trigger.filter.event == "pull_request"
-        assert trigger.filter.actions == ["closed"]
+        assert trigger.filter.conditions[0].field == "event.type"
+        assert trigger.filter.conditions[0].values == ["closed"]
 
-    def test_github_webhook_filter_rejects_invalid_names(self):
-        """Invalid event/action syntax fails instead of silently never matching."""
-        with pytest.raises(ValueError, match="event may contain only"):
-            GitHubWebhookFilter(event="pull request")
-
-        with pytest.raises(ValueError, match="actions may contain only"):
-            GitHubWebhookFilter(event="pull_request", actions=["closed now"])
-
-    def test_webhook_filter_rejects_non_github_provider(self):
-        """A GitHub-shaped filter must not silently run against Jira payloads."""
-        with pytest.raises(ValueError, match="only for GitHub"):
-            WebhookTrigger(
-                provider="jira",
-                filter=GitHubWebhookFilter(event="pull_request"),
+    def test_webhook_filter_rejects_invalid_fields_and_empty_values(self):
+        with pytest.raises(ValueError, match="dot paths"):
+            WebhookFilterCondition(
+                source="payload", field="event[0]", values=["created"]
             )
+
+        with pytest.raises(ValueError, match="must not be empty"):
+            WebhookFilterCondition(source="header", field="X-Event", values=[" "])
+
+    def test_legacy_github_filter_shape_is_migrated(self):
+        trigger = WebhookTrigger.model_validate(
+            {
+                "provider": "github",
+                "filter": {"event": "pull_request", "actions": ["closed"]},
+            }
+        )
+
+        assert trigger.filter is not None
+        assert trigger.filter.model_dump() == {
+            "conditions": [
+                {
+                    "source": "header",
+                    "field": "X-GitHub-Event",
+                    "values": ["pull_request"],
+                },
+                {"source": "payload", "field": "action", "values": ["closed"]},
+            ]
+        }
 
 
 class TestTaskDefinition:

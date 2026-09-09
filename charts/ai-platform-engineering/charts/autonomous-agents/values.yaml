@@ -139,6 +139,14 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# Webhook providers users may select and invoke. This is an allowlist over the
+# four supported UI providers; adapter definitions alone do not enable one.
+enabledWebhookProviders:
+  - github
+  - jira
+  - slack
+  - pagerduty
+
 # ConfigMap for non-sensitive configuration.
 # SUPERVISOR_URL and DYNAMIC_AGENTS_URL default to in-release Service names in
 # templates/_helpers.tpl. Set either value here only to override that default.

@@ -140,6 +140,17 @@ def _resolve_adapter(task: TaskDefinition) -> WebhookAdapter:
     return get_adapter(task.trigger.provider)
 
 
+def _assert_provider_enabled(task: TaskDefinition) -> None:
+    """Hide webhook endpoints whose provider was disabled at deployment."""
+    if (
+        isinstance(task.trigger, WebhookTrigger)
+        and task.trigger.provider not in get_settings().enabled_webhook_providers
+    ):
+        raise HTTPException(
+            status_code=404, detail=f"No webhook task found for id '{task.id}'"
+        )
+
+
 def _parse_context(body: bytes) -> dict[str, Any]:
     """Best-effort parse request body into a dict context."""
     if not body:
@@ -160,23 +171,41 @@ def _matches_webhook_filter(
 ) -> bool:
     """Return whether a verified delivery satisfies its task filter.
 
-    Filters are evaluated only after provider signature verification. The
-    model currently permits filters only for GitHub, whose event name lives in
-    ``X-GitHub-Event`` and whose action is the payload's top-level ``action``.
+    Filters are evaluated only after provider signature verification. Payload
+    fields are bounded dot paths; no user-provided expression is executed.
     """
     if not isinstance(task.trigger, WebhookTrigger) or task.trigger.filter is None:
         return True
 
-    webhook_filter = task.trigger.filter
-    incoming_event = str(headers.get("X-GitHub-Event", "")).strip().lower()
-    if incoming_event != webhook_filter.event:
-        return False
+    missing = object()
 
-    if webhook_filter.actions:
-        incoming_action = context.get("action")
-        if not isinstance(incoming_action, str):
-            return False
-        if incoming_action.strip().lower() not in webhook_filter.actions:
+    def resolve_payload(path: str) -> Any:
+        value: Any = context
+        for segment in path.split("."):
+            if not isinstance(value, dict) or segment not in value:
+                return missing
+            value = value[segment]
+        return value
+
+    def comparable_values(value: Any) -> list[str]:
+        if value is missing:
+            return []
+        values = value if isinstance(value, list) else [value]
+        comparable: list[str] = []
+        for item in values:
+            if isinstance(item, str):
+                comparable.append(item)
+            elif item is None or isinstance(item, (bool, int, float)):
+                comparable.append(json.dumps(item, separators=(",", ":")))
+        return comparable
+
+    for condition in task.trigger.filter.conditions:
+        incoming = (
+            headers.get(condition.field, missing)
+            if condition.source == "header"
+            else resolve_payload(condition.field)
+        )
+        if not any(value in condition.values for value in comparable_values(incoming)):
             return False
 
     return True
@@ -242,8 +271,8 @@ async def receive_webhook(
     Flow:
 
     1. Look up the webhook task; 404 on unknown ids.
-    2. Resolve the provider adapter (github / slack / pagerduty /
-       generic_hmac / operator-supplied) and verify HMAC + replay-window
+    2. Resolve the enabled provider adapter (GitHub / Jira / Slack / PagerDuty)
+       and verify HMAC + replay-window
        per that adapter's contract when a secret is configured.
     3. Short-circuit provider-recognised ping deliveries with HTTP 200
        (no run, no row) — e.g. GitHub's ``X-GitHub-Event: ping``.
@@ -257,6 +286,7 @@ async def receive_webhook(
     task = get_webhook_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"No webhook task found for id '{task_id}'")
+    _assert_provider_enabled(task)
     adapter = _resolve_adapter(task)
 
     settings = get_settings()

@@ -13,11 +13,16 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { MultiSelect } from "@/components/ui/multi-select";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
-import type { AutonomousTask, TaskFormState, TaskSaveResult, TriggerType } from "./types";
+import type {
+  AutonomousTask,
+  TaskFormState,
+  TaskSaveResult,
+  TriggerType,
+  WebhookProvider,
+} from "./types";
 import {
   DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS,
   formatScheduleInterval,
@@ -26,7 +31,14 @@ import {
 } from "./formState";
 import { WebhookSetupStep } from "./WebhookSetupStep";
 
-const WEBHOOK_PROVIDER_OPTIONS = [
+export const DEFAULT_WEBHOOK_PROVIDER_OPTIONS: WebhookProvider[] = [
+  "github",
+  "jira",
+  "slack",
+  "pagerduty",
+];
+
+const WEBHOOK_PROVIDER_OPTIONS: Array<{ value: WebhookProvider; label: string }> = [
   { value: "github", label: "GitHub" },
   { value: "jira", label: "Jira" },
   { value: "slack", label: "Slack" },
@@ -36,84 +48,12 @@ const WEBHOOK_PROVIDER_OPTIONS = [
 const GITHUB_WEBHOOK_DOCS_URL =
   "https://docs.github.com/en/webhooks/webhook-events-and-payloads";
 
-interface GitHubEventOption {
-  value: string;
-  label: string;
-  /** null means GitHub permits caller-defined action values. */
-  actions: readonly string[] | null;
-}
-
-// GitHub has no API that enumerates valid webhook event/action combinations.
-// Keep common repository events here and retain an "Other event" escape hatch;
-// the linked GitHub catalogue remains the source of truth.
-const GITHUB_EVENT_OPTIONS: readonly GitHubEventOption[] = [
-  {
-    value: "pull_request",
-    label: "Pull request",
-    actions: [
-      "assigned",
-      "auto_merge_disabled",
-      "auto_merge_enabled",
-      "closed",
-      "converted_to_draft",
-      "demilestoned",
-      "dequeued",
-      "edited",
-      "enqueued",
-      "labeled",
-      "locked",
-      "milestoned",
-      "opened",
-      "ready_for_review",
-      "reopened",
-      "review_request_removed",
-      "review_requested",
-      "synchronize",
-      "unassigned",
-      "unlabeled",
-      "unlocked",
-    ],
-  },
-  { value: "push", label: "Push", actions: [] },
-  {
-    value: "issues",
-    label: "Issues",
-    actions: [
-      "assigned",
-      "closed",
-      "deleted",
-      "demilestoned",
-      "edited",
-      "labeled",
-      "locked",
-      "milestoned",
-      "opened",
-      "pinned",
-      "reopened",
-      "transferred",
-      "unassigned",
-      "unlabeled",
-      "unlocked",
-      "unpinned",
-    ],
-  },
-  { value: "issue_comment", label: "Issue comment", actions: ["created", "deleted", "edited"] },
-  { value: "pull_request_review", label: "Pull request review", actions: ["dismissed", "edited", "submitted"] },
-  { value: "pull_request_review_comment", label: "Pull request review comment", actions: ["created", "deleted", "edited"] },
-  { value: "pull_request_review_thread", label: "Pull request review thread", actions: ["resolved", "unresolved"] },
-  { value: "check_run", label: "Check run", actions: ["completed", "created", "rerequested", "requested_action"] },
-  { value: "check_suite", label: "Check suite", actions: ["completed", "requested", "rerequested"] },
-  { value: "workflow_job", label: "Workflow job", actions: ["completed", "in_progress", "queued", "waiting"] },
-  { value: "workflow_run", label: "Workflow run", actions: ["completed", "in_progress", "requested"] },
-  { value: "release", label: "Release", actions: ["created", "deleted", "edited", "prereleased", "published", "released", "unpublished"] },
-  { value: "deployment", label: "Deployment", actions: ["created"] },
-  { value: "deployment_status", label: "Deployment status", actions: ["created"] },
-  { value: "create", label: "Branch or tag created", actions: [] },
-  { value: "delete", label: "Branch or tag deleted", actions: [] },
-  { value: "repository_dispatch", label: "Repository dispatch", actions: null },
-  { value: "status", label: "Commit status", actions: [] },
-  { value: "watch", label: "Repository starred", actions: ["started"] },
-];
+const FILTER_EXAMPLES: Record<WebhookProvider, string> = {
+  github: "Header X-GitHub-Event = pull_request; payload action = closed",
+  jira: "Payload webhookEvent = jira:issue_updated",
+  slack: "Payload type = event_callback; payload event.type = message",
+  pagerduty: "Payload event.event_type = incident.triggered",
+};
 
 interface TaskFormDialogProps {
   open: boolean;
@@ -133,6 +73,7 @@ interface TaskFormDialogProps {
    */
   existingNames?: string[];
   minimumScheduleIntervalSeconds?: number;
+  enabledWebhookProviders?: WebhookProvider[];
   onSubmit: (task: AutonomousTask) => Promise<TaskSaveResult>;
   onSaveWebhookSecret: (task: AutonomousTask, secret: string) => Promise<AutonomousTask>;
 }
@@ -155,6 +96,7 @@ export function TaskFormDialog({
   initialAgentId,
   existingNames = [],
   minimumScheduleIntervalSeconds = DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS,
+  enabledWebhookProviders = DEFAULT_WEBHOOK_PROVIDER_OPTIONS,
   onSubmit,
   onSaveWebhookSecret,
 }: TaskFormDialogProps) {
@@ -172,12 +114,16 @@ export function TaskFormDialog({
   // A's fields.
   useEffect(() => {
     if (open) {
-      setForm(seededFormState(task, initialAgentId));
+      const next = seededFormState(task, initialAgentId);
+      if (!task && !enabledWebhookProviders.includes(next.webhookProvider as WebhookProvider)) {
+        next.webhookProvider = enabledWebhookProviders[0] ?? "";
+      }
+      setForm(next);
       setError(null);
       setSubmitting(false);
       setWebhookSetup(null);
     }
-  }, [open, task, initialAgentId]);
+  }, [open, task, initialAgentId, enabledWebhookProviders]);
 
   const update = <K extends keyof TaskFormState>(key: K, value: TaskFormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -192,25 +138,28 @@ export function TaskFormDialog({
     return existingNames.some((n) => n.trim().toLowerCase() === candidate);
   }, [form.name, existingNames]);
 
-  const githubEventOption = GITHUB_EVENT_OPTIONS.find(
-    (option) => option.value === form.webhookFilterEvent,
+  const availableProviderOptions = WEBHOOK_PROVIDER_OPTIONS.filter((option) =>
+    enabledWebhookProviders.includes(option.value),
   );
-  const selectedGitHubActions = Array.from(new Set(
-    form.webhookFilterActions
-      .split(",")
-      .map((action) => action.trim().toLowerCase())
-      .filter(Boolean),
-  ));
-  const githubActionOptions = githubEventOption?.actions == null
-    ? null
-    : Array.from(new Set([...githubEventOption.actions, ...selectedGitHubActions]));
 
-  const updateGitHubEvent = (value: string) => {
+  const updateWebhookProvider = (provider: WebhookProvider) => {
     setForm((current) => ({
       ...current,
-      webhookFilterEvent: value === "__other__" ? "" : value,
-      // Actions are event-specific; never carry a stale action into another event.
-      webhookFilterActions: "",
+      webhookProvider: provider,
+      webhookFilterEnabled: false,
+      webhookFilterConditions: [{ source: "payload", field: "", values: "" }],
+    }));
+  };
+
+  const updateFilterCondition = (
+    index: number,
+    patch: Partial<TaskFormState["webhookFilterConditions"][number]>,
+  ) => {
+    setForm((current) => ({
+      ...current,
+      webhookFilterConditions: current.webhookFilterConditions.map((condition, currentIndex) =>
+        currentIndex === index ? { ...condition, ...patch } : condition,
+      ),
     }));
   };
 
@@ -435,10 +384,16 @@ export function TaskFormDialog({
                   <Select
                     id="task-webhook-provider"
                     value={form.webhookProvider}
-                    onChange={(e) => update("webhookProvider", e.target.value)}
+                    onChange={(e) => updateWebhookProvider(e.target.value as WebhookProvider)}
                     className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {WEBHOOK_PROVIDER_OPTIONS.map((opt) => (
+                    {task?.trigger.type === "webhook" &&
+                      !enabledWebhookProviders.includes(form.webhookProvider as WebhookProvider) && (
+                        <option value={form.webhookProvider} disabled>
+                          {form.webhookProvider} (disabled by deployment)
+                        </option>
+                      )}
+                    {availableProviderOptions.map((opt) => (
                       <option
                         key={opt.value}
                         value={opt.value}
@@ -452,114 +407,100 @@ export function TaskFormDialog({
                     ))}
                   </Select>
                 </div>
-                {form.webhookProvider === "github" && (
-                  <div className="space-y-3 rounded-md border border-border p-3">
-                    <div className="space-y-1">
-                      <Label>Filter deliveries</Label>
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={form.webhookFilterEnabled}
-                          onChange={(e) => update("webhookFilterEnabled", e.target.checked)}
-                          className="h-4 w-4 rounded border-border"
-                        />
-                        Only run the agent for matching GitHub events
-                      </label>
-                    </div>
-
-                    {form.webhookFilterEnabled && (
-                      <>
-                        <div className="space-y-1">
-                          <Label htmlFor="task-webhook-filter-event">GitHub event</Label>
-                          <Select
-                            id="task-webhook-filter-event"
-                            value={githubEventOption?.value ?? "__other__"}
-                            onChange={(e) => updateGitHubEvent(e.target.value)}
-                            required
-                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {GITHUB_EVENT_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label} ({option.value})
-                              </option>
-                            ))}
-                            <option value="__other__">Other event…</option>
-                          </Select>
-                          {!githubEventOption && (
-                            <Input
-                              value={form.webhookFilterEvent}
-                              onChange={(e) => update("webhookFilterEvent", e.target.value)}
-                              placeholder="GitHub event name"
-                              aria-label="Other GitHub event"
-                              required
-                            />
-                          )}
-                          <p className="text-[11px] text-muted-foreground">
-                            Matches <code>X-GitHub-Event</code>. Common repository events are
-                            listed above; choose Other for any additional documented event.{" "}
-                            <a
-                              href={GITHUB_WEBHOOK_DOCS_URL}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="underline underline-offset-2 hover:text-foreground"
-                            >
-                              GitHub event documentation
-                            </a>
-                            .
-                          </p>
-                        </div>
-
-                        <div className="space-y-1">
-                          <Label>GitHub actions (optional)</Label>
-                          {githubActionOptions === null ? (
-                            <Input
-                              id="task-webhook-filter-actions"
-                              value={form.webhookFilterActions}
-                              onChange={(e) => update("webhookFilterActions", e.target.value)}
-                              placeholder="Comma-separated action values"
-                              aria-label="GitHub actions (optional)"
-                            />
-                          ) : githubActionOptions.length > 0 ? (
-                            <MultiSelect
-                              options={githubActionOptions}
-                              selected={selectedGitHubActions}
-                              onChange={(actions) => update(
-                                "webhookFilterActions",
-                                actions.join(", "),
-                              )}
-                              ariaLabel="GitHub actions (optional)"
-                              allowCustom
-                              placeholder="All actions"
-                              searchPlaceholder="Search actions..."
-                              emptyLabel="No matching actions"
-                              badgeLabel="actions"
-                              className="h-9 w-full max-w-full"
-                              portalled={false}
-                            />
-                          ) : null}
-                          <p className="text-[11px] text-muted-foreground">
-                            {githubActionOptions?.length === 0
-                              ? "This event has no documented top-level action filter. "
-                              : "Leave blank to accept every action for this event. "}
-                            <a
-                              href={`${GITHUB_WEBHOOK_DOCS_URL}#${encodeURIComponent(form.webhookFilterEvent)}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="underline underline-offset-2 hover:text-foreground"
-                            >
-                              View valid actions
-                            </a>
-                            .
-                          </p>
-                        </div>
-                      </>
-                    )}
-                    <p className="text-[11px] text-muted-foreground">
-                      Non-matching deliveries are acknowledged without creating a run or invoking
-                      the agent.
-                    </p>
+                <div className="space-y-3 rounded-md border border-border p-3">
+                  <div className="space-y-1">
+                    <Label>Filter deliveries</Label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={form.webhookFilterEnabled}
+                        onChange={(e) => update("webhookFilterEnabled", e.target.checked)}
+                        className="h-4 w-4 rounded border-border"
+                      />
+                      Only run the agent when all conditions match
+                    </label>
                   </div>
-                )}
+
+                  {form.webhookFilterEnabled && (
+                    <div className="space-y-3">
+                      {form.webhookFilterConditions.map((condition, index) => (
+                        <div
+                          key={index}
+                          className="grid gap-2 rounded-md border border-border p-2 sm:grid-cols-[8rem_1fr_1fr_auto]"
+                          data-testid="webhook-filter-condition"
+                        >
+                          <Select
+                            value={condition.source}
+                            onChange={(e) => updateFilterCondition(index, {
+                              source: e.target.value as "payload" | "header",
+                              field: "",
+                            })}
+                            aria-label={`Filter ${index + 1} source`}
+                            className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                          >
+                            <option value="payload">Payload</option>
+                            <option value="header">Header</option>
+                          </Select>
+                          <Input
+                            value={condition.field}
+                            onChange={(e) => updateFilterCondition(index, { field: e.target.value })}
+                            placeholder={condition.source === "payload" ? "event.type" : "X-Event-Type"}
+                            aria-label={`Filter ${index + 1} field`}
+                          />
+                          <Input
+                            value={condition.values}
+                            onChange={(e) => updateFilterCondition(index, { values: e.target.value })}
+                            placeholder="Accepted values, comma-separated"
+                            aria-label={`Filter ${index + 1} accepted values`}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Remove filter ${index + 1}`}
+                            onClick={() => update(
+                              "webhookFilterConditions",
+                              form.webhookFilterConditions.filter((_, currentIndex) => currentIndex !== index),
+                            )}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={form.webhookFilterConditions.length >= 16}
+                        onClick={() => update("webhookFilterConditions", [
+                          ...form.webhookFilterConditions,
+                          { source: "payload", field: "", values: "" },
+                        ])}
+                      >
+                        Add condition
+                      </Button>
+                      <p className="text-[11px] text-muted-foreground">
+                        Field names and exact accepted values only; no filter code is executed.
+                        Conditions use AND, while comma-separated values within one condition use OR.
+                        Example: {FILTER_EXAMPLES[form.webhookProvider as WebhookProvider] ?? "Payload event.type = created"}.
+                        {form.webhookProvider === "github" && (
+                          <>{" "}<a
+                            href={GITHUB_WEBHOOK_DOCS_URL}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline underline-offset-2 hover:text-foreground"
+                          >
+                            GitHub event documentation
+                          </a>.</>
+                        )}
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    Non-matching signed deliveries are acknowledged without creating a run or
+                    invoking the agent.
+                  </p>
+                </div>
                 {isEdit && ["slack", "pagerduty"].includes(form.webhookProvider) ? (
                   <div className="space-y-1">
                     <Label htmlFor="task-webhook-secret">

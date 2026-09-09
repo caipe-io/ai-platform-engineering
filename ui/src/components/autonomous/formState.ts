@@ -10,7 +10,7 @@
  * the exact same cron / interval / webhook parsing + validation logic.
  */
 
-import type { AutonomousTask, TaskFormState } from "./types";
+import type { AutonomousTask, TaskFormState, WebhookFilterCondition } from "./types";
 
 export const DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS = 30 * 60;
 
@@ -41,8 +41,7 @@ export const EMPTY_FORM: TaskFormState = {
   webhookProvider: "github",
   webhookSecret: "",
   webhookFilterEnabled: false,
-  webhookFilterEvent: "pull_request",
-  webhookFilterActions: "closed",
+  webhookFilterConditions: [{ source: "payload", field: "", values: "" }],
 };
 
 /** Convert API model -> form state. */
@@ -80,8 +79,11 @@ export function toFormState(task: AutonomousTask | null | undefined): TaskFormSt
     base.webhookSecret = "";
     if (task.trigger.filter) {
       base.webhookFilterEnabled = true;
-      base.webhookFilterEvent = task.trigger.filter.event;
-      base.webhookFilterActions = (task.trigger.filter.actions ?? []).join(", ");
+      base.webhookFilterConditions = task.trigger.filter.conditions.map((condition) => ({
+        source: condition.source,
+        field: condition.field,
+        values: condition.values.join(", "),
+      }));
     }
   }
   return base;
@@ -148,26 +150,42 @@ export function fromFormState(
   } else {
     const provider = form.webhookProvider.trim() || "github";
     let filter: NonNullable<Extract<AutonomousTask["trigger"], { type: "webhook" }>["filter"]> | undefined;
-    if (provider === "github" && form.webhookFilterEnabled) {
-      const event = form.webhookFilterEvent.trim().toLowerCase();
-      if (!event) return { error: "GitHub event is required when webhook filtering is enabled." };
-      if (!/^[a-z0-9_]+$/.test(event)) {
-        return { error: "GitHub event may contain only letters, numbers, and underscores." };
+    if (form.webhookFilterEnabled) {
+      if (form.webhookFilterConditions.length === 0) {
+        return { error: "Add at least one webhook filter condition." };
       }
-
-      const actions = Array.from(new Set(
-        form.webhookFilterActions
-          .split(",")
-          .map((action) => action.trim().toLowerCase())
-          .filter(Boolean),
-      ));
-      if (actions.length > 32) {
-        return { error: "GitHub filters support at most 32 actions." };
+      if (form.webhookFilterConditions.length > 16) {
+        return { error: "Webhook filters support at most 16 conditions." };
       }
-      if (actions.some((action) => !/^[a-z0-9_]+$/.test(action))) {
-        return { error: "GitHub actions may contain only letters, numbers, and underscores." };
+      const conditions: WebhookFilterCondition[] = [];
+      for (const condition of form.webhookFilterConditions) {
+        const field = condition.field.trim();
+        if (!field) return { error: "Every webhook filter needs a field name." };
+        const validField = condition.source === "payload"
+          ? /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){0,7}$/.test(field)
+          : /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(field);
+        if (!validField) {
+          return {
+            error: condition.source === "payload"
+              ? "Payload fields must be dot paths with at most 8 segments."
+              : "Enter a valid HTTP header name.",
+          };
+        }
+        const values = Array.from(new Set(
+          condition.values.split(",").map((value) => value.trim()).filter(Boolean),
+        ));
+        if (values.length === 0) {
+          return { error: `Enter at least one accepted value for '${field}'.` };
+        }
+        if (values.length > 32) {
+          return { error: "Each webhook filter condition supports at most 32 values." };
+        }
+        if (values.some((value) => value.length > 200)) {
+          return { error: "Webhook filter values must be at most 200 characters." };
+        }
+        conditions.push({ source: condition.source, field, values });
       }
-      filter = { event, actions };
+      filter = { conditions };
     }
     trigger = {
       type: "webhook",

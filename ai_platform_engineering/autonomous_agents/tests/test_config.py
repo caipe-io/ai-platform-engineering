@@ -10,6 +10,29 @@ def test_minimum_schedule_interval_defaults_to_thirty_minutes() -> None:
     assert Settings().minimum_schedule_interval_seconds == 1800
 
 
+def test_enabled_webhook_providers_default_and_validation() -> None:
+    assert Settings().enabled_webhook_providers == [
+        "github",
+        "jira",
+        "slack",
+        "pagerduty",
+    ]
+    assert Settings(enabled_webhook_providers=["GitHub", "jira", "github"]).enabled_webhook_providers == [
+        "github",
+        "jira",
+    ]
+    with pytest.raises(ValueError, match="at least one"):
+        Settings(enabled_webhook_providers=[])
+    with pytest.raises(ValueError, match="unsupported providers"):
+        Settings(enabled_webhook_providers=["generic_hmac"])
+
+
+def test_enabled_webhook_providers_reads_helm_json_env(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLED_WEBHOOK_PROVIDERS", '["github","jira"]')
+
+    assert Settings(debug=False).enabled_webhook_providers == ["github", "jira"]
+
+
 def test_minimum_schedule_interval_is_configurable_and_positive() -> None:
     assert Settings(minimum_schedule_interval_seconds=600).minimum_schedule_interval_seconds == 600
     with pytest.raises(pydantic.ValidationError):

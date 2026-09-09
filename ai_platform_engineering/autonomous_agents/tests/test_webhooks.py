@@ -17,17 +17,18 @@ import time
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from autonomous_agents.config import Settings, get_settings
 from autonomous_agents.models import (
     FollowUpContext,
-    GitHubWebhookFilter,
     TaskDefinition,
     TaskRun,
     TaskStatus,
+    WebhookDeliveryFilter,
+    WebhookFilterCondition,
     WebhookTrigger,
 )
 from autonomous_agents.routes import webhooks as webhooks_route
@@ -49,7 +50,7 @@ def _make_task(
     *,
     secret: str | None = None,
     provider: str = "github",
-    webhook_filter: GitHubWebhookFilter | None = None,
+    webhook_filter: WebhookDeliveryFilter | None = None,
 ) -> TaskDefinition:
     return TaskDefinition(
         id=task_id,
@@ -565,7 +566,38 @@ class TestInitialFireBehaviour:
 
 
 class TestInitialFireFiltering:
-    """GitHub event filters run before deduplication and dispatch."""
+    """Structured filters run before deduplication and dispatch."""
+
+    def test_nested_payload_filter_supports_non_github_provider(self):
+        task = _make_task(
+            provider="jira",
+            webhook_filter=WebhookDeliveryFilter(
+                conditions=[
+                    WebhookFilterCondition(
+                        source="payload",
+                        field="issue.fields.status.name",
+                        values=["Done", "Closed"],
+                    )
+                ]
+            ),
+        )
+
+        assert webhooks_route._matches_webhook_filter(
+            task, {}, {"issue": {"fields": {"status": {"name": "Done"}}}}
+        )
+        assert not webhooks_route._matches_webhook_filter(
+            task, {}, {"issue": {"fields": {"status": {"name": "Open"}}}}
+        )
+
+    def test_provider_disabled_by_deployment_is_not_invokable(self, monkeypatch):
+        _set_settings(monkeypatch, enabled_webhook_providers=["github", "jira"])
+
+        with pytest.raises(HTTPException) as exc_info:
+            webhooks_route._assert_provider_enabled(
+                _make_task(provider="slack", secret="task-secret")
+            )
+
+        assert exc_info.value.status_code == 404
 
     async def test_nonmatching_action_is_acknowledged_without_a_run(
         self, monkeypatch
@@ -588,9 +620,17 @@ class TestInitialFireFiltering:
             _register(
                 _make_task(
                     secret="task-secret",
-                    webhook_filter=GitHubWebhookFilter(
-                        event="pull_request",
-                        actions=["closed"],
+                    webhook_filter=WebhookDeliveryFilter(
+                        conditions=[
+                            WebhookFilterCondition(
+                                source="header",
+                                field="X-GitHub-Event",
+                                values=["pull_request"],
+                            ),
+                            WebhookFilterCondition(
+                                source="payload", field="action", values=["closed"]
+                            ),
+                        ],
                     ),
                 )
             )
@@ -627,9 +667,17 @@ class TestInitialFireFiltering:
         _register(
             _make_task(
                 secret="task-secret",
-                webhook_filter=GitHubWebhookFilter(
-                    event="pull_request",
-                    actions=["closed"],
+                webhook_filter=WebhookDeliveryFilter(
+                    conditions=[
+                        WebhookFilterCondition(
+                            source="header",
+                            field="X-GitHub-Event",
+                            values=["pull_request"],
+                        ),
+                        WebhookFilterCondition(
+                            source="payload", field="action", values=["closed"]
+                        ),
+                    ],
                 ),
             )
         )
@@ -656,9 +704,17 @@ class TestInitialFireFiltering:
         _register(
             _make_task(
                 secret="task-secret",
-                webhook_filter=GitHubWebhookFilter(
-                    event="pull_request",
-                    actions=["closed"],
+                webhook_filter=WebhookDeliveryFilter(
+                    conditions=[
+                        WebhookFilterCondition(
+                            source="header",
+                            field="X-GitHub-Event",
+                            values=["pull_request"],
+                        ),
+                        WebhookFilterCondition(
+                            source="payload", field="action", values=["closed"]
+                        ),
+                    ],
                 ),
             )
         )

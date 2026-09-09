@@ -127,10 +127,13 @@ The modal includes provider-specific instructions and copy controls for the
 URL and secret. A generated secret is never returned again after the creation
 response. Normal task reads expose only `has_secret: true|false`.
 
-GitHub tasks can optionally filter deliveries by the `X-GitHub-Event` value
-and top-level payload `action`. Other providers continue to use their
-provider-side event selection; the service does not apply GitHub payload
-assumptions to them.
+Every supported provider can optionally filter deliveries with structured
+header or payload-field conditions. Payload fields use bounded dot paths; all
+conditions must match and any value within one condition may match. Filter code
+is never accepted or executed. GitHub tasks can, for example, filter by the
+`X-GitHub-Event` header and top-level payload `action`; Jira can use
+`webhookEvent`; Slack can use `event.type`; and PagerDuty can use
+`event.event_type`.
 
 ### Secret storage
 

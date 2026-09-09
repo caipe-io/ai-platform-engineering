@@ -30,6 +30,11 @@ tags:
 
 ######### Autonomous Agents Configuration #########
 autonomous-agents:
+  # Optional deployment allowlist. Omit providers users must not configure.
+  enabledWebhookProviders:
+    - github
+    - jira
+
   # Mint the task owner's bearer for Dynamic Agents and caller-scoped MCP
   # credentials. The bundled scheduler-runner client is provisioned for RFC
   # 8693 requested_subject token exchange.

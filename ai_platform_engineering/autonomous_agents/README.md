@@ -114,9 +114,14 @@ Runs when an external system POSTs to `/api/v1/hooks/{task_id}`.
 trigger:
   type: webhook
   provider: "github"               # UI: github, jira, slack, pagerduty
-  filter:                           # optional; currently GitHub only
-    event: "pull_request"           # X-GitHub-Event value
-    actions: ["closed"]             # top-level payload action
+  filter:                           # optional; works with every provider
+    conditions:                     # all conditions must match
+      - source: header
+        field: X-GitHub-Event
+        values: ["pull_request"]    # any value may match this condition
+      - source: payload
+        field: action               # bounded dot paths support nested fields
+        values: ["closed"]
   # The API requires a signing secret and securely stores it.
 ```
 
@@ -125,13 +130,12 @@ The server generates the task id and therefore the final endpoint:
 secret and returns it once after creation. Slack and PagerDuty issue their own
 secret, which the setup modal requires the user to paste back into CAIPE.
 
-GitHub filters are applied to authenticated deliveries before deduplication or
-queueing. A non-match returns `200 ignored` and creates no task run, chat entry,
-or agent invocation. For example, `event: pull_request` with `actions: [closed]`
-accepts pull-request closures and ignores its other actions.
-
-The service also ships a `generic_hmac` adapter for API/configuration users,
-but it is intentionally absent from the UI task form.
+Structured filters are applied to authenticated deliveries before deduplication
+or queueing for every provider. Conditions use AND; the exact values within one
+condition use OR. Payload conditions accept bounded dot paths such as
+`event.event_type`; header conditions accept an HTTP header name. No user filter
+code or expression is executed. A non-match returns `200 ignored` and creates no
+task run, chat entry, or agent invocation.
 
 ---
 
@@ -182,7 +186,8 @@ tasks:
 | `HOST` | `0.0.0.0` | Server bind host |
 | `PORT` | `8002` | Server port |
 | `WEBHOOK_SECRET` | `None` | Global HMAC fallback for tasks without a per-task key and for the first-party follow-up bridge. New UI tasks use per-task secrets. |
-| `WEBHOOK_PROVIDERS_FILE` | bundled YAML | Optional replacement provider-adapter file. The bundled registry contains GitHub, Jira, Slack, PagerDuty, Webex, and generic HMAC. |
+| `WEBHOOK_PROVIDERS_FILE` | bundled YAML | Optional replacement adapter definitions for the supported providers. Extra adapter ids do not become task providers. |
+| `ENABLED_WEBHOOK_PROVIDERS` | `["github","jira","slack","pagerduty"]` | JSON deployment allowlist controlling which supported providers the UI offers and the service accepts. Helm sets this from `autonomous-agents.enabledWebhookProviders`. |
 | `WEBHOOK_REPLAY_WINDOW_SECONDS` | `0` | Optional replay window for adapters without a mandatory provider window. Slack always enforces its bundled 300-second window. |
 | `WEBHOOK_MAX_PAYLOAD_BYTES` | `1048576` | Maximum accepted webhook request body. Larger bodies are rejected with HTTP 413 before parsing. |
 | `WEBHOOK_MAX_PENDING_PER_TASK` | `100` | Maximum queued + running deliveries for one webhook task. Each task's FIFO still executes exactly one at a time. |

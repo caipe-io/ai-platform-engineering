@@ -80,60 +80,79 @@ it("removes Generic HMAC and does not ask for a GitHub secret", () => {
   expect(screen.getByText(/generated automatically and shown once/i)).toBeInTheDocument();
 });
 
-it("configures a GitHub pull-request action filter", async () => {
+it("configures safe header and payload filters", async () => {
   const onSubmit = jest.fn(saveTask);
   renderDialog({ onSubmit });
   fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Closed PR task" } });
   fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: "Summarize it" } });
   fireEvent.click(screen.getByRole("button", { name: "webhook" }));
 
-  fireEvent.click(screen.getByLabelText(/only run the agent for matching GitHub events/i));
-  expect(screen.getByLabelText("GitHub event")).toHaveValue("pull_request");
-  expect(screen.getByRole("button", { name: "GitHub actions (optional)" })).toHaveTextContent(
-    "closed",
-  );
+  fireEvent.click(screen.getByLabelText(/only run the agent when all conditions match/i));
+  fireEvent.change(screen.getByLabelText("Filter 1 source"), {
+    target: { value: "header" },
+  });
+  fireEvent.change(screen.getByLabelText("Filter 1 field"), {
+    target: { value: "X-GitHub-Event" },
+  });
+  fireEvent.change(screen.getByLabelText("Filter 1 accepted values"), {
+    target: { value: "pull_request" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add condition" }));
+  fireEvent.change(screen.getByLabelText("Filter 2 field"), {
+    target: { value: "action" },
+  });
+  fireEvent.change(screen.getByLabelText("Filter 2 accepted values"), {
+    target: { value: "closed, reopened" },
+  });
   fireEvent.click(screen.getByRole("button", { name: /create task/i }));
 
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
     expect.objectContaining({
       trigger: expect.objectContaining({
-        filter: { event: "pull_request", actions: ["closed"] },
+        filter: {
+          conditions: [
+            { source: "header", field: "X-GitHub-Event", values: ["pull_request"] },
+            { source: "payload", field: "action", values: ["closed", "reopened"] },
+          ],
+        },
       }),
     }),
   ));
 });
 
-it("uses documented event/action choices without a pull-request-only control", () => {
+it("links GitHub webhook documentation and never accepts filter code", () => {
   renderDialog();
   fireEvent.click(screen.getByRole("button", { name: "webhook" }));
-  fireEvent.click(screen.getByLabelText(/only run the agent for matching GitHub events/i));
-
-  const eventSelect = screen.getByLabelText("GitHub event");
-  expect(eventSelect.tagName).toBe("SELECT");
-  expect(screen.getByRole("option", { name: "Pull request (pull_request)" })).toBeInTheDocument();
-  expect(screen.queryByLabelText("Closed pull requests")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText(/only run the agent when all conditions match/i));
   expect(screen.getByRole("link", { name: "GitHub event documentation" })).toHaveAttribute(
     "href",
     "https://docs.github.com/en/webhooks/webhook-events-and-payloads",
   );
 
-  fireEvent.change(eventSelect, { target: { value: "issues" } });
-  expect(screen.getByRole("button", { name: "GitHub actions (optional)" })).toHaveTextContent(
-    "All actions",
-  );
-  expect(screen.getByRole("link", { name: "View valid actions" })).toHaveAttribute(
-    "href",
-    "https://docs.github.com/en/webhooks/webhook-events-and-payloads#issues",
-  );
+  expect(screen.getByText(/no filter code is executed/i)).toBeInTheDocument();
 });
 
-it("shows GitHub filters only for the GitHub provider", () => {
+it("supports filters for non-GitHub providers", () => {
   renderDialog();
   fireEvent.click(screen.getByRole("button", { name: "webhook" }));
   expect(screen.getByText("Filter deliveries")).toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "jira" } });
-  expect(screen.queryByText("Filter deliveries")).not.toBeInTheDocument();
+  expect(screen.getByText("Filter deliveries")).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText(/only run the agent when all conditions match/i));
+  expect(screen.getByTestId("webhook-filter-condition").parentElement).toHaveTextContent(
+    "Payload webhookEvent = jira:issue_updated",
+  );
+});
+
+it("shows only webhook providers enabled by deployment values", () => {
+  renderDialog({ enabledWebhookProviders: ["github", "jira"] });
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+
+  expect(screen.getAllByRole("option")).toHaveLength(2);
+  expect(screen.getByRole("option", { name: "GitHub" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Jira" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "Slack" })).not.toBeInTheDocument();
 });
 
 it("stays open after GitHub creation and shows the full URL plus one-time secret", async () => {

@@ -59,7 +59,12 @@ describe("formState.toFormState", () => {
         type: "webhook",
         provider: "github",
         has_secret: true,
-        filter: { event: "pull_request", actions: ["closed"], merged: true },
+        filter: {
+          conditions: [
+            { source: "header", field: "X-GitHub-Event", values: ["pull_request"] },
+            { source: "payload", field: "action", values: ["closed"] },
+          ],
+        },
       },
       enabled: true,
     };
@@ -68,8 +73,10 @@ describe("formState.toFormState", () => {
         webhookProvider: "github",
         webhookSecret: "",
         webhookFilterEnabled: true,
-        webhookFilterEvent: "pull_request",
-        webhookFilterActions: "closed",
+        webhookFilterConditions: [
+          { source: "header", field: "X-GitHub-Event", values: "pull_request" },
+          { source: "payload", field: "action", values: "closed" },
+        ],
       }),
     );
   });
@@ -173,65 +180,88 @@ describe("formState.fromFormState", () => {
     });
   });
 
-  it("maps a GitHub event/action filter", () => {
+  it("maps structured header and payload filters for any provider", () => {
     const result = fromFormState({
       ...base,
       triggerType: "webhook",
-      webhookProvider: "github",
+      webhookProvider: "jira",
       webhookFilterEnabled: true,
-      webhookFilterEvent: " Pull_Request ",
-      webhookFilterActions: " Closed, reopened, closed ",
+      webhookFilterConditions: [
+        { source: "header", field: " X-Event-Type ", values: " issue_updated " },
+        { source: "payload", field: "issue.status.name", values: "Done, Closed, Done" },
+      ],
     });
     expect(result).toEqual({
       task: expect.objectContaining({
         trigger: {
           type: "webhook",
-          provider: "github",
+          provider: "jira",
           secret: null,
           filter: {
-            event: "pull_request",
-            actions: ["closed", "reopened"],
+            conditions: [
+              { source: "header", field: "X-Event-Type", values: ["issue_updated"] },
+              { source: "payload", field: "issue.status.name", values: ["Done", "Closed"] },
+            ],
           },
         },
       }),
     });
   });
 
-  it("requires an event when GitHub filtering is enabled", () => {
+  it("requires a field and accepted value when filtering is enabled", () => {
     expect(fromFormState({
       ...base,
       triggerType: "webhook",
       webhookFilterEnabled: true,
-      webhookFilterEvent: " ",
-    })).toEqual({ error: expect.stringMatching(/GitHub event is required/) });
+      webhookFilterConditions: [{ source: "payload", field: " ", values: "closed" }],
+    })).toEqual({ error: expect.stringMatching(/field name/) });
+
+    expect(fromFormState({
+      ...base,
+      triggerType: "webhook",
+      webhookFilterEnabled: true,
+      webhookFilterConditions: [{ source: "payload", field: "action", values: " " }],
+    })).toEqual({ error: expect.stringMatching(/at least one accepted value/) });
   });
 
-  it("rejects invalid GitHub event and action names", () => {
+  it("rejects unsafe payload paths and header names", () => {
     expect(fromFormState({
       ...base,
       triggerType: "webhook",
       webhookFilterEnabled: true,
-      webhookFilterEvent: "pull request",
-    })).toEqual({ error: expect.stringMatching(/event may contain only/) });
+      webhookFilterConditions: [{ source: "payload", field: "items[0].name", values: "x" }],
+    })).toEqual({ error: expect.stringMatching(/dot paths/) });
 
     expect(fromFormState({
       ...base,
       triggerType: "webhook",
       webhookFilterEnabled: true,
-      webhookFilterActions: "closed now",
-    })).toEqual({ error: expect.stringMatching(/actions may contain only/) });
+      webhookFilterConditions: [{ source: "header", field: "X Event", values: "x" }],
+    })).toEqual({ error: expect.stringMatching(/HTTP header/) });
   });
 
-  it("does not send a GitHub filter for another provider", () => {
+  it("sends filters for non-GitHub providers", () => {
     const result = fromFormState({
       ...base,
       triggerType: "webhook",
       webhookProvider: "jira",
       webhookFilterEnabled: true,
+      webhookFilterConditions: [
+        { source: "payload", field: "webhookEvent", values: "jira:issue_updated" },
+      ],
     });
     expect(result).toEqual({
       task: expect.objectContaining({
-        trigger: { type: "webhook", provider: "jira", secret: null },
+        trigger: {
+          type: "webhook",
+          provider: "jira",
+          secret: null,
+          filter: {
+            conditions: [
+              { source: "payload", field: "webhookEvent", values: ["jira:issue_updated"] },
+            ],
+          },
+        },
       }),
     });
   });

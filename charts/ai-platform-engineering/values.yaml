@@ -1173,6 +1173,12 @@ dynamic-agents:
 # full recipe.
 autonomous-agents:
   nameOverride: "autonomous-agents"
+  # Restrict which supported webhook providers users may configure.
+  enabledWebhookProviders:
+    - github
+    - jira
+    - slack
+    - pagerduty
   image:
     repository: "ghcr.io/caipe-io/caipe-autonomous-agents"
     # tag defaults to .Chart.AppVersion when not specified

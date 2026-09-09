@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -288,7 +288,10 @@ class TestListAndGet:
         response = client.get("/api/v1/settings")
 
         assert response.status_code == 200
-        assert response.json() == {"minimum_schedule_interval_seconds": 1800}
+        assert response.json() == {
+            "minimum_schedule_interval_seconds": 1800,
+            "enabled_webhook_providers": ["github", "jira", "slack", "pagerduty"],
+        }
 
     def test_list_tasks_initially_empty(self, client: TestClient):
         """Empty store returns an empty list."""
@@ -333,6 +336,20 @@ class TestCreate:
 
         assert tid in webhook_runtime._webhook_tasks
         assert get_scheduler().get_jobs() == []
+
+    def test_rejects_webhook_provider_disabled_by_deployment(self, monkeypatch):
+        settings = tasks_route.get_settings().model_copy(
+            update={"enabled_webhook_providers": ["github", "jira"]}
+        )
+        monkeypatch.setattr(tasks_route, "get_settings", lambda: settings)
+
+        task = TaskDefinition.model_validate(_webhook_task("hook1", provider="slack"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            tasks_route._assert_webhook_provider_enabled(task)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Webhook provider 'slack' is not enabled"
 
     def test_with_disabled_flag_skips_scheduler(self, client: TestClient):
         """Disabled tasks persist but are not scheduled."""
