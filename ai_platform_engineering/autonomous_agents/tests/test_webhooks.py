@@ -91,9 +91,7 @@ def _hex_sig(secret: str, body: bytes, timestamp: str | None = None) -> str:
         signed = timestamp.encode("utf-8") + b"." + body
     else:
         signed = body
-    return "sha256=" + hmac.new(
-        secret.encode("utf-8"), signed, hashlib.sha256
-    ).hexdigest()
+    return "sha256=" + hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
 
 
 class _FakeMongoService:
@@ -103,25 +101,19 @@ class _FakeMongoService:
         self._rows: dict[str, dict[str, Any]] = {}
         self.is_connected = True
 
-    async def record_trigger_instance(
-        self, doc: dict[str, Any]
-    ) -> tuple[bool, dict[str, Any] | None]:
+    async def record_trigger_instance(self, doc: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
         existing = self._rows.get(doc["_id"])
         if existing is not None:
             return False, existing
         self._rows[doc["_id"]] = dict(doc)
         return True, None
 
-    async def attach_run_to_trigger_instance(
-        self, dedup_key: str, run_id: str
-    ) -> None:
+    async def attach_run_to_trigger_instance(self, dedup_key: str, run_id: str) -> None:
         row = self._rows.get(dedup_key)
         if row is not None:
             row["run_id"] = run_id
 
-    async def get_trigger_instance(
-        self, dedup_key: str
-    ) -> dict[str, Any] | None:
+    async def get_trigger_instance(self, dedup_key: str) -> dict[str, Any] | None:
         return self._rows.get(dedup_key)
 
 
@@ -269,9 +261,7 @@ class TestInitialFireSecrets:
         body = json.dumps({"x": 1}).encode()
         sig = _hex_sig("task-secret", body)
 
-        ok = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
+        ok = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
         assert ok.status_code == 202
         assert ok.json()["dedup_strategy"] == "signature"
 
@@ -280,8 +270,9 @@ class TestInitialFireSecrets:
         assert "Missing X-Hub-Signature-256" in bad.json()["detail"]
 
     def test_provider_less_task_uses_generic_hmac(self, client, monkeypatch):
-        """Webhook tasks without ``provider`` use the vendor-neutral adapter."""
-        _set_settings(monkeypatch)
+        """Legacy provider-less tasks still parse with the generic adapter."""
+        settings = _set_settings(monkeypatch)
+        settings.enabled_webhook_providers.append("generic_hmac")
         task = TaskDefinition(
             id="wh-1",
             name="webhook task",
@@ -317,9 +308,7 @@ class TestInitialFireSecrets:
         body = b'{"event":"push"}'
         sig = _hex_sig("global-fallback", body)
 
-        resp = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
+        resp = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
         assert resp.status_code == 202
 
     def test_per_task_secret_wins_over_global(self, client, monkeypatch):
@@ -368,9 +357,7 @@ class TestInitialFireReplayProtection:
         body = b'{"a":1}'
         sig = _hex_sig("s", body)
 
-        resp = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
+        resp = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
         assert resp.status_code == 202
 
     def test_window_enabled_requires_timestamp_header(self, client, monkeypatch):
@@ -381,9 +368,7 @@ class TestInitialFireReplayProtection:
         body = b"{}"
         sig = _hex_sig("s", body)
 
-        resp = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
+        resp = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
         assert resp.status_code == 401
         assert "X-Webhook-Timestamp" in resp.json()["detail"]
 
@@ -514,9 +499,7 @@ class TestInitialFireBehaviour:
         body = b'{"id":42}'
         sig = webhooks_route._expected_signature("library-secret", body, None)
 
-        resp = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
+        resp = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
         assert resp.status_code == 202
 
     def test_github_ping_is_ignored_without_firing_task(self, client, monkeypatch):
@@ -582,26 +565,18 @@ class TestInitialFireFiltering:
             ),
         )
 
-        assert webhooks_route._matches_webhook_filter(
-            task, {}, {"issue": {"fields": {"status": {"name": "Done"}}}}
-        )
-        assert not webhooks_route._matches_webhook_filter(
-            task, {}, {"issue": {"fields": {"status": {"name": "Open"}}}}
-        )
+        assert webhooks_route._matches_webhook_filter(task, {}, {"issue": {"fields": {"status": {"name": "Done"}}}})
+        assert not webhooks_route._matches_webhook_filter(task, {}, {"issue": {"fields": {"status": {"name": "Open"}}}})
 
     def test_provider_disabled_by_deployment_is_not_invokable(self, monkeypatch):
         _set_settings(monkeypatch, enabled_webhook_providers=["github", "jira"])
 
         with pytest.raises(HTTPException) as exc_info:
-            webhooks_route._assert_provider_enabled(
-                _make_task(provider="slack", secret="task-secret")
-            )
+            webhooks_route._assert_provider_enabled(_make_task(provider="slack", secret="task-secret"))
 
         assert exc_info.value.status_code == 404
 
-    async def test_nonmatching_action_is_acknowledged_without_a_run(
-        self, monkeypatch
-    ):
+    async def test_nonmatching_action_is_acknowledged_without_a_run(self, monkeypatch):
         """An authenticated but irrelevant delivery consumes no run capacity."""
         _set_settings(monkeypatch, debug=False)
 
@@ -627,16 +602,12 @@ class TestInitialFireFiltering:
                                 field="X-GitHub-Event",
                                 values=["pull_request"],
                             ),
-                            WebhookFilterCondition(
-                                source="payload", field="action", values=["closed"]
-                            ),
+                            WebhookFilterCondition(source="payload", field="action", values=["closed"]),
                         ],
                     ),
                 )
             )
-            body = json.dumps(
-                {"action": "opened", "pull_request": {"merged": False}}
-            ).encode()
+            body = json.dumps({"action": "opened", "pull_request": {"merged": False}}).encode()
 
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -674,9 +645,7 @@ class TestInitialFireFiltering:
                             field="X-GitHub-Event",
                             values=["pull_request"],
                         ),
-                        WebhookFilterCondition(
-                            source="payload", field="action", values=["closed"]
-                        ),
+                        WebhookFilterCondition(source="payload", field="action", values=["closed"]),
                     ],
                 ),
             )
@@ -711,9 +680,7 @@ class TestInitialFireFiltering:
                             field="X-GitHub-Event",
                             values=["pull_request"],
                         ),
-                        WebhookFilterCondition(
-                            source="payload", field="action", values=["closed"]
-                        ),
+                        WebhookFilterCondition(source="payload", field="action", values=["closed"]),
                     ],
                 ),
             )
@@ -741,9 +708,7 @@ class TestInitialFireDeduplication:
         body = b'{"event":"push","sha":"abc"}'
         sig = _hex_sig("s", body)
 
-        first = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
+        first = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
         assert first.status_code == 202
         first_body = first.json()
         assert first_body["dedup_strategy"] == "signature"
@@ -751,9 +716,7 @@ class TestInitialFireDeduplication:
         original_run_id = first_body["run_id"]
         assert original_run_id
 
-        second = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
+        second = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
         assert second.status_code == 200
         second_body = second.json()
         assert second_body["status"] == "deduped"
@@ -829,12 +792,8 @@ class TestInitialFireDeduplication:
         body = b'{"hi":"there"}'
         sig = _hex_sig("s", body)
 
-        first = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
-        second = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
+        first = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
+        second = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
 
         assert first.status_code == 202
         assert first.json()["dedup_strategy"] == "signature"
@@ -866,9 +825,7 @@ class TestInitialFireDeduplication:
         body = b'{"x":1}'
         sig = _hex_sig("s", body)
 
-        resp = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
+        resp = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
         assert resp.status_code == 202
         body_json = resp.json()
         run_id = body_json["run_id"]
@@ -900,9 +857,7 @@ class TestInitialFireDeduplication:
 
         body = b'{"x":1}'
         sig = _hex_sig("s", body)
-        resp = client.post(
-            "/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig}
-        )
+        resp = client.post("/api/v1/hooks/wh-1", content=body, headers={"X-Hub-Signature-256": sig})
 
         assert resp.status_code == 503
         assert client.captured["calls"] == []

@@ -3,8 +3,7 @@
 Covers loading the bundled ``webhook_providers.yaml``, end-to-end
 routing via ``WebhookTrigger.provider``, the per-provider signature
 contracts (github, slack, jira, pagerduty, webex, generic_hmac),
-operator-misconfiguration handling (unknown provider id =>
-500), and the ``dedup_header`` default precedence between adapter
+deployment allowlist handling, and the ``dedup_header`` default precedence between adapter
 config and per-task overrides.
 """
 
@@ -50,9 +49,7 @@ def _make_task(
         name="webhook task",
         agent="dummy-agent",
         prompt="run the thing",
-        trigger=WebhookTrigger(
-            secret=secret, provider=provider, dedup_header=dedup_header
-        ),
+        trigger=WebhookTrigger(secret=secret, provider=provider, dedup_header=dedup_header),
     )
 
 
@@ -63,18 +60,14 @@ class _FakeMongoService:
         self._rows: dict[str, dict[str, Any]] = {}
         self.is_connected = True
 
-    async def record_trigger_instance(
-        self, doc: dict[str, Any]
-    ) -> tuple[bool, dict[str, Any] | None]:
+    async def record_trigger_instance(self, doc: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
         existing = self._rows.get(doc["_id"])
         if existing is not None:
             return False, existing
         self._rows[doc["_id"]] = dict(doc)
         return True, None
 
-    async def attach_run_to_trigger_instance(
-        self, dedup_key: str, run_id: str
-    ) -> None:
+    async def attach_run_to_trigger_instance(self, dedup_key: str, run_id: str) -> None:
         row = self._rows.get(dedup_key)
         if row is not None:
             row["run_id"] = run_id
@@ -143,24 +136,22 @@ def _set_settings(monkeypatch, **overrides: Any) -> Settings:
 
 
 class TestRegistry:
-    """Bundled adapter YAML loads and unknown ids surface as 500."""
+    """Bundled adapter YAML loads and disabled providers stay hidden."""
 
     def test_bundled_yaml_loads_all_advertised_providers(self):
         """github / slack / pagerduty / jira / webex / generic_hmac always load."""
         webhook_adapters.reset_adapters()
         adapters = webhook_adapters.load_adapters()
-        assert {"github", "slack", "pagerduty", "jira", "webex", "generic_hmac"} <= set(
-            adapters.keys()
-        )
+        assert {"github", "slack", "pagerduty", "jira", "webex", "generic_hmac"} <= set(adapters.keys())
 
-    def test_unknown_provider_id_raises_500_at_route(self, client, monkeypatch):
-        """Unknown provider id returns 500 (operator config bug, not sender bug)."""
+    def test_unknown_provider_id_is_hidden_at_route(self, client, monkeypatch):
+        """A provider outside the deploy-time allowlist is not invokable."""
         _set_settings(monkeypatch)
         _register(_make_task(provider="this-does-not-exist"))
 
         resp = client.post("/api/v1/hooks/wh-1", json={})
-        assert resp.status_code == 500
-        assert "this-does-not-exist" in resp.json()["detail"]
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "No webhook task found for id 'wh-1'"
 
 
 def _slack_sig(secret: str, ts: str, body: bytes) -> str:
@@ -261,10 +252,7 @@ class TestJiraAdapter:
             "/api/v1/hooks/wh-1",
             content=body,
             headers={
-                "X-Hub-Signature": (
-                    "sha256="
-                    "a4771c39fbe90f317c7824e83ddef3caae9cb3d976c214ace1f2937e133263c9"
-                ),
+                "X-Hub-Signature": ("sha256=a4771c39fbe90f317c7824e83ddef3caae9cb3d976c214ace1f2937e133263c9"),
                 "X-Atlassian-Webhook-Identifier": "tenant-local-delivery-1",
             },
         )
@@ -330,9 +318,7 @@ class TestPagerDutyAdapter:
             "/api/v1/hooks/wh-1",
             content=body,
             headers={
-                "X-PagerDuty-Signature": (
-                    f"v1={_pd_sig('wrong1', body)},v1={_pd_sig('wrong2', body)}"
-                ),
+                "X-PagerDuty-Signature": (f"v1={_pd_sig('wrong1', body)},v1={_pd_sig('wrong2', body)}"),
             },
         )
         assert resp.status_code == 401
@@ -349,7 +335,8 @@ class TestWebexAdapter:
 
     def test_accepts_valid_signature(self, client, monkeypatch):
         """Valid Webex signature is accepted; canonical row is ``sha1=<hex>``."""
-        _set_settings(monkeypatch)
+        settings = _set_settings(monkeypatch)
+        settings.enabled_webhook_providers.append("webex")
         _register(_make_task(provider="webex", secret="topsecret"))
 
         body = b'{"data":{"id":"x"}}'
@@ -368,7 +355,8 @@ class TestWebexAdapter:
 
     def test_rejects_mismatched_signature(self, client, monkeypatch):
         """Mismatched Webex signature returns a generic 401."""
-        _set_settings(monkeypatch)
+        settings = _set_settings(monkeypatch)
+        settings.enabled_webhook_providers.append("webex")
         _register(_make_task(provider="webex", secret="topsecret"))
 
         body = b'{"data":{"id":"x"}}'
@@ -384,7 +372,8 @@ class TestWebexAdapter:
 
     def test_rejects_missing_signature_header(self, client, monkeypatch):
         """Missing ``X-Spark-Signature`` returns 401 when a Webex secret is configured."""
-        _set_settings(monkeypatch)
+        settings = _set_settings(monkeypatch)
+        settings.enabled_webhook_providers.append("webex")
         _register(_make_task(provider="webex", secret="topsecret"))
 
         resp = client.post(
@@ -396,7 +385,8 @@ class TestWebexAdapter:
 
     def test_dedup_keys_on_signature(self, client, monkeypatch):
         """Webex retries (same body+sig) dedup to the original run_id."""
-        _set_settings(monkeypatch)
+        settings = _set_settings(monkeypatch)
+        settings.enabled_webhook_providers.append("webex")
         _register(_make_task(provider="webex", secret="s"))
 
         body = b'{"data":{"id":"msg-1"},"id":"event-1"}'
@@ -418,7 +408,8 @@ class TestGenericHmacAdapter:
 
     def test_uses_vendor_neutral_header(self, client, monkeypatch):
         """Generic adapter accepts ``X-Webhook-Signature-256``, rejects ``X-Hub-Signature-256``."""
-        _set_settings(monkeypatch)
+        settings = _set_settings(monkeypatch)
+        settings.enabled_webhook_providers.append("generic_hmac")
         _register(_make_task(provider="generic_hmac", secret="s"))
 
         body = b'{"x":1}'
@@ -474,11 +465,7 @@ class TestDedupHeaderPrecedence:
     def test_per_task_dedup_header_overrides_adapter_default(self, client, monkeypatch):
         """Per-task ``dedup_header`` wins over the adapter default."""
         _set_settings(monkeypatch)
-        _register(
-            _make_task(
-                provider="github", secret="s", dedup_header="X-Custom-Delivery-Id"
-            )
-        )
+        _register(_make_task(provider="github", secret="s", dedup_header="X-Custom-Delivery-Id"))
 
         body = b"{}"
         sig = "sha256=" + hmac.new(b"s", body, hashlib.sha256).hexdigest()
