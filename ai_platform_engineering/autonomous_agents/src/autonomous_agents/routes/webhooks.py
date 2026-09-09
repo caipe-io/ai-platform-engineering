@@ -179,16 +179,6 @@ def _matches_webhook_filter(
         if incoming_action.strip().lower() not in webhook_filter.actions:
             return False
 
-    if webhook_filter.merged is not None:
-        pull_request = context.get("pull_request")
-        if not isinstance(pull_request, dict):
-            return False
-        incoming_merged = pull_request.get("merged")
-        if not isinstance(incoming_merged, bool):
-            return False
-        if incoming_merged is not webhook_filter.merged:
-            return False
-
     return True
 
 

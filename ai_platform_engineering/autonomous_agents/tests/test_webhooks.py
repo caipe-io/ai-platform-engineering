@@ -650,53 +650,6 @@ class TestInitialFireFiltering:
         assert len(client.captured["calls"]) == 1
         assert len(client.mongo._rows) == 1
 
-    @pytest.mark.parametrize(
-        ("required_merged", "payload_merged", "expected_status"),
-        [
-            (True, True, 202),
-            (True, False, 200),
-            (False, False, 202),
-            (False, True, 200),
-        ],
-    )
-    def test_closed_pr_can_filter_merged_state(
-        self,
-        client,
-        monkeypatch,
-        required_merged: bool,
-        payload_merged: bool,
-        expected_status: int,
-    ):
-        """Closed PR filters distinguish merged from unmerged closures."""
-        _set_settings(monkeypatch)
-        _register(
-            _make_task(
-                secret="task-secret",
-                webhook_filter=GitHubWebhookFilter(
-                    event="pull_request",
-                    actions=["closed"],
-                    merged=required_merged,
-                ),
-            )
-        )
-        body = json.dumps(
-            {"action": "closed", "pull_request": {"merged": payload_merged}}
-        ).encode()
-
-        response = client.post(
-            "/api/v1/hooks/wh-1",
-            content=body,
-            headers={
-                "X-GitHub-Event": "pull_request",
-                "X-GitHub-Delivery": f"delivery-{required_merged}-{payload_merged}",
-                "X-Hub-Signature-256": _hex_sig("task-secret", body),
-            },
-        )
-
-        assert response.status_code == expected_status
-        expected_calls = 1 if expected_status == 202 else 0
-        assert len(client.captured["calls"]) == expected_calls
-
     def test_filter_does_not_bypass_signature_verification(self, client, monkeypatch):
         """Even a nonmatching event must authenticate before it is ignored."""
         _set_settings(monkeypatch)

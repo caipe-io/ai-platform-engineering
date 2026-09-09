@@ -40,4 +40,25 @@ describe("MultiSelect", () => {
     await user.click(screen.getByRole("button", { name: /jira: all tools/i }));
     expect(onChange).toHaveBeenCalledWith(["jira: all tools"]);
   });
+
+  it("accepts a custom option when enabled", async () => {
+    const user = userEvent.setup();
+    const onChange = jest.fn();
+
+    render(
+      <MultiSelect
+        options={["opened", "closed"]}
+        selected={[]}
+        onChange={onChange}
+        ariaLabel="GitHub actions"
+        allowCustom
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "GitHub actions" }));
+    await user.type(screen.getByPlaceholderText("Search..."), "converted_to_draft");
+    await user.click(screen.getByRole("button", { name: /add "converted_to_draft"/i }));
+
+    expect(onChange).toHaveBeenCalledWith(["converted_to_draft"]);
+  });
 });

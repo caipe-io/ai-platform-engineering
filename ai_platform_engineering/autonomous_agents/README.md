@@ -117,7 +117,6 @@ trigger:
   filter:                           # optional; currently GitHub only
     event: "pull_request"           # X-GitHub-Event value
     actions: ["closed"]             # top-level payload action
-    merged: true                    # optional: merged PRs only
   # The API requires a signing secret and securely stores it.
 ```
 
@@ -128,9 +127,8 @@ secret, which the setup modal requires the user to paste back into CAIPE.
 
 GitHub filters are applied to authenticated deliveries before deduplication or
 queueing. A non-match returns `200 ignored` and creates no task run, chat entry,
-or agent invocation. For closed pull requests, omit `merged` to accept both
-merged and unmerged closures, set it to `true` for merged PRs only, or `false`
-for PRs closed without merging.
+or agent invocation. For example, `event: pull_request` with `actions: [closed]`
+accepts pull-request closures and ignores its other actions.
 
 The service also ships a `generic_hmac` adapter for API/configuration users,
 but it is intentionally absent from the UI task form.

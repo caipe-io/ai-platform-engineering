@@ -128,10 +128,9 @@ URL and secret. A generated secret is never returned again after the creation
 response. Normal task reads expose only `has_secret: true|false`.
 
 GitHub tasks can optionally filter deliveries by the `X-GitHub-Event` value
-and top-level payload `action`. A `pull_request` / `closed` filter can also
-select merged PRs only or PRs closed without merging. Other providers continue
-to use their provider-side event selection; the service does not apply GitHub
-payload assumptions to them.
+and top-level payload `action`. Other providers continue to use their
+provider-side event selection; the service does not apply GitHub payload
+assumptions to them.
 
 ### Secret storage
 

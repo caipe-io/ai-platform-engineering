@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -30,6 +31,88 @@ const WEBHOOK_PROVIDER_OPTIONS = [
   { value: "jira", label: "Jira" },
   { value: "slack", label: "Slack" },
   { value: "pagerduty", label: "PagerDuty" },
+];
+
+const GITHUB_WEBHOOK_DOCS_URL =
+  "https://docs.github.com/en/webhooks/webhook-events-and-payloads";
+
+interface GitHubEventOption {
+  value: string;
+  label: string;
+  /** null means GitHub permits caller-defined action values. */
+  actions: readonly string[] | null;
+}
+
+// GitHub has no API that enumerates valid webhook event/action combinations.
+// Keep common repository events here and retain an "Other event" escape hatch;
+// the linked GitHub catalogue remains the source of truth.
+const GITHUB_EVENT_OPTIONS: readonly GitHubEventOption[] = [
+  {
+    value: "pull_request",
+    label: "Pull request",
+    actions: [
+      "assigned",
+      "auto_merge_disabled",
+      "auto_merge_enabled",
+      "closed",
+      "converted_to_draft",
+      "demilestoned",
+      "dequeued",
+      "edited",
+      "enqueued",
+      "labeled",
+      "locked",
+      "milestoned",
+      "opened",
+      "ready_for_review",
+      "reopened",
+      "review_request_removed",
+      "review_requested",
+      "synchronize",
+      "unassigned",
+      "unlabeled",
+      "unlocked",
+    ],
+  },
+  { value: "push", label: "Push", actions: [] },
+  {
+    value: "issues",
+    label: "Issues",
+    actions: [
+      "assigned",
+      "closed",
+      "deleted",
+      "demilestoned",
+      "edited",
+      "labeled",
+      "locked",
+      "milestoned",
+      "opened",
+      "pinned",
+      "reopened",
+      "transferred",
+      "unassigned",
+      "unlabeled",
+      "unlocked",
+      "unpinned",
+    ],
+  },
+  { value: "issue_comment", label: "Issue comment", actions: ["created", "deleted", "edited"] },
+  { value: "pull_request_review", label: "Pull request review", actions: ["dismissed", "edited", "submitted"] },
+  { value: "pull_request_review_comment", label: "Pull request review comment", actions: ["created", "deleted", "edited"] },
+  { value: "pull_request_review_thread", label: "Pull request review thread", actions: ["resolved", "unresolved"] },
+  { value: "check_run", label: "Check run", actions: ["completed", "created", "rerequested", "requested_action"] },
+  { value: "check_suite", label: "Check suite", actions: ["completed", "requested", "rerequested"] },
+  { value: "workflow_job", label: "Workflow job", actions: ["completed", "in_progress", "queued", "waiting"] },
+  { value: "workflow_run", label: "Workflow run", actions: ["completed", "in_progress", "requested"] },
+  { value: "release", label: "Release", actions: ["created", "deleted", "edited", "prereleased", "published", "released", "unpublished"] },
+  { value: "deployment", label: "Deployment", actions: ["created"] },
+  { value: "deployment_status", label: "Deployment status", actions: ["created"] },
+  { value: "create", label: "Branch or tag created", actions: [] },
+  { value: "delete", label: "Branch or tag deleted", actions: [] },
+  { value: "repository_dispatch", label: "Repository dispatch", actions: null },
+  { value: "status", label: "Commit status", actions: [] },
+  { value: "watch", label: "Repository starred", actions: ["started"] },
 ];
 
 interface TaskFormDialogProps {
@@ -108,6 +191,28 @@ export function TaskFormDialog({
     if (!candidate) return false;
     return existingNames.some((n) => n.trim().toLowerCase() === candidate);
   }, [form.name, existingNames]);
+
+  const githubEventOption = GITHUB_EVENT_OPTIONS.find(
+    (option) => option.value === form.webhookFilterEvent,
+  );
+  const selectedGitHubActions = Array.from(new Set(
+    form.webhookFilterActions
+      .split(",")
+      .map((action) => action.trim().toLowerCase())
+      .filter(Boolean),
+  ));
+  const githubActionOptions = githubEventOption?.actions == null
+    ? null
+    : Array.from(new Set([...githubEventOption.actions, ...selectedGitHubActions]));
+
+  const updateGitHubEvent = (value: string) => {
+    setForm((current) => ({
+      ...current,
+      webhookFilterEvent: value === "__other__" ? "" : value,
+      // Actions are event-specific; never carry a stale action into another event.
+      webhookFilterActions: "",
+    }));
+  };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -366,52 +471,87 @@ export function TaskFormDialog({
                       <>
                         <div className="space-y-1">
                           <Label htmlFor="task-webhook-filter-event">GitHub event</Label>
-                          <Input
+                          <Select
                             id="task-webhook-filter-event"
-                            value={form.webhookFilterEvent}
-                            onChange={(e) => update("webhookFilterEvent", e.target.value)}
-                            placeholder="pull_request"
+                            value={githubEventOption?.value ?? "__other__"}
+                            onChange={(e) => updateGitHubEvent(e.target.value)}
                             required
-                          />
+                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {GITHUB_EVENT_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label} ({option.value})
+                              </option>
+                            ))}
+                            <option value="__other__">Other event…</option>
+                          </Select>
+                          {!githubEventOption && (
+                            <Input
+                              value={form.webhookFilterEvent}
+                              onChange={(e) => update("webhookFilterEvent", e.target.value)}
+                              placeholder="GitHub event name"
+                              aria-label="Other GitHub event"
+                              required
+                            />
+                          )}
                           <p className="text-[11px] text-muted-foreground">
-                            The event name from <code>X-GitHub-Event</code>, for example{" "}
-                            <code>pull_request</code>.
+                            Matches <code>X-GitHub-Event</code>. Common repository events are
+                            listed above; choose Other for any additional documented event.{" "}
+                            <a
+                              href={GITHUB_WEBHOOK_DOCS_URL}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="underline underline-offset-2 hover:text-foreground"
+                            >
+                              GitHub event documentation
+                            </a>
+                            .
                           </p>
                         </div>
 
                         <div className="space-y-1">
-                          <Label htmlFor="task-webhook-filter-actions">GitHub actions (optional)</Label>
-                          <Input
-                            id="task-webhook-filter-actions"
-                            value={form.webhookFilterActions}
-                            onChange={(e) => update("webhookFilterActions", e.target.value)}
-                            placeholder="closed"
-                          />
+                          <Label>GitHub actions (optional)</Label>
+                          {githubActionOptions === null ? (
+                            <Input
+                              id="task-webhook-filter-actions"
+                              value={form.webhookFilterActions}
+                              onChange={(e) => update("webhookFilterActions", e.target.value)}
+                              placeholder="Comma-separated action values"
+                              aria-label="GitHub actions (optional)"
+                            />
+                          ) : githubActionOptions.length > 0 ? (
+                            <MultiSelect
+                              options={githubActionOptions}
+                              selected={selectedGitHubActions}
+                              onChange={(actions) => update(
+                                "webhookFilterActions",
+                                actions.join(", "),
+                              )}
+                              ariaLabel="GitHub actions (optional)"
+                              allowCustom
+                              placeholder="All actions"
+                              searchPlaceholder="Search actions..."
+                              emptyLabel="No matching actions"
+                              badgeLabel="actions"
+                              className="h-9 w-full max-w-full"
+                              portalled={false}
+                            />
+                          ) : null}
                           <p className="text-[11px] text-muted-foreground">
-                            Comma-separated payload actions. Leave blank to accept every action
-                            for this event.
+                            {githubActionOptions?.length === 0
+                              ? "This event has no documented top-level action filter. "
+                              : "Leave blank to accept every action for this event. "}
+                            <a
+                              href={`${GITHUB_WEBHOOK_DOCS_URL}#${encodeURIComponent(form.webhookFilterEvent)}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="underline underline-offset-2 hover:text-foreground"
+                            >
+                              View valid actions
+                            </a>
+                            .
                           </p>
                         </div>
-
-                        {form.webhookFilterEvent.trim().toLowerCase() === "pull_request" &&
-                          form.webhookFilterActions.trim().toLowerCase() === "closed" && (
-                          <div className="space-y-1">
-                            <Label htmlFor="task-webhook-filter-merged">Closed pull requests</Label>
-                            <Select
-                              id="task-webhook-filter-merged"
-                              value={form.webhookFilterMerged}
-                              onChange={(e) => update(
-                                "webhookFilterMerged",
-                                e.target.value as TaskFormState["webhookFilterMerged"],
-                              )}
-                              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <option value="any">Merged or closed without merging</option>
-                              <option value="merged">Merged only</option>
-                              <option value="unmerged">Closed without merging only</option>
-                            </Select>
-                          </div>
-                        )}
                       </>
                     )}
                     <p className="text-[11px] text-muted-foreground">

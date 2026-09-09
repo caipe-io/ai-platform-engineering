@@ -43,7 +43,6 @@ export const EMPTY_FORM: TaskFormState = {
   webhookFilterEnabled: false,
   webhookFilterEvent: "pull_request",
   webhookFilterActions: "closed",
-  webhookFilterMerged: "any",
 };
 
 /** Convert API model -> form state. */
@@ -83,11 +82,6 @@ export function toFormState(task: AutonomousTask | null | undefined): TaskFormSt
       base.webhookFilterEnabled = true;
       base.webhookFilterEvent = task.trigger.filter.event;
       base.webhookFilterActions = (task.trigger.filter.actions ?? []).join(", ");
-      base.webhookFilterMerged = task.trigger.filter.merged == null
-        ? "any"
-        : task.trigger.filter.merged
-          ? "merged"
-          : "unmerged";
     }
   }
   return base;
@@ -173,12 +167,7 @@ export function fromFormState(
       if (actions.some((action) => !/^[a-z0-9_]+$/.test(action))) {
         return { error: "GitHub actions may contain only letters, numbers, and underscores." };
       }
-      const supportsMergedFilter =
-        event === "pull_request" && actions.length === 1 && actions[0] === "closed";
-      const merged = !supportsMergedFilter || form.webhookFilterMerged === "any"
-        ? null
-        : form.webhookFilterMerged === "merged";
-      filter = { event, actions, merged };
+      filter = { event, actions };
     }
     trigger = {
       type: "webhook",

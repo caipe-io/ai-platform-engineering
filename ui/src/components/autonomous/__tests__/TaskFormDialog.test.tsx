@@ -89,19 +89,42 @@ it("configures a GitHub pull-request action filter", async () => {
 
   fireEvent.click(screen.getByLabelText(/only run the agent for matching GitHub events/i));
   expect(screen.getByLabelText("GitHub event")).toHaveValue("pull_request");
-  expect(screen.getByLabelText("GitHub actions (optional)")).toHaveValue("closed");
-  fireEvent.change(screen.getByLabelText("Closed pull requests"), {
-    target: { value: "merged" },
-  });
+  expect(screen.getByRole("button", { name: "GitHub actions (optional)" })).toHaveTextContent(
+    "closed",
+  );
   fireEvent.click(screen.getByRole("button", { name: /create task/i }));
 
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
     expect.objectContaining({
       trigger: expect.objectContaining({
-        filter: { event: "pull_request", actions: ["closed"], merged: true },
+        filter: { event: "pull_request", actions: ["closed"] },
       }),
     }),
   ));
+});
+
+it("uses documented event/action choices without a pull-request-only control", () => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.click(screen.getByLabelText(/only run the agent for matching GitHub events/i));
+
+  const eventSelect = screen.getByLabelText("GitHub event");
+  expect(eventSelect.tagName).toBe("SELECT");
+  expect(screen.getByRole("option", { name: "Pull request (pull_request)" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("Closed pull requests")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "GitHub event documentation" })).toHaveAttribute(
+    "href",
+    "https://docs.github.com/en/webhooks/webhook-events-and-payloads",
+  );
+
+  fireEvent.change(eventSelect, { target: { value: "issues" } });
+  expect(screen.getByRole("button", { name: "GitHub actions (optional)" })).toHaveTextContent(
+    "All actions",
+  );
+  expect(screen.getByRole("link", { name: "View valid actions" })).toHaveAttribute(
+    "href",
+    "https://docs.github.com/en/webhooks/webhook-events-and-payloads#issues",
+  );
 });
 
 it("shows GitHub filters only for the GitHub provider", () => {
@@ -124,6 +147,7 @@ it("stays open after GitHub creation and shows the full URL plus one-time secret
     webhookSetupRequired: true,
     webhookSetupSecret: "generated-secret-value",
   }));
+
   renderDialog({ onOpenChange, onSubmit });
 
   fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Daily branch summary" } });

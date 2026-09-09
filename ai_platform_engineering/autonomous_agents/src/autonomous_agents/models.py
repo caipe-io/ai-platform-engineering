@@ -69,13 +69,6 @@ class GitHubWebhookFilter(BaseModel):
             "every action for the configured event."
         ),
     )
-    merged: bool | None = Field(
-        default=None,
-        description=(
-            "For a closed pull_request only: true accepts merged PRs, false "
-            "accepts PRs closed without merging, and null accepts both."
-        ),
-    )
 
     @field_validator("event")
     @classmethod
@@ -108,18 +101,6 @@ class GitHubWebhookFilter(BaseModel):
             if action not in normalized:
                 normalized.append(action)
         return normalized
-
-    @model_validator(mode="after")
-    def validate_merged_condition(self) -> "GitHubWebhookFilter":
-        """Limit the merged-state predicate to the payload shape that has it."""
-        if self.merged is not None and (
-            self.event != "pull_request" or self.actions != ["closed"]
-        ):
-            raise ValueError(
-                "Webhook filter merged can only be set for the single "
-                "pull_request action 'closed'"
-            )
-        return self
 
 
 class WebhookTrigger(BaseModel):

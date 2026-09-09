@@ -34,8 +34,6 @@ export interface GitHubWebhookFilter {
   event: string;
   /** Allowed top-level payload actions; empty means every action for the event. */
   actions?: string[];
-  /** For closed pull requests: true=merged, false=closed unmerged, null=either. */
-  merged?: boolean | null;
 }
 
 export interface WebhookTrigger {
@@ -254,5 +252,4 @@ export interface TaskFormState {
   webhookFilterEvent: string;
   /** Comma-separated GitHub action names. */
   webhookFilterActions: string;
-  webhookFilterMerged: "any" | "merged" | "unmerged";
 }

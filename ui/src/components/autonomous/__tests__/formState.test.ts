@@ -70,7 +70,6 @@ describe("formState.toFormState", () => {
         webhookFilterEnabled: true,
         webhookFilterEvent: "pull_request",
         webhookFilterActions: "closed",
-        webhookFilterMerged: "merged",
       }),
     );
   });
@@ -182,7 +181,6 @@ describe("formState.fromFormState", () => {
       webhookFilterEnabled: true,
       webhookFilterEvent: " Pull_Request ",
       webhookFilterActions: " Closed, reopened, closed ",
-      webhookFilterMerged: "any",
     });
     expect(result).toEqual({
       task: expect.objectContaining({
@@ -193,27 +191,8 @@ describe("formState.fromFormState", () => {
           filter: {
             event: "pull_request",
             actions: ["closed", "reopened"],
-            merged: null,
           },
         },
-      }),
-    });
-  });
-
-  it("maps the closed-PR merged-state filter", () => {
-    const result = fromFormState({
-      ...base,
-      triggerType: "webhook",
-      webhookFilterEnabled: true,
-      webhookFilterEvent: "pull_request",
-      webhookFilterActions: "closed",
-      webhookFilterMerged: "unmerged",
-    });
-    expect(result).toEqual({
-      task: expect.objectContaining({
-        trigger: expect.objectContaining({
-          filter: { event: "pull_request", actions: ["closed"], merged: false },
-        }),
       }),
     });
   });
@@ -241,24 +220,6 @@ describe("formState.fromFormState", () => {
       webhookFilterEnabled: true,
       webhookFilterActions: "closed now",
     })).toEqual({ error: expect.stringMatching(/actions may contain only/) });
-  });
-
-  it("drops a stale merged selection when the action changes", () => {
-    const result = fromFormState({
-      ...base,
-      triggerType: "webhook",
-      webhookFilterEnabled: true,
-      webhookFilterEvent: "pull_request",
-      webhookFilterActions: "opened",
-      webhookFilterMerged: "merged",
-    });
-    expect(result).toEqual({
-      task: expect.objectContaining({
-        trigger: expect.objectContaining({
-          filter: { event: "pull_request", actions: ["opened"], merged: null },
-        }),
-      }),
-    });
   });
 
   it("does not send a GitHub filter for another provider", () => {
