@@ -779,6 +779,10 @@ async def authorize_source_ingestion(
   ongoing Owner access.
   Existing datasources continue through the normal connector/config gate.
   """
+  # The platform service starts declaratively seeded sources only after the UI
+  # has preprovisioned their management and search policy.
+  if ownership_preprovisioned and is_trusted_ingestor_service(user):
+    return
   if existing_datasource is not None:
     await check_connector_configuration_access(user, datasource_id)
   elif ownership_preprovisioned:

@@ -380,6 +380,38 @@ async def test_trusted_ingestor_create_can_project_preconfigured_search(
 
 
 @pytest.mark.asyncio
+async def test_trusted_ingestor_can_start_preprovisioned_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    check_source = AsyncMock()
+    authorize_create = AsyncMock()
+    monkeypatch.setattr(restapi, "check_ingestion_source_access", check_source)
+    monkeypatch.setattr(restapi, "authorize_datasource_create", authorize_create)
+    monkeypatch.setattr(restapi, "is_trusted_ingestor_service", lambda _user: True)
+    service = UserContext(
+        subject="ingestor-sub",
+        subject_type="service_account",
+        client_id="example-ingestor",
+        email="example-ingestor@example.com",
+        role=Role.READONLY,
+        is_authenticated=True,
+        groups=[],
+    )
+
+    await restapi.authorize_source_ingestion(
+        None,
+        service,
+        "src_x",
+        "owner-team",
+        True,
+        None,
+    )
+
+    check_source.assert_not_awaited()
+    authorize_create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_ownership_write_failure_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _boom(_writes):
         raise RuntimeError("openfga down")

@@ -204,6 +204,8 @@ When a Slack channel route runs **as a service account** (the route's `execution
 
 RAG accepts both browser user tokens and ingestor client-credentials tokens from Keycloak. For local Docker Compose, `OIDC_DISCOVERY_URL` and `INGESTOR_OIDC_DISCOVERY_URL` may be either the realm base URL (`http://keycloak:7080/realms/caipe`) or the full `.well-known/openid-configuration` URL; the server normalizes both forms before fetching metadata. Keycloak service-account tokens use `preferred_username=service-account-<client>`, so RAG treats that token shape as machine-to-machine and assigns `RBAC_CLIENT_CREDENTIALS_ROLE`; human tokens are identity-only and use OpenFGA for authorization.
 
+The configured first-party ingestor service may start a declaratively seeded datasource only when the UI has already preprovisioned its ownership and Search policy. This narrow transport exception also covers heartbeats, job mutation, and document pushes; it does not bypass datasource read or Search authorization. Interactive and unmanaged datasource creation continues through the normal organization ingestion-capability and source-management checks.
+
 #### User-facing Role Cleanup
 
 The Admin UI intentionally separates **team/resource authorization** from **raw Keycloak plumbing**:

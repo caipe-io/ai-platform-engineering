@@ -1,14 +1,6 @@
-"""Confluence RAG ingestor - syncs pages from Confluence spaces.
-
-Mirrors the webloader ingestor pattern:
-- Redis listener handles on-demand page ingestion
-- Periodic reload refreshes all configured spaces
-- UI sources use one root page per datasource; legacy config can still model a
-  whole space as one datasource
-"""
+"""Confluence ingestor for persisted and on-demand RAG datasources."""
 
 import os
-import json
 import re
 import time
 import traceback
@@ -23,11 +15,7 @@ from common.models.server import (
   ConfluenceReloadRequest,
 )
 from common.job_manager import JobStatus, JobManager
-from common.constants import (
-  CONFLUENCE_INGESTOR_NAME,
-  CONFLUENCE_INGESTOR_TYPE,
-  DEFAULT_RELOAD_INTERVAL,
-)
+from common.constants import CONFLUENCE_INGESTOR_NAME, CONFLUENCE_INGESTOR_TYPE
 from common.utils import get_logger
 from loader import ConfluenceLoader, generate_datasource_id
 
@@ -51,7 +39,6 @@ if not CONFLUENCE_TOKEN:
   raise ValueError("CONFLUENCE_TOKEN (or CONFLUENCE_API_TOKEN) environment variable is required")
 
 CONFLUENCE_SSL_VERIFY = os.environ.get("CONFLUENCE_SSL_VERIFY", "true").lower() == "true"
-CONFLUENCE_SPACES = os.environ.get("CONFLUENCE_SPACES", "")
 MAX_CONCURRENCY = int(os.environ.get("CONFLUENCE_MAX_CONCURRENCY", "5"))
 MAX_INGESTION_TASKS = int(os.environ.get("CONFLUENCE_MAX_INGESTION_TASKS", "5"))
 PREVIEW_MAX_ITEMS = max(1, min(int(os.getenv("INGESTOR_PREVIEW_MAX_ITEMS", "100")), 500))
@@ -79,100 +66,6 @@ def _get_title_patterns(metadata: Optional[Dict[str, Any]]) -> Dict[str, List[st
     denied = denied or ingest_req.get("denied_title_patterns") or []
 
   return {"allowed_title_patterns": allowed, "denied_title_patterns": denied}
-
-
-def _create_datasource_info(
-  datasource_id: str,
-  ingestor_id: str,
-  space_key: str,
-  description: str,
-  page_configs: Optional[List[Dict[str, Any]]] = None,
-  allowed_title_patterns: Optional[List[str]] = None,
-  denied_title_patterns: Optional[List[str]] = None,
-) -> DataSourceInfo:
-  """Create DataSourceInfo with page_configs metadata structure."""
-  metadata: Dict[str, Any] = {
-    "space_key": space_key,
-    "page_configs": page_configs or [],
-    "confluence_url": CONFLUENCE_URL,
-  }
-  if allowed_title_patterns:
-    metadata["allowed_title_patterns"] = allowed_title_patterns
-  if denied_title_patterns:
-    metadata["denied_title_patterns"] = denied_title_patterns
-
-  return DataSourceInfo(
-    datasource_id=datasource_id,
-    name=f"Confluence: {space_key}",
-    ingestor_id=ingestor_id,
-    description=description,
-    source_type="confluence",
-    metadata=metadata,
-    last_updated=int(time.time()),
-    default_chunk_size=1000,
-    default_chunk_overlap=200,
-    reload_interval=DEFAULT_RELOAD_INTERVAL,
-  )
-
-
-def parse_confluence_spaces_json(spaces_config: str) -> Dict[str, List[Dict[str, Any]]]:
-  """Parse CONFLUENCE_SPACES environment variable as JSON.
-
-  Format: JSON object mapping space keys to page configurations.
-  {
-      "SPACE_KEY": [
-          {"page_id": 123, "source": "url", "get_child_pages": false},
-          {"page_id": 456, "get_child_pages": true}
-      ],
-      "SPACE2": []
-  }
-
-  Empty array = fetch entire space.
-
-  Returns:
-      Dict[space_key, List[page_configs]]
-
-  Raises:
-      ValueError: If JSON is invalid or schema doesn't match
-  """
-  if not spaces_config:
-    return {}
-
-  try:
-    config = json.loads(spaces_config)
-  except json.JSONDecodeError as e:
-    raise ValueError(f"CONFLUENCE_SPACES must be valid JSON: {e}")
-
-  if not isinstance(config, dict):
-    raise ValueError("CONFLUENCE_SPACES must be a JSON object")
-
-  # Validate structure
-  for space_key, page_configs in config.items():
-    if page_configs is None:
-      # Convert None to empty list
-      config[space_key] = []
-    elif isinstance(page_configs, list):
-      for idx, page_config in enumerate(page_configs):
-        if not isinstance(page_config, dict):
-          raise ValueError(f"Space {space_key} page {idx}: must be object, got {type(page_config)}")
-
-        # Validate required fields
-        if "page_id" not in page_config:
-          raise ValueError(f"Space {space_key} page {idx}: missing required 'page_id' field")
-
-        # Coerce page_id to string
-        page_config["page_id"] = str(page_config["page_id"])
-
-        # Set defaults for optional fields
-        if "get_child_pages" not in page_config:
-          page_config["get_child_pages"] = False
-
-        if "source" not in page_config:
-          page_config["source"] = None
-    else:
-      raise ValueError(f"Space {space_key}: value must be list or null, got {type(page_configs)}")
-
-  return config
 
 
 async def track_fetch_failures(job_manager: JobManager, job_id: str, failed_pages: List[tuple[str, str]]) -> None:
@@ -488,165 +381,17 @@ async def reload_datasource(
     raise
 
 
-async def periodic_reload(client: Client):
-  """Periodically reload all configured Confluence spaces."""
-  logger.info("Starting periodic Confluence reload...")
-  job_manager = JobManager(redis_client)
-
-  try:
-    # First, process any configured spaces from CONFLUENCE_SPACES env var
-    if CONFLUENCE_SPACES:
-      spaces_config = parse_confluence_spaces_json(CONFLUENCE_SPACES)
-      logger.info(f"Processing {len(spaces_config)} configured Confluence spaces")
-      logger.debug(f"Full configuration: {spaces_config}")
-
-      # Process each configured space
-      for space_key, page_configs in spaces_config.items():
-        try:
-          # Generate datasource ID
-          datasource_id = generate_datasource_id(CONFLUENCE_URL, space_key)
-
-          # Fetch or create datasource
-          datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
-          datasource_info = next(
-            (ds for ds in datasources if ds.datasource_id == datasource_id),
-            None,
-          )
-
-          if datasource_info and (datasource_info.metadata or {}).get("config_managed") is True:
-            logger.debug(
-              f"Skipping legacy CONFLUENCE_SPACES config for database-managed datasource {datasource_id}"
-            )
-            continue
-
-          if (
-            datasource_info
-            and datasource_info.last_updated
-            and int(time.time()) - datasource_info.last_updated
-            < datasource_info.reload_interval
-          ):
-            logger.debug(
-              f"Skipping {space_key}: datasource refresh is not due"
-            )
-            continue
-
-          if not datasource_info:
-            # Create datasource
-            logger.info(f"Creating datasource for configured space: {datasource_id}")
-            datasource_info = _create_datasource_info(
-              datasource_id=datasource_id,
-              ingestor_id=client.ingestor_id,
-              space_key=space_key,
-              description=f"Auto-synced Confluence space {space_key}",
-              page_configs=page_configs,
-            )
-            await client.upsert_datasource(datasource_info)
-          else:
-            datasource_info.metadata = {
-              **(datasource_info.metadata or {}),
-              "space_key": space_key,
-              "page_configs": page_configs,
-              "confluence_url": CONFLUENCE_URL,
-            }
-
-          title_patterns = _get_title_patterns(datasource_info.metadata)
-
-          # Use loader to fetch and ingest pages
-          async with ConfluenceLoader(
-            rag_client=client,
-            job_manager=job_manager,
-            datasource_info=datasource_info,
-            confluence_url=CONFLUENCE_URL,
-            username=CONFLUENCE_USERNAME,
-            token=CONFLUENCE_TOKEN,
-            verify_ssl=CONFLUENCE_SSL_VERIFY,
-            max_concurrency=MAX_CONCURRENCY,
-            allowed_title_patterns=title_patterns["allowed_title_patterns"],
-            denied_title_patterns=title_patterns["denied_title_patterns"],
-          ) as loader:
-            # Load pages
-            pages, failed_pages = await loader.load_pages(space_key, page_configs)
-
-            # Create job with total (successful + failed)
-            total_count = len(pages) + len(failed_pages)
-            job_response = await client.create_job(
-              datasource_id=datasource_id,
-              job_status=JobStatus.IN_PROGRESS,
-              message=f"Auto-syncing {len(pages)} pages from {space_key}, {len(failed_pages)} failed to load",
-              total=total_count,
-            )
-            job_id = job_response["job_id"]
-
-            # Track fetch failures
-            await track_fetch_failures(job_manager, job_id, failed_pages)
-
-            # If no pages succeeded, mark job as failed and continue to next space
-            if not pages:
-              await job_manager.upsert_job(
-                job_id=job_id,
-                status=JobStatus.FAILED,
-                message=f"All page loads failed for {space_key}",
-              )
-              logger.warning(f"All page loads failed for {space_key}")
-              continue
-
-            logger.info(f"Auto-syncing {len(pages)} pages from configured space {space_key}")
-
-            # Ingest pages
-            await loader.ingest_pages(pages, job_id)
-
-          # Update datasource last_updated
-          datasource_info.last_updated = int(time.time())
-          await client.upsert_datasource(datasource_info)
-
-          logger.info(f"Completed auto-sync for space {space_key}")
-
-        except Exception as e:
-          logger.error(f"Error auto-syncing space {space_key}: {e}")
-          logger.error(traceback.format_exc())
-
-    # Refresh UI/database-managed sources too, honoring each source's own
-    # reload interval instead of the connector-wide legacy interval.
-    await reload_persisted_datasources(
-      client,
-      reload_datasource,
-      config_managed_only=True,
-      job_manager=job_manager,
-    )
-
-    logger.info("Periodic reload completed")
-
-  except Exception as e:
-    logger.error(f"Error in periodic reload: {e}")
-    logger.error(traceback.format_exc())
+async def periodic_reload(client: Client) -> None:
+  """Refresh persisted Confluence datasources whose interval is due."""
+  await reload_persisted_datasources(
+    client,
+    reload_datasource,
+    job_manager=JobManager(redis_client),
+  )
 
 
 async def redis_listener(client: Client):
   """Run Confluence commands through the shared per-ingestor listener."""
-
-  async def reconcile_legacy_config() -> None:
-    """Expose legacy connector options immediately for config migration."""
-    if not CONFLUENCE_SPACES:
-      return
-    spaces = parse_confluence_spaces_json(CONFLUENCE_SPACES)
-    datasources = {
-      datasource.datasource_id: datasource
-      for datasource in await client.list_datasources(ingestor_id=client.ingestor_id)
-    }
-    for space_key, page_configs in spaces.items():
-      datasource = datasources.get(generate_datasource_id(CONFLUENCE_URL, space_key))
-      if not datasource:
-        continue
-      metadata = datasource.metadata or {}
-      if metadata.get("config_managed") is True:
-        continue
-      datasource.metadata = {
-        **metadata,
-        "space_key": space_key,
-        "page_configs": page_configs,
-        "confluence_url": CONFLUENCE_URL,
-      }
-      await client.upsert_datasource(datasource)
 
   await run_ingestor_listener(
     client,
@@ -660,7 +405,6 @@ async def redis_listener(client: Client):
     reload_handler=reload_datasource,
     max_tasks=MAX_INGESTION_TASKS,
     describe_ingest=lambda request: f"Confluence page ingestion: {request.url}",
-    on_startup=reconcile_legacy_config,
     on_shutdown=redis_client.aclose,
     preview_command=ConfluenceIngestorCommand.PREVIEW_PAGE,
     preview_model=ConfluenceIngestRequest,
@@ -682,23 +426,13 @@ if __name__ == "__main__":
   try:
     logger.info("Starting Confluence Ingestor...")
     logger.info(f"Confluence URL: {CONFLUENCE_URL}")
-    logger.info(f"Configured spaces: {CONFLUENCE_SPACES or '(none)'}")
-
     # Build and run the ingestor (same pattern as webloader)
-    configured_spaces = (
-      parse_confluence_spaces_json(CONFLUENCE_SPACES) if CONFLUENCE_SPACES else {}
-    )
     (
       IngestorBuilder()
       .name(CONFLUENCE_INGESTOR_NAME)
       .type(CONFLUENCE_INGESTOR_TYPE)
       .description(f"Confluence wiki page ingestor for {CONFLUENCE_URL}")
-      .metadata(
-        {
-          "confluence_url": CONFLUENCE_URL,
-          "spaces": configured_spaces,
-        }
-      )
+      .metadata({"confluence_url": CONFLUENCE_URL})
       .sync_with_fn(periodic_reload)
       .with_startup(redis_listener)
       .schedule_from_datasources()

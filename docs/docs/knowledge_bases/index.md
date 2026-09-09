@@ -59,6 +59,19 @@ Users can create these sources from the CAIPE UI when the corresponding ingestor
 - Jira
 - Webex
 
+### Configuration-seeded sources
+
+Operators can declare the same web and collaboration sources in the
+application configuration:
+
+- Compose: `rag_sources` in `config/app-config.yaml`
+- Helm: `caipe-ui.appConfig.rag_sources`
+
+CAIPE seeds these records into the UI datasource store and starts ingestion
+when the matching ingestor is available. They remain visible but read-only in
+the UI; update or remove them through application configuration. Declare
+`search_with_teams` to grant query access independently from source management.
+
 ### Deployment-managed ingestors
 
 Platform operators can configure additional ingestors for sources such as:

@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from '@docusaurus/Link';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './features.module.css';
@@ -62,6 +63,7 @@ const FEATURES = [
     title: 'Multi-Agent Orchestration',
     icon: '🤖',
     color: '#0284c7',
+    to: '/docs/agents/',
     items: [
       'Multi-agent and deep agent interactions with access to multiple tools and sub-agents based on customizable system prompts',
       '10+ first-party curated sub-agents and MCP servers',
@@ -99,6 +101,7 @@ const FEATURES = [
     title: 'Agent Memory',
     icon: '💾',
     color: '#059669',
+    to: '/docs/api/chat-conversations',
     items: [
       'Chat persistence memory with multi-turn conversation',
       'Fact extraction across chats for a user',
@@ -108,6 +111,7 @@ const FEATURES = [
     title: 'Scheduled Runs & External Triggers',
     icon: '📡',
     color: '#d97706',
+    to: '/docs/architecture/autonomous-agents',
     items: [
       'Webhook-based agent triggers for event-driven workflows',
       'Scheduled/cron-based agent runs',
@@ -119,6 +123,7 @@ const FEATURES = [
     title: 'Agent and Tool Communications',
     icon: '🔗',
     color: '#d97706',
+    to: '/docs/api/dynamic-agents-mcp',
     items: [
       'MCP (Model Context Protocol)',
       'Dynamic Agents API',
@@ -130,6 +135,7 @@ const FEATURES = [
     title: 'Enterprise Security',
     icon: '🔒',
     color: '#dc2626',
+    to: '/docs/security/',
     items: [
       'OAuth 2.0 integration with OIDC compatible IdPs',
       'OIDC/Okta groups base RBAC',
@@ -141,6 +147,7 @@ const FEATURES = [
     title: 'Deployment',
     icon: '🚀',
     color: '#2563eb',
+    to: '/docs/installation/',
     items: [
       'Kubernetes based Helm charts',
       'Docker/Containerized Agents and MCP servers',
@@ -154,6 +161,7 @@ const FEATURES = [
     title: 'Integrations',
     icon: '🔌',
     color: '#0891b2',
+    to: '/docs/getting-started/user-interfaces',
     items: [
       'Web UI — rich chat interface with live agent/tool status via streaming',
       'Slack Bot — conversational interface for your team\'s existing workflow',
@@ -164,6 +172,9 @@ const FEATURES = [
 ];
 
 export default function FeaturesPage() {
+  const {siteConfig} = useDocusaurusContext();
+  const currentDocsPrefix = siteConfig.customFields?.currentDocsPrefix ?? '/docs';
+
   return (
     <Layout
       title="Features · CAIPE"
@@ -200,8 +211,11 @@ export default function FeaturesPage() {
         <section className={styles.grid}>
           <div className={styles.gridInner}>
             {FEATURES.map((f) => {
+              const target = f.title === 'Agent Builder'
+                ? `${currentDocsPrefix}/features/agent-builder`
+                : f.to;
               const card = (
-                <div key={f.title} className={styles.card} style={f.to ? {cursor: 'pointer'} : undefined}>
+                <div key={f.title} className={styles.card} style={target ? {cursor: 'pointer'} : undefined}>
                   <div className={styles.cardHeader} style={{'--card-color': f.color} as React.CSSProperties}>
                     <span className={styles.cardIcon}>{f.icon}</span>
                     <Heading as="h2" className={styles.cardTitle}>{f.title}</Heading>
@@ -213,8 +227,8 @@ export default function FeaturesPage() {
                   </ul>
                 </div>
               );
-              return f.to
-                ? <Link key={f.title} to={f.to} style={{textDecoration: 'none', color: 'inherit'}}>{card}</Link>
+              return target
+                ? <Link key={f.title} to={target} style={{textDecoration: 'none', color: 'inherit'}}>{card}</Link>
                 : card;
             })}
           </div>

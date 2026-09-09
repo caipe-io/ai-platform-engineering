@@ -193,9 +193,9 @@ ENABLE_METALLB="${ENABLE_METALLB:-true}"
 # ENABLE_INGRESS=false or pass --no-ingress to skip.
 ENABLE_INGRESS="${ENABLE_INGRESS:-true}"
 # Default ingress hostname used when ingress is enabled but no domain is
-# supplied. *.local.me resolves to 127.0.0.1 via public DNS, so this works
+# supplied. *.localtest.me resolves to 127.0.0.1 via public DNS, so this works
 # out-of-the-box on any laptop without /etc/hosts edits.
-CAIPE_DOMAIN_DEFAULT="${CAIPE_DOMAIN_DEFAULT:-caipe.local.me}"
+CAIPE_DOMAIN_DEFAULT="${CAIPE_DOMAIN_DEFAULT:-caipe.localtest.me}"
 CAIPE_DOMAIN=""
 TLS_CERT_FILE=""
 TLS_KEY_FILE=""
@@ -1977,7 +1977,7 @@ install_nginx_ingress() {
   # This whole block is Linux-only: it relies on `hostname -I`, /proc/sys, and
   # iptables, none of which exist on macOS. On Docker Desktop (macOS) the kind
   # network is not routable from the host regardless, so external DNAT can't
-  # work — local access is via `*.local.me` → 127.0.0.1 and/or port-forward.
+  # work — local access is via `*.localtest.me` → 127.0.0.1 and/or port-forward.
   if $ENABLE_METALLB && [[ -n "$CAIPE_DOMAIN" ]] && [[ "$(uname -s)" == "Linux" ]]; then
     # DNAT requires IP forwarding to be enabled at runtime — not just in sysctl.conf.
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]]; then
@@ -2062,7 +2062,7 @@ install_nginx_ingress() {
     _persist_iptables "$ingress_ip"
 
     # Update /etc/hosts so local health-check curls (run_validation, sanity tests)
-    # resolve the domain to the MetalLB IP directly, bypassing the *.local.me →
+    # resolve the domain to the MetalLB IP directly, bypassing the *.localtest.me →
     # 127.0.0.1 special-domain default. Idempotent: removes stale entry first.
     if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
       local _hosts_marker="# caipe-ingress"
@@ -2071,7 +2071,7 @@ install_nginx_ingress() {
         && log "/etc/hosts: ${CAIPE_DOMAIN} → ${ingress_ip} (local health-check resolution)"
     fi
   elif $ENABLE_METALLB && [[ "$(uname -s)" != "Linux" ]]; then
-    log "Skipping iptables DNAT (non-Linux host) — use port-forward or *.local.me → 127.0.0.1 for local access"
+    log "Skipping iptables DNAT (non-Linux host) — use port-forward or *.localtest.me → 127.0.0.1 for local access"
   fi
 }
 
@@ -2167,7 +2167,7 @@ setup_tls() {
     # Always announce self-signed up-front, even if the interactive flow
     # already did — duplication is cheap and makes scripted/CI runs honest.
     local _reason=""
-    [[ "$CAIPE_DOMAIN" == *.local.me ]] && _reason="*.local.me has no public CA"
+    [[ "$CAIPE_DOMAIN" == *.localtest.me ]] && _reason="*.localtest.me has no public CA"
     _announce_self_signed "${CAIPE_DOMAIN}" "${_reason}"
     log "Generating self-signed certificate for ${CAIPE_DOMAIN}"
     # Trailing X's only: BSD mktemp (macOS) treats any chars after the X's as a
@@ -2311,7 +2311,7 @@ choose_features() {
     if $ENABLE_INGRESS; then
       if [[ -z "$CAIPE_DOMAIN" ]]; then
         CAIPE_DOMAIN="$CAIPE_DOMAIN_DEFAULT"
-        log "Ingress enabled with default domain: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.local.me; override with --domain=<hostname>)"
+        log "Ingress enabled with default domain: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.localtest.me; override with --domain=<hostname>)"
       else
         log "Ingress enabled for domain: ${CAIPE_DOMAIN} (--ingress --domain)"
       fi
@@ -2941,16 +2941,16 @@ choose_features() {
       if [[ -z "$CAIPE_DOMAIN" ]]; then
         CAIPE_DOMAIN="$CAIPE_DOMAIN_DEFAULT"
         _used_default_domain=true
-        log "No hostname provided — using default: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.local.me)"
+        log "No hostname provided — using default: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.localtest.me)"
       fi
       log "Ingress enabled for: ${CAIPE_DOMAIN}"
 
       echo ""
       if $_used_default_domain; then
-        # Local-dev default (*.local.me) — no public cert authority will
+        # Local-dev default (*.localtest.me) — no public cert authority will
         # issue for this, so always self-sign and skip the auto-detect /
         # manual prompt flow entirely.
-        _announce_self_signed "${CAIPE_DOMAIN}" "default hostname — no public CA can issue for *.local.me"
+        _announce_self_signed "${CAIPE_DOMAIN}" "default hostname — no public CA can issue for *.localtest.me"
       else
         # Auto-detect certs in common locations
         local _auto_cert="" _auto_key=""
@@ -4531,7 +4531,7 @@ JSON
 # Update caipe-ui and caipe-platform Keycloak client redirect URIs, web origins,
 # and root URL to match CAIPE_DOMAIN. Keycloak imports the realm once at first
 # install; the imported URIs are never updated by helm upgrade, so a domain
-# change (e.g. caipe.local.me → caipe.example.com) leaves stale URIs
+# change (e.g. caipe.localtest.me → caipe.example.com) leaves stale URIs
 # that cause "Invalid parameter: redirect_uri" on login.
 update_keycloak_client_urls() {
   $ENABLE_RBAC_RUNTIME || return 0
@@ -7353,7 +7353,7 @@ monitor_port_forwards() {
     fi
     echo ""
     echo -e "    ${DIM}Re-print these any time: ./$(basename "$0") creds${NC}"
-    if [[ "$CAIPE_DOMAIN" == *.local.me ]]; then
+    if [[ "$CAIPE_DOMAIN" == *.localtest.me ]]; then
       echo -e "    ${DIM}${CAIPE_DOMAIN} resolves to 127.0.0.1 — on a remote host, tunnel 443 (ssh -L 8443:127.0.0.1:443 <host>) or re-run with --domain=<public-dns>.${NC}"
     fi
   fi
@@ -8647,7 +8647,7 @@ Options:
   --metallb          Install MetalLB to give LoadBalancer services real IPs in kind clusters — default ON
   --no-metallb       Skip MetalLB (also disables --ingress, which depends on it)
   --ingress          Install nginx-ingress + MetalLB and expose UI via domain — default ON
-                     If --domain is omitted, falls back to ${CAIPE_DOMAIN_DEFAULT} (resolves to 127.0.0.1 via *.local.me)
+                     If --domain is omitted, falls back to ${CAIPE_DOMAIN_DEFAULT} (resolves to 127.0.0.1 via *.localtest.me)
   --no-ingress       Skip nginx-ingress
   --domain=HOST      Hostname for the UI ingress (e.g. my-caipe.example.com)
                      Default when ingress is enabled and --domain is omitted: ${CAIPE_DOMAIN_DEFAULT}

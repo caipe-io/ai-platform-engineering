@@ -56,7 +56,7 @@ export function confluenceSpaceSourceId(
 ): string {
   const domain = netloc(confluenceUrl).replace(/[.-]/g, "_");
   const spaceId = `src_confluence___${domain}__${spaceKey}`;
-  // Preserve whole-space IDs from legacy environment configuration. New
+  // Preserve imported whole-space datasource IDs. New
   // page-scoped sources must also be valid authorization resource IDs.
   return pageId ? managedSourceId(`${spaceId}__${pageId}`) : spaceId;
 }
