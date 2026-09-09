@@ -155,7 +155,7 @@ export function TaskFormDialog({
           <DialogTitle>{webhookSetup ? "Configure webhook" : isEdit ? "Edit task" : "New autonomous task"}</DialogTitle>
           {!webhookSetup && <DialogDescription>
             Tasks are scheduled via the autonomous-agents service and dispatched to
-            CAIPE supervisor over A2A. Cron and interval tasks fire automatically;{" "}
+            the CAIPE agent runtime using AG-UI streaming. Cron and interval tasks fire automatically;{" "}
             {isEdit ? (
               <>
                 webhook tasks fire when a POST hits{" "}
