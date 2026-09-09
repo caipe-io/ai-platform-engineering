@@ -17,7 +17,7 @@ This development guide covers:
 These guides are designed for:
 
 - **Contributors** wanting to add new features or fix bugs
-- **Developers** building custom agents for their organization
+- **Developers** building code-defined agents for their organization
 - **Platform Engineers** extending the platform with new capabilities
 - **Students** learning about AI agents and MCP
 

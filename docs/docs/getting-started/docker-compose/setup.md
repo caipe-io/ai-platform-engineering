@@ -109,7 +109,7 @@ To let the setup helper update `.env` and start Compose:
 | `caipe-ui-prod` | Production CAIPE UI image |
 | `caipe-mongodb` | MongoDB for UI state, Dynamic Agents, RBAC metadata, and checkpoints |
 | `rbac` | Local Keycloak, OpenFGA, AgentGateway, and config bridge |
-| `dynamic-agents` | Dynamic Agents runtime used by chat, skills, and custom agents |
+| `dynamic-agents` | Dynamic Agents runtime used by chat, skills, and Agent Builder |
 | `rag` | Vector RAG services |
 | `web_ingestor` / `web-ingestor` | Web datasource ingestion worker |
 | `slack-bot` | Slack bot integration service |

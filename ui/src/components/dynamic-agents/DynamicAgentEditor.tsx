@@ -319,7 +319,7 @@ function AdvancedStep({
     <div className="space-y-4 pt-2">
       <CollapsibleSection
         title="Subagents"
-        description="Delegate tasks to other custom agents"
+        description="Delegate tasks to other agents"
         badge={`${subagents.length} subagent${subagents.length !== 1 ? "s" : ""}`}
         defaultExpanded={false}
       >

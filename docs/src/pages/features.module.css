@@ -242,12 +242,21 @@
 .demoPreview {
   display: block;
   position: relative;
+  width: calc(100% - 2.7rem);
   margin: 0 1.35rem 1rem;
+  padding: 0;
   overflow: hidden;
   border: 1px solid #334155;
   border-radius: 10px;
   background: #020617;
   line-height: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.demoPreview:focus-visible {
+  outline: 3px solid #38bdf8;
+  outline-offset: 3px;
 }
 
 .demoPreview img {
@@ -269,26 +278,6 @@
   line-height: 1.2;
 }
 
-.demoEmbed {
-  position: relative;
-  display: block;
-  width: calc(100% - 2.7rem);
-  padding-bottom: 56.25%;
-  margin: 0 1.35rem 1rem;
-  overflow: hidden;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  background: #020617;
-}
-
-.demoEmbed iframe {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border: 0;
-}
-
 .demoActions {
   display: flex;
   gap: 1rem;
@@ -308,6 +297,102 @@
 .demoDocsLink:hover,
 .demoVidcastLink:hover {
   text-decoration: underline;
+}
+
+.demoModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgba(2, 6, 23, 0.86);
+  backdrop-filter: blur(6px);
+}
+
+.demoModalDialog {
+  position: relative;
+  width: min(1120px, 100%);
+  max-height: calc(100vh - 3rem);
+  overflow: auto;
+  border: 1px solid #475569;
+  border-radius: 16px;
+  background: #0f172a;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+
+.demoModalClose {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 1;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.78);
+  color: #fff;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.demoModalClose:focus-visible {
+  outline: 3px solid #38bdf8;
+  outline-offset: 3px;
+}
+
+.demoModalGif {
+  display: block;
+  width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  background: #020617;
+}
+
+.demoModalFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+
+.demoModalTitle {
+  margin: 0 0 0.35rem !important;
+  color: #38bdf8;
+  font-size: 1.35rem !important;
+}
+
+.demoModalHint {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.9rem;
+}
+
+.demoModalActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.demoModalVidcast {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.65rem 0.9rem;
+  border-radius: 8px;
+  background: #0284c7;
+  color: #fff;
+  text-decoration: none;
+}
+
+.demoModalVidcast:hover {
+  background: #0369a1;
+  color: #fff;
 }
 
 /* ── CTA ────────────────────────────────────────────────────────── */
@@ -342,5 +427,7 @@
   .hero { padding: 3.5rem 1rem 3rem; }
   .gridInner { grid-template-columns: 1fr; }
   .demoGrid { grid-template-columns: 1fr; }
+  .demoModalFooter { align-items: flex-start; flex-direction: column; }
+  .demoModalActions { justify-content: flex-start; }
   .heroCtas { flex-direction: column; align-items: center; }
 }

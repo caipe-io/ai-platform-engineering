@@ -27,7 +27,7 @@ A full CAIPE stack includes:
 
 - **caipe-ui** — web interface (React / Next.js)
 - **MongoDB** — chat and agent-config persistence  
-- **dynamic-agents** — runtime for user-built custom agents
+- **dynamic-agents** — runtime for agents created in Agent Builder
 - **MCP servers** — tool servers for ArgoCD, GitHub, Backstage, and other integrations
 - **RAG stack** *(optional)* — ingestors, vector store, graph RAG server
 - **Slack / Webex bots** *(optional)*
