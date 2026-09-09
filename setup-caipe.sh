@@ -5616,6 +5616,12 @@ data:
   config.yaml: |
     model_list:
 ${model_list_yaml}
+    litellm_settings:
+      # Ollama's embedding + chat APIs reject OpenAI-only params the langchain
+      # OpenAI client always sends (e.g. encoding_format: base64), which
+      # otherwise 400s the RAG server's startup embedding test. Drop unsupported
+      # params instead of forwarding them.
+      drop_params: true
 ${general_yaml}
 ---
 apiVersion: apps/v1
