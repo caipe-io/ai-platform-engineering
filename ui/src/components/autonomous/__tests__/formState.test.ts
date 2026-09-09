@@ -25,6 +25,7 @@ describe("formState.toFormState", () => {
         id: "nightly",
         triggerType: "cron",
         cronSchedule: "0 0 * * *",
+        cronTimezone: "UTC",
         enabled: false,
       }),
     );
@@ -113,7 +114,7 @@ describe("formState.fromFormState", () => {
     expect(result).toEqual({
       task: expect.objectContaining({
         id: "my_task",
-        trigger: { type: "cron", schedule: "0 9 * * *" },
+        trigger: { type: "cron", schedule: "0 9 * * *", timezone: "UTC" },
       }),
     });
   });
@@ -122,6 +123,33 @@ describe("formState.fromFormState", () => {
     expect(
       fromFormState({ ...base, triggerType: "cron", cronSchedule: "   " }),
     ).toEqual({ error: expect.stringMatching(/Cron schedule/) });
+  });
+
+  it("round-trips an IANA timezone for cron schedules", () => {
+    const task: AutonomousTask = {
+      id: "london-morning",
+      name: "London morning",
+      agent: null,
+      prompt: "report",
+      trigger: {
+        type: "cron",
+        schedule: "0 9 * * *",
+        timezone: "Europe/London",
+      },
+      enabled: true,
+    };
+
+    const form = toFormState(task);
+    expect(form.cronTimezone).toBe("Europe/London");
+    expect(fromFormState(form)).toEqual({
+      task: expect.objectContaining({
+        trigger: {
+          type: "cron",
+          schedule: "0 9 * * *",
+          timezone: "Europe/London",
+        },
+      }),
+    });
   });
 
   it("requires at least one interval field", () => {
@@ -274,7 +302,9 @@ describe("formState.fromFormState", () => {
 
 describe("formState.summarizeTrigger", () => {
   it("summarises cron", () => {
-    expect(summarizeTrigger({ type: "cron", schedule: "0 9 * * *" })).toBe("Cron: 0 9 * * *");
+    expect(summarizeTrigger({ type: "cron", schedule: "0 9 * * *" })).toBe(
+      "Cron: 0 9 * * * (UTC)",
+    );
   });
   it("summarises interval", () => {
     expect(

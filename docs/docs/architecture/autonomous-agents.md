@@ -91,8 +91,10 @@ re-enable it. Tasks created before `owner_sub` was persisted must be recreated.
 Cron and interval tasks are registered directly with APScheduler and execute
 in the service process; they do not use the webhook FIFO.
 
-- Cron uses a standard five-field expression in UTC.
-- Interval supports seconds, minutes, and hours.
+- Cron uses a standard five-field expression. Its IANA timezone defaults to
+  `UTC`; zones such as `Europe/London` automatically follow GMT/BST changes.
+- Interval supports seconds, minutes, and hours. It represents elapsed time,
+  so timezone and daylight-saving changes do not apply.
 - The default minimum gap is 1,800 seconds (30 minutes).
 - `MINIMUM_SCHEDULE_INTERVAL_SECONDS` changes that floor for both trigger
   types.

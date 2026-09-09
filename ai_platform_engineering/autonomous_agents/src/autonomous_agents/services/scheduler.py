@@ -90,8 +90,13 @@ def register_scheduler_task(task: TaskDefinition) -> None:
             trigger,
             get_settings().minimum_schedule_interval_seconds,
         )
-        aps_trigger = APSCronTrigger.from_crontab(trigger.schedule, timezone="UTC")
-        logger.info(f"[{task.id}] Scheduling cron: {trigger.schedule}")
+        aps_trigger = APSCronTrigger.from_crontab(
+            trigger.schedule, timezone=trigger.timezone
+        )
+        logger.info(
+            f"[{task.id}] Scheduling cron: {trigger.schedule} "
+            f"({trigger.timezone})"
+        )
 
     elif trigger.type == TriggerType.INTERVAL:
         if not isinstance(trigger, IntervalTrigger):

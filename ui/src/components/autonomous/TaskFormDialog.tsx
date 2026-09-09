@@ -55,6 +55,42 @@ const FILTER_EXAMPLES: Record<WebhookProvider, string> = {
   pagerduty: "Payload event.event_type = incident.triggered",
 };
 
+const FEATURED_TIME_ZONES = [
+  "UTC",
+  "Europe/London",
+  "Europe/Paris",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Asia/Kolkata",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+];
+
+const TIME_ZONE_LABELS: Record<string, string> = {
+  UTC: "UTC (UTC+00:00)",
+  "Europe/London": "London — Europe/London (GMT/BST, UTC+0/+1)",
+  "Europe/Paris": "Paris — Europe/Paris (CET/CEST)",
+  "America/New_York": "New York — America/New_York (EST/EDT)",
+  "America/Chicago": "Chicago — America/Chicago (CST/CDT)",
+  "America/Denver": "Denver — America/Denver (MST/MDT)",
+  "America/Los_Angeles": "Los Angeles — America/Los_Angeles (PST/PDT)",
+  "Asia/Kolkata": "India — Asia/Kolkata (UTC+05:30)",
+  "Asia/Singapore": "Singapore — Asia/Singapore (UTC+08:00)",
+  "Asia/Tokyo": "Tokyo — Asia/Tokyo (UTC+09:00)",
+  "Australia/Sydney": "Sydney — Australia/Sydney (AEST/AEDT)",
+};
+
+function availableTimeZones(): string[] {
+  const intl = Intl as typeof Intl & {
+    supportedValuesOf?: (key: "timeZone") => string[];
+  };
+  const supported = intl.supportedValuesOf?.("timeZone") ?? [];
+  return Array.from(new Set([...FEATURED_TIME_ZONES, ...supported]));
+}
+
 interface TaskFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -130,6 +166,7 @@ export function TaskFormDialog({
   };
 
   const triggerOptions = useMemo<TriggerType[]>(() => ["cron", "interval", "webhook"], []);
+  const timeZoneOptions = useMemo(availableTimeZones, []);
 
   // Case- and whitespace-insensitive: "daily REPORT " should still warn.
   const duplicateName = useMemo(() => {
@@ -319,19 +356,39 @@ export function TaskFormDialog({
             </div>
 
             {form.triggerType === "cron" && (
-              <div className="space-y-1">
-                <Label htmlFor="task-cron">Schedule (cron)</Label>
-                <Input
-                  id="task-cron"
-                  value={form.cronSchedule}
-                  onChange={(e) => update("cronSchedule", e.target.value)}
-                  placeholder="0 9 * * *"
-                  required
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Standard 5-field cron expression (minute hour dom month dow). Runs
-                  must be at least {formatScheduleInterval(minimumScheduleIntervalSeconds)} apart.
-                </p>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label htmlFor="task-cron">Schedule (cron)</Label>
+                  <Input
+                    id="task-cron"
+                    value={form.cronSchedule}
+                    onChange={(e) => update("cronSchedule", e.target.value)}
+                    placeholder="0 9 * * *"
+                    required
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Standard 5-field cron expression (minute hour dom month dow). Runs
+                    must be at least {formatScheduleInterval(minimumScheduleIntervalSeconds)} apart.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="task-cron-timezone">Time zone</Label>
+                  <Select
+                    id="task-cron-timezone"
+                    value={form.cronTimezone}
+                    onChange={(e) => update("cronTimezone", e.target.value)}
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground"
+                  >
+                    {timeZoneOptions.map((timeZone) => (
+                      <option key={timeZone} value={timeZone}>
+                        {TIME_ZONE_LABELS[timeZone] ?? timeZone}
+                      </option>
+                    ))}
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    UTC by default. Named zones automatically follow daylight-saving changes.
+                  </p>
+                </div>
               </div>
             )}
 
@@ -372,7 +429,8 @@ export function TaskFormDialog({
                 <p className="text-[11px] text-muted-foreground">
                   Fill in at least one field; empty fields count as 0. Values
                   add up (e.g. 1 hour + 30 minutes = every 90 minutes). Minimum: {" "}
-                  {formatScheduleInterval(minimumScheduleIntervalSeconds)}.
+                  {formatScheduleInterval(minimumScheduleIntervalSeconds)}. Intervals are elapsed
+                  durations, so time zones do not apply.
                 </p>
               </div>
             )}

@@ -317,6 +317,7 @@ class TestCreate:
         assert body["id"]  # server-generated; shape is asserted in TestTaskIdGeneration
         assert body["name"] == "Task cron-1"
         assert body["trigger"]["type"] == "cron"
+        assert body["trigger"]["timezone"] == "UTC"
         assert body["enabled"] is True
         for required in ("agent", "prompt", "llm_provider"):
             assert required in body

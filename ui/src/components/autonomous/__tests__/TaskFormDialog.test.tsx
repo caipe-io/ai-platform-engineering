@@ -46,6 +46,16 @@ it("does not expose obsolete per-task timeout or retry controls", () => {
   expect(screen.queryByText(/A2A_(TIMEOUT_SECONDS|MAX_RETRIES)/i)).not.toBeInTheDocument();
 });
 
+it("defaults cron schedules to UTC and offers daylight-saving-aware time zones", () => {
+  renderDialog();
+
+  expect(screen.getByLabelText("Time zone")).toHaveValue("UTC");
+  expect(screen.getByRole("option", { name: /London.*GMT\/BST.*UTC\+0\/\+1/i })).toHaveValue(
+    "Europe/London",
+  );
+  expect(screen.getByText(/UTC by default/i)).toBeInTheDocument();
+});
+
 it("shows the id as read-only text in edit mode", () => {
   renderDialog({ task: existingTask() });
   expect(screen.getByTestId("task-id-readonly")).toHaveTextContent("daily-report-a3f9");

@@ -23,6 +23,8 @@ export type WebhookProvider = 'github' | 'jira' | 'slack' | 'pagerduty';
 export interface CronTrigger {
   type: 'cron';
   schedule: string;
+  /** IANA time zone; absent legacy tasks are interpreted as UTC. */
+  timezone?: string;
 }
 
 export interface IntervalTrigger {
@@ -251,6 +253,7 @@ export interface TaskFormState {
   enabled: boolean;
   triggerType: TriggerType;
   cronSchedule: string;
+  cronTimezone: string;
   intervalSeconds: string;
   intervalMinutes: string;
   intervalHours: string;

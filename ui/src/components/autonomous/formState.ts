@@ -35,6 +35,7 @@ export const EMPTY_FORM: TaskFormState = {
   enabled: true,
   triggerType: "cron",
   cronSchedule: "0 9 * * *",
+  cronTimezone: "UTC",
   intervalSeconds: "",
   intervalMinutes: "",
   intervalHours: "",
@@ -67,6 +68,7 @@ export function toFormState(task: AutonomousTask | null | undefined): TaskFormSt
   };
   if (task.trigger.type === "cron") {
     base.cronSchedule = task.trigger.schedule;
+    base.cronTimezone = task.trigger.timezone ?? "UTC";
   } else if (task.trigger.type === "interval") {
     base.intervalSeconds = task.trigger.seconds == null ? "" : String(task.trigger.seconds);
     base.intervalMinutes = task.trigger.minutes == null ? "" : String(task.trigger.minutes);
@@ -115,7 +117,11 @@ export function fromFormState(
   let trigger: AutonomousTask["trigger"];
   if (form.triggerType === "cron") {
     if (!form.cronSchedule.trim()) return { error: "Cron schedule is required." };
-    trigger = { type: "cron", schedule: form.cronSchedule.trim() };
+    trigger = {
+      type: "cron",
+      schedule: form.cronSchedule.trim(),
+      timezone: form.cronTimezone.trim() || "UTC",
+    };
   } else if (form.triggerType === "interval") {
     const parseField = (raw: string): number | null => {
       const v = raw.trim();
@@ -224,7 +230,7 @@ export function fromFormState(
  */
 export function summarizeTrigger(trigger: AutonomousTask["trigger"]): string {
   if (trigger.type === "cron") {
-    return `Cron: ${trigger.schedule}`;
+    return `Cron: ${trigger.schedule} (${trigger.timezone ?? "UTC"})`;
   }
   if (trigger.type === "interval") {
     const parts: string[] = [];

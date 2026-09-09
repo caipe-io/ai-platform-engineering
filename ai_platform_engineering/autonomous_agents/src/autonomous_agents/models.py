@@ -4,8 +4,9 @@ import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class TriggerType(str, Enum):
@@ -30,6 +31,25 @@ class CronTrigger(BaseModel):
     """Trigger for cron-scheduled tasks"""
     type: Literal[TriggerType.CRON] = TriggerType.CRON
     schedule: str = Field(..., description="Cron expression e.g. '0 9 * * *'")
+    timezone: str = Field(
+        default="UTC",
+        description=(
+            "IANA timezone used to interpret the cron expression. Defaults to UTC; "
+            "named zones such as Europe/London follow daylight-saving changes."
+        ),
+    )
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        timezone_name = value.strip()
+        if not timezone_name:
+            raise ValueError("Cron timezone must not be empty")
+        try:
+            ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"Unknown IANA timezone: {timezone_name}") from exc
+        return timezone_name
 
 
 class IntervalTrigger(BaseModel):

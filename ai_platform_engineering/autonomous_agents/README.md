@@ -90,16 +90,18 @@ autonomous_agents/
 ## Trigger Types
 
 ### Cron
-Runs on a standard cron schedule (UTC).
+Runs on a standard cron schedule. UTC is the default; an IANA timezone can be
+selected when the schedule should follow local time and daylight-saving rules.
 
 ```yaml
 trigger:
   type: cron
-  schedule: "0 9 * * 1-5"   # 09:00 UTC, Monday-Friday
+  schedule: "0 9 * * 1-5"   # 09:00 Monday-Friday
+  timezone: "Europe/London"  # GMT in winter, BST (UTC+1) in summer
 ```
 
 ### Interval
-Runs repeatedly at a fixed time interval.
+Runs repeatedly after a fixed elapsed duration. Time zones do not apply.
 
 ```yaml
 trigger:

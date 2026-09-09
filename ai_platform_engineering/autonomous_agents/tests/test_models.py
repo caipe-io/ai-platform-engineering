@@ -23,6 +23,16 @@ class TestTriggerTypes:
         trigger = CronTrigger(schedule="0 9 * * *")
         assert trigger.type == TriggerType.CRON
         assert trigger.schedule == "0 9 * * *"
+        assert trigger.timezone == "UTC"
+
+    def test_cron_trigger_accepts_iana_timezone_and_rejects_unknown_zone(self):
+        trigger = CronTrigger(
+            schedule="0 9 * * *", timezone=" Europe/London "
+        )
+        assert trigger.timezone == "Europe/London"
+
+        with pytest.raises(ValueError, match="Unknown IANA timezone"):
+            CronTrigger(schedule="0 9 * * *", timezone="Mars/Olympus_Mons")
 
     def test_interval_trigger_type(self):
         """IntervalTrigger reports ``TriggerType.INTERVAL``."""

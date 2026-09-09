@@ -8,6 +8,7 @@ helpers. The dynamic-agents client is mocked everywhere so no live runtime is re
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -786,6 +787,26 @@ class TestHotReload:
 
         jobs = get_scheduler().get_jobs()
         assert [j.id for j in jobs] == ["cron-1"]
+
+    @pytest.mark.asyncio
+    async def test_cron_job_uses_configured_timezone(self, _fresh_scheduler):
+        register_scheduler_task(
+            _job_task(
+                "london",
+                trigger=CronTrigger(
+                    schedule="0 9 * * *", timezone="Europe/London"
+                ),
+            )
+        )
+
+        job = get_scheduler().get_job("london")
+        assert str(job.trigger.timezone) == "Europe/London"
+        summer_fire = job.trigger.get_next_fire_time(
+            None, datetime(2026, 7, 1, tzinfo=timezone.utc)
+        )
+        assert summer_fire is not None
+        assert summer_fire.hour == 9
+        assert summer_fire.astimezone(timezone.utc).hour == 8
 
     @pytest.mark.asyncio
     async def test_register_scheduler_task_adds_interval_job(self, _fresh_scheduler):
