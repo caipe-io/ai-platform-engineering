@@ -21,7 +21,7 @@ import { cn,formatDate,truncateText } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import type { Conversation } from "@/types/a2a";
 import { getAgentId } from "@/types/a2a";
-import { AnimatePresence,motion } from "framer-motion";
+import { motion } from "framer-motion";
 import {
 Archive,
 ArchiveRestore,
@@ -590,8 +590,8 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
               {isLoadingConversations && conversations.length === 0 ? (
                 <ConversationListSkeleton collapsed={collapsed} />
               ) : (
-                <AnimatePresence mode="popLayout">
-                  {conversationListItems.map((item, index) => {
+                <>
+                  {conversationListItems.map((item) => {
                   if (item.kind === "section") {
                     const sectionHeader = (
                       <>
@@ -734,11 +734,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                     key={conv.id}
                     className="group/conv"
                   >
-                    <motion.div
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -10 }}
-                      transition={{ delay: index * 0.02 }}
+                    <div
                       className={cn(
                         "group relative flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-all min-w-0",
                         isLive
@@ -1056,11 +1052,11 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                         </div>
                       </>
                     )}
-                  </motion.div>
+                  </div>
                   </div>
                     );
                   })}
-                </AnimatePresence>
+                </>
               )}
 
               {!isLoadingConversations && conversations.length === 0 && !collapsed && (
