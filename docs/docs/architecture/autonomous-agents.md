@@ -127,6 +127,12 @@ The modal includes provider-specific instructions and copy controls for the
 URL and secret. A generated secret is never returned again after the creation
 response. Normal task reads expose only `has_secret: true|false`.
 
+GitHub tasks can optionally filter deliveries by the `X-GitHub-Event` value
+and top-level payload `action`. A `pull_request` / `closed` filter can also
+select merged PRs only or PRs closed without merging. Other providers continue
+to use their provider-side event selection; the service does not apply GitHub
+payload assumptions to them.
+
 ### Secret storage
 
 Per-task webhook secrets are never stored as plaintext in MongoDB. Each write
@@ -156,9 +162,11 @@ The receiver performs the following work before returning:
 2. Enforce the request-body limit.
 3. Verify the provider-specific HMAC and timestamp policy.
 4. Ignore recognized configuration pings, such as GitHub `ping` events.
-5. Reserve queue capacity.
-6. Claim the delivery's deduplication key in MongoDB.
-7. Append the run to the task's process-local FIFO and return `202 Accepted`
+5. Apply the task's provider-aware filter, when configured. A mismatch returns
+   `200 OK` without creating a deduplication row, run, or agent invocation.
+6. Reserve queue capacity.
+7. Claim the delivery's deduplication key in MongoDB.
+8. Append the run to the task's process-local FIFO and return `202 Accepted`
    with its preallocated run ID.
 
 Duplicate deliveries return `200 OK` with the original run ID and do not run

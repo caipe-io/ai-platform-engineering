@@ -49,19 +49,28 @@ describe("formState.toFormState", () => {
     );
   });
 
-  it("maps webhook provider and leaves secret blank even when has_secret=true on the server", () => {
+  it("maps webhook provider, filter, and leaves a stored secret blank", () => {
     const task: AutonomousTask = {
       id: "hook",
       name: "N",
       agent: null,
       prompt: "p",
-      trigger: { type: "webhook", provider: "jira", has_secret: true },
+      trigger: {
+        type: "webhook",
+        provider: "github",
+        has_secret: true,
+        filter: { event: "pull_request", actions: ["closed"], merged: true },
+      },
       enabled: true,
     };
     expect(toFormState(task)).toEqual(
       expect.objectContaining({
-        webhookProvider: "jira",
+        webhookProvider: "github",
         webhookSecret: "",
+        webhookFilterEnabled: true,
+        webhookFilterEvent: "pull_request",
+        webhookFilterActions: "closed",
+        webhookFilterMerged: "merged",
       }),
     );
   });
@@ -161,6 +170,107 @@ describe("formState.fromFormState", () => {
     expect(result).toEqual({
       task: expect.objectContaining({
         trigger: { type: "webhook", provider: "jira", secret: "s3cret" },
+      }),
+    });
+  });
+
+  it("maps a GitHub event/action filter", () => {
+    const result = fromFormState({
+      ...base,
+      triggerType: "webhook",
+      webhookProvider: "github",
+      webhookFilterEnabled: true,
+      webhookFilterEvent: " Pull_Request ",
+      webhookFilterActions: " Closed, reopened, closed ",
+      webhookFilterMerged: "any",
+    });
+    expect(result).toEqual({
+      task: expect.objectContaining({
+        trigger: {
+          type: "webhook",
+          provider: "github",
+          secret: null,
+          filter: {
+            event: "pull_request",
+            actions: ["closed", "reopened"],
+            merged: null,
+          },
+        },
+      }),
+    });
+  });
+
+  it("maps the closed-PR merged-state filter", () => {
+    const result = fromFormState({
+      ...base,
+      triggerType: "webhook",
+      webhookFilterEnabled: true,
+      webhookFilterEvent: "pull_request",
+      webhookFilterActions: "closed",
+      webhookFilterMerged: "unmerged",
+    });
+    expect(result).toEqual({
+      task: expect.objectContaining({
+        trigger: expect.objectContaining({
+          filter: { event: "pull_request", actions: ["closed"], merged: false },
+        }),
+      }),
+    });
+  });
+
+  it("requires an event when GitHub filtering is enabled", () => {
+    expect(fromFormState({
+      ...base,
+      triggerType: "webhook",
+      webhookFilterEnabled: true,
+      webhookFilterEvent: " ",
+    })).toEqual({ error: expect.stringMatching(/GitHub event is required/) });
+  });
+
+  it("rejects invalid GitHub event and action names", () => {
+    expect(fromFormState({
+      ...base,
+      triggerType: "webhook",
+      webhookFilterEnabled: true,
+      webhookFilterEvent: "pull request",
+    })).toEqual({ error: expect.stringMatching(/event may contain only/) });
+
+    expect(fromFormState({
+      ...base,
+      triggerType: "webhook",
+      webhookFilterEnabled: true,
+      webhookFilterActions: "closed now",
+    })).toEqual({ error: expect.stringMatching(/actions may contain only/) });
+  });
+
+  it("drops a stale merged selection when the action changes", () => {
+    const result = fromFormState({
+      ...base,
+      triggerType: "webhook",
+      webhookFilterEnabled: true,
+      webhookFilterEvent: "pull_request",
+      webhookFilterActions: "opened",
+      webhookFilterMerged: "merged",
+    });
+    expect(result).toEqual({
+      task: expect.objectContaining({
+        trigger: expect.objectContaining({
+          filter: { event: "pull_request", actions: ["opened"], merged: null },
+        }),
+      }),
+    });
+  });
+
+  it("does not send a GitHub filter for another provider", () => {
+    const result = fromFormState({
+      ...base,
+      triggerType: "webhook",
+      webhookProvider: "jira",
+      webhookFilterEnabled: true,
+    });
+    expect(result).toEqual({
+      task: expect.objectContaining({
+        trigger: { type: "webhook", provider: "jira", secret: null },
       }),
     });
   });

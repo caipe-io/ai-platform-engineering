@@ -114,6 +114,10 @@ Runs when an external system POSTs to `/api/v1/hooks/{task_id}`.
 trigger:
   type: webhook
   provider: "github"               # UI: github, jira, slack, pagerduty
+  filter:                           # optional; currently GitHub only
+    event: "pull_request"           # X-GitHub-Event value
+    actions: ["closed"]             # top-level payload action
+    merged: true                    # optional: merged PRs only
   # The API requires a signing secret and securely stores it.
 ```
 
@@ -121,6 +125,12 @@ The server generates the task id and therefore the final endpoint:
 `/api/v1/hooks/<task-id>`. For GitHub and Jira it also generates a signing
 secret and returns it once after creation. Slack and PagerDuty issue their own
 secret, which the setup modal requires the user to paste back into CAIPE.
+
+GitHub filters are applied to authenticated deliveries before deduplication or
+queueing. A non-match returns `200 ignored` and creates no task run, chat entry,
+or agent invocation. For closed pull requests, omit `merged` to accept both
+merged and unmerged closures, set it to `true` for merged PRs only, or `false`
+for PRs closed without merging.
 
 The service also ships a `generic_hmac` adapter for API/configuration users,
 but it is intentionally absent from the UI task form.
@@ -218,9 +228,10 @@ configure KMS before enabling webhook creation.
 ## Webhook Dispatch
 
 Webhook requests are HMAC-verified through the selected provider adapter,
-deduplicated through MongoDB, queued, and acknowledged with `202` plus a
+filtered, deduplicated through MongoDB, queued, and acknowledged with `202` plus a
 preallocated run id. Duplicate deliveries return `200` with the original run
-id. GitHub configuration pings are ignored without creating a run.
+id. GitHub configuration pings and filter mismatches are ignored without
+creating a run.
 
 The request body is capped at 1 MiB by default. Each task has one process-local
 FIFO consumer, so the same webhook never runs concurrently with itself.

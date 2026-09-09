@@ -153,6 +153,45 @@ def _parse_context(body: bytes) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _matches_webhook_filter(
+    task: TaskDefinition,
+    headers: Any,
+    context: dict[str, Any],
+) -> bool:
+    """Return whether a verified delivery satisfies its task filter.
+
+    Filters are evaluated only after provider signature verification. The
+    model currently permits filters only for GitHub, whose event name lives in
+    ``X-GitHub-Event`` and whose action is the payload's top-level ``action``.
+    """
+    if not isinstance(task.trigger, WebhookTrigger) or task.trigger.filter is None:
+        return True
+
+    webhook_filter = task.trigger.filter
+    incoming_event = str(headers.get("X-GitHub-Event", "")).strip().lower()
+    if incoming_event != webhook_filter.event:
+        return False
+
+    if webhook_filter.actions:
+        incoming_action = context.get("action")
+        if not isinstance(incoming_action, str):
+            return False
+        if incoming_action.strip().lower() not in webhook_filter.actions:
+            return False
+
+    if webhook_filter.merged is not None:
+        pull_request = context.get("pull_request")
+        if not isinstance(pull_request, dict):
+            return False
+        incoming_merged = pull_request.get("merged")
+        if not isinstance(incoming_merged, bool):
+            return False
+        if incoming_merged is not webhook_filter.merged:
+            return False
+
+    return True
+
+
 async def _verify_followup_signature(
     task: TaskDefinition,
     body: bytes,
@@ -218,7 +257,9 @@ async def receive_webhook(
        per that adapter's contract when a secret is configured.
     3. Short-circuit provider-recognised ping deliveries with HTTP 200
        (no run, no row) — e.g. GitHub's ``X-GitHub-Event: ping``.
-    4. Derive a dedup key (per-task header > adapter default header >
+    4. Apply any provider-aware delivery filter. Non-matches return HTTP 200
+       without creating a run or dedup row.
+    5. Derive a dedup key (per-task header > adapter default header >
        verified signature > none) and hand off to
        :func:`dispatch_webhook_run`, which owns the shared
        claim / spawn / envelope tail.
@@ -262,6 +303,21 @@ async def receive_webhook(
             "task_id": task_id,
         }
 
+    context = _parse_context(body)
+    if not _matches_webhook_filter(task, request.headers, context):
+        # A valid provider delivery that the task intentionally does not
+        # consume is a successful receipt. Return 200 so GitHub does not retry,
+        # and do not spend dedup-store, queue, run-history, or LLM capacity.
+        logger.info(
+            "Ignoring GitHub delivery that did not match the filter for task '%s'",
+            task_id,
+        )
+        return {
+            "status": "ignored",
+            "reason": "filter_mismatch",
+            "task_id": task_id,
+        }
+
     dedup_key = derive_dedup_key(
         task=task,
         headers=request.headers,
@@ -269,7 +325,6 @@ async def receive_webhook(
         default_dedup_header=result.default_dedup_header,
     )
 
-    context = _parse_context(body)
     payload_dict = WebhookPayload(data=context).model_dump()
 
     outcome = await dispatch_webhook_run(

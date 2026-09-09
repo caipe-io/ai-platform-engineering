@@ -29,6 +29,15 @@ export interface IntervalTrigger {
   hours?: number | null;
 }
 
+export interface GitHubWebhookFilter {
+  /** Exact value expected in GitHub's X-GitHub-Event header. */
+  event: string;
+  /** Allowed top-level payload actions; empty means every action for the event. */
+  actions?: string[];
+  /** For closed pull requests: true=merged, false=closed unmerged, null=either. */
+  merged?: boolean | null;
+}
+
 export interface WebhookTrigger {
   type: 'webhook';
   /**
@@ -55,6 +64,8 @@ export interface WebhookTrigger {
    * value.
    */
   has_secret?: boolean;
+  /** Optional GitHub event/action filter evaluated before a run is queued. */
+  filter?: GitHubWebhookFilter | null;
 }
 
 export type Trigger = CronTrigger | IntervalTrigger | WebhookTrigger;
@@ -239,4 +250,9 @@ export interface TaskFormState {
   webhookProvider: string;
   /** Used only to rotate provider-issued Slack/PagerDuty secrets on edit. */
   webhookSecret: string;
+  webhookFilterEnabled: boolean;
+  webhookFilterEvent: string;
+  /** Comma-separated GitHub action names. */
+  webhookFilterActions: string;
+  webhookFilterMerged: "any" | "merged" | "unmerged";
 }

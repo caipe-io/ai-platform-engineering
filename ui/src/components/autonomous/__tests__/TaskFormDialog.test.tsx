@@ -80,6 +80,39 @@ it("removes Generic HMAC and does not ask for a GitHub secret", () => {
   expect(screen.getByText(/generated automatically and shown once/i)).toBeInTheDocument();
 });
 
+it("configures a GitHub pull-request action filter", async () => {
+  const onSubmit = jest.fn(saveTask);
+  renderDialog({ onSubmit });
+  fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Closed PR task" } });
+  fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: "Summarize it" } });
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+
+  fireEvent.click(screen.getByLabelText(/only run the agent for matching GitHub events/i));
+  expect(screen.getByLabelText("GitHub event")).toHaveValue("pull_request");
+  expect(screen.getByLabelText("GitHub actions (optional)")).toHaveValue("closed");
+  fireEvent.change(screen.getByLabelText("Closed pull requests"), {
+    target: { value: "merged" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      trigger: expect.objectContaining({
+        filter: { event: "pull_request", actions: ["closed"], merged: true },
+      }),
+    }),
+  ));
+});
+
+it("shows GitHub filters only for the GitHub provider", () => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  expect(screen.getByText("Filter deliveries")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "jira" } });
+  expect(screen.queryByText("Filter deliveries")).not.toBeInTheDocument();
+});
+
 it("stays open after GitHub creation and shows the full URL plus one-time secret", async () => {
   const onOpenChange = jest.fn();
   const onSubmit = jest.fn(async (task: AutonomousTask) => ({

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class TriggerType(str, Enum):
@@ -49,6 +49,79 @@ class IntervalTrigger(BaseModel):
         return self
 
 
+class GitHubWebhookFilter(BaseModel):
+    """Structured GitHub delivery filter evaluated before queueing a run."""
+
+    event: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description=(
+            "GitHub event name from X-GitHub-Event, for example "
+            "'pull_request'."
+        ),
+    )
+    actions: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+        description=(
+            "Allowed top-level GitHub payload actions. An empty list accepts "
+            "every action for the configured event."
+        ),
+    )
+    merged: bool | None = Field(
+        default=None,
+        description=(
+            "For a closed pull_request only: true accepts merged PRs, false "
+            "accepts PRs closed without merging, and null accepts both."
+        ),
+    )
+
+    @field_validator("event")
+    @classmethod
+    def normalize_event(cls, value: str) -> str:
+        """Store GitHub event names in their canonical lowercase form."""
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValueError("Webhook filter event must not be empty")
+        if not normalized.replace("_", "").isalnum():
+            raise ValueError(
+                "Webhook filter event may contain only letters, numbers, and underscores"
+            )
+        return normalized
+
+    @field_validator("actions")
+    @classmethod
+    def normalize_actions(cls, values: list[str]) -> list[str]:
+        """Normalize and de-duplicate configured action names."""
+        normalized: list[str] = []
+        for value in values:
+            action = value.strip().lower()
+            if not action:
+                raise ValueError("Webhook filter actions must not be empty")
+            if len(action) > 100:
+                raise ValueError("Webhook filter actions must be at most 100 characters")
+            if not action.replace("_", "").isalnum():
+                raise ValueError(
+                    "Webhook filter actions may contain only letters, numbers, and underscores"
+                )
+            if action not in normalized:
+                normalized.append(action)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_merged_condition(self) -> "GitHubWebhookFilter":
+        """Limit the merged-state predicate to the payload shape that has it."""
+        if self.merged is not None and (
+            self.event != "pull_request" or self.actions != ["closed"]
+        ):
+            raise ValueError(
+                "Webhook filter merged can only be set for the single "
+                "pull_request action 'closed'"
+            )
+        return self
+
+
 class WebhookTrigger(BaseModel):
     """Trigger for webhook-scheduled tasks"""
     type: Literal[TriggerType.WEBHOOK] = TriggerType.WEBHOOK
@@ -76,6 +149,21 @@ class WebhookTrigger(BaseModel):
             "so retries from the sender don't double-fire the task."
         ),
     )
+    filter: GitHubWebhookFilter | None = Field(
+        default=None,
+        description=(
+            "Optional provider-aware delivery filter. Currently supported "
+            "only for GitHub webhooks. Non-matching signed deliveries are "
+            "acknowledged without queueing or invoking the agent."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_filter_provider(self) -> "WebhookTrigger":
+        """Do not apply GitHub payload assumptions to another provider."""
+        if self.filter is not None and self.provider != "github":
+            raise ValueError("Webhook filters are currently supported only for GitHub")
+        return self
 
 
 Trigger = CronTrigger | IntervalTrigger | WebhookTrigger

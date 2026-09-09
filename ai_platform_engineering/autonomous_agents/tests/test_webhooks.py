@@ -19,10 +19,12 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from autonomous_agents.config import Settings, get_settings
 from autonomous_agents.models import (
     FollowUpContext,
+    GitHubWebhookFilter,
     TaskDefinition,
     TaskRun,
     TaskStatus,
@@ -47,13 +49,18 @@ def _make_task(
     *,
     secret: str | None = None,
     provider: str = "github",
+    webhook_filter: GitHubWebhookFilter | None = None,
 ) -> TaskDefinition:
     return TaskDefinition(
         id=task_id,
         name="webhook task",
         agent="dummy-agent",
         prompt="run the thing",
-        trigger=WebhookTrigger(secret=secret, provider=provider),
+        trigger=WebhookTrigger(
+            secret=secret,
+            provider=provider,
+            filter=webhook_filter,
+        ),
     )
 
 
@@ -554,6 +561,163 @@ class TestInitialFireBehaviour:
         )
         assert signed.status_code == 200
         assert signed.json()["status"] == "ignored"
+        assert client.captured["calls"] == []
+
+
+class TestInitialFireFiltering:
+    """GitHub event filters run before deduplication and dispatch."""
+
+    async def test_nonmatching_action_is_acknowledged_without_a_run(
+        self, monkeypatch
+    ):
+        """An authenticated but irrelevant delivery consumes no run capacity."""
+        _set_settings(monkeypatch, debug=False)
+
+        async def unexpected_dispatch(**_kwargs: Any) -> None:
+            raise AssertionError("A filter mismatch must not reach dispatch")
+
+        monkeypatch.setattr(
+            webhooks_route,
+            "dispatch_webhook_run",
+            unexpected_dispatch,
+        )
+        app = FastAPI()
+        app.include_router(webhooks_router, prefix="/api/v1")
+        webhook_runtime._webhook_tasks.clear()
+        try:
+            _register(
+                _make_task(
+                    secret="task-secret",
+                    webhook_filter=GitHubWebhookFilter(
+                        event="pull_request",
+                        actions=["closed"],
+                    ),
+                )
+            )
+            body = json.dumps(
+                {"action": "opened", "pull_request": {"merged": False}}
+            ).encode()
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://testserver",
+            ) as client:
+                response = await client.post(
+                    "/api/v1/hooks/wh-1",
+                    content=body,
+                    headers={
+                        "X-GitHub-Event": "pull_request",
+                        "X-GitHub-Delivery": "delivery-opened",
+                        "X-Hub-Signature-256": _hex_sig("task-secret", body),
+                    },
+                )
+
+            assert response.status_code == 200
+            assert response.json() == {
+                "status": "ignored",
+                "reason": "filter_mismatch",
+                "task_id": "wh-1",
+            }
+        finally:
+            webhook_runtime._webhook_tasks.clear()
+
+    def test_matching_event_and_action_is_dispatched(self, client, monkeypatch):
+        """A matching delivery follows the normal dedup and queue path."""
+        _set_settings(monkeypatch)
+        _register(
+            _make_task(
+                secret="task-secret",
+                webhook_filter=GitHubWebhookFilter(
+                    event="pull_request",
+                    actions=["closed"],
+                ),
+            )
+        )
+        body = json.dumps({"action": "closed", "pull_request": {"merged": False}}).encode()
+
+        response = client.post(
+            "/api/v1/hooks/wh-1",
+            content=body,
+            headers={
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": "delivery-closed",
+                "X-Hub-Signature-256": _hex_sig("task-secret", body),
+            },
+        )
+
+        assert response.status_code == 202
+        assert response.json()["status"] == "accepted"
+        assert len(client.captured["calls"]) == 1
+        assert len(client.mongo._rows) == 1
+
+    @pytest.mark.parametrize(
+        ("required_merged", "payload_merged", "expected_status"),
+        [
+            (True, True, 202),
+            (True, False, 200),
+            (False, False, 202),
+            (False, True, 200),
+        ],
+    )
+    def test_closed_pr_can_filter_merged_state(
+        self,
+        client,
+        monkeypatch,
+        required_merged: bool,
+        payload_merged: bool,
+        expected_status: int,
+    ):
+        """Closed PR filters distinguish merged from unmerged closures."""
+        _set_settings(monkeypatch)
+        _register(
+            _make_task(
+                secret="task-secret",
+                webhook_filter=GitHubWebhookFilter(
+                    event="pull_request",
+                    actions=["closed"],
+                    merged=required_merged,
+                ),
+            )
+        )
+        body = json.dumps(
+            {"action": "closed", "pull_request": {"merged": payload_merged}}
+        ).encode()
+
+        response = client.post(
+            "/api/v1/hooks/wh-1",
+            content=body,
+            headers={
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": f"delivery-{required_merged}-{payload_merged}",
+                "X-Hub-Signature-256": _hex_sig("task-secret", body),
+            },
+        )
+
+        assert response.status_code == expected_status
+        expected_calls = 1 if expected_status == 202 else 0
+        assert len(client.captured["calls"]) == expected_calls
+
+    def test_filter_does_not_bypass_signature_verification(self, client, monkeypatch):
+        """Even a nonmatching event must authenticate before it is ignored."""
+        _set_settings(monkeypatch)
+        _register(
+            _make_task(
+                secret="task-secret",
+                webhook_filter=GitHubWebhookFilter(
+                    event="pull_request",
+                    actions=["closed"],
+                ),
+            )
+        )
+        body = json.dumps({"action": "opened"}).encode()
+
+        response = client.post(
+            "/api/v1/hooks/wh-1",
+            content=body,
+            headers={"X-GitHub-Event": "pull_request"},
+        )
+
+        assert response.status_code == 401
         assert client.captured["calls"] == []
 
 

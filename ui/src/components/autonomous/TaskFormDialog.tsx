@@ -347,6 +347,79 @@ export function TaskFormDialog({
                     ))}
                   </Select>
                 </div>
+                {form.webhookProvider === "github" && (
+                  <div className="space-y-3 rounded-md border border-border p-3">
+                    <div className="space-y-1">
+                      <Label>Filter deliveries</Label>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={form.webhookFilterEnabled}
+                          onChange={(e) => update("webhookFilterEnabled", e.target.checked)}
+                          className="h-4 w-4 rounded border-border"
+                        />
+                        Only run the agent for matching GitHub events
+                      </label>
+                    </div>
+
+                    {form.webhookFilterEnabled && (
+                      <>
+                        <div className="space-y-1">
+                          <Label htmlFor="task-webhook-filter-event">GitHub event</Label>
+                          <Input
+                            id="task-webhook-filter-event"
+                            value={form.webhookFilterEvent}
+                            onChange={(e) => update("webhookFilterEvent", e.target.value)}
+                            placeholder="pull_request"
+                            required
+                          />
+                          <p className="text-[11px] text-muted-foreground">
+                            The event name from <code>X-GitHub-Event</code>, for example{" "}
+                            <code>pull_request</code>.
+                          </p>
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label htmlFor="task-webhook-filter-actions">GitHub actions (optional)</Label>
+                          <Input
+                            id="task-webhook-filter-actions"
+                            value={form.webhookFilterActions}
+                            onChange={(e) => update("webhookFilterActions", e.target.value)}
+                            placeholder="closed"
+                          />
+                          <p className="text-[11px] text-muted-foreground">
+                            Comma-separated payload actions. Leave blank to accept every action
+                            for this event.
+                          </p>
+                        </div>
+
+                        {form.webhookFilterEvent.trim().toLowerCase() === "pull_request" &&
+                          form.webhookFilterActions.trim().toLowerCase() === "closed" && (
+                          <div className="space-y-1">
+                            <Label htmlFor="task-webhook-filter-merged">Closed pull requests</Label>
+                            <Select
+                              id="task-webhook-filter-merged"
+                              value={form.webhookFilterMerged}
+                              onChange={(e) => update(
+                                "webhookFilterMerged",
+                                e.target.value as TaskFormState["webhookFilterMerged"],
+                              )}
+                              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <option value="any">Merged or closed without merging</option>
+                              <option value="merged">Merged only</option>
+                              <option value="unmerged">Closed without merging only</option>
+                            </Select>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    <p className="text-[11px] text-muted-foreground">
+                      Non-matching deliveries are acknowledged without creating a run or invoking
+                      the agent.
+                    </p>
+                  </div>
+                )}
                 {isEdit && ["slack", "pagerduty"].includes(form.webhookProvider) ? (
                   <div className="space-y-1">
                     <Label htmlFor="task-webhook-secret">

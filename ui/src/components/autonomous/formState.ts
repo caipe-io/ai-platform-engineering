@@ -40,6 +40,10 @@ export const EMPTY_FORM: TaskFormState = {
   intervalHours: "",
   webhookProvider: "github",
   webhookSecret: "",
+  webhookFilterEnabled: false,
+  webhookFilterEvent: "pull_request",
+  webhookFilterActions: "closed",
+  webhookFilterMerged: "any",
 };
 
 /** Convert API model -> form state. */
@@ -75,6 +79,16 @@ export function toFormState(task: AutonomousTask | null | undefined): TaskFormSt
     // ``has_secret`` boolean comes back. Leave the form blank so the
     // operator must explicitly type a new value to *change* it.
     base.webhookSecret = "";
+    if (task.trigger.filter) {
+      base.webhookFilterEnabled = true;
+      base.webhookFilterEvent = task.trigger.filter.event;
+      base.webhookFilterActions = (task.trigger.filter.actions ?? []).join(", ");
+      base.webhookFilterMerged = task.trigger.filter.merged == null
+        ? "any"
+        : task.trigger.filter.merged
+          ? "merged"
+          : "unmerged";
+    }
   }
   return base;
 }
@@ -139,12 +153,40 @@ export function fromFormState(
     };
   } else {
     const provider = form.webhookProvider.trim() || "github";
+    let filter: NonNullable<Extract<AutonomousTask["trigger"], { type: "webhook" }>["filter"]> | undefined;
+    if (provider === "github" && form.webhookFilterEnabled) {
+      const event = form.webhookFilterEvent.trim().toLowerCase();
+      if (!event) return { error: "GitHub event is required when webhook filtering is enabled." };
+      if (!/^[a-z0-9_]+$/.test(event)) {
+        return { error: "GitHub event may contain only letters, numbers, and underscores." };
+      }
+
+      const actions = Array.from(new Set(
+        form.webhookFilterActions
+          .split(",")
+          .map((action) => action.trim().toLowerCase())
+          .filter(Boolean),
+      ));
+      if (actions.length > 32) {
+        return { error: "GitHub filters support at most 32 actions." };
+      }
+      if (actions.some((action) => !/^[a-z0-9_]+$/.test(action))) {
+        return { error: "GitHub actions may contain only letters, numbers, and underscores." };
+      }
+      const supportsMergedFilter =
+        event === "pull_request" && actions.length === 1 && actions[0] === "closed";
+      const merged = !supportsMergedFilter || form.webhookFilterMerged === "any"
+        ? null
+        : form.webhookFilterMerged === "merged";
+      filter = { event, actions, merged };
+    }
     trigger = {
       type: "webhook",
       provider,
       // POST generates the initial credential. On edit, a value is present
       // only when rotating a Slack/PagerDuty-issued secret; null preserves it.
       secret: form.webhookSecret.trim() ? form.webhookSecret.trim() : null,
+      ...(filter ? { filter } : {}),
     };
   }
 
