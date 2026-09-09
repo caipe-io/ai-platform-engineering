@@ -44,7 +44,7 @@ invoke agents and tools allowed by its configured identity and route policy.
 ## CLI
 
 The [agent-chat-cli](../tools-utils/agent-chat-cli.md) provides an interactive
-terminal client for agent and A2A conversations. It is useful for scripting,
+terminal client for agent conversations. It is useful for scripting,
 testing an agent, or working without a browser.
 
 ## Tool Access

@@ -10,7 +10,7 @@ Regenerate with `make docs-helm-charts`.
 
 # autonomous-agents
 
-A Helm chart for Autonomous Agents - Standalone scheduler that fires tasks (cron / interval / webhook) at the CAIPE supervisor over A2A
+A Helm chart for Autonomous Agents - Standalone scheduler that fires tasks (cron / interval / webhook) at the configured CAIPE agent runtime
 
 | | |
 |---|---|

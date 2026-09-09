@@ -11,7 +11,7 @@ The CLI is under active development. Track progress in [PR #1184](https://github
 
 AI-assisted coding, workflows, and platform engineering from the terminal.
 
-CAIPE CLI is a TypeScript/Bun CLI that connects to a CAIPE server via the A2A or AG-UI streaming protocol. It provides an interactive chat REPL, headless mode for CI/CD pipelines, skill management, and secure credential storage.
+CAIPE CLI is a TypeScript/Bun CLI that connects to a CAIPE server through the AG-UI streaming protocol. It provides an interactive chat REPL, headless mode for CI/CD pipelines, skill management, and secure credential storage.
 
 ## Installation
 
@@ -91,7 +91,7 @@ caipe
 
 The chat REPL provides:
 
-- **Streaming responses** via A2A or AG-UI Server-Sent Events
+- **Streaming responses** via AG-UI Server-Sent Events
 - **Slash commands** — type `/` for a picker: `/clear`, `/compact`, `/login`, `/skills`, `/agents`, `/help`, `/exit`
 - **Readline keybindings** — `Ctrl+A/E`, `Ctrl+B/F`, `Alt+B/F`, `Ctrl+U/K/W`, `Ctrl+D`
 - **Input history** — `Up/Down` or `Ctrl+P/N`
@@ -110,7 +110,7 @@ caipe chat --headless --prompt "Explain the deployment architecture"
 caipe chat --headless --prompt-file question.txt --output json
 
 # Multi-turn via stdin
-echo -e "Hello\nWhat is A2A?" | caipe chat --headless --interactive-stdin
+echo -e "Hello\nWhat can this agent do?" | caipe chat --headless --interactive-stdin
 
 # With explicit token
 caipe chat --headless --token "$JWT" --prompt "status check"

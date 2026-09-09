@@ -25,6 +25,14 @@ Agent Builder is the no-code path for managed agents. Choose the [developer
 guide](../development/creating-an-agent.md) when you need to package an agent
 as application code or control its deployment yourself.
 
+:::note Planned connector
+
+A2A is not currently a CAIPE platform transport. The planned reintroduction is
+as an optional connector tool configured from Agent Builder; until it is
+available, use MCP servers for external tools and services.
+
+:::
+
 ## Watch the demo
 
 <a href="https://app.vidcast.io/share/70f22189-0a44-42d3-b601-b5730504a8e3">

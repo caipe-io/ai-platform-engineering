@@ -49,7 +49,7 @@ CAIPE uses a gamified badge system to celebrate your contributions and learning 
 
 **How to earn:**
 - Deploy CAIPE securely with Agent Identity (Zero-Trust).
-- Use semantic layers and agent-to-agent gateways.
+- Use semantic layers and agent gateways for secure tool access.
 - Actively contribute and share agentic learnings with the CAIPE and OSS community.
 
 ---

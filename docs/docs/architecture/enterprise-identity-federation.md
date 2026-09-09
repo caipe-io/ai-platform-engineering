@@ -946,7 +946,7 @@ This works and is the recommended starting point.
 
 ### What AgentGateway Adds
 
-AgentGateway provides a **centralized data plane** for agent-to-tool and agent-to-agent communication, adding capabilities that are difficult to implement consistently across individual agents:
+AgentGateway provides a **centralized data plane** for agent-to-tool and service-to-service communication, adding capabilities that are difficult to implement consistently across individual agents:
 
 ```mermaid
 graph TB
