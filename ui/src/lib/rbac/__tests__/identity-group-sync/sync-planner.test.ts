@@ -102,6 +102,53 @@ describe("identity group sync dry-run planner", () => {
     expect(result.teams_to_create).toEqual([]);
   });
 
+  it("flags an archived team for unarchive when its Okta group regains an active managed member", async () => {
+    const result = await planIdentityGroupSync({
+      groups: [group],
+      rules: [rule],
+      existingTeams: [{ id: "platform-id", slug: "platform", name: "Platform", status: "archived" }],
+      existingMembershipSources: [],
+      now: "2026-05-12T01:00:00.000Z",
+      actor: "admin@example.test",
+    });
+
+    expect(result.teams_to_unarchive).toEqual(["platform"]);
+    expect(result.membership_sources_to_add).toEqual(
+      expect.arrayContaining([expect.objectContaining({ team_slug: "platform", user_subject: "bob-sub" })])
+    );
+  });
+
+  it("does not flag an already-active team for unarchive", async () => {
+    const result = await planIdentityGroupSync({
+      groups: [group],
+      rules: [rule],
+      existingTeams: [{ id: "platform-id", slug: "platform", name: "Platform", status: "active" }],
+      existingMembershipSources: [],
+      now: "2026-05-12T01:00:00.000Z",
+      actor: "admin@example.test",
+    });
+
+    expect(result.teams_to_unarchive).toEqual([]);
+  });
+
+  it("does not flag an archived team for unarchive when its group has no active matched members", async () => {
+    const inactiveGroup = {
+      ...group,
+      members: [{ email: "inactive@example.test", display_name: "Inactive User", active: false }],
+    };
+
+    const result = await planIdentityGroupSync({
+      groups: [inactiveGroup],
+      rules: [rule],
+      existingTeams: [{ id: "platform-id", slug: "platform", name: "Platform", status: "archived" }],
+      existingMembershipSources: [],
+      now: "2026-05-12T01:00:00.000Z",
+      actor: "admin@example.test",
+    });
+
+    expect(result.teams_to_unarchive).toEqual([]);
+  });
+
   it("stamps last_seen_at on membership_sources_to_refresh for unchanged active memberships", async () => {
     const existingSource: TeamMembershipSource = {
       team_id: "platform-id",

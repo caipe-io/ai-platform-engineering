@@ -38,6 +38,7 @@ interface ExistingTeam {
   _id?: unknown;
   slug: string;
   name: string;
+  status?: string;
 }
 
 export interface ClaimGroupUser {
@@ -83,14 +84,17 @@ export function groupsToExternalGroupsForUser(input: {
   }));
 }
 
-async function listExistingTeams(): Promise<Array<{ id: string; slug: string; name: string }>> {
+async function listExistingTeams(): Promise<
+  Array<{ id: string; slug: string; name: string; status?: string }>
+> {
   const { getCollection } = await import("@/lib/mongodb");
   const collection = await getCollection<ExistingTeam>("teams");
-  const teams = await collection.find({}).project({ id: 1, slug: 1, name: 1 }).toArray();
+  const teams = await collection.find({}).project({ id: 1, slug: 1, name: 1, status: 1 }).toArray();
   return teams.map((team) => ({
     id: team.id ?? String(team._id ?? team.slug),
     slug: team.slug,
     name: team.name,
+    status: team.status,
   }));
 }
 
