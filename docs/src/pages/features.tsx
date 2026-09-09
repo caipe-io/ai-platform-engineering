@@ -5,6 +5,25 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './features.module.css';
 
+const FEATURE_DEMOS = [
+  {
+    title: 'Agent Builder',
+    description: 'Configure agents, tools, knowledge, skills, and runtime guardrails from one guided workspace.',
+    gif: 'https://raw.githubusercontent.com/wiki/caipe-io/ai-platform-engineering/agent-builder-demo.gif',
+    embed: 'https://app.vidcast.io/share/embed/70f22189-0a44-42d3-b601-b5730504a8e3?disableAMA=1',
+    vidcast: 'https://app.vidcast.io/share/70f22189-0a44-42d3-b601-b5730504a8e3',
+    alt: 'Agent Builder demo showing agent configuration steps',
+  },
+  {
+    title: 'Knowledge Bases',
+    description: 'Ingest sources, search governed content, and organize reusable collections for agents.',
+    gif: 'https://raw.githubusercontent.com/wiki/caipe-io/ai-platform-engineering/knowledge-bases-demo.gif',
+    embed: 'https://app.vidcast.io/share/embed/e4c72165-7164-4dde-9e3d-7f0087b6bc13?disableAMA=1',
+    vidcast: 'https://app.vidcast.io/share/e4c72165-7164-4dde-9e3d-7f0087b6bc13',
+    alt: 'Knowledge Bases demo showing data sources, search, and collections',
+  },
+];
+
 const FEATURES = [
   {
     title: 'Agent Builder',
@@ -204,6 +223,48 @@ export default function FeaturesPage() {
               >
                 Submit a Feature Request ↗
               </Link>
+            </div>
+          </div>
+        </section>
+
+        <section className={styles.demos}>
+          <div className={styles.demosInner}>
+            <div className={styles.demosHeader}>
+              <Heading as="h2" className={styles.demosTitle}>See it in action</Heading>
+              <p className={styles.demosSubtitle}>
+                Explore the two workflows that make CAIPE useful from the first day.
+              </p>
+            </div>
+            <div className={styles.demoGrid}>
+              {FEATURE_DEMOS.map((demo) => {
+                const docsPath = demo.title === 'Agent Builder'
+                  ? `${currentDocsPrefix}/features/agent-builder`
+                  : `${currentDocsPrefix}/knowledge_bases/`;
+                return (
+                  <article key={demo.title} className={styles.demoCard}>
+                    <div className={styles.demoCopy}>
+                      <Heading as="h3" className={styles.demoTitle}>{demo.title}</Heading>
+                      <p className={styles.demoDescription}>{demo.description}</p>
+                    </div>
+                    <a href={demo.vidcast} className={styles.demoPreview}>
+                      <img src={demo.gif} alt={demo.alt} loading="lazy" />
+                      <span className={styles.demoPreviewLabel}>Open full demo ↗</span>
+                    </a>
+                    <div className={styles.demoEmbed}>
+                      <iframe
+                        src={demo.embed}
+                        title={`${demo.title} Vidcast demo`}
+                        loading="lazy"
+                        allow="fullscreen *;autoplay *;clipboard-write *;"
+                      />
+                    </div>
+                    <div className={styles.demoActions}>
+                      <Link className={styles.demoDocsLink} to={docsPath}>Read the docs →</Link>
+                      <a className={styles.demoVidcastLink} href={demo.vidcast}>Watch on Vidcast ↗</a>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </div>
         </section>

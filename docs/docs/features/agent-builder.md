@@ -12,6 +12,18 @@ organizational knowledge, reusable skills, and runtime guardrails.
 [Dynamic Agents Helm chart](../installation/helm-charts/ai-platform-engineering/dynamic-agents-chart) ·
 [Developer guide](../development/creating-an-agent)
 
+## Watch the demo
+
+<a href="https://app.vidcast.io/share/70f22189-0a44-42d3-b601-b5730504a8e3">
+  <img src="https://raw.githubusercontent.com/wiki/caipe-io/ai-platform-engineering/agent-builder-demo.gif" alt="Agent Builder demo showing agent configuration steps" loading="lazy" />
+</a>
+
+<div style={{paddingBottom: '56.25%', position: 'relative', display: 'block', width: '100%'}}>
+  <iframe src="https://app.vidcast.io/share/embed/70f22189-0a44-42d3-b601-b5730504a8e3?disableAMA=1" width="100%" height="100%" title="CAIPE.io Agent Builder Demo" loading="lazy" allow="fullscreen *;autoplay *;clipboard-write *;" style={{position: 'absolute', top: 0, left: 0, border: 'solid', borderRadius: '12px'}}></iframe>
+</div>
+
+[Watch the full Agent Builder demo on Vidcast ↗](https://app.vidcast.io/share/70f22189-0a44-42d3-b601-b5730504a8e3)
+
 ## How it works
 
 ```mermaid

@@ -8,6 +8,18 @@ reusable collections, and resource-level access control.
 [Architecture](architecture.md) · [Ingestors](ingestors.md) ·
 [MCP tools](mcp-tools.md) · [Authentication](authentication-overview.md)
 
+## Watch the demo
+
+<a href="https://app.vidcast.io/share/e4c72165-7164-4dde-9e3d-7f0087b6bc13">
+  <img src="https://raw.githubusercontent.com/wiki/caipe-io/ai-platform-engineering/knowledge-bases-demo.gif" alt="Knowledge Bases demo showing data sources, search, and collections" loading="lazy" />
+</a>
+
+<div style={{paddingBottom: '56.25%', position: 'relative', display: 'block', width: '100%'}}>
+  <iframe src="https://app.vidcast.io/share/embed/e4c72165-7164-4dde-9e3d-7f0087b6bc13?disableAMA=1" width="100%" height="100%" title="CAIPE.io Knowledge Bases Demo" loading="lazy" allow="fullscreen *;autoplay *;clipboard-write *;" style={{position: 'absolute', top: 0, left: 0, border: 'solid', borderRadius: '12px'}}></iframe>
+</div>
+
+[Watch the full Knowledge Bases demo on Vidcast ↗](https://app.vidcast.io/share/e4c72165-7164-4dde-9e3d-7f0087b6bc13)
+
 ## How it works
 
 ```mermaid
