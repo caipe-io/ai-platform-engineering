@@ -872,10 +872,16 @@ export const authOptions: NextAuthOptions = {
   jwt: {
     async encode({ token, secret, maxAge }) {
       if (token?.sub) {
-        await storeTokens(token.sub, {
+        // Token persistence is deliberately best-effort. The L1 cache is
+        // updated synchronously by storeTokens; waiting for a remote MongoDB
+        // write here would block SSR and App Router navigations when the
+        // database is temporarily unavailable.
+        void storeTokens(token.sub, {
           accessToken: token.accessToken as string | undefined,
           refreshToken: token.refreshToken as string | undefined,
           idToken: token.idToken as string | undefined,
+        }).catch((error) => {
+          console.error("[Auth] Failed to persist token metadata:", error);
         });
       }
       const slimToken = { ...(token ?? {}) } as Record<string, unknown>;
