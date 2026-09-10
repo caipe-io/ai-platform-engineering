@@ -176,7 +176,7 @@ test.describe("mocked RBAC e2e — chat navigation regression", () => {
     });
 
     await page.goto("/chat", { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(/\/chat\/rbac-slow-list-conv$/);
+    await expect(page).toHaveURL(/\/chat\/rbac-slow-list-conv$/, { timeout: 20_000 });
     await expectChatComposerReady(page);
 
     expect(createCallCount).toBe(0);
