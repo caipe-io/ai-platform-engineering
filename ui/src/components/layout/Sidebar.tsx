@@ -15,13 +15,14 @@ import { autonomousApi } from "@/components/autonomous/api";
 import type { AutonomousTask } from "@/components/autonomous/types";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
+import { getConfig } from "@/lib/config";
 import { getErrorMessage } from "@/lib/error-utils";
 import { getStorageMode } from "@/lib/storage-config";
 import { cn,formatDate,truncateText } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import type { Conversation } from "@/types/a2a";
 import { getAgentId } from "@/types/a2a";
-import { AnimatePresence,motion } from "framer-motion";
+import { motion } from "framer-motion";
 import {
 Archive,
 ArchiveRestore,
@@ -67,7 +68,8 @@ interface ConversationTitleBadge {
   title: string;
 }
 
-type ConversationSectionId = "autonomous" | "webhook" | "scheduled" | "history";
+type ConversationViewId = "chat" | "scheduled" | "autonomous";
+type ConversationSectionId = "webhook" | "history";
 
 type ConversationListItem =
   | {
@@ -79,9 +81,6 @@ type ConversationListItem =
       id: ConversationSectionId;
       label: string;
       count: number;
-      expanded?: boolean;
-      onToggle?: () => void;
-      nested?: boolean;
     }
   | {
       kind: "webhook-task";
@@ -172,10 +171,10 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [renameSavingId, setRenameSavingId] = useState<string | null>(null);
-  const [autonomousRunsExpanded, setAutonomousRunsExpanded] = useState(false);
-  const [webhookRunsExpanded, setWebhookRunsExpanded] = useState(false);
-  const [scheduledRunsExpanded, setScheduledRunsExpanded] = useState(false);
+  const [conversationView, setConversationView] = useState<ConversationViewId>("chat");
   const [webhookTasks, setWebhookTasks] = useState<AutonomousTask[]>([]);
+  const scheduledTabEnabled = getConfig("schedulerEnabled");
+  const autonomousTabEnabled = getConfig("autonomousAgentsEnabled");
   const { toast } = useToast();
 
   // Agent name lookup for dynamic agent conversations
@@ -251,7 +250,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   useEffect(() => {
     let cancelled = false;
     const ownerEmail = session?.user?.email?.trim().toLowerCase();
-    if (activeTab !== "chat" || !ownerEmail) {
+    if (activeTab !== "chat" || !ownerEmail || !autonomousTabEnabled) {
       setWebhookTasks([]);
       return;
     }
@@ -277,7 +276,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     return () => {
       cancelled = true;
     };
-  }, [activeTab, session?.user?.email]);
+  }, [activeTab, autonomousTabEnabled, session?.user?.email]);
 
   // Handle mouse move for resizing
   useEffect(() => {
@@ -429,63 +428,53 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   const historyConversations = conversations.filter(
     (conversation) => getConversationRunKind(conversation) === null,
   );
+  const visibleConversations =
+    conversationView === "chat"
+      ? historyConversations
+      : conversationView === "scheduled"
+        ? scheduledConversations
+        : autonomousConversations;
   const conversationListItems: ConversationListItem[] = collapsed
     ? conversations.map((conversation) => ({ kind: "conversation", conversation }))
     : [
-        {
-          kind: "section",
-          id: "autonomous",
-          label: "Autonomous Runs",
-          count: autonomousConversations.length + webhookTasks.length,
-          expanded: autonomousRunsExpanded,
-          onToggle: () => setAutonomousRunsExpanded((expanded) => !expanded),
-        },
-        ...(autonomousRunsExpanded
-          ? autonomousConversations.map(
-              (conversation): ConversationListItem => ({ kind: "conversation", conversation }),
-            )
+        ...(conversationView === "chat"
+          ? [{
+              kind: "section" as const,
+              id: "history" as const,
+              label: "History",
+              count: historyConversations.length,
+            }]
           : []),
-        ...(autonomousRunsExpanded
+        ...visibleConversations.map(
+          (conversation): ConversationListItem => ({ kind: "conversation", conversation }),
+        ),
+        ...(conversationView === "autonomous" && webhookTasks.length > 0
           ? [
               {
                 kind: "section" as const,
                 id: "webhook" as const,
                 label: "Webhook Runs",
                 count: webhookTasks.length,
-                expanded: webhookRunsExpanded,
-                onToggle: () => setWebhookRunsExpanded((expanded) => !expanded),
-                nested: true,
               },
-              ...(webhookRunsExpanded
-                ? webhookTasks.map(
-                    (task): ConversationListItem => ({ kind: "webhook-task", task }),
-                  )
-                : []),
+              ...webhookTasks.map(
+                (task): ConversationListItem => ({ kind: "webhook-task", task }),
+              ),
             ]
           : []),
-        {
-          kind: "section",
-          id: "scheduled",
-          label: "Scheduled Runs",
-          count: scheduledConversations.length,
-          expanded: scheduledRunsExpanded,
-          onToggle: () => setScheduledRunsExpanded((expanded) => !expanded),
-        },
-        ...(scheduledRunsExpanded
-          ? scheduledConversations.map(
-              (conversation): ConversationListItem => ({ kind: "conversation", conversation }),
-            )
-          : []),
-        {
-          kind: "section",
-          id: "history",
-          label: "History",
-          count: historyConversations.length,
-        },
-        ...historyConversations.map(
-          (conversation): ConversationListItem => ({ kind: "conversation", conversation }),
-        ),
       ];
+  const conversationTabs: Array<{ id: ConversationViewId; label: string; count?: number }> = [
+    { id: "chat", label: "Chat" },
+    ...(scheduledTabEnabled
+      ? [{ id: "scheduled" as const, label: "Scheduled", count: scheduledConversations.length }]
+      : []),
+    ...(autonomousTabEnabled
+      ? [{
+          id: "autonomous" as const,
+          label: "Autonomous",
+          count: autonomousConversations.length + webhookTasks.length,
+        }]
+      : []),
+  ];
 
   return (
     <motion.div
@@ -520,12 +509,56 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
 
       {/* New Chat Button */}
       {activeTab === "chat" && (
-        <div className="px-2 pb-2 shrink-0">
-          <NewChatButton
-            collapsed={collapsed}
-            onNewChat={handleNewChat}
-          />
-        </div>
+        <>
+          <div className="px-2 pb-2 shrink-0">
+            <NewChatButton
+              collapsed={collapsed}
+              onNewChat={handleNewChat}
+            />
+          </div>
+          {!collapsed && (
+            <div
+              className="mx-2 mb-2 flex rounded-lg border border-border/60 bg-muted/30 p-1 shrink-0"
+              role="tablist"
+              aria-label="Conversation views"
+            >
+              {conversationTabs.map((tab) => {
+                const isSelected = conversationView === tab.id;
+                const accessibleName = tab.count ? `${tab.label} (${tab.count})` : tab.label;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isSelected}
+                    aria-label={accessibleName}
+                    className={cn(
+                      "flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+                      isSelected
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
+                    )}
+                    onClick={() => setConversationView(tab.id)}
+                  >
+                    <span className="truncate">{tab.label}</span>
+                    {tab.count ? (
+                      <span
+                        className={cn(
+                          "inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] tabular-nums",
+                          isSelected
+                            ? "bg-primary/15 text-primary"
+                            : "bg-muted text-muted-foreground",
+                        )}
+                      >
+                        {tab.count}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {/* Bottom-right indicators: Archive + Storage Mode */}
@@ -590,18 +623,13 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
               {isLoadingConversations && conversations.length === 0 ? (
                 <ConversationListSkeleton collapsed={collapsed} />
               ) : (
-                <AnimatePresence mode="popLayout">
-                  {conversationListItems.map((item, index) => {
+                <>
+                  {conversationListItems.map((item) => {
                   if (item.kind === "section") {
                     const sectionHeader = (
                       <>
-                        {item.onToggle ? (
-                          <ChevronRight
-                            className={cn(
-                              "h-3.5 w-3.5 shrink-0 transition-transform",
-                              item.expanded && "rotate-90",
-                            )}
-                          />
+                        {item.id === "webhook" ? (
+                          <Webhook className="h-3.5 w-3.5 shrink-0" />
                         ) : (
                           <History className="h-3.5 w-3.5 shrink-0" />
                         )}
@@ -615,26 +643,12 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                     return (
                       <div
                         key={`section-${item.id}`}
-                        className={cn(
-                          "flex items-center gap-1.5 px-1 pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground",
-                          item.nested && "ml-4 border-l border-border/60 pl-2",
-                        )}
+                        className="flex items-center gap-1.5 px-1 pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground"
                         data-testid={`conversation-section-${item.id}`}
                       >
-                        {item.onToggle ? (
-                          <button
-                            type="button"
-                            className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left hover:bg-muted/50 hover:text-foreground"
-                            aria-expanded={item.expanded}
-                            onClick={item.onToggle}
-                          >
-                            {sectionHeader}
-                          </button>
-                        ) : (
-                          <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-1">
-                            {sectionHeader}
-                          </div>
-                        )}
+                        <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-1">
+                          {sectionHeader}
+                        </div>
                         {item.id === "history" && storageMode === "mongodb" && (
                           <TooltipProvider delayDuration={300}>
                             <Tooltip>
@@ -734,11 +748,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                     key={conv.id}
                     className="group/conv"
                   >
-                    <motion.div
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -10 }}
-                      transition={{ delay: index * 0.02 }}
+                    <div
                       className={cn(
                         "group relative flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-all min-w-0",
                         isLive
@@ -1056,23 +1066,32 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                         </div>
                       </>
                     )}
-                  </motion.div>
+                  </div>
                   </div>
                     );
                   })}
-                </AnimatePresence>
+                </>
               )}
 
-              {!isLoadingConversations && conversations.length === 0 && !collapsed && (
+              {!isLoadingConversations &&
+                visibleConversations.length === 0 &&
+                (conversationView !== "autonomous" || webhookTasks.length === 0) &&
+                !collapsed && (
                 <div className="text-center py-8 px-4">
                   <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-muted flex items-center justify-center">
                     <Sparkles className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <p className="text-sm font-medium text-muted-foreground">
-                    No conversations yet
+                    {conversationView === "chat"
+                      ? "No conversations yet"
+                      : conversationView === "scheduled"
+                        ? "No scheduled runs yet"
+                        : "No autonomous runs yet"}
                   </p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
-                    Start a new chat to begin
+                    {conversationView === "chat"
+                      ? "Start a new chat to begin"
+                      : "Runs will appear here when they are available"}
                   </p>
                 </div>
               )}

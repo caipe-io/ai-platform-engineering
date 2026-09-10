@@ -48,7 +48,10 @@ function task(id: string, agentId: string, owner: string) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockListTasks.mockResolvedValue([]);
-  mockGetSettings.mockResolvedValue({ minimum_schedule_interval_seconds: 1800 });
+  mockGetSettings.mockResolvedValue({
+    minimum_schedule_interval_seconds: 1800,
+    enabled_webhook_providers: ["github", "jira", "slack", "pagerduty"],
+  });
 });
 
 it("renders a section for every schedulable agent, including empty ones", async () => {

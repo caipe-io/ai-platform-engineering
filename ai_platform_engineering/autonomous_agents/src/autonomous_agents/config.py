@@ -8,6 +8,8 @@ from typing import Any, Self
 from pydantic import AliasChoices, Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+SUPPORTED_WEBHOOK_PROVIDERS = ("github", "jira", "slack", "pagerduty")
+
 
 def _parse_cors_string(raw: str | None) -> list[str]:
     """Parse ``CORS_ORIGINS`` / constructor value into a list of origins.
@@ -64,6 +66,7 @@ class Settings(BaseSettings):
     dynamic_agents_oauth2_token_url: str | None = None
     dynamic_agents_oauth2_client_id: str | None = None
     dynamic_agents_oauth2_client_secret: str | None = None
+    dynamic_agents_oauth2_audience: str = "caipe-platform"
     dynamic_agents_oauth2_scope: str | None = None
 
     @field_validator(
@@ -130,12 +133,33 @@ class Settings(BaseSettings):
     # (signature header, scheme, algorithm, payload template, etc.).
     # ``None`` (the default) means use the bundled
     # ``autonomous_agents/webhook_providers.yaml`` shipped with the
-    # package -- which already covers github, slack, pagerduty, and
-    # generic_hmac. Operators add private upstreams by pointing
-    # ``WEBHOOK_PROVIDERS_FILE`` at a custom file; that file fully
-    # replaces the bundled defaults, so include any built-in providers
-    # you still want when overriding.
+    # package. A custom file fully replaces the bundled adapter definitions,
+    # but does not expand the four task providers supported by the API/UI.
+    # Include every enabled provider when overriding this file.
     webhook_providers_file: str | None = None
+
+    # Deployment allowlist for webhook providers offered by the UI and accepted
+    # by task/webhook routes. Provider adapter configuration remains separate:
+    # an adapter existing in YAML does not make it supported or user-selectable.
+    enabled_webhook_providers: list[str] = Field(
+        default_factory=lambda: list(SUPPORTED_WEBHOOK_PROVIDERS)
+    )
+
+    @field_validator("enabled_webhook_providers")
+    @classmethod
+    def validate_enabled_webhook_providers(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(value.strip().lower() for value in values))
+        if not normalized:
+            raise ValueError("ENABLED_WEBHOOK_PROVIDERS must enable at least one provider")
+        unknown = [
+            value for value in normalized if value not in SUPPORTED_WEBHOOK_PROVIDERS
+        ]
+        if unknown:
+            raise ValueError(
+                "ENABLED_WEBHOOK_PROVIDERS contains unsupported providers: "
+                + ", ".join(unknown)
+            )
+        return normalized
 
     # CORS — stored as a raw string so Docker ``CORS_ORIGINS=`` (empty) does
     # not trip pydantic-settings' JSON decode for ``list[str]``. Expose the

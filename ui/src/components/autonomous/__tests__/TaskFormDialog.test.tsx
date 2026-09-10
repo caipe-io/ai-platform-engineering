@@ -46,6 +46,16 @@ it("does not expose obsolete per-task timeout or retry controls", () => {
   expect(screen.queryByText(/A2A_(TIMEOUT_SECONDS|MAX_RETRIES)/i)).not.toBeInTheDocument();
 });
 
+it("defaults cron schedules to UTC and offers daylight-saving-aware time zones", () => {
+  renderDialog();
+
+  expect(screen.getByLabelText("Time zone")).toHaveValue("UTC");
+  expect(screen.getByRole("option", { name: /London.*GMT\/BST.*UTC\+0\/\+1/i })).toHaveValue(
+    "Europe/London",
+  );
+  expect(screen.getByText(/UTC by default/i)).toBeInTheDocument();
+});
+
 it("shows the id as read-only text in edit mode", () => {
   renderDialog({ task: existingTask() });
   expect(screen.getByTestId("task-id-readonly")).toHaveTextContent("daily-report-a3f9");
@@ -80,6 +90,81 @@ it("removes Generic HMAC and does not ask for a GitHub secret", () => {
   expect(screen.getByText(/generated automatically and shown once/i)).toBeInTheDocument();
 });
 
+it("configures safe header and payload filters", async () => {
+  const onSubmit = jest.fn(saveTask);
+  renderDialog({ onSubmit });
+  fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Closed PR task" } });
+  fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: "Summarize it" } });
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+
+  fireEvent.click(screen.getByLabelText(/only run the agent when all conditions match/i));
+  fireEvent.change(screen.getByLabelText("Filter 1 source"), {
+    target: { value: "header" },
+  });
+  fireEvent.change(screen.getByLabelText("Filter 1 field"), {
+    target: { value: "X-GitHub-Event" },
+  });
+  fireEvent.change(screen.getByLabelText("Filter 1 accepted values"), {
+    target: { value: "pull_request" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add condition" }));
+  fireEvent.change(screen.getByLabelText("Filter 2 field"), {
+    target: { value: "action" },
+  });
+  fireEvent.change(screen.getByLabelText("Filter 2 accepted values"), {
+    target: { value: "closed, reopened" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      trigger: expect.objectContaining({
+        filter: {
+          conditions: [
+            { source: "header", field: "X-GitHub-Event", values: ["pull_request"] },
+            { source: "payload", field: "action", values: ["closed", "reopened"] },
+          ],
+        },
+      }),
+    }),
+  ));
+});
+
+it("links GitHub webhook documentation and never accepts filter code", () => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.click(screen.getByLabelText(/only run the agent when all conditions match/i));
+  expect(screen.getByRole("link", { name: "GitHub event documentation" })).toHaveAttribute(
+    "href",
+    "https://docs.github.com/en/webhooks/webhook-events-and-payloads",
+  );
+
+  expect(screen.getByText(/no filter code is executed/i)).toBeInTheDocument();
+});
+
+it("supports filters for non-GitHub providers", () => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  expect(screen.getByText("Filter deliveries")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "jira" } });
+  expect(screen.getByText("Filter deliveries")).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText(/only run the agent when all conditions match/i));
+  expect(screen.getByTestId("webhook-filter-condition").parentElement).toHaveTextContent(
+    "Payload webhookEvent = jira:issue_updated",
+  );
+});
+
+it("shows only webhook providers enabled by deployment values", () => {
+  renderDialog({ enabledWebhookProviders: ["github", "jira"] });
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+
+  expect(screen.getAllByRole("option")).toHaveLength(2);
+  expect(screen.getByRole("option", { name: "GitHub" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Jira" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "Slack" })).not.toBeInTheDocument();
+});
+
 it("stays open after GitHub creation and shows the full URL plus one-time secret", async () => {
   const onOpenChange = jest.fn();
   const onSubmit = jest.fn(async (task: AutonomousTask) => ({
@@ -91,6 +176,7 @@ it("stays open after GitHub creation and shows the full URL plus one-time secret
     webhookSetupRequired: true,
     webhookSetupSecret: "generated-secret-value",
   }));
+
   renderDialog({ onOpenChange, onSubmit });
 
   fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Daily branch summary" } });

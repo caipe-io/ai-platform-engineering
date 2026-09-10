@@ -1,10 +1,12 @@
 """Pydantic models for Autonomous Agents service."""
 
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class TriggerType(str, Enum):
@@ -29,6 +31,25 @@ class CronTrigger(BaseModel):
     """Trigger for cron-scheduled tasks"""
     type: Literal[TriggerType.CRON] = TriggerType.CRON
     schedule: str = Field(..., description="Cron expression e.g. '0 9 * * *'")
+    timezone: str = Field(
+        default="UTC",
+        description=(
+            "IANA timezone used to interpret the cron expression. Defaults to UTC; "
+            "named zones such as Europe/London follow daylight-saving changes."
+        ),
+    )
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        timezone_name = value.strip()
+        if not timezone_name:
+            raise ValueError("Cron timezone must not be empty")
+        try:
+            ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"Unknown IANA timezone: {timezone_name}") from exc
+        return timezone_name
 
 
 class IntervalTrigger(BaseModel):
@@ -49,6 +70,72 @@ class IntervalTrigger(BaseModel):
         return self
 
 
+class WebhookFilterCondition(BaseModel):
+    """One bounded equality condition for an incoming webhook delivery."""
+
+    source: Literal["payload", "header"] = "payload"
+    field: str = Field(..., min_length=1, max_length=200)
+    values: list[str] = Field(..., min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def validate_condition(self) -> "WebhookFilterCondition":
+        self.field = self.field.strip()
+        if self.source == "payload":
+            if not re.fullmatch(
+                r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){0,7}", self.field
+            ):
+                raise ValueError(
+                    "Payload filter fields must be dot paths with at most 8 segments"
+                )
+        elif not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", self.field):
+            raise ValueError("Header filter fields must be valid HTTP header names")
+
+        normalized: list[str] = []
+        for value in self.values:
+            item = value.strip()
+            if not item:
+                raise ValueError("Webhook filter values must not be empty")
+            if len(item) > 200:
+                raise ValueError("Webhook filter values must be at most 200 characters")
+            if item not in normalized:
+                normalized.append(item)
+        self.values = normalized
+        return self
+
+
+class WebhookDeliveryFilter(BaseModel):
+    """Safe structured filter evaluated after signature verification."""
+
+    conditions: list[WebhookFilterCondition] = Field(
+        ..., min_length=1, max_length=16
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_github_event_filter(cls, data: Any) -> Any:
+        """Read the former ``{event, actions}`` shape without data migration."""
+        if not isinstance(data, dict) or "conditions" in data or "event" not in data:
+            return data
+
+        conditions: list[dict[str, Any]] = [
+            {
+                "source": "header",
+                "field": "X-GitHub-Event",
+                "values": [str(data["event"]).strip().lower()],
+            }
+        ]
+        actions = data.get("actions")
+        if isinstance(actions, list) and actions:
+            conditions.append(
+                {
+                    "source": "payload",
+                    "field": "action",
+                    "values": [str(action).strip().lower() for action in actions],
+                }
+            )
+        return {"conditions": conditions}
+
+
 class WebhookTrigger(BaseModel):
     """Trigger for webhook-scheduled tasks"""
     type: Literal[TriggerType.WEBHOOK] = TriggerType.WEBHOOK
@@ -63,9 +150,9 @@ class WebhookTrigger(BaseModel):
     provider: str = Field(
         default="generic_hmac",
         description=(
-            "Webhook provider adapter id from webhook_providers.yaml "
-            "Use 'generic_hmac' for vendor-neutral HMAC webhooks. "
-            "Missing values default to 'generic_hmac'."
+            "Webhook provider adapter id. New tasks are restricted by the "
+            "deployment allowlist; the generic_hmac default remains only so "
+            "older persisted task documents can still be read."
         ),
     )
     dedup_header: str | None = Field(
@@ -74,6 +161,14 @@ class WebhookTrigger(BaseModel):
             "HTTP header name carrying a unique delivery id. When set "
             "Used as the dedup key for the trigger_instances collection "
             "so retries from the sender don't double-fire the task."
+        ),
+    )
+    filter: WebhookDeliveryFilter | None = Field(
+        default=None,
+        description=(
+            "Optional structured delivery filter for any provider. All conditions "
+            "must match; any configured value may satisfy a condition. Non-matching "
+            "signed deliveries are acknowledged without queueing or invoking the agent."
         ),
     )
 

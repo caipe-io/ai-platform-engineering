@@ -140,6 +140,17 @@ def _resolve_adapter(task: TaskDefinition) -> WebhookAdapter:
     return get_adapter(task.trigger.provider)
 
 
+def _assert_provider_enabled(task: TaskDefinition) -> None:
+    """Hide webhook endpoints whose provider was disabled at deployment."""
+    if (
+        isinstance(task.trigger, WebhookTrigger)
+        and task.trigger.provider not in get_settings().enabled_webhook_providers
+    ):
+        raise HTTPException(
+            status_code=404, detail=f"No webhook task found for id '{task.id}'"
+        )
+
+
 def _parse_context(body: bytes) -> dict[str, Any]:
     """Best-effort parse request body into a dict context."""
     if not body:
@@ -151,6 +162,53 @@ def _parse_context(body: bytes) -> dict[str, Any]:
         return {}
 
     return data if isinstance(data, dict) else {}
+
+
+def _matches_webhook_filter(
+    task: TaskDefinition,
+    headers: Any,
+    context: dict[str, Any],
+) -> bool:
+    """Return whether a verified delivery satisfies its task filter.
+
+    Filters are evaluated only after provider signature verification. Payload
+    fields are bounded dot paths; no user-provided expression is executed.
+    """
+    if not isinstance(task.trigger, WebhookTrigger) or task.trigger.filter is None:
+        return True
+
+    missing = object()
+
+    def resolve_payload(path: str) -> Any:
+        value: Any = context
+        for segment in path.split("."):
+            if not isinstance(value, dict) or segment not in value:
+                return missing
+            value = value[segment]
+        return value
+
+    def comparable_values(value: Any) -> list[str]:
+        if value is missing:
+            return []
+        values = value if isinstance(value, list) else [value]
+        comparable: list[str] = []
+        for item in values:
+            if isinstance(item, str):
+                comparable.append(item)
+            elif item is None or isinstance(item, (bool, int, float)):
+                comparable.append(json.dumps(item, separators=(",", ":")))
+        return comparable
+
+    for condition in task.trigger.filter.conditions:
+        incoming = (
+            headers.get(condition.field, missing)
+            if condition.source == "header"
+            else resolve_payload(condition.field)
+        )
+        if not any(value in condition.values for value in comparable_values(incoming)):
+            return False
+
+    return True
 
 
 async def _verify_followup_signature(
@@ -213,12 +271,14 @@ async def receive_webhook(
     Flow:
 
     1. Look up the webhook task; 404 on unknown ids.
-    2. Resolve the provider adapter (github / slack / pagerduty /
-       generic_hmac / operator-supplied) and verify HMAC + replay-window
+    2. Resolve the enabled provider adapter (GitHub / Jira / Slack / PagerDuty)
+       and verify HMAC + replay-window
        per that adapter's contract when a secret is configured.
     3. Short-circuit provider-recognised ping deliveries with HTTP 200
        (no run, no row) — e.g. GitHub's ``X-GitHub-Event: ping``.
-    4. Derive a dedup key (per-task header > adapter default header >
+    4. Apply any provider-aware delivery filter. Non-matches return HTTP 200
+       without creating a run or dedup row.
+    5. Derive a dedup key (per-task header > adapter default header >
        verified signature > none) and hand off to
        :func:`dispatch_webhook_run`, which owns the shared
        claim / spawn / envelope tail.
@@ -226,6 +286,7 @@ async def receive_webhook(
     task = get_webhook_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"No webhook task found for id '{task_id}'")
+    _assert_provider_enabled(task)
     adapter = _resolve_adapter(task)
 
     settings = get_settings()
@@ -262,6 +323,21 @@ async def receive_webhook(
             "task_id": task_id,
         }
 
+    context = _parse_context(body)
+    if not _matches_webhook_filter(task, request.headers, context):
+        # A valid provider delivery that the task intentionally does not
+        # consume is a successful receipt. Return 200 so GitHub does not retry,
+        # and do not spend dedup-store, queue, run-history, or LLM capacity.
+        logger.info(
+            "Ignoring GitHub delivery that did not match the filter for task '%s'",
+            task_id,
+        )
+        return {
+            "status": "ignored",
+            "reason": "filter_mismatch",
+            "task_id": task_id,
+        }
+
     dedup_key = derive_dedup_key(
         task=task,
         headers=request.headers,
@@ -269,7 +345,6 @@ async def receive_webhook(
         default_dedup_header=result.default_dedup_header,
     )
 
-    context = _parse_context(body)
     payload_dict = WebhookPayload(data=context).model_dump()
 
     outcome = await dispatch_webhook_run(

@@ -52,6 +52,17 @@ logger = logging.getLogger("autonomous_agents")
 router = APIRouter(tags=["tasks"])
 
 
+def _assert_webhook_provider_enabled(task: TaskDefinition) -> None:
+    if (
+        isinstance(task.trigger, WebhookTrigger)
+        and task.trigger.provider not in get_settings().enabled_webhook_providers
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Webhook provider '{task.trigger.provider}' is not enabled",
+        )
+
+
 def _get_caller(request: Request) -> tuple[str | None, bool, str | None]:
     """Extract caller identity from gateway-injected headers.
 
@@ -201,10 +212,12 @@ def _serialize_task(task: TaskDefinition, next_run_iso: str | None) -> dict:
 @router.get("/settings", response_model=dict)
 async def get_public_settings() -> dict:
     """Return non-sensitive runtime constraints needed by the task form."""
+    settings = get_settings()
     return {
         "minimum_schedule_interval_seconds": (
-            get_settings().minimum_schedule_interval_seconds
-        )
+            settings.minimum_schedule_interval_seconds
+        ),
+        "enabled_webhook_providers": settings.enabled_webhook_providers,
     }
 
 
@@ -256,6 +269,8 @@ async def create_task(payload: TaskCreate, request: Request) -> dict:
                 "target a dynamic agent. Select a custom agent for this task."
             ),
         )
+
+    _assert_webhook_provider_enabled(payload)
 
     # The server owns the id. Whatever the client sent is discarded
 
@@ -433,6 +448,8 @@ async def update_task(task_id: str, task: TaskDefinition, request: Request) -> d
         task = task.model_copy(
             update={"owner_id": existing.owner_id, "owner_sub": existing.owner_sub}
         )
+
+    _assert_webhook_provider_enabled(task)
 
     # Webhook secret preservation: GET responses redact the secret to
     # ``has_secret: bool``, so when the UI submits an unchanged form
