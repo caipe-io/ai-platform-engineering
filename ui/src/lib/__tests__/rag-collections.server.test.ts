@@ -60,37 +60,23 @@ beforeEach(() => {
 });
 
 describe("searchableDatasourceIdsForCollectionPublishing", () => {
-  it("uses ingestion_source read access for configured sources and data_source for legacy sources", async () => {
-    mockGetCollection.mockResolvedValue({
-      find: jest.fn().mockReturnValue({
-        project: jest.fn().mockReturnThis(),
-        toArray: jest
-          .fn()
-          .mockResolvedValue([{ source_id: "source-configured" }]),
-      }),
-    });
+  it("checks data_source#can_read uniformly, regardless of source-config rows", async () => {
     mockFilterResourcesByPermission.mockImplementation(
-      async (_session, rows, target: { type: string }) =>
-        target.type === "ingestion_source" ? rows : [],
+      async (_session, rows: { source_id: string }[]) =>
+        rows.filter((row) => row.source_id === "source-readable"),
     );
 
     const result = await searchableDatasourceIdsForCollectionPublishing(
       { sub: "test-user-subject" },
-      ["source-configured", "source-legacy"],
+      ["source-readable", "source-unreadable"],
     );
 
-    expect(result).toEqual(new Set(["source-configured"]));
-    expect(mockFilterResourcesByPermission).toHaveBeenNthCalledWith(
-      1,
+    expect(result).toEqual(new Set(["source-readable"]));
+    expect(mockGetCollection).not.toHaveBeenCalled();
+    expect(mockFilterResourcesByPermission).toHaveBeenCalledTimes(1);
+    expect(mockFilterResourcesByPermission).toHaveBeenCalledWith(
       expect.anything(),
-      [{ source_id: "source-configured" }],
-      expect.objectContaining({ type: "ingestion_source", action: "read" }),
-      { bypassForOrgAdmin: true },
-    );
-    expect(mockFilterResourcesByPermission).toHaveBeenNthCalledWith(
-      2,
-      expect.anything(),
-      [{ source_id: "source-legacy" }],
+      [{ source_id: "source-readable" }, { source_id: "source-unreadable" }],
       expect.objectContaining({ type: "data_source", action: "read" }),
       { bypassForOrgAdmin: true },
     );

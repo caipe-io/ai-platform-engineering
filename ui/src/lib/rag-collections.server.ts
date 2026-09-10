@@ -364,9 +364,11 @@ export async function canPublishCollection(
  * (see the `parent_collection` comment in deploy/openfga/model.fga), so the
  * bar for adding is search access, not management authority.
  *
- * DB-backed sources use the independent ingestion_source RBAC graph. Legacy
- * sources that have no source-config row fall back to the historical
- * data_source relation.
+ * This checks `data_source#can_read` (content-search access) uniformly for
+ * every id, regardless of whether the source has a `rag_ingestion_sources`
+ * config row. `ingestion_source#can_read` would be the wrong relation here:
+ * it governs visibility into connector configuration, not search access to
+ * the resulting indexed content.
  */
 export async function searchableDatasourceIdsForCollectionPublishing(
   session: ResourceAuthzSession,
@@ -375,40 +377,15 @@ export async function searchableDatasourceIdsForCollectionPublishing(
   const ids = unique(datasourceIds);
   if (ids.length === 0) return new Set();
 
-  const sourceConfigs = await getCollection<{ source_id: string }>(
-    "rag_ingestion_sources",
+  const rows = ids.map((source_id) => ({ source_id }));
+  const readable = await filterResourcesByPermission(
+    session,
+    rows,
+    { type: "data_source", action: "read", id: (row) => row.source_id },
+    { bypassForOrgAdmin: true },
   );
-  const configuredRows = await sourceConfigs
-    .find({ source_id: { $in: ids } } as never)
-    .project({ _id: 0, source_id: 1 })
-    .toArray();
-  const configuredIds = new Set(configuredRows.map((row) => row.source_id));
-  const legacyRows = ids
-    .filter((id) => !configuredIds.has(id))
-    .map((source_id) => ({ source_id }));
 
-  const [readableConfigured, readableLegacy] = await Promise.all([
-    filterResourcesByPermission(
-      session,
-      configuredRows,
-      {
-        type: "ingestion_source",
-        action: "read",
-        id: (row) => row.source_id,
-      },
-      { bypassForOrgAdmin: true },
-    ),
-    filterResourcesByPermission(
-      session,
-      legacyRows,
-      { type: "data_source", action: "read", id: (row) => row.source_id },
-      { bypassForOrgAdmin: true },
-    ),
-  ]);
-
-  return new Set(
-    [...readableConfigured, ...readableLegacy].map((row) => row.source_id),
-  );
+  return new Set(readable.map((row) => row.source_id));
 }
 
 export async function deleteCollectionMemberships(
