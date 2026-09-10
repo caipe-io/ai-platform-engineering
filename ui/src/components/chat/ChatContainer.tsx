@@ -31,6 +31,7 @@ export function ChatContainer() {
   const [agentInfo, setAgentInfo] = useState<DynamicAgentConfig | null>(null);
   // Track when a dynamic agent has been deleted but conversation still references it
   const [agentNotFound, setAgentNotFound] = useState(false);
+  const [relinkedAgentId, setRelinkedAgentId] = useState<string | null>(null);
 
   // Only subscribe to stable functions — NOT to `conversations`.
   const { setActiveConversation, loadMessagesFromServer } = useChatStore();
@@ -92,6 +93,7 @@ export function ChatContainer() {
       setError(null);
       setAccessLevel(null);
       setAgentNotFound(false);
+      setRelinkedAgentId(null);
       // Don't reset agentInfo - let the agent fetch effect handle it
     }
   }, [uuid, storageMode]);
@@ -375,10 +377,11 @@ export function ChatContainer() {
   // participant (participants: []). Treat them the same as conversations whose
   // agent was later deleted: show the full chat history in read-only mode with
   // an "agent deleted" banner and a CTA to start a new conversation.
-  const effectiveAgentId = selectedAgentId ?? "deprecated-supervisor-agent";
-  const isAgentGone = agentNotFound || !selectedAgentId;
+  const effectiveAgentId = selectedAgentId ?? relinkedAgentId ?? "deprecated-supervisor-agent";
+  const isAgentGone = agentNotFound || (!selectedAgentId && !relinkedAgentId);
   const handleAgentRelinked = (agentId: string) => {
     fetchedAgentRef.current = { uuid, agentId };
+    setRelinkedAgentId(agentId);
     setAgentInfo(null);
     setAgentNotFound(false);
   };
