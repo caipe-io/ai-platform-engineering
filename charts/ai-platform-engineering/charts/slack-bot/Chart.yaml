@@ -1,6 +1,6 @@
 apiVersion: v2
 name: slack-bot
 description: Slack bot integration for AI Platform Engineering using the CAIPE UI BFF
-version: 1.0.1-dev.9
-appVersion: 1.0.1-dev.9
+version: 1.0.1-dev.10
+appVersion: 1.0.1-dev.10
 type: application
