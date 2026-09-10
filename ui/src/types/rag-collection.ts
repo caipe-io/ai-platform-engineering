@@ -27,7 +27,9 @@ export interface RagCollection {
   owner_subject?: string;
   /** Members publish sources; team admins also manage collection settings. */
   maintainer_team_slugs: string[];
-  /** Query audiences. Collection membership grants read only. */
+  /** Teams that may use this collection as a search-time filter. Grants no
+   * read access to member datasources - each one remains independently
+   * governed. */
   reader_team_slugs: string[];
   /** Reserved for the explicit platform-wide wildcard option. */
   global_read: boolean;
@@ -44,5 +46,4 @@ export interface RagCollectionMembershipLabel {
   id: string;
   name: string;
   is_platform: boolean;
-  reader_team_slugs: string[];
 }

@@ -352,15 +352,14 @@ export const PATCH = withErrorHandler(
       const additions = sourceIds.filter(
         (sourceId) => !(previous.source_ids ?? []).includes(sourceId),
       );
-      await requireExistingDatasources(session, additions);
       // A collection is a saved filter over sources the caller can already
       // search (see rag-collections.server.ts); adding a source never
       // extends who can read its content, so search access is sufficient.
-      const searchableIds =
-        await searchableDatasourceIdsForCollectionPublishing(
-          session,
-          additions,
-        );
+      // These two checks are independent, so run them concurrently.
+      const [, searchableIds] = await Promise.all([
+        requireExistingDatasources(session, additions),
+        searchableDatasourceIdsForCollectionPublishing(session, additions),
+      ]);
       const denied = additions.filter(
         (sourceId) => !searchableIds.has(sourceId),
       );

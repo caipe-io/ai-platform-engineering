@@ -509,7 +509,6 @@ export async function visibleRagCollectionsByDatasource(
       id: ragCollection._id,
       name: ragCollection.name,
       is_platform: ragCollection.is_platform,
-      reader_team_slugs: ragCollection.reader_team_slugs ?? [],
     };
     for (const datasourceId of ragCollection.source_ids ?? []) {
       if (!idSet.has(datasourceId)) continue;

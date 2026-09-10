@@ -144,6 +144,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       : [...grants.kbIds, ...callerReadableIds],
   );
   const candidates = [...ids].map((id) => ({ id }));
+  // Re-derives can_read via OpenFGA rather than trusting the RAG server's
+  // own can_read_content flag above: this is the same authoritative check
+  // the PATCH handler uses to gate the actual mutation, so the picker can
+  // never show a candidate as addable that the backend would then reject.
   const searchableIds =
     purpose === "publish"
       ? await searchableDatasourceIdsForCollectionPublishing(session, [...ids])
