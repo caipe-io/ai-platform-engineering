@@ -4261,6 +4261,24 @@ post_deploy_patches() {
       && log "caipe-ui: NODE_TLS_REJECT_UNAUTHORIZED=0 (self-signed cert, local dev only)"
   fi
 
+  # ── 6c. dynamic-agents: point CAS agent-use checks at the BFF ──
+  # The 1.0.0 chart's dynamic-agents deployment ships no AUTHZ_SERVICE_URL, so
+  # every RBAC-gated agent call hits `AUTHZ_SERVICE_URL is not configured` and
+  # returns 503 PDP_UNAVAILABLE (chat + agent-builder test are unusable). main
+  # (-> 1.0.1) adds the env with a `http://<release>-caipe-ui:3000` default;
+  # backfill it here for 1.0.0. Harmless once the chart sets it.
+  if $ENABLE_RBAC_RUNTIME; then
+    local _cur_authz
+    _cur_authz=$(kubectl get deployment caipe-dynamic-agents -n caipe \
+      -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="AUTHZ_SERVICE_URL")].value}' \
+      2>/dev/null || true)
+    if [[ -z "$_cur_authz" ]]; then
+      kubectl set env deployment/caipe-dynamic-agents -n caipe \
+        AUTHZ_SERVICE_URL="http://caipe-caipe-ui:3000" &>/dev/null \
+        && log "dynamic-agents: AUTHZ_SERVICE_URL set to http://caipe-caipe-ui:3000 (1.0.0 chart gap)"
+    fi
+  fi
+
   # ── 7. MongoDB for dynamic-agents ──
   # The dynamic-agents chart defaults MONGODB_URI to localhost:27017 (no-op
   # default). Setup deploys a bitnami/mongodb instance (if none exists) and
