@@ -377,8 +377,8 @@ export function ChatContainer() {
   // participant (participants: []). Treat them the same as conversations whose
   // agent was later deleted: show the full chat history in read-only mode with
   // an "agent deleted" banner and a CTA to start a new conversation.
-  const effectiveAgentId = selectedAgentId ?? relinkedAgentId ?? "deprecated-supervisor-agent";
-  const isAgentGone = agentNotFound || (!selectedAgentId && !relinkedAgentId);
+  const effectiveAgentId = relinkedAgentId ?? selectedAgentId ?? "deprecated-supervisor-agent";
+  const isAgentGone = !relinkedAgentId && (agentNotFound || !selectedAgentId);
   const handleAgentRelinked = (agentId: string) => {
     fetchedAgentRef.current = { uuid, agentId };
     setRelinkedAgentId(agentId);
