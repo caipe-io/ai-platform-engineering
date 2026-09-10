@@ -12,13 +12,15 @@ import pytest
 from ai_platform_engineering.integrations.slack_bot.utils.ai import (
   stream_response,
   StreamBuffer,
-  _extract_tool_thought,
   _INITIAL_LOADING_MESSAGES,
   _STATUS_PREFIX,
   _STATUS_MAX_LEN,
   _STATUS_SKIP_LOW_CONFIDENCE,
   _STATUS_SKIP_DEFER,
   _STATUS_ERROR,
+)
+from ai_platform_engineering.integrations.slack_bot.utils.agui_events import (
+  extract_tool_thought as _extract_tool_thought,
 )
 from ai_platform_engineering.integrations.slack_bot.sse_client import SSEEvent, SSEEventType
 from ai_platform_engineering.integrations.slack_bot.utils.config_models import OverthinkConfig

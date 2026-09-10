@@ -10,7 +10,9 @@ import os
 
 import pytest
 
-from ai_platform_engineering.integrations.slack_bot.utils import ai
+from ai_platform_engineering.integrations.slack_bot.utils.agui_events import (
+  check_overthink_skip,
+)
 
 
 @pytest.mark.integration
@@ -41,25 +43,25 @@ class TestCheckOverthinkSkip:
   """Unit tests for _check_overthink_skip with configurable markers."""
 
   def test_default_markers_defer(self):
-    result = ai._check_overthink_skip("[DEFER] human action needed", "ts1")
+    result = check_overthink_skip("[DEFER] human action needed", "ts1")
     assert result == {"skipped": True, "reason": "defer"}
 
   def test_default_markers_low_confidence(self):
-    result = ai._check_overthink_skip("[LOW_CONFIDENCE] no good sources", "ts1")
+    result = check_overthink_skip("[LOW_CONFIDENCE] no good sources", "ts1")
     assert result == {"skipped": True, "reason": "low_confidence"}
 
   def test_default_markers_no_match(self):
-    result = ai._check_overthink_skip("CONFIDENCE: HIGH - here is the answer", "ts1")
+    result = check_overthink_skip("CONFIDENCE: HIGH - here is the answer", "ts1")
     assert result is None
 
   def test_custom_markers(self):
-    result = ai._check_overthink_skip("[CUSTOM_SKIP] reason", "ts1", skip_markers=["CUSTOM_SKIP"])
+    result = check_overthink_skip("[CUSTOM_SKIP] reason", "ts1", skip_markers=["CUSTOM_SKIP"])
     assert result == {"skipped": True, "reason": "custom_skip"}
 
   def test_custom_markers_no_match(self):
-    result = ai._check_overthink_skip("[DEFER] reason", "ts1", skip_markers=["CUSTOM_SKIP"])
+    result = check_overthink_skip("[DEFER] reason", "ts1", skip_markers=["CUSTOM_SKIP"])
     assert result is None
 
   def test_none_markers_uses_defaults(self):
-    result = ai._check_overthink_skip("[DEFER] reason", "ts1", skip_markers=None)
+    result = check_overthink_skip("[DEFER] reason", "ts1", skip_markers=None)
     assert result == {"skipped": True, "reason": "defer"}

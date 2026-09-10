@@ -9,10 +9,11 @@ import sys
 
 import pytest
 
-_APP_PY = pathlib.Path(__file__).resolve().parents[1] / "app.py"
-_APP_DIR = _APP_PY.parent
+_APP_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
+
+from .handler_test_utils import load_handler_module  # noqa: E402
 
 _POLICY = importlib.import_module("utils.slack_runtime_policy")
 should_post_route_miss_notice = _POLICY.should_post_route_miss_notice
@@ -30,12 +31,6 @@ class _Logger:
 
     def error(self, *_args: object, **_kwargs: object) -> None:
         pass
-
-
-class _HealthResponse:
-    ok = True
-    status_code = 200
-    text = "ok"
 
 
 class _Client:
@@ -57,23 +52,10 @@ def _load_slack_app(
     monkeypatch: pytest.MonkeyPatch,
     *,
     rbac_enabled: bool = False,
+    module_name: str = "authorization",
 ):
     monkeypatch.syspath_prepend(str(_APP_DIR))
-    monkeypatch.setenv("SLACK_INTEGRATION_BOT_TOKEN", "xoxb-test-token")
-    monkeypatch.setenv("CAIPE_API_URL", "http://localhost:3000")
-    monkeypatch.setenv("CAIPE_CONNECT_RETRIES", "1")
-    monkeypatch.setenv("SLACK_RBAC_ENABLED", "true" if rbac_enabled else "false")
-    monkeypatch.setenv("SLACK_INTEGRATION_ENABLE_AUTH", "false")
-    monkeypatch.setattr(
-        "slack_sdk.web.client.WebClient.auth_test",
-        lambda _self, **_kwargs: {"ok": True, "user_id": "UBOT"},
-    )
-    monkeypatch.setattr("requests.get", lambda *_args, **_kwargs: _HealthResponse())
-
-    for module_name in ("app", "utils.config", "utils.config_models"):
-        sys.modules.pop(module_name, None)
-
-    return importlib.import_module("app")
+    return load_handler_module(module_name, rbac_enabled=rbac_enabled)
 
 
 def test_route_miss_notice_requires_explicit_invocation() -> None:
@@ -88,8 +70,6 @@ def test_deduplicated_event_returns_200(monkeypatch: pytest.MonkeyPatch) -> None
     "middleware skipped calling next()" warning storm we hit in dev.
     """
     app_module = _load_slack_app(monkeypatch)
-    from slack_bolt.response import BoltResponse
-
     payload = {
         "event_id": "E-dupe-test",
         "event": {"type": "message", "channel": "C1", "user": "U1"},
@@ -112,7 +92,6 @@ def test_deduplicated_event_returns_200(monkeypatch: pytest.MonkeyPatch) -> None
     # must return BoltResponse(200) so Slack stops retrying.
     second = app_module.rbac_global_middleware(payload, {}, next_handler, _Logger())
     assert next_calls == calls_before_duplicate, "duplicate event must not re-invoke handlers"
-    assert isinstance(second, BoltResponse)
     assert second.status == 200
 
 
@@ -135,8 +114,6 @@ def test_rbac_deny_logs_warning_and_returns_200(
          calling next()" warning).
     """
     app_module = _load_slack_app(monkeypatch, rbac_enabled=True)
-    from slack_bolt.response import BoltResponse
-
     async def _fake_enrich(body, slack_user_id, context, *, require_mapping=True):
         return ("deny", "You don't have access to any agents in this channel.")
 
@@ -204,7 +181,6 @@ def test_rbac_deny_logs_warning_and_returns_200(
     )
 
     # 4. Return BoltResponse(200) so Slack does not retry the envelope.
-    assert isinstance(result, BoltResponse)
     assert result.status == 200
 
 
@@ -300,7 +276,7 @@ def test_missing_unlinked_token_uses_stdlib_log_formatting(
 def test_route_miss_notice_does_not_call_slack_for_ambient_messages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app_module = _load_slack_app(monkeypatch)
+    app_module = _load_slack_app(monkeypatch, module_name="channel_routing")
     client = _Client()
 
     app_module._post_route_miss_notice(
@@ -318,7 +294,7 @@ def test_route_miss_notice_does_not_call_slack_for_ambient_messages(
 def test_route_miss_notice_posts_for_explicit_invocations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app_module = _load_slack_app(monkeypatch)
+    app_module = _load_slack_app(monkeypatch, module_name="channel_routing")
     client = _Client()
 
     app_module._post_route_miss_notice(

@@ -11,38 +11,28 @@ This module handles all interactions with dynamic agents via AG-UI protocol:
 - Real-time progress updates in Slack
 """
 
-import json
 import os
-import re
 import threading
 import time
 
 from loguru import logger
 
 try:
-  from sse_client import SSEClient, SSEEventType  # type: ignore[import]
+  from sse_client import SSEClient  # type: ignore[import]
 except ImportError:
-  from ..sse_client import SSEClient, SSEEventType
+  from ..sse_client import SSEClient
 from . import slack_formatter
+from .agui_events import (
+  AguiEventKind,
+  check_overthink_skip as _check_overthink_skip,
+  extract_tool_thought as _extract_tool_thought,
+  interpret_agui_event,
+  parse_write_todos_args as _parse_write_todos_args,
+  strip_confidence_markers as _strip_confidence_markers,
+)
+from .hitl_handler import format_hitl_form_blocks, parse_agui_interrupt
 
 APP_NAME = os.environ.get("SLACK_INTEGRATION_APP_NAME", os.environ.get("APP_NAME", "CAIPE"))
-
-# Keys to search for in tool arguments to find reasoning/thought text.
-# Matches the UI's extractToolThought() in ui/src/types/timeline.ts.
-_THOUGHT_KEYS = (
-  "thought",
-  "thoughts",
-  "reason",
-  "thinking",
-  "rationale",
-  "explanation",
-  "description",
-  "purpose",
-  "intent",
-  "goal",
-)
-
-_MAX_DETAILS_LEN = 200
 
 # Typing indicator constants (overridable via env vars)
 _STATUS_PREFIX = ""
@@ -106,63 +96,6 @@ OVERTHINK_BOILERPLATE = (
     "\n"
     "---\n"
 )
-
-
-def _parse_write_todos_args(raw_args_json: str) -> list[dict] | None:
-  """Parse the todo list from write_todos tool arguments.
-
-  The write_todos tool is called with args like:
-  {"todos": [{"id": 1, "content": "...", "status": "in_progress"}, ...]}
-
-  Args:
-      raw_args_json: JSON string of write_todos tool arguments.
-
-  Returns:
-      List of todo dicts, or None if parsing fails.
-  """
-  if not raw_args_json:
-    return None
-  try:
-    args = json.loads(raw_args_json)
-  except (json.JSONDecodeError, TypeError):
-    return None
-  if not isinstance(args, dict):
-    return None
-  todos = args.get("todos")
-  if not isinstance(todos, list) or not todos:
-    return None
-  return todos
-
-
-def _extract_tool_thought(raw_args_json: str) -> str | None:
-  """Extract a thought/reason string from JSON-encoded tool arguments.
-
-  Searches for well-known keys (thought, reason, etc.) in the parsed
-  args dict and returns the first non-empty string value found, truncated
-  to _MAX_DETAILS_LEN characters.
-
-  Args:
-      raw_args_json: JSON string of tool arguments (may be truncated by backend).
-
-  Returns:
-      Truncated thought string, or None if no thought field found.
-  """
-  if not raw_args_json:
-    return None
-  try:
-    args = json.loads(raw_args_json)
-  except (json.JSONDecodeError, TypeError):
-    return None
-  if not isinstance(args, dict):
-    return None
-  for key in _THOUGHT_KEYS:
-    value = args.get(key)
-    if isinstance(value, str) and value.strip():
-      trimmed = value.strip()
-      if len(trimmed) > _MAX_DETAILS_LEN:
-        return trimmed[:_MAX_DETAILS_LEN] + "..."
-      return trimmed
-  return None
 
 
 class StreamBuffer:
@@ -314,8 +247,6 @@ def stream_response(
       List of Slack blocks for the final response, or dict with retry_needed=True
       on recoverable errors, or dict with skipped=True if overthink_mode filtered.
   """
-  from .hitl_handler import parse_agui_interrupt, format_hitl_form_blocks
-
   # Derive boolean from config object
   overthink_mode = bool(overthink_config and overthink_config.enabled)
 
@@ -586,6 +517,7 @@ def stream_response(
 
   try:
     for event in event_stream:
+      update = interpret_agui_event(event)
       if thread_deleted:
         logger.info(f"[{thread_ts}] Thread deleted — stopping stream processing")
         break
@@ -594,27 +526,27 @@ def stream_response(
       _schedule_keepalive()
 
       # --- RUN_STARTED ---
-      if event.type == SSEEventType.RUN_STARTED:
-        if event.run_id:
-          logger.info(f"[{thread_ts}] RUN_STARTED run_id={event.run_id} conv={conversation_id} agent={agent_id}")
+      if update.kind is AguiEventKind.RUN_STARTED:
+        if update.run_id:
+          logger.info(f"[{thread_ts}] RUN_STARTED run_id={update.run_id} conv={conversation_id} agent={agent_id}")
 
       # --- TEXT_MESSAGE_START ---
-      elif event.type == SSEEventType.TEXT_MESSAGE_START:
+      elif update.kind is AguiEventKind.TEXT_MESSAGE_START:
         if in_subagent:
           logger.debug(f"[{thread_ts}] TEXT_MESSAGE_START suppressed (subagent)")
         else:
-          logger.debug(f"[{thread_ts}] TEXT_MESSAGE_START msg_id={event.message_id}")
+          logger.debug(f"[{thread_ts}] TEXT_MESSAGE_START msg_id={update.message_id}")
 
       # --- TEXT_MESSAGE_CONTENT ---
-      elif event.type == SSEEventType.TEXT_MESSAGE_CONTENT:
+      elif update.kind is AguiEventKind.TEXT_MESSAGE_CONTENT:
         if in_subagent:
           # Don't accumulate as final answer, but update typing status
           # so the user sees subagent thinking in the typing indicator.
-          if not stream_ts and event.delta:
-            typing_text_buf.append(event.delta)
+          if not stream_ts and update.delta:
+            typing_text_buf.append(update.delta)
           continue
-        if event.delta:
-          accumulated_text.append(event.delta)
+        if update.delta:
+          accumulated_text.append(update.delta)
 
           # Before any tool has been seen, buffer text as potential "thinking".
           # Between tool calls (active_tools empty but seen_any_tool is True),
@@ -626,14 +558,14 @@ def stream_response(
           # Otherwise buffer — the final answer will pick it up.
           if active_tools and stream_buf:
             # Mid-tool text — stream it live (only if stream already open)
-            text = event.delta
+            text = update.delta
             if needs_separator and stream_buf.has_flushed:
               text = "\n\n" + text
               needs_separator = False
             stream_buf.append(text)
           else:
             # No tool currently running — buffer as thinking
-            pending_thinking.append(event.delta)
+            pending_thinking.append(update.delta)
 
             if has_todos and active_todo_id is not None:
               # Todo-aware mode: thinking text is NOT sent to the plan card.
@@ -643,12 +575,12 @@ def stream_response(
             # Accumulate text for typing indicator — status is updated
             # on TEXT_MESSAGE_END (not on every chunk) to avoid flicker.
             if not stream_ts:
-              typing_text_buf.append(event.delta)
+              typing_text_buf.append(update.delta)
             # Don't stream yet — might be thinking for the next tool call.
             # If RUN_FINISHED arrives, we'll stream it as the final answer.
 
       # --- TEXT_MESSAGE_END ---
-      elif event.type == SSEEventType.TEXT_MESSAGE_END:
+      elif update.kind is AguiEventKind.TEXT_MESSAGE_END:
         if in_subagent:
           continue
         if stream_buf:
@@ -659,17 +591,17 @@ def stream_response(
           if text:
             _set_typing_status(f"{_STATUS_PREFIX}{text}")
           typing_text_buf.clear()
-        logger.debug(f"[{thread_ts}] TEXT_MESSAGE_END msg_id={event.message_id}")
+        logger.debug(f"[{thread_ts}] TEXT_MESSAGE_END msg_id={update.message_id}")
 
       # --- TOOL_CALL_START ---
-      elif event.type == SSEEventType.TOOL_CALL_START:
+      elif update.kind is AguiEventKind.TOOL_CALL_START:
         if stream_buf:
           stream_buf.flush()
-        tool_name = event.tool_call_name or event.tool_call_id or "unknown"
+        tool_name = update.tool_call_name or update.tool_call_id or "unknown"
         current_tool = tool_name
-        if event.tool_call_id:
-          active_tools[event.tool_call_id] = tool_name
-          tool_args_buffer[event.tool_call_id] = ""
+        if update.tool_call_id:
+          active_tools[update.tool_call_id] = tool_name
+          tool_args_buffer[update.tool_call_id] = ""
         logger.info(f"[{thread_ts}] Tool started: {tool_name}")
 
         # Overthink mode: flash a status for write_todos so the user
@@ -689,22 +621,22 @@ def stream_response(
           _start_stream_if_needed()
 
       # --- TOOL_CALL_ARGS ---
-      elif event.type == SSEEventType.TOOL_CALL_ARGS:
+      elif update.kind is AguiEventKind.TOOL_CALL_ARGS:
         # Accumulate tool arguments; extract thought/reason for display
-        if event.tool_call_id and event.delta:
-          tool_args_buffer[event.tool_call_id] = tool_args_buffer.get(event.tool_call_id, "") + event.delta
+        if update.tool_call_id and update.delta:
+          tool_args_buffer[update.tool_call_id] = tool_args_buffer.get(update.tool_call_id, "") + update.delta
 
           # Extract thought from partial args and set status immediately,
           # resetting the typing text buffer since the thought supersedes it.
           if not stream_ts:
-            thought = _extract_tool_thought(tool_args_buffer[event.tool_call_id])
+            thought = _extract_tool_thought(tool_args_buffer[update.tool_call_id])
             if thought:
               typing_text_buf.clear()
               _set_typing_status(f"{_STATUS_PREFIX}{thought}")
 
       # --- TOOL_CALL_END ---
-      elif event.type == SSEEventType.TOOL_CALL_END:
-        tool_call_id = event.tool_call_id
+      elif update.kind is AguiEventKind.TOOL_CALL_END:
+        tool_call_id = update.tool_call_id
         tool_name = active_tools.pop(tool_call_id, None) if tool_call_id else None
         display_name = tool_name or current_tool or "unknown"
         logger.info(f"[{thread_ts}] Tool completed: {display_name}")
@@ -738,43 +670,43 @@ def stream_response(
             _set_typing_status(f"{_STATUS_PREFIX}{tool_thought}")
 
       # --- STEP_STARTED ---
-      elif event.type == SSEEventType.STEP_STARTED:
-        step_name = event.name or event.run_id or "step"
+      elif update.kind is AguiEventKind.STEP_STARTED:
+        step_name = update.name or update.run_id or "step"
         logger.info(f"[{thread_ts}] Step started: {step_name}")
         if not stream_ts:
           _set_typing_status(f"{_STATUS_PREFIX}{step_name}")
 
       # --- STEP_FINISHED ---
-      elif event.type == SSEEventType.STEP_FINISHED:
-        step_name = event.name or event.run_id or "step"
+      elif update.kind is AguiEventKind.STEP_FINISHED:
+        step_name = update.name or update.run_id or "step"
         logger.info(f"[{thread_ts}] Step finished: {step_name}")
 
       # --- CUSTOM ---
-      elif event.type == SSEEventType.CUSTOM:
-        if event.name == "WARNING":
-          warning_msg = (event.value or {}).get("message", "unknown warning")
+      elif update.kind is AguiEventKind.CUSTOM:
+        if update.name == "WARNING":
+          warning_msg = (update.value or {}).get("message", "unknown warning")
           logger.warning(f"[{thread_ts}] Agent warning: {warning_msg}")
-        elif event.name == "NAMESPACE_CONTEXT":
-          namespace = (event.value or {}).get("namespace", [])
+        elif update.name == "NAMESPACE_CONTEXT":
+          namespace = (update.value or {}).get("namespace", [])
           in_subagent = len(namespace) > 0
           logger.info(f"[{thread_ts}] Subagent context: {namespace}")
-        elif event.name == "TOOL_ERROR":
-          tool_error = (event.value or {}).get("error", "unknown error")
-          tool_id = (event.value or {}).get("tool_call_id")
+        elif update.name == "TOOL_ERROR":
+          tool_error = (update.value or {}).get("error", "unknown error")
+          tool_id = (update.value or {}).get("tool_call_id")
           logger.warning(f"[{thread_ts}] Tool error (call={tool_id}): {tool_error}")
           # Tool errors are logged but not streamed to Slack — the agent
           # recovers or RUN_ERROR fires for drastic failures.
         else:
-          logger.debug(f"[{thread_ts}] CUSTOM event: name={event.name}")
+          logger.debug(f"[{thread_ts}] CUSTOM event: name={update.name}")
 
       # --- RUN_FINISHED ---
-      elif event.type == SSEEventType.RUN_FINISHED:
-        outcome = event.outcome or "success"
+      elif update.kind is AguiEventKind.RUN_FINISHED:
+        outcome = update.outcome or "success"
         logger.info(f"[{thread_ts}] RUN_FINISHED outcome={outcome} conv={conversation_id} agent={agent_id}")
 
-        if outcome == "interrupt" and event.interrupt:
+        if outcome == "interrupt" and update.interrupt:
           # HITL interrupt — render form and return
-          logger.info(f"[{thread_ts}] HITL interrupt: {event.interrupt.get('reason', 'unknown')}")
+          logger.info(f"[{thread_ts}] HITL interrupt: {update.interrupt.get('reason', 'unknown')}")
           form = parse_agui_interrupt(
             event,
             conversation_id=conversation_id,
@@ -818,8 +750,8 @@ def stream_response(
         break
 
       # --- RUN_ERROR ---
-      elif event.type == SSEEventType.RUN_ERROR:
-        error_msg = event.message or "Unknown agent error"
+      elif update.kind is AguiEventKind.RUN_ERROR:
+        error_msg = update.message or "Unknown agent error"
         logger.error(f"[{thread_ts}] RUN_ERROR: {error_msg} conv={conversation_id} agent={agent_id}")
 
         # Overthink mode: don't stream errors — flash a casual status and bail
@@ -863,7 +795,7 @@ def stream_response(
         return {"retry_needed": True, "error": error_msg}
 
       # --- RAW / unknown ---
-      elif event.type == SSEEventType.RAW:
+      elif update.kind is AguiEventKind.RAW:
         logger.debug(f"[{thread_ts}] RAW event (ignored)")
 
     # --- Finalization ---
@@ -1141,37 +1073,6 @@ def invoke_response(
       text="Error",
     )
     return error_blocks
-
-
-def _check_overthink_skip(final_text: str, thread_ts: str, skip_markers: list[str] | None = None) -> dict | None:
-  """Check if response should be skipped in overthink mode.
-
-  Args:
-      final_text: The agent's complete response text.
-      thread_ts: Slack thread timestamp for logging.
-      skip_markers: Configurable list of marker strings to check.
-          Defaults to ``["DEFER", "LOW_CONFIDENCE"]``.
-
-  Returns:
-      None if response should be posted normally
-      {"skipped": True, "reason": "..."} if response should be skipped
-  """
-  markers = skip_markers or ["DEFER", "LOW_CONFIDENCE"]
-  for marker in markers:
-    if f"[{marker}]" in final_text:
-      logger.info(f"[{thread_ts}] Overthink: skipping response ({marker})")
-      return {"skipped": True, "reason": marker.lower()}
-  return None
-
-
-# Regex matching all confidence/control markers: [CONFIDENCE: HIGH], [LOW_CONFIDENCE], [DEFER], etc.
-_CONFIDENCE_MARKER_RE = re.compile(r"\[(?:CONFIDENCE:\s*\w+|LOW_CONFIDENCE|DEFER)\]")
-
-
-def _strip_confidence_markers(text: str) -> str:
-  """Remove all confidence/control markers from text before posting to Slack."""
-  stripped = _CONFIDENCE_MARKER_RE.sub("", text).strip()
-  return stripped
 
 
 def _post_final_response(
