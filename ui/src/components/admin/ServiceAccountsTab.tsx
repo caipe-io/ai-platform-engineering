@@ -853,9 +853,11 @@ function CreateServiceAccountDialog({
                 portalled={false}
               />
               <p className="text-xs text-muted-foreground">
-                A collection includes its current and future datasources. The
-                service account can use selected knowledge through direct RAG
-                calls or assigned agents.
+                A collection grant lets the service account search using that
+                collection as a filter; it does not grant access to its
+                member datasources. Grant datasources directly for content
+                access. The service account can use selected knowledge
+                through direct RAG calls or assigned agents.
               </p>
             </div>
 

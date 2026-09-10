@@ -53,8 +53,7 @@ interface DatasourceOption {
   source_type?: string;
   document_count?: number;
   chunk_count?: number;
-  can_manage?: boolean;
-  can_read?: boolean;
+  can_search?: boolean;
 }
 
 interface TeamRow {
@@ -132,7 +131,7 @@ export function RagCollectionsView() {
     ? null
     : (collections.find((item) => item._id === selectedId) ?? null);
   // User-created collections retain their personal owner as a reader even
-  // after team delegation, so additions must not elevate that owner's access.
+  // after team delegation; this drives the ownership copy shown below.
   const selectedHasPersonalOwner = isCreating || Boolean(selected?.owner_subject);
   const canManageDraft = isCreating || selected?._permissions.can_manage === true;
   const canPublishDraft =
@@ -531,20 +530,17 @@ export function RagCollectionsView() {
       subtitle: "Collection datasource",
     };
   });
+  function canAddDatasource(datasource: DatasourceOption | undefined): boolean {
+    return datasource?.can_search === true;
+  }
+
   const filteredDatasources = datasources.filter((datasource) => {
     if (draftSources.includes(datasource.datasource_id)) return false;
-    if (datasource.can_manage !== true) return false;
+    if (!canAddDatasource(datasource)) return false;
     const query = sourceSearch.trim().toLowerCase();
     if (!query) return true;
     return datasource.name.toLowerCase().includes(query);
   });
-
-  function canAddDatasource(datasource: DatasourceOption | undefined): boolean {
-    return Boolean(
-      datasource?.can_manage === true &&
-        (!selectedHasPersonalOwner || datasource.can_read === true),
-    );
-  }
 
   function addDatasourceToDraft(datasourceId: string): void {
     if (
@@ -748,10 +744,7 @@ export function RagCollectionsView() {
                   </div>
                   <div className="max-h-72 space-y-1 overflow-y-auto rounded-xl border p-2">
                     {filteredDatasources.map((datasource) => {
-                      const canManage = datasource?.can_manage === true;
-                      const canAdd = canAddDatasource(datasource);
-                      const disabled =
-                        !canPublishDraft || saving || !canAdd;
+                      const disabled = !canPublishDraft || saving;
                       return (
                         <DatasourceOptionRow
                           key={datasource.datasource_id}
@@ -759,13 +752,6 @@ export function RagCollectionsView() {
                           name={datasource.name}
                           sourceType={datasource.source_type}
                           disabled={disabled}
-                          title={
-                            !canAdd
-                              ? !canManage
-                                ? "You must be able to manage this datasource before adding it"
-                                : "A personal collection can only include datasources you can already search"
-                              : undefined
-                          }
                           onDragStart={(event) => {
                             const candidate: KnowledgeDragCandidate = {
                               kind: "datasource",

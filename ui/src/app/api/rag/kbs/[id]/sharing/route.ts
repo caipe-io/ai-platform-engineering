@@ -26,7 +26,6 @@ import {
   type RagPublicationState,
 } from "@/lib/publication-approval.server";
 import {
-  datasourceCollectionAudience,
   visibleRagCollectionsByDatasource,
 } from "@/lib/rag-collections.server";
 import {
@@ -874,17 +873,6 @@ export async function PUT(
       delete (publicationSource as unknown as Record<string, unknown>)
         .owner_team_slug;
     }
-    const collectionAudience = ownerChanged
-      ? await datasourceCollectionAudience(id, {
-          ownerTeamSlug: snapshot.ownerTeamSlug,
-          ownerSubject: effectivePreviousPersonalOwner,
-        })
-      : {
-          collectionIds: [],
-          readerTeamSlugs: [],
-          hasExternalPrincipal: false,
-          organizationWide: false,
-        };
     const publication = await prepareRagPublication({
       session,
       source: publicationSource,
@@ -899,9 +887,6 @@ export async function PUT(
           }
         : undefined,
       materialChange: ownerChanged,
-      externalAudienceTeamSlugs: collectionAudience.readerTeamSlugs,
-      externalBroadAudience: collectionAudience.hasExternalPrincipal,
-      externalOrganizationWide: collectionAudience.organizationWide,
     });
     await invalidatePublicationRequests(
       publication.resource,

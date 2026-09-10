@@ -18,24 +18,16 @@ describe("DatasourceAccessBadges", () => {
     expect(screen.getByTitle("Search: reader-team, secondary-team")).toBeInTheDocument();
   });
 
-  it("shows effective team access without presenting collections as audiences", () => {
+  it("does not treat collection membership as Search access", () => {
     render(
       <DatasourceAccessBadges
         ownerTeamSlug="management-team"
         searchTeamSlugs={[]}
-        ragCollections={[
-          {
-            id: "platform-rag",
-            name: "Platform RAG",
-            is_platform: true,
-            reader_team_slugs: ["everyone"],
-          },
-        ]}
         detailsKnown
       />,
     );
 
-    expect(screen.getByText("Search: Everyone")).toBeInTheDocument();
+    expect(screen.getByText("Search: No access")).toBeInTheDocument();
     expect(screen.queryByText(/Platform RAG/)).not.toBeInTheDocument();
   });
 

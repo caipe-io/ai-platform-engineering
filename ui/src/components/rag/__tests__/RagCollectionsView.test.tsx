@@ -200,8 +200,7 @@ describe("RagCollectionsView", () => {
                   source_type: "slack",
                   document_count: 3,
                   chunk_count: 8,
-                  can_manage: false,
-                  can_read: true,
+                  can_search: true,
                 },
                 {
                   datasource_id: "web-docs",
@@ -209,15 +208,13 @@ describe("RagCollectionsView", () => {
                   source_type: "web",
                   document_count: 4,
                   chunk_count: 12,
-                  can_manage: true,
-                  can_read: true,
+                  can_search: true,
                 },
                 {
-                  datasource_id: "managed-only",
-                  name: "Managed only",
+                  datasource_id: "unsearchable",
+                  name: "Unsearchable",
                   source_type: "jira",
-                  can_manage: true,
-                  can_read: false,
+                  can_search: false,
                 },
               ],
             },
@@ -437,12 +434,9 @@ describe("RagCollectionsView", () => {
     ).not.toHaveAttribute("data-rarity");
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
-    const managedOnly = screen.getByRole("button", { name: /Managed only/i });
-    expect(managedOnly).toBeDisabled();
-    expect(managedOnly).toHaveAttribute(
-      "title",
-      "A personal collection can only include datasources you can already search",
-    );
+    expect(
+      screen.queryByRole("button", { name: /Unsearchable/i }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Web docs/i }));
     expect(

@@ -18,10 +18,7 @@ import type {
   PublicationRequestDocument,
 } from "@/types/publication-approval";
 import { PendingPublicationRequestNotice } from "./PendingPublicationRequestNotice";
-import {
-  CollectionSearchAccessNotice,
-  collectionDerivedSearchAccess,
-} from "./CollectionSearchAccess";
+import { CollectionSearchAccessNotice } from "./CollectionSearchAccess";
 
 interface KbSharingPanelProps {
   knowledgeBaseId: string;
@@ -291,16 +288,7 @@ export function KbSharingPanel({ knowledgeBaseId, onSaved, onCancel }: KbSharing
   const creatorLabel = creator
     ? creator.name || creator.email || "Unknown user"
     : null;
-  const collectionSearchAccess = collectionDerivedSearchAccess(ragCollections);
-  const implicitSearchAccess = [
-    ...(owner?.kind === "user" ? [owner] : []),
-    ...collectionSearchAccess.selections,
-  ].filter(
-    (ref, index, refs) =>
-      refs.findIndex(
-        (candidate) => candidate.kind === ref.kind && candidate.id === ref.id,
-      ) === index,
-  );
+  const implicitSearchAccess = owner?.kind === "user" ? [owner] : [];
 
   return (
     <div className="space-y-5">
@@ -351,11 +339,7 @@ export function KbSharingPanel({ knowledgeBaseId, onSaved, onCancel }: KbSharing
           teams={teams}
           knownUsers={knownUsers}
           implicitSelections={implicitSearchAccess}
-          implicitSelectionLabel={(ref) =>
-            owner?.kind === "user" && sameRef(ref, owner)
-              ? "Included through ownership"
-              : collectionSearchAccess.labelFor(ref)
-          }
+          implicitSelectionLabel="Included through ownership"
           disabled={loading || saving}
           placeholder={owner?.kind === "user"
             ? "Only the Owner can search — add others"

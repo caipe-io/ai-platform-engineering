@@ -2944,7 +2944,6 @@ export default function IngestView() {
                                       sourceConfig?.search_user_display_names ??
                                       ds.search_user_display_names
                                     }
-                                    ragCollections={ragCollections}
                                     pendingPublicationRequest={pendingPublicationRequests.get(
                                       ds.datasource_id,
                                     )}

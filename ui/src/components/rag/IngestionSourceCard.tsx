@@ -116,7 +116,6 @@ export function IngestionSourceCard({
                 ?? (source.search_owner_team_slug ? [source.search_owner_team_slug] : [])
               }
               searchUserDisplayNames={source.search_user_display_names}
-              ragCollections={source.rag_collections}
               pendingPublicationRequest={pendingPublicationRequest}
               detailsKnown
             />
