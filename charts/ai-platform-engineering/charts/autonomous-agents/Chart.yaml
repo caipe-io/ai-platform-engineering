@@ -4,6 +4,6 @@ description: A Helm chart for Autonomous Agents - Standalone scheduler that fire
 # Application chart that can be packaged and deployed
 type: application
 # Chart version - automatically updated by release workflow
-version: 1.0.1-dev.7 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+version: 1.0.1-rc.3 # Do NOT bump this. It will be updated automatically using the PR or release workflow
 # Application version - automatically updated by release workflow
-appVersion: 1.0.1-dev.7 # Do NOT modify. It will be updated automatically using the release workflow
+appVersion: 1.0.1-rc.3 # Do NOT modify. It will be updated automatically using the release workflow

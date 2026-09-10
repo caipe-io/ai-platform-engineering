@@ -1,3 +1,39 @@
+## 1.0.1-rc.3 (2026-09-10)
+
+### Fix
+
+- **ui**: preserve agent colors in chat avatars (#2699)
+- **setup-caipe**: let caipe-ui trust the self-signed cert for OIDC login (#2677)
+- **setup-caipe**: set litellm drop_params so Ollama embeddings work (#2674)
+- **setup-caipe**: pin in-cluster Ollama to the real model in LiteLLM mode (#2673)
+- **identity-sync**: unarchive teams when their group regains membership
+- **docs**: resolve versioned agent builder links (#2704)
+
+## 1.0.1-dev.7 (2026-09-08)
+
+### Feat
+
+- **rag**: seed datasources from app config (#2701)
+- **homepage**: pair product tour with full demo (#2703)
+- **docs**: polish homepage and feature navigation (#2702)
+
+### Fix
+
+- **docs**: restore star history chart (#2643)
+- **workflows**: validate stale tool overrides before execution (#2692)
+- **setup-caipe**: default local domain to *.localtest.me not *.local.me (#2671)
+- **setup-caipe**: harden interactive input and Kind cluster selection (#2667)
+- **setup-caipe**: make Langfuse tracing non-fatal and pin the chart (#2665)
+- **setup-caipe**: use the caipe-io chart registry and validate versions (#2666)
+
+### Refactor
+
+- **setup-caipe**: drop cnoe-agent-utils attribution from user-facing text (#2669)
+
+## 1.0.1-dev.6 (2026-09-07)
+
+## 1.0.1-rc.2 (2026-09-07)
+
 ## 1.0.1-dev.5 (2026-09-07)
 
 ### Fix
