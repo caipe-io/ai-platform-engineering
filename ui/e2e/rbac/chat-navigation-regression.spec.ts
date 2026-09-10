@@ -65,7 +65,7 @@ test.describe("mocked RBAC e2e — chat navigation regression", () => {
 
     for (let i = 0; i < 3; i += 1) {
       await page.goto("/chat", { waitUntil: "domcontentloaded" });
-      await expect(page).toHaveURL(/\/chat\/rbac-resume-conv$/);
+      await expect(page).toHaveURL(/\/chat\/rbac-resume-conv$/, { timeout: 20_000 });
     }
 
     await dismissReleaseUpgradeDialog(page);

@@ -223,7 +223,6 @@ export function ChatPanel({
         ),
       }));
       onAgentRelinked?.(agentId);
-      router.refresh();
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
@@ -259,7 +258,6 @@ export function ChatPanel({
         ),
       }));
       onAgentRelinked?.(chosenAgentId);
-      router.refresh();
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
