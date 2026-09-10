@@ -177,7 +177,14 @@ export function ShareDialog({
     // object on every store update. Re-running this effect for that identity
     // would refetch the sharing endpoint indefinitely while the dialog is
     // open. The conversation id is the stable boundary for a new snapshot.
-  }, [open, conversationId, canManageSharing, applySharingSnapshot, loadSharingInfo]);
+  }, [
+    open,
+    conversationId,
+    canManageSharing,
+    initialSharing,
+    applySharingSnapshot,
+    loadSharingInfo,
+  ]);
 
   // Search users and teams as they type
   useEffect(() => {
