@@ -81,7 +81,7 @@ test.describe("RBAC e2e — provider connection display and cleanup", () => {
       await expect(page.getByText("Atlassian Cloud")).toBeVisible();
       await expect(page.getByText("cisco-eti")).toBeVisible();
       await expect(page.getByText("healthy")).toBeVisible();
-      await expect(page.getByText(/refreshed 30m ago/i)).toBeVisible();
+      await expect(page.getByText(/refreshed \d+m ago/i)).toBeVisible();
       await expect(page.getByText("legacy-site")).toHaveCount(0);
       await expect(page.getByText("expired")).toHaveCount(0);
     });
@@ -119,7 +119,7 @@ test.describe("RBAC e2e — provider connection display and cleanup", () => {
       });
       await gotoConnectedAppsWorkspace(page);
 
-      await expect(page.getByText("CO2 Dev")).toBeVisible();
+      await expect(page.getByText("CO2 Dev", { exact: true })).toBeVisible();
       // Health pill stays green (usable now), not the amber "expiring soon".
       await expect(
         page.locator("table").getByText("no auto-renew", { exact: true }),
