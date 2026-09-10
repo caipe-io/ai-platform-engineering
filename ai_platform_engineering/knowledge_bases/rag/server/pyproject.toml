@@ -15,6 +15,9 @@ dependencies = [
     "langchain-text-splitters==1.1.2",
     "langchain-milvus==0.3.3",
     # Vector DB
+    # 2.6.10+ exposes ConnectionManager aliases that langchain-milvus 0.3.3
+    # cannot resolve through its remaining ORM Collection calls. Version 0.4
+    # requires a coordinated Milvus 3 server and storage migration.
     "pymilvus==2.6.9",
     # Web framework
     "fastapi[standard]==0.141.1",
