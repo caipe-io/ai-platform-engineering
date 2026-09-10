@@ -9,7 +9,13 @@ jest.mock("@/lib/audit", () => ({
   getAuditBackend: () => mockGetAuditBackend(),
 }));
 
-import { buildDecisionEvent, buildGrantEvent, emitDecisionAudit, emitGrantAudit } from "../audit";
+import {
+  buildDecisionEvent,
+  buildGrantEvent,
+  emitDecisionAudit,
+  emitGrantAudit,
+  emitReconcileAudit,
+} from "../audit";
 
 const subject = { type: "user" as const, id: "alice" };
 const resource = { type: "agent" as const, id: "platform-engineer" };
@@ -193,5 +199,97 @@ describe("emitGrantAudit", () => {
     ).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledWith("[cas/audit] Failed to enqueue audit event:", expect.any(Error));
     warn.mockRestore();
+  });
+});
+
+describe("emitReconcileAudit", () => {
+  it("does not record a successful reconcile when OpenFGA applies no changes", () => {
+    emitReconcileAudit(
+      { writes: [{ user: "user:alice" }], deletes: [] },
+      { enabled: true, writes: 0, deletes: 0 },
+      { source: "config_seed" },
+    );
+
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("records applied and requested tuple counts with the human caller", () => {
+    emitReconcileAudit(
+      { writes: [{ user: "user:alice" }], deletes: [{ user: "user:bob" }] },
+      { enabled: true, writes: 1, deletes: 1 },
+      {
+        caller,
+        source: "team_resources",
+        tenantId: "acme",
+        correlationId: "reconcile-1",
+        traceId: "trace-1",
+      },
+    );
+
+    expect(mockWrite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "cas_reconcile",
+        source: "cas",
+        reconcile_scope: "team_resources",
+        action: "reconcile",
+        resource_ref: "authorization_policy:openfga_relationship_tuples",
+        resource_type: "authorization_policy",
+        resource_id: "openfga_relationship_tuples",
+        requested_writes: 1,
+        requested_deletes: 1,
+        writes: 1,
+        deletes: 1,
+        subject_ref: "user:alice",
+        actor_ref: "user:alice",
+        caller_ref: "user:alice",
+        tenant_id: "acme",
+        correlation_id: "reconcile-1",
+        trace_id: "trace-1",
+      }),
+    );
+  });
+
+  it("uses a readable, sanitized system actor without a fabricated hash", () => {
+    emitReconcileAudit(
+      { writes: [], deletes: [{ user: "user:alice" }] },
+      { enabled: true, writes: 0, deletes: 1 },
+      { source: " Config Seed / Restart " },
+      { outcome: "error", reasonCode: "PDP_WRITE_FAILED" },
+    );
+
+    const event = mockWrite.mock.calls[0][0];
+    expect(event).toMatchObject({
+      source: "cas",
+      reconcile_scope: "Config Seed / Restart",
+      subject_ref: "system:config-seed-restart",
+      actor_ref: "system:config-seed-restart",
+      requested_writes: 0,
+      requested_deletes: 1,
+      writes: 0,
+      deletes: 1,
+      outcome: "error",
+      reason_code: "PDP_WRITE_FAILED",
+    });
+    expect(event.subject_hash).toBeUndefined();
+    expect(event.actor_hash).toBeUndefined();
+    expect(event.caller_ref).toBeUndefined();
+  });
+
+  it("preserves a service-account caller as a service-account principal", () => {
+    emitReconcileAudit(
+      { writes: [{ user: "service_account:reconciler" }], deletes: [] },
+      { enabled: true, writes: 1, deletes: 0 },
+      { caller: { type: "service_account", id: "reconciler" } },
+    );
+
+    const event = mockWrite.mock.calls[0][0];
+    expect(event).toMatchObject({
+      reconcile_scope: "cas-reconciler",
+      subject_ref: "service_account:reconciler",
+      actor_ref: "service_account:reconciler",
+      caller_ref: "service_account:reconciler",
+    });
+    expect(event.subject_hash).toMatch(/^sha256:/);
+    expect(event.actor_hash).toBe(event.subject_hash);
   });
 });

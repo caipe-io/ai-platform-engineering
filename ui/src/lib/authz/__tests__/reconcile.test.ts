@@ -61,6 +61,7 @@ describe("reconcileTupleDiff", () => {
     await reconcileTupleDiff({ writes: [sampleWrite], deletes: [] });
 
     expect(mockInvalidateDecisionCache).not.toHaveBeenCalled();
+    expect(mockEmitReconcileAudit).not.toHaveBeenCalled();
   });
 
   it("throws OpenFgaReconcileRequiredError when reconciliation is disabled but a diff was requested", async () => {

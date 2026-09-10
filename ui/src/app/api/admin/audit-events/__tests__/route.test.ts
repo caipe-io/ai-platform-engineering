@@ -462,6 +462,47 @@ describe("GET /api/admin/audit-events", () => {
     expect(body.records[0].user_email).toBeUndefined();
   });
 
+  it("maps legacy reconcile source metadata and tuple counts into the unified event", async () => {
+    global.fetch = jest.fn(async () =>
+      new Response(
+        JSON.stringify({
+          records: [
+            {
+              ts: "2026-08-27T21:37:47.000Z",
+              type: "cas_reconcile",
+              tenant_id: "default",
+              action: "reconcile",
+              outcome: "success",
+              correlation_id: "reconcile-correlation",
+              source: "team_resources",
+              source_system: "cas",
+              component: "cas",
+              pdp: "openfga",
+              writes: 2,
+              deletes: 1,
+            },
+          ],
+          total: 1,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const { GET } = await import("../route");
+
+    const response = await GET(request("/api/admin/audit-events?type=cas_reconcile"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.records[0]).toMatchObject({
+      type: "cas_reconcile",
+      source: "cas",
+      reconcile_scope: "team_resources",
+      writes: 2,
+      deletes: 1,
+    });
+    expect(body.records[0].subject_hash).toBeUndefined();
+  });
+
   it("returns an empty warning response when audit-service is unavailable", async () => {
     global.fetch = jest.fn(async () => new Response("unavailable", { status: 503 }));
     const { GET } = await import("../route");

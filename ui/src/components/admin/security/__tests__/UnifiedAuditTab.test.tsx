@@ -318,6 +318,54 @@ describe('UnifiedAuditTab', () => {
     expect(screen.getByText(/^grant$/i)).toBeInTheDocument();
   });
 
+  it('renders reconcile events as applied policy changes without unknown fields', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        records: [
+          {
+            ts: new Date('2026-08-27T21:37:47.000Z').toISOString(),
+            type: 'cas_reconcile',
+            outcome: 'success',
+            action: 'reconcile',
+            tenant_id: 'default',
+            subject_ref: 'system:config-seed',
+            actor_ref: 'system:config-seed',
+            correlation_id: 'reconcile-correlation',
+            source: 'cas',
+            reconcile_scope: 'config_seed',
+            requested_writes: 4,
+            requested_deletes: 1,
+            writes: 3,
+            deletes: 1,
+            component: 'cas',
+            pdp: 'openfga',
+            resource_ref: 'authorization_policy:openfga_relationship_tuples',
+            resource_type: 'authorization_policy',
+            resource_id: 'openfga_relationship_tuples',
+          },
+        ],
+        total: 1,
+        page: 1,
+        limit: 30,
+      }),
+    });
+
+    render(<UnifiedAuditTab isAdmin />);
+
+    const story = await screen.findByText(/Reconciled config seed — 3 added, 1 removed/i);
+    expect(screen.getByText('system:config-seed')).toBeInTheDocument();
+    expect(screen.getByText(/Scope config seed · Requested 4 added, 1 removed/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Policy reconciliation/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^unknown$/i)).not.toBeInTheDocument();
+
+    fireEvent.click(story);
+    expect(await screen.findByText(/^Target:/i)).toBeInTheDocument();
+    expect(screen.getByText(/^OpenFGA relationships$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Applied Additions:/i)).toBeInTheDocument();
+    expect(screen.getByText(/^3$/)).toBeInTheDocument();
+  });
+
   it('renders CAS decisions as readable authorization stories', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
