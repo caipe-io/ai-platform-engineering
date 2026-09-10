@@ -2,8 +2,6 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MCP_SERVERS_REFRESH_INTERVAL_MS, MCPServersTab } from "../MCPServersTab";
 
-// assisted-by Codex Codex-sonnet-4-6
-
 /** Opens the `Tool` AgentPicker, searches for `toolName`, and picks it. */
 async function selectTool(toolName: string): Promise<void> {
   fireEvent.click(await screen.findByLabelText("Tool"));
@@ -272,9 +270,9 @@ describe("MCPServersTab AgentGateway repair", () => {
     await screen.findByText("Jira");
     fireEvent.click(screen.getByRole("button", { name: /test mcp tools for jira/i }));
 
-    await screen.findByLabelText("Tool");
-    fireEvent.change(screen.getByLabelText("Parameter value 1"), { target: { value: "5" } });
+    await selectTool("version");
     fireEvent.change(screen.getByPlaceholderText("parameter_name"), { target: { value: "limit" } });
+    fireEvent.change(await screen.findByLabelText("Value for limit"), { target: { value: "5" } });
     fireEvent.click(screen.getByRole("button", { name: /run tool/i }));
 
     await waitFor(() => {
