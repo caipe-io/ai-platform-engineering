@@ -10,7 +10,7 @@ authors = [
 maintainers = [
     { name = "Sri Aradhyula", email = "sraradhy@cisco.com" },
 ]
-requires-python = ">=3.13,<4.0"
+requires-python = ">=3.14,<3.15"
 dependencies = []
 
 [tool.ruff]

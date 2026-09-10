@@ -120,7 +120,7 @@ const techStack: TechItem[] = [
     category: "backend",
   },
   {
-    name: "Python 3.11+",
+    name: "Python 3.14",
     description: "Backend agent implementation with asyncio support",
     url: "https://www.python.org/",
     category: "backend",

@@ -3,7 +3,7 @@
 This project sets up a Webex MCP server using the MCP SDK and manages dependencies with uv.
 
 ## Prerequisites
-- Python 3.10+
+- Python 3.14
 - [uv](https://github.com/astral-sh/uv) (for dependency management)
 
 ## Setup

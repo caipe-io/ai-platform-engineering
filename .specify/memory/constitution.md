@@ -59,7 +59,7 @@ No code ships without passing lint and test gates. `.specify/TESTING.md` defines
 
 | Layer | Technologies |
 |-------|-------------|
-| Backend | Python 3.11+, LangGraph, LangChain |
+| Backend | Python 3.14, LangGraph, LangChain |
 | Frontend | Next.js, React, Tailwind CSS |
 | Deployment | Docker, Kubernetes, Helm |
 | Linting | Ruff (Python), ESLint (TypeScript) |

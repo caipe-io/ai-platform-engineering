@@ -1,17 +1,15 @@
 # Copyright 2025 CNOE
 # SPDX-License-Identifier: Apache-2.0
 
-# assisted-by claude code claude-sonnet-4-6
-
 import functools
 import logging
 from enum import Enum
-from typing import Annotated, Optional
+from typing import Annotated, ClassVar, Optional
 
 import httpx
 from mcp.shared.exceptions import McpError
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ErrorData, TextContent
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from mcp_agent_auth.token import get_request_token
 
 WEBEX_API_BASE = "https://webexapis.com/v1"
@@ -51,12 +49,11 @@ class PostMessage(BaseModel):
         ),
     ] = None
 
-    class Config:
-        description = """Send a message to a Webex room or user.
-            You can specify text, markdown, and optionally reply in a thread.
-            Requires either 'room_id' or 'to_person_email'.
-            At least one of 'text' or 'markdown' must be provided.
-        """
+    tool_description: ClassVar[str] = """Send a message to a Webex room or user.
+        You can specify text, markdown, and optionally reply in a thread.
+        Requires either 'room_id' or 'to_person_email'.
+        At least one of 'text' or 'markdown' must be provided.
+    """
 
     @model_validator(mode="after")
     def validate_message_content(self):
@@ -72,12 +69,11 @@ class PostMessage(BaseModel):
 class CreateRoom(BaseModel):
     title: str = Field(description="Title of the Webex room to create")
 
-    class Config:
-        description = """
-            Create a new Webex room.
-            Use this tool when you need to create a new Webex room for a
-            conversation or project.
-        """
+    tool_description: ClassVar[str] = """
+        Create a new Webex room.
+        Use this tool when you need to create a new Webex room for a
+        conversation or project.
+    """
 
 
 class AddUsersToRoom(BaseModel):
@@ -86,15 +82,14 @@ class AddUsersToRoom(BaseModel):
         description="List of email addresses of users to add to the room"
     )
 
-    class Config:
-        description = """
-            Add multiple users to an existing Webex room.
-            Use this tool when you need to add several users to a room at
-            once.
-        """
-        json_schema_extra = {
-            "required": ["room_id", "user_emails"],
-        }
+    tool_description: ClassVar[str] = """
+        Add multiple users to an existing Webex room.
+        Use this tool when you need to add several users to a room at
+        once.
+    """
+    model_config = ConfigDict(
+        json_schema_extra={"required": ["room_id", "user_emails"]}
+    )
 
 
 class ListDirectMessages(BaseModel):
@@ -105,12 +100,11 @@ class ListDirectMessages(BaseModel):
         default=50, description="Maximum number of messages " "to return"
     )
 
-    class Config:
-        description = """
-            Add multiple users to an existing Webex room.
-            Use this tool when you need to add several users to a room at
-            once.
-        """
+    tool_description: ClassVar[str] = """
+        Add multiple users to an existing Webex room.
+        Use this tool when you need to add several users to a room at
+        once.
+    """
 
 
 class ListMessagesInRoom(BaseModel):
@@ -123,8 +117,7 @@ class ListMessagesInRoom(BaseModel):
         description="If specified, only list messages with this parentId (" "thread)",
     )
 
-    class Config:
-        description = "List messages in a Webex room"
+    tool_description: ClassVar[str] = "List messages in a Webex room"
 
 
 class ListRooms(BaseModel):
@@ -135,8 +128,7 @@ class ListRooms(BaseModel):
         default=None, description="If specified, only list rooms " "for this team"
     )
 
-    class Config:
-        description = "List Webex rooms"
+    tool_description: ClassVar[str] = "List Webex rooms"
 
 
 class ListUsersInRoom(BaseModel):
@@ -145,8 +137,7 @@ class ListUsersInRoom(BaseModel):
         default=None, description="Maximum number of users to return"
     )
 
-    class Config:
-        description = "List users in a Webex room"
+    tool_description: ClassVar[str] = "List users in a Webex room"
 
 
 class ListThreadMessages(BaseModel):
@@ -156,8 +147,7 @@ class ListThreadMessages(BaseModel):
         default=None, description="Maximum number of messages to return"
     )
 
-    class Config:
-        description = "List messages in a thread in a Webex room"
+    tool_description: ClassVar[str] = "List messages in a thread in a Webex room"
 
 
 class WebexTools(str, Enum):
@@ -221,7 +211,7 @@ def register_tools(server, auth_token: Optional[str] = None) -> None:
         return wrapper
 
     @server.tool(
-        name=WebexTools.POST_MESSAGE, description=PostMessage.Config.description
+        name=WebexTools.POST_MESSAGE, description=PostMessage.tool_description
     )
     @handle_mcp_errors
     async def post_message_tool(args: PostMessage):
@@ -267,7 +257,7 @@ def register_tools(server, auth_token: Optional[str] = None) -> None:
             ]
         return [TextContent(type="text", text="Message sent successfully")]
 
-    @server.tool(name=WebexTools.CREATE_ROOM, description=CreateRoom.Config.description)
+    @server.tool(name=WebexTools.CREATE_ROOM, description=CreateRoom.tool_description)
     @handle_mcp_errors
     async def create_room_tool(args: CreateRoom):
         payload = {"title": args.title}
@@ -287,7 +277,7 @@ def register_tools(server, auth_token: Optional[str] = None) -> None:
         ]
 
     @server.tool(
-        name=WebexTools.ADD_USERS_TO_ROOM, description=AddUsersToRoom.Config.description
+        name=WebexTools.ADD_USERS_TO_ROOM, description=AddUsersToRoom.tool_description
     )
     @handle_mcp_errors
     async def add_users_to_room_tool(args: AddUsersToRoom):
@@ -317,7 +307,7 @@ def register_tools(server, auth_token: Optional[str] = None) -> None:
 
     @server.tool(
         name=WebexTools.LIST_DIRECT_MESSAGES,
-        description=ListDirectMessages.Config.description,
+        description=ListDirectMessages.tool_description,
     )
     @handle_mcp_errors
     async def list_direct_messages_tool(args: ListDirectMessages):
@@ -354,7 +344,7 @@ def register_tools(server, auth_token: Optional[str] = None) -> None:
 
     @server.tool(
         name=WebexTools.LIST_MESSAGES_IN_ROOM,
-        description=ListMessagesInRoom.Config.description,
+        description=ListMessagesInRoom.tool_description,
     )
     @handle_mcp_errors
     async def list_messages_in_room_tool(args: ListMessagesInRoom):
@@ -379,7 +369,7 @@ def register_tools(server, auth_token: Optional[str] = None) -> None:
         )
         return [TextContent(type="text", text=formatted or "No messages found.")]
 
-    @server.tool(name=WebexTools.LIST_ROOMS, description=ListRooms.Config.description)
+    @server.tool(name=WebexTools.LIST_ROOMS, description=ListRooms.tool_description)
     @handle_mcp_errors
     async def list_rooms_tool(args: ListRooms):
         params = {}
@@ -399,7 +389,7 @@ def register_tools(server, auth_token: Optional[str] = None) -> None:
 
     @server.tool(
         name=WebexTools.LIST_USERS_IN_ROOM,
-        description=ListUsersInRoom.Config.description,
+        description=ListUsersInRoom.tool_description,
     )
     @handle_mcp_errors
     async def list_users_in_room_tool(args: ListUsersInRoom):
@@ -425,7 +415,7 @@ def register_tools(server, auth_token: Optional[str] = None) -> None:
 
     @server.tool(
         name=WebexTools.LIST_THREAD_MESSAGES,
-        description=ListThreadMessages.Config.description,
+        description=ListThreadMessages.tool_description,
     )
     @handle_mcp_errors
     async def list_thread_messages_tool(args: ListThreadMessages):

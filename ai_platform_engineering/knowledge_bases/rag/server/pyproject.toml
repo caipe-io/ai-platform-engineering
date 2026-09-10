@@ -8,40 +8,26 @@ authors = [
 ]
 license = {text = "Apache-2.0"}
 readme = "README.md"
-requires-python = ">=3.13,<4.0"
+requires-python = ">=3.14,<3.15"
 dependencies = [
     # LangChain ecosystem (versions must align with common's langchain-openai)
-    "langchain==1.3.9",
-    "langchain-core==1.4.8",
-    "langchain-community==0.4.1",
-    "langchain-milvus==0.3.0",
+    "langchain-core==1.6.0",
+    "langchain-text-splitters==1.1.2",
+    "langchain-milvus==0.3.3",
     # Vector DB
-    "pymilvus==2.6.2",
-    # Agent frameworks
-    "a2a==0.44",
-    "cnoe-agent-utils==0.4.0",
+    "pymilvus==2.6.9",
     # Web framework
-    "fastapi[standard]==0.135.3",
-    "uvicorn==0.37.0",
-    "fastmcp==3.2.4",
+    "fastapi[standard]==0.141.1",
+    "fastmcp==3.4.7",
     # HTTP clients
-    "aiohttp==3.14.3",
-    "aiohttp-retry==2.9.1",
     "httpx==0.28.1",
     # Data processing
-    "beautifulsoup4==4.14.2",
-    "lxml==6.1.0",
     "pyyaml==6.0.3",
     # Auth & utils
-    "openai==2.32.0",
     "python-dotenv==1.2.2",
     "PyJWT[crypto]==2.13.0",
-    "click==8.3.3",
-    "aiofile==3.9.0",
-    # 098 RBAC additions
-    "python-jose[cryptography]==3.5.0",
     "common",
-    "pypdf==6.16.1",
+    "pypdf==6.16.2",
 ]
 
 [project.scripts]
@@ -49,17 +35,17 @@ run-server = "server.__main__:main"
 
 [project.optional-dependencies]
 dev = [
-    "pytest==9.0.3",
-    "pytest-asyncio==1.3.0",
-    "pytest-cov==6.2.1",
-    "pytest-mock==3.14.0",
-    "ruff==0.11.10",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "ruff==0.16.4",
 ]
 # HuggingFace local embeddings variant (~900MB additional due to PyTorch)
 # Use the -hf image variant or install with: pip install server[huggingface]
 huggingface = [
-    "sentence-transformers==5.4.0",
-    "huggingface-hub==1.5.0",
+    # langchain-huggingface 1.2.2 supports Sentence Transformers 5.x.
+    "sentence-transformers==5.7.0",
+    "huggingface-hub==1.28.0",
     "common[huggingface]",
 ]
 
@@ -69,18 +55,17 @@ build-backend = "uv_build"
 
 
 [tool.uv]
-constraint-dependencies = ["mcp>=1.28.1", "starlette>=1.3.1", "transformers>=5.5.0"]
-dev-dependencies = [
-    "pytest==9.0.3",
-    "pytest-asyncio==1.3.0",
-    "pytest-cov==6.2.1",
-    "pytest-mock==3.14.0",
-    "pytest-timeout==2.4.0",
-    "requests==2.33.1",
-    "ruff==0.11.10",
+constraint-dependencies = ["mcp==1.29.1", "starlette==1.6.0", "transformers==5.16.1"]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "requests==2.34.2",
+    "ruff==0.16.4",
     "psutil==7.2.2",
     "memory-profiler==0.61.0",
-    "aiofile==3.9.0",
 ]
 
 [tool.uv.sources]

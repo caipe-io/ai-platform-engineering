@@ -210,7 +210,7 @@ Entity Types     Entity Instances
 - **Redis:** Key-value store for caching and state management
 
 ### Backend
-- **Python 3.13+** with UV package manager
+- **Python 3.14** with UV package manager
 - **FastAPI** for REST API services
 - **LangChain** for LLM integration
 - **LangGraph** for agent workflows

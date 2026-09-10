@@ -175,11 +175,11 @@ All runtime container images follow a two-stage build pattern to minimize the at
 
 ```dockerfile
 # Stage 1: builder — full toolchain, installs dependencies
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 RUN uv sync --locked --no-dev
 
 # Stage 2: runtime — only what's needed to run
-FROM python:3.13-slim
+FROM python:3.14-slim
 COPY --from=builder /app /app
 ```
 

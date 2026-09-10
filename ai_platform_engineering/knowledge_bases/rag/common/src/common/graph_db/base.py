@@ -28,6 +28,11 @@ class GraphDB(ABC):
     raise NotImplementedError("Subclasses must implement this method.")
 
   @abstractmethod
+  async def close(self) -> None:
+    """Release database resources held by this client."""
+    raise NotImplementedError("Subclasses must implement this method.")
+
+  @abstractmethod
   async def fuzzy_search_batch(self, batch_keywords: List[List[List[Union[str, Tuple[float, str]]]]], exclude_type_filter: List[str] = [], num_record_per_type: int = 0, require_single_match_per_type: bool = False, strict: bool = True, max_results=100) -> List[List[Tuple[StructuredEntity, float]]]:
     """
     Executes multiple fuzzy search queries in a batch for improved efficiency.

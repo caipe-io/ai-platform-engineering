@@ -4,7 +4,7 @@
 #
 # Hardening notes (IMP-04):
 # * Two-stage build -- ``uv`` and any build-time tooling stay in the
-#   builder stage; the final runtime image is just ``python:3.13-slim-bookworm``
+#   builder stage; the final runtime image is just ``python:3.14-slim-trixie``
 #   plus the resolved venv and our source.
 # * Final stage runs as the non-root ``app`` user (UID/GID 1001) -- the
 #   project-wide container rule rejects root.
@@ -27,7 +27,7 @@
 # =============================================================================
 # Stage 1: builder -- runs as root, has uv, never reaches production
 # =============================================================================
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:0.12.6-python3.14-trixie-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -57,7 +57,7 @@ RUN find /app/.venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null ||
 # =============================================================================
 # Stage 2: runtime -- pinned slim, no uv, no apt, runs as ``app``
 # =============================================================================
-FROM python:3.13-slim-bookworm
+FROM python:3.14-slim-trixie
 
 # Create the unprivileged runtime user. ``--no-create-home`` because we
 # never need a writable HOME -- if the app does, mount a tmpfs at /home/app.

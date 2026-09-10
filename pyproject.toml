@@ -7,43 +7,39 @@ authors = [
 ]
 license = {text = "Apache-2.0"}
 readme = "README.md"
-requires-python = ">=3.13,<4.0"
+requires-python = ">=3.14,<3.15"
 dependencies = [
-    "beautifulsoup4==4.14.3",
+    "beautifulsoup4==4.15.0",
     # `cachetools.TTLCache` backs the Keycloak JWKS / userinfo cache and the
     # PDP decision cache used by `utils/auth/keycloak_authz.py`. Pinned to
     # match the version already locked across every agent sub-package in
     # `ai_platform_engineering/agents/*/uv.lock` so the platform image
     # cannot drift from sub-agents.
-    "cachetools==6.2.2",
-    "cnoe-agent-utils==0.4.0",
-    "config==0.5.1",
-    "cryptography==50.0.0",
-    "fastapi==0.135.3",
+    "cachetools==7.1.7",
+    "cnoe-agent-utils==0.4.1",
+    "cryptography==50.0.1",
+    "fastapi==0.141.1",
     "httpx==0.28.1",
-    "hvac==2.4.0",
-    "langchain==1.3.9",
-    "langchain-core==1.4.8",
-    "langchain-mcp-adapters==0.2.1",
-    "langfuse==3.14.3",
-    "langgraph==1.2.6",
+    "langchain==1.3.17",
+    "langchain-core==1.6.0",
+    "langchain-mcp-adapters==0.3.2",
+    "langfuse==3.15.0",
+    "langgraph==1.2.11",
     "langmem==0.0.30",
-    "mdformat==1.0.0",
-    "prometheus-client==0.23.1",
-    "pydantic==2.12.5",
-    "pydantic-core==2.41.5",
+    "prometheus-client==0.26.0",
+    "pydantic==2.13.4",
     "pyjwt==2.13.0",
-    "requests==2.33.0",
+    "requests==2.34.2",
     # Dynamic agents are built on the upstream deepagents library.
-    "deepagents==0.3.8",
+    "deepagents==0.6.8",
     # MongoDB client for shared MongoDB collections (conversations, skills, audit)
-    "pymongo==4.15.5",
+    "pymongo==4.16.0",
     # MongoDB checkpoint saver for LangGraph persistence (dynamic agents)
-    "langgraph-checkpoint-mongodb==0.3.1",
+    "langgraph-checkpoint-mongodb==0.4.0",
     # Async MongoDB driver for MongoDB store
     "motor==3.7.1",
     # S3-compatible object storage client for audit log backend
-    "boto3==1.42.7",
+    "boto3==1.43.16",
     # Parquet writer for columnar audit log files (S3 backend)
     "pyarrow==23.0.1",
 ]
@@ -86,11 +82,11 @@ dev = [
     # Slack bot utils (e.g. tests importing ai.py) expect loguru at import time
     "loguru==0.7.3",
     "mongomock==4.3.0",
-    "pytest==9.0.3",
-    "ruff==0.14.8",
+    "pytest==9.1.1",
+    "ruff==0.16.4",
 ]
 unittest = [
-    "pytest-asyncio==1.3.0",
+    "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
 ]
 
@@ -98,5 +94,5 @@ unittest = [
 url = "https://pypi.org/simple/"
 
 [tool.uv]
-override-dependencies = ["protobuf==5.29.6"]
-constraint-dependencies = ["pypdf==6.13.3"]
+override-dependencies = ["protobuf==6.33.5"]
+constraint-dependencies = ["pypdf==6.16.2"]

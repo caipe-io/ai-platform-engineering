@@ -25,7 +25,7 @@ These guides are designed for:
 
 Before you begin, you should have:
 
-- Basic knowledge of Python 3.11+
+- Basic knowledge of Python 3.14
 - Familiarity with async/await patterns
 - Understanding of REST APIs
 - Git and Docker installed

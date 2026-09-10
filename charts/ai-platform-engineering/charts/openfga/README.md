@@ -71,7 +71,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/openfga --version 0.5.68
 | init.helmHookDeletePolicy | string | `"before-hook-creation"` |  |
 | init.image.pullPolicy | string | `"IfNotPresent"` |  |
 | init.image.repository | string | `"python"` |  |
-| init.image.tag | string | `"3.13-slim"` |  |
+| init.image.tag | string | `"3.14-slim"` |  |
 | init.seedSub | string | `""` |  |
 | init.seedTuples | list | `[]` |  |
 | init.storeName | string | `"caipe-openfga"` |  |

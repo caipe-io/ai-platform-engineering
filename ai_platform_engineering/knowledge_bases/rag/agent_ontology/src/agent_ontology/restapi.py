@@ -57,8 +57,21 @@ async def lifespan(_: FastAPI):
     scheduler.add_job(agent.process_and_evaluate_all, trigger=IntervalTrigger(seconds=SYNC_INTERVAL))
     scheduler.start()
 
-  # Yield control to the event loop to allow server to start
-  yield
+  try:
+    # Yield control to the event loop to allow server to start
+    yield
+  finally:
+    try:
+      if scheduler.running:
+        scheduler.shutdown(wait=False)
+    finally:
+      try:
+        await graph_db.close()
+      finally:
+        try:
+          await ontology_graph_db.close()
+        finally:
+          await redis_client.aclose()
 
 
 app = FastAPI(title="Ontology Agent Admin Server", lifespan=lifespan)
