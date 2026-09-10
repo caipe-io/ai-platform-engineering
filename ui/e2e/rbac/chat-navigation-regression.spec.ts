@@ -149,7 +149,7 @@ test.describe("mocked RBAC e2e — chat navigation regression", () => {
     await expect(dialog.getByText(SHARED_OWNER_EMAIL)).toBeVisible();
     await expect(dialog.getByText("Share Link")).toBeVisible();
     await expect(dialog.locator('input[readonly]').first()).toHaveValue(`${env.baseUrl}/chat/${conversationId}`);
-    await expect(dialog.getByText("Can edit")).toBeVisible();
+    await expect(dialog.getByText("Can edit", { exact: true })).toBeVisible();
     await expect(dialog.getByPlaceholder("Search by email or team name...")).toHaveCount(0);
     await expect(dialog.getByRole("switch", { name: "Share with everyone" })).toHaveCount(0);
   });
