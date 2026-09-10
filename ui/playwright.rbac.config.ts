@@ -29,7 +29,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { RBAC_STORAGE_STATE_PATH } from "./e2e/rbac/global-setup";
 
 function unquoteEnvValue(value: string): string {
   const trimmed = value.trim();
@@ -64,7 +63,6 @@ loadEnvFile(resolve(__dirname, ".env.local"));
 
 export default defineConfig({
   testDir: "./e2e/rbac",
-  globalSetup: "./e2e/rbac/global-setup.ts",
   // Sequential by default — these tests share a Keycloak realm and
   // some flip global toggles (e.g. PDP-down). Parallelizing them
   // would create heisenbugs.
@@ -79,7 +77,6 @@ export default defineConfig({
     : [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: process.env.CAIPE_UI_BASE_URL ?? "http://localhost:3000",
-    storageState: RBAC_STORAGE_STATE_PATH,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

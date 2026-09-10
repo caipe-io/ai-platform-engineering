@@ -889,7 +889,16 @@ export const authOptions: NextAuthOptions = {
     async decode({ token, secret }) {
       const { decode } = await import("next-auth/jwt");
       const decoded = await decode({ token, secret });
-      if (decoded?.sub) {
+      // Test and short-lived local cookies may already carry the access token.
+      // Avoid an unnecessary MongoDB lookup in that case; production cookies
+      // created by the custom encoder omit these fields and still rehydrate
+      // from the server-side token store as before.
+      if (
+        decoded?.sub &&
+        !decoded.accessToken &&
+        !decoded.refreshToken &&
+        !decoded.idToken
+      ) {
         const stored = await getStoredTokens(decoded.sub);
         if (stored) {
           if (stored.accessToken) decoded.accessToken = stored.accessToken;
