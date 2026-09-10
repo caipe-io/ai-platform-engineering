@@ -2,5 +2,5 @@ apiVersion: v2
 name: audit-service
 description: Lightweight CAIPE audit log read/write service
 type: application
-version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
-appVersion: 1.0.1-dev.8 # Do NOT modify. It will be updated automatically using the release workflow
+version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+appVersion: 1.0.1-dev.9 # Do NOT modify. It will be updated automatically using the release workflow

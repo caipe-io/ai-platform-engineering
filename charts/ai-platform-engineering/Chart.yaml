@@ -1,17 +1,17 @@
 apiVersion: v2
 # pyproject.toml version
-appVersion: 1.0.1-dev.8 # Do NOT modify. It will be updated automatically using the release workflow
+appVersion: 1.0.1-dev.9 # Do NOT modify. It will be updated automatically using the release workflow
 name: ai-platform-engineering
 description: Parent chart to deploy CAIPE — dynamic agents, per-agent MCP servers, RBAC, and the UI
 sources:
   - https://github.com/caipe-io/ai-platform-engineering/charts
 # Chart version for ai-platform-engineering parent chart
-version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
 dependencies:
   # Single MCP-server chart used multiple times with different aliases.
   # Each alias deploys one agent's MCP server (Deployment + Service).
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-argocd
     tags:
       - mcp-argocd
@@ -21,7 +21,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.argocd
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-aws
     tags:
       - mcp-aws
@@ -30,7 +30,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.aws
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-backstage
     tags:
       - mcp-backstage
@@ -40,7 +40,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.backstage
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-confluence
     tags:
       - mcp-confluence
@@ -49,7 +49,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.confluence
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-github
     tags:
       - mcp-github
@@ -59,7 +59,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.github
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-gitlab
     tags:
       - mcp-gitlab
@@ -68,7 +68,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.gitlab
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-jira
     tags:
       - mcp-jira
@@ -77,7 +77,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.jira
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-komodor
     tags:
       - mcp-komodor
@@ -86,7 +86,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.komodor
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-pagerduty
     tags:
       - mcp-pagerduty
@@ -95,7 +95,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.pagerduty
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-slack
     tags:
       - mcp-slack
@@ -104,7 +104,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.slack
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-splunk
     tags:
       - mcp-splunk
@@ -113,7 +113,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.splunk
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-victorops
     tags:
       - mcp-victorops
@@ -121,7 +121,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.victorops
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-webex
     tags:
       - mcp-webex
@@ -130,7 +130,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.webex
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-webex-meetings
     tags:
       - mcp-webex-meetings
@@ -139,7 +139,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.webex-meetings
   - name: mcp-server
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-netutils
     tags:
       - mcp-netutils
@@ -148,7 +148,7 @@ dependencies:
       - child: agentExports.data
         parent: global.enabledSubAgents.netutils
   - name: rag-stack
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     repository: file://../rag-stack # TODO: might be changed to be separate
     tags:
       - rag-stack
@@ -158,46 +158,46 @@ dependencies:
         parent: global.enabledSubAgents.rag
   # CAIPE UI
   - name: caipe-ui
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     tags:
       - caipe-ui
   # Lightweight audit log read/write service.
   # Mandatory platform service: installed without a tag or condition so
   # audit producers can drop/warn when unavailable instead of owning storage.
   - name: audit-service
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
   # Dynamic Agents - Standalone agent builder with MCP tool support
   - name: dynamic-agents
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     tags:
       - dynamic-agents
   # Autonomous Agents - Standalone scheduler firing cron/interval/webhook tasks at the supervisor over A2A
   - name: autonomous-agents
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     tags:
       - autonomous-agents
   # Scheduler service for Dynamic Agents scheduled jobs.
   - name: scheduler
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     condition: global.scheduler.enabled
   # MongoDB for CAIPE UI persistence
   - name: caipe-ui-mongodb
-    version: 1.0.1-dev.8
+    version: 1.0.1-dev.9
     condition: caipe-ui.mongodb.enabled
     alias: mongodb
   # Skill Scanner — standalone cisco-ai-defense/skill-scanner REST API.
   # Required for the UI's skill safety scan; off by default.
   - name: skill-scanner
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     condition: global.skillScanner.enabled
   # Slack Bot Integration (client, not an agent)
   - name: slack-bot
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     tags:
       - slack-bot
   # Webex Bot Integration (client, not an agent)
   - name: webex-bot
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     tags:
       - webex-bot
   # Keycloak Identity Provider for CAIPE RBAC/OIDC.
@@ -206,16 +206,16 @@ dependencies:
   # wiring. There is no upstream Keycloak chart that provides these CAIPE
   # bootstrap invariants without additional Jobs/templates.
   - name: keycloak
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     tags:
       - keycloak
   # OpenFGA relationship authorization service
   - name: openfga
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     condition: openfga.enabled
   # AgentGateway ext_authz bridge backed by OpenFGA
   - name: openfga-authz-bridge
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     condition: openfgaAuthzBridge.enabled
   # AgentGateway standalone proxy for RBAC-protected MCP routing.
   # Intentional local subchart for this release: this deploys the standalone
@@ -224,5 +224,5 @@ dependencies:
   # and remain the target for a later migration once we can preserve this
   # release's static MCP routing and authz bridge contract.
   - name: agentgateway
-    version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    version: 1.0.1-dev.9 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     condition: agentgateway.enabled
