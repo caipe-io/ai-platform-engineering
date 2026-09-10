@@ -1404,7 +1404,7 @@ The dev PDP model keeps the coarse AgentGateway gate and adds admin-configured t
 | `tool:<server>/*`              | base `caller`; derived `can_call`                     | AgentGateway runtime grant for every tool on a concrete MCP server; Team Resources expands all-MCP-server access into one tuple per registered server |
 | `knowledge_base:<id>`          | base `reader`, `ingestor`, `manager`; derived `can_read`, `can_ingest`, `can_admin` | Datasource Search settings write `reader` relationships. The `ingestor` relation remains available only for trusted ingestion transports; it is not granted by the Search UI. KB pages, sharing, and KB-scoped routes check these relationships. |
 | `data_source:<id>`             | base `reader` (incl. `user:*` wildcard), `ingestor`, `manager`, `parent_kb`; derived `can_read`, `can_ingest`, `can_manage` | Indexed-content policy. A 1:1 `parent_kb knowledge_base:<id>` edge inherits query grants without mirrored per-team tuples; direct component grants remain possible. Search intersects this policy with the caller, while reload requires `ingestion_source` management. A `user:* reader data_source:<id>` tuple makes a datasource searchable by every authenticated user who also has the organization Search capability. |
-| `rag_collection:<id>`          | base `owner`, `reader`, `publisher`, `manager`; derived `can_discover`, `can_read`, `can_publish`, `can_manage` | Control-plane grouping of datasource IDs. `reader` grants read access through `knowledge_base#parent_collection`; `data_source` then inherits through its existing `parent_kb` edge. `publisher` changes membership and `manager` changes settings; neither relation implies read access. |
+| `rag_collection:<id>`          | base `owner`, `reader`, `publisher`, `manager`; derived `can_discover`, `can_read`, `can_publish`, `can_manage` | Control-plane grouping of datasource IDs — a saved search-time filter, not an access grant. `reader` only lets the caller use the collection as a `collection_id` query scope; it does **not** propagate to member `knowledge_base`/`data_source` objects, so a reader still needs independent read access to see any given member's content. `publisher` adds/removes membership and requires only `can_read` on the datasource being added (never `can_manage`) — since membership grants no one new access, search-only access to a source can never be amplified into access for someone else via a shared collection. `manager` changes settings; neither relation implies read access to members. |
 | `ingestion_source:<id>`        | base `owner`, `reader`, `manager`; derived `can_read`, `can_manage` | Independent connector-configuration policy. Source create/edit/transfer/reload/delete and config visibility check this object; it does not inherit Search access from `data_source` or `knowledge_base`. |
 | `skill:<id>`                   | base `reader`, `user`, `writer`, `manager`; derived `can_read`, `can_use`, `can_write`, `can_manage` | Team Resources skill selection writes `user` relationships for local and Skill Hub catalog ids; `/api/skills` filters by `can_read`/`can_use`. |
 | `conversation:<id>`            | base `owner`, `reader`, `writer`, `sharer`, `manager`; derived `can_read`, `can_write`, `can_share`, `can_delete` | Chat list/read/write/share and Dynamic Agent stream/invoke/resume/cancel paths check implicit Mongo ownership first, then explicit OpenFGA conversation access. |
@@ -1446,10 +1446,11 @@ removing stale pages when a source shrinks.
   arrays are a deny/opt-out. The migration attaches otherwise-unscoped
   RAG-enabled agents to `platform-rag`; new RAG-enabled agents default to that
   collection when their owner can read it, and may remove it.
-- A personal collection writes separate owner and reader relationships. Its
-  owner can publish only datasources they both manage and read. Organization
-  admins may delegate Owner and Search teams for centrally managed
-  collections.
+- A personal collection writes separate owner and reader relationships. Any
+  editor can publish any datasource they can search — publishing never
+  extends read access to that datasource for anyone else, including the
+  collection's own readers. Organization admins may delegate Owner and Search
+  teams for centrally managed collections.
 - Service-account scope editing writes explicit `data_source#reader` grants for
   selected datasources. It uses the same grantable-resource rule as agents and
   tools: a creator cannot delegate a datasource they cannot access. There is no
@@ -1459,12 +1460,13 @@ removing stale pages when a source shrinks.
   from reviving an old agent selection. Collection deletion removes its agent
   references but never deletes indexed source data.
 
-This separation keeps collection Owners from reading content merely
-because they can curate it. When an organization admin delegates collection
-Search to a team, the BFF also adds the coarse organization `can_search`
-capability. That capability is additive-only because another collection or an
-explicit Team setting may still depend on it; datasource relationships remain
-the authoritative content boundary.
+This separation keeps collection membership from ever widening who can read a
+datasource's content: a collection's `reader` relation only controls who may
+use it as a query scope, and datasource relationships remain the sole
+authoritative content boundary. When an organization admin delegates
+collection Search to a team, the BFF also adds the coarse organization
+`can_search` capability. That capability is additive-only because another
+collection or an explicit Team setting may still depend on it.
 
 > **Team membership semantic:** On the `team` type, `member` is now defined as `[user, external_group#member] or admin` — i.e. anyone with the `admin` relation on a team automatically satisfies `team#member` checks (and, by extension, `team#member` userset references such as the `team:<slug>#member can_use agent:<id>` Slack/Webex resource paths). This means an admin no longer needs a separate `member` tuple to use the team's agents, and bots can ask `check(user, "member", team:<slug>)` as a single question. `admin` continues to be a directly-written relation; only `member` gains the derived branch. Callers that legacy-listed both `team#member` and `team#admin` as subject sets still work but are now redundant.
 

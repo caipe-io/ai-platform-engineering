@@ -274,9 +274,10 @@ type rag_collection
     define publisher: [user, service_account, team#member, team#admin]
     define manager: [user, service_account, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
-    # Collection maintenance and query access are deliberately independent.
-    # Owners/publishers/managers can discover the control-plane object, but
-    # indexed content flows only through an explicit reader relationship.
+    # A collection is a saved filter over datasources the caller can already
+    # search, not an access grant: reader/can_read here controls who can use
+    # the collection as a query scope, but membership no longer widens what
+    # content a member's own permissions expose (see knowledge_base.can_read).
     define can_discover: can_read or can_publish or can_manage
     define can_read: reader
     define can_use: can_read
@@ -293,12 +294,20 @@ type knowledge_base
     define ingestor: [user, service_account, team#member, team#admin, external_group#member]
     define manager: [user, service_account, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
-    # A source may belong to several RAG collections. Collections confer only
-    # query/read access; connector management and ingestion remain source-level
-    # grants so publishing a source never lets readers mutate it.
+    # A source may belong to several RAG collections. `parent_collection` is
+    # a curation edge only: it records that a source has been added to a
+    # collection so `collection_id` search filters can resolve to member
+    # source ids, but it deliberately grants NO access. A collection reader
+    # only ever sees results from member sources they can already read via
+    # their own reader/manager/owner grant (or a team/org grant) — adding a
+    # source to a collection never extends who can read that source's
+    # content. This lets adding-to-a-collection require only can_read on the
+    # source (rather than can_manage): search-only access to a source can
+    # never be amplified into search access for someone else via a shared
+    # collection.
     define parent_collection: [rag_collection]
     define can_discover: can_read
-    define can_read: reader or can_ingest or can_manage or owner or can_read from parent_collection
+    define can_read: reader or can_ingest or can_manage or owner
     define can_use: can_read
     define can_write: can_ingest
     define can_ingest: ingestor or can_manage or owner

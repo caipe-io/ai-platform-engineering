@@ -20,11 +20,10 @@ import {
   ragCollectionPublicationState,
   ragCollectionSourceDependencyRevisions,
 } from "@/lib/rag-collection-publication-approval.server";
-import { batchCheckOpenFgaTuples } from "@/lib/rbac/openfga";
 import {
   collectionMembershipTuple,
   collectionRelationshipTuples,
-  manageableDatasourceIdsForCollectionPublishing,
+  searchableDatasourceIdsForCollectionPublishing,
   ragCollectionSetFields,
   RAG_COLLECTION_ID_PATTERN,
   RAG_COLLECTIONS_COLLECTION,
@@ -354,47 +353,23 @@ export const PATCH = withErrorHandler(
         (sourceId) => !(previous.source_ids ?? []).includes(sourceId),
       );
       await requireExistingDatasources(session, additions);
-      // Publishing a search-only source controlled by somebody else would let
-      // an untrusted owner mutate already-approved content later. Require source
-      // management authority for additions; removals need only collection publish.
-      const manageableIds =
-        await manageableDatasourceIdsForCollectionPublishing(
+      // A collection is a saved filter over sources the caller can already
+      // search (see rag-collections.server.ts); adding a source never
+      // extends who can read its content, so search access is sufficient.
+      const searchableIds =
+        await searchableDatasourceIdsForCollectionPublishing(
           session,
           additions,
         );
       const denied = additions.filter(
-        (sourceId) => !manageableIds.has(sourceId),
+        (sourceId) => !searchableIds.has(sourceId),
       );
       if (denied.length > 0) {
         throw new ApiError(
-          `You must be able to manage a datasource before adding it: ${denied.join(", ")}`,
+          `You must be able to search a datasource before adding it: ${denied.join(", ")}`,
           403,
           "DATASOURCE_PUBLISH_FORBIDDEN",
         );
-      }
-
-      // A personal owner is an explicit collection reader, even after teams
-      // are delegated. Validate against that owner rather than the editor so
-      // an administrator or Owner cannot turn source-management access
-      // into content access for somebody else through collection membership.
-      if (previous.owner_subject && additions.length > 0) {
-        const ownerReadDecisions = await batchCheckOpenFgaTuples(
-          additions.map((sourceId) => ({
-            user: `user:${previous.owner_subject}`,
-            relation: "can_read",
-            object: `data_source:${sourceId}`,
-          })),
-        );
-        const unreadable = additions.filter(
-          (_sourceId, index) => ownerReadDecisions[index] !== true,
-        );
-        if (unreadable.length > 0) {
-          throw new ApiError(
-            `A personally owned knowledge base can only include datasources its owner can already search: ${unreadable.join(", ")}`,
-            403,
-            "DATASOURCE_READ_REQUIRED",
-          );
-        }
       }
     }
 

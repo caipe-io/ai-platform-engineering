@@ -29,7 +29,7 @@ import {
   collectionMembershipTuple,
   collectionRelationshipTuples,
   ensurePlatformRagCollection,
-  manageableDatasourceIdsForCollectionPublishing,
+  searchableDatasourceIdsForCollectionPublishing,
   removeDatasourceFromAgentPins,
   removeRagCollectionFromAgentPins,
   replaceCollectionSources,
@@ -59,8 +59,8 @@ beforeEach(() => {
   );
 });
 
-describe("manageableDatasourceIdsForCollectionPublishing", () => {
-  it("uses ingestion_source management for configured sources and data_source for legacy sources", async () => {
+describe("searchableDatasourceIdsForCollectionPublishing", () => {
+  it("uses ingestion_source read access for configured sources and data_source for legacy sources", async () => {
     mockGetCollection.mockResolvedValue({
       find: jest.fn().mockReturnValue({
         project: jest.fn().mockReturnThis(),
@@ -74,7 +74,7 @@ describe("manageableDatasourceIdsForCollectionPublishing", () => {
         target.type === "ingestion_source" ? rows : [],
     );
 
-    const result = await manageableDatasourceIdsForCollectionPublishing(
+    const result = await searchableDatasourceIdsForCollectionPublishing(
       { sub: "test-user-subject" },
       ["source-configured", "source-legacy"],
     );
@@ -84,14 +84,14 @@ describe("manageableDatasourceIdsForCollectionPublishing", () => {
       1,
       expect.anything(),
       [{ source_id: "source-configured" }],
-      expect.objectContaining({ type: "ingestion_source", action: "manage" }),
+      expect.objectContaining({ type: "ingestion_source", action: "read" }),
       { bypassForOrgAdmin: true },
     );
     expect(mockFilterResourcesByPermission).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
       [{ source_id: "source-legacy" }],
-      expect.objectContaining({ type: "data_source", action: "manage" }),
+      expect.objectContaining({ type: "data_source", action: "read" }),
       { bypassForOrgAdmin: true },
     );
   });

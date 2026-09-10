@@ -2558,16 +2558,6 @@
                 "computedUserset": {
                   "relation": "owner"
                 }
-              },
-              {
-                "tupleToUserset": {
-                  "tupleset": {
-                    "relation": "parent_collection"
-                  },
-                  "computedUserset": {
-                    "relation": "can_read"
-                  }
-                }
               }
             ]
           }

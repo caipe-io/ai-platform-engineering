@@ -2,7 +2,6 @@ import { getCollection } from "@/lib/mongodb";
 import { reconcileTupleDiff } from "@/lib/authz";
 import {
   checkOpenFgaTuple,
-  readOpenFgaTuples,
   type OpenFgaTupleKey,
 } from "@/lib/rbac/openfga";
 import { organizationObjectId } from "@/lib/rbac/organization";
@@ -357,87 +356,19 @@ export async function canPublishCollection(
   ).allowed;
 }
 
-export interface DatasourceCollectionAudience {
-  collectionIds: string[];
-  readerTeamSlugs: string[];
-  hasExternalPrincipal: boolean;
-  organizationWide: boolean;
-}
-
-/**
- * Resolve direct collection readers that currently inherit Search for a source.
- *
- * This reads the live OpenFGA projection rather than trusting Mongo labels, so
- * direct people, service accounts, chat surfaces, and typed wildcards are not
- * missed when a material source change is evaluated for publication review.
- */
-export async function datasourceCollectionAudience(
-  datasourceId: string,
-  owner: { ownerTeamSlug?: string | null; ownerSubject?: string | null },
-): Promise<DatasourceCollectionAudience> {
-  const collection = await getCollection<RagCollection>(
-    RAG_COLLECTIONS_COLLECTION,
-  );
-  const rows = await collection
-    .find({ source_ids: datasourceId } as never)
-    .project({ _id: 1 })
-    .toArray();
-  const collectionIds = rows.map((row) => String(row._id));
-  const readerTeamSlugs = new Set<string>();
-  let hasExternalPrincipal = false;
-  let organizationWide = false;
-
-  for (const collectionId of collectionIds) {
-    let continuationToken: string | undefined;
-    do {
-      const page = await readOpenFgaTuples({
-        tuple: {
-          relation: "reader",
-          object: `rag_collection:${collectionId}`,
-        },
-        continuationToken,
-      });
-      for (const tuple of page.tuples) {
-        const principal = tuple.key.user;
-        if (principal === "user:*") {
-          organizationWide = true;
-          hasExternalPrincipal = true;
-          continue;
-        }
-        const team = /^team:([^#]+)#(?:member|admin)$/.exec(principal)?.[1];
-        if (team) {
-          readerTeamSlugs.add(team);
-          continue;
-        }
-        if (
-          owner.ownerSubject &&
-          principal === `user:${owner.ownerSubject}`
-        ) {
-          continue;
-        }
-        hasExternalPrincipal = true;
-      }
-      continuationToken = page.continuationToken;
-    } while (continuationToken);
-  }
-
-  return {
-    collectionIds,
-    readerTeamSlugs: [...readerTeamSlugs].sort(),
-    hasExternalPrincipal,
-    organizationWide,
-  };
-}
-
 /**
  * Resolve which datasource ids the caller may publish into a collection.
  *
- * DB-backed sources use the independent ingestion_source management graph.
- * Legacy sources that have no source-config row fall back to the historical
- * data_source management relation. This prevents a query-policy manager from
- * publishing a mutable connector that is managed by somebody else.
+ * A collection is a saved filter over sources the caller can already search;
+ * adding a source to one never extends who can read that source's content
+ * (see the `parent_collection` comment in deploy/openfga/model.fga), so the
+ * bar for adding is search access, not management authority.
+ *
+ * DB-backed sources use the independent ingestion_source RBAC graph. Legacy
+ * sources that have no source-config row fall back to the historical
+ * data_source relation.
  */
-export async function manageableDatasourceIdsForCollectionPublishing(
+export async function searchableDatasourceIdsForCollectionPublishing(
   session: ResourceAuthzSession,
   datasourceIds: readonly string[],
 ): Promise<Set<string>> {
@@ -456,13 +387,13 @@ export async function manageableDatasourceIdsForCollectionPublishing(
     .filter((id) => !configuredIds.has(id))
     .map((source_id) => ({ source_id }));
 
-  const [managedConfigured, managedLegacy] = await Promise.all([
+  const [readableConfigured, readableLegacy] = await Promise.all([
     filterResourcesByPermission(
       session,
       configuredRows,
       {
         type: "ingestion_source",
-        action: "manage",
+        action: "read",
         id: (row) => row.source_id,
       },
       { bypassForOrgAdmin: true },
@@ -470,13 +401,13 @@ export async function manageableDatasourceIdsForCollectionPublishing(
     filterResourcesByPermission(
       session,
       legacyRows,
-      { type: "data_source", action: "manage", id: (row) => row.source_id },
+      { type: "data_source", action: "read", id: (row) => row.source_id },
       { bypassForOrgAdmin: true },
     ),
   ]);
 
   return new Set(
-    [...managedConfigured, ...managedLegacy].map((row) => row.source_id),
+    [...readableConfigured, ...readableLegacy].map((row) => row.source_id),
   );
 }
 
