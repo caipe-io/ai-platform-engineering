@@ -1030,7 +1030,7 @@ describe('Admin Dashboard Page', () => {
     });
 
     it('orders Security & Policy destinations and omits Permissions Tool', async () => {
-      currentPathname = '/admin/security/rbac-audit';
+      currentPathname = '/admin/security/audit';
 
       render(<AdminPage />);
 
@@ -1039,29 +1039,53 @@ describe('Admin Dashboard Page', () => {
         'Access before sign-in',
         'AI Review',
         'Autonomous Enablement',
-        'RBAC Audit',
+        'Audit',
         'Approvals',
-        'Access Explorer',
-        'Self Check',
-        'Chat Audit',
-        'Keycloak',
-        'Migrations',
+        'Access Operations',
       ];
       const renderedLinks = within(navigation)
         .getAllByRole('link')
         .map((link) => link.textContent?.trim())
         .filter((label): label is string => destinationLabels.includes(label ?? ''));
       expect(renderedLinks).toEqual(destinationLabels);
-      expect(within(navigation).getByRole('link', { name: /^RBAC Audit$/i })).toHaveAttribute(
+      expect(within(navigation).getByRole('link', { name: /^Audit$/i })).toHaveAttribute(
         'aria-current',
         'page',
       );
       expect(
         within(navigation).queryByRole('link', { name: /^Permissions Tool$/i }),
       ).not.toBeInTheDocument();
-      for (const subgroup of ['Policy', 'Authorization', 'Audit', 'Identity & maintenance']) {
+      for (const subgroup of ['Policy', 'Authorization']) {
         expect(within(navigation).queryByText(subgroup)).not.toBeInTheDocument();
       }
+    });
+
+    it.each([
+      ["auditTab=rbac", "RBAC", "unified-audit-tab"],
+      ["auditTab=chat", "Chat", "audit-logs-tab"],
+      ["auditTab=self-check", "Self-check", "rbac-self-check-tab"],
+    ])('selects the Audit %s submenu',async (query,tabLabel,testId) => {
+      currentPathname = "/admin/security/audit";
+      currentSearchParams = new URLSearchParams(query);
+
+      render(<AdminPage />);
+
+      expect(await screen.findByRole("tab",{ name: tabLabel })).toHaveAttribute("data-state","active");
+      expect(screen.getByTestId(testId)).toBeInTheDocument();
+    });
+
+    it.each([
+      ["operationsTab=access-explorer", "Access Explorer", "access-explorer-tab"],
+      ["operationsTab=keycloak", "Keycloak", "keycloak-health-tab"],
+      ["operationsTab=migrations", "Migrations", "migration-tab"],
+    ])('selects the Access Operations %s submenu',async (query,tabLabel,testId) => {
+      currentPathname = "/admin/security/access-operations";
+      currentSearchParams = new URLSearchParams(query);
+
+      render(<AdminPage />);
+
+      expect(await screen.findByRole("tab",{ name: tabLabel })).toHaveAttribute("data-state","active");
+      expect(screen.getByTestId(testId)).toBeInTheDocument();
     });
 
     it('does not show Keycloak role badges for listed users', async () => {
@@ -1150,12 +1174,19 @@ describe('Admin Dashboard Page', () => {
       ["/admin/platform/rag", "RAG"],
       ["/admin/integrations/slack", "Slack"],
       ["/admin/integrations/webex", "Webex"],
-      ["/admin/security/access-explorer", "Access Explorer"],
-      ["/admin/security/self-check", "Self Check"],
+      ["/admin/security/audit", "Audit"],
+      ["/admin/security/access-operations", "Access Operations"],
       ["/admin/operations/metrics", "Metrics"],
       ["/admin/operations/health", "Health"],
     ])("selects canonical destination %s", async (path, label) => {
       currentPathname = path;
+      currentSearchParams = new URLSearchParams(
+        path === "/admin/security/audit"
+          ? "auditTab=rbac"
+          : path === "/admin/security/access-operations"
+            ? "operationsTab=access-explorer"
+            : "",
+      );
       render(<AdminPage />);
 
       expect(await screen.findByRole("heading", { level: 1, name: label })).toBeInTheDocument();

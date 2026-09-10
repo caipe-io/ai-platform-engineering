@@ -101,7 +101,7 @@ test.describe("mocked RBAC admin browser regression", () => {
       handlers: [auditHandler],
     });
 
-    await page.goto("/admin/security/rbac-audit", {
+    await page.goto("/admin/security/audit?auditTab=rbac", {
       waitUntil: "domcontentloaded",
     });
 

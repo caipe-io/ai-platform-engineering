@@ -1,7 +1,6 @@
 import {
   Bell,
   Bot,
-  Code2,
   KeyRound,
   Palette,
   type LucideIcon,
@@ -11,8 +10,7 @@ export type SettingsRouteId =
   | "appearance"
   | "chat"
   | "notifications"
-  | "access"
-  | "developer";
+  | "access";
 
 export interface SettingsRouteDefinition {
   description: string;
@@ -55,14 +53,6 @@ export const PERSONAL_SETTINGS_ROUTES: SettingsRouteDefinition[] = [
     label: "Account & access",
     description: "Your role, teams, and linked identity.",
     icon: KeyRound,
-  },
-  {
-    id: "developer",
-    href: "/settings/developer",
-    segment: "developer",
-    label: "Developer",
-    description: "Debug preferences and session diagnostics.",
-    icon: Code2,
   },
 ];
 

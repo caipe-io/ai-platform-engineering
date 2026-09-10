@@ -151,7 +151,7 @@ function makeRetentionPutHandler(
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function navigateToAuditPage(page: import("@playwright/test").Page) {
-  await page.goto("/admin/security/rbac-audit", { waitUntil: "domcontentloaded" });
+  await page.goto("/admin/security/audit?auditTab=rbac", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("RBAC Audit Log", { exact: true })).toBeVisible();
 }
 
