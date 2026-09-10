@@ -377,6 +377,11 @@ export function ChatContainer() {
   // an "agent deleted" banner and a CTA to start a new conversation.
   const effectiveAgentId = selectedAgentId ?? "deprecated-supervisor-agent";
   const isAgentGone = agentNotFound || !selectedAgentId;
+  const handleAgentRelinked = (agentId: string) => {
+    fetchedAgentRef.current = { uuid, agentId };
+    setAgentInfo(null);
+    setAgentNotFound(false);
+  };
 
   return (
     <ChatView
@@ -387,6 +392,7 @@ export function ChatContainer() {
       readOnly={isReadOnly}
       readOnlyReason={readOnlyReason}
       isLoadingMessages={isLoadingMessages}
+      onAgentRelinked={handleAgentRelinked}
     />
   );
 }

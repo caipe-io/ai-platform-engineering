@@ -61,6 +61,8 @@ interface ChatPanelProps {
   agentId: string; // Mandatory for Dynamic Agents
   agent?: DynamicAgentConfig | null; // Full agent config object
   isLoadingMessages?: boolean; // Whether messages are still loading (show skeleton)
+  /** Called after a deprecated conversation is linked to a usable agent. */
+  onAgentRelinked?: (agentId: string) => void;
   /** Bounded, host-validated metadata attached to each app-assistant turn. */
   clientContext?: Record<string, unknown>;
 }
@@ -72,6 +74,7 @@ export function ChatPanel({
   agentId,
   agent,
   isLoadingMessages,
+  onAgentRelinked,
   clientContext: suppliedClientContext,
 }: ChatPanelProps) {
   // Derive display values from agent object
@@ -219,11 +222,12 @@ export function ChatPanel({
           c.id === conversationId ? { ...c, participants: newParticipants } : c,
         ),
       }));
+      onAgentRelinked?.(agentId);
       router.refresh();
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
-  }, [conversationId, router, toast]);
+  }, [conversationId, onAgentRelinked, router, toast]);
 
   // "Choose agent" picker state — loaded lazily when the deprecated-agent banner is shown.
   const [showAgentPicker, setShowAgentPicker] = useState(false);
@@ -254,11 +258,12 @@ export function ChatPanel({
           c.id === conversationId ? { ...c, participants: newParticipants } : c,
         ),
       }));
+      onAgentRelinked?.(chosenAgentId);
       router.refresh();
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
-  }, [conversationId, chosenAgentId, router, toast]);
+  }, [conversationId, chosenAgentId, onAgentRelinked, router, toast]);
 
   // Slash command registry
   const slashCommands = useSlashCommands(agentSkills);
