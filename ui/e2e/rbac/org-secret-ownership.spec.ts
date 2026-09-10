@@ -65,15 +65,15 @@ test.describe("org-level secret ownership", () => {
     const createRequests: Array<Record<string, unknown>> = [];
     await page.route("**/api/credentials/secrets", async (route) => {
       if (route.request().method() === "POST") {
-        const body = await route.request().postDataJSON().catch(() => null);
+        const body = route.request().postDataJSON();
         createRequests.push(body as Record<string, unknown>);
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.getByRole("button", { name: /add secret/i }).click();
     await page.getByLabel(/name/i).fill("Org-level test secret");
-    await page.getByLabel(/value/i).fill("raw-token-value");
+    await page.getByRole("textbox", { name: "Secret value" }).fill("raw-token-value");
     await page.getByLabel(/Save as organization secret/i).check();
     await page.getByRole("button", { name: /save/i }).click();
 
@@ -102,15 +102,15 @@ test.describe("org-level secret ownership", () => {
     const createRequests: Array<Record<string, unknown>> = [];
     await page.route("**/api/credentials/secrets", async (route) => {
       if (route.request().method() === "POST") {
-        const body = await route.request().postDataJSON().catch(() => null);
+        const body = route.request().postDataJSON();
         createRequests.push(body as Record<string, unknown>);
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.getByRole("button", { name: /add secret/i }).click();
     await page.getByLabel(/name/i).fill("Personal test secret");
-    await page.getByLabel(/value/i).fill("raw-token-value");
+    await page.getByRole("textbox", { name: "Secret value" }).fill("raw-token-value");
     // intentionally leave the org checkbox unchecked
     await page.getByRole("button", { name: /save/i }).click();
 
