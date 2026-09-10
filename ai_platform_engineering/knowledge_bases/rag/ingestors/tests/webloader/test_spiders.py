@@ -411,51 +411,6 @@ class TestWorkerSpiderRedirectHandling:
     # effective_domain should remain None since no redirect occurred
     assert spider.effective_domain is None
 
-  def test_build_request_meta_allows_all_http_statuses(self):
-    """Requests must opt out of Scrapy's default HttpErrorMiddleware.
-
-    Without handle_httpstatus_all, a non-2xx response (e.g. 401/403 from an
-    auth-walled page) is silently dropped before reaching parse_page/
-    handle_error, so the failure is never recorded.
-    """
-    spider = self._make_worker_spider()
-
-    assert spider._build_request_meta() == {"handle_httpstatus_all": True}
-
-  def test_parse_page_records_http_401_as_a_failure(self):
-    """parse_page should record an auth-required error instead of ignoring it."""
-    spider = self._make_worker_spider(start_url="https://docs.example.com")
-
-    mock_response = Mock()
-    mock_response.url = "https://docs.example.com/private-page"
-    mock_response.status = 401
-    mock_response.text = ""
-    mock_response.css = Mock(return_value=Mock(getall=Mock(return_value=[])))
-
-    list(spider.parse_page(mock_response))
-
-    assert spider.pages_failed == 1
-    assert len(spider.errors) == 1
-    assert "401" in spider.errors[0]
-    assert "authentication" in spider.errors[0]
-    assert mock_response.url in spider.errors[0]
-
-  def test_parse_page_records_http_403_with_url(self):
-    """parse_page should record the failing URL alongside a 403 status."""
-    spider = self._make_worker_spider(start_url="https://docs.example.com")
-
-    mock_response = Mock()
-    mock_response.url = "https://docs.example.com/forbidden-page"
-    mock_response.status = 403
-    mock_response.text = ""
-    mock_response.css = Mock(return_value=Mock(getall=Mock(return_value=[])))
-
-    list(spider.parse_page(mock_response))
-
-    assert spider.pages_failed == 1
-    assert "403" in spider.errors[0]
-    assert mock_response.url in spider.errors[0]
-
   def test_legacy_host_redirects_to_canonical_domain(self):
     """A crawl should follow links on the canonical domain after redirecting from a legacy host."""
     spider = self._make_worker_spider(start_url="https://legacy.example.com", crawl_mode="recursive")
@@ -1000,13 +955,13 @@ class TestWorkerSpiderPlaywrightMeta:
     return spider
 
   def test_build_request_meta_without_js_rendering(self):
-    """_build_request_meta should skip Playwright settings when JS rendering disabled."""
+    """_build_request_meta should return empty dict when JS rendering disabled."""
     spider = self._make_worker_spider(render_javascript=False)
 
     meta = spider._build_request_meta()
 
     assert "playwright" not in meta
-    assert meta == {"handle_httpstatus_all": True}
+    assert meta == {}
 
   def test_build_request_meta_with_js_rendering(self):
     """_build_request_meta should include Playwright settings when JS rendering enabled."""

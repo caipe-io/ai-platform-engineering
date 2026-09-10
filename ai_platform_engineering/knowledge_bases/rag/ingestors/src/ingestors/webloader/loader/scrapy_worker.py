@@ -161,12 +161,6 @@ class WorkerSpider(Spider):
         Meta dict for Request objects
     """
     meta = dict(extra_meta)
-    # Without this, Scrapy's HttpErrorMiddleware silently drops any non-2xx
-    # response (e.g. 401/403 from an auth-walled page) before it reaches
-    # parse_page/handle_error, so the failure never gets recorded in
-    # self.errors and the caller sees only a generic "No pages were
-    # crawled." instead of the real reason.
-    meta["handle_httpstatus_all"] = True
 
     if self.crawl_request.render_javascript:
       from scrapy_playwright.page import PageMethod
@@ -585,10 +579,7 @@ class WorkerSpider(Spider):
 
     # Handle non-200 responses
     if response.status != 200:
-      if response.status in (401, 403):
-        error_msg = f"HTTP {response.status} (page requires authentication): {response.url}"
-      else:
-        error_msg = f"HTTP {response.status}: {response.url}"
+      error_msg = f"Ignoring non-200 response ({response.status}): {response.url}"
       self._log(logging.WARNING, error_msg)
       self.pages_failed += 1
       if len(self.errors) < self.max_errors:
