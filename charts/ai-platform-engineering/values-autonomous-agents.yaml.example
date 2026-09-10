@@ -44,6 +44,18 @@ autonomous-agents:
     # Defaults track the in-release supervisor; override for an external one.
     # SUPERVISOR_URL: "http://external-supervisor-agent:8000"
     MONGODB_DATABASE: "caipe"
+    # Minimum gap between cron/interval fires. Webhook triggers are exempt.
+    MINIMUM_SCHEDULE_INTERVAL_SECONDS: "1800"
+    # Reject larger webhook bodies before parsing/signature verification.
+    WEBHOOK_MAX_PAYLOAD_BYTES: "1048576"
+    # Each task is a single-consumer FIFO. Bound queued work separately from
+    # execution concurrency across different tasks.
+    WEBHOOK_MAX_PENDING_PER_TASK: "100"
+    WEBHOOK_MAX_PENDING_PER_OWNER: "500"
+    WEBHOOK_MAX_PENDING_GLOBAL: "5000"
+    WEBHOOK_MAX_PENDING_PAYLOAD_BYTES_GLOBAL: "67108864"
+    WEBHOOK_MAX_CONCURRENT_PER_OWNER: "20"
+    WEBHOOK_MAX_CONCURRENT_GLOBAL: "100"
     # Uncomment when tags.dynamic-agents=true so autonomous tasks with a
     # dynamic_agent_id route through the user's custom agent:
     # DYNAMIC_AGENTS_URL: "http://external-dynamic-agents:8001"

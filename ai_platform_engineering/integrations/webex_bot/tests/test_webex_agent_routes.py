@@ -228,6 +228,160 @@ def test_wdm_bot_mention_uses_mention_route_without_at_prefix(monkeypatch) -> No
     assert deny is None
 
 
+def test_thread_reply_plain_message_excluded_from_message_mode_route(monkeypatch) -> None:
+    monkeypatch.setenv("WEBEX_AGENT_ROUTES_MODE", "db_only")
+    collection = _Collection(
+        [
+            {
+                "workspace_id": "CAIPE-WEBEX",
+                "space_id": "space12345",
+                "agent_id": "message-mode-agent",
+                "enabled": True,
+                "priority": 10,
+                "status": "active",
+                "users": {"enabled": True, "listen": "message"},
+            },
+        ]
+    )
+    resolver = WebexAgentRouteResolver(
+        collection_factory=lambda: collection,
+        openfga_agent_ids_factory=lambda _bot_id, _workspace_id, _space_id: ["message-mode-agent"],
+    )
+
+    async def _run() -> tuple[str | None, str | None]:
+        return await resolve_webex_agent_route(
+            bot_id="primary",
+            workspace_id="CAIPE-WEBEX",
+            space_id="space12345",
+            person_id="person1234",
+            text="just chatting, no mention here",
+            thread_parent_id="parent-message-id",
+            resolver=resolver,
+        )
+
+    agent_id, deny = asyncio.run(_run())
+
+    assert agent_id is None
+    assert deny is None
+
+
+def test_thread_reply_mention_still_matches_route(monkeypatch) -> None:
+    monkeypatch.setenv("WEBEX_AGENT_ROUTES_MODE", "db_only")
+    collection = _Collection(
+        [
+            {
+                "workspace_id": "CAIPE-WEBEX",
+                "space_id": "space12345",
+                "agent_id": "mention-agent",
+                "enabled": True,
+                "priority": 10,
+                "status": "active",
+                "users": {"enabled": True, "listen": "mention"},
+            },
+        ]
+    )
+    resolver = WebexAgentRouteResolver(
+        collection_factory=lambda: collection,
+        openfga_agent_ids_factory=lambda _bot_id, _workspace_id, _space_id: ["mention-agent"],
+    )
+
+    async def _run() -> tuple[str | None, str | None]:
+        return await resolve_webex_agent_route(
+            bot_id="primary",
+            workspace_id="CAIPE-WEBEX",
+            space_id="space12345",
+            person_id="person1234",
+            text="Primary please help",
+            was_bot_mentioned=True,
+            thread_parent_id="parent-message-id",
+            resolver=resolver,
+        )
+
+    agent_id, deny = asyncio.run(_run())
+
+    assert agent_id == "mention-agent"
+    assert deny is None
+
+
+def test_mention_only_thread_reply_matches_route_same_as_worded_mention(monkeypatch) -> None:
+    """A bare "@bot" reply to an earlier non-mention message in the same
+    thread must route identically to a worded mention: was_bot_mentioned is a
+    structural flag from Mercury, not a function of message text, so an
+    empty/mention-only body must not fall into the thread_parent_id message-mode
+    short-circuit that only applies when listen resolves to "message"."""
+    monkeypatch.setenv("WEBEX_AGENT_ROUTES_MODE", "db_only")
+    collection = _Collection(
+        [
+            {
+                "workspace_id": "CAIPE-WEBEX",
+                "space_id": "space12345",
+                "agent_id": "mention-agent",
+                "enabled": True,
+                "priority": 10,
+                "status": "active",
+                "users": {"enabled": True, "listen": "mention"},
+            },
+        ]
+    )
+    resolver = WebexAgentRouteResolver(
+        collection_factory=lambda: collection,
+        openfga_agent_ids_factory=lambda _bot_id, _workspace_id, _space_id: ["mention-agent"],
+    )
+
+    async def _run(text: str) -> tuple[str | None, str | None]:
+        return await resolve_webex_agent_route(
+            bot_id="primary",
+            workspace_id="CAIPE-WEBEX",
+            space_id="space12345",
+            person_id="person1234",
+            text=text,
+            was_bot_mentioned=True,
+            thread_parent_id="parent-message-id",
+            resolver=resolver,
+        )
+
+    for text in ("", "@bot"):
+        agent_id, deny = asyncio.run(_run(text))
+        assert agent_id == "mention-agent"
+        assert deny is None
+
+
+def test_top_level_plain_message_still_matches_message_mode_route(monkeypatch) -> None:
+    monkeypatch.setenv("WEBEX_AGENT_ROUTES_MODE", "db_only")
+    collection = _Collection(
+        [
+            {
+                "workspace_id": "CAIPE-WEBEX",
+                "space_id": "space12345",
+                "agent_id": "message-mode-agent",
+                "enabled": True,
+                "priority": 10,
+                "status": "active",
+                "users": {"enabled": True, "listen": "message"},
+            },
+        ]
+    )
+    resolver = WebexAgentRouteResolver(
+        collection_factory=lambda: collection,
+        openfga_agent_ids_factory=lambda _bot_id, _workspace_id, _space_id: ["message-mode-agent"],
+    )
+
+    async def _run() -> tuple[str | None, str | None]:
+        return await resolve_webex_agent_route(
+            bot_id="primary",
+            workspace_id="CAIPE-WEBEX",
+            space_id="space12345",
+            person_id="person1234",
+            text="just chatting, no mention here",
+            resolver=resolver,
+        )
+
+    agent_id, deny = asyncio.run(_run())
+
+    assert agent_id == "message-mode-agent"
+    assert deny is None
+
+
 def test_plain_group_message_route_mismatch_uses_plain_language() -> None:
     collection = _Collection(
         [

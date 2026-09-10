@@ -33,6 +33,11 @@ describe("SettingsPanel",() => {
     document.body.removeAttribute("data-font-size");
     document.body.removeAttribute("data-font-family");
     document.documentElement.removeAttribute("data-gradient-theme");
+    document.documentElement.style.removeProperty("--primary");
+    document.documentElement.style.removeProperty("--ring");
+    document.documentElement.style.removeProperty("--gradient-start");
+    document.documentElement.style.removeProperty("--gradient-mid");
+    document.documentElement.style.removeProperty("--gradient-end");
     mockTheme = "dark";
     mockConfig = {
       defaultFontSize: "medium",
@@ -99,6 +104,8 @@ describe("SettingsPanel",() => {
       expect(document.body).toHaveAttribute("data-font-size","x-large");
       expect(document.body).toHaveAttribute("data-font-family","source-sans");
       expect(document.documentElement).toHaveAttribute("data-gradient-theme","sunset");
+      expect(document.documentElement.style.getPropertyValue("--primary")).toBe("30 80% 55%");
+      expect(document.documentElement.style.getPropertyValue("--ring")).toBe("30 80% 55%");
       expect(mockSetTheme).toHaveBeenCalledWith("nord");
     });
   });

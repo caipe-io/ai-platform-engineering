@@ -96,6 +96,7 @@ it("paginates direct, team, and organization-admin notifications", async () => {
       { recipient_user_subjects: "requester-subject" },
       { recipient_team_slugs: { $in: ["reviewers"] } },
       { recipient_organization_admins: true },
+      { recipient_platform_users: true },
     ]),
   }));
   expect(cursor.skip).toHaveBeenCalledWith(20);
@@ -105,6 +106,64 @@ it("paginates direct, team, and organization-admin notifications", async () => {
     pagination: { page: 2, page_size: 20, total: 21, total_pages: 2 },
     notifications: [{ id: "notification-primary", read: false }],
   });
+});
+
+it("creates a global Platform notification without changing personal audiences",async () => {
+  const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+  mockGetCollection.mockResolvedValue({ updateOne });
+
+  await createInAppNotification({
+    eventKey: "platform-health:chat-runtime:incident-primary:opened",
+    recipientPlatformUsers: true,
+    title: "Chat Runtime is degraded",
+    message: "Two health audits reported a degraded runtime.",
+    severity: "warning",
+    category: "platform_health",
+    sourceLabel: "Platform",
+    lifecycleStatus: "active",
+  });
+
+  expect(updateOne).toHaveBeenCalledWith(
+    { event_key: "platform-health:chat-runtime:incident-primary:opened" },
+    expect.objectContaining({
+      $setOnInsert: expect.objectContaining({
+        recipient_user_subjects: [],
+        recipient_team_slugs: [],
+        recipient_platform_users: true,
+        category: "platform_health",
+        source_label: "Platform",
+        lifecycle_status: "active",
+      }),
+    }),
+    { upsert: true },
+  );
+});
+
+it("excludes Platform health notifications when an admin viewer opted out",async () => {
+  const cursor = {
+    sort: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    toArray: jest.fn().mockResolvedValue([]),
+  };
+  const collection = {
+    countDocuments: jest.fn().mockResolvedValue(0),
+    find: jest.fn().mockReturnValue(cursor),
+  };
+  mockGetCollection.mockResolvedValue(collection);
+
+  await listInAppNotifications("requester-subject",{
+    includePlatformNotifications: false,
+  });
+
+  const audience = collection.countDocuments.mock.calls[0][0];
+  expect(audience.category).toEqual({ $ne: "platform_health" });
+  expect(audience.$or).toEqual(expect.arrayContaining([
+    { recipient_user_subjects: "requester-subject" },
+    { recipient_team_slugs: { $in: ["reviewers"] } },
+    { recipient_organization_admins: true },
+    { recipient_platform_users: true },
+  ]));
 });
 
 it("marks only a notification in the viewer's audience as read", async () => {

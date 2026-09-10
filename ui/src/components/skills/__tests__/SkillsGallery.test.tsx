@@ -411,8 +411,8 @@ describe("SkillsGallery — search and filter", () => {
 
   it("filters by category picker", async () => {
     await renderGallery();
-    fireEvent.click(screen.getByRole("button", { name: /category filter/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Cloud" }));
+    fireEvent.click(screen.getByRole("combobox", { name: /category filter/i }));
+    fireEvent.click(await screen.findByRole("option", { name: "Cloud" }));
     expect(screen.getByText("Cost Explorer")).toBeInTheDocument();
     expect(screen.queryByText("DevOps Health Check")).not.toBeInTheDocument();
   });

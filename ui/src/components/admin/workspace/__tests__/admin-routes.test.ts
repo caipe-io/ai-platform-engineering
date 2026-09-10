@@ -24,11 +24,14 @@ describe("admin route registry", () => {
   it("uses canonical paths as the only destination lookup contract", () => {
     expect(findAdminDestinationByPath("/admin/platform/agents")?.id).toBe("agents");
     expect(findAdminDestinationByPath("/admin/platform/mcp-catalog")?.id).toBe("mcp");
-    expect(findAdminDestinationByPath("/admin/platform/autonomous")?.id).toBe("autonomous");
+    expect(findAdminDestinationByPath("/admin/security/autonomous-enablement")?.id).toBe(
+      "autonomous",
+    );
     expect(findAdminDestinationByPath("/admin/security/ai-review/")?.id).toBe("ai-review");
     expect(findAdminDestinationByPath("/admin/configuration/defaults")?.id).toBe("defaults");
     expect(findAdminDestinationByPath("/admin/configuration/announcements")?.id).toBe("announcements");
     expect(findAdminDestinationByPath("/admin/platform/defaults")).toBeUndefined();
+    expect(findAdminDestinationByPath("/admin/platform/autonomous")).toBeUndefined();
   });
 
   it("filters destinations by access and removes empty categories", () => {

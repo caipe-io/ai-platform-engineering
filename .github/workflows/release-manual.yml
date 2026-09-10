@@ -25,7 +25,7 @@ jobs:
       current_version: ${{ steps.validate.outputs.current_version }}
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -58,6 +58,35 @@ jobs:
           fi
 
           echo "✅ Version format is valid"
+
+      - name: 📰 Require a release post for the minor series
+        run: |
+          set -euo pipefail
+
+          VERSION="$RELEASE_VERSION"
+
+          # Release candidates ship before their series post is written; only a
+          # final release must have published notes to link to.
+          if [[ "$VERSION" == *-rc.* ]]; then
+            echo "⏭️  $VERSION is a release candidate — series post not required yet"
+            exit 0
+          fi
+
+          BASE_VERSION="${VERSION%%-*}"
+          SERIES_MAJOR_MINOR="${BASE_VERSION%.*}"
+          SERIES_SLUG="release-${SERIES_MAJOR_MINOR//./-}-0"
+
+          if compgen -G "docs/releases/*${SERIES_SLUG}.md" > /dev/null; then
+            echo "✅ Found release post for the ${SERIES_MAJOR_MINOR}.0 series"
+            exit 0
+          fi
+
+          echo "❌ ERROR: no release post for the ${SERIES_MAJOR_MINOR}.0 series"
+          echo "   Expected a file matching: docs/releases/*${SERIES_SLUG}.md"
+          echo "   Release notes are published once per minor series and are what"
+          echo "   the in-app About dialog and GitHub Release link to, so the post"
+          echo "   must land before $VERSION is tagged."
+          exit 1
 
       - name: 🔍 Get current version and validate
         id: validate
@@ -201,11 +230,21 @@ jobs:
           NEW_VERSION="$RELEASE_VERSION"
           echo "🔄 Creating DRAFT GitHub Release for $NEW_VERSION..."
 
+          # Release notes live once per minor series on the docs site; the release
+          # body points there instead of carrying a second hand-written narrative.
+          BASE_VERSION="${NEW_VERSION%%-*}"
+          SERIES_MAJOR_MINOR="${BASE_VERSION%.*}"
+          SERIES_URL="https://caipe.io/releases/release-${SERIES_MAJOR_MINOR}.0"
+
+          NOTES=$(printf '%s\n\n%s\n' \
+            "<!-- release-initiator:$RELEASE_INITIATOR -->" \
+            "📖 Release notes: [${SERIES_MAJOR_MINOR}.0 release notes]($SERIES_URL)")
+
           gh release create "$NEW_VERSION" \
             --repo "${{ github.repository }}" \
             --title "Release $NEW_VERSION" \
             --generate-notes \
-            --notes "<!-- release-initiator:$RELEASE_INITIATOR -->" \
+            --notes "$NOTES" \
             --draft
 
           echo "✅ Draft release created"

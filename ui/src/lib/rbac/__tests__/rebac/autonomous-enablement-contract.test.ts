@@ -1,8 +1,8 @@
 /**
  * Authorization-model contract for autonomous-agent enablement
  *
- * Layer 1: team eligibility = org tuple `team#member -> automation_eligible -> organization`.
- * Layer 2: per-agent grant = `agent.automator`, with `can_schedule = automator and can_use`.
+ * Team eligibility is a user entitlement inherited from any enabled team.
+ * Agent access remains independently enforced by `agent#can_use`.
  * Pinned in BOTH the authored `.fga` and the deployed chart JSON so they can't drift.
  */
 import { readFileSync } from "fs";
@@ -42,6 +42,15 @@ function hasTeamMember(types: DirectType[]): boolean {
   return types.some((t) => t.type === "team" && t.relation === "member");
 }
 
+function chartRelations(typeName: string): string[] {
+  const model = JSON.parse(readFileSync(CHART_JSON, "utf8")) as {
+    type_definitions: Array<{ type: string; relations?: Record<string, unknown> }>;
+  };
+  const definition = model.type_definitions.find((item) => item.type === typeName);
+  if (!definition) throw new Error(`${typeName} type missing from chart JSON`);
+  return Object.keys(definition.relations ?? {});
+}
+
 describe("autonomous-enablement model contract", () => {
   it(".fga: organization defines automation_eligible + can_automate", () => {
     const org = fgaTypeBlock("organization");
@@ -49,14 +58,17 @@ describe("autonomous-enablement model contract", () => {
     expect(org).toMatch(/define can_automate: automation_eligible or admin/);
   });
 
-  it(".fga: agent defines automator + can_schedule (automator and can_use)", () => {
+  it(".fga: agent access has no separate autonomous owner-team grant", () => {
     const agent = fgaTypeBlock("agent");
-    expect(agent).toMatch(/define automator: \[team#member, team#admin\]/);
-    expect(agent).toMatch(/define can_schedule: automator and can_use/);
+    expect(agent).toMatch(/define can_use:/);
+    expect(agent).not.toMatch(/define automator:/);
+    expect(agent).not.toMatch(/define can_schedule:/);
   });
 
-  it("chart JSON: automation_eligible + automator accept team#member", () => {
+  it("chart JSON mirrors the user entitlement model", () => {
     expect(hasTeamMember(chartDirectTypes("organization", "automation_eligible"))).toBe(true);
-    expect(hasTeamMember(chartDirectTypes("agent", "automator"))).toBe(true);
+    expect(chartRelations("organization")).toContain("can_automate");
+    expect(chartRelations("agent")).not.toContain("automator");
+    expect(chartRelations("agent")).not.toContain("can_schedule");
   });
 });

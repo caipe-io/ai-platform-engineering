@@ -71,8 +71,8 @@ See the full badge guide and how to claim yours → [Contributing & Badges](../c
 
 ## 🤝 Getting Help
 
-- **Issues**: [GitHub Issues](https://github.com/cnoe-io/ai-platform-engineering/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/cnoe-io/ai-platform-engineering/discussions)
+- **Issues**: [GitHub Issues](https://github.com/caipe-io/ai-platform-engineering/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/caipe-io/ai-platform-engineering/discussions)
 - **Community**: [CAIPE community meetings](../community/index.md)
 - **Slack**: [Join the CAIPE community channel on CNCF Slack](https://cloud-native.slack.com/archives/C08N0AKR52S)
 

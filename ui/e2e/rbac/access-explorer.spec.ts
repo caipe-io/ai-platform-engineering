@@ -412,6 +412,9 @@ test.describe("mocked Access Explorer browser regression", () => {
     await expect(page.getByTestId("access-explorer-search-stage")).toHaveCount(0);
     await expect(page.getByTestId("access-explorer-header")).toBeVisible();
     await expect(page.getByTestId("feature-check-panel")).toBeVisible();
+    const featureAgentPicker = page.getByRole("combobox", { name: "Feature check agent" });
+    await featureAgentPicker.click();
+    await page.getByRole("option", { name: "Source Control Agent" }).click();
     await expect(page.getByText("Example User can perform this feature path.")).toBeVisible();
     await expect(page.getByText("Actor can invoke agent")).toBeVisible();
     await expect(page.getByText("Agent can call MCP/tool")).toBeVisible();

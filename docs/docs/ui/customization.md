@@ -204,7 +204,7 @@ Control which links appear in the application header.
 
 ```bash
 DOCS_URL=https://docs.caipe.example.com
-SOURCE_URL=https://github.com/cnoe-io/ai-platform-engineering
+SOURCE_URL=https://github.com/caipe-io/ai-platform-engineering
 ```
 
 ## Login Page Customization

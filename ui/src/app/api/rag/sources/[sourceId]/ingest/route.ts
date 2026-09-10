@@ -6,13 +6,16 @@ import {
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
 import {
+  getRagServerUrl,
+  triggerIngestion,
+} from "@/lib/rag-source-ingestion.server";
+import {
   enforceRagIngestorLimits,
   getRagIngestorLimits,
 } from "@/lib/rag-ingestor-limits.server";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
 import type { IngestionSourceConfig } from "@/types/ingestion-source";
 import { NextRequest } from "next/server";
-import { triggerIngestion } from "../../route";
 
 const COLLECTION_NAME = "rag_ingestion_sources";
 
@@ -23,14 +26,6 @@ const RELOAD_PATH: Record<IngestionSourceConfig["source_type"], string> = {
   web_url: "/v1/ingest/webloader/reload",
   webex_space: "/v1/ingest/webex/reload",
 };
-
-function getRagServerUrl(): string {
-  return (
-    process.env.RAG_SERVER_URL ||
-    process.env.NEXT_PUBLIC_RAG_URL ||
-    "http://localhost:9446"
-  );
-}
 
 async function ragDatasourceExists(
   source: IngestionSourceConfig,

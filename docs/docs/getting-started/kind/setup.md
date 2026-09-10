@@ -15,12 +15,12 @@ This guide gets you from zero to a running **CAIPE** (Community AI Platform Engi
 No clone required. Run this in your terminal and follow the prompts:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cnoe-io/ai-platform-engineering/main/setup-caipe.sh | bash
+curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh | bash
 ```
 
 The interactive script will ask for your LLM provider, API key, and optional components (RAG, tracing, persistence). That's it.
 
-> **Want to inspect the script first?** View it at [`setup-caipe.sh`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/setup-caipe.sh) before running.
+> **Want to inspect the script first?** View it at [`setup-caipe.sh`](https://github.com/caipe-io/ai-platform-engineering/blob/main/setup-caipe.sh) before running.
 
 <iframe src="https://asciinema.org/a/845278/iframe" width="100%" height="600" style={{border: 'none', borderRadius: '8px', overflow: 'hidden'}} scrolling="no" allowFullScreen />
 

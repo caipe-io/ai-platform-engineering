@@ -588,6 +588,7 @@ describe('PATCH /api/settings/notifications', () => {
       body: JSON.stringify({
         email_enabled: false,
         weekly_summary: true,
+        platform_health: false,
       }),
     });
 
@@ -597,6 +598,7 @@ describe('PATCH /api/settings/notifications', () => {
     const $set = col.updateOne.mock.calls[0][1].$set;
     expect($set['notifications.email_enabled']).toBe(false);
     expect($set['notifications.weekly_summary']).toBe(true);
+    expect($set['notifications.platform_health']).toBe(false);
     expect($set.updated_at).toBeInstanceOf(Date);
   });
 });

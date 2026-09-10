@@ -74,3 +74,42 @@ it("remeasures both the trigger and async content while open", () => {
     writable: true,
   });
 });
+
+it("closes on Escape and returns focus to the trigger", () => {
+  render(
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button">Open picker</button>
+      </PopoverTrigger>
+      <PopoverContent>
+        <button type="button">Selectable option</button>
+      </PopoverContent>
+    </Popover>,
+  );
+
+  const trigger = screen.getByRole("button", { name: "Open picker" });
+  fireEvent.click(trigger);
+  screen.getByRole("button", { name: "Selectable option" }).focus();
+  fireEvent.keyDown(document, { key: "Escape" });
+
+  expect(
+    screen.queryByRole("button", { name: "Selectable option" }),
+  ).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+});
+
+it("does not open an aria-disabled custom trigger", () => {
+  render(
+    <Popover>
+      <PopoverTrigger asChild>
+        <div role="button" aria-disabled="true" tabIndex={-1}>
+          Disabled picker
+        </div>
+      </PopoverTrigger>
+      <PopoverContent>Picker content</PopoverContent>
+    </Popover>,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Disabled picker" }));
+  expect(screen.queryByText("Picker content")).not.toBeInTheDocument();
+});

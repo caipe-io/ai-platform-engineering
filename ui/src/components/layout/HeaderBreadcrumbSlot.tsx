@@ -9,8 +9,11 @@
  */
 
 import {
+  useCallback,
   createContext,
   useContext,
+  useId,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -19,6 +22,8 @@ import {
 import { createPortal } from "react-dom";
 
 interface HeaderBreadcrumbSlotContextValue {
+  hasPortalContent: boolean;
+  registerPortal: (id: string) => () => void;
   setTarget: RefCallback<HTMLDivElement>;
   target: HTMLDivElement | null;
 }
@@ -34,7 +39,33 @@ export function HeaderBreadcrumbSlotProvider({
   children: ReactNode;
 }) {
   const [target, setTarget] = useState<HTMLDivElement | null>(null);
-  const value = useMemo(() => ({ setTarget, target }), [target]);
+  const [activePortalIds, setActivePortalIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const registerPortal = useCallback((id: string) => {
+    setActivePortalIds((current) => {
+      const next = new Set(current);
+      next.add(id);
+      return next;
+    });
+
+    return () => {
+      setActivePortalIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    };
+  }, []);
+  const value = useMemo(
+    () => ({
+      hasPortalContent: activePortalIds.size > 0,
+      registerPortal,
+      setTarget,
+      target,
+    }),
+    [activePortalIds.size, registerPortal, target],
+  );
 
   return (
     <HeaderBreadcrumbSlotContext.Provider value={value}>
@@ -43,11 +74,11 @@ export function HeaderBreadcrumbSlotProvider({
   );
 }
 
-/** Used once, by AppHeader, to mark where portaled breadcrumbs should land. */
-export function useHeaderBreadcrumbSlotRef():
-  | RefCallback<HTMLDivElement>
+/** Read the slot state when the header also needs to render a route fallback. */
+export function useHeaderBreadcrumbSlot():
+  | HeaderBreadcrumbSlotContextValue
   | undefined {
-  return useContext(HeaderBreadcrumbSlotContext)?.setTarget;
+  return useContext(HeaderBreadcrumbSlotContext);
 }
 
 /**
@@ -61,6 +92,17 @@ export function HeaderBreadcrumbPortal({
   children: ReactNode;
 }) {
   const context = useContext(HeaderBreadcrumbSlotContext);
-  if (!context?.target) return null;
+  const portalId = useId();
+  const registerPortal = context?.registerPortal;
+
+  useLayoutEffect(() => {
+    if (!registerPortal) return;
+    return registerPortal(portalId);
+  }, [portalId, registerPortal]);
+
+  // Component tests and reusable fragments may render outside the app shell.
+  // Preserve the breadcrumb inline in that case instead of hiding navigation.
+  if (!context) return <>{children}</>;
+  if (!context.target) return null;
   return createPortal(children, context.target);
 }

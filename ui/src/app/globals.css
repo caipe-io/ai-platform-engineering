@@ -474,6 +474,15 @@ html[data-navigation-pending="true"] * {
     @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 
+  /* Text-entry controls use their border as the focus indicator. A surrounding
+     halo obscures adjacent labels and duplicates the field boundary. */
+  input:not(:disabled):not([type="button"]):not([type="checkbox"]):not([type="color"]):not([type="file"]):not([type="image"]):not([type="radio"]):not([type="range"]):not([type="reset"]):not([type="submit"]):focus-visible,
+  textarea:not(:disabled):focus-visible,
+  select:not(:disabled):focus-visible {
+    border-color: hsl(var(--foreground) / 50%);
+    box-shadow: none;
+  }
+
   /* Ensure proper text truncation for all fonts (except Source Sans which handles it naturally) */
   /* These fonts have wider character widths and need explicit constraints */
   [data-font-family="inter"] .truncate,
@@ -528,46 +537,9 @@ html[data-navigation-pending="true"] * {
     transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  /* Sparkle accent that pops next to the wordmark on hover/focus, layered
-     on top of the per-letter color ease above rather than replacing it. */
-  .brand-sparkle {
-    color: var(--gradient-to);
-    opacity: 0;
-    transform: translate3d(-0.2rem, 0.2rem, 0) scale(0.35) rotate(-30deg);
-    transform-origin: center;
-  }
-
-  .brand-link:is(:hover, :focus-visible) .brand-sparkle {
-    animation: brand-sparkle-finish 1250ms cubic-bezier(0.4, 0, 0.2, 1) both;
-  }
-
-  @keyframes brand-sparkle-finish {
-    0%, 64% {
-      opacity: 0;
-      transform: translate3d(-0.2rem, 0.2rem, 0) scale(0.35) rotate(-30deg);
-    }
-    76% {
-      opacity: 1;
-      transform: translate3d(0, 0, 0) scale(1.15) rotate(8deg);
-      filter: drop-shadow(0 0 0.3rem color-mix(in srgb, var(--gradient-to) 70%, transparent));
-    }
-    88% {
-      opacity: 0.9;
-      transform: translate3d(0.1rem, -0.1rem, 0) scale(0.85) rotate(20deg);
-    }
-    100% {
-      opacity: 0;
-      transform: translate3d(0.2rem, -0.2rem, 0) scale(0.45) rotate(35deg);
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .brand-letter {
       transition: none;
-    }
-
-    .brand-link:is(:hover, :focus-visible) .brand-sparkle {
-      animation: none;
     }
   }
 
@@ -960,9 +932,7 @@ pre code.hljs {
     color-mix(in srgb, hsl(var(--primary)) 2%, hsl(var(--background)))
   );
   border-color: color-mix(in srgb, hsl(var(--primary)) 45%, hsl(var(--border)));
-  box-shadow:
-    0 0 0 3px hsl(var(--ring) / 8%),
-    0 12px 28px hsl(var(--primary) / 8%);
+  box-shadow: 0 12px 28px hsl(var(--primary) / 8%);
 }
 
 [data-theme="light"] .home-composer-field {
@@ -974,7 +944,6 @@ pre code.hljs {
   border-color: color-mix(in srgb, hsl(var(--primary)) 48%, hsl(var(--border)));
   box-shadow:
     inset 0 1px rgb(255 255 255 / 72%),
-    0 0 0 3px hsl(var(--ring) / 8%),
     0 12px 28px hsl(var(--primary) / 8%);
 }
 

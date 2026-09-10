@@ -13,7 +13,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { IngestionSourceConfigWithPermissions } from "@/types/ingestion-source";
-import { Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { Eye, Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { DatasourceAccessBadges } from "./DatasourceAccessBadges";
 import type { PendingPublicationRequestView } from "@/types/publication-approval";
@@ -124,7 +124,7 @@ export function IngestionSourceCard({
               <Badge
                 variant="outline"
                 className="gap-1 bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30"
-                title="Loaded from config.yaml - cannot be edited"
+                title="Loaded from app-config.yaml — view only"
               >
                 Config
               </Badge>
@@ -167,12 +167,17 @@ export function IngestionSourceCard({
               size="icon"
               className="h-8 w-8"
               onClick={() => onEdit(source)}
-              title="Edit"
+              title={source.config_driven ? "View" : "Edit"}
+              aria-label={source.config_driven ? `View ${source.name}` : `Edit ${source.name}`}
             >
-              <Pencil className="h-4 w-4" />
+              {source.config_driven ? (
+                <Eye className="h-4 w-4" />
+              ) : (
+                <Pencil className="h-4 w-4" />
+              )}
             </Button>
           )}
-          {canManage &&
+          {canManage && !source.config_driven &&
             (pendingDelete ? (
               <div className="flex items-center gap-1 rounded-full border border-destructive/20 bg-destructive/10 px-2 py-1">
                 <span className="max-w-[7rem] truncate text-xs font-medium text-destructive">

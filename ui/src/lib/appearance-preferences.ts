@@ -67,6 +67,13 @@ function isOption<Value extends string>(
   return typeof value === "string" && options.some((option) => option.id === value);
 }
 
+function hslComponents(color: string): string | null {
+  const match = color.match(
+    /^hsl\(\s*([-+]?\d*\.?\d+)\s*[, ]\s*([-+]?\d*\.?\d+)%\s*[, /]\s*([-+]?\d*\.?\d+)%/i,
+  );
+  return match ? `${match[1]} ${match[2]}% ${match[3]}%` : null;
+}
+
 export function getDefaultAppearancePreferences(): AppearancePreferences {
   const configuredTheme = getConfig("defaultTheme");
   return {
@@ -159,9 +166,23 @@ export function applyFontSize(value: FontSize): void {
 export function applyGradientTheme(value: GradientTheme): void {
   const selected = gradientThemes.find((theme) => theme.id === value);
   if (!selected) return;
-  document.documentElement.style.setProperty("--gradient-from",selected.from);
-  document.documentElement.style.setProperty("--gradient-to",selected.to);
-  document.documentElement.setAttribute("data-gradient-theme",value);
+  const root = document.documentElement;
+  root.style.setProperty("--gradient-from",selected.from);
+  root.style.setProperty("--gradient-to",selected.to);
+
+  // Primary controls are part of the selected accent system, so buttons,
+  // focus rings, selections, and active settings choices use the same hue.
+  const from = hslComponents(selected.from);
+  const to = hslComponents(selected.to);
+  if (from) {
+    root.style.setProperty("--primary",from);
+    root.style.setProperty("--ring",from);
+    root.style.setProperty("--gradient-start",from);
+    root.style.setProperty("--gradient-mid",from);
+  }
+  if (to) root.style.setProperty("--gradient-end",to);
+
+  root.setAttribute("data-gradient-theme",value);
   localStorage.setItem(STORAGE_KEYS.gradientTheme,value);
 }
 

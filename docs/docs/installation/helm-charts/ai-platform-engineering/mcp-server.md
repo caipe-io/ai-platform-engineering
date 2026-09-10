@@ -14,17 +14,17 @@ Deploys one agent's MCP server (Deployment + Service) for CAIPE
 
 | | |
 |---|---|
-| **Version** | `0.6.0` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.6.0
+helm install mcp-server oci://ghcr.io/caipe-io/charts/mcp-server --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.6.0
+helm upgrade mcp-server oci://ghcr.io/caipe-io/charts/mcp-server --version 1.0.0
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.6.0 \
+helm install mcp-server oci://ghcr.io/caipe-io/charts/mcp-server --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.6.0 \
+helm install mcp-server oci://ghcr.io/caipe-io/charts/mcp-server --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.6.0
+helm show values oci://ghcr.io/caipe-io/charts/mcp-server --version 1.0.0
 ```
 
 ## Reading the Values Table

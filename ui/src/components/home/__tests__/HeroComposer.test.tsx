@@ -2,12 +2,11 @@
  * Unit tests for HeroComposer
  *
  * Tests:
- * - Renders the heading and textarea; no longer renders the removed
- *   "Starts a new chat with the agent best suited..." caption
- * - Disables the send button when the input is empty, enables once typed
+ * - Renders the heading, textarea, agent picker, and attachment control
+ * - Enables sending for text or supported attachments
  * - Resolves the default agent on mount and passes it to AgentSelector
  * - Submitting uses the resolved/picked agent id, creates a conversation,
- *   stashes the pending message, and navigates to /chat/{id}
+ *   stashes the pending turn, and navigates to /chat/{id}
  * - Falls back to resolveUsableChatAgentId() if no default resolved yet
  * - Surfaces a toast and re-enables the composer on failure
  */
@@ -102,7 +101,7 @@ describe('HeroComposer', () => {
     expect(screen.getByTestId('hero-composer-input')).toBeInTheDocument()
   })
 
-  it('no longer renders the removed helper caption', () => {
+  it('keeps the composer concise', () => {
     render(<HeroComposer />)
     expect(
       screen.queryByText('Starts a new chat with the agent best suited to your request.'),
@@ -118,6 +117,29 @@ describe('HeroComposer', () => {
     render(<HeroComposer />)
     fireEvent.change(screen.getByTestId('hero-composer-input'), { target: { value: 'How do I deploy?' } })
     expect(screen.getByTestId('hero-composer-send')).not.toBeDisabled()
+  })
+
+  it('places a working attachment control immediately before Send', async () => {
+    render(<HeroComposer />)
+    const attach = screen.getByRole('button', { name: 'Attach files' })
+    const send = screen.getByTestId('hero-composer-send')
+    expect(attach.nextElementSibling).toBe(send)
+    expect(screen.queryByTestId('icon-Plus')).not.toBeInTheDocument()
+
+    const file = new File(['hello'], 'example.txt', { type: 'text/plain' })
+    fireEvent.change(screen.getByTestId('hero-composer-file-input'), {
+      target: { files: [file] },
+    })
+
+    expect(await screen.findByText('example.txt')).toBeInTheDocument()
+    expect(send).not.toBeDisabled()
+    fireEvent.click(send)
+
+    await waitFor(() => expect(mockSetPendingFirstMessage).toHaveBeenCalledWith(
+      'new-conv-id',
+      '',
+      [expect.objectContaining({ name: 'example.txt', mime_type: 'text/plain' })],
+    ))
   })
 
   it('resolves the default agent on mount and passes it to AgentSelector', async () => {
@@ -143,7 +165,7 @@ describe('HeroComposer', () => {
     fireEvent.click(screen.getByTestId('hero-composer-send'))
 
     await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledWith('default-agent'))
-    expect(mockSetPendingFirstMessage).toHaveBeenCalledWith('new-conv-id', 'How do I deploy?')
+    expect(mockSetPendingFirstMessage).toHaveBeenCalledWith('new-conv-id', 'How do I deploy?', [])
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/chat/new-conv-id'))
     expect(mockResolveUsableChatAgentId).not.toHaveBeenCalled()
   })

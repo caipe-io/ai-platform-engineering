@@ -10,10 +10,8 @@ import { getConfig } from "@/lib/config";
 export interface AutonomousCapability {
   /**
    * Layer 1 eligibility -- the caller belongs to an autonomous-eligible team
-   * (or is an org admin). This, not per-agent `can_schedule`, decides whether
-   * the Autonomous nav entry appears: a member of an eligible team must be
-   * able to reach the page before any agent has been enabled, so the page can
-   * tell them to ask their team admin.
+   * (or is an org admin). This decides whether the Autonomous nav entry appears;
+   * the list itself is independently filtered to agents the caller can use.
    */
   canUseAutonomous: boolean;
   loading: boolean;

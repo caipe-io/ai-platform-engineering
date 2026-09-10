@@ -16,7 +16,7 @@ serviceAccount:
 
 # -- Flat key-value map of environment variables (non-sensitive).
 # Injected via ConfigMap envFrom. Sensitive values belong in existingSecret
-# or externalSecrets (WEBEX_INTEGRATION_BOT_ACCESS_TOKEN, KEYCLOAK_* secrets, WEBEX_LINK_HMAC_SECRET, …).
+# or externalSecrets (WEBEX_INTEGRATION_BOT_ACCESS_TOKEN, KEYCLOAK_* secrets, …).
 config:
   APP_NAME: "CAIPE"
   CAIPE_API_URL: ""
@@ -99,10 +99,6 @@ externalSecrets:
     #   remoteRef:
     #     key: prod/webex-bot
     #     property: webhook_secret
-    # - secretKey: WEBEX_LINK_HMAC_SECRET
-    #   remoteRef:
-    #     key: prod/webex-bot
-    #     property: link_hmac_secret
     # - secretKey: KEYCLOAK_WEBEX_BOT_CLIENT_SECRET
     #   remoteRef:
     #     key: prod/webex-bot

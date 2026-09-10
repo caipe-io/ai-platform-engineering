@@ -779,6 +779,10 @@ async def authorize_source_ingestion(
   ongoing Owner access.
   Existing datasources continue through the normal connector/config gate.
   """
+  # The platform service starts declaratively seeded sources only after the UI
+  # has preprovisioned their management and search policy.
+  if ownership_preprovisioned and is_trusted_ingestor_service(user):
+    return
   if existing_datasource is not None:
     await check_connector_configuration_access(user, datasource_id)
   elif ownership_preprovisioned:
@@ -2252,6 +2256,86 @@ def _validate_local_file_batch(files: list[tuple[str, bytes]]) -> None:
     raise HTTPException(status_code=413, detail=f"Upload exceeds the {max_local_file_total_upload_bytes} byte batch limit")
 
 
+def _bound_local_file_chunk_params(chunk_size: int, chunk_overlap: int) -> tuple[int, int]:
+  bounded_chunk_size = max(100, min(chunk_size, 100000))
+  bounded_chunk_overlap = max(0, min(chunk_overlap, 10000, bounded_chunk_size - 1))
+  return bounded_chunk_size, bounded_chunk_overlap
+
+
+async def _ingest_local_file_uploads(
+  *,
+  job_id: str,
+  datasource_id: str,
+  uploads: list[tuple[UploadFile, str, bytes, str, str]],
+  description: str,
+  fresh_until: int,
+  chunk_size: int,
+  chunk_overlap: int,
+  user: UserContext,
+  success_message: str,
+  failure_message: str,
+) -> None:
+  """Build documents from validated uploads, ingest them, and finalize the job."""
+  now = int(time.time())
+  documents = []
+  for upload_file, filename, content, text, document_type in uploads:
+    document_metadata = {
+      "document_id": f"{datasource_id}__{hashlib.sha256(filename.encode()).hexdigest()[:8]}",
+      "datasource_id": datasource_id,
+      "ingestor_id": LOCAL_FILE_INGESTOR_ID,
+      "title": filename,
+      "description": description or "",
+      "is_structured_entity": False,
+      "document_type": document_type,
+      "document_ingested_at": now,
+      "fresh_until": fresh_until,
+      "metadata": {
+        "source": filename,
+        "filename": filename,
+        "content_type": upload_file.content_type,
+        "byte_size": len(content),
+      },
+    }
+    documents.append(Document(page_content=text, metadata=document_metadata))
+    logger.info(
+      "local_file_upload accepted filename=%s content_type=%s bytes=%d document_type=%s datasource_id=%s user=%s",
+      filename,
+      upload_file.content_type,
+      len(content),
+      document_type,
+      datasource_id,
+      user.email,
+    )
+
+  try:
+    await ingestor.ingest_documents(
+      ingestor_id=LOCAL_FILE_INGESTOR_ID,
+      datasource_id=datasource_id,
+      job_id=job_id,
+      documents=documents,
+      fresh_until=fresh_until,
+      chunk_overlap=chunk_overlap,
+      chunk_size=chunk_size,
+    )
+    await jobmanager.increment_document_count(job_id, len(documents))
+    await jobmanager.upsert_job(
+      job_id,
+      status=JobStatus.COMPLETED,
+      message=success_message,
+      total=len(uploads),
+      datasource_id=datasource_id,
+    )
+  except Exception as exc:
+    await jobmanager.increment_failure(job_id, message=str(exc))
+    await jobmanager.upsert_job(
+      job_id,
+      status=JobStatus.FAILED,
+      message=failure_message,
+      datasource_id=datasource_id,
+    )
+    raise
+
+
 @app.post("/v1/ingest/local-file", status_code=status.HTTP_202_ACCEPTED)
 async def ingest_local_file(
   request: Request,
@@ -2331,8 +2415,7 @@ async def ingest_local_file(
   if not success:
     raise HTTPException(status_code=500, detail="Failed to create job")
 
-  bounded_chunk_size = max(100, min(chunk_size, 100000))
-  bounded_chunk_overlap = max(0, min(chunk_overlap, 10000, bounded_chunk_size - 1))
+  bounded_chunk_size, bounded_chunk_overlap = _bound_local_file_chunk_params(chunk_size, chunk_overlap)
   now = int(time.time())
   first_filename = uploads[0][1]
   datasource_name = first_filename if len(uploads) == 1 else f"{first_filename} + {len(uploads) - 1} files"
@@ -2374,67 +2457,138 @@ async def ingest_local_file(
   await metadata_storage.store_datasource_info(datasource_info)
 
   fresh_until = get_fresh_until(datasource_info.reload_interval)
-  documents = []
-  for upload_file, filename, content, text, document_type in uploads:
-    document_metadata = {
-      "document_id": f"{datasource_id}__{hashlib.sha256(filename.encode()).hexdigest()[:8]}",
-      "datasource_id": datasource_id,
-      "ingestor_id": LOCAL_FILE_INGESTOR_ID,
-      "title": filename,
-      "description": description or "",
-      "is_structured_entity": False,
-      "document_type": document_type,
-      "document_ingested_at": now,
-      "fresh_until": fresh_until,
-      "metadata": {
-        "source": filename,
-        "filename": filename,
-        "content_type": upload_file.content_type,
-        "byte_size": len(content),
-      },
-    }
-    documents.append(Document(page_content=text, metadata=document_metadata))
-    logger.info(
-      "local_file_upload accepted filename=%s content_type=%s bytes=%d document_type=%s datasource_id=%s user=%s",
-      filename,
-      upload_file.content_type,
-      len(content),
-      document_type,
-      datasource_id,
-      user.email,
-    )
-
-  try:
-    await ingestor.ingest_documents(
-      ingestor_id=LOCAL_FILE_INGESTOR_ID,
-      datasource_id=datasource_id,
-      job_id=job_id,
-      documents=documents,
-      fresh_until=fresh_until,
-      chunk_overlap=bounded_chunk_overlap,
-      chunk_size=bounded_chunk_size,
-    )
-    await jobmanager.upsert_job(
-      job_id,
-      status=JobStatus.COMPLETED,
-      message="Uploaded file ingested successfully" if len(uploads) == 1 else f"Uploaded {len(uploads)} files ingested successfully",
-      total=len(uploads),
-      datasource_id=datasource_id,
-    )
-  except Exception as exc:
-    await jobmanager.increment_failure(job_id, message=str(exc))
-    await jobmanager.upsert_job(
-      job_id,
-      status=JobStatus.FAILED,
-      message="Uploaded file ingestion failed",
-      datasource_id=datasource_id,
-    )
-    raise
+  await _ingest_local_file_uploads(
+    job_id=job_id,
+    datasource_id=datasource_id,
+    uploads=uploads,
+    description=description,
+    fresh_until=fresh_until,
+    chunk_size=bounded_chunk_size,
+    chunk_overlap=bounded_chunk_overlap,
+    user=user,
+    success_message="Uploaded file ingested successfully" if len(uploads) == 1 else f"Uploaded {len(uploads)} files ingested successfully",
+    failure_message="Uploaded file ingestion failed",
+  )
 
   return {
     "datasource_id": datasource_id,
     "job_id": job_id,
     "message": "Local file ingested successfully" if len(uploads) == 1 else "Local files ingested successfully",
+  }
+
+
+@app.post("/v1/ingest/local-file/reupload", status_code=status.HTTP_202_ACCEPTED)
+async def reupload_local_file(
+  datasource_id: str = Form(...),
+  files: List[UploadFile] = File(..., alias="file"),
+  chunk_size: Optional[int] = Form(None),
+  chunk_overlap: Optional[int] = Form(None),
+  user: UserContext = Depends(require_authenticated_user),
+):
+  """Replace the content of an existing local-file data source with a new upload."""
+  if not metadata_storage or not jobmanager or not ingestor or not vector_db:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+  if graph_rag_enabled and not data_graph_db:
+    raise HTTPException(status_code=500, detail="Server not initialized")
+
+  existing = await metadata_storage.get_datasource_info(datasource_id)
+  if not existing:
+    raise HTTPException(status_code=404, detail="Datasource not found")
+  if existing.source_type != "local_file":
+    raise HTTPException(status_code=400, detail="Only file datasources support re-upload")
+
+  await check_datasource_management_access(user, datasource_id)
+
+  uploads: list[tuple[UploadFile, str, bytes, str, str]] = []
+  for upload_file in files:
+    content = await upload_file.read()
+    try:
+      filename = _validate_local_file_upload(upload_file, content)
+      text, document_type = _extract_local_file_text(filename, upload_file.content_type, content)
+    except HTTPException as exc:
+      safe_filename = _safe_upload_filename(upload_file.filename)
+      logger.warning(
+        "local_file_reupload rejected filename=%s content_type=%s bytes=%d status=%d detail=%s user=%s",
+        safe_filename,
+        upload_file.content_type,
+        len(content),
+        exc.status_code,
+        exc.detail,
+        user.email,
+      )
+      raise
+    uploads.append((upload_file, filename, content, text, document_type))
+
+  _validate_local_file_batch([(filename, content) for _, filename, content, _, _ in uploads])
+  total_bytes = sum(len(content) for _, _, content, _, _ in uploads)
+
+  jobs = await jobmanager.get_jobs_by_datasource(datasource_id)
+  if jobs and any(job.status == JobStatus.IN_PROGRESS for job in jobs):
+    raise HTTPException(status_code=400, detail="Cannot re-upload while an ingestion job is in progress.")
+
+  await vector_db.adelete(expr=f"datasource_id == {VectorDBQueryService._quote_string(datasource_id)}")
+  if graph_rag_enabled and data_graph_db:
+    await data_graph_db.remove_entity(None, {DATASOURCE_ID_KEY: datasource_id})
+
+  bounded_chunk_size, bounded_chunk_overlap = _bound_local_file_chunk_params(
+    chunk_size if chunk_size is not None else (existing.default_chunk_size or 10000),
+    chunk_overlap if chunk_overlap is not None else (existing.default_chunk_overlap or 2000),
+  )
+
+  job_id = str(uuid.uuid4())
+  success = await jobmanager.upsert_job(
+    job_id,
+    status=JobStatus.IN_PROGRESS,
+    message="Re-uploading file..." if len(uploads) == 1 else f"Re-uploading {len(uploads)} files...",
+    total=len(uploads),
+    datasource_id=datasource_id,
+  )
+  if not success:
+    raise HTTPException(status_code=500, detail="Failed to create job")
+
+  now = int(time.time())
+  first_filename = uploads[0][1]
+  datasource_name = first_filename if len(uploads) == 1 else f"{first_filename} + {len(uploads) - 1} files"
+  file_metadata = [
+    {
+      "filename": filename,
+      "content_type": upload_file.content_type,
+      "document_type": document_type,
+      "byte_size": len(content),
+    }
+    for upload_file, filename, content, _, document_type in uploads
+  ]
+  existing.name = datasource_name
+  existing.default_chunk_size = bounded_chunk_size
+  existing.default_chunk_overlap = bounded_chunk_overlap
+  existing.last_updated = now
+  existing.metadata = {
+    **(existing.metadata or {}),
+    "filename": first_filename,
+    "file_count": len(uploads),
+    "total_byte_size": total_bytes,
+    "files": file_metadata,
+  }
+  await metadata_storage.store_datasource_info(existing)
+
+  fresh_until = get_fresh_until(existing.reload_interval)
+  await _ingest_local_file_uploads(
+    job_id=job_id,
+    datasource_id=datasource_id,
+    uploads=uploads,
+    description=existing.description,
+    fresh_until=fresh_until,
+    chunk_size=bounded_chunk_size,
+    chunk_overlap=bounded_chunk_overlap,
+    user=user,
+    success_message="Re-uploaded file ingested successfully" if len(uploads) == 1 else f"Re-uploaded {len(uploads)} files ingested successfully",
+    failure_message="Re-uploaded file ingestion failed",
+  )
+
+  return {
+    "datasource_id": datasource_id,
+    "job_id": job_id,
+    "message": "Local file re-uploaded successfully" if len(uploads) == 1 else "Local files re-uploaded successfully",
   }
 
 

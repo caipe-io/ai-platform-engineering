@@ -1,27 +1,18 @@
 #!/usr/bin/env python3
-"""
-Webex message ingestor for RAG.
-Fetches messages from configured Webex spaces and ingests them as documents.
-Each space becomes a datasource, and messages are grouped into thread-based documents.
-"""
+"""Webex message ingestor for persisted and on-demand RAG datasources."""
 
 import os
-import json
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from langchain_core.documents import Document
 
 from common.ingestor import IngestorBuilder, Client
-from common.ingestor_listener import (
-  configured_reload_interval,
-  reload_persisted_datasources,
-  run_ingestor_listener,
-)
+from common.ingestor_listener import reload_persisted_datasources, run_ingestor_listener
 from common.models.rag import DataSourceInfo, DocumentMetadata
 from common.models.server import (
   WebexIngestRequest,
@@ -40,15 +31,6 @@ init_delay = int(os.environ.get("INIT_DELAY_SECONDS", "0"))
 WEBEX_API_BASE = "https://webexapis.com/v1"
 
 MAX_INGESTION_TASKS = int(os.environ.get("WEBEX_MAX_INGESTION_TASKS", "5"))
-
-
-def configured_spaces() -> Dict[str, Dict[str, Any]]:
-  """Return the legacy WEBEX_SPACES mapping, or an empty mapping."""
-  try:
-    parsed = json.loads(os.environ.get("WEBEX_SPACES", "{}"))
-  except json.JSONDecodeError:
-    return {}
-  return parsed if isinstance(parsed, dict) else {}
 
 
 def iso_to_timestamp(iso_string: str) -> int:
@@ -408,122 +390,6 @@ class WebexSpaceSyncer:
     return Document(page_content=content, metadata=metadata.model_dump())
 
 
-async def sync_webex_spaces(client: Client):
-  """Bootstrap and sync Webex spaces still managed by legacy env config."""
-
-  # Read config first so DB-managed sources do not require WEBEX_SPACES.
-  bot_name = os.environ.get("WEBEX_BOT_NAME", "webex")
-  spaces = configured_spaces()
-  if not spaces:
-    logger.warning("No spaces configured (WEBEX_SPACES not set or empty) — skipping sync")
-    return
-
-  webex_token = os.environ.get("WEBEX_ACCESS_TOKEN")
-  if not webex_token:
-    logger.warning("WEBEX_ACCESS_TOKEN not set — skipping sync")
-    return
-
-  # Initialize Webex syncer
-  syncer = WebexSpaceSyncer(webex_token)
-
-  # Load timestamps from previous runs (stored in datasource metadata)
-  existing_datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
-  existing_by_id = {ds.datasource_id: ds for ds in existing_datasources}
-  timestamp_map = {}
-  for ds in existing_datasources:
-    if ds.metadata and "last_message_time" in ds.metadata:
-      # Extract space_id from datasource_id (format: webex-space-{space_id})
-      space_id = ds.datasource_id.replace("webex-space-", "")
-      timestamp_map[space_id] = ds.metadata["last_message_time"]
-
-  # Process each space
-  for space_id, config in spaces.items():
-    space_name = config.get("name", space_id)
-    include_bots = config.get("include_bots", False)
-
-    logger.info(f"Processing space: '{space_name}' (ID: {space_id})")
-
-    # Create or update datasource
-    datasource_id = f"webex-space-{space_id}"
-    existing = existing_by_id.get(datasource_id)
-    if existing and (existing.metadata or {}).get("config_managed") is True:
-      logger.debug(
-        f"Skipping legacy WEBEX_SPACES config for database-managed datasource {datasource_id}"
-      )
-      continue
-    reload_interval = configured_reload_interval(config, existing)
-    if (
-      existing
-      and existing.last_updated
-      and int(time.time()) - existing.last_updated < reload_interval
-    ):
-      logger.debug(f"Skipping '{space_name}': datasource refresh is not due")
-      continue
-    last_message_time = timestamp_map.get(space_id)
-
-    # Fetch messages
-    messages, newest_time = syncer.fetch_space_messages(space_id, space_name, last_message_time)
-
-    # Always persist the check, including when the space has no new messages,
-    # so smart scheduling does not continuously treat it as overdue.
-    datasource = DataSourceInfo(
-      datasource_id=datasource_id,
-      name=f"Webex: {space_name}",
-      ingestor_id=client.ingestor_id or "",
-      description=f"Webex messages from space '{space_name}'",
-      source_type="webex",
-      last_updated=int(time.time()),
-      default_chunk_size=existing.default_chunk_size if existing else 10000,
-      default_chunk_overlap=existing.default_chunk_overlap if existing else 2000,
-      reload_interval=reload_interval,
-      creator_subject=existing.creator_subject if existing else None,
-      owner_subject=existing.owner_subject if existing else None,
-      owner_team_slug=existing.owner_team_slug if existing else None,
-      shared_with_teams=existing.shared_with_teams if existing else [],
-      search_with_teams=existing.search_with_teams if existing else [],
-      metadata={
-        **((existing.metadata or {}) if existing else {}),
-        "space_id": space_id,
-        "space_name": space_name,
-        "last_message_time": newest_time if newest_time else last_message_time,
-        "bot_name": bot_name,
-        "include_bots": include_bots,
-      },
-    )
-    await client.upsert_datasource(datasource)
-
-    if not messages:
-      logger.info(f"No new messages for space '{space_name}'")
-      continue
-
-    # Convert messages to documents
-    documents = syncer.group_messages_into_documents(messages, space_id, space_name, include_bots, datasource_id, client.ingestor_id or "")
-
-    if not documents:
-      logger.info(f"No documents created for space '{space_name}'")
-      continue
-
-    logger.info(f"Created {len(documents)} documents for space '{space_name}'")
-
-    # Create job
-    job_response = await client.create_job(datasource_id=datasource_id, job_status=JobStatus.IN_PROGRESS, message=f"Ingesting {len(documents)} messages from space '{space_name}'", total=len(documents))
-    job_id = job_response["job_id"]
-
-    try:
-      fresh_until = get_fresh_until(reload_interval)
-      await client.ingest_documents(job_id=job_id, datasource_id=datasource_id, documents=documents, fresh_until=fresh_until)
-
-      # Update job status
-      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully ingested {len(documents)} documents from space '{space_name}'")
-
-      logger.info(f"✓ Successfully ingested {len(documents)} documents from space '{space_name}'")
-
-    except Exception as e:
-      logger.error(f"Error ingesting documents for space '{space_name}': {e}")
-      await client.add_job_error(job_id, [str(e)])
-      await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=f"Failed to ingest documents: {str(e)}")
-
-
 async def process_space_ingestion(
   client: Client,
   job_manager: JobManager,
@@ -705,32 +571,6 @@ async def reload_datasource(
 async def redis_listener(client: Client):
   """Run Webex commands through the shared per-ingestor listener."""
 
-  async def reconcile_legacy_config() -> None:
-    """Expose legacy connector options immediately for config migration."""
-    spaces = configured_spaces()
-    if not spaces:
-      return
-    bot_name = os.environ.get("WEBEX_BOT_NAME", "webex")
-    for datasource in await client.list_datasources(ingestor_id=client.ingestor_id):
-      metadata = datasource.metadata or {}
-      if metadata.get("config_managed") is True:
-        continue
-      space_id = metadata.get("space_id") or datasource.datasource_id.removeprefix(
-        "webex-space-"
-      )
-      config = spaces.get(space_id)
-      if not isinstance(config, dict):
-        continue
-      datasource.reload_interval = configured_reload_interval(config, datasource)
-      datasource.metadata = {
-        **metadata,
-        "space_id": space_id,
-        "space_name": config.get("name", space_id),
-        "bot_name": bot_name,
-        "include_bots": config.get("include_bots", False),
-      }
-      await client.upsert_datasource(datasource)
-
   await run_ingestor_listener(
     client,
     ingest_command=WebexIngestorCommand.INGEST_SPACE,
@@ -743,18 +583,12 @@ async def redis_listener(client: Client):
     reload_handler=reload_datasource,
     max_tasks=MAX_INGESTION_TASKS,
     describe_ingest=lambda request: f"Webex space ingestion: {request.space_id}",
-    on_startup=reconcile_legacy_config,
   )
 
 
 async def periodic_reload(client: Client) -> None:
-  """Refresh both legacy env sources and UI/database-managed sources."""
-  await sync_webex_spaces(client)
-  await reload_persisted_datasources(
-    client,
-    reload_datasource,
-    config_managed_only=True,
-  )
+  """Refresh persisted Webex datasources whose interval is due."""
+  await reload_persisted_datasources(client, reload_datasource)
 
 
 async def reload_all_webex_spaces(client: Client) -> None:
@@ -766,16 +600,14 @@ def main():
   """Main entry point for the Webex ingestor"""
 
   bot_name = os.environ.get("WEBEX_BOT_NAME", "webex")
-  spaces = configured_spaces()
 
-  # The on-demand queue and persisted per-datasource schedules are independent
-  # from deployment configuration.
+  # The on-demand queue and persisted per-datasource schedules share one worker.
   (
     IngestorBuilder()
     .name(f"webex-{bot_name}")
     .type("webex")
     .description(f"Webex ingestor for bot {bot_name}")
-    .metadata({"bot_name": bot_name, "init_delay": init_delay, "spaces": spaces})
+    .metadata({"bot_name": bot_name, "init_delay": init_delay})
     .sync_with_fn(periodic_reload)
     .with_startup(redis_listener)
     .schedule_from_datasources()

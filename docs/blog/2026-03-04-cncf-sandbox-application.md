@@ -7,7 +7,7 @@ tags: [articles]
 
 # [Sandbox] CAIPE (Community AI Platform Engineering)
 
-> Application for [CNCF Sandbox](https://github.com/cncf/sandbox/issues/new?assignees=&labels=New&projects=&template=application.yml&title=%5BSandbox%5D+CAIPE). This post tracks the text merged in [cnoe-io/ai-platform-engineering#904](https://github.com/cnoe-io/ai-platform-engineering/pull/904); copy each section into the corresponding field of the GitHub issue form when submitting.
+> Application for [CNCF Sandbox](https://github.com/cncf/sandbox/issues/new?assignees=&labels=New&projects=&template=application.yml&title=%5BSandbox%5D+CAIPE). This post tracks the text merged in [caipe-io/ai-platform-engineering#904](https://github.com/caipe-io/ai-platform-engineering/pull/904); copy each section into the corresponding field of the GitHub issue form when submitting.
 
 <!-- truncate -->
 
@@ -45,7 +45,7 @@ https://github.com/cnoe-io
 
 ### Project repo URL in scope of application
 
-https://github.com/cnoe-io/ai-platform-engineering
+https://github.com/caipe-io/ai-platform-engineering
 
 ### Additional repos in scope of the application
 
@@ -66,7 +66,7 @@ Project roadmap:
 [https://github.com/orgs/cnoe-io/projects/9](https://github.com/orgs/cnoe-io/projects/9)
 
 Issues and feature discussions:
-[https://github.com/cnoe-io/ai-platform-engineering/issues](https://github.com/cnoe-io/ai-platform-engineering/issues)
+[https://github.com/caipe-io/ai-platform-engineering/issues](https://github.com/caipe-io/ai-platform-engineering/issues)
 
 Key roadmap themes include:
 
@@ -93,7 +93,7 @@ Project documentation:
 
 ### Contributing guide
 
-https://github.com/cnoe-io/ai-platform-engineering/blob/main/CONTRIBUTING.md
+https://github.com/caipe-io/ai-platform-engineering/blob/main/CONTRIBUTING.md
 
 ### Code of Conduct (CoC)
 
@@ -101,15 +101,15 @@ https://github.com/cnoe-io/governance/blob/main/CODE-OF-CONDUCT.md
 
 ### Adopters
 
-https://github.com/cnoe-io/ai-platform-engineering/blob/main/ADOPTERS.md
+https://github.com/caipe-io/ai-platform-engineering/blob/main/ADOPTERS.md
 
 ### Maintainers file
 
-https://github.com/cnoe-io/ai-platform-engineering/blob/main/MAINTAINERS.md
+https://github.com/caipe-io/ai-platform-engineering/blob/main/MAINTAINERS.md
 
 ### Security policy file
 
-https://github.com/cnoe-io/ai-platform-engineering/blob/main/SECURITY.md
+https://github.com/caipe-io/ai-platform-engineering/blob/main/SECURITY.md
 
 ### Standard or specification?
 
@@ -276,7 +276,7 @@ cnoe-steering@googlegroups.com
 - 77+ Architecture Decision Records documenting project evolution
 - Weekly community meetings (CNOE Agentic AI SIG) with participants from multiple organizations
 - Active Slack channel (#cnoe-sig-agentic-ai) on CNCF Slack
-- [Adopters include Outshift by Cisco, Splunk, and Demandbase](https://github.com/cnoe-io/ai-platform-engineering/blob/main/ADOPTERS.md)
+- [Adopters include Outshift by Cisco, Splunk, and Demandbase](https://github.com/caipe-io/ai-platform-engineering/blob/main/ADOPTERS.md)
 - Comprehensive documentation site with getting-started guides, architecture docs, and workshops (CAIPE Labs)
 
 **Technical maturity indicators:**

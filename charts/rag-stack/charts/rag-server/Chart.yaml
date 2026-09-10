@@ -2,5 +2,5 @@ apiVersion: v2
 name: rag-server
 description: RAG server
 type: application
-version: 1.0.0-dev.2-chart.1 # Do NOT bump this. It will be updated automatically using the PR or release workflow
-appVersion: "1.0.0-dev.2" # Do NOT modify. It will be updated automatically using the release workflow
+version: 1.0.1-dev.7 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+appVersion: "1.0.1-dev.7" # Do NOT modify. It will be updated automatically using the release workflow

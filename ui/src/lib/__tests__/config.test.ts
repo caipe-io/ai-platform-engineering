@@ -76,6 +76,8 @@ describe('getServerConfig', () => {
         'DEFAULT_FONT_SIZE', 'DEFAULT_FONT_FAMILY',
         'DEFAULT_THEME', 'DEFAULT_GRADIENT_THEME',
         'AUTONOMOUS_AGENTS_ENABLED', 'ENABLE_AUTONOMOUS_AGENTS',
+        'PROJECTS_ENABLED',
+        'PROVIDE_FEEDBACK_ENABLED',
       );
       delete process.env.MONGODB_URI;
       delete process.env.MONGODB_DATABASE;
@@ -125,6 +127,7 @@ describe('getServerConfig', () => {
     it('should return default ticket integration values', () => {
       const cfg = getServerConfig();
       expect(cfg.reportProblemEnabled).toBe(true);
+      expect(cfg.provideFeedbackEnabled).toBe(false);
       expect(cfg.jiraTicketEnabled).toBe(false);
       expect(cfg.jiraTicketProject).toBeNull();
       expect(cfg.jiraTicketLabel).toBe('caipe-reported');
@@ -145,7 +148,7 @@ describe('getServerConfig', () => {
         'gradientFrom', 'gradientTo', 'logoStyle', 'spinnerColor',
         'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
         'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
-        'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
+        'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
         'allowBuiltinSkillMutation',
         'auditLogsEnabled',
         'actionAuditEnabled',
@@ -153,7 +156,9 @@ describe('getServerConfig', () => {
         'defaultFontSize', 'defaultFontFamily', 'defaultTheme', 'defaultGradientTheme',
         'dynamicAgentsUrl',
         'autonomousAgentsEnabled',
+        'agenticAppsEnabled',
         'reportProblemEnabled',
+        'provideFeedbackEnabled',
         'jiraTicketEnabled', 'jiraTicketProject', 'jiraTicketLabel',
         'githubTicketEnabled', 'githubTicketRepo', 'githubTicketLabel',
         'ticketEnabled', 'ticketProvider',
@@ -165,6 +170,24 @@ describe('getServerConfig', () => {
         'schedulerEnabled',
       ];
       expect(Object.keys(cfg).sort()).toEqual(expectedKeys.sort());
+    });
+  });
+
+  describe('projectsEnabled', () => {
+    beforeEach(() => clearEnv('PROJECTS_ENABLED'));
+
+    it('should default to false', () => {
+      expect(getServerConfig().projectsEnabled).toBe(false);
+    });
+
+    it('should be true when PROJECTS_ENABLED=true', () => {
+      process.env.PROJECTS_ENABLED = 'true';
+      expect(getServerConfig().projectsEnabled).toBe(true);
+    });
+
+    it('should remain false for non-true values', () => {
+      process.env.PROJECTS_ENABLED = '1';
+      expect(getServerConfig().projectsEnabled).toBe(false);
     });
   });
 
@@ -312,12 +335,11 @@ describe('getServerConfig', () => {
     });
   });
 
-  // ---------- Ticket Integration ----------
-
   describe('ticket integration env vars', () => {
     beforeEach(() => {
       clearEnv(
         'REPORT_PROBLEM_ENABLED',
+        'PROVIDE_FEEDBACK_ENABLED',
         'JIRA_TICKET_ENABLED', 'JIRA_TICKET_PROJECT', 'JIRA_TICKET_LABEL',
         'GITHUB_TICKET_ENABLED', 'GITHUB_TICKET_REPO', 'GITHUB_TICKET_LABEL',
       );
@@ -375,6 +397,12 @@ describe('getServerConfig', () => {
     it('should enable report problem by default', () => {
       const cfg = getServerConfig();
       expect(cfg.reportProblemEnabled).toBe(true);
+    });
+
+    it('should keep the header feedback shortcut opt-in', () => {
+      expect(getServerConfig().provideFeedbackEnabled).toBe(false);
+      process.env.PROVIDE_FEEDBACK_ENABLED = 'true';
+      expect(getServerConfig().provideFeedbackEnabled).toBe(true);
     });
 
     it('should derive ticketEnabled=false when no provider is enabled', () => {
@@ -886,7 +914,7 @@ describe('getClientConfigScript (XSS safety)', () => {
       'gradientFrom', 'gradientTo', 'logoStyle', 'spinnerColor',
       'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
       'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
-      'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
+      'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
       'allowBuiltinSkillMutation',
       'auditLogsEnabled',
       'actionAuditEnabled',
@@ -894,7 +922,9 @@ describe('getClientConfigScript (XSS safety)', () => {
       'defaultFontSize', 'defaultFontFamily', 'defaultTheme', 'defaultGradientTheme',
       'dynamicAgentsUrl',
       'autonomousAgentsEnabled',
+      'agenticAppsEnabled',
       'reportProblemEnabled',
+      'provideFeedbackEnabled',
       'jiraTicketEnabled', 'jiraTicketProject', 'jiraTicketLabel',
       'githubTicketEnabled', 'githubTicketRepo', 'githubTicketLabel',
       'ticketEnabled', 'ticketProvider',

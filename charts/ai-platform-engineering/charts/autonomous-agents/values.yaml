@@ -19,6 +19,8 @@ imagePullSecrets: []
 serviceAccount:
   create: true
   automount: true
+  # On EKS, annotate this service account with an IRSA role allowed to call
+  # kms:GenerateDataKey and kms:Decrypt on config.CREDENTIAL_KMS_CMK_ID.
   annotations: {}
   name: ""
 
@@ -83,8 +85,9 @@ ingress:
 
 # Replica configuration.
 # Keep replicaCount at 1: the scheduler has no leader election, so a second
-# replica would double-fire every cron/interval task. Use VPA (below) as the
-# scaling lever instead of horizontal scaling.
+# replica would double-fire cron/interval tasks, and webhook FIFOs are
+# process-local. Use VPA below until scheduling and webhook work move behind a
+# shared durable queue.
 replicaCount: 1
 revisionHistoryLimit: 3
 
@@ -147,6 +150,18 @@ config:
   # whose dynamic_agent_id is set through the user's custom agent. Only
   # uncomment when the dynamic-agents subchart is enabled (tags.dynamic-agents).
   DYNAMIC_AGENTS_URL: ""
+  # Minimum gap between cron/interval fires. Webhook triggers are exempt.
+  MINIMUM_SCHEDULE_INTERVAL_SECONDS: "1800"
+  # Reject larger webhook bodies before parsing/signature verification.
+  WEBHOOK_MAX_PAYLOAD_BYTES: "1048576"
+  # Each task is a single-consumer FIFO. Bound queued work separately from
+  # execution concurrency across different tasks.
+  WEBHOOK_MAX_PENDING_PER_TASK: "100"
+  WEBHOOK_MAX_PENDING_PER_OWNER: "500"
+  WEBHOOK_MAX_PENDING_GLOBAL: "5000"
+  WEBHOOK_MAX_PENDING_PAYLOAD_BYTES_GLOBAL: "67108864"
+  WEBHOOK_MAX_CONCURRENT_PER_OWNER: "20"
+  WEBHOOK_MAX_CONCURRENT_GLOBAL: "100"
   # MongoDB database name (uses same DB as CAIPE UI so the Autonomous tab's
   # task list and run history come from the same source of truth)
   MONGODB_DATABASE: "caipe"
@@ -162,6 +177,12 @@ config:
   # server-side proxy, so browsers never hit it directly). Note: the service
   # rejects "*" at startup by design.
   CORS_ORIGINS: ""
+  # Per-task webhook secrets use the same AWS KMS envelope-encryption format
+  # as UI-managed integration credentials (including Webex OAuth secrets).
+  # Leave blank only when every task uses no per-task secret (or relies on the
+  # global WEBHOOK_SECRET fallback). Never put the plaintext secret here.
+  CREDENTIAL_KMS_CMK_ID: ""
+  CREDENTIAL_KMS_REGION: ""
 
 # OAuth client used by Autonomous Agents to authenticate its calls to Dynamic
 # Agents. The standalone chart keeps this disabled because it cannot assume an

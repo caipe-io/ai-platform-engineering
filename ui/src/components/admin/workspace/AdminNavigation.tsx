@@ -81,7 +81,6 @@ export function AdminNavigation({
       }
       activeItemId={activeDestination?.id ?? ""}
       categories={navigationCategories}
-      key={activeCategory?.id ?? ""}
       navigationLabel="Admin sections"
     />
   );

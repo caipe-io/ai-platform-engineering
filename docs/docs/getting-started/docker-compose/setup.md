@@ -16,7 +16,7 @@ servers, MongoDB, RBAC services, and optional RAG/tracing components.
 ## Configure
 
 ```bash
-git clone https://github.com/cnoe-io/ai-platform-engineering.git
+git clone https://github.com/caipe-io/ai-platform-engineering.git
 cd ai-platform-engineering
 cp .env.example .env
 ```
@@ -45,6 +45,40 @@ ARGOCD_API_URL=https://argocd.example.com
 
 For full provider details see [Configure LLMs](configure-llms.md). For service
 credentials see [Configure Agent Secrets](configure-agent-secrets.md).
+
+### Seed application resources
+
+Compose mounts `config/app-config.yaml` into the UI. To keep local settings out
+of Git:
+
+```bash
+cp config/app-config.yaml config/app-config.local.yaml
+```
+
+Set the override in `.env`:
+
+```bash
+CAIPE_APP_CONFIG_FILE=./config/app-config.local.yaml
+```
+
+The file can seed models, MCP servers, agents, workflows, and RAG datasources.
+For example:
+
+```yaml
+rag_sources:
+  - source_type: web_url
+    url: https://docs.example.com
+    name: example-docs
+    search_with_teams: [primary]
+    settings:
+      crawl_mode: sitemap
+      max_pages: 500
+```
+
+Seeded datasources are visible but read-only in the UI. `search_with_teams`
+controls who can query their content independently from source management.
+Change the YAML and restart the UI to update or remove them. Connector
+credentials remain in `.env` or the deployment secret store.
 
 ## Start
 

@@ -305,6 +305,9 @@ services:
       - .env
     environment:
       - NODE_ENV=production
+      # Safe release metadata shown by System Health. A specific
+      # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
+      - CAIPE_RELEASE_VERSION=${IMAGE_TAG:-0.5.66}
       # Pass the active Compose profile set through to the UI so product
       # health can show profile-enabled integrations as degraded/down even
       # when their container crashes before serving traffic.
@@ -353,6 +356,15 @@ services:
       - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-caipe-platform-dev-secret}
       # Workflow runner - set WORKFLOW_RUNNER_ENABLED=true to show Run Workflow button and Multi-Step Workflows
       - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
+      # Projects - set PROJECTS_ENABLED=true to show the Projects workspace
+      - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
+      # Top-level workflows and schedules are independent, opt-in navigation surfaces.
+      - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
+      - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-false}
+      # Compact header shortcut that reuses the existing feedback dialog.
+      - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
       # Connections & Secrets. Docker Compose reads provider bootstrap values
       # from .env; Kubernetes deployments use ESO to inject the same env names.
@@ -381,6 +393,9 @@ services:
       # Audit log storage is owned by the lightweight Python audit-service.
       - AUDIT_LOG_BACKEND=${AUDIT_LOG_BACKEND:-service}
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
+      - APP_CONFIG_PATH=/app/config/app-config.yaml
+    volumes:
+      - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s
@@ -532,6 +547,7 @@ services:
       # Centralized Authorization Service. Dynamic Agents delegates agent-use
       # decisions to the UI BFF and fails closed with 503 if this is unset.
       - AUTHZ_SERVICE_URL=${AUTHZ_SERVICE_URL:-http://caipe-ui:3000}
+      - CAIPE_ORG_KEY=${CAIPE_ORG_KEY:-caipe}
       # Tracing (Langfuse)
       - ENABLE_TRACING=${ENABLE_TRACING:-false}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
@@ -674,7 +690,6 @@ services:
       - JIRA_URL=${JIRA_URL}
       - JIRA_EMAIL=${JIRA_EMAIL}
       - ATLASSIAN_TOKEN=${ATLASSIAN_TOKEN}
-      - JIRA_PROJECTS=${JIRA_PROJECTS}
       - JIRA_PAGE_SIZE=${JIRA_PAGE_SIZE:-100}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
@@ -694,7 +709,6 @@ services:
       - CONFLUENCE_URL=${CONFLUENCE_URL}
       - CONFLUENCE_USERNAME=${CONFLUENCE_USERNAME}
       - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
-      - CONFLUENCE_SPACES=${CONFLUENCE_SPACES:-}
       - CONFLUENCE_SYNC_INTERVAL=${CONFLUENCE_SYNC_INTERVAL:-86400}
       - CONFLUENCE_SSL_VERIFY=${CONFLUENCE_SSL_VERIFY:-true}
       - CONFLUENCE_MAX_CONCURRENCY=${CONFLUENCE_MAX_CONCURRENCY:-5}
@@ -716,7 +730,6 @@ services:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_BOT_NAME=${SLACK_BOT_NAME}
       - SLACK_WORKSPACE_URL=${SLACK_WORKSPACE_URL:-https://slack.com}
-      - SLACK_CHANNELS=${SLACK_CHANNELS:-{}}
       - SLACK_MAX_INGESTION_TASKS=${SLACK_MAX_INGESTION_TASKS:-5}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
@@ -738,7 +751,6 @@ services:
       - INGESTOR_TYPE=webex
       - WEBEX_ACCESS_TOKEN=${WEBEX_ACCESS_TOKEN}
       - WEBEX_BOT_NAME=${WEBEX_BOT_NAME}
-      - WEBEX_SPACES=${WEBEX_SPACES:-{}}
       - WEBEX_MAX_INGESTION_TASKS=${WEBEX_MAX_INGESTION_TASKS:-5}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0

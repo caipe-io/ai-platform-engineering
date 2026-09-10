@@ -22,7 +22,7 @@ export const UNIVERSAL_REBAC_RESOURCE_TYPES: readonly UniversalRebacResourceType
   [
     {
       type: "organization",
-      actions: ["discover", "read", "manage", "audit"],
+      actions: ["discover", "read", "manage", "audit", "automate"],
       description: "Platform-wide organization scope.",
     },
     {
@@ -79,7 +79,6 @@ export const UNIVERSAL_REBAC_RESOURCE_TYPES: readonly UniversalRebacResourceType
         "create",
         "manage",
         "audit",
-        "schedule",
       ],
       description: "Agent execution and configuration resource.",
     },

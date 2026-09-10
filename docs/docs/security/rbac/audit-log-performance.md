@@ -4,7 +4,7 @@
 
 Related UI-wide benchmark results are tracked in [UI Performance Benchmark Results](../../evaluations/ui-performance-benchmark-results.md).
 
-Three improvements shipped together in [#1903](https://github.com/cnoe-io/ai-platform-engineering/issues/1903) / PR #1917:
+Three improvements shipped together in [#1903](https://github.com/caipe-io/ai-platform-engineering/issues/1903) / PR #1917:
 
 1. **Audit service** — MongoDB writes replaced by a lightweight service that owns local/S3 storage
 2. **OpenFGA N+1 fix** — sequential permission checks on `/api/rbac/admin-tab-gates` parallelized with `Promise.all`

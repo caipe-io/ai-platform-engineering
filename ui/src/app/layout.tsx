@@ -1,4 +1,5 @@
 import { AuthProvider } from "@/components/auth-provider";
+import { AgentCompletionNotifier } from "@/components/notifications/AgentCompletionNotifier";
 import { ThemeInjector } from "@/components/theme-injector";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TokenExpiryGuard } from "@/components/token-expiry-guard";
@@ -122,6 +123,7 @@ export default async function RootLayout({
             <ToastProvider>
               <ThemeInjector />
               <TokenExpiryGuard />
+              <AgentCompletionNotifier />
               {children}
             </ToastProvider>
           </ThemeProvider>

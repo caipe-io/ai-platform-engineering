@@ -8,17 +8,17 @@ Keycloak identity provider for CAIPE RBAC, token exchange, and identity federati
 
 | | |
 |---|---|
-| **Version** | `0.6.0` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install keycloak oci://ghcr.io/cnoe-io/charts/keycloak --version 0.6.0
+helm install keycloak oci://ghcr.io/caipe-io/charts/keycloak --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade keycloak oci://ghcr.io/cnoe-io/charts/keycloak --version 0.6.0
+helm upgrade keycloak oci://ghcr.io/caipe-io/charts/keycloak --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install keycloak oci://ghcr.io/cnoe-io/charts/keycloak --version 0.6.0 \
+helm install keycloak oci://ghcr.io/caipe-io/charts/keycloak --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install keycloak oci://ghcr.io/cnoe-io/charts/keycloak --version 0.6.0 \
+helm install keycloak oci://ghcr.io/caipe-io/charts/keycloak --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/keycloak --version 0.6.0
+helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.0.0
 ```
 
 ## Reading the Values Table

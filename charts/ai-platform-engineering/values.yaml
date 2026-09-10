@@ -1129,6 +1129,9 @@ dynamic-agents:
     # the in-cluster default http://<release-name>-caipe-ui:3000; override only
     # when pointing dynamic-agents at an external CAIPE UI/BFF.
     CAIPE_API_URL: ""
+    AUTHZ_SERVICE_URL: ""
+    # Must match caipe-ui.config.CAIPE_ORG_KEY.
+    CAIPE_ORG_KEY: "caipe"
     CREDENTIAL_SERVICE_AUDIENCE: "caipe-credential-service"
     USE_IMPERSONATION_TOKENS: "false"
     # MCP server IDs routed through AgentGateway. "all" only applies to
@@ -1195,6 +1198,18 @@ autonomous-agents:
     # Dynamic-agents runtime endpoint -- every autonomous task runs against a
     # dynamic agent selected by the task's dynamic_agent_id.
     DYNAMIC_AGENTS_URL: ""
+    # Minimum gap between cron/interval fires. Webhook triggers are exempt.
+    MINIMUM_SCHEDULE_INTERVAL_SECONDS: "1800"
+    # Reject larger webhook bodies before parsing/signature verification.
+    WEBHOOK_MAX_PAYLOAD_BYTES: "1048576"
+    # Each task is a single-consumer FIFO. Bound queued work separately from
+    # execution concurrency across different tasks.
+    WEBHOOK_MAX_PENDING_PER_TASK: "100"
+    WEBHOOK_MAX_PENDING_PER_OWNER: "500"
+    WEBHOOK_MAX_PENDING_GLOBAL: "5000"
+    WEBHOOK_MAX_PENDING_PAYLOAD_BYTES_GLOBAL: "67108864"
+    WEBHOOK_MAX_CONCURRENT_PER_OWNER: "20"
+    WEBHOOK_MAX_CONCURRENT_GLOBAL: "100"
     # MongoDB configuration (uses same database as CAIPE UI)
     MONGODB_DATABASE: "caipe"
   # Pre-existing secret with MONGODB_URI (required), WEBHOOK_SECRET, and
@@ -1248,6 +1263,9 @@ scheduler:
     existingSecret: ""
     existingSecretKey: "token"
     value: ""
+  limits:
+    # -- Minimum permitted gap, in seconds, between recurring cron fires.
+    minimumScheduleIntervalSeconds: 1800
 # Scheduler MCP. Rendered whenever the scheduler feature is enabled unless this
 # narrower switch is disabled. It shares the scheduler service token Secret.
 schedulerMcp:
@@ -1357,10 +1375,6 @@ slack-bot:
       #   remoteRef:
       #     key: prod/slack-bot
       #     property: slack_client_secret
-      # - secretKey: SLACK_LINK_HMAC_SECRET
-      #   remoteRef:
-      #     key: prod/slack-bot
-      #     property: slack_link_hmac_secret
       # - secretKey: OAUTH2_CLIENT_SECRET
       #   remoteRef:
       #     key: prod/slack-bot

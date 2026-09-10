@@ -108,6 +108,7 @@
   background: var(--ifm-card-background-color, #fff);
   border: 1px solid var(--ifm-color-emphasis-200);
   border-radius: 14px;
+  height: 100%;
   overflow: hidden;
   transition: transform 0.15s, box-shadow 0.15s;
 }

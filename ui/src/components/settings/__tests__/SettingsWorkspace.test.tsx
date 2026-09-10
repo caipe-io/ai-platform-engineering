@@ -11,6 +11,7 @@ jest.mock("@/components/settings/sections/AccessSettings",() => ({ AccessSetting
 jest.mock("@/components/settings/sections/DeveloperSettings",() => ({ DeveloperSettings: () => <div>Developer content</div> }));
 
 import { SettingsWorkspace } from "../SettingsWorkspace";
+import { findSettingsRouteBySegment,PERSONAL_SETTINGS_ROUTES } from "../settings-routes";
 
 describe("SettingsWorkspace",() => {
   it("renders the selected section without duplicating the global navigation",() => {
@@ -28,5 +29,8 @@ describe("SettingsWorkspace",() => {
     expect(screen.queryByText("Appearance content")).not.toBeInTheDocument();
     expect(screen.queryByText("Defaults",{ exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText("Announcements",{ exact: true })).not.toBeInTheDocument();
+    expect(PERSONAL_SETTINGS_ROUTES.some((route) => route.id === "system-health")).toBe(false);
+    expect(findSettingsRouteBySegment("system-health")).toBeUndefined();
   });
+
 });

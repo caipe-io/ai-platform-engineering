@@ -15,11 +15,12 @@
 
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { BUILTIN_MCP_CREDENTIAL_SOURCES } from "@/lib/rbac/agentgateway-mcp-discovery";
+import { computeIngestionSourceId } from "@/lib/ingestion-source-id";
 import {
-  computeIngestionSourceId,
-  type IngestionSourceIdentity,
-} from "@/lib/ingestion-source-id";
-import { parseConfluencePageUrl } from "@/lib/confluence-url";
+  extractIngestionSourceTypeFields,
+  optionalInteger,
+  validateSourceSpecificInputFields,
+} from "@/lib/ingestion-source-config";
 import {
   writeOpenFgaTuples,
   isOpenFgaReconciliationEnabled,
@@ -53,7 +54,6 @@ import type {
 import { PLATFORM_RAG_COLLECTION_ID } from "@/types/rag-collection";
 import type {
   IngestionSourceConfig,
-  IngestionSourceType,
   IngestionSourceVisibility,
 } from "@/types/ingestion-source";
 import type {
@@ -62,6 +62,7 @@ import type {
   WorkflowConfigVisibility,
 } from "@/types/workflow-config";
 import fs from "fs";
+import { createHash } from "node:crypto";
 import yaml from "js-yaml";
 
 // Pattern to match ${VAR_NAME} or ${VAR_NAME:-default}
@@ -106,7 +107,7 @@ interface LLMModelDoc {
  *
  * In Kubernetes, Helm resolves values before creating the ConfigMap,
  * so the mounted YAML contains literal values. But in docker-compose
- * dev mode, the raw config.yaml is mounted and uses ${VAR:-default}
+ * dev mode, the raw app-config.yaml is mounted and uses ${VAR:-default}
  * syntax, so we need this expansion for dev compatibility.
  */
 function expandEnvVars(value: unknown): unknown {
@@ -705,116 +706,9 @@ async function seedWorkflowConfigs(
   return count;
 }
 
-const INGESTION_SOURCE_TYPES: readonly IngestionSourceType[] = [
-  "slack_channel",
-  "confluence_space",
-  "jira_project",
-  "web_url",
-  "webex_space",
-];
-
-/**
- * Extract the `source_type`-specific identity/config fields from a raw YAML
- * entry, keyed identically to the discriminated `IngestionSourceConfig`
- * union (ui/src/types/ingestion-source.ts). Returns `null` when the entry's
- * `source_type` is missing/unrecognized or its required identity fields are
- * absent, so the caller can skip the entry the same way `seedAgents` skips
- * entries missing `id`.
- */
-/**
- * Exported so the `migrate-from-config` admin preview route can compute the
- * same deterministic `source_id` for a raw YAML entry without duplicating
- * the per-type identity-field switch.
- */
-export function extractRagSourceTypeFields(
-  sourceData: Record<string, unknown>,
-): {
-  identity: IngestionSourceIdentity;
-  fields: Record<string, unknown>;
-} | null {
-  const sourceType = sourceData.source_type as IngestionSourceType | undefined;
-  if (!sourceType || !INGESTION_SOURCE_TYPES.includes(sourceType)) return null;
-
-  switch (sourceType) {
-    case "slack_channel": {
-      const channelId = sourceData.channel_id as string | undefined;
-      if (!channelId) return null;
-      return {
-        identity: { source_type: "slack_channel", channel_id: channelId },
-        fields: {
-          source_type: sourceType,
-          channel_id: channelId,
-          lookback_days: sourceData.lookback_days as number | undefined,
-          include_bots: sourceData.include_bots as boolean | undefined,
-        },
-      };
-    }
-    case "confluence_space": {
-      const confluenceUrl = sourceData.confluence_url as string | undefined;
-      const spaceKey = sourceData.space_key as string | undefined;
-      const startPageUrl = sourceData.start_page_url as string | undefined;
-      const parsedPage = startPageUrl
-        ? parseConfluencePageUrl(startPageUrl)
-        : null;
-      if (
-        !confluenceUrl ||
-        !spaceKey ||
-        !startPageUrl ||
-        !parsedPage ||
-        parsedPage.spaceKey !== spaceKey
-      ) return null;
-      return {
-        identity: {
-          source_type: "confluence_space",
-          confluence_url: confluenceUrl,
-          space_key: spaceKey,
-          page_id: parsedPage.pageId,
-        },
-        fields: {
-          source_type: sourceType,
-          confluence_url: confluenceUrl,
-          space_key: spaceKey,
-          start_page_url: startPageUrl,
-        },
-      };
-    }
-    case "jira_project": {
-      const projectKey = sourceData.project_key as string | undefined;
-      const sourceSlug = sourceData.source_slug as string | undefined;
-      if (!projectKey || !sourceSlug) return null;
-      return {
-        identity: {
-          source_type: "jira_project",
-          project_key: projectKey,
-          source_slug: sourceSlug,
-        },
-        fields: {
-          source_type: sourceType,
-          project_key: projectKey,
-          source_slug: sourceSlug,
-          jql: (sourceData.jql as string) ?? "",
-          include_comments: sourceData.include_comments as boolean | undefined,
-        },
-      };
-    }
-    case "web_url": {
-      const url = sourceData.url as string | undefined;
-      if (!url) return null;
-      return {
-        identity: { source_type: "web_url", url },
-        fields: { source_type: sourceType, url },
-      };
-    }
-    case "webex_space": {
-      const spaceId = sourceData.space_id as string | undefined;
-      if (!spaceId) return null;
-      return {
-        identity: { source_type: "webex_space", space_id: spaceId },
-        fields: { source_type: sourceType, space_id: spaceId },
-      };
-    }
-  }
-}
+export {
+  extractIngestionSourceTypeFields as extractRagSourceTypeFields,
+} from "@/lib/ingestion-source-config";
 
 export async function seedRagSources(
   sources: Record<string, unknown>[],
@@ -827,7 +721,17 @@ export async function seedRagSources(
   let count = 0;
 
   for (const sourceData of sources) {
-    const extracted = extractRagSourceTypeFields(sourceData);
+    let extracted: ReturnType<typeof extractIngestionSourceTypeFields>;
+    try {
+      validateSourceSpecificInputFields(sourceData);
+      extracted = extractIngestionSourceTypeFields(sourceData);
+    } catch (error) {
+      console.warn(
+        `[seed-config] Skipping invalid rag source ${sourceData.name ?? "unknown"}:`,
+        error,
+      );
+      continue;
+    }
     if (!extracted) {
       console.warn(
         `[seed-config] Skipping rag source with missing identity fields: ${sourceData.name ?? "unknown"}`,
@@ -835,6 +739,46 @@ export async function seedRagSources(
       continue;
     }
     const sourceId = computeIngestionSourceId(extracted.identity);
+    let defaultChunkSize: number;
+    let defaultChunkOverlap: number;
+    let reloadInterval: number;
+    try {
+      defaultChunkSize =
+        optionalInteger(
+          sourceData.default_chunk_size,
+          "default_chunk_size",
+          100,
+          100000,
+        ) ?? 10000;
+      defaultChunkOverlap =
+        optionalInteger(
+          sourceData.default_chunk_overlap,
+          "default_chunk_overlap",
+          0,
+          10000,
+        ) ?? 2000;
+      reloadInterval =
+        optionalInteger(sourceData.reload_interval, "reload_interval", 60) ??
+        86400;
+    } catch (error) {
+      console.warn(
+        `[seed-config] Skipping invalid rag source ${sourceData.name ?? sourceId}:`,
+        error,
+      );
+      continue;
+    }
+    if (defaultChunkOverlap >= defaultChunkSize) {
+      console.warn(
+        `[seed-config] Skipping rag source ${sourceData.name ?? sourceId}: default_chunk_overlap must be smaller than default_chunk_size`,
+      );
+      continue;
+    }
+    if (extracted.fields.source_type === "jira_project" && !extracted.fields.jql) {
+      console.warn(
+        `[seed-config] Skipping rag source ${sourceData.name ?? sourceId}: jql is required`,
+      );
+      continue;
+    }
 
     const now = new Date().toISOString();
     const existing = await collection.findOne({ source_id: sourceId } as never);
@@ -897,17 +841,32 @@ export async function seedRagSources(
     const persistedSearchTeamSlugs = hasExplicitSearchPolicy
       ? searchTeamSlugs
       : previousSearchTeamSlugs;
+    const configHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          fields: extracted.fields,
+          name: (sourceData.name as string) ?? sourceId,
+          description: (sourceData.description as string) ?? "",
+          default_chunk_size: defaultChunkSize,
+          default_chunk_overlap: defaultChunkOverlap,
+          reload_interval: reloadInterval,
+          visibility,
+          owner_team_slug: ownerTeamSlug,
+          search_with_teams: persistedSearchTeamSlugs,
+        }),
+      )
+      .digest("hex");
+    const configChanged = existing?.config_hash !== configHash;
 
     const doc = {
       source_id: sourceId,
       ...extracted.fields,
       name: (sourceData.name as string) ?? sourceId,
       description: (sourceData.description as string) ?? "",
-      default_chunk_size: (sourceData.default_chunk_size as number) ?? 10000,
-      default_chunk_overlap:
-        (sourceData.default_chunk_overlap as number) ?? 2000,
-      reload_interval: (sourceData.reload_interval as number) ?? 86400,
-      status: existing?.status ?? "pending",
+      default_chunk_size: defaultChunkSize,
+      default_chunk_overlap: defaultChunkOverlap,
+      reload_interval: reloadInterval,
+      status: configChanged ? "pending" : (existing?.status ?? "pending"),
       visibility,
       shared_with_teams: [],
       search_with_teams: persistedSearchTeamSlugs,
@@ -915,6 +874,13 @@ export async function seedRagSources(
       owner_id: ownerTeamSlug ? undefined : "system",
       config_driven: true,
       config_import_adopted: false,
+      config_hash: configHash,
+      ...(!configChanged && existing?.ingestion_job_id
+        ? { ingestion_job_id: existing.ingestion_job_id }
+        : {}),
+      ...(!configChanged && existing?.last_error
+        ? { last_error: existing.last_error }
+        : {}),
       created_at: createdAt,
       updated_at: now,
     } as unknown as IngestionSourceConfig;
@@ -1077,7 +1043,7 @@ export async function adoptConfigImportedRagSources(
 /**
  * Remove config-driven entities that are no longer in the config.
  *
- * When an entity is removed from config.yaml, it should be deleted
+ * When an entity is removed from app-config.yaml, it should be deleted
  * from the database on the next server restart.
  */
 export async function cleanupStaleConfigDriven(
@@ -1183,9 +1149,9 @@ export async function cleanupStaleConfigDriven(
       console.log(
         `[seed-config] Removing stale config-driven rag source: ${source.source_id}`,
       );
-      // Removing source configuration must not revoke independent query
-      // grants for data that may still be populated by a legacy env-driven
-      // ingestor. It does need exact management-tuple cleanup.
+      // Removing declarative source configuration does not implicitly purge
+      // already-indexed content or its independent query grants. It does need
+      // exact management-tuple cleanup.
       if (isOpenFgaReconciliationEnabled()) {
         await deleteAllIngestionSourceRelationshipTuples(source.source_id);
       }
@@ -1793,11 +1759,15 @@ export async function applySeedConfig(): Promise<void> {
       );
       const currentRagSourceIds = new Set(
         config.rag_sources
-          .map((s) => extractRagSourceTypeFields(s)?.identity)
-          .filter(
-            (identity): identity is IngestionSourceIdentity =>
-              identity !== undefined,
-          )
+          .flatMap((source) => {
+            try {
+              validateSourceSpecificInputFields(source);
+              const extracted = extractIngestionSourceTypeFields(source);
+              return extracted ? [extracted.identity] : [];
+            } catch {
+              return [];
+            }
+          })
           .map((identity) => computeIngestionSourceId(identity)),
       );
 

@@ -14,35 +14,29 @@ While the CAIPE UI handles on-demand, chat-driven work, Autonomous Agents handle
 - Run an agent at a fixed **interval** (e.g. health check every 30 minutes)
 - Run an agent when an external system fires a **webhook** (e.g. GitHub PR opened)
 
-Tasks are managed through the CAIPE UI (persisted to MongoDB) or the service's REST API. No code changes needed to add or modify tasks.
+Tasks are managed through the CAIPE UI. Its authenticated server-side
+`/api/autonomous` route forwards requests to this cluster-internal service,
+which persists task definitions to MongoDB. MongoDB is required in the current
+runtime.
 
 ---
 
 ## Architecture
 
-```
-  +--------------------------+
-  |  Autonomous Agents       |  FastAPI :8002
-  |  +------------+          |
-  |  | Scheduler  | APScheduler (cron / interval)
-  |  +-----+------+          |
-  |        |  webhook POST   |
-  |  +-----v------+          |
-  |  | Task Runner|          |
-  |  +-----+------+          |
-  +---------|-----------------+
-            |  HTTP (/api/v1/chat/stream/start, SSE)
-            v
-  +--------------------------+
-  |  Dynamic Agents          |  :8001
-  |  (deepagents / LangGraph)|
-  +--------------------------+
-            |
-            v
-  MCP tools: GitHub, ArgoCD, Jira, PagerDuty ...
+```text
+CAIPE UI --> authenticated /api/autonomous route --> Autonomous Agents
+                                                           |
+                                                           v
+                                                        MongoDB
+
+Autonomous Agents (one process / pod)
+  |-- APScheduler (cron / interval) --+
+  |-- webhook receiver                |--> Task Runner --> Dynamic Agents
+  |     `-- process-local task FIFO ---+       (SSE, as task owner)
+  `-- run history / optional Chat publisher --> MongoDB
 ```
 
-Task definitions live in MongoDB and are managed through the UI's admin-gated
+Task definitions live in MongoDB and are managed through the authenticated
 `/api/autonomous` proxy. Every task targets a **dynamic agent** (by
 `dynamic_agent_id`): when a trigger fires, the Task Runner POSTs the prompt to
 the dynamic-agents service's `/api/v1/chat/stream/start` endpoint, which runs
@@ -56,6 +50,10 @@ Identity and access:
   target agent.
 - A missing or unauthorized agent surfaces as a failed run with a clear
   error rather than silently doing nothing.
+- Cron/interval tasks execute directly from APScheduler. Webhook deliveries
+  use a bounded, process-local FIFO with one active execution per task.
+- The current deployment is intentionally single-replica. See
+  [Current scaling limitation](#current-scaling-limitation).
 
 ---
 
@@ -67,7 +65,6 @@ autonomous_agents/
     main.py               # FastAPI app entrypoint
     config.py             # Settings (env vars)
     models.py             # Pydantic models: TaskDefinition, triggers, run records
-    scheduler.py          # APScheduler - registers and fires cron/interval tasks
     log_config.py         # Logging with task_id context
     routes/
       health.py           # GET /health
@@ -76,8 +73,12 @@ autonomous_agents/
     services/
       task_lifecycle.py        # Task store, runtime hot-reload, preflight
       task_runner.py           # Per-run execution pipeline
+      scheduler.py             # APScheduler registration for cron/interval
       dynamic_agents_client.py # Runs prompts on the dynamic-agents service
       mongo.py                 # MongoDB-backed task + run stores
+      schedule_validation.py   # Configurable cron/interval frequency floor
+      secret_encryption.py     # KMS envelope encryption for webhook secrets
+      webhook_runtime.py       # Registry, per-task FIFO, capacity limits
   pyproject.toml
   Dockerfile
 ```
@@ -110,10 +111,17 @@ Runs when an external system POSTs to `/api/v1/hooks/{task_id}`.
 ```yaml
 trigger:
   type: webhook
-  path: "/hooks/pr-review"
-  provider: "generic_hmac"         # or github, slack, pagerduty, jira, webex
-  secret: "optional-hmac-secret"   # validates the provider-specific HMAC
+  provider: "github"               # UI: github, jira, slack, pagerduty
+  # The API requires a signing secret and securely stores it.
 ```
+
+The server generates the task id and therefore the final endpoint:
+`/api/v1/hooks/<task-id>`. For GitHub and Jira it also generates a signing
+secret and returns it once after creation. Slack and PagerDuty issue their own
+secret, which the setup modal requires the user to paste back into CAIPE.
+
+The service also ships a `generic_hmac` adapter for API/configuration users,
+but it is intentionally absent from the UI task form.
 
 ---
 
@@ -138,7 +146,6 @@ tasks:
       type: cron
       schedule: "0 9 * * *"
     enabled: true
-    timeout_seconds: 600             # optional: override DYNAMIC_AGENTS_TIMEOUT_SECONDS
 ```
 
 > **Note:** the legacy `agent` (sub-agent hint) and `llm_provider` fields are
@@ -152,51 +159,89 @@ tasks:
 | Variable | Default | Description |
 |---|---|---|
 | `DYNAMIC_AGENTS_URL` | `None` | Dynamic-agents service base URL (e.g. `http://dynamic-agents:8001`). Required to run tasks. |
-| `DYNAMIC_AGENTS_TIMEOUT_SECONDS` | `300` | Per-call timeout for the dynamic-agents streaming call. Overridable per task via `timeout_seconds`. |
+| `DYNAMIC_AGENTS_TIMEOUT_SECONDS` | `300` | Deployment-wide timeout for each dynamic-agents streaming call. |
 | `DYNAMIC_AGENTS_PREFLIGHT_TIMEOUT_SECONDS` | `10` | Timeout budget for the preflight check. |
 | `DYNAMIC_AGENTS_SYSTEM_EMAIL` | `autonomous@system` | Fallback identity for tasks created before per-user ownership existed. |
+| `MINIMUM_SCHEDULE_INTERVAL_SECONDS` | `1800` | Minimum allowed gap between cron/interval fires. Webhook triggers are exempt. |
 | `LLM_PROVIDER` | `anthropic-claude` | Informational default; the dynamic agent's own model config governs execution. |
 | `HOST` | `0.0.0.0` | Server bind host |
 | `PORT` | `8002` | Server port |
-| `WEBHOOK_SECRET` | `None` | Global HMAC secret for webhook validation |
+| `WEBHOOK_SECRET` | `None` | Global HMAC fallback for tasks without a per-task key and for the first-party follow-up bridge. New UI tasks use per-task secrets. |
+| `WEBHOOK_PROVIDERS_FILE` | bundled YAML | Optional replacement provider-adapter file. The bundled registry contains GitHub, Jira, Slack, PagerDuty, Webex, and generic HMAC. |
+| `WEBHOOK_REPLAY_WINDOW_SECONDS` | `0` | Optional replay window for adapters without a mandatory provider window. Slack always enforces its bundled 300-second window. |
+| `WEBHOOK_MAX_PAYLOAD_BYTES` | `1048576` | Maximum accepted webhook request body. Larger bodies are rejected with HTTP 413 before parsing. |
+| `WEBHOOK_MAX_PENDING_PER_TASK` | `100` | Maximum queued + running deliveries for one webhook task. Each task's FIFO still executes exactly one at a time. |
+| `WEBHOOK_MAX_PENDING_PER_OWNER` | `500` | Maximum queued + running webhook deliveries owned by one user. |
+| `WEBHOOK_MAX_PENDING_GLOBAL` | `5000` | Process-wide queued + running delivery ceiling. |
+| `WEBHOOK_MAX_PENDING_PAYLOAD_BYTES_GLOBAL` | `67108864` | Process-wide raw-payload byte budget across queued + running webhook deliveries. |
+| `WEBHOOK_MAX_CONCURRENT_PER_OWNER` | `20` | Execution concurrency across different webhook tasks owned by one user. |
+| `WEBHOOK_MAX_CONCURRENT_GLOBAL` | `100` | Execution concurrency across different webhook tasks. Same-task runs are always serialized. |
+| `CREDENTIAL_KMS_CMK_ID` | `None` | AWS KMS CMK id/ARN/alias used to envelope-encrypt per-task webhook secrets. Required when any task has its own HMAC secret. |
+| `CREDENTIAL_KMS_REGION` | AWS SDK default | AWS region for the KMS client. The pod also needs `kms:GenerateDataKey` and `kms:Decrypt`, normally through IRSA. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `MONGODB_URI` | `None` | Optional. Enables MongoDB-backed run history. See *Run History Persistence*. |
-| `MONGODB_DATABASE` | `None` | Optional. MongoDB database name. Required together with `MONGODB_URI`. |
+| `MONGODB_URI` | `None` | Required MongoDB connection for task definitions, runs, deduplication, and optional Chat publishing. |
+| `MONGODB_DATABASE` | `None` | Required MongoDB database name. |
 | `MONGODB_COLLECTION` | `autonomous_runs` | MongoDB collection name for run history. |
-| `RUN_HISTORY_MAXLEN` | `500` | Max runs retained by the in-memory store when MongoDB is not configured. |
-| `CHAT_HISTORY_PUBLISH_ENABLED` | `false` | Master switch for publishing autonomous runs into the UI's `conversations` / `messages` collections. Requires `MONGODB_URI`. See *Chat History Integration*. |
-| `CHAT_HISTORY_OWNER_EMAIL` | `autonomous@system` | Synthetic owner stamped on every autonomous conversation. Used as a sentinel — UI access is granted to authenticated users via the `source: 'autonomous'` flag, not by matching this email. |
+| `MONGODB_TASKS_COLLECTION` | `autonomous_tasks` | MongoDB collection name for task definitions. |
+| `MONGODB_TRIGGER_INSTANCES_COLLECTION` | `trigger_instances` | MongoDB collection for webhook deduplication claims. |
+| `TRIGGER_INSTANCE_TTL_DAYS` | `7` | Retention period for webhook deduplication claims. |
+| `CHAT_HISTORY_PUBLISH_ENABLED` | `false` | Publishes cron and interval task activity into the UI's `conversations` / `messages` collections. Webhook tasks are always excluded. Requires `MONGODB_URI`. See *Chat History Integration*. |
+| `CHAT_HISTORY_OWNER_EMAIL` | `autonomous@system` | Fallback owner for records without a task owner; current conversations use the task owner's email. |
 | `CHAT_HISTORY_DATABASE` | `None` | Optional override of the chat database name when the UI's chat data lives in a different database than `MONGODB_DATABASE`. |
 | `CHAT_HISTORY_CONVERSATIONS_COLLECTION` | `conversations` | Collection that the UI sidebar reads. |
 | `CHAT_HISTORY_MESSAGES_COLLECTION` | `messages` | Collection that the UI message panel reads. |
-| `CHAT_HISTORY_INCLUDE_CONTEXT` | `false` | When `true`, inlines raw webhook context payloads into the published prompt. **Default off** because autonomous chat rows are read-accessible to all authenticated UI users (audit visibility); inlining payloads risks leaking customer/internal data. With this off, the published prompt records `Context: <redacted N keys>` so debugging "did the webhook fire?" is still possible. |
+
+---
+
+### Per-task webhook secret storage
+
+Per-task HMAC secrets use the same envelope-encryption pattern as the UI
+credential store used by integrations such as Webex OAuth. Mongo stores an
+AES-256-GCM ciphertext and a KMS-wrapped, one-time data key; it never stores
+the plaintext secret. The task id is bound into both AES additional
+authenticated data and the KMS encryption context, so an envelope cannot be
+moved to another task.
+
+If KMS is not configured or is unavailable, reads/writes involving a per-task
+secret fail closed. Because every new UI webhook task has a per-task secret,
+configure KMS before enabling webhook creation.
+
+---
+
+## Webhook Dispatch
+
+Webhook requests are HMAC-verified through the selected provider adapter,
+deduplicated through MongoDB, queued, and acknowledged with `202` plus a
+preallocated run id. Duplicate deliveries return `200` with the original run
+id. GitHub configuration pings are ignored without creating a run.
+
+The request body is capped at 1 MiB by default. Each task has one process-local
+FIFO consumer, so the same webhook never runs concurrently with itself.
+Different tasks may run concurrently within the per-owner and global limits in
+the configuration table above. Queue overflow returns `429` with
+`Retry-After: 1`; dedup-store failure returns `503`.
+
+The FIFO is not durable. A pod restart loses queued or running webhook work.
+Edge rate limiting and WAF controls are still required for an internet-facing
+receiver.
 
 ---
 
 ## Run History Persistence
 
-The service records one entry per task run (a `TaskRun`) and exposes
-them via `GET /api/v1/runs` and `GET /api/v1/tasks/{id}/runs`.
+MongoDB is required. Startup fails closed unless both `MONGODB_URI` and
+`MONGODB_DATABASE` are configured and the connection succeeds within the
+configured retry budget.
 
-Two backends are supported and selected automatically by environment
-variables. Both implement the same `RunStore` protocol so the
-scheduler and HTTP routes are agnostic to which one is active:
+The service records one `TaskRun` document per execution and exposes it via
+`GET /api/v1/runs` and `GET /api/v1/tasks/{id}/runs`. Each document is upserted
+with `_id = run_id`: observers see `RUNNING` first and the same row later moves
+to `SUCCESS` or `FAILED`. Current records include the request prompt, a
+500-character preview, full final response, captured SSE events, error,
+task owner, and webhook trigger-instance link when applicable.
 
-| Mode | Activated by | Trade-offs |
-|---|---|---|
-| **In-memory (default)** | Neither `MONGODB_URI` nor `MONGODB_DATABASE` set | Zero infra, instant startup. **Lost on restart**. Bounded by `RUN_HISTORY_MAXLEN` (default 500), oldest evicted FIFO. Suitable for development and demos. |
-| **MongoDB** | **Both** `MONGODB_URI` *and* `MONGODB_DATABASE` set | Persistent across restarts, queryable from external tools, no eviction. Required for production and for the upcoming UI integration (the UI reads run history from this store). |
-
-Partial Mongo configuration (only `MONGODB_URI` or only
-`MONGODB_DATABASE`) is treated as **not configured** and falls back
-to in-memory — silently engaging Mongo on half-config would mask
-typical env-var typos and write history to the wrong place.
-
-The MongoDB schema is one document per run, mirroring the `TaskRun`
-model. Each run is stored with `_id = run_id`, so Mongo's automatic
-`_id_` index already enforces run-id uniqueness — no extra unique
-index is needed. Two additional indexes are created automatically
-at startup:
+MongoDB's automatic `_id_` index enforces run-id uniqueness. Two additional
+indexes are created at startup:
 
 - Compound `(task_id ASC, started_at DESC)` — backs the
   list-by-task query (`GET /tasks/{id}/runs`) without a collection
@@ -205,42 +250,29 @@ at startup:
   (`GET /runs`). The compound index above leads on `task_id`, so
   Mongo will not use it for an unfiltered sort across tasks.
 
-The startup log line tells you which backend is active:
-
-```
-RunStore: MongoDB (database=autonomous_agents, collection=autonomous_runs)
-RunStore: in-memory (maxlen=500) — set MONGODB_URI and MONGODB_DATABASE to persist run history
-```
+Run-history writes are best-effort observability: a write failure is logged but
+does not abort an agent already executing.
 
 ---
 
 ## Chat History Integration
 
-Operations folks live in the CAIPE chat sidebar. By default, autonomous
-runs are invisible there: they never go through the UI's `/api/chat/*`
-routes, so they never land in the `conversations` / `messages`
-collections that the sidebar reads.
-
-When `CHAT_HISTORY_PUBLISH_ENABLED=true` (and `MONGODB_URI` is
-configured), every autonomous run is **mirrored** into those collections
-as it completes. The sidebar then has a chip to flip between *human*
-chats and *autonomous* runs without a separate page.
+Chat publishing is disabled by default. When
+`CHAT_HISTORY_PUBLISH_ENABLED=true`, cron and interval task lifecycle events
+are mirrored into the UI's `conversations` and `messages` collections.
+Webhook tasks are always excluded and appear only in the Autonomous page's
+Run history.
 
 | Document | Collection | Deterministic key | Notes |
 |---|---|---|---|
-| Conversation (1 per run) | `CHAT_HISTORY_CONVERSATIONS_COLLECTION` (default `conversations`) | `_id = uuid5(run_id)` — deterministic UUID, satisfies the UI route validator | `source: "autonomous"`, `task_id`, `run_id` set; `owner_id = CHAT_HISTORY_OWNER_EMAIL` |
-| User message | `CHAT_HISTORY_MESSAGES_COLLECTION` (default `messages`) | `message_id = f"{run_id}-user"` | Reconstructed prompt sent to the dynamic agent. Webhook context is **redacted** by default (`Context: <redacted N keys>`) — set `CHAT_HISTORY_INCLUDE_CONTEXT=true` to inline the raw payload. Mongo `_id` stays as the default `ObjectId`. |
-| Assistant message | same | `message_id = f"{run_id}-assistant"` | Final response on success, the error message on failure, a placeholder while the run is still `RUNNING`. Mongo `_id` stays as the default `ObjectId`. |
+| Conversation (1 per task) | `CHAT_HISTORY_CONVERSATIONS_COLLECTION` (default `conversations`) | `_id = uuid5("task:<task-id>")` | Stable across runs; `source: "autonomous"`, `task_id`, and the task owner's `owner_id` are set. |
+| Run request | `CHAT_HISTORY_MESSAGES_COLLECTION` (default `messages`) | `run:<run-id>:request` | Prompt sent to the dynamic agent. |
+| Run response/error | same | `run:<run-id>:response` | Running placeholder, full final response, or error. |
+| Task lifecycle | same | Deterministic task/ack key | Creation intent and preflight acknowledgement. |
 
-The conversation write is an upsert keyed on the deterministic `_id`;
-the message writes are upserts keyed on `(conversation_id, message_id)`
-(matching the UI's own message upsert shape in
-`ui/src/app/api/chat/conversations/[id]/messages/route.ts`). The
-publisher is therefore **idempotent** across status transitions: when a
-run moves from `RUNNING` to `SUCCESS` the same documents are updated in
-place — no duplicates. The original `created_at` is pinned in
-`$setOnInsert` so the UI's chronological sort is stable across retries
-(a separate `updated_at` field tracks the last publish attempt).
+Conversation and message writes are idempotent upserts. When a run moves from
+`RUNNING` to `SUCCESS` or `FAILED`, the same response message is updated in
+place rather than duplicated.
 
 The publisher is wired into `_publish_safely`, which mirrors
 `_record_safely`: any exception inside the publisher is logged at
@@ -249,22 +281,20 @@ prevent a run from being recorded in the canonical `RunStore`.
 
 ### UI access model
 
-`/api/chat/conversations?source=autonomous` is an allow-listed query
-parameter. The route always pins `source: 'autonomous'` server-side
-when the parameter is present, so the parameter cannot be abused to
-bypass per-user ownership on human conversations. Any authenticated UI
-user can list autonomous conversations (operator/audit visibility); the
-read-only path is enforced by `requireConversationAccess`, which grants
-`shared_readonly` for `source: 'autonomous'` rows so messages are
-visible but writes are blocked.
+`/api/chat/conversations?source=autonomous` is a content filter only. It is
+combined with the normal ownership and sharing query and cannot bypass
+conversation authorization.
+
+The sidebar shows three sections:
+
+- **Autonomous Runs** with a violet task badge, collapsed by default.
+- **Scheduled Runs** with a cyan schedule badge, collapsed by default.
+- **History** for ordinary conversations.
 
 ### Disabling
 
-Either of the following disables the publisher and silently swaps in a
-no-op implementation, so the rest of the service is unaffected:
-
-- `CHAT_HISTORY_PUBLISH_ENABLED=false` (the default)
-- `MONGODB_URI` not set
+`CHAT_HISTORY_PUBLISH_ENABLED=false` swaps in a no-op publisher. Runs completed
+while publishing is disabled are not backfilled later.
 
 ---
 
@@ -283,11 +313,8 @@ How the streaming caller classifies failures:
 | Transport error (connect refused, DNS, read timeout) | Run recorded `FAILED` with a "did not respond" message. |
 | HTTP 4xx / 5xx | Run recorded `FAILED` with the status and target agent. |
 | In-band SSE `error` event | Run recorded `FAILED` with the streamed error. |
-| Missing / unauthorized agent | Run recorded `FAILED` with an actionable message. |
-
-The per-task override on `TaskDefinition`:
-
-- `timeout_seconds`: raise it for known long-running synthesis prompts.
+| Missing agent | Run recorded `FAILED` with an actionable message. |
+| Owner no longer eligible or authorized for the agent | Run recorded `FAILED` and the task is automatically disabled until the owner explicitly re-enables it after access is restored. |
 
 ---
 
@@ -311,6 +338,8 @@ uv pip install -e .
 # Configure
 cp ../../.env .env
 echo "DYNAMIC_AGENTS_URL=http://localhost:8001" >> .env
+echo "MONGODB_URI=mongodb://localhost:27017" >> .env
+echo "MONGODB_DATABASE=caipe" >> .env
 
 # Run
 uv run uvicorn autonomous_agents.main:app --port 8002 --reload
@@ -366,20 +395,46 @@ Once running, the interactive API docs are at `http://localhost:8002/docs`.
 |---|---|
 | `GET /health` | Service health + scheduler status |
 | `GET /api/v1/tasks` | List all tasks and next scheduled run |
+| `POST /api/v1/tasks` | Create a task; server generates its id and webhook secret when applicable |
+| `GET /api/v1/tasks/{id}` | Get one task; webhook secrets are redacted to `has_secret` |
+| `PUT /api/v1/tasks/{id}` | Update a task and hot-reload its runtime registration |
+| `DELETE /api/v1/tasks/{id}` | Delete a task and its persisted task history |
 | `GET /api/v1/tasks/{id}/runs` | Run history for a specific task |
 | `POST /api/v1/tasks/{id}/run` | Manually trigger a task immediately |
 | `GET /api/v1/runs` | Full run history across all tasks |
+| `GET /api/v1/settings` | Non-sensitive runtime constraints used by the task form |
 | `POST /api/v1/hooks/{task_id}` | Webhook endpoint for a task |
 
 ---
 
 ## Adding a New Task
 
-Tasks are managed through the CAIPE UI's admin-gated **Autonomous** tab
-(backed by the `/api/autonomous` proxy and persisted to MongoDB) or by
-POSTing a `TaskDefinition` to `POST /api/v1/tasks`. Each task must set a
-`dynamic_agent_id`; new definitions without one are rejected. No code or
-service restart is required — the scheduler hot-reloads on create/update.
+Tasks are managed through the CAIPE UI's **Autonomous** page. Its authenticated
+server-side `/api/autonomous` route forwards task creation to the service's
+cluster-internal `POST /api/v1/tasks` endpoint. The user must belong to an
+Autonomous-enabled team and must already have `can_use` access to the target
+agent. Organization admins manage team eligibility under **Admin → Security &
+Policy → Autonomous Enablement**; there is no per-agent enablement switch or
+task-oversight page.
+
+Each task must set a `dynamic_agent_id`; new definitions without one are
+rejected. The server generates an immutable task id. No service restart is
+required because create/update/delete operations hot-reload APScheduler or the
+webhook runtime.
+
+---
+
+## Current Scaling Limitation
+
+Keep the Helm deployment at one replica. APScheduler has no distributed
+leader election, while webhook queues, limits, and task registrations are
+process-local. Multiple replicas could double-fire scheduled tasks, run the
+same webhook concurrently, and retain different task registries. The chart
+therefore uses `replicaCount: 1`, a `Recreate` strategy, and no HPA.
+
+The current implementation does not use a durable broker or separate workers.
+See the [architecture guide](../../docs/docs/architecture/autonomous-agents.md)
+for the complete current-state flow and limits.
 
 ---
 

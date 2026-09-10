@@ -56,6 +56,7 @@ def log_authz_decision(
     duration_ms: float | None = None,
     tenant_id: str | None = None,
     extra: dict[str, Any] | None = None,
+    subject_ref: str | None = None,
 ) -> dict[str, Any]:
     """Submit a bridge authorization decision without affecting the request path."""
     event: dict[str, Any] = {
@@ -73,6 +74,11 @@ def log_authz_decision(
         "pdp": pdp,
         "source": source,
     }
+    # Real, resolvable identity alongside subject_hash — audit logs exist to
+    # support audits, so this event type is no longer anonymized. Omitted when
+    # the caller has no verifiable subject (e.g. DENY_NO_TOKEN).
+    if subject_ref:
+        event["subject_ref"] = subject_ref
     if duration_ms is not None:
         event["duration_ms"] = round(duration_ms, 2)
     if extra:

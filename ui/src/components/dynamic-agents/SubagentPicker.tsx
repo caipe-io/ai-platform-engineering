@@ -23,7 +23,7 @@ import { AlertCircle,Bot,Globe,Loader2,Trash2,Users } from "lucide-react";
 import React from "react";
 import { AgentAvatar } from "./AgentAvatar";
 
-// Loose shape for items returned by /api/dynamic-agents (the BFF list endpoint).
+// Loose shape for items returned by /api/dynamic-agents/available.
 // We accept LegacyVisibilityType so docs that still carry visibility:"private"
 // (until the migration script rewrites them) can be normalized on read.
 interface RawAgentListItem {
@@ -108,12 +108,11 @@ export function SubagentPicker({ agentId, value, onChange, disabled, parentVisib
     setLoading(true);
     setError(null);
     try {
-      // Use enabled_only=true to filter out disabled agents (important for admins)
-      const response = await fetch("/api/dynamic-agents?enabled_only=true");
+      const response = await fetch("/api/dynamic-agents/available");
       const data = await response.json();
-      if (data.success && data.data?.items) {
+      if (data.success && Array.isArray(data.data)) {
         setAvailableAgents(
-          data.data.items.map((agent: RawAgentListItem) => ({
+          data.data.map((agent: RawAgentListItem) => ({
             id: agent._id,
             name: agent.name,
             description: agent.description,

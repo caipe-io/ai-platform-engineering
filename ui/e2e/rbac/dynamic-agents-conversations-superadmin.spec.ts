@@ -198,10 +198,10 @@ test.describe("mocked RBAC Dynamic Agents workspace", () => {
     await expect(page.getByText("3 conversations found")).toBeVisible();
 
     await expect(page.getByText("Slack incident bridge")).toBeVisible();
-    await expect(page.getByText("Incident Commander")).toHaveCount(3);
+    await expect(page.getByText("Incident Commander")).toHaveCount(2);
     await expect(page.getByText("Slack", { exact: true })).toBeVisible();
     await expect(page.getByText("Web cost review")).toBeVisible();
-    await expect(page.getByText("FinOps Analyst")).toHaveCount(2);
+    await expect(page.getByText("FinOps Analyst")).toHaveCount(1);
     await expect(page.getByText("Archived audit trail")).toBeVisible();
     await expect(page.getByText("Archived", { exact: true })).toBeVisible();
     await expect(page.getByText("Showing 1–3 of 3")).toBeVisible();
@@ -305,13 +305,14 @@ test.describe("mocked RBAC Dynamic Agents workspace", () => {
     await expect(page.getByText("3 conversations found")).toBeVisible();
 
     await page.getByPlaceholder("Search by ID, title, or owner...").fill("cost");
-    await page.getByRole("button", { name: "Search" }).click();
+    await page.getByRole("button", { exact: true, name: "Search" }).click();
     await expect(page.getByText("1 conversation found")).toBeVisible();
     await expect(page.getByText("Web cost review")).toBeVisible();
     await expect(page.getByText("Slack incident bridge")).toHaveCount(0);
 
-    const agentSelect = page.getByLabel("Filter conversations by agent");
-    await agentSelect.selectOption("agent-finops");
+    const agentPicker = page.getByRole("combobox", { name: "Filter conversations by agent" });
+    await agentPicker.click();
+    await page.getByRole("option", { name: /FinOps Analyst/ }).click();
     await expect(page.getByText("1 conversation found")).toBeVisible();
 
     const rowsSelect = page.getByLabel("Rows per page");

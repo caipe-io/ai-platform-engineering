@@ -1143,7 +1143,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     const pending = takePendingFirstMessage(conversationId);
     if (pending) {
       pendingFirstMessageSentRef.current = true;
-      void submitMessage(pending);
+      void submitMessage(pending.text, pending.files);
     }
   }, [conversationId, readOnly, submitMessage]);
 
@@ -1736,7 +1736,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
               <div className="text-center py-20">
                 {isLoadingMessages ? (
                   <>
-                    <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
+                    <div className="w-16 h-16 mx-auto mb-6 rounded-2xl gradient-primary-br flex items-center justify-center">
                       <Loader2 className="h-8 w-8 text-white animate-spin" />
                     </div>
                     <h2 className="text-2xl font-bold mb-2">Loading conversation...</h2>
@@ -1748,10 +1748,12 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
                   <>
                     <AgentAvatar
                       agent={agent}
+                      agentId={agentId}
                       rounded="rounded-2xl"
                       size="w-16 h-16 mx-auto mb-6"
                       iconSize="h-8 w-8"
                       icon={Sparkles}
+                      useGlobalTheme
                     />
                     <h2 className="text-2xl font-bold mb-4">Welcome to {getConfig('appName')}</h2>
                     <p className="text-muted-foreground mb-3">
@@ -1760,9 +1762,11 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
                     <div className="flex items-center justify-center gap-3">
                       <AgentAvatar
                         agent={agent}
+                        agentId={agentId}
                         rounded="rounded-lg"
                         size="w-8 h-8"
                         iconSize="h-4 w-4"
+                        useGlobalTheme
                       />
                       <span className="text-lg font-semibold">
                         {agentName || "your agent"}
@@ -1893,6 +1897,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
                           showTimestamp={showTimestamps}
                           agentGradient={agentGradient}
                           agentCustomTheme={agentCustomTheme}
+                          agentId={agentId}
                           agentName={agentName}
                           turnEvents={turnEvents}
                           // Timeline props (only passed to latest message)
@@ -2368,6 +2373,7 @@ interface ChatMessageProps {
   showTimestamp?: boolean;
   agentGradient?: string | null;
   agentCustomTheme?: import("@/types/dynamic-agent").CustomThemeConfig | null;
+  agentId?: string | null;
   agentName?: string;
   turnEvents?: StreamEvent[];
   // Timeline props (for AgentTimeline)
@@ -2399,6 +2405,7 @@ const ChatMessage = React.memo(function ChatMessage({
   showTimestamp = false,
   agentGradient,
   agentCustomTheme,
+  agentId,
   agentName,
   turnEvents = [],
   // Timeline props
@@ -2460,6 +2467,7 @@ const ChatMessage = React.memo(function ChatMessage({
         </div>
       ) : (
         <AgentAvatar
+          agentId={agentId}
           gradientTheme={agentGradient}
           customThemeConfig={agentCustomTheme}
           rounded="rounded-xl"

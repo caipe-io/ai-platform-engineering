@@ -28,7 +28,7 @@ The GitHub agent now supports **GitHub App authentication** as an alternative to
 
 ## Related
 
-- [Token provider implementation](https://github.com/cnoe-io/ai-platform-engineering/blob/main/ai_platform_engineering/utils/github_app_token_provider.py)
+- [Token provider implementation](https://github.com/caipe-io/ai-platform-engineering/blob/main/ai_platform_engineering/utils/github_app_token_provider.py)
 - [GitHub App authentication docs](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app)
 - [GitHub MCP Server - App auth issues](https://github.com/github/github-mcp-server/issues/311)
 - [Installation token API](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)

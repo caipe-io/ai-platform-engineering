@@ -1872,7 +1872,7 @@ export function deriveMessagingRebacPlan(input: {
       if (!botId) {
         legacyRoutesRequiringBotAssignment += 1;
         warnings.push(
-          `Skipping legacy Webex route for ${workspaceId}--${resourceOwnerId}; assign a bot in the Webex Legacy migration tab.`,
+          `Skipping legacy Webex route for ${workspaceId}--${resourceOwnerId}; set bot_id on the route to migrate it.`,
         );
         continue;
       }
@@ -2189,11 +2189,6 @@ const MESSAGING_REBAC_INDEX_SPECS: NonNullable<MigrationRuntimePlan["indexes"]> 
     collection: "webex_space_grants",
     keys: { workspace_id: 1, space_id: 1, "resource.type": 1, "resource.id": 1, status: 1 },
     options: { name: "webex_space_grant_lookup" },
-  },
-  {
-    collection: "webex_link_nonces",
-    keys: { expires_at: 1 },
-    options: { expireAfterSeconds: 0, name: "webex_link_nonce_expiry" },
   },
 ];
 

@@ -8,17 +8,17 @@ MongoDB database for CAIPE UI persistence
 
 | | |
 |---|---|
-| **Version** | `0.6.0` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install caipe-ui-mongodb oci://ghcr.io/cnoe-io/charts/caipe-ui-mongodb --version 0.6.0
+helm install caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade caipe-ui-mongodb oci://ghcr.io/cnoe-io/charts/caipe-ui-mongodb --version 0.6.0
+helm upgrade caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install caipe-ui-mongodb oci://ghcr.io/cnoe-io/charts/caipe-ui-mongodb --version 0.6.0 \
+helm install caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install caipe-ui-mongodb oci://ghcr.io/cnoe-io/charts/caipe-ui-mongodb --version 0.6.0 \
+helm install caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/caipe-ui-mongodb --version 0.6.0
+helm show values oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0
 ```
 
 ## Reading the Values Table

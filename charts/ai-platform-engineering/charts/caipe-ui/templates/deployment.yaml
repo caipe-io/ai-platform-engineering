@@ -67,7 +67,9 @@ spec:
           {{- $hasModels := and .Values.appConfig.models (gt (len .Values.appConfig.models) 0) }}
           {{- $hasMcpServers := and .Values.appConfig.mcp_servers (gt (len .Values.appConfig.mcp_servers) 0) }}
           {{- $hasAgents := and .Values.appConfig.agents (gt (len .Values.appConfig.agents) 0) }}
-          {{- $hasAppConfig := or $hasModels $hasMcpServers $hasAgents }}
+          {{- $hasWorkflowConfigs := and .Values.appConfig.workflow_configs (gt (len .Values.appConfig.workflow_configs) 0) }}
+          {{- $hasRagSources := and .Values.appConfig.rag_sources (gt (len .Values.appConfig.rag_sources) 0) }}
+          {{- $hasAppConfig := or $hasModels $hasMcpServers $hasAgents $hasWorkflowConfigs $hasRagSources }}
           {{- $schedulerEnabled := dig "scheduler" "enabled" false (.Values.global | default dict) }}
           {{- $schedulerTokenSecretName := dig "scheduler" "serviceTokenSecretName" "caipe-scheduler-service-token" (.Values.global | default dict) }}
           {{- $schedulerTokenSecretKey := dig "scheduler" "serviceTokenSecretKey" "token" (.Values.global | default dict) }}
@@ -77,6 +79,8 @@ spec:
           {{- $schedulerRunnerSecretName = printf "%s-scheduler-runner" $schedulerRunnerBase }}
           {{- end }}
           env:
+            - name: CAIPE_RELEASE_VERSION
+              value: {{ index .Values.config "CAIPE_RELEASE_VERSION" | default (.Values.image.tag | default (include "caipe-ui.appVersion" .)) | quote }}
             {{- if $hasAppConfig }}
             - name: APP_CONFIG_PATH
               value: "/etc/caipe-ui/app-config.yaml"

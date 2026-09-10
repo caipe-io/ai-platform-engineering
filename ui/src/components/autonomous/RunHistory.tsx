@@ -3,25 +3,29 @@
 
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { RefreshCw, ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { MarkdownRenderer } from "@/components/shared/timeline/MarkdownRenderer";
 import { cn } from "@/lib/utils";
 
 import { autonomousApi, AutonomousApiError } from "./api";
-import type { TaskRun } from "./types";
+import type { TaskRun, TriggerType } from "./types";
 
 interface RunHistoryProps {
   taskId: string;
+  triggerType?: TriggerType;
   /**
    * Refresh trigger — bump this counter from the parent (e.g. right
    * after manually firing a task) to force a reload without waiting
    * for the polling interval.
    */
   refreshKey?: number;
+  /** Require an explicit run selection before showing the webhook composer. */
+  allowWebhookFollowUp?: boolean;
 }
 
 const STATUS_BADGE_VARIANT: Record<TaskRun["status"], "default" | "secondary" | "destructive" | "outline"> = {
@@ -75,11 +79,60 @@ function formatDuration(start: string, end: string | null | undefined): string {
   }
 }
 
-export function RunHistory({ taskId, refreshKey = 0 }: RunHistoryProps) {
+interface OrderedRun {
+  run: TaskRun;
+  depth: number;
+}
+
+/** Root deliveries newest-first, with each delivery's follow-ups nested below it. */
+function orderRunThreads(runs: TaskRun[]): OrderedRun[] {
+  const byId = new Map(runs.map((run) => [run.run_id, run]));
+  const children = new Map<string, TaskRun[]>();
+  const roots: TaskRun[] = [];
+
+  for (const run of runs) {
+    if (run.parent_run_id && byId.has(run.parent_run_id)) {
+      const siblings = children.get(run.parent_run_id) ?? [];
+      siblings.push(run);
+      children.set(run.parent_run_id, siblings);
+    } else {
+      roots.push(run);
+    }
+  }
+
+  const timestamp = (run: TaskRun) => new Date(run.started_at).getTime() || 0;
+  roots.sort((a, b) => timestamp(b) - timestamp(a));
+  children.forEach((siblings) => siblings.sort((a, b) => timestamp(a) - timestamp(b)));
+
+  const ordered: OrderedRun[] = [];
+  const visited = new Set<string>();
+  const append = (run: TaskRun, depth: number) => {
+    if (visited.has(run.run_id)) return;
+    visited.add(run.run_id);
+    ordered.push({ run, depth });
+    for (const child of children.get(run.run_id) ?? []) append(child, depth + 1);
+  };
+  roots.forEach((run) => append(run, 0));
+  // Defensive cycle/orphan fallback: no persisted run should disappear.
+  runs.forEach((run) => append(run, 0));
+  return ordered;
+}
+
+export function RunHistory({
+  taskId,
+  triggerType,
+  refreshKey = 0,
+  allowWebhookFollowUp = false,
+}: RunHistoryProps) {
   const [runs, setRuns] = useState<TaskRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [followUpText, setFollowUpText] = useState("");
+  const [submittingFollowUp, setSubmittingFollowUp] = useState(false);
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const [followUpNotice, setFollowUpNotice] = useState<string | null>(null);
   // Track in-flight requests so a slow response doesn't clobber a
   // newer one — important once the auto-poll kicks in.
   const inflightRef = useRef(0);
@@ -135,6 +188,46 @@ export function RunHistory({ taskId, refreshKey = 0 }: RunHistoryProps) {
     });
   };
 
+  const orderedRuns = useMemo(() => orderRunThreads(runs), [runs]);
+
+  const beginFollowUp = (runId: string) => {
+    setReplyingTo(runId);
+    setFollowUpText("");
+    setFollowUpError(null);
+    setFollowUpNotice(null);
+  };
+
+  const cancelFollowUp = () => {
+    setReplyingTo(null);
+    setFollowUpText("");
+    setFollowUpError(null);
+  };
+
+  const submitFollowUp = async (run: TaskRun) => {
+    const message = followUpText.trim();
+    if (!message) {
+      setFollowUpError("Enter a message before continuing this run.");
+      return;
+    }
+    setSubmittingFollowUp(true);
+    setFollowUpError(null);
+    try {
+      const accepted = await autonomousApi.followUpRun(taskId, run.run_id, message);
+      setFollowUpNotice(
+        `Follow-up queued for run ${run.run_id}. New run: ${accepted.run_id}.`,
+      );
+      setReplyingTo(null);
+      setFollowUpText("");
+      await load({ silent: true });
+    } catch (err) {
+      setFollowUpError(
+        err instanceof AutonomousApiError ? err.message : "Failed to continue this run.",
+      );
+    } finally {
+      setSubmittingFollowUp(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
@@ -157,6 +250,12 @@ export function RunHistory({ taskId, refreshKey = 0 }: RunHistoryProps) {
         </div>
       )}
 
+      {followUpNotice && (
+        <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
+          {followUpNotice}
+        </div>
+      )}
+
       {!error && runs.length === 0 && !loading && (
         <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
           No runs yet. Trigger the task to generate history.
@@ -164,12 +263,21 @@ export function RunHistory({ taskId, refreshKey = 0 }: RunHistoryProps) {
       )}
 
       <ul className="flex flex-col gap-1">
-        {runs.map((run) => {
+        {orderedRuns.map(({ run, depth }) => {
           const isOpen = expanded.has(run.run_id);
+          const response =
+            triggerType === "webhook"
+              ? run.response_full ?? run.response_preview
+              : run.response_preview;
           return (
             <li
               key={run.run_id}
-              className="rounded-md border border-border bg-card text-card-foreground"
+              className={cn(
+                "rounded-md border border-border bg-card text-card-foreground",
+                depth > 0 && "border-l-orange-500/40",
+              )}
+              style={{ marginLeft: `${Math.min(depth, 3) * 16}px` }}
+              data-run-depth={depth}
             >
               <button
                 type="button"
@@ -187,6 +295,11 @@ export function RunHistory({ taskId, refreshKey = 0 }: RunHistoryProps) {
                 >
                   {run.status}
                 </Badge>
+                {depth > 0 && (
+                  <Badge variant="outline" className="border-orange-500/30 text-[10px] text-orange-700 dark:text-orange-300">
+                    Follow-up
+                  </Badge>
+                )}
                 <span className="font-mono text-muted-foreground truncate">
                   {run.run_id}
                 </span>
@@ -235,6 +348,19 @@ export function RunHistory({ taskId, refreshKey = 0 }: RunHistoryProps) {
                       </Button>
                     </div>
                   )}
+                  {triggerType === "webhook" && (
+                    <div className="space-y-1">
+                      <div className="font-medium text-foreground">
+                        {run.parent_run_id ? "Follow-up message" : "Task request"}
+                      </div>
+                      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3">
+                        <MarkdownRenderer
+                          content={run.follow_up_text ?? run.request_prompt ?? "Request unavailable."}
+                          variant="final"
+                        />
+                      </div>
+                    </div>
+                  )}
                   {run.error && (
                     <div>
                       <div className="font-medium text-foreground mb-1">Error</div>
@@ -243,19 +369,89 @@ export function RunHistory({ taskId, refreshKey = 0 }: RunHistoryProps) {
                       </pre>
                     </div>
                   )}
-                  {run.response_preview && (
+                  {response && (
                     <div>
-                      <div className="font-medium text-foreground mb-1">Response preview</div>
-                      <pre className="whitespace-pre-wrap break-words rounded bg-muted p-2 text-foreground">
-                        {run.response_preview}
-                      </pre>
+                      <div className="font-medium text-foreground mb-1">
+                        {triggerType === "webhook" ? "Result" : "Response preview"}
+                      </div>
+                      {triggerType === "webhook" ? (
+                        <div
+                          className="min-w-0 overflow-hidden rounded bg-muted p-3"
+                          data-testid="webhook-run-result"
+                        >
+                          <MarkdownRenderer content={response} variant="final" />
+                        </div>
+                      ) : (
+                        <pre className="whitespace-pre-wrap break-words rounded bg-muted p-2 text-foreground">
+                          {response}
+                        </pre>
+                      )}
                     </div>
                   )}
-                  {!run.error && !run.response_preview && (
+                  {!run.error && !response && (
                     <div className="text-muted-foreground italic">
                       No response captured.
                     </div>
                   )}
+                  {allowWebhookFollowUp &&
+                    triggerType === "webhook" &&
+                    !["pending", "running"].includes(run.status) && (
+                      <div className="border-t border-border pt-2">
+                        {replyingTo === run.run_id ? (
+                          <div className="space-y-2" data-testid={`run-follow-up-form-${run.run_id}`}>
+                            <label
+                              htmlFor={`run-follow-up-${run.run_id}`}
+                              className="text-xs font-medium text-foreground"
+                            >
+                              Continue this run
+                            </label>
+                            <textarea
+                              id={`run-follow-up-${run.run_id}`}
+                              value={followUpText}
+                              onChange={(event) => setFollowUpText(event.target.value)}
+                              rows={3}
+                              maxLength={10_000}
+                              disabled={submittingFollowUp}
+                              className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                              placeholder="Ask a follow-up using only this run's context…"
+                            />
+                            {followUpError && (
+                              <p className="text-xs text-destructive">{followUpError}</p>
+                            )}
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={cancelFollowUp}
+                                disabled={submittingFollowUp}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => void submitFollowUp(run)}
+                                disabled={submittingFollowUp || !followUpText.trim()}
+                              >
+                                {submittingFollowUp ? "Queuing…" : "Send follow-up"}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex justify-end">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => beginFollowUp(run.run_id)}
+                            >
+                              Continue this run
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                 </div>
               )}
             </li>

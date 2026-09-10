@@ -119,6 +119,7 @@ describe("parsers", () => {
   });
   it("parseAction / parseResourceType validate membership", () => {
     expect(parseAction("use")).toBe("use");
+    expect(parseAction("automate")).toBe("automate");
     expect(() => parseAction("frobnicate")).toThrow(HttpAuthzError);
     expect(parseResourceType("task")).toBe("task");
     expect(() => parseResourceType("nope")).toThrow(HttpAuthzError);

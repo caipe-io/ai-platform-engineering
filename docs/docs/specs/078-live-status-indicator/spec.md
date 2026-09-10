@@ -27,6 +27,6 @@ The streaming state of a conversation was only visible inside the chat panel (A2
 
 - Spec: [live-status-indicator](../087-live-status-indicator/spec.md)
 - Branch: `prebuild/feat/live-status-indicator`
-- PR: [#892](https://github.com/cnoe-io/ai-platform-engineering/pull/892)
+- PR: [#892](https://github.com/caipe-io/ai-platform-engineering/pull/892)
 
 - Architecture: [architecture.md](./architecture.md)

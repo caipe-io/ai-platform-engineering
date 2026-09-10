@@ -10,15 +10,16 @@ filterAccessibleWorkflowConfigs,
 workflowAccessAllowed,
 } from "@/lib/server/workflow-cas-authz";
 import {
-buildTeamRefToSlugMap,
+  buildTeamRefToSlugMap,
 filterWorkflowConfigsByRunAccess,
 mergeWorkflowConfigsById,
 normalizeSharedWithTeamSlugs,
 reconcileWorkflowConfigAccess,
 requireWorkflowConfigRunAccess,
 requireWorkflowConfigWriteAccess,
-resolveUserTeamSlugsForWorkflow,
+  resolveUserTeamSlugsForWorkflow,
 } from "@/lib/rbac/workflow-config-rebac";
+import { assertWorkflowConfigRunnable } from "@/lib/server/workflow-step-agents";
 import type {
 CreateWorkflowConfigInput,
 StepEntry,
@@ -222,6 +223,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       updated_at: now,
     };
 
+    await assertWorkflowConfigRunnable(config);
+
     const collection = await getCollection<WorkflowConfig>("workflow_configs");
     await collection.insertOne(config);
 
@@ -324,6 +327,8 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       visibility: mergedVisibility,
       shared_with_teams: mergedSharedWithTeams,
     };
+
+    await assertWorkflowConfigRunnable(merged);
 
     await reconcileWorkflowConfigAccess(session, merged, existing);
 

@@ -77,7 +77,7 @@ describe("/api/platform/health", () => {
 
   it("returns healthy product capabilities when enabled checks pass", async () => {
     (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
-      if (url.includes("/api/dynamic-agents/health")) return jsonResponse({ status: "healthy" });
+      if (url === "http://dynamic-agents:8001/healthz") return jsonResponse({ status: "healthy" });
       if (url.includes("/v1/audit/status")) return jsonResponse(healthyAuditServiceStatus);
       return jsonResponse({});
     });
@@ -104,11 +104,11 @@ describe("/api/platform/health", () => {
       expect.objectContaining({ method: "GET" }),
     );
     expect(global.fetch).toHaveBeenCalledWith(
-      "http://localhost:3000/api/dynamic-agents/health",
+      "http://dynamic-agents:8001/healthz",
       expect.objectContaining({ method: "GET" }),
     );
     expect(global.fetch).toHaveBeenCalledWith(
-      "http://localhost:3000/api/rag/healthz",
+      "http://rag-server:9446/healthz",
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -141,7 +141,7 @@ describe("/api/platform/health", () => {
     process.env.DYNAMIC_AGENTS_ENABLED = "false";
     (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
       if (url.includes("/v1/audit/status")) return jsonResponse(healthyAuditServiceStatus);
-      return jsonResponse({}, { status: url.includes("/api/rag/healthz") ? 503 : 200 });
+      return jsonResponse({}, { status: url === "http://rag-server:9446/healthz" ? 503 : 200 });
     });
 
     const { GET } = await import("../route");
@@ -160,7 +160,7 @@ describe("/api/platform/health", () => {
   it("returns 503 when the enabled dynamic agents capability fails", async () => {
     process.env.RAG_ENABLED = "false";
     (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
-      if (url.includes("/api/dynamic-agents/health")) return jsonResponse({ status: "unhealthy" });
+      if (url === "http://dynamic-agents:8001/healthz") return jsonResponse({ status: "unhealthy" });
       if (url.includes("/v1/audit/status")) return jsonResponse(healthyAuditServiceStatus);
       return jsonResponse({});
     });
@@ -205,7 +205,7 @@ describe("/api/platform/health", () => {
 
   it("degrades when audit-service reports queue worker problems", async () => {
     (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
-      if (url.includes("/api/dynamic-agents/health")) return jsonResponse({ status: "healthy" });
+      if (url === "http://dynamic-agents:8001/healthz") return jsonResponse({ status: "healthy" });
       if (url.includes("/v1/audit/status")) {
         return jsonResponse({
           ...healthyAuditServiceStatus,
@@ -233,7 +233,7 @@ describe("/api/platform/health", () => {
 
   it("degrades when audit-service reports local disk pressure", async () => {
     (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
-      if (url.includes("/api/dynamic-agents/health")) return jsonResponse({ status: "healthy" });
+      if (url === "http://dynamic-agents:8001/healthz") return jsonResponse({ status: "healthy" });
       if (url.includes("/v1/audit/status")) {
         return jsonResponse({
           ...healthyAuditServiceStatus,
@@ -305,7 +305,7 @@ describe("/api/platform/health", () => {
   it("falls back to the dynamic agents URL for chat runtime health", async () => {
     process.env.A2A_BASE_URL = "";
     (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
-      if (url.includes("/api/dynamic-agents/health")) return jsonResponse({ status: "healthy" });
+      if (url === "http://dynamic-agents:8001/healthz") return jsonResponse({ status: "healthy" });
       if (url.includes("/v1/audit/status")) return jsonResponse(healthyAuditServiceStatus);
       return jsonResponse({});
     });

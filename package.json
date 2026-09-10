@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "mongodb": "7.2.0",
-    "pnpm": "11.9.0"
+    "pnpm": "11.11.0"
   },
   "devDependencies": {
     "@types/node": "25.7.0",

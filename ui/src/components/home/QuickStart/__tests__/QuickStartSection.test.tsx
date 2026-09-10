@@ -6,7 +6,7 @@
  * - Build tab is active by default with its 5 cards
  * - Switching tabs shows the correct cards
  * - Each card links to its documented destination route
- * - Explore tab ships with only the Chat assistants card (Projects intentionally omitted)
+ * - Explore tab ships with only the chat card (Projects intentionally omitted)
  */
 
 import React from 'react'
@@ -92,7 +92,7 @@ describe('QuickStartSection', () => {
     expect(screen.getByTestId('quick-start-card-secrets')).toBeInTheDocument()
   })
 
-  it('Explore tab ships with only the Chat assistants card', () => {
+  it('Explore tab ships with only the chat card', () => {
     render(<QuickStartSection />)
     fireEvent.mouseDown(screen.getByTestId('quick-start-tab-explore'), { button: 0 })
     expect(screen.getByTestId('quick-start-card-chat-assistants')).toBeInTheDocument()

@@ -19,6 +19,7 @@ import pytest
 import autonomous_agents.services.dynamic_agents_client as da_client
 from autonomous_agents.config import get_settings
 from autonomous_agents.services.dynamic_agents_client import (
+    DynamicAgentsAuthorizationRevokedError,
     DynamicAgentsClientError,
     DynamicAgentsNotConfiguredError,
     _build_user_context_header,
@@ -192,6 +193,14 @@ class TestInvokeDynamicAgent:
         factory, _ = _mock_async_client(_resp(500, {"detail": "boom"}))
         with patch("autonomous_agents.services.dynamic_agents_client.httpx.AsyncClient", factory):
             with pytest.raises(DynamicAgentsClientError, match="HTTP 500"):
+                await invoke_dynamic_agent(prompt="hi", task_id="t1", agent_id="agent-x")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("code", ["organization#automate", "agent#use"])
+    async def test_authorization_revoke_raises_auto_pause_signal(self, configured, code):
+        factory, _ = _mock_async_client(_resp(403, {"detail": {"code": code}}))
+        with patch("autonomous_agents.services.dynamic_agents_client.httpx.AsyncClient", factory):
+            with pytest.raises(DynamicAgentsAuthorizationRevokedError):
                 await invoke_dynamic_agent(prompt="hi", task_id="t1", agent_id="agent-x")
 
     @pytest.mark.asyncio
@@ -593,7 +602,7 @@ class TestOwnerEmailInRequests:
 
 
 class TestAutonomousFlag:
-    """Both request bodies mark the run as autonomous so DA enforces can_schedule"""
+    """Both request bodies ask DA to enforce user entitlement plus agent access."""
 
     @pytest.mark.asyncio
     async def test_sync_body_sets_autonomous_true(self, configured):

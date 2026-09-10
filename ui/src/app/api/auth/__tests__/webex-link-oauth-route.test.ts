@@ -4,6 +4,8 @@
 
 import { NextRequest } from "next/server";
 
+import { ApiError } from "@/lib/api-middleware";
+
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockMergeUserAttributes = jest.fn();
 const mockFindRealmUserIdByAttribute = jest.fn();
@@ -73,6 +75,42 @@ describe("GET /api/auth/webex-link/start", () => {
     expect(location.searchParams.get("scope")).toBe("spark:people_read");
     expect(location.searchParams.get("code_challenge_method")).toBe("S256");
     expect(response.headers.get("set-cookie")).toContain("caipe_oauth_state_webex-link=");
+  });
+
+  it("redirects an unauthenticated browser navigation to sign-in with a callbackUrl, not a bare JSON 401", async () => {
+    setConfigured();
+    mockGetAuthFromBearerOrSession.mockRejectedValue(
+      new ApiError("You are not signed in. Please sign in to continue.", 401, "NOT_SIGNED_IN", "not_signed_in", "sign_in"),
+    );
+    const { GET } = await import("../webex-link/start/route");
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/auth/webex-link/start?webex_user=abc123"),
+    );
+
+    expect(response.status).toBe(307);
+    const location = new URL(response.headers.get("location") ?? "");
+    expect(location.pathname).toBe("/login");
+    expect(location.searchParams.get("callbackUrl")).toBe(
+      "/api/auth/webex-link/start?webex_user=abc123",
+    );
+    expect(await response.text()).toBe("");
+  });
+
+  it("redirects to the public origin (NEXTAUTH_URL) for the sign-in page, not the pod-internal request origin", async () => {
+    setConfigured();
+    process.env.NEXTAUTH_URL = "https://forge.dev.svc.splunk8s.io";
+    mockGetAuthFromBearerOrSession.mockRejectedValue(
+      new ApiError("You are not signed in. Please sign in to continue.", 401, "NOT_SIGNED_IN", "not_signed_in", "sign_in"),
+    );
+    const { GET } = await import("../webex-link/start/route");
+    const response = await GET(new NextRequest("http://0.0.0.0:3000/api/auth/webex-link/start"));
+    delete process.env.NEXTAUTH_URL;
+
+    expect(response.status).toBe(307);
+    const location = new URL(response.headers.get("location") ?? "");
+    expect(location.origin).toBe("https://forge.dev.svc.splunk8s.io");
+    expect(location.pathname).toBe("/login");
+    expect(location.searchParams.get("callbackUrl")).toBe("/api/auth/webex-link/start");
   });
 });
 
@@ -231,6 +269,32 @@ describe("GET /api/auth/webex-link/callback", () => {
       webex_user_email: undefined,
     });
     expect(response.headers.get("set-cookie")).toContain("caipe_oauth_state_webex-link=;");
+  });
+
+  it("redirects to the public origin (NEXTAUTH_URL), not the pod-internal request origin", async () => {
+    setConfigured();
+    process.env.NEXTAUTH_URL = "https://forge.dev.svc.splunk8s.io";
+    const cookie = await startAndGetCookie();
+    const { oauthStateCookieName, parseOAuthStateCookie } = await import("@/lib/credentials/oauth-state");
+    const cookieValue = cookie.split(`${oauthStateCookieName("webex-link")}=`)[1];
+    const parsed = parseOAuthStateCookie(cookieValue);
+
+    global.fetch = mockFetchSequence({ personId: "person-42", personOrgId: "org-1" });
+
+    const { GET } = await import("../webex-link/callback/route");
+    const response = await GET(
+      new NextRequest(
+        `http://0.0.0.0:3000/api/auth/webex-link/callback?code=code-1&state=${parsed.state}`,
+        { headers: { cookie } },
+      ),
+    );
+    delete process.env.NEXTAUTH_URL;
+
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("location") ?? "");
+    expect(location.origin).toBe("https://forge.dev.svc.splunk8s.io");
+    expect(location.pathname).toBe("/settings/account-and-access");
+    expect(location.searchParams.get("webex_link")).toBe("success");
   });
 
   it("rolls back and rejects when a concurrent grant wins the race after the initial check", async () => {

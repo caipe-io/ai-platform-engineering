@@ -90,6 +90,7 @@ jobs:
     if: |
       needs.determine-changes.outputs.should_build == 'true' &&
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name == 'workflow_call' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.event.action != 'closed'
     permissions:
       contents: write
@@ -108,7 +109,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -241,6 +242,7 @@ jobs:
       needs.determine-changes.result == 'success' &&
       needs.determine-changes.outputs.should_build == 'true' &&
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name == 'workflow_call' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.event.action != 'closed'
     permissions:
       contents: write
@@ -248,7 +250,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 

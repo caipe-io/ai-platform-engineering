@@ -62,7 +62,8 @@ jest.mock("@/lib/rbac/resource-authz", () => ({
     mockRequireResourcePermission(...args),
 }));
 
-jest.mock("../../../route", () => ({
+jest.mock("@/lib/rag-source-ingestion.server", () => ({
+  getRagServerUrl: () => "http://rag.example.test",
   triggerIngestion: (...args: unknown[]) => mockTriggerIngestion(...args),
 }));
 
@@ -145,7 +146,7 @@ describe("POST /api/rag/sources/[sourceId]/ingest", () => {
     expect(response.status).toBe(200);
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
-      "http://localhost:9446/v1/ingest/jira/reload",
+      "http://rag.example.test/v1/ingest/jira/reload",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ datasource_id: "jira-example-primary" }),

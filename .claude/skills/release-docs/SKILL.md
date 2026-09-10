@@ -148,7 +148,7 @@ Focus on operator/user impact, not internal implementation details.>
 
 ## Bug Fixes
 
-- **<scope>**: <description> ([#NNNN](https://github.com/cnoe-io/ai-platform-engineering/pull/NNNN))
+- **<scope>**: <description> ([#NNNN](https://github.com/caipe-io/ai-platform-engineering/pull/NNNN))
 
 ## Security
 

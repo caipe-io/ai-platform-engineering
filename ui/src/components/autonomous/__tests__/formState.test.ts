@@ -19,8 +19,6 @@ describe("formState.toFormState", () => {
       llm_provider: "anthropic",
       trigger: { type: "cron", schedule: "0 0 * * *" },
       enabled: false,
-      timeout_seconds: 30,
-      max_retries: 2,
     };
     expect(toFormState(task)).toEqual(
       expect.objectContaining({
@@ -28,8 +26,6 @@ describe("formState.toFormState", () => {
         triggerType: "cron",
         cronSchedule: "0 0 * * *",
         enabled: false,
-        timeoutSeconds: "30",
-        maxRetries: "2",
       }),
     );
   });
@@ -98,11 +94,11 @@ describe("formState.fromFormState", () => {
   });
 
   it("parses a valid cron task", () => {
-    const result = fromFormState({ ...base, triggerType: "cron", cronSchedule: "*/5 * * * *" });
+    const result = fromFormState({ ...base, triggerType: "cron", cronSchedule: "0 9 * * *" });
     expect(result).toEqual({
       task: expect.objectContaining({
         id: "my_task",
-        trigger: { type: "cron", schedule: "*/5 * * * *" },
+        trigger: { type: "cron", schedule: "0 9 * * *" },
       }),
     });
   });
@@ -128,11 +124,29 @@ describe("formState.fromFormState", () => {
     ).toEqual({ error: expect.stringMatching(/positive whole numbers/) });
   });
 
-  it("maps webhook with blank secret to null", () => {
+  it("rejects intervals below the default 30-minute minimum", () => {
+    expect(
+      fromFormState({ ...base, triggerType: "interval", intervalMinutes: "29" }),
+    ).toEqual({ error: "Interval must be at least 30 minutes." });
+  });
+
+  it("accepts the configured interval minimum", () => {
+    const result = fromFormState(
+      { ...base, triggerType: "interval", intervalMinutes: "10" },
+      600,
+    );
+    expect(result).toEqual({
+      task: expect.objectContaining({
+        trigger: { type: "interval", seconds: null, minutes: 10, hours: null },
+      }),
+    });
+  });
+
+  it("maps webhook with blank secret to null for server generation/preservation", () => {
     const result = fromFormState({ ...base, triggerType: "webhook", webhookSecret: "   " });
     expect(result).toEqual({
       task: expect.objectContaining({
-        trigger: { type: "webhook", provider: "generic_hmac", secret: null },
+        trigger: { type: "webhook", provider: "github", secret: null },
       }),
     });
   });
@@ -149,28 +163,6 @@ describe("formState.fromFormState", () => {
         trigger: { type: "webhook", provider: "jira", secret: "s3cret" },
       }),
     });
-  });
-
-  it("parses optional timeout and maxRetries", () => {
-    const result = fromFormState({
-      ...base,
-      triggerType: "cron",
-      cronSchedule: "0 9 * * *",
-      timeoutSeconds: "60",
-      maxRetries: "3",
-    });
-    expect(result).toEqual({
-      task: expect.objectContaining({ timeout_seconds: 60, max_retries: 3 }),
-    });
-  });
-
-  it("rejects invalid timeout and maxRetries", () => {
-    expect(
-      fromFormState({ ...base, triggerType: "cron", cronSchedule: "0 9 * * *", timeoutSeconds: "-1" }),
-    ).toEqual({ error: expect.stringMatching(/Timeout/) });
-    expect(
-      fromFormState({ ...base, triggerType: "cron", cronSchedule: "0 9 * * *", maxRetries: "1.5" }),
-    ).toEqual({ error: expect.stringMatching(/Max retries/) });
   });
 
   it("converts empty agent to null", () => {
@@ -190,7 +182,7 @@ describe("formState.summarizeTrigger", () => {
   });
   it("summarises webhook with/without secret", () => {
     expect(summarizeTrigger({ type: "webhook", provider: "jira", has_secret: true })).toBe("Webhook: jira (signed)");
-    expect(summarizeTrigger({ type: "webhook", has_secret: false })).toBe("Webhook: generic_hmac");
+    expect(summarizeTrigger({ type: "webhook", has_secret: false })).toBe("Webhook: github");
   });
 });
 
