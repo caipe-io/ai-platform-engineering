@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import yaml from "js-yaml";
+import { load } from "js-yaml";
 import {
   agentGatewayAdminConfigUrl,
   agentGatewayMcpEndpointUrl,
@@ -121,7 +121,7 @@ describe("AgentGateway MCP discovery", () => {
     "keeps %s populated with the dev MCP services",
     (filename) => {
       const configPath = path.join(process.cwd(), "../deploy/agentgateway", filename);
-      const config = yaml.load(fs.readFileSync(configPath, "utf-8"));
+      const config = load(fs.readFileSync(configPath, "utf-8"));
 
       expect(extractAgentGatewayMcpTargets(config).map((target) => target.id).sort()).toEqual(
         [

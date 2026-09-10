@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import yaml from "js-yaml";
+import { load as loadYaml } from "js-yaml";
 
 import type {
   AgenticAppInstallation,
@@ -52,7 +52,7 @@ export function loadConfiguredAgenticApps(
     throw new Error(`External Apps config does not exist: ${configPath}`);
   }
 
-  const root = asRecord(yaml.load(fs.readFileSync(configPath, "utf8")), "config");
+  const root = asRecord(loadYaml(fs.readFileSync(configPath, "utf8")), "config");
   const section = asRecord(root.agentic_apps, "agentic_apps");
   const rawPackages = asArray(section.packages, "agentic_apps.packages");
   const rawInstallations = asArray(

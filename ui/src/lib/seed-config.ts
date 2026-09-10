@@ -10,7 +10,7 @@
  * - Are re-applied on every server restart (config is source of truth)
  * - Stale config-driven entities (removed from YAML) are cleaned up
  *
- * Ported from DA services/seed_config.py — DA no longer seeds configs.
+ * The gateway owns config seeding; Dynamic Agents remains stateless here.
  */
 
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
@@ -63,7 +63,7 @@ import type {
 } from "@/types/workflow-config";
 import fs from "fs";
 import { createHash } from "node:crypto";
-import yaml from "js-yaml";
+import { load } from "js-yaml";
 
 // Pattern to match ${VAR_NAME} or ${VAR_NAME:-default}
 const ENV_VAR_PATTERN = /\$\{([^}:]+)(?::-([^}]*))?\}/g;
@@ -85,6 +85,16 @@ interface SeedConfig {
   mcp_servers: Record<string, unknown>[];
   workflow_configs: Record<string, unknown>[];
   rag_sources: Record<string, unknown>[];
+}
+
+function emptySeedConfig(): SeedConfig {
+  return {
+    models: [],
+    agents: [],
+    mcp_servers: [],
+    workflow_configs: [],
+    rag_sources: [],
+  };
 }
 
 /** Shape of documents in the llm_models collection. */
@@ -149,17 +159,14 @@ export function loadSeedConfig(configPath: string): SeedConfig {
     console.warn(
       `[seed-config] Config not found at ${configPath}, skipping seed`,
     );
-    return {
-      models: [],
-      agents: [],
-      mcp_servers: [],
-      workflow_configs: [],
-      rag_sources: [],
-    };
+    return emptySeedConfig();
   }
 
   const raw = fs.readFileSync(configPath, "utf-8");
-  const parsed = (yaml.load(raw) as Record<string, unknown>) || {};
+  if (raw.trim().length === 0) {
+    return emptySeedConfig();
+  }
+  const parsed = (load(raw) as Record<string, unknown> | null) ?? {};
 
   // Models don't need env var expansion (no secrets)
   const models = (parsed.models ?? []) as SeedModel[];
@@ -218,7 +225,6 @@ async function reconcileSeededAgentRelationships(input: {
   logContext: string;
 }): Promise<void> {
   try {
-    // assisted-by Codex Codex-sonnet-4-6
     await reconcileAgentRelationships({
       agentId: input.agentId,
       previousAllowedTools: input.previousAllowedTools ?? {},
