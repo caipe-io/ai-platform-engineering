@@ -128,6 +128,9 @@ export function ChatPanel({
   }, [session?.user?.name]);
 
   const [input, setInput] = useState("");
+  const [hasRelinkedAgent, setHasRelinkedAgent] = useState(false);
+  const panelReadOnly = readOnly && !hasRelinkedAgent;
+  const panelReadOnlyReason = hasRelinkedAgent ? undefined : readOnlyReason;
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   // Files staged in the composer for the next turn (multimodal input).
@@ -221,6 +224,7 @@ export function ChatPanel({
         ),
       }));
       onAgentRelinked?.(agentId);
+      setHasRelinkedAgent(true);
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
@@ -256,6 +260,7 @@ export function ChatPanel({
         ),
       }));
       onAgentRelinked?.(chosenAgentId);
+      setHasRelinkedAgent(true);
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
@@ -1151,13 +1156,13 @@ export function ChatPanel({
   // through the normal pipeline rather than duplicating it there.
   const pendingFirstMessageSentRef = useRef(false);
   useEffect(() => {
-    if (pendingFirstMessageSentRef.current || readOnly) return;
+    if (pendingFirstMessageSentRef.current || panelReadOnly) return;
     const pending = takePendingFirstMessage(conversationId);
     if (pending) {
       pendingFirstMessageSentRef.current = true;
       void submitMessage(pending.text, pending.files);
     }
-  }, [conversationId, readOnly, submitMessage]);
+  }, [conversationId, panelReadOnly, submitMessage]);
 
   // Handle queued messages after streaming completes
   useEffect(() => {
@@ -2031,22 +2036,22 @@ export function ChatPanel({
       </AnimatePresence>
 
       {/* Input Area - Fixed bottom, doesn't scroll */}
-      {readOnly ? (
-        <div className={`border-t border-border shrink-0 ${readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
+      {panelReadOnly ? (
+        <div className={`border-t border-border shrink-0 ${panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
           <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
-            <div className={`flex items-center gap-2 ${readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled' ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>
+            <div className={`flex items-center gap-2 ${panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled' ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>
               <ShieldCheck className="h-4 w-4 shrink-0" />
-              {readOnlyReason === 'admin_audit' ? (
+              {panelReadOnlyReason === 'admin_audit' ? (
                 <>
                   <span className="text-sm font-medium">Read-Only Audit Mode</span>
                   <span className="text-xs text-amber-600 dark:text-amber-500">— You are viewing this conversation as an admin auditor.</span>
                 </>
-              ) : readOnlyReason === 'agent_deleted' ? (
+              ) : panelReadOnlyReason === 'agent_deleted' ? (
                 <>
                   <span className="text-sm font-medium">Agent No Longer Available</span>
                   <span className="text-xs text-red-600 dark:text-red-500">— This agent has been deprecated or deleted. You can view the history but cannot send new messages.</span>
                 </>
-              ) : readOnlyReason === 'agent_disabled' ? (
+              ) : panelReadOnlyReason === 'agent_disabled' ? (
                 <>
                   <span className="text-sm font-medium">Agent Disabled</span>
                   <span className="text-xs text-red-600 dark:text-red-500">— This agent has been disabled by an administrator. You can view the history but cannot send new messages.</span>
@@ -2058,7 +2063,7 @@ export function ChatPanel({
                 </>
               )}
             </div>
-            {readOnlyReason === 'admin_audit' ? (
+            {panelReadOnlyReason === 'admin_audit' ? (
             <NavigationProgressLink
               href="/admin/insights/feedback"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-amber-600/20 text-amber-700 dark:text-amber-300 hover:bg-amber-600/30 transition-colors"
@@ -2066,7 +2071,7 @@ export function ChatPanel({
               <ArrowLeft className="h-3 w-3" />
               Back to Feedback
             </NavigationProgressLink>
-            ) : (readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled') ? (
+            ) : (panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled') ? (
             <div className="flex items-center gap-2 flex-wrap">
               {showAgentPicker ? (
                 <>
