@@ -294,6 +294,8 @@ export function ChatContainer() {
     }
 
     fetchedAgentRef.current = { uuid, agentId: selectedAgentId };
+    setAgentNotFound(false);
+    let cancelled = false;
 
     async function fetchAgentInfo() {
       try {
@@ -301,25 +303,32 @@ export function ChatContainer() {
         if (response.ok) {
           const data = await response.json();
           const agent = data.data as DynamicAgentConfig;
+          if (cancelled) return;
           setAgentInfo(agent);
           setAgentNotFound(false);
         } else if (response.status === 404) {
           console.warn(`[ChatContainer] Agent ${selectedAgentId} not found (deleted)`);
+          if (cancelled) return;
           setAgentInfo(null);
           setAgentNotFound(true);
         } else {
           console.error(`[ChatContainer] Failed to fetch agent info: ${response.status}`);
+          if (cancelled) return;
           setAgentInfo(null);
           setAgentNotFound(false);
         }
       } catch (err) {
         console.error("Failed to fetch agent info:", err);
+        if (cancelled) return;
         setAgentInfo(null);
         setAgentNotFound(false);
       }
     }
 
     fetchAgentInfo();
+    return () => {
+      cancelled = true;
+    };
     // Note: agentInfo in deps intentionally triggers re-fetch when agentInfo becomes null
     // (e.g., on page refresh or after navigating away and back)
   }, [uuid, selectedAgentId, agentInfo]);
