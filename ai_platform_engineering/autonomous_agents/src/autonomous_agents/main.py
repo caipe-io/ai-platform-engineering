@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from autonomous_agents.config import get_settings
+from autonomous_agents.error_handlers import webhook_secret_encryption_error_handler
 from autonomous_agents.routes import health, tasks, webex, webhooks
 from autonomous_agents.routes.webex import set_bot_person_id, set_webex_client
 from autonomous_agents.services.chat_history import NoopChatHistoryPublisher
@@ -28,6 +29,7 @@ from autonomous_agents.services.scheduler import (
     get_scheduler,
     register_scheduler_tasks,
 )
+from autonomous_agents.services.secret_encryption import WebhookSecretEncryptionError
 from autonomous_agents.services.task_lifecycle import set_task_store
 from autonomous_agents.services.task_runner import (
     set_chat_history_publisher,
@@ -273,6 +275,11 @@ def create_app() -> FastAPI:
         description="Schedule and trigger AI agents to run in the background autonomously",
         version="0.1.0",
         lifespan=lifespan,
+    )
+
+    app.add_exception_handler(
+        WebhookSecretEncryptionError,
+        webhook_secret_encryption_error_handler,
     )
 
     # Add CORS middleware

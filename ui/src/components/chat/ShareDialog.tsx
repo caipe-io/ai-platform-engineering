@@ -1,5 +1,6 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
 import { getErrorMessage } from "@/lib/error-utils";
 
 import { apiClient } from "@/lib/api-client";
@@ -495,7 +496,7 @@ export function ShareDialog({
               onChange={(e) => setSearchInput(e.target.value)}
               className="flex-1 px-3 py-2 text-sm border rounded-md"
             />
-            <select
+            <Select
               value={defaultPermission}
               onChange={(e) => setDefaultPermission(e.target.value as SharePermission)}
               className="text-xs border rounded-md px-2 py-2 bg-background text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50"
@@ -503,7 +504,7 @@ export function ShareDialog({
             >
               <option value="view">Can view</option>
               <option value="comment">Can edit</option>
-            </select>
+            </Select>
             
             {/* Search results dropdown */}
             {((userResults.length > 0 || teamResults.length > 0 || noResults) && searchInput.length >= 2) && (
@@ -616,14 +617,14 @@ export function ShareDialog({
                   </div>
                   {canManageSharing ? (
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <select
+                    <Select
                       value={userPermissions[email] || 'view'}
                       onChange={(e) => handlePermissionChange({ email }, e.target.value as SharePermission)}
                       className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50"
                     >
                       <option value="view">Can view</option>
                       <option value="comment">Can edit</option>
-                    </select>
+                    </Select>
                     <button
                       className="text-muted-foreground hover:text-destructive"
                       onClick={() => {
@@ -657,14 +658,14 @@ export function ShareDialog({
                   </div>
                   {canManageSharing ? (
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <select
+                    <Select
                       value={teamPermissions[teamId] || 'view'}
                       onChange={(e) => handlePermissionChange({ team_id: teamId }, e.target.value as SharePermission)}
                       className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50"
                     >
                       <option value="view">Can view</option>
                       <option value="comment">Can edit</option>
-                    </select>
+                    </Select>
                     <button
                       className="text-muted-foreground hover:text-destructive"
                       onClick={() => {

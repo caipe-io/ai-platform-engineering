@@ -1,16 +1,21 @@
 "use client";
 
-import { Loader2, RefreshCw, RotateCcw, Save } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { CheckCircle2, Loader2, RefreshCw, RotateCcw, Save, XCircle } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentPicker, type AgentPickerOption } from "@/components/ui/agent-picker";
+import { ConnectorIdentityPicker } from "@/components/admin/rebac/ConnectorIdentityPicker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
+import { findSettingsRouteById } from "@/components/settings/settings-routes";
 import { loadAllDynamicAgents } from "@/lib/dynamic-agent-list";
 import type { DynamicAgentOption } from "./connector-admin-adapter";
+
+const ACCOUNT_ACCESS_SETTINGS_HREF = findSettingsRouteById("access")?.href ?? "/settings/account-and-access";
 
 type DmAccessMode = "disabled" | "allowlist" | "all_users";
 
@@ -24,12 +29,11 @@ interface DirectUserRow {
   keycloak_user_id: string;
   email: string;
   display_name: string;
-  webex_user_id: string | null;
+  linked: boolean;
   enabled: boolean;
   configured: boolean;
   inherited: boolean;
   state: "disabled" | "inherited" | "denied" | "allowlisted" | "overridden" | "not_allowed";
-  expected_webex_email: string;
   agent_id: string;
 }
 
@@ -38,7 +42,14 @@ interface DirectUsersResponse {
   bot_id: string;
   dm_access_mode: DmAccessMode;
   default_agent_id: string | null;
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
 }
+
+const PAGE_SIZE = 25;
+const SEARCH_DEBOUNCE_MS = 300;
 
 function apiData<T>(payload: { data?: T } & T): T {
   return (payload.data ?? payload) as T;
@@ -65,9 +76,29 @@ export function WebexDirectUsersPanel({ disabled = false }: { disabled?: boolean
   const [data, setData] = useState<DirectUsersResponse | null>(null);
   const [rows, setRows] = useState<DirectUserRow[]>([]);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Debounce the search box before it drives a server request — avoids
+  // firing a fetch on every keystroke.
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedSearch(search.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(handle);
+  }, [search]);
+
+  // Every fetch is tagged with an incrementing id so a response can detect
+  // it has been superseded (bot switch, search change, or page change) and
+  // skip applying stale data instead of overwriting a newer result.
+  const requestIdRef = useRef(0);
+  // Tracks the (bot, search) pair the current `page` value was computed
+  // for, so a bot/search change can force page back to 1 and skip fetching
+  // until that reset has committed — otherwise this effect and the
+  // page-reset would each fire their own request against the same render's
+  // stale `page`.
+  const pageResetKeyRef = useRef("");
 
   useEffect(() => {
     let active = true;
@@ -95,35 +126,49 @@ export function WebexDirectUsersPanel({ disabled = false }: { disabled?: boolean
     return () => { active = false; };
   }, []);
 
-  const loadUsers = useCallback(async (botId: string) => {
+  const loadUsers = useCallback(async (botId: string, pageArg: number, searchTerm: string) => {
     if (!botId) return;
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ bot_id: botId });
+      const params = new URLSearchParams({
+        bot_id: botId,
+        page: String(pageArg),
+        page_size: String(PAGE_SIZE),
+      });
+      if (searchTerm) params.set("q", searchTerm);
       const response = await fetch(`/api/admin/webex/direct-users?${params.toString()}`, {
         cache: "no-store",
       });
       if (!response.ok) throw new Error(await responseError(response, "Failed to load deployment users"));
       const next = apiData<DirectUsersResponse>(await response.json());
+      if (requestIdRef.current !== requestId) return;
       setData(next);
       setRows(next.users ?? []);
     } catch (reason) {
+      if (requestIdRef.current !== requestId) return;
       setError(reason instanceof Error ? reason.message : "Failed to load deployment users");
     } finally {
-      setLoading(false);
+      if (requestIdRef.current === requestId) setLoading(false);
     }
   }, []);
 
+  // Reset to page 1 whenever the search term or selected bot changes, and
+  // only fetch once that reset has committed — otherwise this effect would
+  // fire a fetch for the stale page in the same pass as the page-reset.
   useEffect(() => {
-    if (selectedBotId) void loadUsers(selectedBotId);
-  }, [loadUsers, selectedBotId]);
-
-  const filteredRows = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return rows;
-    return rows.filter((row) => `${row.display_name} ${row.email}`.toLowerCase().includes(query));
-  }, [rows, search]);
+    if (!selectedBotId) return;
+    const resetKey = `${selectedBotId} ${debouncedSearch}`;
+    if (resetKey !== pageResetKeyRef.current) {
+      pageResetKeyRef.current = resetKey;
+      if (page !== 1) {
+        setPage(1);
+        return;
+      }
+    }
+    void loadUsers(selectedBotId, page, debouncedSearch);
+  }, [loadUsers, selectedBotId, page, debouncedSearch]);
 
   const agentOptions = useMemo(
     () => agents.map<AgentPickerOption>((agent) => ({
@@ -131,6 +176,11 @@ export function WebexDirectUsersPanel({ disabled = false }: { disabled?: boolean
       label: agent.name || agent._id,
     })),
     [agents],
+  );
+
+  const botOptions = useMemo(
+    () => bots.filter((bot) => bot.available).map((bot) => ({ id: bot.id, label: bot.name })),
+    [bots],
   );
 
   const updateRow = (userId: string, patch: Partial<DirectUserRow>) => {
@@ -158,12 +208,11 @@ export function WebexDirectUsersPanel({ disabled = false }: { disabled?: boolean
           keycloak_user_id: row.keycloak_user_id,
           agent_id: row.agent_id,
           enabled: row.enabled,
-          expected_webex_email: row.expected_webex_email,
         }),
       });
       if (!response.ok) throw new Error(await responseError(response, "Failed to save 1:1 access"));
       toast(shouldDelete ? `Removed 1:1 routing for ${row.email}.` : `Saved 1:1 routing for ${row.email}.`, "success");
-      await loadUsers(selectedBotId);
+      await loadUsers(selectedBotId, page, debouncedSearch);
     } catch (reason) {
       toast(reason instanceof Error ? reason.message : "Failed to save 1:1 access", "error");
     } finally {
@@ -184,7 +233,7 @@ export function WebexDirectUsersPanel({ disabled = false }: { disabled?: boolean
       });
       if (!response.ok) throw new Error(await responseError(response, "Failed to reset 1:1 access"));
       toast(`Reset 1:1 access for ${row.email} to the bot policy.`, "success");
-      await loadUsers(selectedBotId);
+      await loadUsers(selectedBotId, page, debouncedSearch);
     } catch (reason) {
       toast(reason instanceof Error ? reason.message : "Failed to reset 1:1 access", "error");
     } finally {
@@ -192,35 +241,26 @@ export function WebexDirectUsersPanel({ disabled = false }: { disabled?: boolean
     }
   };
 
-  const modeLabel = data?.dm_access_mode === "all_users" ? "All deployment users"
-    : data?.dm_access_mode === "allowlist" ? "Allowlist" : "Disabled";
-
   return (
     <div className="space-y-3" role="region" aria-label="Webex 1:1 message access">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="flex min-w-64 flex-col gap-1 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
-            <span className="text-xs font-medium text-muted-foreground">Webex bot</span>
-            <select
-              className="h-8 bg-transparent text-sm font-medium outline-none"
-              value={selectedBotId}
-              onChange={(event) => {
-                setSelectedBotId(event.target.value);
-                setData(null);
-                setRows([]);
-              }}
-              disabled={disabled || savingUserId !== null}
-              aria-label="Webex bot"
-            >
-              <option value="">Select a bot</option>
-              {bots.filter((bot) => bot.available).map((bot) => (
-                <option key={bot.id} value={bot.id}>{bot.name}</option>
-              ))}
-            </select>
-          </label>
-          <Badge variant={data?.dm_access_mode === "disabled" ? "outline" : "secondary"}>{modeLabel}</Badge>
-        </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => void loadUsers(selectedBotId)} disabled={disabled || loading || !selectedBotId}>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <span>Webex bot</span>
+          <ConnectorIdentityPicker
+            options={botOptions}
+            value={selectedBotId}
+            onChange={(botId) => {
+              setSelectedBotId(botId);
+              setData(null);
+              setRows([]);
+            }}
+            disabled={disabled || savingUserId !== null}
+            ariaLabel="Webex bot"
+            allowClear
+            triggerClassName="h-8 min-w-[12rem]"
+          />
+        </label>
+        <Button type="button" variant="outline" size="sm" onClick={() => void loadUsers(selectedBotId, page, debouncedSearch)} disabled={disabled || loading || !selectedBotId}>
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
           Refresh
         </Button>
@@ -267,7 +307,7 @@ export function WebexDirectUsersPanel({ disabled = false }: { disabled?: boolean
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((row) => {
+                {rows.map((row) => {
                   const saving = savingUserId === row.keycloak_user_id;
                   const modeDisabled = data?.dm_access_mode === "disabled";
                   return (
@@ -287,14 +327,20 @@ export function WebexDirectUsersPanel({ disabled = false }: { disabled?: boolean
                         <div className="text-xs text-muted-foreground">{row.email}</div>
                       </td>
                       <td className="px-3 py-2">
-                        <Input
-                          className="h-8 min-w-56"
-                          value={row.expected_webex_email}
-                          onChange={(event) => updateRow(row.keycloak_user_id, { expected_webex_email: event.target.value })}
-                          disabled={disabled || modeDisabled || saving}
-                          aria-label={`Webex email for ${row.email}`}
-                        />
-                        <div className="mt-1 text-xs text-muted-foreground">{row.webex_user_id ? "Linked" : "Not linked yet"}</div>
+                        {row.linked ? (
+                          <span className="inline-flex items-center gap-1.5 text-sm text-green-500">
+                            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                            Linked
+                          </span>
+                        ) : (
+                          <Link
+                            href={ACCOUNT_ACCESS_SETTINGS_HREF}
+                            className="inline-flex items-center gap-1.5 text-sm text-red-500 hover:underline"
+                          >
+                            <XCircle className="h-4 w-4" aria-hidden="true" />
+                            Unlinked
+                          </Link>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <AgentPicker
@@ -330,11 +376,39 @@ export function WebexDirectUsersPanel({ disabled = false }: { disabled?: boolean
                     </tr>
                   );
                 })}
-                {filteredRows.length === 0 && (
+                {rows.length === 0 && (
                   <tr><td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">No deployment users found.</td></tr>
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+        {data && data.total > 0 && (
+          <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
+            <span>
+              Showing {(data.page - 1) * data.page_size + 1}
+              –{Math.min(data.page * data.page_size, data.total)} of {data.total}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                disabled={disabled || loading || page <= 1}
+              >
+                Prev
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((current) => current + 1)}
+                disabled={disabled || loading || !data.has_more || page * data.page_size >= data.total}
+              >
+                Next
+              </Button>
+            </div>
           </div>
         )}
       </div>

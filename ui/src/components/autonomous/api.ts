@@ -1,12 +1,31 @@
 // Copyright CAIPE Contributors (https://caipe.io)
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AutonomousTask, TaskRun } from './types';
+import type {
+  AutonomousRuntimeSettings,
+  AutonomousTask,
+  TaskRun,
+  TaskRunFollowUpResult,
+  TaskSaveResult,
+} from './types';
 // Note: ``TaskRun`` is exported because consumers like ``RunHistory``
 // type-narrow on it. Keep this barrel-style re-export below in mind
 // when adjusting the API surface.
 
 export type { AutonomousTask, TaskRun };
+
+type TaskMutationResponse = AutonomousTask & {
+  webhook_setup?: { secret?: string };
+};
+
+function toTaskSaveResult(saved: TaskMutationResponse): TaskSaveResult {
+  const { webhook_setup: webhookSetup, ...task } = saved;
+  return {
+    task,
+    webhookSetupRequired: webhookSetup !== undefined,
+    webhookSetupSecret: webhookSetup?.secret,
+  };
+}
 
 /**
  * Tiny client for the autonomous-agents proxy.
@@ -79,19 +98,35 @@ async function request<T>(
 }
 
 export const autonomousApi = {
+  getSettings: (): Promise<AutonomousRuntimeSettings> => request('/settings'),
   listTasks: (): Promise<AutonomousTask[]> => request('/tasks'),
   getTask: (id: string): Promise<AutonomousTask> => request(`/tasks/${encodeURIComponent(id)}`),
-  createTask: (task: AutonomousTask): Promise<AutonomousTask> =>
-    request('/tasks', { method: 'POST', body: JSON.stringify(task) }),
-  updateTask: (id: string, task: AutonomousTask): Promise<AutonomousTask> =>
-    request(`/tasks/${encodeURIComponent(id)}`, {
+  createTask: async (task: AutonomousTask): Promise<TaskSaveResult> =>
+    toTaskSaveResult(await request<TaskMutationResponse>('/tasks', {
+      method: 'POST',
+      body: JSON.stringify(task),
+    })),
+  updateTask: async (id: string, task: AutonomousTask): Promise<TaskSaveResult> =>
+    toTaskSaveResult(await request<TaskMutationResponse>(`/tasks/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: JSON.stringify(task),
-    }),
+    })),
   deleteTask: (id: string): Promise<void> =>
     request(`/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   triggerTask: (id: string): Promise<{ status: string; task_id: string }> =>
     request(`/tasks/${encodeURIComponent(id)}/run`, { method: 'POST' }),
   listRuns: (id: string): Promise<TaskRun[]> =>
     request(`/tasks/${encodeURIComponent(id)}/runs`),
+  followUpRun: (
+    taskId: string,
+    runId: string,
+    userText: string,
+  ): Promise<TaskRunFollowUpResult> =>
+    request(
+      `/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}/follow-up`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ user_text: userText }),
+      },
+    ),
 };

@@ -14,12 +14,7 @@ from handler_dependencies import AuthorizationDependencies
 from sse_client import set_obo_token
 from utils import utils
 from utils.channel_team_resolver import is_dm_channel, resolve_channel_team
-from utils.identity_linker import (
-  SLACK_FORCE_LINK,
-  auto_bootstrap_slack_user,
-  generate_linking_url,
-  resolve_slack_user,
-)
+from utils.identity_linker import auto_bootstrap_slack_user, resolve_slack_user
 from utils.keycloak_admin import realm_has_enabled_idp_broker, user_is_federated
 from utils.obo_exchange import (
   OboExchangeError,
@@ -112,8 +107,7 @@ async def _rbac_enrich_context(
         """
         keycloak_user_id = await resolve_slack_user(slack_user_id)
         if keycloak_user_id is None:
-            if not SLACK_FORCE_LINK:
-                keycloak_user_id = await auto_bootstrap_slack_user(slack_user_id)
+            keycloak_user_id = await auto_bootstrap_slack_user(slack_user_id)
             if keycloak_user_id is None:
                 return "unlinked"
 
@@ -580,12 +574,6 @@ def rbac_global_middleware(
         async def _mint_wrapper() -> str | None:
             return await _mint_unlinked_obo_token()
 
-        async def _linking_url_wrapper(uid: str) -> str | None:
-            try:
-                return await generate_linking_url(uid)
-            except Exception:
-                return None
-
         fallback_loop = None
         try:
             fallback_loop = asyncio.new_event_loop()
@@ -596,7 +584,7 @@ def rbac_global_middleware(
                     channel=channel,
                     context=context,
                     mint_fn=_mint_wrapper,
-                    linking_url_fn=_linking_url_wrapper,
+                    linking_url_fn=None,
                     last_sent=last_sent,
                     linking_prompt_cooldown=_LINKING_PROMPT_COOLDOWN,
                     is_dm_channel_fn=is_dm_channel,

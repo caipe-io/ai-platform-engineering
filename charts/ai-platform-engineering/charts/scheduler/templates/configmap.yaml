@@ -23,6 +23,7 @@ data:
   CAIPE_CHAT_PATH: {{ (.Values.CAIPE_CHAT_PATH | default .Values.caipe.chatPath) | quote }}
   MAX_SCHEDULES_PER_OWNER: {{ .Values.limits.maxSchedulesPerOwner | quote }}
   MAX_MESSAGE_CHARS: {{ .Values.limits.maxMessageChars | quote }}
+  MINIMUM_SCHEDULE_INTERVAL_SECONDS: {{ .Values.limits.minimumScheduleIntervalSeconds | quote }}
   ONE_OFF_DISPATCH_ENABLED: {{ .Values.oneOff.dispatchEnabled | quote }}
   ONE_OFF_DISPATCH_INTERVAL_SECONDS: {{ .Values.oneOff.dispatchIntervalSeconds | quote }}
   ONE_OFF_DISPATCH_BATCH_SIZE: {{ .Values.oneOff.dispatchBatchSize | quote }}

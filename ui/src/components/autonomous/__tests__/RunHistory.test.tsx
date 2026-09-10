@@ -39,6 +39,12 @@ jest.mock('lucide-react', () => ({
   MessageSquare: (props: Record<string, unknown>) => <span data-testid="icon-chat" {...props} />,
 }));
 
+jest.mock('@/components/shared/timeline/MarkdownRenderer', () => ({
+  MarkdownRenderer: ({ content }: { content: string }) => (
+    <div data-testid="markdown-renderer">{content}</div>
+  ),
+}));
+
 // The component fetches via `autonomousApi.listRuns`; we stub the
 // whole module so each test can hand-tailor the returned runs.
 const mockListRuns = jest.fn();
@@ -141,5 +147,59 @@ describe('RunHistory deep-link to chat', () => {
     const hrefs = links.map((l) => l.getAttribute('href'));
     expect(hrefs).toContain(`/chat/${runA.conversation_id}`);
     expect(hrefs).toContain(`/chat/${runB.conversation_id}`);
+  });
+});
+
+describe('RunHistory webhook results', () => {
+  it('renders the complete webhook response as markdown instead of the preview', async () => {
+    const run = makeRun({
+      conversation_id: null,
+      response_preview: 'Short **preview**',
+      response_full: '# Full result\n\n- first\n- second',
+    });
+    mockListRuns.mockResolvedValue([run]);
+
+    render(<RunHistory taskId="t-1" triggerType="webhook" />);
+    fireEvent.click(await screen.findByText(run.run_id));
+
+    expect(screen.getByText('Result')).toBeInTheDocument();
+    expect(screen.queryByText('Response preview')).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId('webhook-run-result').querySelector('[data-testid="markdown-renderer"]'),
+    ).toHaveTextContent(
+      '# Full result - first - second',
+    );
+    expect(screen.queryByText('Short **preview**')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the preview for webhook runs created before response_full existed', async () => {
+    const run = makeRun({
+      conversation_id: null,
+      response_preview: '**Legacy result**',
+      response_full: null,
+    });
+    mockListRuns.mockResolvedValue([run]);
+
+    render(<RunHistory taskId="t-1" triggerType="webhook" />);
+    fireEvent.click(await screen.findByText(run.run_id));
+
+    expect(
+      screen.getByTestId('webhook-run-result').querySelector('[data-testid="markdown-renderer"]'),
+    ).toHaveTextContent('**Legacy result**');
+  });
+
+  it('keeps the compact preview for non-webhook runs', async () => {
+    const run = makeRun({
+      response_preview: 'Compact preview',
+      response_full: '# Full scheduled result',
+    });
+    mockListRuns.mockResolvedValue([run]);
+
+    render(<RunHistory taskId="t-1" triggerType="cron" />);
+    fireEvent.click(await screen.findByText(run.run_id));
+
+    expect(screen.getByText('Response preview')).toBeInTheDocument();
+    expect(screen.getByText('Compact preview')).toBeInTheDocument();
+    expect(screen.queryByTestId('markdown-renderer')).not.toBeInTheDocument();
   });
 });

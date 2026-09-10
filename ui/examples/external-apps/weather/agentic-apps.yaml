@@ -1,0 +1,47 @@
+# Example catalog for the config-driven External Apps framework.
+agentic_apps:
+  packages:
+    - package_id: weather
+      source: example
+      manifest:
+        id: weather
+        displayName: Weather Example
+        description: A small authenticated External App backed by Open-Meteo.
+        apiVersion: "1.0"
+        runtime:
+          kind: proxied-next-zone
+          origin: http://127.0.0.1:3020
+          mountPath: /apps/weather
+          preserveMountPath: false
+          chrome: iframe
+        surfaces:
+          showInHub: true
+          navOrder: 100
+        access:
+          requiredRoles: [user]
+          tokenScopes: [weather:read, weather:write]
+          policyActions:
+            - action: proxy:GET
+              defaultEffect: allow
+              requiredScopes: [weather:read]
+            - action: proxy:HEAD
+              defaultEffect: allow
+              requiredScopes: [weather:read]
+            - action: update-preferences
+              method: POST
+              path: /api/preferences
+              defaultEffect: allow
+              requiredScopes: [weather:write]
+        health:
+          endpoint: /healthz
+          timeoutMs: 1500
+        catalog:
+          categories: [example, weather]
+          capabilities: [forecast, air-quality, app-bound-identity]
+  installations:
+    - app_id: weather
+      package_id: weather
+      installed: true
+      enabled: true
+      visible: true
+      runtime_mount_path: /apps/weather

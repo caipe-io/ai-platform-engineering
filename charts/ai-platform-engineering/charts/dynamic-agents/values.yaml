@@ -169,6 +169,10 @@ config:
   # get the in-cluster default http://<release-name>-caipe-ui:3000; override
   # only when pointing dynamic-agents at an external CAIPE UI/BFF.
   CAIPE_API_URL: ""
+  # CAS endpoint used for agent access and Autonomous entitlement checks.
+  AUTHZ_SERVICE_URL: ""
+  # Must match caipe-ui.config.CAIPE_ORG_KEY.
+  CAIPE_ORG_KEY: "caipe"
   CREDENTIAL_SERVICE_AUDIENCE: "caipe-credential-service"
   USE_IMPERSONATION_TOKENS: "false"
   # Agent runtime TTL in seconds (purged after this much inactivity)
@@ -244,4 +248,3 @@ externalSecrets:
     name: "vault"
     kind: "ClusterSecretStore"
   data: []
-

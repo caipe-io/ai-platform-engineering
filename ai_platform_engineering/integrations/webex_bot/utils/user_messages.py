@@ -34,6 +34,11 @@ WEBEX_DIRECT_AGENT_REQUIRED_MESSAGE = (
     "choose a default agent, or ask an admin to check your Webex setup."
 )
 
+WEBEX_DIRECT_MESSAGE_NOT_ONBOARDED_MESSAGE = (
+    "You don't have access to message {app_name} directly. Ask an admin to "
+    "enable 1:1 Webex messages for your account in {app_name}."
+)
+
 FRIENDLY_REASON_MESSAGES = {
     "WEBEX_OBO_FAILED": TEAM_SESSION_UNAVAILABLE_MESSAGE,
     "WEBEX_WORKSPACE_UNCONFIGURED": (

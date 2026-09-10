@@ -11,6 +11,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Select } from "@/components/ui/select";
 import { useApplicationNavigation } from "@/components/layout/ApplicationNavigationContext";
 import { GuardedNavigationLink } from "@/components/layout/GuardedNavigationLink";
 import { useWorkspaceRail } from "@/components/layout/WorkspaceRailContext";
@@ -477,7 +478,7 @@ export function WorkspaceSectionPicker({
       <label className="mb-1.5 block text-xs font-medium text-muted-foreground" htmlFor={id}>
         {ariaLabel}
       </label>
-      <select
+      <Select
         aria-label={ariaLabel}
         className="h-12 w-full appearance-none rounded-xl border border-input bg-background px-3 pr-10 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         id={id}
@@ -505,7 +506,7 @@ export function WorkspaceSectionPicker({
             <optgroup key={group.id} label="Sections">{options}</optgroup>
           );
         })}
-      </select>
+      </Select>
       <ChevronDown
         aria-hidden="true"
         className="pointer-events-none absolute bottom-4 right-3 h-4 w-4 text-muted-foreground"

@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ModelPicker } from "@/components/ui/model-picker";
 import { type TeamPickerOption } from "@/components/ui/team-picker";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
@@ -1422,53 +1423,22 @@ export function DynamicAgentEditor({
                     LLM Model <span className="text-destructive">*</span>
                   </Label>
                   <div className="p-3 rounded-lg border-2 border-primary/20 bg-primary/5">
-                    <select
+                    <ModelPicker
                       id="modelId"
-                      value={`${modelId}::${modelProvider}`}
-                      onChange={(e) => {
-                        const lastDelimiter = e.target.value.lastIndexOf("::");
-                        if (lastDelimiter > 0) {
-                          const selectedId = e.target.value.slice(
-                            0,
-                            lastDelimiter,
-                          );
-                          const selectedProvider = e.target.value.slice(
-                            lastDelimiter + 2,
-                          );
-                          if (selectedId && selectedProvider) {
-                            setModelId(selectedId);
-                            setModelProvider(selectedProvider);
-                          }
-                        }
+                      options={availableModels}
+                      modelId={modelId}
+                      modelProvider={modelProvider}
+                      onChange={(selectedId, selectedProvider) => {
+                        setModelId(selectedId);
+                        setModelProvider(selectedProvider);
                       }}
+                      loading={modelsLoading}
                       disabled={
                         loading ||
-                        !!readOnly ||
-                        modelsLoading ||
-                        availableModels.length === 0
+                        !!readOnly
                       }
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {modelsLoading ? (
-                        <option value="">Loading models...</option>
-                      ) : availableModels.length === 0 ? (
-                        <option value="" disabled>
-                          No models available
-                        </option>
-                      ) : (
-                        availableModels.map((model) => (
-                          <option
-                            key={`${model.model_id}::${model.provider}`}
-                            value={`${model.model_id}::${model.provider}`}
-                          >
-                            {model.name}
-                            {model.provider && model.provider !== "default"
-                              ? ` (${model.provider})`
-                              : ""}
-                          </option>
-                        ))
-                      )}
-                    </select>
+                      triggerClassName="font-medium"
+                    />
                     {!modelsLoading && availableModels.length === 0 ? (
                       <p className="text-xs text-destructive mt-2">
                         No LLM models available. Please check your deployment

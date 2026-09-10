@@ -38,6 +38,9 @@ jest.mock("lucide-react", () => {
   return {
     Loader2: stub("loader"),
     AlertCircle: stub("alert"),
+    Check: stub("check"),
+    ChevronDown: stub("chevron-down"),
+    Search: stub("search"),
     Sparkles: stub("sparkles"),
     CheckSquare: stub("check-square"),
     TriangleAlert: stub("triangle-alert"),

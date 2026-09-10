@@ -16,7 +16,11 @@ import {
   installMcpBrowserMocks,
   openAddMcpServerEditor,
 } from "./_mcp-browser-fixtures";
-import { dismissReleaseUpgradeDialog, installTestSession } from "./_helpers";
+import {
+  chooseSearchablePickerOption,
+  dismissReleaseUpgradeDialog,
+  installTestSession,
+} from "./_helpers";
 import { mockedRbacEnabled } from "./_mocked-rbac";
 
 function minimalSessionEnv() {
@@ -240,7 +244,7 @@ test.describe("mocked credentials workspace browser regression", () => {
       await page.getByRole("button", { name: /share github token/i }).click();
       const sharePanel = page.getByRole("region", { name: /github token team access/i });
       await expect(sharePanel).toBeVisible();
-      await sharePanel.getByRole("button", { name: /team access/i }).click();
+      await sharePanel.getByRole("combobox", { name: /team access/i }).click();
       await page.getByRole("option", { name: /Ops Team/ }).click();
       await sharePanel.getByRole("button", { name: /grant access/i }).click();
       await expect.poll(() => credentialsMocks.shareRequests.length).toBe(1);
@@ -360,7 +364,11 @@ test.describe("mocked credentials workspace browser regression", () => {
 
       await page.getByRole("button", { name: "Add Credential" }).click();
       await page.getByLabel(/Credential header/i).selectOption("Authorization");
-      await page.getByLabel(/^Secret$/).selectOption("secret-jira-token");
+      await chooseSearchablePickerOption(
+        page,
+        page.getByLabel(/^Secret$/),
+        "Jira API token",
+      );
 
       await page.getByRole("button", { name: "Create Server" }).click();
 

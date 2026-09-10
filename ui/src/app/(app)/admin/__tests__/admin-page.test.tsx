@@ -130,6 +130,12 @@ jest.mock('@/components/admin/settings/ImportAgentsFromConfigCard', () => ({
   ),
 }));
 
+jest.mock('@/components/admin/autonomous/AutonomousTeamAccessPanel', () => ({
+  AutonomousTeamAccessPanel: () => (
+    <div data-testid="autonomous-enablement-panel">Autonomous team access</div>
+  ),
+}));
+
 jest.mock('@/components/admin/ServiceAccountsTab', () => ({
   ServiceAccountsTab: (props: { readOnly?: boolean }) => (
     <div data-testid="service-accounts-tab" data-read-only={String(Boolean(props.readOnly))}>
@@ -356,8 +362,16 @@ function setupFetchMock(overrides: {
   tabGates?: Record<string, boolean>;
   integrationPanelModes?: { slack: string; webex: string };
   simulation?: unknown;
+  userPreferences?: unknown;
 } = {}): jest.Mock {
   const mock = jest.fn((url: string) => {
+    if (url.includes('/api/user/preferences')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(overrides.userPreferences ?? { success: true, data: {} }),
+      });
+    }
     if (url.includes('/api/rbac/admin-tab-gates')) {
       return Promise.resolve({
         ok: true,
@@ -943,9 +957,9 @@ describe('Admin Dashboard Page', () => {
       expect(within(table).queryByText('Roles')).not.toBeInTheDocument();
     });
 
-    it('exposes Slack pending as a user table filter', async () => {
+    it('exposes Slack linked as a user table filter', async () => {
       currentPathname = '/admin/people/users';
-      currentSearchParams = new URLSearchParams('umSlack=pending');
+      currentSearchParams = new URLSearchParams('umSlack=linked');
       const fetchMock = setupFetchMock();
 
       render(<AdminPage />);
@@ -954,22 +968,20 @@ describe('Admin Dashboard Page', () => {
         expect(screen.getByText('admin@example.com')).toBeInTheDocument();
       });
 
-      const slackSelect = screen
-        .getAllByRole('combobox')
-        .find((select) => within(select).queryByRole('option', { name: 'Pending' }));
-      expect(slackSelect).toBeDefined();
-      expect(slackSelect).toHaveValue('pending');
-      expect(within(slackSelect!).getByRole('option', { name: 'Pending' })).toBeInTheDocument();
+      const slackLabel = screen.getByText('Slack', { selector: 'span.text-xs' });
+      const slackFilter = slackLabel.parentElement?.querySelector('select');
+      expect(slackFilter).toBeDefined();
+      expect(slackFilter).toHaveValue('linked');
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringContaining('/api/admin/users?page=1&pageSize=20&slackStatus=pending')
+          expect.stringContaining('/api/admin/users?page=1&pageSize=20&slackStatus=linked')
         );
       });
 
-      fireEvent.change(slackSelect!, { target: { value: 'linked' } });
+      fireEvent.change(slackFilter!, { target: { value: 'unlinked' } });
       expect(replaceMock).toHaveBeenCalledWith(
-        expect.stringContaining('umSlack=linked'),
+        expect.stringContaining('umSlack=unlinked'),
         { scroll: false }
       );
     });
@@ -1003,6 +1015,20 @@ describe('Admin Dashboard Page', () => {
       );
     });
 
+    it('renders Autonomous Enablement as its own Security & Policy page', async () => {
+      mockIsAdmin = true;
+      currentPathname = '/admin/security/autonomous-enablement';
+      setupFetchMock();
+
+      render(<AdminPage />);
+
+      expect(await screen.findByTestId('autonomous-enablement-panel')).toBeInTheDocument();
+      const navigation = screen.getByRole('navigation', { name: 'Admin sections' });
+      expect(
+        within(navigation).getByRole('link', { name: /^Autonomous Enablement$/i }),
+      ).toHaveAttribute('aria-current', 'page');
+    });
+
     it('orders Security & Policy destinations and omits Permissions Tool', async () => {
       currentPathname = '/admin/security/rbac-audit';
 
@@ -1012,6 +1038,7 @@ describe('Admin Dashboard Page', () => {
       const destinationLabels = [
         'Access before sign-in',
         'AI Review',
+        'Autonomous Enablement',
         'RBAC Audit',
         'Approvals',
         'Access Explorer',
@@ -1534,6 +1561,95 @@ describe('Admin Dashboard Page', () => {
     });
   });
 
+  describe('Webex source option', () => {
+    it('shows a Webex option in the Statistics source picker when Webex is enabled', async () => {
+      currentPathname = '/admin/insights/statistics';
+      const fetchMock = setupFetchMock({
+        userPreferences: { success: true, data: { integrations: { webex: true } } },
+      });
+
+      render(<AdminPage />);
+      await screen.findByText('42');
+
+      const sourceSelect = await screen.findByDisplayValue('All Sources');
+      expect(within(sourceSelect as HTMLElement).getByRole('option', { name: 'Webex' })).toBeInTheDocument();
+
+      fireEvent.change(sourceSelect, { target: { value: 'webex' } });
+
+      await waitFor(() => {
+        const sourceRefreshes = fetchMock.mock.calls.filter(([url]) => {
+          const parsed = new URL(url, 'http://localhost');
+          return parsed.pathname === '/api/admin/stats' && parsed.searchParams.get('source') === 'webex';
+        });
+        expect(sourceRefreshes.length).toBeGreaterThan(0);
+      });
+      expect(sourceSelect).toHaveValue('webex');
+    });
+
+    it('omits the Webex option from the Statistics source picker when Webex is disabled', async () => {
+      currentPathname = '/admin/insights/statistics';
+      setupFetchMock({
+        userPreferences: { success: true, data: { integrations: { webex: false } } },
+      });
+
+      render(<AdminPage />);
+      await screen.findByText('42');
+
+      const sourceSelect = await screen.findByDisplayValue('All Sources');
+      expect(within(sourceSelect as HTMLElement).queryByRole('option', { name: 'Webex' })).not.toBeInTheDocument();
+    });
+
+    it('never shows a Webex option in the Feedback source picker, regardless of the Webex flag', async () => {
+      currentPathname = '/admin/insights/feedback';
+      setupFetchMock({
+        userPreferences: { success: true, data: { integrations: { webex: true } } },
+      });
+
+      render(<AdminPage />);
+
+      const sourceSelect = await screen.findByDisplayValue('All Sources');
+      expect(within(sourceSelect as HTMLElement).queryByRole('option', { name: 'Webex' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('API source option', () => {
+    it('always shows an API option in the Statistics source picker, unlike Webex there is no enablement flag', async () => {
+      currentPathname = '/admin/insights/statistics';
+      const fetchMock = setupFetchMock({
+        userPreferences: { success: true, data: { integrations: { webex: false } } },
+      });
+
+      render(<AdminPage />);
+      await screen.findByText('42');
+
+      const sourceSelect = await screen.findByDisplayValue('All Sources');
+      expect(within(sourceSelect as HTMLElement).getByRole('option', { name: 'API' })).toBeInTheDocument();
+
+      fireEvent.change(sourceSelect, { target: { value: 'api' } });
+
+      await waitFor(() => {
+        const sourceRefreshes = fetchMock.mock.calls.filter(([url]) => {
+          const parsed = new URL(url, 'http://localhost');
+          return parsed.pathname === '/api/admin/stats' && parsed.searchParams.get('source') === 'api';
+        });
+        expect(sourceRefreshes.length).toBeGreaterThan(0);
+      });
+      expect(sourceSelect).toHaveValue('api');
+    });
+
+    it('never shows an API option in the Feedback source picker', async () => {
+      currentPathname = '/admin/insights/feedback';
+      setupFetchMock({
+        userPreferences: { success: true, data: { integrations: { webex: true } } },
+      });
+
+      render(<AdminPage />);
+
+      const sourceSelect = await screen.findByDisplayValue('All Sources');
+      expect(within(sourceSelect as HTMLElement).queryByRole('option', { name: 'API' })).not.toBeInTheDocument();
+    });
+  });
+
   describe('Stats rendering', () => {
     beforeEach(() => {
       currentPathname = '/admin/insights/statistics';
@@ -1574,8 +1690,8 @@ describe('Admin Dashboard Page', () => {
       const statsUrls = fetchMock.mock.calls
         .map(([url]) => new URL(url, 'http://localhost'))
         .filter((url) => url.pathname === '/api/admin/stats');
-      expect(statsUrls).toHaveLength(10);
-      expect(new Set(statsUrls.map((url) => url.searchParams.get('section'))).size).toBe(10);
+      expect(statsUrls).toHaveLength(12);
+      expect(new Set(statsUrls.map((url) => url.searchParams.get('section'))).size).toBe(12);
       expect(statsUrls.every((url) => url.searchParams.get('range') === '30d')).toBe(true);
     });
 
@@ -1877,14 +1993,14 @@ describe('Admin Dashboard Page', () => {
         .slice(callsBeforeFilter)
         .map(([url]) => new URL(url, 'http://localhost').searchParams.get('section'))
         .filter(Boolean);
-      expect(refreshCalls).toHaveLength(9);
-      expect(new Set(refreshCalls).size).toBe(9);
+      expect(refreshCalls).toHaveLength(11);
+      expect(new Set(refreshCalls).size).toBe(11);
       expect(refreshCalls).not.toContain('filters');
       const refreshUrls = fetchMock.mock.calls
         .slice(callsBeforeFilter)
         .map(([url]) => new URL(url, 'http://localhost'))
         .filter((url) => url.pathname === '/api/admin/stats');
-      expect(refreshUrls).toHaveLength(9);
+      expect(refreshUrls).toHaveLength(11);
       expect(refreshUrls.every((url) => url.searchParams.get('source') === 'web')).toBe(true);
       await waitFor(() => {
         expect(fetchMock.mock.calls.slice(callsBeforeFilter).some(([url]) => {
@@ -1958,7 +2074,7 @@ describe('Admin Dashboard Page', () => {
         .slice(callsBeforeFilter)
         .map(([url]) => new URL(url, 'http://localhost'))
         .filter((url) => url.pathname === '/api/admin/stats');
-      expect(refreshUrls).toHaveLength(9);
+      expect(refreshUrls).toHaveLength(11);
       expect(refreshUrls.every((url) => url.searchParams.get('agent') === 'agent-primary')).toBe(true);
       expect(refreshUrls.find((url) => url.searchParams.get('section') === 'overview'))
         .toBeDefined();
@@ -1991,7 +2107,7 @@ describe('Admin Dashboard Page', () => {
           .slice(callsBeforeChannel)
           .map(([url]) => new URL(url, 'http://localhost'))
           .filter((url) => url.pathname === '/api/admin/stats');
-        expect(channelRefreshes).toHaveLength(9);
+        expect(channelRefreshes).toHaveLength(11);
         expect(channelRefreshes.every((url) => (
           url.searchParams.get('source') === 'slack'
           && url.searchParams.get('channel') === 'primary-channel'
@@ -2014,7 +2130,7 @@ describe('Admin Dashboard Page', () => {
           .slice(callsBeforeTeam)
           .map(([url]) => new URL(url, 'http://localhost'))
           .filter((url) => url.pathname === '/api/admin/stats');
-        expect(teamRefreshes).toHaveLength(9);
+        expect(teamRefreshes).toHaveLength(11);
         expect(teamRefreshes.every((url) => (
           url.searchParams.get('team') === 'platform-team'
           && url.searchParams.has('user') === false

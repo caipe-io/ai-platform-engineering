@@ -500,24 +500,12 @@ export interface AgentRowPermissions {
   can_manage: boolean;
   can_write: boolean;
   can_discover: boolean;
-  can_schedule: boolean;
-  /**
-   * Whether the caller may flip per-agent autonomous enablement (the team
-   * `automator` grant). True for platform admins and admins of the agent's
-   * owner team only — deliberately narrower than `can_manage`, which the
-   * team-level "Manage" grant extends to every team member. Stamped by the
-   * agents list route (it needs `owner_team_slug`, which this resolver
-   * doesn't see).
-   */
-  can_automate: boolean;
 }
 
 const DEFAULT_AGENT_ROW_PERMISSIONS: AgentRowPermissions = {
   can_manage: false,
   can_write: false,
   can_discover: false,
-  can_schedule: false,
-  can_automate: false,
 };
 
 /**
@@ -540,14 +528,14 @@ export async function resolveAgentListPermissions(
     const rows = new Map(
       agentIds.map((id) => [
         id,
-        { can_manage: true, can_write: true, can_discover: true, can_schedule: true, can_automate: true } satisfies AgentRowPermissions,
+        { can_manage: true, can_write: true, can_discover: true } satisfies AgentRowPermissions,
       ]),
     );
     return { rows };
   }
 
   const uniqueIds = [...new Set(agentIds.filter((id) => id.trim().length > 0))];
-  const [manageResults, writeResults, discoverResults, scheduleResults] = await Promise.all([
+  const [manageResults, writeResults, discoverResults] = await Promise.all([
     uniqueIds.length > 0
       ? authorizeMany(casSubject, "manage", "agent", uniqueIds)
       : Promise.resolve(new Map<string, Awaited<ReturnType<typeof authorize>>>()),
@@ -557,9 +545,6 @@ export async function resolveAgentListPermissions(
     uniqueIds.length > 0
       ? authorizeMany(casSubject, "discover", "agent", uniqueIds)
       : Promise.resolve(new Map<string, Awaited<ReturnType<typeof authorize>>>()),
-    uniqueIds.length > 0
-      ? authorizeMany(casSubject, "schedule", "agent", uniqueIds)
-      : Promise.resolve(new Map<string, Awaited<ReturnType<typeof authorize>>>()),
   ]);
 
   const rows = new Map<string, AgentRowPermissions>();
@@ -568,9 +553,6 @@ export async function resolveAgentListPermissions(
       can_manage: manageResults.get(id)?.decision === "ALLOW",
       can_write: writeResults.get(id)?.decision === "ALLOW",
       can_discover: discoverResults.get(id)?.decision === "ALLOW",
-      can_schedule: scheduleResults.get(id)?.decision === "ALLOW",
-      // Refined by the agents list route, which knows each agent's owner team.
-      can_automate: false,
     });
   }
 

@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
-import { AgentPicker } from "@/components/ui/agent-picker";
+import { AgentPicker } from "../agent-picker";
 
 describe("AgentPicker", () => {
-  it("searches by label and selects the matching agent", () => {
+  it("maps domain IDs and labels onto the shared picker", () => {
     const onChange = jest.fn();
     render(
       <AgentPicker
@@ -12,33 +12,63 @@ describe("AgentPicker", () => {
           { value: "agent-primary", label: "Primary Agent" },
           { value: "agent-secondary", label: "Secondary Agent" },
         ]}
-        value=""
+        value="agent-primary"
         onChange={onChange}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Example agent" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Search agents..." }), {
-      target: { value: "secondary" },
-    });
-
-    const listbox = screen.getByRole("listbox", { name: "Example agent" });
-    expect(within(listbox).getAllByRole("option")).toHaveLength(1);
-    fireEvent.click(within(listbox).getByRole("option", { name: /Secondary Agent/ }));
+    expect(screen.getByRole("combobox", { name: "Example agent" })).toHaveTextContent(
+      "Primary Agentagent:agent-primary",
+    );
+    fireEvent.click(screen.getByRole("combobox", { name: "Example agent" }));
+    fireEvent.click(screen.getByRole("option", { name: /Secondary Agent/ }));
     expect(onChange).toHaveBeenCalledWith("agent-secondary");
   });
 
-  it("can require a selection by hiding the clear action", () => {
-    render(
+  it("passes required and custom clear-value behavior through the adapter", () => {
+    const onChange = jest.fn();
+    const { rerender } = render(
       <AgentPicker
         ariaLabel="Required agent"
         options={[{ value: "agent-primary", label: "Primary Agent" }]}
         value="agent-primary"
-        onChange={jest.fn()}
-        allowClear={false}
+        onChange={onChange}
+        required
       />,
     );
 
+    expect(screen.getByRole("combobox", { name: "Required agent" })).toHaveAttribute(
+      "aria-required",
+      "true",
+    );
     expect(screen.queryByRole("button", { name: "Clear agent selection" })).not.toBeInTheDocument();
+
+    rerender(
+      <AgentPicker
+        ariaLabel="Optional agent"
+        options={[{ value: "agent-primary", label: "Primary Agent" }]}
+        value="agent-primary"
+        onChange={onChange}
+        clearValue="deployment-default"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear agent selection" }));
+    expect(onChange).toHaveBeenCalledWith("deployment-default");
+
+    rerender(
+      <AgentPicker
+        ariaLabel="Default agent"
+        options={[
+          { value: "deployment-default", label: "Use deployment default" },
+          { value: "agent-primary", label: "Primary Agent" },
+        ]}
+        value="deployment-default"
+        onChange={onChange}
+        clearValue="deployment-default"
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Clear agent selection" }),
+    ).not.toBeInTheDocument();
   });
 });

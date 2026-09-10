@@ -1,21 +1,22 @@
 import React from 'react';
 import Link from '@docusaurus/Link';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './features.module.css';
 
 const FEATURES = [
   {
-    title: 'Custom Agents',
+    title: 'Agent Builder',
     icon: '🛠️',
     color: '#0284c7',
-    to: '/docs/features/custom-agents',
+    to: '/docs/features/agent-builder',
     items: [
-      'No-code Agent Builder UI — configure identity, owner team, system prompt, model, tools, skills, subagents, middleware, approvals, and workflow access',
-      'dynamic-agents Helm chart — deploy the agent runtime independently',
-      'App config bootstrap: pre-wire models, MCP servers, agents, and workflows at chart install time',
-      'Team/global ownership with RBAC-managed sharing',
-      'MongoDB-backed persistence, Prometheus metrics, ExternalSecrets integration',
+      'Six-step builder for identity, instructions, tools, knowledge, skills, and advanced controls',
+      'Configured models, MCP tools, built-in tools, data sources, and collections',
+      'Subagents, workflows, middleware, and human approval rules',
+      'Team ownership and global sharing with RBAC enforcement',
+      'Test in chat, clone, export, or bootstrap agents through Helm',
     ],
   },
   {
@@ -24,20 +25,20 @@ const FEATURES = [
     color: '#0d9488',
     to: '/docs/features/workflows',
     items: [
-      'Visual workflow builder for chaining dynamic agents into multi-step automations',
-      'Step prompts support Jinja2 templates with previous outputs and user context',
-      'Per-step error handling: abort, skip, or retry with configurable attempts',
-      'MongoDB-backed workflow configs, run history, event timelines, and artifacts',
-      'Custom agents can trigger and monitor approved workflows as built-in tools',
+      'Ordered agent steps with per-step prompts and optional capability overrides',
+      'Jinja-compatible context from previous steps and run input',
+      'Abort, skip, or retry failed steps; pause for human input or approval',
+      'Persistent run timelines, tool events, statuses, and artifacts',
+      'Start runs from the UI, an agent with workflow access, or the REST API',
     ],
   },
   {
     title: 'BYO Agents & MCP Servers',
     icon: '🔌',
     color: '#7c3aed',
-    to: '/docs/features/custom-agents',
+    to: '/docs/development/',
     items: [
-      'No-code Agent Builder UI — create agents without writing code',
+      'Deploy code-defined agents and connect external MCP servers',
       'appConfig.mcp_servers — plug in external MCP servers at chart install time',
       'Per-tool MCP servers for each integration',
       'Supported MCP transports: stdio, SSE, and Streamable HTTP',
@@ -62,6 +63,7 @@ const FEATURES = [
     title: 'Multi-Agent Orchestration',
     icon: '🤖',
     color: '#0284c7',
+    to: '/docs/agents/',
     items: [
       'Multi-agent and deep agent interactions with access to multiple tools and sub-agents based on customizable system prompts',
       '10+ first-party curated sub-agents and MCP servers',
@@ -78,25 +80,28 @@ const FEATURES = [
       'Rich/Contextual Home Page',
       'Rich Chat Interface with live agent/tool status via streaming',
       'Share chat with teams · Archive/Delete chats',
-      'Custom Agent Builder',
+      'Agent Builder',
       'Skills Gateway — AI Assist, API access, security scanner, GitHub crawling',
     ],
   },
   {
-    title: 'Integrated Knowledge Bases',
+    title: 'Knowledge Bases',
     icon: '🧠',
     color: '#0891b2',
+    to: '/docs/knowledge_bases/',
     items: [
-      'Unified RAG with hybrid vector search and optional Graph RAG',
-      'Ingestors: Web, AWS, Kubernetes, Backstage, ArgoCD, GitHub, Jira, Confluence, Slack, Webex',
-      'MCP tools for search, fetch, datasource discovery, and graph exploration',
-      'OAuth2/RBAC-aware ingestion and querying across data sources',
+      'Self-service file, web, and collaboration data sources',
+      'Deployment-managed infrastructure ingestors',
+      'Hybrid semantic and keyword retrieval with optional Graph RAG',
+      'Ownership and search access enforced through OIDC and OpenFGA',
+      'Reusable collections and MCP tools for search, fetch, discovery, and graph exploration',
     ],
   },
   {
     title: 'Agent Memory',
     icon: '💾',
     color: '#059669',
+    to: '/docs/api/chat-conversations',
     items: [
       'Chat persistence memory with multi-turn conversation',
       'Fact extraction across chats for a user',
@@ -106,6 +111,7 @@ const FEATURES = [
     title: 'Scheduled Runs & External Triggers',
     icon: '📡',
     color: '#d97706',
+    to: '/docs/architecture/autonomous-agents',
     items: [
       'Webhook-based agent triggers for event-driven workflows',
       'Scheduled/cron-based agent runs',
@@ -117,6 +123,7 @@ const FEATURES = [
     title: 'Agent and Tool Communications',
     icon: '🔗',
     color: '#d97706',
+    to: '/docs/api/dynamic-agents-mcp',
     items: [
       'MCP (Model Context Protocol)',
       'Dynamic Agents API',
@@ -128,6 +135,7 @@ const FEATURES = [
     title: 'Enterprise Security',
     icon: '🔒',
     color: '#dc2626',
+    to: '/docs/security/',
     items: [
       'OAuth 2.0 integration with OIDC compatible IdPs',
       'OIDC/Okta groups base RBAC',
@@ -139,6 +147,7 @@ const FEATURES = [
     title: 'Deployment',
     icon: '🚀',
     color: '#2563eb',
+    to: '/docs/installation/',
     items: [
       'Kubernetes based Helm charts',
       'Docker/Containerized Agents and MCP servers',
@@ -152,6 +161,7 @@ const FEATURES = [
     title: 'Integrations',
     icon: '🔌',
     color: '#0891b2',
+    to: '/docs/getting-started/user-interfaces',
     items: [
       'Web UI — rich chat interface with live agent/tool status via streaming',
       'Slack Bot — conversational interface for your team\'s existing workflow',
@@ -162,6 +172,9 @@ const FEATURES = [
 ];
 
 export default function FeaturesPage() {
+  const {siteConfig} = useDocusaurusContext();
+  const currentDocsPrefix = siteConfig.customFields?.currentDocsPrefix ?? '/docs';
+
   return (
     <Layout
       title="Features · CAIPE"
@@ -198,8 +211,11 @@ export default function FeaturesPage() {
         <section className={styles.grid}>
           <div className={styles.gridInner}>
             {FEATURES.map((f) => {
+              const target = f.title === 'Agent Builder'
+                ? `${currentDocsPrefix}/features/agent-builder`
+                : f.to;
               const card = (
-                <div key={f.title} className={styles.card} style={f.to ? {cursor: 'pointer'} : undefined}>
+                <div key={f.title} className={styles.card} style={target ? {cursor: 'pointer'} : undefined}>
                   <div className={styles.cardHeader} style={{'--card-color': f.color} as React.CSSProperties}>
                     <span className={styles.cardIcon}>{f.icon}</span>
                     <Heading as="h2" className={styles.cardTitle}>{f.title}</Heading>
@@ -211,8 +227,8 @@ export default function FeaturesPage() {
                   </ul>
                 </div>
               );
-              return f.to
-                ? <Link key={f.title} to={f.to} style={{textDecoration: 'none', color: 'inherit'}}>{card}</Link>
+              return target
+                ? <Link key={f.title} to={target} style={{textDecoration: 'none', color: 'inherit'}}>{card}</Link>
                 : card;
             })}
           </div>

@@ -34,6 +34,7 @@ For chart changes, you can test temporary versions before merging:
 - [ ] Existing issues have been referenced (where applicable)
 - [ ] I have verified this change is not present in other open pull requests
 - [ ] Functionality is documented
+- [ ] New selection controls follow the [selection-control decision table](https://github.com/caipe-io/ai-platform-engineering/blob/main/docs/docs/ui/selection-controls.md), or the custom interaction is justified
 - [ ] All code style checks pass
 - [ ] New code contribution is covered by automated tests
 - [ ] All new and existing tests pass

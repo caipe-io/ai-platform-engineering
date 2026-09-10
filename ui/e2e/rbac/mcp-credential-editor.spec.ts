@@ -2,6 +2,7 @@
 
 import { expect, test } from "@playwright/test";
 
+import { chooseSearchablePickerOption } from "./_helpers";
 import {
   DEFAULT_JIRA_MCP_SERVER,
   gotoMcpServersTab,
@@ -156,7 +157,11 @@ test.describe("RBAC e2e — MCP credential editor", () => {
     await openMcpServerEditor(page, "Jira");
 
     await page.getByLabel(/Credential kind/i).selectOption("secret_ref");
-    await page.getByLabel(/^Secret$/).selectOption("secret-jira-team");
+    await chooseSearchablePickerOption(
+      page,
+      page.getByLabel(/^Secret$/),
+      "Team Jira token",
+    );
     await page.getByRole("button", { name: "Save Changes" }).click();
 
     await expect.poll(() => mocks.updateRequests.length).toBe(1);
@@ -189,8 +194,11 @@ test.describe("RBAC e2e — MCP credential editor", () => {
     await openAddMcpServerEditor(page);
     await page.getByRole("button", { name: "Add Credential" }).click();
 
-    await expect(page.getByLabel(/^Secret$/)).toContainText("Shared GitHub PAT");
-    await page.getByLabel(/^Secret$/).selectOption("secret-github-shared");
+    await chooseSearchablePickerOption(
+      page,
+      page.getByLabel(/^Secret$/),
+      "Shared GitHub PAT",
+    );
     await expect(page.getByText("Preview jira_...team")).toHaveCount(0);
     await expect(page.getByText("Preview ghp_...team")).toBeVisible();
   });
@@ -274,7 +282,11 @@ test.describe("RBAC e2e — MCP credential editor", () => {
     const credentialRows = page.getByLabel(/Credential kind/i);
     await expect(credentialRows).toHaveCount(2);
     await credentialRows.nth(1).selectOption("secret_ref");
-    await page.getByLabel(/^Secret$/).selectOption("secret-fallback");
+    await chooseSearchablePickerOption(
+      page,
+      page.getByLabel(/^Secret$/),
+      "Fallback API key",
+    );
 
     await page.getByRole("button", { name: "Create Server" }).click();
 

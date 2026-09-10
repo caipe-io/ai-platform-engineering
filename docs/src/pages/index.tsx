@@ -6,7 +6,11 @@ import Heading from '@theme/Heading';
 import styles from './index.module.css';
 
 const CURL_CMD = 'bash <(curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh)';
-const HELM_CMD = 'helm upgrade --install ai-platform-engineering \\\n    oci://ghcr.io/caipe-io/charts/ai-platform-engineering \\\n    --version 1.0.0 -f your-values.yaml';
+const HELM_CMD = 'helm upgrade --install ai-platform-engineering \\\n    oci://ghcr.io/caipe-io/charts/ai-platform-engineering \\\n    --version 1.0.1 -f your-values.yaml';
+const DEMO_GIF = 'https://raw.githubusercontent.com/wiki/caipe-io/ai-platform-engineering/caipe-product-tour.gif';
+const DEMO_VIDCAST_URL = 'https://app.vidcast.io/share/b46e063b-6530-4d04-90b6-064dbbcdc613';
+const DEMO_VIDCAST_EMBED_URL = 'https://app.vidcast.io/share/embed/b46e063b-6530-4d04-90b6-064dbbcdc613?disableAMA=1';
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -88,14 +92,8 @@ const HOME_FEATURES = [
     to: '/features',
   },
   {
-    icon: '🎨',
-    title: 'Rich Web UI',
-    description: 'Streaming chat, agent builder, skills gateway, and admin controls.',
-    to: '/features',
-  },
-  {
     icon: '🧠',
-    title: 'Integrated Knowledge Bases',
+    title: 'Knowledge Bases',
     description: 'Hybrid RAG and optional Graph RAG across web, AWS, Kubernetes, Jira, GitHub, Slack, and more.',
     to: '/features',
   },
@@ -119,14 +117,14 @@ const HOME_FEATURES = [
   },
   {
     icon: '⚙️',
-    title: 'Deterministic Workflows',
-    description: 'Multi-step dynamic-agent pipelines with persisted run history and artifacts.',
+    title: 'Workflows',
+    description: 'Ordered agent steps with persisted run history and artifacts.',
     to: '/features',
   },
   {
     icon: '🛠️',
-    title: 'Custom Agents',
-    description: 'Build agents with custom prompts, tools, and personas. No boilerplate.',
+    title: 'Agent Builder',
+    description: 'Build governed agents with configured models, tools, knowledge, and guardrails.',
     to: '/features',
   },
   {
@@ -144,7 +142,7 @@ const HOME_FEATURES = [
   {
     icon: '💻',
     title: 'Multiple Clients',
-    description: 'Web UI, Chat CLI, Slack Bot, and Webex Bot.',
+    description: 'Rich Web UI for streaming chat, Agent Builder, Skills Gateway, and admin controls — plus Chat CLI, Slack, and Webex.',
     to: '/features',
   },
 ];
@@ -173,10 +171,52 @@ const USE_CASES = [
 const AGENTS = [
   'ArgoCD', 'PagerDuty', 'GitHub', 'GitLab', 'Jira', 'Confluence',
   'Kubernetes', 'Slack', 'Webex', 'Splunk', 'VictorOps', 'Komodor',
-  'Backstage', 'AWS', 'Weather',
+  'Backstage', 'AWS',
 ];
 
-function HeroSection() {
+const HERO_AUDIENCES = ['enterprises.', 'individuals.', 'you.', 'teams.'];
+
+function TypewriterAudience() {
+  const [audienceIndex, setAudienceIndex] = useState(0);
+  const [displayedAudience, setDisplayedAudience] = useState(HERO_AUDIENCES[0]);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const audience = HERO_AUDIENCES[audienceIndex];
+
+  useEffect(() => {
+    const isComplete = displayedAudience === audience;
+    const delay = isDeleting ? 45 : isComplete ? 3800 : 65;
+    const timer = window.setTimeout(() => {
+      if (isDeleting) {
+        setDisplayedAudience((current) => current.slice(0, -1));
+        if (displayedAudience.length === 1) {
+          setAudienceIndex((current) => (current + 1) % HERO_AUDIENCES.length);
+          setIsDeleting(false);
+        }
+        return;
+      }
+
+      if (isComplete) {
+        setIsDeleting(true);
+        return;
+      }
+
+      setDisplayedAudience(audience.slice(0, displayedAudience.length + 1));
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [audience, displayedAudience, isDeleting]);
+
+  return (
+    <>
+      <span aria-hidden="true" className={styles.typewriterAudience}>
+        {displayedAudience}
+      </span>
+      <span className={styles.screenReaderOnly}>enterprises, individuals, you, and teams.</span>
+    </>
+  );
+}
+
+function HeroSection({ onOpenTour }: { onOpenTour: () => void }) {
   const [stars, setStars] = useState<string | null>(null);
   useEffect(() => {
     fetch('https://api.github.com/repos/caipe-io/ai-platform-engineering')
@@ -200,14 +240,11 @@ function HeroSection() {
               <span className={styles.heroAccent}>All</span>
             </Heading>
             <p className={styles.heroSubtitle}>
-              <span className={styles.heroLine}>
-                Build, govern, and operate secure AI agents and agentic workflows
-              </span>{' '}
-              <span className={styles.heroLine}>for enterprises and individuals</span>
+              Build, govern, and operate secure AI agents and workflows for <TypewriterAudience />
             </p>
             <p className={styles.heroPronunciation}>
               <span className={styles.heroLine}>
-                💡 Pronounced like <strong>cape</strong> 🦸 — just as a cape empowers a superhero,
+                💡 Pronounced <strong>cape</strong> 🦸 — just as a cape empowers a superhero,
               </span>{' '}
               <span className={styles.heroLine}>
                 CAIPE empowers teams with 🤖 agentic AI automation.
@@ -217,7 +254,7 @@ function HeroSection() {
               <Link className={styles.heroPrimary} to="/docs/getting-started/quick-start">
                 Get Started →
               </Link>
-              <Link className={styles.heroSecondary} href="https://app.vidcast.io/share/embed/e0033e26-46bf-4298-8c20-0a2fd1746073">
+              <Link className={styles.heroSecondary} href={DEMO_VIDCAST_URL}>
                 Watch a Demo ▶
               </Link>
               <Link className={styles.heroSecondary} href="https://github.com/caipe-io/ai-platform-engineering">
@@ -227,6 +264,20 @@ function HeroSection() {
 
             <InstallWidget />
           </div>
+          <button
+            aria-label="Expand the CAIPE product tour"
+            className={styles.heroDemo}
+            onClick={onOpenTour}
+            type="button"
+          >
+            <img
+              alt="CAIPE product tour showing chat, skills, knowledge bases, autonomous agents, credentials, and admin settings"
+              className={styles.heroDemoGif}
+              decoding="async"
+              src={DEMO_GIF}
+            />
+            <span className={styles.heroDemoHint}>Click to expand product tour</span>
+          </button>
         </div>
 
         {/* Stats row */}
@@ -260,8 +311,7 @@ function FeaturesSection() {
           Built for teams of all sizes
         </Heading>
         <p className={styles.sectionSubtitle}>
-          Everything you need to run agents in production, plus the controls to
-          let your whole team help themselves safely.
+          Everything you need to run agents in production, plus the controls to let your whole team help themselves safely.
         </p>
       </div>
       <div className={styles.featuresGrid}>
@@ -346,7 +396,7 @@ function QuickStartSection() {
   return (
     <section className={styles.quickstart}>
       <div className={styles.quickstartInner}>
-        <div className={styles.sectionHeader} style={{textAlign: 'left', marginBottom: '1.5rem'}}>
+        <div className={styles.sectionHeader} style={{marginBottom: '1.5rem'}}>
           <p className={styles.sectionLabel}>Quick Install</p>
           <Heading as="h2" className={styles.sectionTitle}>
             Up and running in minutes
@@ -382,7 +432,7 @@ function QuickStartSection() {
               <span className={styles.codePrompt}>$</span>{' '}
               {'helm upgrade --install ai-platform-engineering \\'}{'\n'}
               {'    oci://ghcr.io/caipe-io/charts/ai-platform-engineering \\'}{'\n'}
-              {'    --version 1.0.0 -f your-values.yaml'}
+              {'    --version 1.0.1 -f your-values.yaml'}
             </code>
           </pre>
         </div>
@@ -418,26 +468,91 @@ function VisionSection() {
 }
 
 
-function VideoSection() {
+function VideoSection({ onOpenTour }: { onOpenTour: () => void }) {
   return (
     <section className={styles.quickstart}>
       <div className={styles.quickstartInner}>
-        <div className={styles.sectionHeader} style={{textAlign: 'left', marginBottom: '1.5rem'}}>
+        <div className={styles.sectionHeader} style={{marginBottom: '1.5rem'}}>
           <p className={styles.sectionLabel}>See It In Action</p>
           <Heading as="h2" className={styles.sectionTitle}>
             Watch the demo
           </Heading>
         </div>
-        <div style={{position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', borderRadius: '12px'}}>
-          <iframe
-            src="https://app.vidcast.io/share/embed/e0033e26-46bf-4298-8c20-0a2fd1746073"
-            style={{position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0}}
-            allowFullScreen
-            title="CAIPE Demo"
-          />
+        <div className={styles.demoFrame}>
+          <div className={styles.demoEmbed}>
+            <iframe
+              src={DEMO_VIDCAST_EMBED_URL}
+              title="CAIPE.io Demo"
+              loading="lazy"
+              allow="fullscreen *;autoplay *;clipboard-write *;"
+              allowFullScreen
+            />
+          </div>
+        </div>
+        <div className={styles.demoFooter}>
+          <span>Explore the platform in action.</span>
+          <div className={styles.demoActions}>
+            <button className={styles.demoLink} onClick={onOpenTour} type="button">
+              Watch the full demo ↗
+            </button>
+            <Link
+              className={styles.demoLink}
+              href={DEMO_VIDCAST_URL}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              Watch on Vidcast ↗
+            </Link>
+          </div>
         </div>
       </div>
     </section>
+  );
+}
+
+function DemoLightbox({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className={styles.modalBackdrop} onClick={onClose} role="presentation">
+      <div
+        aria-labelledby="demo-lightbox-title"
+        aria-modal="true"
+        className={styles.modalDialog}
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <button aria-label="Close product tour" className={styles.modalClose} onClick={onClose} type="button">
+          ×
+        </button>
+        <img
+          alt="CAIPE product tour showing chat, skills, knowledge bases, autonomous agents, credentials, and admin settings"
+          className={styles.modalGif}
+          src={DEMO_GIF}
+        />
+        <div className={styles.modalFooter}>
+          <Heading as="h2" className={styles.modalTitle} id="demo-lightbox-title">
+            CAIPE product tour
+          </Heading>
+          <Link
+            className={styles.heroPrimary}
+            href={DEMO_VIDCAST_URL}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Watch the full demo on Vidcast ↗
+          </Link>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -461,20 +576,22 @@ function CtaSection() {
 
 export default function Home() {
   const {siteConfig} = useDocusaurusContext();
+  const [isTourOpen, setIsTourOpen] = useState(false);
   return (
     <Layout
       title={siteConfig.title}
       description="Open Source AI Platform for All. Build, govern, and operate secure AI agents and agentic workflows for enterprises and individuals."
     >
       <main>
-        <HeroSection />
-        <VideoSection />
+        <HeroSection onOpenTour={() => setIsTourOpen(true)} />
+        <VideoSection onOpenTour={() => setIsTourOpen(true)} />
         <InTheWildSection />
         <VisionSection />
         <FeaturesSection />
         <AgentsSection />
         <CtaSection />
       </main>
+      {isTourOpen && <DemoLightbox onClose={() => setIsTourOpen(false)} />}
     </Layout>
   );
 }

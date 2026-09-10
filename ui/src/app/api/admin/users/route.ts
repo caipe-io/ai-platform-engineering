@@ -4,7 +4,7 @@ getAuthFromBearerOrSession,
 requireRbacPermission,
 withErrorHandler,
 } from "@/lib/api-middleware";
-import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
+import { isMongoDBConfigured } from "@/lib/mongodb";
 import {
 countRealmUsers,
 findRealmUsersByExactEmail,
@@ -38,7 +38,7 @@ type AdminUsersListBase = {
   lastName: string;
   enabled: boolean;
   attributes: Record<string, string[]>;
-  slack_link_status: "linked" | "pending" | "unlinked";
+  slack_link_status: "linked" | "unlinked";
   webex_link_status: "linked" | "unlinked";
 };
 
@@ -86,39 +86,10 @@ function readWebexUserIdFromUser(u: Record<string, unknown>): string | undefined
   return normalized || undefined;
 }
 
-async function loadPendingSlackIds(): Promise<Set<string>> {
-  try {
-    const nonceColl = await getCollection<{
-      slack_user_id: string;
-      expires_at?: Date;
-      created_at?: Date;
-      consumed?: boolean;
-    }>("slack_link_nonces");
-    const now = Date.now();
-    const ttlMs = 10 * 60 * 1000;
-    const rows = await nonceColl
-      .find({
-        consumed: { $ne: true },
-        $or: [
-          { expires_at: { $gt: new Date() } },
-          { created_at: { $gte: new Date(now - ttlMs) } },
-        ],
-      })
-      .project({ slack_user_id: 1 })
-      .toArray();
-    return new Set(rows.map((r) => String(r.slack_user_id).trim()).filter(Boolean));
-  } catch {
-    return new Set();
-  }
-}
-
 function getSlackLinkStatus(
-  u: Record<string, unknown>,
-  pendingSlackIds: Set<string>
+  u: Record<string, unknown>
 ): AdminUsersListItem["slack_link_status"] {
-  const slackUserId = readSlackUserIdFromUser(u);
-  if (!slackUserId) return "unlinked";
-  return pendingSlackIds.has(slackUserId) ? "pending" : "linked";
+  return readSlackUserIdFromUser(u) ? "linked" : "unlinked";
 }
 
 function getWebexLinkStatus(u: Record<string, unknown>): AdminUsersListItem["webex_link_status"] {
@@ -164,10 +135,7 @@ async function loadTeamMemberEmailsBySlug(slug: string): Promise<Set<string>> {
   return membershipEmails(await listActiveTeamMembershipSourcesBySlug(slug));
 }
 
-function mapBaseRow(
-  u: Record<string, unknown>,
-  pendingSlackIds: Set<string>
-): AdminUsersListBase {
+function mapBaseRow(u: Record<string, unknown>): AdminUsersListBase {
   return {
     id: String(u.id ?? ""),
     username: String(u.username ?? ""),
@@ -177,7 +145,7 @@ function mapBaseRow(
     lastName: u.lastName !== undefined && u.lastName !== null ? String(u.lastName) : "",
     enabled: u.enabled !== false,
     attributes: normalizeAttributes(u.attributes),
-    slack_link_status: getSlackLinkStatus(u, pendingSlackIds),
+    slack_link_status: getSlackLinkStatus(u),
     webex_link_status: getWebexLinkStatus(u),
   };
 }
@@ -189,10 +157,9 @@ function mapBaseRow(
 // need them (detail panel) use `/api/admin/users/[id]/roles` instead.
 async function enrichListRow(
   u: Record<string, unknown>,
-  pendingSlackIds: Set<string>,
   includeRoles: boolean
 ): Promise<AdminUsersListItem> {
-  const base = mapBaseRow(u, pendingSlackIds);
+  const base = mapBaseRow(u);
   if (!includeRoles) return base;
   const roleRows = await listRealmRoleMappingsForUser(base.id);
   const curatedRoles = curateRealmRolesForUser(roleRows.map((r) => r.name));
@@ -209,7 +176,6 @@ function userMatchesFilters(
     teamEmailSet: Set<string> | null;
     slackStatus: AdminUsersListItem["slack_link_status"] | null;
     webexStatus: AdminUsersListItem["webex_link_status"] | null;
-    pendingSlackIds: Set<string>;
   }
 ): boolean {
   const id = String(u.id ?? "");
@@ -218,7 +184,7 @@ function userMatchesFilters(
   const email = String(u.email ?? "").trim().toLowerCase();
   if (opts.teamEmailSet && !opts.teamEmailSet.has(email)) return false;
 
-  if (opts.slackStatus && getSlackLinkStatus(u, opts.pendingSlackIds) !== opts.slackStatus) return false;
+  if (opts.slackStatus && getSlackLinkStatus(u) !== opts.slackStatus) return false;
   if (opts.webexStatus && getWebexLinkStatus(u) !== opts.webexStatus) return false;
 
   return true;
@@ -319,8 +285,6 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
     if (!actor) {
       throw new ApiError("A stable user subject is required to load your user profile.", 401);
     }
-    const pendingSlackIds = await loadPendingSlackIds();
-
     const selfOnlyResponse = async (): Promise<NextResponse> => {
       if (!selfSubjectId) {
         return NextResponse.json({
@@ -333,7 +297,6 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       }
       const self = await enrichListRow(
         await getRealmUserById(selfSubjectId),
-        pendingSlackIds,
         true
       );
       return NextResponse.json({
@@ -395,7 +358,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
             const id = String(u.id ?? "");
             if (!id || seenIds.has(id)) continue;
             seenIds.add(id);
-            teamUsers.push(await enrichListRow(u, pendingSlackIds, false));
+            teamUsers.push(await enrichListRow(u, false));
           }
         } catch {
           // skip this email on error
@@ -418,12 +381,12 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
     const team = (url.searchParams.get("team") ?? "").trim() || undefined;
     const slackRaw = (url.searchParams.get("slackStatus") ?? "").trim().toLowerCase();
     const slackStatus =
-      slackRaw === "linked" || slackRaw === "pending" || slackRaw === "unlinked"
+      slackRaw === "linked" || slackRaw === "unlinked"
         ? (slackRaw as AdminUsersListItem["slack_link_status"])
         : slackRaw === ""
           ? null
           : (() => {
-              throw new ApiError('slackStatus must be "linked", "pending", or "unlinked"', 400);
+              throw new ApiError('slackStatus must be "linked" or "unlinked"', 400);
             })();
 
     const webexRaw = (url.searchParams.get("webexStatus") ?? "").trim().toLowerCase();
@@ -475,8 +438,6 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       Boolean(teamEmailSet) ||
       Boolean(slackStatus) ||
       Boolean(webexStatus);
-    const pendingSlackIds =
-      needsScan || !slackStatus ? await loadPendingSlackIds() : new Set<string>();
 
     if (!needsScan) {
       const first = skip;
@@ -488,7 +449,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       });
       const total = await countRealmUsers({ search, enabled });
       const users = await Promise.all(
-        raw.map((row) => enrichListRow(row, pendingSlackIds, includeRoles))
+        raw.map((row) => enrichListRow(row, includeRoles))
       );
       return NextResponse.json({
         users: stampCanEdit(users),
@@ -503,7 +464,6 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       teamEmailSet,
       slackStatus,
       webexStatus,
-      pendingSlackIds,
     };
 
     const pageRows: AdminUsersListItem[] = [];
@@ -523,7 +483,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       for (const row of batch) {
         if (!userMatchesFilters(row, filterOpts)) continue;
         if (matchCount >= skip && pageRows.length < pageSize) {
-          pageRows.push(await enrichListRow(row, pendingSlackIds, includeRoles));
+          pageRows.push(await enrichListRow(row, includeRoles));
         }
         matchCount += 1;
       }

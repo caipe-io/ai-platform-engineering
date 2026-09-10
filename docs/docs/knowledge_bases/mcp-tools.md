@@ -1,100 +1,98 @@
-# MCP Tools
+# MCP tools
 
-The RAG server exposes MCP (Model Context Protocol) tools that enable AI agents to search, fetch, and explore the knowledge base. These tools provide a standardized interface for LLMs to access organizational knowledge.
+The RAG server exposes Model Context Protocol (MCP) tools for search, document
+retrieval, and graph exploration. Agents created in Agent Builder and other MCP
+clients use the same authorization-aware interface to organizational knowledge.
 
-For configuration details, see the [Server README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/README.md).
+For configuration details, see the
+[RAG server README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/README.md).
 
 ## What is MCP?
 
-Model Context Protocol (MCP) is an open standard for connecting AI models to external tools and data sources. Instead of custom integrations, MCP provides:
+MCP is an open standard for connecting AI applications to tools and data sources.
+It provides:
 
-- **Standardized tool interface** for any MCP-compatible client
-- **Streaming responses** via Server-Sent Events (SSE)
-- **Tool discovery** so agents know what capabilities are available
+- A consistent tool interface for MCP-compatible clients
+- Tool discovery so agents can inspect the available capabilities
+- Streamable HTTP transport for remote connections
 
-## Connecting to CAIPE RAG
+## Connect to CAIPE RAG
 
-### MCP Endpoint
+The default MCP endpoint is:
 
-```
+```text
 http://localhost:9446/mcp
 ```
 
-### Compatible Clients
+Connect over Streamable HTTP. When `MCP_AUTH_ENABLED=true`, the client must send
+a valid bearer token. In Agent Builder, register the endpoint as an MCP server
+and attach only the tools the agent needs. See [Authentication](authentication-overview.md)
+for identity and authorization details.
 
-Any MCP-compatible client can connect:
+## Search and fetch pattern
 
-- Claude Desktop
-- VS Code with GitHub Copilot
-- Cursor
-- Continue
-- Custom LangChain/LangGraph agents
+Use search to find relevant content before fetching full documents:
 
-### Example: Claude Desktop Configuration
+1. **Search** returns short snippets, document IDs, scores, and metadata.
+2. **Review** the results to identify relevant documents.
+3. **Fetch** the full content for the selected document IDs.
 
-Add to your Claude Desktop config:
+The default snippet limit is 500 characters. This pattern lets agents compare
+several results before loading complete documents.
 
-```json
-{
-  "mcpServers": {
-    "caipe-rag": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-client", "http://localhost:9446/mcp"]
-    }
-  }
-}
-```
+## Available tools
 
-## Search + Fetch Pattern
+Tool schemas can include `thought`, which records why the agent selected a tool.
+They can also include runtime `filters` that narrow the configured data source
+scope. Filters never expand the current caller's access.
 
-The MCP tools follow a **search + fetch pattern** that mirrors how humans use search engines:
-
-1. **Search** returns truncated snippets (500 chars) with metadata
-2. **Scan** results to identify relevant documents
-3. **Fetch** full content of specific documents
-
-This pattern is token-efficient: agents scan many results quickly, then fetch only what they need.
-
-## Available Tools
-
-### Core Search Tools
+### Search tools
 
 #### `search`
 
 Hybrid semantic and keyword search across all indexed content.
 
 **Parameters:**
-- `query` (required): Search query string
-- `top_k`: Number of results (default: 10)
-- `bias`: Search strategy - `"semantic"` or `"keyword"` (default: balanced)
-- `filters`: Metadata filters (see below)
 
-**Returns:** List of results with truncated content (500 chars), scores, and metadata.
+- `query` (required): Search query
+- `filters`: Optional metadata filters
+- `limit`: Maximum number of results for each configured search (default: `10`)
+- `thought`: Reason the agent selected the tool
 
-**Use when:** Finding relevant documents, exploring a topic, answering questions.
+**Returns:** An object keyed by the configured parallel-search labels. The
+default labels are `semantic_results` and `keyword_results`; each contains
+snippets, scores, document IDs, and metadata.
+
+Use this tool to find documents, explore a topic, or gather evidence for an answer.
 
 #### `fetch_document`
 
 Retrieve full content of a specific document by ID.
 
 **Parameters:**
-- `document_id` (required): Document ID from search results
+
+- `document_id` (required): Document ID returned by `search`
+- `filters`: Optional runtime data source scope
+- `thought`: Reason the agent selected the tool
 
 **Returns:** Complete document content and metadata.
 
-**Use when:** Need full context after identifying a relevant document via search.
+Use this tool after `search` identifies a relevant document.
 
-#### `fetch_datasources_and_entity_types`
+#### `list_datasources_and_entity_types`
 
-List all available datasources and entity types in the knowledge base.
+List the data sources and entity types available in the current scope.
 
-**Parameters:** None
+**Parameters:**
 
-**Returns:** List of datasources with their entity types.
+- `filters`: Optional runtime data source scope
+- `thought`: Reason the agent selected the tool
 
-**Use when:** Discovering what data is available, building filters.
+**Returns:** Data source IDs and available graph entity types.
 
-### Graph Exploration Tools
+Use this tool to discover available data before building filters or graph queries.
+
+### Graph exploration tools
 
 These tools are available when Graph RAG is enabled (`ENABLE_GRAPH_RAG=true`).
 
@@ -103,145 +101,168 @@ These tools are available when Graph RAG is enabled (`ENABLE_GRAPH_RAG=true`).
 Explore entity type schemas and their relationships.
 
 **Parameters:**
-- `entity_type` (required): Type name (e.g., "Pod", "Deployment")
-- `hops`: Relationship depth (1-3, default: 1)
+
+- `entity_type` (required): Entity type name
+- `depth`: Relationship depth from `1` to `3` (default: `1`)
+- `filters`: Optional runtime data source scope
+- `thought`: Reason the agent selected the tool
 
 **Returns:** Entity type schema with properties and connected relationship types.
 
-**Use when:** Understanding the knowledge graph schema, discovering what relationships exist.
+Use this tool to understand the ontology schema and discover relationships.
 
 #### `graph_explore_data_entity`
 
 Explore a specific entity instance and its neighborhood.
 
 **Parameters:**
-- `entity_type` (required): Type name
-- `entity_id` (required): Entity identifier
-- `hops`: Relationship depth (1-3, default: 1)
+
+- `entity_type` (required): Entity type name
+- `primary_key_id` (required): Entity primary key
+- `depth`: Relationship depth from `1` to `3` (default: `1`)
+- `filters`: Optional runtime data source scope
+- `thought`: Reason the agent selected the tool
 
 **Returns:** Entity with properties and related entities.
 
-**Use when:** Investigating a specific resource and its connections.
+Use this tool to investigate a specific entity and its connections.
 
 #### `graph_fetch_data_entity_details`
 
 Get complete properties and all relations for an entity.
 
 **Parameters:**
-- `entity_type` (required): Type name
-- `entity_id` (required): Entity identifier
+
+- `entity_type` (required): Entity type name
+- `primary_key_id` (required): Entity primary key
+- `filters`: Optional runtime data source scope
+- `thought` (required): Reason the agent selected the tool
 
 **Returns:** Full entity details including all properties and relationships.
 
-**Use when:** Need complete information about a specific entity.
+Use this tool when an agent needs complete information about one entity.
 
 #### `graph_shortest_path_between_entity_types`
 
 Find relationship paths between two entity types.
 
 **Parameters:**
-- `source_type` (required): Starting entity type
-- `target_type` (required): Ending entity type
+
+- `entity_type_1` (required): First entity type
+- `entity_type_2` (required): Second entity type
+- `filters`: Optional runtime data source scope
+- `thought` (required): Reason the agent selected the tool
 
 **Returns:** Path in Cypher notation showing relationship chain.
 
-**Use when:** Understanding how entity types are connected, planning graph queries.
+Use this tool to understand how entity types connect before planning a graph query.
 
 #### `graph_raw_query_data` / `graph_raw_query_ontology`
 
 Execute custom read-only Cypher queries.
 
 **Parameters:**
-- `query` (required): Cypher query string (read-only)
+
+- `query` (required): Read-only Cypher query
+- `filters`: Optional runtime data source scope for `graph_raw_query_ontology`
+- `thought` (required): Reason the agent selected the tool
 
 **Returns:** Query results (limited to configured max results).
 
-**Use when:** Complex queries that can't be expressed with other tools.
+Use these tools for queries that the graph exploration tools cannot express.
 
-**Note:** Queries are automatically scoped to the correct tenant labels (`NxsDataEntity` or `NxsSchemaEntity`).
+**Authorization:** Data-graph exploration is restricted to data sources the caller
+can search. Raw data-graph queries and deployment-wide ontology operations
+require unrestricted data source access. Queries are also scoped to the relevant
+graph label: `NxsDataEntity` or `NxsSchemaEntity`.
 
 ## Filtering
 
 Search and exploration tools support metadata filters:
 
-| Filter Key | Description | Example |
+| Filter key | Description | Example |
 |------------|-------------|---------|
-| `datasource_id` | Filter by data source | `"aws-production"` |
-| `ingestor_id` | Filter by ingestor | `"k8s-ingestor"` |
+| `datasource_id` | Filter by data source | `"primary"` |
+| `collection_id` | Filter by collection | `"primary"` |
+| `ingestor_id` | Filter by ingestor | `"primary-ingestor"` |
 | `is_structured_entity` | Only structured entities | `true` |
 | `document_type` | Filter by document type | `"runbook"`, `"structured:Pod"` |
 | `metadata.<key>` | Filter by nested metadata | `metadata.structured_entity_type` |
 
-For structured entities, `document_type` is prefixed with `structured:` followed by the entity type (e.g., `"structured:Pod"`, `"structured:Deployment"`). To filter for a specific entity type, use `document_type` with this prefix.
+For structured entities, prefix the entity type with `structured:`. For example,
+use `"structured:Workload"` to return only `Workload` entities.
 
-### Nested Metadata Filters
+### Nested metadata filters
 
-You can also filter by custom metadata fields stored in the `metadata` dict using dot notation:
+Use dot notation to filter custom fields in the `metadata` object:
 
 ```json
 {
   "filters": {
-    "metadata.structured_entity_type": "Pod",
+    "metadata.structured_entity_type": "Workload",
     "metadata.custom_field": "value"
   }
 }
 ```
 
-This is useful for filtering by ingestor-specific metadata that isn't a top-level field.
+Use nested filters for ingestor-specific metadata that is not available as a
+top-level field.
 
 Filters are combined with AND logic.
 
-## Example Agent Workflow
+## Example agent workflow
 
-Here's how an AI agent might use these tools to answer "What pods are running on node worker-1?":
+This example shows how an agent can answer, "What workloads are running on
+`node-a`?"
 
 1. **Discover schema:**
-   ```
-   fetch_datasources_and_entity_types()
-   → Sees "Pod" and "Node" entity types from k8s datasource
+   ```text
+   list_datasources_and_entity_types()
+   → Returns "Workload" and "Node" entity types from the primary data source
    ```
 
 2. **Explore relationships:**
-   ```
-   graph_explore_ontology_entity(entity_type="Pod", hops=1)
-   → Sees Pod has "RUNS_ON" relationship to Node
+   ```text
+   graph_explore_ontology_entity(entity_type="Workload", depth=1)
+   → Returns the "RUNS_ON" relationship from Workload to Node
    ```
 
 3. **Find the node:**
-   ```
-   search(query="worker-1", filters={"document_type": "structured:Node"})
-   → Gets Node entity ID
+   ```text
+   search(query="node-a", filters={"document_type": "structured:Node"})
+   → Returns the Node primary key
    ```
 
-4. **Explore node's pods:**
-   ```
-   graph_explore_data_entity(entity_type="Node", entity_id="worker-1", hops=1)
-   → Gets all Pods connected to this Node
+4. **Explore the node's workloads:**
+
+   ```text
+   graph_explore_data_entity(entity_type="Node", primary_key_id="node-a", depth=1)
+   → Returns Workloads connected to the Node
    ```
 
 ## Configuration
 
-### Enable/Disable MCP
+### Enable or disable MCP
 
 ```bash
 ENABLE_MCP=true  # default
 ```
 
-### Result Truncation
+### Result truncation
 
 ```bash
 SEARCH_RESULT_TRUNCATE_LENGTH=500  # Characters per result in search
 ```
 
-### Graph Query Limits
+### Graph query limits
 
 ```bash
 MAX_GRAPH_RAW_QUERY_RESULTS=100   # Max entities per query
 MAX_GRAPH_RAW_QUERY_TOKENS=80000  # Max tokens in results
 ```
 
-## Further Reading
+## Further reading
 
-- [Server Architecture](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/ARCHITECTURE.md) - MCP implementation details
-- [Architecture Overview](architecture.md) - System-level architecture
-- [MCP Specification](https://modelcontextprotocol.io/) - Official MCP documentation
+- [Server architecture](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/ARCHITECTURE.md) — MCP implementation details
+- [Knowledge Bases architecture](architecture.md) — system-level architecture
+- [MCP specification](https://modelcontextprotocol.io/) — official MCP documentation

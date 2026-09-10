@@ -2,7 +2,7 @@ const updateOne = jest.fn(async () => ({ upsertedCount: 1 }));
 const deleteOne = jest.fn(async () => ({ deletedCount: 1 }));
 const toArray = jest.fn(async () => []);
 const sort = jest.fn(() => ({ toArray }));
-const find = jest.fn(() => ({ sort }));
+const find = jest.fn(() => ({ sort, toArray }));
 
 jest.mock("../mongo-collections", () => ({
   getRbacCollection: jest.fn(async () => ({
@@ -15,6 +15,8 @@ jest.mock("../mongo-collections", () => ({
 import {
   deleteWebexDirectUserRoute,
   listWebexDirectUserRoutes,
+  listWebexDirectUserRoutesByUserIds,
+  listWebexDirectUserRoutesForUser,
   upsertWebexDirectUserRoute,
 } from "../webex-direct-user-route-store";
 
@@ -27,7 +29,6 @@ describe("Webex direct-user route ownership", () => {
     const common = {
       keycloakUserId: "user-1",
       userEmail: "user@example.com",
-      expectedWebexEmail: "user@example.com",
       agentId: "agent-1",
       actor: "admin@example.com",
     };
@@ -54,5 +55,41 @@ describe("Webex direct-user route ownership", () => {
     expect(deleteOne).toHaveBeenCalledWith({
       _id: '["secondary","user-1"]',
     });
+  });
+
+  it("lists a user's routes across bots, keyed by bot_id", async () => {
+    toArray.mockResolvedValueOnce([
+      { bot_id: "primary", keycloak_user_id: "user-1", agent_id: "agent-1" },
+      { bot_id: "secondary", keycloak_user_id: "user-1", agent_id: "agent-2" },
+    ]);
+
+    const routes = await listWebexDirectUserRoutesForUser("user-1");
+
+    expect(find).toHaveBeenCalledWith({ keycloak_user_id: "user-1" });
+    expect(routes.get("primary")?.agent_id).toBe("agent-1");
+    expect(routes.get("secondary")?.agent_id).toBe("agent-2");
+  });
+
+  it("lists routes for one bot scoped to a set of user ids, keyed by keycloak_user_id", async () => {
+    toArray.mockResolvedValueOnce([
+      { bot_id: "primary", keycloak_user_id: "user-1", agent_id: "agent-1" },
+      { bot_id: "primary", keycloak_user_id: "user-2", agent_id: "agent-2" },
+    ]);
+
+    const routes = await listWebexDirectUserRoutesByUserIds("primary", ["user-1", "user-2"]);
+
+    expect(find).toHaveBeenCalledWith({
+      bot_id: "primary",
+      keycloak_user_id: { $in: ["user-1", "user-2"] },
+    });
+    expect(routes.get("user-1")?.agent_id).toBe("agent-1");
+    expect(routes.get("user-2")?.agent_id).toBe("agent-2");
+  });
+
+  it("short-circuits on an empty user id list without querying Mongo", async () => {
+    const routes = await listWebexDirectUserRoutesByUserIds("primary", []);
+
+    expect(routes.size).toBe(0);
+    expect(find).not.toHaveBeenCalled();
   });
 });

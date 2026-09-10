@@ -119,5 +119,5 @@ warning. Choose another agent or remove the platform default.
 ## Related pages
 
 - [UI customization and branding](../ui/customization.md)
-- [Custom agents](./custom-agents.md)
+- [Agent Builder](./agent-builder.md)
 - [RBAC architecture](../security/rbac/architecture.md)

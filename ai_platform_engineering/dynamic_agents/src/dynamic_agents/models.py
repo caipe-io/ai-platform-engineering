@@ -675,7 +675,7 @@ class ChatRequest(BaseModel):
         False,
         description=(
             "True when the scheduler/webhook runtime drives this call unattended. "
-            "Adds a can_schedule authorization check on top of can_use."
+            "Requires autonomous team entitlement in addition to agent use access."
         ),
     )
     client_context: ClientContext | None = Field(None, description="Opaque client context for system prompt rendering")

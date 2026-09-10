@@ -1,178 +1,217 @@
-# Architecture
+# Knowledge Bases architecture
 
-This page provides an overview of the CAIPE RAG system architecture, including core components, data flows, and technology decisions.
+This page describes how CAIPE ingests, authorizes, searches, and serves
+organizational knowledge. For implementation details and environment variables,
+see
+[RAG codebase architecture](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/Architecture.md).
 
-For implementation details and configuration, see the [Architecture.md](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/Architecture.md) in the RAG codebase.
+## Component architecture
 
-## System Overview
+```mermaid
+flowchart TB
+  ENTRY["Experience and ingestion<br/>CAIPE UI · agents · MCP clients · ingestors"]
+  BFF["CAIPE BFF<br/>session · capability checks"]
+  RAG(["RAG server<br/>REST · MCP · ingestion · retrieval"])
+  AUTH{"OIDC + OpenFGA<br/>identity · authorization"}
+  ONT["Ontology Agent<br/>relationship discovery"]
+  DATA[("Knowledge stores<br/>Milvus · Neo4j · Redis<br/>object storage + etcd")]
 
-CAIPE RAG is composed of three main components that work together to ingest, process, and serve knowledge:
+  ENTRY -->|"UI session"| BFF -->|"bearer token"| RAG
+  ENTRY -->|"MCP + ingestion APIs"| RAG
+  RAG <--> AUTH
+  RAG <--> DATA
+  ONT <--> RAG
+  ONT <--> DATA
 
-| Component | Port | Purpose |
-|-----------|------|---------|
-| **Server** | 9446 | Core API for ingestion, hybrid search, graph exploration, and MCP tools |
-| **Ontology Agent** | 8098 | Automated relationship discovery using LLM evaluation |
-| **Ingestors** | - | External services that pull data from various sources |
+  classDef client fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:2px
+  classDef gateway fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
+  classDef hub fill:#ede9fe,stroke:#7c3aed,color:#4c1d95,stroke-width:3px
+  classDef policy fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:2px
+  classDef agent fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:2px
+  classDef store fill:#ccfbf1,stroke:#0f766e,color:#134e4a,stroke-width:2px
 
-### Diagram: Component Architecture
+  class ENTRY client
+  class BFF gateway
+  class RAG hub
+  class AUTH policy
+  class ONT agent
+  class DATA store
+```
 
-<!-- DIAGRAM NEEDED: system-architecture.svg
+### Core components
 
-Description: High-level component diagram showing:
+| Component | Default port | Responsibility |
+|-----------|--------------|----------------|
+| **CAIPE UI and BFF** | 3000 | Data source management, collections, search, graph exploration, and authenticated API proxying |
+| **RAG server** | 9446 | Ingestion, hybrid search, graph operations, REST APIs, and MCP tools |
+| **Ontology Agent** | 8098 | Optional background discovery and validation of entity relationships |
+| **Ingestors** | Varies | Retrieve data from external systems and submit normalized content or entities |
 
-Components (boxes):
-- "Ingestors" box on left (with sub-labels: AWS, K8s, Backstage, Slack, etc.)
-- "Server (FastAPI)" box in center
-- "Ontology Agent" box on upper right
-- "AI Agents (MCP)" box on lower left
+OIDC establishes the caller's identity. OpenFGA relationships decide which
+knowledge-base actions and resources that identity may use. The RAG server checks
+data source access even when a request has already passed through the UI BFF.
 
-Database layer (bottom):
-- "Milvus (Vectors)" cylinder
-- "Neo4j Data Graph" cylinder  
-- "Neo4j Ontology Graph" cylinder
-- "Redis (Metadata)" cylinder
+## Document ingestion
 
-Connections (arrows):
-- Ingestors → Server (labeled "REST /v1/ingest")
-- AI Agents → Server (labeled "MCP /mcp")
-- Server ↔ Ontology Agent (labeled "REST")
-- Server → all databases
-- Ontology Agent → Neo4j databases and Redis
+```mermaid
+flowchart LR
+  SRC(["Document source"])
+  N["1 · Normalize<br/>attach source metadata"]
+  C["2 · Chunk<br/>preserve context"]
+  D["3A · Embed<br/>semantic meaning"]
+  S["3B · Index<br/>exact terms"]
+  M[("Milvus<br/>hybrid index")]
 
-Style: Clean boxes with rounded corners, databases as cylinders, directional arrows with protocol labels
--->
+  SRC --> N --> C
+  C -->|"Dense"| D --> M
+  C -->|"BM25"| S --> M
 
-## Data Flow
+  classDef source fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:2px
+  classDef process fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
+  classDef semantic fill:#ede9fe,stroke:#7c3aed,color:#4c1d95,stroke-width:2px
+  classDef keyword fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:2px
+  classDef store fill:#ccfbf1,stroke:#0f766e,color:#134e4a,stroke-width:3px
 
-### Document Ingestion
+  class SRC source
+  class N,C process
+  class D semantic
+  class S keyword
+  class M store
+```
 
-When documents are ingested, they flow through a processing pipeline that prepares them for both vector search and graph storage.
+1. An ingestor retrieves source content and associates every item with a data source ID.
+2. The RAG server normalizes and chunks the text while preserving useful metadata.
+3. An embedding provider creates dense semantic vectors.
+4. Milvus produces and indexes BM25 sparse vectors for keyword matching.
+5. Milvus stores both representations for filtered hybrid retrieval.
 
-**Flow:**
-1. **External Source** → Ingestor fetches data (e.g., AWS API, Kubernetes API, web crawler)
-2. **Ingestor** → Server API (`POST /v1/ingest`) with documents and metadata
-3. **Server** → Processes documents:
-   - Text chunking with overlap for context preservation
-   - Dual embedding generation (dense + sparse vectors)
-   - Graph entity parsing and nested structure splitting
-4. **Storage** → Milvus (vectors) + Neo4j (graph entities) + Redis (metadata)
+Data source IDs are part of the security boundary. Reloading a data source
+replaces its indexed content and removes stale pages while preserving its
+ownership and search access.
 
-**Key Processing Steps:**
+## Structured-entity ingestion
 
-| Step | Description |
-|------|-------------|
-| Chunking | Large documents split on paragraph/sentence boundaries with overlap |
-| Dense Embedding | Semantic vectors via OpenAI, Azure OpenAI, or other providers |
-| Sparse Embedding | BM25 vectors for keyword matching (generated by Milvus) |
-| Entity Splitting | Nested JSON structures split into connected sub-entities |
+```mermaid
+flowchart LR
+  SRC(["Structured source<br/>infrastructure · catalog API"])
+  P["1 · Parse entities<br/>split nested structures"]
+  V["2 · Build searchable<br/>representations"]
+  M[("Milvus<br/>hybrid index")]
+  N[("Neo4j<br/>data graph")]
+  O["3 · Ontology Agent<br/>discover relationships"]
+  OG[("Neo4j<br/>ontology graph")]
 
-### Diagram: Ingestion Pipeline
+  SRC --> P --> V
+  V -->|"Search"| M
+  V -->|"Relationships"| N
+  N --> O -->|"Accepted links"| OG
 
-<!-- DIAGRAM NEEDED: ingestion-pipeline.svg
+  classDef source fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:2px
+  classDef process fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
+  classDef store fill:#ccfbf1,stroke:#0f766e,color:#134e4a,stroke-width:2px
+  classDef agent fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:2px
+  classDef ontology fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:3px
 
-Description: Data flow diagram showing document processing:
+  class SRC source
+  class P,V process
+  class M,N store
+  class O agent
+  class OG ontology
+```
 
-Flow (left to right):
-1. "Document" box → 
-2. "Text Chunking" box (with note: "paragraph/sentence boundaries") →
-3. Split into two parallel paths:
-   - Upper path: "Dense Embedding" → "Semantic Vector"
-   - Lower path: "BM25 Tokenization" → "Sparse Vector"
-4. Both paths merge into "Milvus" cylinder
+Structured ingestors can submit entities and relationships instead of document
+pages. The server splits nested structures into connected entities, makes their
+properties searchable, and stores their relationships in Neo4j when Graph RAG
+is enabled.
 
-For graph entities, show alternate path:
-1. "Graph Entity (JSON)" →
-2. "Parse & Split Nested Structures" →
-3. Split to both "Milvus" and "Neo4j" cylinders
+The Ontology Agent examines entity types and properties, finds candidate
+relationships, evaluates them, and writes accepted relationships to the
+ontology graph.
 
-Style: Horizontal flow, boxes for processing steps, cylinders for storage
--->
+## Authorized query flow
 
-### Query and Hybrid Search
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Caller
+  participant UI as CAIPE UI / agent runtime
+  participant FGA as OpenFGA
+  participant RAG as RAG server
+  participant DB as Milvus / Neo4j
 
-Queries combine semantic and keyword search for comprehensive results.
+  Caller->>UI: Search or agent request
+  Note over Caller,UI: Identity stays attached to the request
+  UI->>FGA: Resolve caller capabilities and resources
+  FGA-->>UI: Allowed data source IDs
+  UI->>RAG: Query + bearer token + requested scope
+  RAG->>FGA: Revalidate data source access
+  FGA-->>RAG: Effective data source IDs
+  Note over RAG,DB: Storage receives only the effective scope
+  RAG->>DB: Filtered vector or graph query
+  DB-->>RAG: Authorized matches
+  RAG-->>Caller: Ranked results
+```
 
-**Flow:**
-1. **User Query** → Server API (`POST /v1/query`)
-2. **Filter Application** → Metadata filters narrow search scope
-3. **Dual Search**:
-   - Semantic search using dense vectors (cosine similarity)
-   - Keyword search using BM25 sparse vectors
-4. **Weighted Reranking** → Combine scores with configurable weights
-5. **Results** → Ranked documents with relevance scores
+For a direct search, the requested scope may include every data source the caller
+can search. For an agent request, CAIPE intersects that access with the data
+sources and collections selected for the agent. Both paths fail closed when
+authorization cannot be verified.
 
-**Search Strategies:**
+## Hybrid retrieval
 
-| Strategy | Semantic Weight | Keyword Weight | Best For |
-|----------|-----------------|----------------|----------|
-| Balanced (default) | 50% | 50% | General queries |
-| Semantic | 90% | 10% | Conceptual questions |
-| Keyword | 10% | 90% | Exact term matching |
+A query produces a dense vector and a sparse keyword representation. Milvus runs
+both searches within the authorized data source filter, then CAIPE combines the
+result scores with configurable weights.
 
-### Ontology Discovery
+| Strategy | Semantic weight | Keyword weight | Useful for |
+|----------|-----------------|----------------|------------|
+| Balanced | 50% | 50% | General-purpose retrieval |
+| Semantic | 90% | 10% | Concepts and paraphrased language |
+| Keyword | 10% | 90% | Exact identifiers and terms |
 
-The Ontology Agent automatically discovers relationships between entity types. See [Ontology Agent](ontology-agent.md) for conceptual details.
+These values describe the standard presets. Deployments can tune the weights for their content and evaluation results.
 
-**Flow:**
-1. **Data Graph** → Ontology Agent reads entity types and properties
-2. **Candidate Discovery** → BM25 fuzzy search finds potential relationships
-3. **Validation** → Deep property matching validates candidates
-4. **LLM Evaluation** → Parallel workers evaluate relationship validity
-5. **Sync** → Accepted relationships written to data graph
+## Storage and supporting services
 
-## Technology Stack
+| Service | Purpose |
+|---------|---------|
+| **Milvus** | Dense HNSW and sparse BM25 indexes |
+| **Neo4j** | Optional data and ontology graphs |
+| **Redis** | Data source metadata, ingestion jobs, and ontology state |
+| **Object storage** | Milvus object persistence |
+| **etcd** | Milvus metadata coordination |
 
-### Databases
+## Embedding providers
 
-| Database | Purpose | Key Features |
-|----------|---------|--------------|
-| **Milvus** | Vector storage and hybrid search | HNSW index for dense vectors, inverted index for BM25 |
-| **Neo4j** | Knowledge graph storage | Cypher queries, relationship traversal, APOC plugins |
-| **Redis** | Metadata and caching | Job queues, datasource metadata, ontology metrics |
-
-### Backend
-
-| Technology | Purpose |
-|------------|---------|
-| **Python 3.13+** | Primary language with UV package manager |
-| **FastAPI** | REST API framework |
-| **LangChain** | Document processing and LLM integration |
-| **LangGraph** | Agent workflows for ontology discovery |
-| **FastMCP** | Model Context Protocol server |
-
-### Embeddings Providers
-
-The system supports multiple embedding providers:
+The embedding factory supports provider configurations for:
 
 - Azure OpenAI
 - OpenAI
 - AWS Bedrock
 - Cohere
-- HuggingFace (local models)
-- Ollama (local models)
+- Hugging Face
+- LiteLLM
+- Ollama
 
-### Infrastructure
+Use deployment-owned secrets for credentials. Do not place provider keys in reusable source configuration or documentation examples.
 
-| Component | Purpose |
-|-----------|---------|
-| **Docker / Docker Compose** | Containerization and orchestration |
-| **MinIO** | Object storage for Milvus |
-| **Etcd** | Configuration management for Milvus |
-
-## Port Reference
+## Port reference
 
 | Port | Service | Protocol |
 |------|---------|----------|
-| 9446 | Server REST API | HTTP |
-| 9446 | Server MCP | HTTP (SSE) |
+| 3000 | CAIPE UI | HTTP |
+| 9446 | RAG REST API and MCP server | HTTP / Streamable HTTP |
 | 8098 | Ontology Agent | HTTP |
 | 7687 | Neo4j | Bolt |
 | 7474 | Neo4j Browser | HTTP |
 | 19530 | Milvus | gRPC |
 | 6379 | Redis | TCP |
 
-## Further Reading
+Neo4j and the Ontology Agent are required only for the Graph RAG profile.
 
-- [Server Architecture](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/ARCHITECTURE.md) - Detailed server internals
-- [Ontology Agent README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/agent_ontology/README.md) - Relationship discovery details
-- [Server README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/README.md) - Configuration reference
+## Further reading
+
+- [RAG server architecture](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/ARCHITECTURE.md)
+- [Ontology Agent](ontology-agent.md)
+- [RAG API reference](api-reference.md)
+- [Authentication](authentication-overview.md)

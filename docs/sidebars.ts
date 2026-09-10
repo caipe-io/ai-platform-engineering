@@ -250,8 +250,9 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Features',
       items: [
-        { type: 'doc', id: 'features/custom-agents', label: 'Custom Agents' },
+        { type: 'doc', id: 'features/agent-builder', label: 'Agent Builder' },
         { type: 'doc', id: 'features/workflows', label: 'Workflows' },
+        { type: 'doc', id: 'features/agentic-apps', label: 'External Apps' },
         {
           type: 'category',
           label: 'Rich Web UI',
@@ -262,6 +263,7 @@ const sidebars: SidebarsConfig = {
             { type: 'doc', id: 'ui/configuration', label: 'Configuration' },
             { type: 'doc', id: 'ui/customization', label: 'Customization & Branding' },
             { type: 'doc', id: 'ui/development', label: 'Development Guide' },
+            { type: 'doc', id: 'ui/selection-controls', label: 'Selection Controls' },
             { type: 'doc', id: 'ui/api-reference', label: 'API Reference' },
             { type: 'doc', id: 'ui/troubleshooting', label: 'Troubleshooting' },
           ],

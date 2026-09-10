@@ -25,14 +25,20 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from apscheduler.triggers.cron import CronTrigger as APSCronTrigger
-
-from autonomous_agents.models import Acknowledgement, CronTrigger, TaskDefinition, TriggerType
+from autonomous_agents.config import get_settings
+from autonomous_agents.models import (
+    Acknowledgement,
+    CronTrigger,
+    IntervalTrigger,
+    TaskDefinition,
+    WebhookTrigger,
+)
 from autonomous_agents.services.dynamic_agents_client import preflight_dynamic_agent
 from autonomous_agents.services.mongo import (
     TaskNotFoundError,
     TaskStore,
 )
+from autonomous_agents.services.schedule_validation import validate_trigger_frequency
 from autonomous_agents.services.scheduler import (
     get_scheduler,
     register_scheduler_task,
@@ -100,8 +106,11 @@ def validate_task_for_runtime(task: TaskDefinition) -> None:
     """
     if not task.enabled:
         return
-    if task.trigger.type == TriggerType.CRON and isinstance(task.trigger, CronTrigger):
-        APSCronTrigger.from_crontab(task.trigger.schedule, timezone="UTC")
+    if isinstance(task.trigger, (CronTrigger, IntervalTrigger)):
+        validate_trigger_frequency(
+            task.trigger,
+            get_settings().minimum_schedule_interval_seconds,
+        )
 
 
 def detach_task_from_runtime(task_id: str) -> None:
@@ -220,6 +229,8 @@ def schedule_preflight(task_id: str) -> None:
 
 async def publish_creation_intent_safely(task: TaskDefinition) -> None:
     """Best-effort publish of the creation_intent message. Never raises."""
+    if isinstance(task.trigger, WebhookTrigger):
+        return
     try:
         await get_chat_history_publisher().publish_creation_intent(task)
     except Exception:
@@ -230,6 +241,8 @@ async def publish_creation_intent_safely(task: TaskDefinition) -> None:
 
 async def _safe_publish_preflight_ack(task: TaskDefinition, ack: Acknowledgement) -> None:
     """Best-effort publish of the preflight_ack message. Never raises."""
+    if isinstance(task.trigger, WebhookTrigger):
+        return
     try:
         await get_chat_history_publisher().publish_preflight_ack(
             task, ack.model_dump(mode="json")

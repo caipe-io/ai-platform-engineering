@@ -1748,6 +1748,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
                   <>
                     <AgentAvatar
                       agent={agent}
+                      agentId={agentId}
                       rounded="rounded-2xl"
                       size="w-16 h-16 mx-auto mb-6"
                       iconSize="h-8 w-8"
@@ -1761,6 +1762,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
                     <div className="flex items-center justify-center gap-3">
                       <AgentAvatar
                         agent={agent}
+                        agentId={agentId}
                         rounded="rounded-lg"
                         size="w-8 h-8"
                         iconSize="h-4 w-4"
@@ -1895,6 +1897,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
                           showTimestamp={showTimestamps}
                           agentGradient={agentGradient}
                           agentCustomTheme={agentCustomTheme}
+                          agentId={agentId}
                           agentName={agentName}
                           turnEvents={turnEvents}
                           // Timeline props (only passed to latest message)
@@ -2370,6 +2373,7 @@ interface ChatMessageProps {
   showTimestamp?: boolean;
   agentGradient?: string | null;
   agentCustomTheme?: import("@/types/dynamic-agent").CustomThemeConfig | null;
+  agentId?: string | null;
   agentName?: string;
   turnEvents?: StreamEvent[];
   // Timeline props (for AgentTimeline)
@@ -2401,6 +2405,7 @@ const ChatMessage = React.memo(function ChatMessage({
   showTimestamp = false,
   agentGradient,
   agentCustomTheme,
+  agentId,
   agentName,
   turnEvents = [],
   // Timeline props
@@ -2462,6 +2467,7 @@ const ChatMessage = React.memo(function ChatMessage({
         </div>
       ) : (
         <AgentAvatar
+          agentId={agentId}
           gradientTheme={agentGradient}
           customThemeConfig={agentCustomTheme}
           rounded="rounded-xl"

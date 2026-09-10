@@ -76,45 +76,6 @@ function setupFetchMock() {
         },
       });
     }
-    if (url === "/api/admin/webex/migrations/bot-ownership" && init?.method === "DELETE") {
-      return response({
-        data: {
-          result: {
-            spaces_cleaned: 1,
-            team_mappings_deleted: 1,
-            agent_routes_deleted: 1,
-            legacy_openfga_tuples_deleted: 1,
-          },
-        },
-      });
-    }
-    if (url === "/api/admin/webex/migrations/bot-ownership") {
-      return response({
-        data: {
-          candidates: [
-            {
-              workspace_id: "WEBEX-WORKSPACE",
-              space_id: "legacy-space",
-              space_name: "Legacy Space",
-              team_mapping_count: 1,
-              route_count: 1,
-              mongo_agent_ids: ["incident-agent"],
-              openfga_agent_ids: ["incident-agent"],
-              mapping_details: [{
-                team_id: "team-1",
-                team_slug: "platform-engineering",
-              }],
-              mongo_route_details: [{ agent_id: "incident-agent" }],
-              openfga_grants: [{
-                user: "webex_space:WEBEX-WORKSPACE--legacy-space",
-                relation: "user",
-                object: "agent:incident-agent",
-              }],
-            },
-          ],
-        },
-      });
-    }
     if (url.startsWith("/api/dynamic-agents?enabled_only=true")) {
       return response({
         data: {
@@ -137,12 +98,11 @@ function setupFetchMock() {
               keycloak_user_id: "user-1",
               email: "user@example.com",
               display_name: "Example User",
-              webex_user_id: null,
+              linked: false,
               enabled: false,
               configured: false,
               inherited: false,
               state: "not_allowed",
-              expected_webex_email: "user@example.com",
               agent_id: "",
             },
           ],
@@ -308,16 +268,24 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-function response(payload: unknown): Response {
+function response(payload: unknown, init?: { ok?: boolean; status?: number }): Response {
   return {
-    ok: true,
-    status: 200,
+    ok: init?.ok ?? true,
+    status: init?.status ?? 200,
     json: async () => payload,
     text: async () => JSON.stringify(payload),
   } as Response;
 }
 
+async function ensureConfigureSpacesTabActive() {
+  const tab = await screen.findByRole("tab", { name: "Configure spaces" });
+  if (tab.getAttribute("aria-selected") !== "true") {
+    fireEvent.click(tab);
+  }
+}
+
 async function clickFindSpaces() {
+  await ensureConfigureSpacesTabActive();
   const discoverButton = await screen.findByRole("button", {
     name: "Find spaces",
   });
@@ -365,6 +333,10 @@ it("shows the onboarding loading state while configured spaces seed the table", 
   });
 
   render(<WebexSpaceRebacPanel />);
+  // Query synchronously (no `findBy`/await) so this capture happens on the
+  // same tick as render, before the mocked bots/dynamic-agents fetches
+  // resolve — matching the timing this test is actually asserting on.
+  fireEvent.click(screen.getByRole("tab", { name: "Configure spaces" }));
   expect(screen.getByTestId("discovery-loading")).toBeInTheDocument();
   expect(screen.getByText("Loading configured spaces…")).toBeInTheDocument();
   expect(
@@ -379,34 +351,65 @@ it("shows the onboarding loading state while configured spaces seed the table", 
 
 // ── Single onboarding layout ────────────────────────────────────────────────
 
-it("renders Webex with Configure, Configured, and 1:1 tabs but no Advanced tab", async () => {
+it("renders Webex with Configure, Configured, 1:1, and Advanced tabs", async () => {
   render(<WebexSpaceRebacPanel />);
 
-  // Default landing tab is "Configure spaces"
+  // Default landing tab is "Configured spaces", matching Slack's tab order
   expect(
-    await screen.findByRole("tab", { name: "Configure spaces" }),
-  ).toBeInTheDocument();
-  // "Configured spaces" tab is present for navigation back to the configured table
+    await screen.findByRole("tab", { name: "Configured spaces" }),
+  ).toHaveAttribute("aria-selected", "true");
+  // "Configure spaces" tab is present for navigating to onboarding
   expect(
-    screen.getByRole("tab", { name: "Configured spaces" }),
+    screen.getByRole("tab", { name: "Configure spaces" }),
   ).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "1:1 Messages" })).toBeInTheDocument();
-  // The focused Webex switcher does not expose the generic Advanced tab.
+  // The Advanced tab is present, at the end of the switcher.
+  expect(screen.getByRole("tab", { name: "Advanced" })).toBeInTheDocument();
+  // Configured table renders on the default tab
   expect(
-    screen.queryByRole("tab", { name: "Advanced" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "Find spaces" }),
+    await screen.findByRole("region", { name: "Configured Webex spaces" }),
   ).toBeInTheDocument();
-  // Configured table and Advanced section are not visible on the default tab
+  // Onboarding-only controls and the Advanced section are not visible on the default tab
   expect(
-    screen.queryByRole("region", { name: "Configured Webex spaces" }),
+    screen.queryByRole("button", { name: "Find spaces" }),
   ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("region", {
       name: "Advanced Setup - Import/Sync with Webex Bot",
     }),
   ).not.toBeInTheDocument();
+});
+
+it("shows only the Reload Bot Cache action on the Webex Advanced tab", async () => {
+  render(<WebexSpaceRebacPanel />);
+
+  fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+
+  expect(
+    await screen.findByRole("region", {
+      name: "Advanced Setup - Import/Sync with Webex Bot",
+    }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reload Bot Cache" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Refresh Runtime Status" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Import from YAML" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Route mode")).not.toBeInTheDocument();
+});
+
+it("never fetches runtime status because Webex's Advanced tab is minimal", async () => {
+  render(<WebexSpaceRebacPanel />);
+
+  await screen.findByRole("region", { name: "Configured Webex spaces" });
+  fireEvent.click(await screen.findByRole("tab", { name: "Advanced" }));
+  await screen.findByRole("button", { name: "Reload Bot Cache" });
+
+  expect(
+    fetchMock.mock.calls.some(([url]) => url === "/api/admin/webex/runtime/status"),
+  ).toBe(false);
 });
 
 it("opens Configure spaces from the empty configured-spaces action", async () => {
@@ -432,6 +435,8 @@ it("opens Configure spaces from the empty configured-spaces action", async () =>
 it("refreshes configured spaces when the tab opens and on explicit refresh", async () => {
   render(<WebexSpaceRebacPanel />);
 
+  await screen.findByRole("region", { name: "Configured Webex spaces" });
+  fireEvent.click(screen.getByRole("tab", { name: "Configure spaces" }));
   await screen.findByRole("button", { name: "Find spaces" });
   const callsBeforeTab = fetchMock.mock.calls.filter(([url]) =>
     String(url).startsWith("/api/admin/webex/spaces?health=1"),
@@ -455,16 +460,18 @@ it("refreshes configured spaces when the tab opens and on explicit refresh", asy
   ).toBeGreaterThan(callsBeforeRefresh));
 });
 
-it("ignores stale Webex subtab URL params and stays on onboarding", async () => {
-  currentSearchParams = new URLSearchParams("subtab=advanced");
+it("falls back to the default configured-spaces tab for a subtab value foreign to Webex", async () => {
+  // "migration" is a valid subtab for other connectors but Webex has no
+  // migration panel, so it must not be treated as one of this switcher's values.
+  currentSearchParams = new URLSearchParams("subtab=migration");
   render(<WebexSpaceRebacPanel />);
 
   expect(
-    await screen.findByRole("tab", { name: "Configure spaces" }),
-  ).toBeInTheDocument();
+    await screen.findByRole("tab", { name: "Configured spaces" }),
+  ).toHaveAttribute("aria-selected", "true");
   expect(
-    screen.getByRole("button", { name: "Find spaces" }),
-  ).toBeInTheDocument();
+    screen.queryByRole("button", { name: "Find spaces" }),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("region", {
       name: "Advanced Setup - Import/Sync with Webex Bot",
@@ -473,10 +480,48 @@ it("ignores stale Webex subtab URL params and stays on onboarding", async () => 
   expect(replaceMock).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["onboard", "Configure spaces"],
+  ["direct", "1:1 Messages"],
+  ["advanced", "Advanced"],
+] as const)(
+  "opens the Webex %s tab named by the subtab URL param on load",
+  async (subtab, tabName) => {
+    currentSearchParams = new URLSearchParams(`subtab=${subtab}`);
+    render(<WebexSpaceRebacPanel />);
+
+    expect(await screen.findByRole("tab", { name: tabName })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  },
+);
+
+it("writes the active Webex sub-tab to the subtab URL param when clicked", async () => {
+  render(<WebexSpaceRebacPanel />);
+  await screen.findByRole("tab", { name: "Configured spaces" });
+
+  fireEvent.click(await screen.findByRole("tab", { name: "Configure spaces" }));
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=onboard", {
+    scroll: false,
+  });
+
+  fireEvent.click(screen.getByRole("tab", { name: "1:1 Messages" }));
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=direct", {
+    scroll: false,
+  });
+
+  fireEvent.click(screen.getByRole("tab", { name: "Configured spaces" }));
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=channels", {
+    scroll: false,
+  });
+});
+
 // ── Discovery + onboarding ─────────────────────────────────────────────────
 
 it("seeds configured Webex spaces on the onboard tab before discovery", async () => {
   render(<WebexSpaceRebacPanel />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Configure spaces" }));
 
   expect(await screen.findByText("Platform Alerts")).toBeInTheDocument();
   expect(screen.getByText("Configured by Platform Engineering")).toBeInTheDocument();
@@ -518,6 +563,7 @@ it("filters configured Webex spaces locally before live discovery runs", async (
   });
 
   render(<WebexSpaceRebacPanel />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Configure spaces" }));
 
   expect(await screen.findByText("Platform Alerts")).toBeInTheDocument();
   expect(screen.getByText("CAIPE Demo")).toBeInTheDocument();
@@ -533,6 +579,36 @@ it("filters configured Webex spaces locally before live discovery runs", async (
       String(url).startsWith("/api/admin/webex/available-spaces"),
     ),
   ).toBe(false);
+});
+
+it("deep-links and updates the configured Webex space search", async () => {
+  currentSearchParams = new URLSearchParams(
+    "subtab=channels&webexSpaceSearch=Platform",
+  );
+  const { rerender } = render(<WebexSpaceRebacPanel />);
+
+  const searchInput = await screen.findByRole("textbox", {
+    name: "Search configured spaces",
+  });
+  expect(searchInput).toHaveValue("Platform");
+  expect(await screen.findByText("Platform Alerts")).toBeInTheDocument();
+
+  fireEvent.change(searchInput, { target: { value: "nonexistent" } });
+  expect(replaceMock).toHaveBeenLastCalledWith(
+    "/admin?subtab=channels&webexSpaceSearch=nonexistent",
+    { scroll: false },
+  );
+
+  currentSearchParams = new URLSearchParams(
+    "subtab=channels&webexSpaceSearch=space-abc",
+  );
+  rerender(<WebexSpaceRebacPanel />);
+  expect(searchInput).toHaveValue("space-abc");
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=channels", {
+    scroll: false,
+  });
 });
 
 it("discovers Webex bot spaces, auto-selects new ones, and submits verified onboarding", async () => {
@@ -554,7 +630,7 @@ it("discovers Webex bot spaces, auto-selects new ones, and submits verified onbo
   ).not.toBeChecked();
   await pickTeam("Team for Incident War Room", "platform-engineering");
   await pickAgent("Dynamic Agent for Incident War Room", "incident-agent");
-  expect(screen.getByRole("combobox", { name: "Webex bot" })).toHaveValue("primary");
+  expect(screen.getByRole("combobox", { name: "Webex bot" })).toHaveTextContent("Primary bot");
 
   fireEvent.click(screen.getByRole("button", { name: /^Submit \d+ spaces?$/ }));
 
@@ -655,13 +731,17 @@ it("uses one top-level Webex bot selector for space discovery", async () => {
   render(<WebexSpaceRebacPanel />);
 
   await clickFindSpaces();
+  await screen.findByRole("status", {
+    name: /Discovered: 2 .* Configured: 1/i,
+  });
   const botSelector = screen.getByRole("combobox", { name: "Webex bot" });
   expect(screen.queryByRole("combobox", { name: /Webex bot for / })).not.toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([url]) =>
     new URL(String(url), "http://localhost").searchParams.get("bot_id") === "primary",
   )).toBe(true);
 
-  fireEvent.change(botSelector, { target: { value: "secondary" } });
+  fireEvent.click(botSelector);
+  fireEvent.click(await screen.findByRole("option", { name: "Secondary bot" }));
   await clickFindSpaces();
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) =>
     new URL(String(url), "http://localhost").searchParams.get("bot_id") === "secondary",
@@ -752,9 +832,9 @@ it("onboards deployment users independently for the bot selected above the table
 
   fireEvent.click(await screen.findByRole("tab", { name: "1:1 Messages" }));
   expect(await screen.findByText("Example User")).toBeInTheDocument();
-  expect(screen.getByText("Allowlist")).toBeInTheDocument();
+  expect(screen.getByText("not allowed")).toBeInTheDocument();
   const botSelector = screen.getByRole("combobox", { name: "Webex bot" });
-  expect(botSelector).toHaveValue("primary");
+  expect(botSelector).toHaveTextContent("Primary bot");
   expect(screen.queryByRole("combobox", { name: "Webex bot for user@example.com" })).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("checkbox", { name: "Allow direct messages for user@example.com" }));
@@ -773,7 +853,8 @@ it("onboards deployment users independently for the bot selected above the table
     });
   });
 
-  fireEvent.change(botSelector, { target: { value: "secondary" } });
+  fireEvent.click(botSelector);
+  fireEvent.click(await screen.findByRole("option", { name: "Secondary bot" }));
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => {
     const parsed = new URL(String(url), "http://localhost");
     return parsed.pathname === "/api/admin/webex/direct-users" &&
@@ -781,23 +862,40 @@ it("onboards deployment users independently for the bot selected above the table
   })).toBe(true));
 });
 
-it("loads every enabled-agent page and searches 1:1 routing options", async () => {
+it("shows linked and unlinked Webex identity indicators", async () => {
   const baseFetch = fetchMock.getMockImplementation();
-  const firstPage = Array.from({ length: 100 }, (_, index) => ({
-    _id: `agent-${index + 1}`,
-    name: `Agent ${index + 1}`,
-  }));
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-    const parsed = new URL(String(url), "http://localhost");
-    if (parsed.pathname === "/api/dynamic-agents") {
-      const page = Number(parsed.searchParams.get("page") ?? "1");
+    if (String(url).startsWith("/api/admin/webex/direct-users") && !init?.method) {
       return response({
-        data: page === 1
-          ? { items: firstPage, has_more: true }
-          : {
-              items: [{ _id: "agent-personal-assistant", name: "Personal Assistant" }],
-              has_more: false,
+        data: {
+          users: [
+            {
+              keycloak_user_id: "user-1",
+              email: "user@example.com",
+              display_name: "Example User",
+              linked: false,
+              enabled: false,
+              configured: false,
+              inherited: false,
+              state: "not_allowed",
+              agent_id: "",
             },
+            {
+              keycloak_user_id: "user-2",
+              email: "linked-user@example.com",
+              display_name: "Linked User",
+              linked: true,
+              enabled: false,
+              configured: false,
+              inherited: false,
+              state: "not_allowed",
+              agent_id: "",
+            },
+          ],
+          bot_id: "primary",
+          dm_access_mode: "allowlist",
+          default_agent_id: null,
+        },
       });
     }
     return baseFetch?.(url, init) ?? response({});
@@ -806,29 +904,15 @@ it("loads every enabled-agent page and searches 1:1 routing options", async () =
   render(<WebexSpaceRebacPanel />);
 
   fireEvent.click(await screen.findByRole("tab", { name: "1:1 Messages" }));
-  fireEvent.click(await screen.findByRole("checkbox", {
-    name: "Allow direct messages for user@example.com",
-  }));
-  const agentPicker = await screen.findByRole("button", {
-    name: "Agent for user@example.com",
-  });
 
-  fireEvent.click(agentPicker);
-  const searchInput = await screen.findByRole("textbox", {
-    name: "Search agents...",
-  });
-  fireEvent.change(searchInput, { target: { value: "personal assistant" } });
-  const listbox = screen.getByRole("listbox", {
-    name: "Agent for user@example.com",
-  });
-  const matchingOptions = within(listbox).getAllByRole("option");
-  expect(matchingOptions).toHaveLength(1);
-  expect(matchingOptions[0]).toHaveTextContent("Personal Assistant");
-  fireEvent.click(matchingOptions[0]);
-  expect(agentPicker).toHaveTextContent("Personal Assistant");
-  expect(fetchMock).toHaveBeenCalledWith(
-    "/api/dynamic-agents?enabled_only=true&page=2&page_size=100",
-    { cache: "no-store" },
+  const linkedRow = (await screen.findByText("Linked User")).closest("tr") as HTMLElement;
+  expect(within(linkedRow).getByText("Linked")).toBeInTheDocument();
+  expect(within(linkedRow).queryByRole("link", { name: /Unlinked/i })).not.toBeInTheDocument();
+
+  const unlinkedRow = screen.getByText("Example User").closest("tr") as HTMLElement;
+  expect(within(unlinkedRow).getByRole("link", { name: "Unlinked" })).toHaveAttribute(
+    "href",
+    "/settings/account-and-access",
   );
 });
 
@@ -846,12 +930,11 @@ it("shows inherited defaults and allows overrides in all-users mode", async () =
               keycloak_user_id: "user-1",
               email: "user@example.com",
               display_name: "Example User",
-              webex_user_id: null,
+              linked: false,
               enabled: true,
               configured: false,
               inherited: true,
               state: "inherited",
-              expected_webex_email: "user@example.com",
               agent_id: "fallback-agent",
             },
           ],
@@ -868,7 +951,9 @@ it("shows inherited defaults and allows overrides in all-users mode", async () =
 
   fireEvent.click(await screen.findByRole("tab", { name: "1:1 Messages" }));
 
-  expect(await screen.findByText("All deployment users")).toBeInTheDocument();
+  expect(
+    await screen.findByText(/All enabled deployment users can message this bot/),
+  ).toBeInTheDocument();
   expect(
     screen.getByText(/configured default unless an admin saves an explicit override/i),
   ).toBeInTheDocument();
@@ -879,7 +964,7 @@ it("shows inherited defaults and allows overrides in all-users mode", async () =
     screen.getByLabelText("Allow direct messages for user@example.com"),
   ).toBeChecked();
   expect(screen.queryByRole("combobox", { name: "Team for user@example.com" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Agent for user@example.com" })).toHaveTextContent(
+  expect(screen.getByRole("combobox", { name: "Agent for user@example.com" })).toHaveTextContent(
     "Fallback Agent",
   );
   expect(screen.getByText("inherited")).toBeInTheDocument();
@@ -920,48 +1005,6 @@ it("allows discovery before global defaults are configured", async () => {
   ).toBeChecked();
 });
 
-it("probes legacy botless ownership from the migration tab", async () => {
-  render(<WebexSpaceRebacPanel />);
-
-  fireEvent.click(await screen.findByRole("tab", { name: "Legacy migration" }));
-  fireEvent.click(screen.getByRole("button", { name: "Probe legacy data" }));
-
-  expect(await screen.findByText("Legacy Space")).toBeInTheDocument();
-  expect(fetchMock).toHaveBeenCalledWith(
-    "/api/admin/webex/migrations/bot-ownership",
-    { cache: "no-store" },
-  );
-  expect(screen.getByRole("combobox", { name: "Webex bot for Legacy Space" })).toHaveValue("");
-
-  fireEvent.click(screen.getByRole("button", { name: "Details" }));
-  expect(screen.getByText("team:platform-engineering")).toBeInTheDocument();
-  expect(screen.getByText("agent:incident-agent")).toBeInTheDocument();
-  expect(screen.getByText("webex_space:WEBEX-WORKSPACE--legacy-space")).toBeInTheDocument();
-  expect(screen.getByText("user -> agent:incident-agent")).toBeInTheDocument();
-});
-
-it("deletes selected legacy ownership after destructive confirmation", async () => {
-  render(<WebexSpaceRebacPanel />);
-
-  fireEvent.click(await screen.findByRole("tab", { name: "Legacy migration" }));
-  fireEvent.click(screen.getByRole("button", { name: "Probe legacy data" }));
-  fireEvent.click(await screen.findByRole("checkbox", { name: "Select Legacy Space" }));
-  fireEvent.click(screen.getByRole("button", { name: "Delete selected (1)" }));
-  expect(screen.getByRole("heading", { name: "Delete selected legacy data?" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Delete legacy data" }));
-
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-    "/api/admin/webex/migrations/bot-ownership",
-    expect.objectContaining({
-      method: "DELETE",
-      body: JSON.stringify({
-        targets: [{ workspace_id: "WEBEX-WORKSPACE", space_id: "legacy-space" }],
-      }),
-    }),
-  ));
-  expect(mockToast).toHaveBeenCalledWith("Deleted legacy data for 1 Webex space.", "success");
-});
-
 it("deletes a configured Webex space after confirmation", async () => {
   render(<WebexSpaceRebacPanel />);
 
@@ -981,4 +1024,202 @@ it("deletes a configured Webex space after confirmation", async () => {
   await waitFor(() =>
     expect(mockToast).toHaveBeenCalledWith("Removed Platform Alerts from CAIPE.", "success"),
   );
+});
+
+it("shows an error toast and keeps the confirmation open when deleting a Webex space fails", async () => {
+  const baseFetch = fetchMock.getMockImplementation();
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (
+      String(url).startsWith("/api/admin/webex/spaces/WEBEX-WORKSPACE/space-abc?") &&
+      init?.method === "DELETE"
+    ) {
+      return response({ error: "boom" }, { ok: false, status: 500 });
+    }
+    return baseFetch?.(url, init) ?? response({});
+  });
+
+  render(<WebexSpaceRebacPanel />);
+
+  fireEvent.click(await screen.findByRole("tab", { name: "Configured spaces" }));
+  fireEvent.click(await screen.findByText("Platform Alerts"));
+  fireEvent.click(await screen.findByRole("button", { name: "Delete space Platform Alerts" }));
+
+  expect(screen.getByRole("heading", { name: "Delete space from CAIPE?" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Delete space", exact: true }));
+
+  await waitFor(() =>
+    expect(mockToast).toHaveBeenCalledWith("Failed to delete Webex space: boom", "error"),
+  );
+  expect(screen.getByRole("heading", { name: "Delete space from CAIPE?" })).toBeInTheDocument();
+  expect(screen.getByText("Platform Alerts")).toBeInTheDocument();
+});
+
+// ── Route editor (agent only — Mercury only ever delivers @mentions, so
+// priority and listen mode are fixed rather than editable) ─────────────────
+
+it("adds an agent to an empty Webex space via the route editor dialog", async () => {
+  const baseFetch = fetchMock.getMockImplementation();
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (String(url).startsWith("/api/admin/webex/spaces?health=1")) {
+      return response({
+        data: {
+          spaces: [
+            {
+              workspace_id: "WEBEX-WORKSPACE",
+              space_id: "space-empty",
+              space_name: "Empty Space",
+              bot_id: "primary",
+              active_grants: 0,
+            },
+          ],
+        },
+      });
+    }
+    if (String(url).includes("/space-empty/routes?")) {
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body ?? "{}"));
+        return response({ data: { routes: body.routes } });
+      }
+      return response({ data: { routes: [] } });
+    }
+    if (String(url).includes("/space-empty/diagnostics?")) {
+      return response({
+        data: { openfga: { reachable: true, tuple_count: 0 }, warnings: [], routes: [] },
+      });
+    }
+    return baseFetch?.(url, init) ?? response({});
+  });
+
+  render(<WebexSpaceRebacPanel />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Configured spaces" }));
+  fireEvent.click(await screen.findByText("Empty Space"));
+
+  expect(await screen.findByText("No agent responds in Empty Space yet.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Add Agent" }));
+
+  expect(screen.getByRole("dialog", { name: "Add Agent to Empty Space" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("Priority")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Listen" })).not.toBeInTheDocument();
+  await pickAgent("Dynamic Agent", "incident-agent");
+  fireEvent.click(screen.getByRole("button", { name: "Add Agent" }));
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/webex/spaces/WEBEX-WORKSPACE/space-empty/routes?bot_id=primary",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          routes: [{
+            agent_id: "incident-agent",
+            enabled: true,
+            priority: 100,
+            users: { enabled: true, listen: "mention" },
+          }],
+        }),
+      }),
+    ),
+  );
+  await waitFor(() =>
+    expect(mockToast).toHaveBeenCalledWith("Webex space agent added.", "success"),
+  );
+});
+
+it("edits an existing Webex space route's agent, keeping priority and listen mode fixed", async () => {
+  render(<WebexSpaceRebacPanel />);
+
+  fireEvent.click(await screen.findByRole("tab", { name: "Configured spaces" }));
+  fireEvent.click(await screen.findByText("Platform Alerts"));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit agent:incident-agent" }));
+
+  const editor = screen.getByRole("dialog", { name: "Edit agent:incident-agent" });
+  expect(within(editor).queryByLabelText("Priority")).not.toBeInTheDocument();
+  expect(within(editor).queryByRole("button", { name: "Listen" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Update Agent" }));
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/webex/spaces/WEBEX-WORKSPACE/space-abc/routes?bot_id=primary",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          routes: [{
+            agent_id: "incident-agent",
+            enabled: true,
+            priority: 100,
+            users: { enabled: true, listen: "mention" },
+          }],
+        }),
+      }),
+    ),
+  );
+  await waitFor(() =>
+    expect(mockToast).toHaveBeenCalledWith("Webex space agent updated.", "success"),
+  );
+});
+
+it("shows an error toast and keeps the dialog open when saving a Webex space route fails", async () => {
+  const baseFetch = fetchMock.getMockImplementation();
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (String(url).includes("/routes?") && init?.method === "PUT") {
+      return response({ error: "boom" }, { ok: false, status: 500 });
+    }
+    return baseFetch?.(url, init) ?? response({});
+  });
+
+  render(<WebexSpaceRebacPanel />);
+
+  fireEvent.click(await screen.findByRole("tab", { name: "Configured spaces" }));
+  fireEvent.click(await screen.findByText("Platform Alerts"));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit agent:incident-agent" }));
+
+  const editor = screen.getByRole("dialog", { name: "Edit agent:incident-agent" });
+  fireEvent.click(within(editor).getByRole("button", { name: "Update Agent" }));
+
+  await waitFor(() =>
+    expect(mockToast).toHaveBeenCalledWith("Failed to save Webex space agent: boom", "error"),
+  );
+  expect(screen.getByRole("dialog", { name: "Edit agent:incident-agent" })).toBeInTheDocument();
+});
+
+it("deletes a route agent from a configured Webex space after confirmation", async () => {
+  render(<WebexSpaceRebacPanel />);
+
+  fireEvent.click(await screen.findByRole("tab", { name: "Configured spaces" }));
+  fireEvent.click(await screen.findByText("Platform Alerts"));
+  fireEvent.click(await screen.findByRole("button", { name: "Delete agent:incident-agent" }));
+
+  expect(screen.getByRole("heading", { name: "Remove agent from space?" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Remove agent" }));
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/webex/spaces/WEBEX-WORKSPACE/space-abc/routes?bot_id=primary",
+      expect.objectContaining({
+        method: "DELETE",
+        body: JSON.stringify({ agent_id: "incident-agent" }),
+      }),
+    ),
+  );
+  await waitFor(() =>
+    expect(mockToast).toHaveBeenCalledWith("Webex space agent removed.", "success"),
+  );
+});
+
+it("no longer offers a routing fix for a route that only differs by listen mode", async () => {
+  render(<WebexSpaceRebacPanel />);
+
+  fireEvent.click(await screen.findByRole("tab", { name: "Configured spaces" }));
+  fireEvent.click(await screen.findByText("Platform Alerts"));
+
+  // foo-bar: stale route metadata with no OpenFGA tuple — still a real,
+  // fixable orphan.
+  expect(
+    await screen.findByRole("button", { name: "Fix routing for foo-bar" }),
+  ).toBeInTheDocument();
+  // incident-agent: has its OpenFGA tuple and only differs by listen mode
+  // ("mention" vs "all") — that is an intentional choice now, not a bug.
+  expect(
+    screen.queryByRole("button", { name: "Fix routing for incident-agent" }),
+  ).not.toBeInTheDocument();
 });

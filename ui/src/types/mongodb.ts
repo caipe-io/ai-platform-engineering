@@ -43,14 +43,21 @@ export interface UserPublicInfo {
 // Conversation Collection
 // ============================================================================
 
-/** Valid client types for conversation creation. */
-export type ClientType = "webui" | "slack" | "webex";
+/**
+ * Valid client types for conversation creation.
+ * 'api' is never caller-declared in practice: the server forces it onto any
+ * Bearer-authenticated request that doesn't self-declare 'slack' or 'webex'
+ * (see the POST handler in chat/conversations/route.ts), overriding a false
+ * 'webui' claim from a non-first-party caller.
+ */
+export type ClientType = "webui" | "slack" | "webex" | "api";
 
 /** All valid client_type values — used for runtime validation. */
 export const VALID_CLIENT_TYPES: readonly ClientType[] = [
   "webui",
   "slack",
   "webex",
+  "api",
 ] as const;
 
 /**
@@ -123,7 +130,11 @@ export interface Conversation {
   // "what did the autonomous agent do today?" via the Autonomous filter
   // chip. Undefined = legacy human-typed conversation. Stats/insights
   // endpoints intentionally do not filter on `source`, so `api` conversations
-  // are hidden from chat history but still counted there.
+  // are hidden from chat history but still counted there. Webex threads are
+  // excluded from the default listing for the same "has its own dedicated
+  // UI" reason as Slack, but Webex is never tagged via `source` (no
+  // `'webex'` member here) — it is only ever tagged via `client_type`, so
+  // the default-listing query filters `client_type` too.
   source?: 'web' | 'slack' | 'autonomous' | 'api';
   // Set when `source === 'autonomous'`: the upstream autonomous task
   // and the specific run that produced this conversation. Lets the
@@ -526,14 +537,6 @@ export interface AuditLogFilters {
 // ============================================================================
 // Webex Bot Collections
 // ============================================================================
-
-/** Single-use nonce for Webex user ↔ Keycloak linking (expires after 10 minutes). */
-export interface WebexLinkNonce {
-  nonce: string;
-  webex_user_id: string;
-  created_at: Date;
-  consumed?: boolean;
-}
 
 /** Operational metrics for Webex bot usage (space-level aggregates). */
 export interface WebexUserMetrics {

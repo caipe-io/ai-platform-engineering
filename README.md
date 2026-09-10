@@ -2,7 +2,7 @@
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
-🚀 [Getting Started](https://caipe.io/docs/getting-started/quick-start) | 🎥 [Meeting Recordings](https://caipe.io/docs/community/meeting-recordings) | 🏛️ [Governance](https://github.com/caipe-io/governance) | 🗺️ [Roadmap](https://github.com/orgs/cnoe-io/projects/9)
+🚀 [Getting Started](https://caipe.io/docs/getting-started/quick-start) | 🎥 [Meeting Recordings](https://caipe.io/docs/community/meeting-recordings) | 🏛️ [Governance](https://github.com/caipe-io/governance) | 🗺️ [Roadmap](https://caipe.io/roadmap)
 
 ## What is CAIPE?
 
@@ -38,7 +38,13 @@ We’re excited to collaborate with you!
 
 ## Star History
 
-![CAIPE GitHub star history](.github/star-history.svg)
+<a href="https://www.star-history.com/?repos=caipe-io%2Fai-platform-engineering&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=caipe-io/ai-platform-engineering&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=caipe-io/ai-platform-engineering&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=caipe-io/ai-platform-engineering&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ## Contributors
 

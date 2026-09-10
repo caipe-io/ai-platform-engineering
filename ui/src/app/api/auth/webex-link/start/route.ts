@@ -1,5 +1,6 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
+import { getRequestOrigin } from "@/app/api/skills/_lib/request-origin";
 import {
   ApiError,
   getAuthFromBearerOrSession,
@@ -22,6 +23,18 @@ function assertConfigured(): void {
   }
 }
 
+// This route is meant to be opened via a full browser navigation (a link
+// shared in a Webex DM or by an admin), not called via background fetch()
+// like other API routes. A bare JSON 401 is the wrong response shape here —
+// send the browser through the normal sign-in page instead, with a
+// callbackUrl that lands it right back on this same request once signed in.
+function signInRedirect(request: NextRequest): NextResponse {
+  const requestUrl = new URL(request.url);
+  const loginUrl = new URL("/login", getRequestOrigin(request));
+  loginUrl.searchParams.set("callbackUrl", `${requestUrl.pathname}${requestUrl.search}`);
+  return NextResponse.redirect(loginUrl);
+}
+
 function webexAuthorizationUrl(): string {
   const descriptor = BUILT_IN_OAUTH_CONNECTORS.find((connector) => connector.provider === "webex");
   if (!descriptor) {
@@ -32,7 +45,16 @@ function webexAuthorizationUrl(): string {
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   assertConfigured();
-  const { session } = await getAuthFromBearerOrSession(request);
+  const auth = await getAuthFromBearerOrSession(request).catch((error: unknown) => {
+    if (error instanceof ApiError && error.code === "NOT_SIGNED_IN") {
+      return null;
+    }
+    throw error;
+  });
+  if (!auth) {
+    return signInRedirect(request);
+  }
+  const { session } = auth;
   const ownerId = typeof session.sub === "string" ? session.sub : "";
   if (!ownerId) {
     throw new ApiError("Authenticated subject is required", 401, "UNAUTHORIZED");

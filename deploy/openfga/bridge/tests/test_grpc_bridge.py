@@ -175,6 +175,7 @@ def test_check_audits_openfga_allow(monkeypatch: pytest.MonkeyPatch) -> None:
     assert events == [
         {
             "subject": "user-sub-123",
+            "subject_ref": "user:user-sub-123",
             "outcome": "allow",
             "reason_code": "OK",
             "correlation_id": "request-allow",
@@ -206,6 +207,7 @@ def test_check_audits_openfga_deny(monkeypatch: pytest.MonkeyPatch) -> None:
     assert events[0]["reason_code"] == "DENY_NO_CAPABILITY"
     assert events[0]["correlation_id"] == "request-deny"
     assert events[0]["resource_ref"] == "user:user-sub-123 can_call mcp_gateway:list"
+    assert events[0]["subject_ref"] == "user:user-sub-123"
 
 
 def test_check_audits_unauthenticated_request(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -223,6 +225,8 @@ def test_check_audits_unauthenticated_request(monkeypatch: pytest.MonkeyPatch) -
     assert events[0]["outcome"] == "deny"
     assert events[0]["reason_code"] == "DENY_NO_TOKEN"
     assert events[0]["correlation_id"] == "request-missing-subject"
+    # No verifiable subject → no resolvable identity to attach.
+    assert events[0]["subject_ref"] is None
 
 
 def test_check_audits_openfga_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -400,6 +404,7 @@ def test_tools_call_requires_user_agent_and_agent_tool_grants(monkeypatch: pytes
 
 def test_tools_call_denies_when_agent_tool_grant_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     bridge = _load_bridge_module()
+    events: list[dict] = []
 
     def _fake_check_openfga(user: str, relation: str, obj: str):
         return (user, relation, obj) in {
@@ -409,7 +414,7 @@ def test_tools_call_denies_when_agent_tool_grant_is_missing(monkeypatch: pytest.
 
     monkeypatch.setattr(bridge, "_decode_verified_bearer_subject", lambda _auth_header: "user-sub-123")
     monkeypatch.setattr(bridge, "_check_openfga", _fake_check_openfga)
-    monkeypatch.setattr(bridge, "log_authz_decision", lambda **_event: None, raising=False)
+    monkeypatch.setattr(bridge, "log_authz_decision", lambda **event: events.append(event), raising=False)
     monkeypatch.setattr(bridge, "BYPASS_SUBS", frozenset())
     monkeypatch.setattr(bridge, "AGENT_CONTEXT_HMAC_SECRET", "test-secret")
     context_header, signature = bridge.build_agent_context_header(
@@ -431,6 +436,14 @@ def test_tools_call_denies_when_agent_tool_grant_is_missing(monkeypatch: pytest.
 
     assert response.status.code == bridge.PERMISSION_DENIED
     assert "agent tool grant" in response.status.message
+    # This decision's OpenFGA "user" tuple-key is agent:<id> (resource_ref
+    # reflects the agent being checked), but subject_ref must still identify
+    # the actual caller, not the agent.
+    assert events[-1]["reason_code"] == "DENY_AGENT_TOOL"
+    assert events[-1]["resource_ref"] == (
+        "agent:agent-test-april-2025 can_call tool:jira/delete_filter"
+    )
+    assert events[-1]["subject_ref"] == "user:user-sub-123"
 
 
 def _tools_call_request(
@@ -642,6 +655,8 @@ def test_caller_keyed_allows_service_account_with_both_grants(
     ]
     assert len(caller_tool_allow) == 1
     assert caller_tool_allow[0]["outcome"] == "allow"
+    # Real identity is attached for service-account callers too, not just users.
+    assert caller_tool_allow[0]["subject_ref"] == "service_account:sa-sub"
 
 
 def test_caller_keyed_denies_service_account_without_caller_tool(

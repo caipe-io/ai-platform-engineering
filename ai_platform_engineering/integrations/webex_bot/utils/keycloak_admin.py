@@ -89,35 +89,6 @@ async def get_user_by_attribute(
     return None
 
 
-async def get_user_by_email(
-    email: str,
-    config: KeycloakAdminConfig | None = None,
-) -> Optional[dict[str, Any]]:
-    """
-    Find one enabled realm user whose email exactly matches *email*.
-    Required for Webex 1:1 feature where the webex sender's email is
-    checked against Keycloak deployment user
-    """
-    normalized = email.strip().lower()
-    if not normalized or "@" not in normalized:
-        return None
-    cfg = config or _default_config
-    token = await _get_admin_token(cfg)
-    url = f"{cfg.server_url}/admin/realms/{cfg.realm}/users"
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(
-            url,
-            params={"email": normalized, "exact": "true", "max": 5},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        resp.raise_for_status()
-        for user in resp.json():
-            stored = str(user.get("email") or "").strip().lower()
-            if stored == normalized and user.get("enabled") is not False:
-                return user
-    return None
-
-
 def _user_profile_roundtrip(user_repr: dict[str, Any]) -> dict[str, Any]:
     return {
         field: user_repr[field]

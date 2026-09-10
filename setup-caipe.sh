@@ -11,7 +11,10 @@ set -euo pipefail
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
 CAIPE_CHART_VERSION="${CAIPE_CHART_VERSION:-}"
-CAIPE_OCI_REPO="oci://ghcr.io/cnoe-io/charts/ai-platform-engineering"
+# Helm chart OCI registry. Charts publish to ghcr.io/<repo owner>/charts (see
+# .github/workflows/helm.yml), which moved to the caipe-io org — the cnoe-io
+# path is frozen pre-migration at 0.6.0. Override with CAIPE_OCI_REPO.
+CAIPE_OCI_REPO="${CAIPE_OCI_REPO:-oci://ghcr.io/caipe-io/charts/ai-platform-engineering}"
 LANGFUSE_PORT=3100
 DYNAMIC_AGENTS_PORT=8001
 UI_PORT=3000
@@ -168,6 +171,12 @@ RAG_INGESTOR_OIDC_ISSUER=""
 RAG_INGESTOR_OIDC_CLIENT_ID=""
 LANGFUSE_PUBLIC_KEY=""
 LANGFUSE_SECRET_KEY=""
+# Langfuse Helm chart version. Pinned to the last 1.x release on purpose: the
+# 2.x line hard-requires cert-manager + the ClickHouse operator (ClickHouseCluster
+# / KeeperCluster CRs, ~15 extra pods, 100Gi+ PVCs) and bumps the minimum
+# Kubernetes version — far too heavy for a first-install laptop stack. 1.5.41
+# bundles ClickHouse + MinIO as plain pods. Override with LANGFUSE_CHART_VERSION.
+LANGFUSE_CHART_VERSION="${LANGFUSE_CHART_VERSION:-1.5.41}"
 PF_PIDS=()
 AUTO_YES=false
 NON_INTERACTIVE=false
@@ -184,12 +193,13 @@ ENABLE_METALLB="${ENABLE_METALLB:-true}"
 # ENABLE_INGRESS=false or pass --no-ingress to skip.
 ENABLE_INGRESS="${ENABLE_INGRESS:-true}"
 # Default ingress hostname used when ingress is enabled but no domain is
-# supplied. *.local.me resolves to 127.0.0.1 via public DNS, so this works
+# supplied. *.localtest.me resolves to 127.0.0.1 via public DNS, so this works
 # out-of-the-box on any laptop without /etc/hosts edits.
-CAIPE_DOMAIN_DEFAULT="${CAIPE_DOMAIN_DEFAULT:-caipe.local.me}"
+CAIPE_DOMAIN_DEFAULT="${CAIPE_DOMAIN_DEFAULT:-caipe.localtest.me}"
 CAIPE_DOMAIN=""
 TLS_CERT_FILE=""
 TLS_KEY_FILE=""
+TLS_SELF_SIGNED=false   # true when setup generates the cert (no --tls-cert)
 ENV_FILE=""
 UI_ENV_FILE=""
 COMPOSE_ENV_FILE=""
@@ -282,6 +292,20 @@ tty_read() { read "$@" <&3; }
 
 # Returns 0 (true) when the user wants to go back — accepts "b", "back", "0"
 _is_back() { local _v; _v="$(echo "$1" | tr '[:upper:]' '[:lower:]')"; [[ "$_v" == "b" || "$_v" == "back" || "$1" == "0" ]]; }
+
+# Sanitise an interactive answer: strip CR/LF/tabs, trim surrounding spaces, and
+# drop a single leading backslash. When run via "curl | bash", prompts are read
+# from /dev/tty while bash still consumes the script on stdin; a stray keystroke
+# (e.g. a shell line-continuation "\") can prepend "\" or a trailing CR to the
+# value, so "1" arrives as "\1". Menu / version / model reads route through here.
+_trim_input() {
+  local s="$1"
+  s="${s//$'\r'/}"; s="${s//$'\n'/}"; s="${s//$'\t'/}"
+  s="${s#"${s%%[![:space:]]*}"}"   # ltrim
+  s="${s%"${s##*[![:space:]]}"}"   # rtrim
+  s="${s#\\}"                      # drop one leading backslash
+  printf '%s' "$s"
+}
 
 ask_yn() {
   local question="$1" default="${2:-y}"
@@ -873,9 +897,10 @@ choose_cluster() {
   local default_choice=1
   prompt "Select an option ${CYAN}[${default_choice}]${NC}${BOLD}: "
   tty_read -r choice
+  choice="$(_trim_input "$choice")"
   choice="${choice:-$default_choice}"
 
-  if [[ "$choice" -lt 1 || "$choice" -gt "${#options[@]}" ]]; then
+  if [[ ! "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 || "$choice" -gt "${#options[@]}" ]]; then
     err "Invalid choice"
     exit 1
   fi
@@ -899,11 +924,55 @@ choose_cluster() {
           exit 1
         fi
       fi
-      prompt "Enter a name for the new cluster ${CYAN}[caipe]${NC}${BOLD}: "
-      tty_read -r CLUSTER_NAME
-      CLUSTER_NAME="${CLUSTER_NAME:-caipe}"
-      log "Creating Kind cluster '${CLUSTER_NAME}'..."
-      kind create cluster --name "$CLUSTER_NAME" </dev/null
+      # `kind create cluster` fails hard ("node(s) already exist for a cluster
+      # with the name ...") when the name is taken, which aborts the whole
+      # script under `set -e`. Detect the collision first and let the user
+      # reuse / recreate / rename instead.
+      local _want _existing
+      while :; do
+        prompt "Enter a name for the new cluster ${CYAN}[caipe]${NC}${BOLD}: "
+        tty_read -r _want
+        _want="$(_trim_input "$_want")"
+        _want="${_want:-caipe}"
+
+        if kind get clusters 2>/dev/null | grep -qxF "$_want"; then
+          warn "A Kind cluster named '${_want}' already exists."
+          echo -e "    ${BOLD}1)${NC} Reuse it"
+          echo -e "    ${BOLD}2)${NC} Delete and recreate it  ${DIM}(destroys everything in it)${NC}"
+          echo -e "    ${BOLD}3)${NC} Pick a different name"
+          prompt "Select an option ${CYAN}[1]${NC}${BOLD}: "
+          tty_read -r _existing
+          _existing="$(_trim_input "$_existing")"
+          case "${_existing:-1}" in
+            1)
+              CLUSTER_NAME="$_want"
+              kubectl config use-context "kind-${CLUSTER_NAME}" 2>/dev/null \
+                || kind export kubeconfig --name "$CLUSTER_NAME" 2>/dev/null || true
+              log "Reusing existing Kind cluster '${CLUSTER_NAME}'"
+              break
+              ;;
+            2)
+              log "Deleting Kind cluster '${_want}'..."
+              kind delete cluster --name "$_want" \
+                || { err "Could not delete Kind cluster '${_want}'"; return 1; }
+              CLUSTER_NAME="$_want"
+              ;;
+            3) continue ;;
+            *) warn "Enter 1, 2, or 3."; continue ;;
+          esac
+        else
+          CLUSTER_NAME="$_want"
+        fi
+
+        # Reached with a fresh name, or after deleting the old cluster.
+        log "Creating Kind cluster '${CLUSTER_NAME}'..."
+        if ! kind create cluster --name "$CLUSTER_NAME" </dev/null; then
+          err "Kind cluster creation failed for '${CLUSTER_NAME}'."
+          if ask_yn "Try a different name?" "y"; then continue; fi
+          return 1
+        fi
+        break
+      done
       kubectl config use-context "kind-${CLUSTER_NAME}" 2>/dev/null || true
       log "Context set to kind-${CLUSTER_NAME}"
       ;;
@@ -992,7 +1061,7 @@ choose_chart_version() {
   if command -v crane &>/dev/null; then
     while IFS= read -r v; do
       [[ -n "$v" ]] && versions+=("$v")
-    done < <(crane ls ghcr.io/cnoe-io/charts/ai-platform-engineering 2>/dev/null | sort -Vr | head -10)
+    done < <(crane ls "${CAIPE_OCI_REPO#oci://}" 2>/dev/null | sort -Vr | head -10)
   fi
 
   if [[ ${#versions[@]} -eq 0 && -n "$versions_raw" ]]; then
@@ -1004,45 +1073,71 @@ choose_chart_version() {
     warn "Could not fetch version list; using known default"
   fi
 
-  if [[ ${#versions[@]} -eq 1 ]]; then
-    echo -e "  ${DIM}Latest version: ${versions[0]}${NC}"
-    prompt "Chart version ${CYAN}[${versions[0]}]${NC} (or 'b' to go back)${BOLD}: "
-    tty_read -r input
-    if _is_back "$input"; then return 1; fi
-    CAIPE_CHART_VERSION="${input:-${versions[0]}}"
-  else
-    echo -e "  ${DIM}Available versions (most recent first):${NC}"
-    echo -e "    ${BOLD}0)${NC} ${DIM}← Back to previous step${NC}"
-    local i=1
-    for v in "${versions[@]}"; do
-      if [[ $i -eq 1 ]]; then
-        echo -e "    ${BOLD}${i})${NC} $v  ${DIM}(latest)${NC}"
-      else
-        echo -e "    ${BOLD}${i})${NC} $v"
-      fi
-      i=$((i + 1))
-    done
-    echo -e "    ${BOLD}${i})${NC} Enter a custom version"
-
-    prompt "Select a version ${CYAN}[1]${NC}${BOLD}: "
-    tty_read -r choice
-    choice="${choice:-1}"
-    if _is_back "$choice"; then return 1; fi
-
-    if [[ "$choice" -eq "$i" ]]; then
-      prompt "Enter chart version: "
-      tty_read -r CAIPE_CHART_VERSION
-      if [[ -z "$CAIPE_CHART_VERSION" ]]; then
-        err "Version is required"
-        exit 1
-      fi
-    elif [[ "$choice" -ge 1 && "$choice" -lt "$i" ]]; then
-      CAIPE_CHART_VERSION="${versions[$((choice - 1))]}"
+  # Resolve one value into CAIPE_CHART_VERSION. Any free-form entry (custom
+  # version, or an override typed at the single-version prompt) is checked
+  # against the OCI registry so a version that does not exist can't sail
+  # through to a failing `helm upgrade --install caipe --version <x>` later.
+  local _picked=""
+  while [[ -z "$_picked" ]]; do
+    if [[ ${#versions[@]} -eq 1 ]]; then
+      echo -e "  ${DIM}Latest version: ${versions[0]}${NC}"
+      prompt "Chart version ${CYAN}[${versions[0]}]${NC} (or 'b' to go back)${BOLD}: "
+      tty_read -r input
+      input="${input//[$'\t\r\n ']/}"; input="${input#\\}"
+      if _is_back "$input"; then return 1; fi
+      _picked="${input:-${versions[0]}}"
     else
-      err "Invalid choice"
-      exit 1
+      echo -e "  ${DIM}Available versions (most recent first):${NC}"
+      echo -e "    ${BOLD}0)${NC} ${DIM}← Back to previous step${NC}"
+      local i=1
+      for v in "${versions[@]}"; do
+        if [[ $i -eq 1 ]]; then
+          echo -e "    ${BOLD}${i})${NC} $v  ${DIM}(latest)${NC}"
+        else
+          echo -e "    ${BOLD}${i})${NC} $v"
+        fi
+        i=$((i + 1))
+      done
+      echo -e "    ${BOLD}${i})${NC} Enter a custom version"
+
+      prompt "Select a version ${CYAN}[1]${NC}${BOLD}: "
+      tty_read -r choice
+      choice="${choice//[$'\t\r\n ']/}"; choice="${choice#\\}"
+      choice="${choice:-1}"
+      if _is_back "$choice"; then return 1; fi
+
+      if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
+        warn "Enter a number between 0 and ${i}."
+        continue
+      fi
+      if [[ "$choice" -eq "$i" ]]; then
+        prompt "Enter chart version: "
+        tty_read -r input
+        _picked="${input//[$'\t\r\n ']/}"; _picked="${_picked#\\}"
+        if [[ -z "$_picked" ]]; then
+          warn "Version is required."
+          continue
+        fi
+      elif [[ "$choice" -ge 1 && "$choice" -lt "$i" ]]; then
+        _picked="${versions[$((choice - 1))]}"
+      else
+        warn "Enter a number between 0 and ${i}."
+        continue
+      fi
     fi
-  fi
+
+    # Menu picks come from the registry already; only validate free-form values.
+    if [[ " ${versions[*]} " != *" ${_picked} "* ]]; then
+      if ! helm show chart "$CAIPE_OCI_REPO" --version "$_picked" &>/dev/null; then
+        warn "Chart version '${_picked}' was not found in ${CAIPE_OCI_REPO}."
+        if ! ask_yn "Use it anyway?" "n"; then
+          _picked=""
+          continue
+        fi
+      fi
+    fi
+  done
+  CAIPE_CHART_VERSION="$_picked"
 
   log "Using chart version ${CAIPE_CHART_VERSION}"
 }
@@ -1102,7 +1197,7 @@ collect_credentials() {
       ENABLE_OLLAMA=false
 
       echo ""
-      echo -e "  ${DIM}Select your LLM provider (powered by cnoe-agent-utils LLMFactory):${NC}"
+      echo -e "  ${DIM}Select your LLM provider:${NC}"
       echo -e "    ${BOLD}0)${NC} ${DIM}← Back to previous step${NC}"
       echo -e "    ${BOLD}1)${NC} Ollama            ${DIM}(in-cluster: qwen3:0.6b, qwen2.5:1.5b, lfm2.5, arcee-ai/arcee-agent, etc.) — default${NC}"
       echo -e "    ${BOLD}2)${NC} Anthropic Claude  ${DIM}(claude-haiku-4-5, claude-sonnet-4, etc.)${NC}"
@@ -1567,7 +1662,17 @@ _collect_ollama_config() {
     echo -e "  ${DIM}arcee-ai/arcee-agent: https://ollama.com/arcee-ai/arcee-agent${NC}"
     prompt "Ollama model to use ${CYAN}[${OLLAMA_MODEL}]${NC}${BOLD}: "
     tty_read -r input
+    input="$(_trim_input "$input")"
     OLLAMA_MODEL="${input:-$OLLAMA_MODEL}"
+
+    # Soft validation only — the Ollama init container can pull anything from the
+    # registry, but a typo here costs a multi-GB pull and a crash-looping agent
+    # before it's noticed. Warn on an unrecognised name and echo the final value.
+    local _known_ollama=" qwen3:0.6b qwen3:1.7b qwen2.5:1.5b lfm2.5 arcee-ai/arcee-agent qwen2.5:7b qwen2.5:14b mistral:7b ministral3:3b phi4-mini smollm2:1.7b smollm2:360m smollm2:135m gemma3 llama3.2 "
+    if [[ "$_known_ollama" != *" ${OLLAMA_MODEL} "* ]]; then
+      warn "'${OLLAMA_MODEL}' is not in the suggested model list — will attempt to pull it as-is."
+    fi
+    log "Ollama model: ${OLLAMA_MODEL}"
   fi
 
   # Ollama runs in-cluster; use the FQDN so DNS resolution works regardless of
@@ -1873,7 +1978,7 @@ install_nginx_ingress() {
   # This whole block is Linux-only: it relies on `hostname -I`, /proc/sys, and
   # iptables, none of which exist on macOS. On Docker Desktop (macOS) the kind
   # network is not routable from the host regardless, so external DNAT can't
-  # work — local access is via `*.local.me` → 127.0.0.1 and/or port-forward.
+  # work — local access is via `*.localtest.me` → 127.0.0.1 and/or port-forward.
   if $ENABLE_METALLB && [[ -n "$CAIPE_DOMAIN" ]] && [[ "$(uname -s)" == "Linux" ]]; then
     # DNAT requires IP forwarding to be enabled at runtime — not just in sysctl.conf.
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]]; then
@@ -1958,7 +2063,7 @@ install_nginx_ingress() {
     _persist_iptables "$ingress_ip"
 
     # Update /etc/hosts so local health-check curls (run_validation, sanity tests)
-    # resolve the domain to the MetalLB IP directly, bypassing the *.local.me →
+    # resolve the domain to the MetalLB IP directly, bypassing the *.localtest.me →
     # 127.0.0.1 special-domain default. Idempotent: removes stale entry first.
     if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
       local _hosts_marker="# caipe-ingress"
@@ -1967,7 +2072,7 @@ install_nginx_ingress() {
         && log "/etc/hosts: ${CAIPE_DOMAIN} → ${ingress_ip} (local health-check resolution)"
     fi
   elif $ENABLE_METALLB && [[ "$(uname -s)" != "Linux" ]]; then
-    log "Skipping iptables DNAT (non-Linux host) — use port-forward or *.local.me → 127.0.0.1 for local access"
+    log "Skipping iptables DNAT (non-Linux host) — use port-forward or *.localtest.me → 127.0.0.1 for local access"
   fi
 }
 
@@ -2063,7 +2168,7 @@ setup_tls() {
     # Always announce self-signed up-front, even if the interactive flow
     # already did — duplication is cheap and makes scripted/CI runs honest.
     local _reason=""
-    [[ "$CAIPE_DOMAIN" == *.local.me ]] && _reason="*.local.me has no public CA"
+    [[ "$CAIPE_DOMAIN" == *.localtest.me ]] && _reason="*.localtest.me has no public CA"
     _announce_self_signed "${CAIPE_DOMAIN}" "${_reason}"
     log "Generating self-signed certificate for ${CAIPE_DOMAIN}"
     # Trailing X's only: BSD mktemp (macOS) treats any chars after the X's as a
@@ -2083,6 +2188,7 @@ setup_tls() {
       -subj "/CN=${CAIPE_DOMAIN}/O=CAIPE" \
       -addext "subjectAltName=${_san}" \
       2>/dev/null
+    TLS_SELF_SIGNED=true
     log "Self-signed cert generated (valid 365 days)"
   fi
 
@@ -2207,7 +2313,7 @@ choose_features() {
     if $ENABLE_INGRESS; then
       if [[ -z "$CAIPE_DOMAIN" ]]; then
         CAIPE_DOMAIN="$CAIPE_DOMAIN_DEFAULT"
-        log "Ingress enabled with default domain: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.local.me; override with --domain=<hostname>)"
+        log "Ingress enabled with default domain: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.localtest.me; override with --domain=<hostname>)"
       else
         log "Ingress enabled for domain: ${CAIPE_DOMAIN} (--ingress --domain)"
       fi
@@ -2837,16 +2943,16 @@ choose_features() {
       if [[ -z "$CAIPE_DOMAIN" ]]; then
         CAIPE_DOMAIN="$CAIPE_DOMAIN_DEFAULT"
         _used_default_domain=true
-        log "No hostname provided — using default: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.local.me)"
+        log "No hostname provided — using default: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.localtest.me)"
       fi
       log "Ingress enabled for: ${CAIPE_DOMAIN}"
 
       echo ""
       if $_used_default_domain; then
-        # Local-dev default (*.local.me) — no public cert authority will
+        # Local-dev default (*.localtest.me) — no public cert authority will
         # issue for this, so always self-sign and skip the auto-detect /
         # manual prompt flow entirely.
-        _announce_self_signed "${CAIPE_DOMAIN}" "default hostname — no public CA can issue for *.local.me"
+        _announce_self_signed "${CAIPE_DOMAIN}" "default hostname — no public CA can issue for *.localtest.me"
       else
         # Auto-detect certs in common locations
         local _auto_cert="" _auto_key=""
@@ -3227,7 +3333,7 @@ provision_bot_secrets() {
   if $ENABLE_SLACK_BOT; then
     local _slack_keys=(
       SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_SIGNING_SECRET SLACK_CLIENT_SECRET
-      SLACK_LINK_HMAC_SECRET SLACK_INTEGRATION_AUTH_CLIENT_SECRET
+      SLACK_INTEGRATION_AUTH_CLIENT_SECRET
       KEYCLOAK_BOT_CLIENT_SECRET OAUTH2_CLIENT_SECRET
     )
     local _slack_literals=()
@@ -3254,7 +3360,7 @@ provision_bot_secrets() {
 
   if $ENABLE_WEBEX_BOT; then
     local _webex_keys=(
-      WEBEX_INTEGRATION_BOT_ACCESS_TOKEN WEBEX_TOKEN WEBEX_LINK_HMAC_SECRET
+      WEBEX_INTEGRATION_BOT_ACCESS_TOKEN WEBEX_TOKEN
       WEBEX_INTEGRATION_AUTH_CLIENT_SECRET KEYCLOAK_WEBEX_BOT_CLIENT_SECRET
     )
     local _webex_literals=()
@@ -3725,7 +3831,15 @@ deploy_langfuse() {
   minio_pw=$(openssl rand -hex 16)
   log "Generated Langfuse secrets"
 
-  helm upgrade --install langfuse langfuse/langfuse -n langfuse \
+  # Pin the chart version (LANGFUSE_CHART_VERSION) and DO NOT swallow stderr: a
+  # failed langfuse install must be visible and must return non-zero so the
+  # caller can continue without tracing instead of aborting the whole install
+  # under `set -e`. (Prior behaviour: `&>/dev/null` + unguarded call meant an
+  # optional observability add-on silently killed the entire deploy.)
+  local _lf_log
+  _lf_log=$(mktemp)
+  if ! helm upgrade --install langfuse langfuse/langfuse -n langfuse \
+    --version "$LANGFUSE_CHART_VERSION" \
     --set langfuse.salt.value="$salt" \
     --set langfuse.encryptionKey.value="$enc_key" \
     --set langfuse.nextauth.secret.value="$nextauth_secret" \
@@ -3735,10 +3849,16 @@ deploy_langfuse() {
     --set s3.accessKeyId.value=minio \
     --set s3.secretAccessKey.value="$minio_pw" \
     --set s3.auth.rootUser=minio \
-    --set s3.auth.rootPassword="$minio_pw" &>/dev/null
-  log "Langfuse Helm release deployed"
+    --set s3.auth.rootPassword="$minio_pw" >"$_lf_log" 2>&1; then
+    err "Langfuse Helm install failed (chart ${LANGFUSE_CHART_VERSION}):"
+    sed 's/^/    /' "$_lf_log" >&2
+    rm -f "$_lf_log"
+    return 1
+  fi
+  rm -f "$_lf_log"
+  log "Langfuse Helm release deployed (chart ${LANGFUSE_CHART_VERSION})"
 
-  wait_for_pods langfuse 420
+  wait_for_pods langfuse 420 || return 1
 }
 
 create_langfuse_api_keys() {
@@ -4100,6 +4220,19 @@ post_deploy_patches() {
     else
       log "rag-server: No OIDC config found in caipe-ui-secret — skipping OIDC patch (no-SSO deployment)"
     fi
+
+    # Self-signed cert: pin rag-server's OIDC discovery / JWKS to the in-cluster
+    # HTTP Keycloak so token validation (ui + ingestor providers) doesn't fetch
+    # from the untrusted public https issuer and 500 on CERTIFICATE_VERIFY_FAILED.
+    if [[ "${TLS_SELF_SIGNED:-false}" == true ]]; then
+      local _kc_int="http://caipe-keycloak:8080/realms/caipe"
+      kubectl set env deployment/rag-server -n caipe \
+        OIDC_DISCOVERY_URL="${_kc_int}/.well-known/openid-configuration" \
+        OIDC_JWKS_URL="${_kc_int}/protocol/openid-connect/certs" \
+        INGESTOR_OIDC_DISCOVERY_URL="${_kc_int}/.well-known/openid-configuration" \
+        INGESTOR_OIDC_JWKS_URL="${_kc_int}/protocol/openid-connect/certs" &>/dev/null \
+        && log "rag-server: OIDC discovery/JWKS pinned to in-cluster Keycloak (self-signed cert)"
+    fi
   fi
 
   # ── 6. caipe-ui: raise Node.js HTTP header size limit ──
@@ -4114,6 +4247,18 @@ post_deploy_patches() {
     kubectl set env deployment/caipe-caipe-ui -n caipe \
       NODE_OPTIONS="--max-http-header-size=65536" &>/dev/null \
       && log "caipe-ui: NODE_OPTIONS set to --max-http-header-size=65536"
+  fi
+
+  # ── 6b. caipe-ui: trust the generated self-signed cert for server-side OIDC ──
+  # NextAuth does the OIDC token exchange / JWKS fetch server-side against the
+  # public HTTPS domain (KC_HOSTNAME). With a setup-generated self-signed cert
+  # Node.js rejects it (DEPTH_ZERO_SELF_SIGNED_CERT -> OAUTH_CALLBACK_ERROR) and
+  # login silently bounces back to the sign-in page. Local dev only — skipped
+  # entirely when a real cert was supplied via --tls-cert.
+  if [[ "${TLS_SELF_SIGNED:-false}" == true ]]; then
+    kubectl set env deployment/caipe-caipe-ui -n caipe \
+      NODE_TLS_REJECT_UNAUTHORIZED=0 &>/dev/null \
+      && log "caipe-ui: NODE_TLS_REJECT_UNAUTHORIZED=0 (self-signed cert, local dev only)"
   fi
 
   # ── 7. MongoDB for dynamic-agents ──
@@ -4413,7 +4558,7 @@ JSON
 # Update caipe-ui and caipe-platform Keycloak client redirect URIs, web origins,
 # and root URL to match CAIPE_DOMAIN. Keycloak imports the realm once at first
 # install; the imported URIs are never updated by helm upgrade, so a domain
-# change (e.g. caipe.local.me → caipe.example.com) leaves stale URIs
+# change (e.g. caipe.localtest.me → caipe.example.com) leaves stale URIs
 # that cause "Invalid parameter: redirect_uri" on login.
 update_keycloak_client_urls() {
   $ENABLE_RBAC_RUNTIME || return 0
@@ -5498,6 +5643,12 @@ data:
   config.yaml: |
     model_list:
 ${model_list_yaml}
+    litellm_settings:
+      # Ollama's embedding + chat APIs reject OpenAI-only params the langchain
+      # OpenAI client always sends (e.g. encoding_format: base64), which
+      # otherwise 400s the RAG server's startup embedding test. Drop unsupported
+      # params instead of forwarding them.
+      drop_params: true
 ${general_yaml}
 ---
 apiVersion: apps/v1
@@ -5597,12 +5748,21 @@ _write_rbac_runtime_values() {
   # discovery via the in-cluster service still resolves to public endpoints),
   # and register the public NextAuth callback on the caipe-ui client. Skipped
   # for IP domains (Ingress host must be a DNS name) and local installs.
+  # With a setup-generated self-signed cert, server-to-server OIDC (rag-server
+  # JWKS, web-ingestor token fetch, ...) against the public HTTPS issuer fails
+  # cert verification. hostname-backchannel-dynamic keeps the browser-facing
+  # issuer public but lets in-cluster callers that hit http://caipe-keycloak:8080
+  # get back plain-HTTP token/JWKS endpoints, so the self-signed cert never
+  # enters back-channel flows.
+  local _kc_backchannel=""
+  [[ "${TLS_SELF_SIGNED:-false}" == true ]] && _kc_backchannel=$'\n    KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"'
+
   local _kc_public_yaml=""
   if [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     _kc_public_yaml=$(cat <<KCPUB
   env:
     KC_HOSTNAME: "https://${CAIPE_DOMAIN}"
-    KC_PROXY_HEADERS: "xforwarded"
+    KC_PROXY_HEADERS: "xforwarded"${_kc_backchannel}
   ingress:
     enabled: true
     className: "nginx"
@@ -7235,7 +7395,7 @@ monitor_port_forwards() {
     fi
     echo ""
     echo -e "    ${DIM}Re-print these any time: ./$(basename "$0") creds${NC}"
-    if [[ "$CAIPE_DOMAIN" == *.local.me ]]; then
+    if [[ "$CAIPE_DOMAIN" == *.localtest.me ]]; then
       echo -e "    ${DIM}${CAIPE_DOMAIN} resolves to 127.0.0.1 — on a remote host, tunnel 443 (ssh -L 8443:127.0.0.1:443 <host>) or re-run with --domain=<public-dns>.${NC}"
     fi
   fi
@@ -7739,6 +7899,7 @@ choose_setup_target() {
 
   local choice
   tty_read -r choice
+  choice="$(_trim_input "$choice")"
   choice="${choice:-1}"
   choice="$(echo "$choice" | tr '[:upper:]' '[:lower:]')"
 
@@ -8161,16 +8322,16 @@ cmd_setup() {
    ╚═════╝╚═╝  ╚═╝╚═╝╚═╝     ╚══════╝
 BANNER
   echo -e "${NC}"
-  echo -e "${BLUE}${BOLD}╔═══════════════════════════════════════════════╗${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${BOLD}Welcome to CAIPE Setup${NC}                       ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  Your 🤖 Agentic AI automation super hero 🦸  ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}                                               ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}Multi-Agent System on Kubernetes${NC}             ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}                                               ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}github.com/caipe-io/ai-platform-engineering${NC}   ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}Powered by cnoe-agent-utils LLMFactory${NC}       ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}github.com/cnoe-io/cnoe-agent-utils${NC}          ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}╚═══════════════════════════════════════════════╝${NC}"
+  # Full https:// URL so terminals auto-linkify it (Cmd/Ctrl-click); avoids OSC 8
+  # escapes, which render as visible junk and break this box in terminals that
+  # don't support them (tmux w/o passthrough, CI logs, older Terminal.app).
+  echo -e "${BLUE}${BOLD}╔══════════════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  ${BOLD}Open Source AI Platform for All${NC}                                     ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}                                                                      ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  CAIPE empowers individuals and teams with 🤖 agentic AI automation. ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}                                                                      ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}https://github.com/caipe-io/ai-platform-engineering${NC}                 ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}╚══════════════════════════════════════════════════════════════════════╝${NC}"
   echo ""
 
   # On hosts where kubectl is a k3s symlink (/usr/local/bin/kubectl -> k3s),
@@ -8326,8 +8487,17 @@ BANNER
   fi
 
   if $ENABLE_TRACING; then
-    deploy_langfuse
-    create_langfuse_api_keys
+    # Non-fatal: using these functions as an `if` condition disables `set -e`
+    # inside them, so a Langfuse failure degrades to "tracing off" instead of
+    # aborting the core platform deploy (deploy_langfuse returns non-zero on a
+    # helm/rollout failure).
+    if deploy_langfuse && create_langfuse_api_keys; then
+      log "Langfuse tracing ready"
+    else
+      warn "Langfuse tracing setup failed — continuing WITHOUT tracing; the core platform is unaffected."
+      warn "Resolve the error above and re-run, or set LANGFUSE_CHART_VERSION to a working chart."
+      ENABLE_TRACING=false
+    fi
   fi
 
   if $INJECT_CORPORATE_CA; then
@@ -8360,6 +8530,21 @@ BANNER
     fi
     kubectl apply -f "$_ollama_yaml" 2>&1 \
       | grep -v "^$" | while IFS= read -r line; do log "$line"; done
+
+    # deploy/kind/ollama.yaml reads OPENAI_MODEL_NAME/EMBEDDINGS_MODEL from
+    # llm-secret. In LiteLLM proxy mode _finalize_litellm_mode has already
+    # rewritten those to the proxy aliases (caipe-chat / caipe-embeddings), so
+    # the pod would `ollama pull caipe-chat` (fails) and its readiness probe
+    # `ollama show caipe-chat` would loop forever. Pin the pod's env to the real
+    # Ollama model names instead.
+    if $LLM_VIA_LITELLM; then
+      local _real_embed="${LITELLM_EMBED_MODEL_REAL:-${EMBEDDINGS_MODEL:-}}"
+      kubectl set env deployment/ollama -n caipe --containers='*' \
+        "OPENAI_MODEL_NAME=${OLLAMA_MODEL}" \
+        ${_real_embed:+"EMBEDDINGS_MODEL=${_real_embed}"} >/dev/null 2>&1 \
+        && log "Ollama pod pinned to real model '${OLLAMA_MODEL}' (llm-secret holds the LiteLLM alias)"
+    fi
+
     log "Waiting for Ollama to be ready (model pull may take several minutes on first run)..."
     kubectl rollout status deployment/ollama -n caipe --timeout=10m 2>&1 \
       | while IFS= read -r line; do log "$line"; done
@@ -8519,7 +8704,7 @@ Options:
   --metallb          Install MetalLB to give LoadBalancer services real IPs in kind clusters — default ON
   --no-metallb       Skip MetalLB (also disables --ingress, which depends on it)
   --ingress          Install nginx-ingress + MetalLB and expose UI via domain — default ON
-                     If --domain is omitted, falls back to ${CAIPE_DOMAIN_DEFAULT} (resolves to 127.0.0.1 via *.local.me)
+                     If --domain is omitted, falls back to ${CAIPE_DOMAIN_DEFAULT} (resolves to 127.0.0.1 via *.localtest.me)
   --no-ingress       Skip nginx-ingress
   --domain=HOST      Hostname for the UI ingress (e.g. my-caipe.example.com)
                      Default when ingress is enabled and --domain is omitted: ${CAIPE_DOMAIN_DEFAULT}
@@ -8640,7 +8825,7 @@ Embeddings provider credentials are read from (in order):
     key-pair (single line):   ACCESS_KEY_ID:SECRET_ACCESS_KEY
     profile name (single line): my-profile-name
 
-Supported providers (via cnoe-agent-utils LLMFactory):
+Supported LLM providers:
   openai, anthropic-claude, azure-openai, aws-bedrock,
   google-gemini, gcp-vertexai, groq
 

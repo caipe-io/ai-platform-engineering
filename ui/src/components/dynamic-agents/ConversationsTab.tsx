@@ -11,6 +11,7 @@ DialogHeader,
 DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { AgentPicker, type AgentPickerOption } from "@/components/ui/agent-picker";
 import { useToast } from "@/components/ui/toast";
 import { loadAllDynamicAgents } from "@/lib/dynamic-agent-list";
@@ -462,7 +463,7 @@ export function ConversationsTab() {
                 {/* Page size dropdown */}
                 <div className="flex items-center gap-2">
                   <label className="text-sm text-muted-foreground whitespace-nowrap" htmlFor="conversation-page-size">Rows</label>
-                  <select
+                  <Select
                     aria-label="Rows per page"
                     id="conversation-page-size"
                     value={pageSize}
@@ -475,7 +476,7 @@ export function ConversationsTab() {
                     {[10, 20, 50, 100].map((size) => (
                       <option key={size} value={size}>{size}</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
             )}

@@ -277,6 +277,108 @@ async def test_search_runtime_filter_datasource_outside_accessible_returns_empty
 
 
 # ---------------------------------------------------------------------------
+# search — collection_id filter
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_collection_filter_resolves_to_member_datasources(monkeypatch: pytest.MonkeyPatch):
+    at = _make_tools()
+    monkeypatch.setattr(AgentTools, "_resolve_accessible_datasource_ids", AsyncMock(return_value=None))
+    monkeypatch.setattr(tools_module, "get_datasource_ids_for_collection", AsyncMock(return_value=["ds-a", "ds-b"]))
+    at.vector_db_query_service.query = AsyncMock(return_value=[])
+
+    search_fn = at._make_search_fn(_make_single_label_config(allow_runtime_filters=True), graph_rag_enabled=False)
+    await search_fn(query="test", filters={"collection_id": "coll-1"}, limit=10, thought="")
+
+    _, kwargs = at.vector_db_query_service.query.call_args
+    assert sorted(kwargs["filters"]["datasource_id"]) == ["ds-a", "ds-b"]
+
+
+@pytest.mark.asyncio
+async def test_search_collection_filter_intersects_with_accessible(monkeypatch: pytest.MonkeyPatch):
+    """A collection's member datasources must narrow, never widen, the
+    caller's RBAC-accessible set."""
+    at = _make_tools()
+    monkeypatch.setattr(AgentTools, "_resolve_accessible_datasource_ids", AsyncMock(return_value=["ds-a"]))
+    monkeypatch.setattr(tools_module, "get_datasource_ids_for_collection", AsyncMock(return_value=["ds-a", "ds-b"]))
+    at.vector_db_query_service.query = AsyncMock(return_value=[])
+
+    search_fn = at._make_search_fn(_make_single_label_config(allow_runtime_filters=True), graph_rag_enabled=False)
+    await search_fn(query="test", filters={"collection_id": "coll-1"}, limit=10, thought="")
+
+    _, kwargs = at.vector_db_query_service.query.call_args
+    assert kwargs["filters"]["datasource_id"] == ["ds-a"]
+
+
+@pytest.mark.asyncio
+async def test_search_collection_id_and_datasource_id_intersect(monkeypatch: pytest.MonkeyPatch):
+    at = _make_tools()
+    monkeypatch.setattr(AgentTools, "_resolve_accessible_datasource_ids", AsyncMock(return_value=None))
+    monkeypatch.setattr(tools_module, "get_datasource_ids_for_collection", AsyncMock(return_value=["ds-a", "ds-b"]))
+    at.vector_db_query_service.query = AsyncMock(return_value=[])
+
+    search_fn = at._make_search_fn(_make_single_label_config(allow_runtime_filters=True), graph_rag_enabled=False)
+    await search_fn(
+        query="test",
+        filters={"collection_id": "coll-1", "datasource_id": "ds-b"},
+        limit=10,
+        thought="",
+    )
+
+    _, kwargs = at.vector_db_query_service.query.call_args
+    assert kwargs["filters"]["datasource_id"] == ["ds-b"]
+
+
+@pytest.mark.asyncio
+async def test_search_unknown_collection_returns_empty(monkeypatch: pytest.MonkeyPatch):
+    """An unresolvable collection_id narrows to nothing rather than erroring
+    or falling back to unrestricted search."""
+    at = _make_tools()
+    monkeypatch.setattr(AgentTools, "_resolve_accessible_datasource_ids", AsyncMock(return_value=None))
+    monkeypatch.setattr(tools_module, "get_datasource_ids_for_collection", AsyncMock(return_value=[]))
+    at.vector_db_query_service.query = AsyncMock(return_value=[])
+
+    search_fn = at._make_search_fn(_make_single_label_config(allow_runtime_filters=True), graph_rag_enabled=False)
+    response = await search_fn(query="test", filters={"collection_id": "coll-unknown"}, limit=10, thought="")
+
+    assert response == {"semantic_results": []}
+    at.vector_db_query_service.query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_search_multiple_collection_ids_union_member_datasources(monkeypatch: pytest.MonkeyPatch):
+    at = _make_tools()
+    monkeypatch.setattr(AgentTools, "_resolve_accessible_datasource_ids", AsyncMock(return_value=None))
+
+    async def _resolve(collection_id: str):
+        return {"coll-1": ["ds-a"], "coll-2": ["ds-b"]}.get(collection_id, [])
+
+    monkeypatch.setattr(tools_module, "get_datasource_ids_for_collection", _resolve)
+    at.vector_db_query_service.query = AsyncMock(return_value=[])
+
+    search_fn = at._make_search_fn(_make_single_label_config(allow_runtime_filters=True), graph_rag_enabled=False)
+    await search_fn(query="test", filters={"collection_id": ["coll-1", "coll-2"]}, limit=10, thought="")
+
+    _, kwargs = at.vector_db_query_service.query.call_args
+    assert sorted(kwargs["filters"]["datasource_id"]) == ["ds-a", "ds-b"]
+
+
+@pytest.mark.asyncio
+async def test_search_without_collection_filter_does_not_call_resolver(monkeypatch: pytest.MonkeyPatch):
+    at = _make_tools()
+    monkeypatch.setattr(AgentTools, "_resolve_accessible_datasource_ids", AsyncMock(return_value=None))
+    mock_resolve = AsyncMock(side_effect=AssertionError("must not be called"))
+    monkeypatch.setattr(tools_module, "get_datasource_ids_for_collection", mock_resolve)
+    at.vector_db_query_service.query = AsyncMock(return_value=[])
+
+    search_fn = at._make_search_fn(_make_single_label_config(allow_runtime_filters=True), graph_rag_enabled=False)
+    await search_fn(query="test", filters={"datasource_id": "ds-a"}, limit=10, thought="")
+
+    mock_resolve.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # fetch_document
 # ---------------------------------------------------------------------------
 

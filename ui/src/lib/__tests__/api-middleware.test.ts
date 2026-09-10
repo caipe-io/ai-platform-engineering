@@ -1304,7 +1304,6 @@ describe('withAuth', () => {
       ['/api/users/me', 'PATCH', 'can_manage_self'],
       ['/api/users/search?q=alice', 'GET', 'can_search_directory'],
       ['/api/auth/my-roles', 'GET', 'can_read_self'],
-      ['/api/auth/slack-link', 'POST', 'can_manage_self'],
       ['/api/settings/preferences', 'GET', 'can_manage_self'],
       ['/api/settings/preferences', 'PATCH', 'can_manage_self'],
       ['/api/feedback', 'POST', 'can_submit_feedback'],

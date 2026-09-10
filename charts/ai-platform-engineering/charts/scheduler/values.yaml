@@ -139,6 +139,8 @@ auth:
 limits:
   maxSchedulesPerOwner: 50
   maxMessageChars: 2000
+  # -- Minimum permitted gap, in seconds, between recurring cron fires.
+  minimumScheduleIntervalSeconds: 1800
 
 # Delayed one-off fire dispatcher. These support scheduler-managed domain
 # retries without teaching the scheduler domain-specific behavior.

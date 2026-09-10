@@ -14,6 +14,7 @@ interface ExistingTeam {
   id: string;
   slug: string;
   name: string;
+  status?: string;
 }
 
 interface ExternalGroupMember {
@@ -223,6 +224,17 @@ export async function planIdentityGroupSync(
     }
   }
 
+  // A team can be archived (all managed memberships previously removed) and
+  // later regain an active managed member when its Okta group is unarchived
+  // or repopulated. Detect that here — before reconciliation — so it applies
+  // whether the member is brand new (`sourcesToAdd`) or already stored as
+  // active (defensive: an archived team should never retain active sources,
+  // but this keeps the check independent of that invariant holding).
+  const teamSlugsWithDesiredMembership = new Set(desiredSources.map((s) => s.team_slug));
+  const teams_to_unarchive = Array.from(existingTeamBySlug.values())
+    .filter((team) => team.status === "archived" && teamSlugsWithDesiredMembership.has(team.slug))
+    .map((team) => team.slug);
+
   const reconciliation = await reconcileTeamMembershipSources({
     existingSources: input.existingMembershipSources,
     desiredSources,
@@ -253,6 +265,7 @@ export async function planIdentityGroupSync(
     ignored_groups: ruleResult.ignored.map((ignored) => ignored.group),
     teams_to_create,
     teams_to_update,
+    teams_to_unarchive,
     membership_sources_to_add: reconciliation.sourcesToAdd,
     membership_sources_to_remove: reconciliation.sourcesToRemove,
     membership_sources_to_refresh,

@@ -266,6 +266,27 @@ describe("RagCollectionsView", () => {
     );
   });
 
+  it("shows the collection id next to its name, like the agent editor does", async () => {
+    render(<RagCollectionsView />);
+
+    expect(
+      await screen.findByDisplayValue("Primary collection"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^id:/)).toBeInTheDocument();
+    expect(screen.getByText("primary-collection")).toBeInTheDocument();
+  });
+
+  it("does not show an id for an unsaved, in-progress collection draft", async () => {
+    render(<RagCollectionsView />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "New Collection" }),
+    );
+
+    expect(screen.getByTestId("new-collection-draft")).toBeInTheDocument();
+    expect(screen.queryByText(/^id:/)).not.toBeInTheDocument();
+  });
+
   it("opens new collection as a full inline editor", async () => {
     render(<RagCollectionsView />);
 
@@ -293,7 +314,7 @@ describe("RagCollectionsView", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("You (personal)")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Search teams" })).toHaveTextContent(
+    expect(screen.getByRole("combobox", { name: "Search teams" })).toHaveTextContent(
       "Only you can search — add teams",
     );
     expect(screen.getByText("Datasources")).toBeInTheDocument();

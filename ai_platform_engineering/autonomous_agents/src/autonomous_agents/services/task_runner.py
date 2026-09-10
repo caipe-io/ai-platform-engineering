@@ -26,14 +26,16 @@ from autonomous_agents.models import (
     TaskDefinition,
     TaskRun,
     TaskStatus,
+    WebhookTrigger,
 )
 from autonomous_agents.services.chat_history import (
     ChatHistoryPublisher,
     NoopChatHistoryPublisher,
     conversation_id_for_task,
+    conversation_id_for_webhook_run,
 )
 from autonomous_agents.services.dynamic_agents_client import (
-    DynamicAgentsScheduleRevokedError,
+    DynamicAgentsAuthorizationRevokedError,
     invoke_dynamic_agent_streaming,
 )
 from autonomous_agents.services.mongo import RunStore
@@ -102,6 +104,13 @@ def set_chat_history_publisher(publisher: ChatHistoryPublisher) -> None:
 def chat_history_publishing_enabled() -> bool:
     """Return whether autonomous runs are being published to UI chat history."""
     return get_chat_history_publisher().enabled
+
+
+def task_chat_history_publishing_enabled(task: TaskDefinition) -> bool:
+    """Return whether this task may create UI chat-history records."""
+    return chat_history_publishing_enabled() and not isinstance(
+        task.trigger, WebhookTrigger
+    )
 
 
 def get_webex_thread_map() -> WebexThreadMap | None:
@@ -298,13 +307,42 @@ async def execute_task(
     finally block so audit tooling can navigate delivery -> run.
     """
     run_id = run_id or str(uuid.uuid4())
-    # Always use the deterministic per-task id for Dynamic Agents execution,
-    # but expose it on run history only when a UI chat record will be published.
-    # Spec #099 FR-006 / AD-002: one chat thread per task, not per run.
-    conversation_id = conversation_id_for_task(task.id)
-    published_conversation_id = (
-        conversation_id if chat_history_publishing_enabled() else None
-    )
+    root_run_id: str | None = None
+    if isinstance(task.trigger, WebhookTrigger):
+        if follow_up is None:
+            # Every initial delivery gets a separate Dynamic Agents context.
+            # The UI groups these by task, but the model/checkpointer must not
+            # inherit state from an unrelated webhook payload.
+            root_run_id = run_id
+            execution_context_id = conversation_id_for_webhook_run(task.id, root_run_id)
+        else:
+            # Follow-ups inherit only the selected parent run's context. Routes
+            # validate parent ownership before enqueueing; this lookup carries
+            # the durable context id through the asynchronous worker boundary.
+            recent_runs = await get_run_store().list_by_task(task.id, limit=500)
+            parent = next(
+                (candidate for candidate in recent_runs if candidate.run_id == follow_up.parent_run_id),
+                None,
+            )
+            if parent is not None and parent.execution_context_id:
+                root_run_id = parent.root_run_id or parent.run_id
+                execution_context_id = parent.execution_context_id
+            else:
+                # Legacy webhook runs used the per-task context and have no
+                # execution_context_id. Preserve that context for continuations
+                # instead of silently losing the prior conversation state.
+                root_run_id = (
+                    (parent.root_run_id or parent.run_id)
+                    if parent
+                    else follow_up.parent_run_id
+                )
+                execution_context_id = conversation_id_for_task(task.id)
+    else:
+        # Scheduled tasks intentionally keep one continuing context per task.
+        execution_context_id = conversation_id_for_task(task.id)
+
+    publish_to_chat = task_chat_history_publishing_enabled(task)
+    published_conversation_id = execution_context_id if publish_to_chat else None
     # Materialise the prompt the agent will actually see. For follow-up
     # runs we splice the operator reply into a clearly-labelled section
     # so the LLM treats it as new instructions rather than confusing it
@@ -337,6 +375,10 @@ async def execute_task(
         status=TaskStatus.RUNNING,
         conversation_id=published_conversation_id,
         parent_run_id=follow_up.parent_run_id if follow_up else None,
+        root_run_id=root_run_id,
+        execution_context_id=execution_context_id,
+        follow_up_text=follow_up.user_text if follow_up else None,
+        follow_up_transport=follow_up.transport if follow_up else None,
         request_prompt=effective_task.prompt,
         trigger_instance_id=trigger_instance_id,
         owner_id=_owner_email,
@@ -378,9 +420,8 @@ async def execute_task(
             agent_id=effective_task.dynamic_agent_id,
             owner_email=_owner_email,
             owner_sub=_owner_sub,
-            conversation_id=conversation_id,
+            conversation_id=execution_context_id,
             context=context,
-            timeout=effective_task.timeout_seconds,
         )
         response_text = response
         run.status = TaskStatus.SUCCESS
@@ -392,17 +433,18 @@ async def execute_task(
             f"({len(events)} events, {len(response)} chars). "
             f"Preview: {response[:120]}..."
         )
-    except DynamicAgentsScheduleRevokedError as exc:
-        # The owner's autonomous grant (team eligibility or per-agent enablement)
-        # was revoked. Fail this run AND auto-pause the task so it stops firing
-        # until a team admin re-enables autonomous for the agent.
+    except DynamicAgentsAuthorizationRevokedError as exc:
+        # The owner lost team entitlement or access to the selected agent. Fail
+        # this run and auto-pause the task so it stops firing until access is
+        # restored and the owner explicitly re-enables it.
         error_text = (
             f"{exc} — autonomous execution was disabled for this task. "
-            "Ask a team admin to re-enable autonomous for this agent."
+            "Ask a platform admin to enable Autonomous for one of your teams, "
+            "or restore your access to this agent."
         )
         run.status = TaskStatus.FAILED
         run.error = error_text
-        logger.warning("[%s] Run %s denied (schedule revoked); auto-pausing task", task.id, run_id)
+        logger.warning("[%s] Run %s denied (authorization revoked); auto-pausing task", task.id, run_id)
         try:
             # Lazy import avoids a circular import (task_lifecycle imports task_runner).
             from autonomous_agents.services.task_lifecycle import get_task_store
@@ -433,17 +475,18 @@ async def execute_task(
         # delay the authoritative run-history record. The publisher
         # is a no-op when ``CHAT_HISTORY_PUBLISH_ENABLED`` is off so
         # this is essentially free in the default config.
-        await _publish_safely(
-            get_chat_history_publisher(),
-            run,
-            effective_task,
-            context,
-            response=response_text,
-            error=error_text,
-            # Surface the dynamic agent id as the routing label so the chat
-            # sidebar shows the same routing target as the autonomous tab.
-            agent=task.dynamic_agent_id,
-        )
+        if publish_to_chat:
+            await _publish_safely(
+                get_chat_history_publisher(),
+                run,
+                effective_task,
+                context,
+                response=response_text,
+                error=error_text,
+                # Surface the dynamic agent id as the routing label so the chat
+                # sidebar shows the same routing target as the autonomous tab.
+                agent=task.dynamic_agent_id,
+            )
         # Webex thread map: only worth scanning on a successful run --
         # a FAILED run usually didn't get far enough to call any
         # tools, and even when it did the message we'd record points

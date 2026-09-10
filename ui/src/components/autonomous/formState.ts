@@ -12,6 +12,14 @@
 
 import type { AutonomousTask, TaskFormState } from "./types";
 
+export const DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS = 30 * 60;
+
+export function formatScheduleInterval(seconds: number): string {
+  if (seconds % 3600 === 0) return `${seconds / 3600} hour${seconds === 3600 ? "" : "s"}`;
+  if (seconds % 60 === 0) return `${seconds / 60} minutes`;
+  return `${seconds} seconds`;
+}
+
 export const EMPTY_FORM: TaskFormState = {
   id: "",
   name: "",
@@ -30,10 +38,8 @@ export const EMPTY_FORM: TaskFormState = {
   intervalSeconds: "",
   intervalMinutes: "",
   intervalHours: "",
-  webhookProvider: "generic_hmac",
+  webhookProvider: "github",
   webhookSecret: "",
-  timeoutSeconds: "",
-  maxRetries: "",
 };
 
 /** Convert API model -> form state. */
@@ -56,8 +62,6 @@ export function toFormState(task: AutonomousTask | null | undefined): TaskFormSt
     llm_provider: task.llm_provider ?? "",
     enabled: task.enabled,
     triggerType: task.trigger.type,
-    timeoutSeconds: task.timeout_seconds == null ? "" : String(task.timeout_seconds),
-    maxRetries: task.max_retries == null ? "" : String(task.max_retries),
   };
   if (task.trigger.type === "cron") {
     base.cronSchedule = task.trigger.schedule;
@@ -66,7 +70,7 @@ export function toFormState(task: AutonomousTask | null | undefined): TaskFormSt
     base.intervalMinutes = task.trigger.minutes == null ? "" : String(task.trigger.minutes);
     base.intervalHours = task.trigger.hours == null ? "" : String(task.trigger.hours);
   } else {
-    base.webhookProvider = task.trigger.provider ?? "generic_hmac";
+    base.webhookProvider = task.trigger.provider ?? "github";
     // Backend never echoes the secret on read paths -- only the
     // ``has_secret`` boolean comes back. Leave the form blank so the
     // operator must explicitly type a new value to *change* it.
@@ -83,7 +87,10 @@ export type FormConversionResult =
  * Convert form state -> API model. Returns ``{ error }`` when inputs
  * are invalid so the caller can surface a human-readable message.
  */
-export function fromFormState(form: TaskFormState): FormConversionResult {
+export function fromFormState(
+  form: TaskFormState,
+  minimumScheduleIntervalSeconds = DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS,
+): FormConversionResult {
   const id = form.id.trim();
   const name = form.name.trim();
   const agent = form.agent.trim();
@@ -118,6 +125,12 @@ export function fromFormState(form: TaskFormState): FormConversionResult {
     if (seconds == null && minutes == null && hours == null) {
       return { error: "Interval requires at least one of seconds / minutes / hours." };
     }
+    const totalSeconds = (seconds ?? 0) + (minutes ?? 0) * 60 + (hours ?? 0) * 3600;
+    if (totalSeconds < minimumScheduleIntervalSeconds) {
+      return {
+        error: `Interval must be at least ${formatScheduleInterval(minimumScheduleIntervalSeconds)}.`,
+      };
+    }
     trigger = {
       type: "interval",
       seconds: seconds ?? null,
@@ -125,32 +138,14 @@ export function fromFormState(form: TaskFormState): FormConversionResult {
       hours: hours ?? null,
     };
   } else {
-    const provider = form.webhookProvider.trim() || "generic_hmac";
+    const provider = form.webhookProvider.trim() || "github";
     trigger = {
       type: "webhook",
       provider,
-      // Treat empty input as "no secret" rather than "empty secret" --
-      // the latter would be (correctly) rejected by HMAC validation.
+      // POST generates the initial credential. On edit, a value is present
+      // only when rotating a Slack/PagerDuty-issued secret; null preserves it.
       secret: form.webhookSecret.trim() ? form.webhookSecret.trim() : null,
     };
-  }
-
-  let timeoutSeconds: number | null = null;
-  if (form.timeoutSeconds.trim()) {
-    const n = Number(form.timeoutSeconds);
-    if (!Number.isFinite(n) || n <= 0) {
-      return { error: "Timeout must be a positive number of seconds." };
-    }
-    timeoutSeconds = n;
-  }
-
-  let maxRetries: number | null = null;
-  if (form.maxRetries.trim()) {
-    const n = Number(form.maxRetries);
-    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
-      return { error: "Max retries must be a non-negative integer." };
-    }
-    maxRetries = n;
   }
 
   const task: AutonomousTask = {
@@ -169,8 +164,6 @@ export function fromFormState(form: TaskFormState): FormConversionResult {
     llm_provider: form.llm_provider.trim() || null,
     trigger,
     enabled: form.enabled,
-    timeout_seconds: timeoutSeconds,
-    max_retries: maxRetries,
   };
   return { task };
 }
@@ -191,6 +184,6 @@ export function summarizeTrigger(trigger: AutonomousTask["trigger"]): string {
     if (trigger.seconds) parts.push(`${trigger.seconds}s`);
     return parts.length > 0 ? `Every ${parts.join(" ")}` : "Interval (unset)";
   }
-  const provider = trigger.provider ?? "generic_hmac";
+  const provider = trigger.provider ?? "github";
   return trigger.has_secret ? `Webhook: ${provider} (signed)` : `Webhook: ${provider}`;
 }

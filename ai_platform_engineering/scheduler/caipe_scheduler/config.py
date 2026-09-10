@@ -56,6 +56,11 @@ class Settings(BaseModel):
   # Limits
   max_schedules_per_owner: int = Field(default_factory=lambda: int(os.environ.get("MAX_SCHEDULES_PER_OWNER", "50")))
   max_message_chars: int = Field(default_factory=lambda: int(os.environ.get("MAX_MESSAGE_CHARS", "2000")))
+  minimum_schedule_interval_seconds: int = Field(
+    default_factory=lambda: int(os.environ.get("MINIMUM_SCHEDULE_INTERVAL_SECONDS", "1800")),
+    ge=1,
+    validate_default=True,
+  )
 
   # One-off run dispatcher. One-off records are stored in Mongo with UTC run_at;
   # the scheduler pod wakes near the next due record and creates a normal Job.

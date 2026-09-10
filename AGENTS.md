@@ -31,6 +31,7 @@ until you have checked the shared locations below.
 |---|---|---|
 | UI page or API route | `ui/src/app/` | `ui/src/components/`, `ui/src/lib/`, `ui/src/store/` |
 | UI component | `ui/src/components/` | `ui/src/components/ui/` and `ui/src/components/shared/`, then an existing component in the same feature area |
+| UI selection control | `ui/src/components/ui/{select,searchable-picker}.tsx` | Follow `docs/docs/ui/selection-controls.md`; reuse a domain picker before adding a base or custom listbox |
 | UI state or browser data | `ui/src/store/` | Existing store and `ui/src/lib/` helpers |
 | MCP integration | `ai_platform_engineering/mcp/<provider>/` | `ai_platform_engineering/mcp/common/` |
 | Slack or Webex behavior | `ai_platform_engineering/integrations/{slack_bot,webex_bot}/` | The BFF/API contract and shared auth utilities |

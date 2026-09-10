@@ -121,6 +121,26 @@ def test_identity_lookup_exception_fail_closed() -> None:
     )
     assert result.reason_code == REASON_IDENTITY_UNAVAILABLE
     assert dispatcher.calls == []
+    # Passive channel message — must not be flagged explicit.
+    assert result.explicit_invocation is False
+
+
+def test_identity_lookup_exception_explicit_mention_marks_explicit_invocation() -> None:
+    # An @mention must propagate explicit_invocation=True even when
+    # linker.resolve() raises, so the responder tells the user identity
+    # verification is unavailable instead of silently dropping the request.
+    dispatcher = FakeDispatcher()
+    result = asyncio.run(
+        handle_webex_message(
+            _event(text="@bot help", is_bot=False),
+            identity_linker=FailingIdentityLinker(),
+            team_resolver=FakeTeamResolver(),
+            dispatcher=dispatcher,
+        )
+    )
+    assert result.reason_code == REASON_IDENTITY_UNAVAILABLE
+    assert result.explicit_invocation is True
+    assert dispatcher.calls == []
 
 
 @dataclass
@@ -153,6 +173,26 @@ def test_obo_value_error_fail_closed() -> None:
         )
     )
     assert result.reason_code == REASON_OBO_FAILED
+    assert dispatcher.calls == []
+    # Passive channel message — must not be flagged explicit.
+    assert result.explicit_invocation is False
+
+
+def test_obo_value_error_explicit_mention_marks_explicit_invocation() -> None:
+    # An @mention must propagate explicit_invocation=True even when
+    # obo.impersonate() raises.
+    dispatcher = FakeDispatcher()
+    result = asyncio.run(
+        handle_webex_message(
+            _event(text="@bot help", is_bot=False),
+            identity_linker=LinkedIdentityLinker(),
+            team_resolver=FakeTeamResolver(team_slug="platform-eng"),
+            obo_exchanger=ValueErrorOboExchanger(),
+            dispatcher=dispatcher,
+        )
+    )
+    assert result.reason_code == REASON_OBO_FAILED
+    assert result.explicit_invocation is True
     assert dispatcher.calls == []
 
 

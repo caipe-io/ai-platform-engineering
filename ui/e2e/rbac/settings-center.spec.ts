@@ -81,7 +81,7 @@ function createState(): SettingsMockState {
       platform_default_agent_id: null,
       slack_default_agent_id: null,
       web_default_agent_id: null,
-      webex_default_agent_id: null,
+      webex_bots: [],
     },
     userPreferenceWrites: [],
   };
@@ -401,14 +401,14 @@ test.describe("mocked routed Settings browser regression",() => {
     await installSettingsCenterMocks(page,state);
     const settings = await openSettings(page);
 
-    await settings.getByRole("button",{ name: "Web default agent" }).click();
+    await settings.getByRole("combobox",{ name: "Web default agent" }).click();
     await page.getByRole("option",{ name: "Incident Response" }).click();
 
     await expect.poll(() => state.userPreferenceWrites).toEqual([
       { web_default_agent_id: "incident-response" },
     ]);
-    await expect(settings.getByRole("button",{ name: "Web default agent" })).toContainText("Incident Response");
-    await expect(settings.getByRole("button",{ name: "Slack default agent" })).toContainText("Use platform default");
+    await expect(settings.getByRole("combobox",{ name: "Web default agent" })).toContainText("Incident Response");
+    await expect(settings.getByRole("combobox",{ name: "Slack default agent" })).toContainText("Use platform default");
     await expect(settings.getByRole("button",{ name: /^save$/i })).toHaveCount(0);
   });
 
@@ -425,7 +425,7 @@ test.describe("mocked routed Settings browser regression",() => {
       "href",
       "/admin/configuration/defaults",
     );
-    await defaults.getByRole("button",{ name: "Platform default agent for new chats" }).click();
+    await defaults.getByRole("combobox",{ name: "Platform default agent for new chats" }).click();
     await page.getByRole("option",{ name: "Incident Response" }).click();
 
     const confirmation = page.getByRole("dialog",{

@@ -2,6 +2,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { chooseSearchablePickerOption } from "./_helpers";
 import { openAddMcpServerEditor } from "./_mcp-browser-fixtures";
 import {
   fulfillJson,
@@ -1236,14 +1237,21 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
     });
 
     await page.getByRole("button", { name: "Add Credential" }).click();
-    await expect(page.getByLabel(/^Secret$/).first()).toContainText("Jira token");
     await expect(page.getByLabel(/Credential header/i).first()).toHaveValue("X-CAIPE-Provider-Token");
-    await page.getByLabel(/^Secret$/).first().selectOption(secretIds.jira);
+    await chooseSearchablePickerOption(
+      page,
+      page.getByLabel(/^Secret$/).first(),
+      "Jira token",
+    );
 
     await page.getByRole("button", { name: "Add Credential" }).click();
     await page.getByLabel(/Credential target/i).nth(1).selectOption("env");
     await page.getByLabel(/Credential name/i).fill("JIRA_TOKEN");
-    await page.getByLabel(/^Secret$/).nth(1).selectOption(secretIds.pagerduty);
+    await chooseSearchablePickerOption(
+      page,
+      page.getByLabel(/^Secret$/).nth(1),
+      "PagerDuty token",
+    );
 
     await page.getByRole("button", { name: "Create Server" }).click();
 
@@ -1304,7 +1312,11 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
 
     await page.getByRole("button", { name: "Add Credential" }).click();
     await page.getByLabel(/Credential header/i).selectOption("X-CAIPE-Provider-Token");
-    await page.getByLabel(/^Secret$/).selectOption("secret-netutils-token");
+    await chooseSearchablePickerOption(
+      page,
+      page.getByLabel(/^Secret$/),
+      "Netutils token",
+    );
     await expect(page.getByText("Preview net_...oken")).toBeVisible();
 
     await page.getByRole("button", { name: "Create Server" }).click();

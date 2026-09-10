@@ -676,6 +676,14 @@ export function RagCollectionsView() {
                       className="h-10 max-w-xl text-lg font-semibold"
                     />
                   </CardTitle>
+                  {!isCreating && selected && (
+                    <p className="pl-8 text-xs text-muted-foreground">
+                      id:{" "}
+                      <code className="rounded bg-muted px-1 py-0.5">
+                        {selected._id}
+                      </code>
+                    </p>
+                  )}
                   <CardDescription>
                     {isCreating
                       ? "Private by default. You are the Owner and the only person who can search this collection until you add teams below."

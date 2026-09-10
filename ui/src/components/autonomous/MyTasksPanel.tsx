@@ -11,7 +11,8 @@ import { AgentTaskAccordion } from "./AgentTaskAccordion";
 import { autonomousApi, AutonomousApiError } from "./api";
 import { isTaskOwnedByAgent } from "./taskOwnership";
 import { TaskFormDialog } from "./TaskFormDialog";
-import type { AutonomousTask } from "./types";
+import { DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS } from "./formState";
+import type { AutonomousTask, TaskSaveResult } from "./types";
 
 export interface MyTasksAgent {
   id: string;
@@ -43,6 +44,9 @@ export function MyTasksPanel({ agents, currentUserEmail }: MyTasksPanelProps) {
   const [dialogAgentId, setDialogAgentId] = useState<string | null>(null);
   const [runHistoryRefreshKey, setRunHistoryRefreshKey] = useState(0);
   const [lastCreatedId, setLastCreatedId] = useState<string | null>(null);
+  const [minimumScheduleIntervalSeconds, setMinimumScheduleIntervalSeconds] = useState(
+    DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS,
+  );
   // Sections start COLLAPSED: the page can list many agents, and a wall of
   // expanded task lists buries the one the user came for. The header carries a
   // task count so nothing is hidden without a signal.
@@ -52,9 +56,8 @@ export function MyTasksPanel({ agents, currentUserEmail }: MyTasksPanelProps) {
     if (!options.silent) setLoading(true);
     try {
       const all = await autonomousApi.listTasks();
-      // The proxy stamps X-Authenticated-User-Is-Admin, so an admin receives
-      // EVERY user's tasks here. This page is "my tasks" for everyone --
-      // admins get the global view from Admin > Autonomous instead.
+      // This page is always "my tasks", including for admins, so keep only
+      // tasks owned by the signed-in user if the backend returns a wider set.
       const mine = currentUserEmail
         ? all.filter((t) => t.owner_id === currentUserEmail)
         : all;
@@ -73,6 +76,18 @@ export function MyTasksPanel({ agents, currentUserEmail }: MyTasksPanelProps) {
   useEffect(() => {
     void fetchTasks();
   }, [fetchTasks]);
+
+  useEffect(() => {
+    void autonomousApi
+      .getSettings()
+      .then((settings) => {
+        setMinimumScheduleIntervalSeconds(settings.minimum_schedule_interval_seconds);
+      })
+      .catch(() => {
+        // Keep the chart default in the form. The backend remains authoritative
+        // and returns its configured limit if the save is attempted.
+      });
+  }, []);
 
   const hasPendingAck = useMemo(
     () => tasks.some((task) => task.last_ack?.ack_status === "pending"),
@@ -131,23 +146,43 @@ export function MyTasksPanel({ agents, currentUserEmail }: MyTasksPanelProps) {
     setDialogOpen(true);
   };
 
-  const handleSubmitTask = async (task: AutonomousTask) => {
+  const handleSubmitTask = async (task: AutonomousTask): Promise<TaskSaveResult> => {
     if (editingTask) {
-      const updated = await autonomousApi.updateTask(editingTask.id, task);
+      const saved = await autonomousApi.updateTask(editingTask.id, task);
+      const updated = saved.task;
       setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
       toast(`Task "${updated.name}" updated.`, "success");
+      return saved;
     } else {
       const created = await autonomousApi.createTask(task);
-      setTasks((prev) => [...prev, created]);
-      setLastCreatedId(created.id);
+      setTasks((prev) => [...prev, created.task]);
+      setLastCreatedId(created.task.id);
       // Reveal the section the new task landed in -- sections default to
       // collapsed, so otherwise a just-created task would be invisible.
-      const createdAgentId = created.dynamic_agent_id ?? dialogAgentId;
+      const createdAgentId = created.task.dynamic_agent_id ?? dialogAgentId;
       if (createdAgentId) {
         setExpandedAgentIds((prev) => new Set(prev).add(createdAgentId));
       }
-      toast(`Task "${created.name}" created.`, "success");
+      toast(`Task "${created.task.name}" created.`, "success");
+      return created;
     }
+  };
+
+  const handleSaveWebhookSecret = async (
+    task: AutonomousTask,
+    secret: string,
+  ): Promise<AutonomousTask> => {
+    if (task.trigger.type !== "webhook") {
+      throw new Error("Only webhook tasks have signing secrets.");
+    }
+    const saved = await autonomousApi.updateTask(task.id, {
+      ...task,
+      trigger: { ...task.trigger, secret },
+    });
+    const updated = saved.task;
+    setTasks((prev) => prev.map((existing) => (existing.id === updated.id ? updated : existing)));
+    toast("Signing secret saved securely.", "success");
+    return updated;
   };
 
   const handleDelete = async (task: AutonomousTask) => {
@@ -275,7 +310,9 @@ export function MyTasksPanel({ agents, currentUserEmail }: MyTasksPanelProps) {
         existingNames={tasks
           .filter((t) => t.id !== editingTask?.id)
           .map((t) => t.name)}
+        minimumScheduleIntervalSeconds={minimumScheduleIntervalSeconds}
         onSubmit={handleSubmitTask}
+        onSaveWebhookSecret={handleSaveWebhookSecret}
       />
     </div>
   );

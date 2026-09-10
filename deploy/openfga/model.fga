@@ -93,9 +93,8 @@ type organization
     # owner delegates at least one datasource. The datasource reader tuples
     # remain the actual content boundary; users never manage this separately.
     define searcher: [service_account, team#member, team#admin]
-    # Autonomous eligibility. Granted to teams only,
-    # by org admins. Precondition for enabling any agent for a team; deleting
-    # this tuple cascades to revoke the team's agent#automator grants.
+    # Autonomous eligibility is a user capability inherited from membership in
+    # any enabled team. Agent access remains independently gated by can_use.
     define automation_eligible: [team#member, team#admin]
     define can_use: member or admin
     define can_manage: admin
@@ -178,7 +177,6 @@ type agent
     define writer: [user, service_account, team#member, team#admin]
     define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
-    define automator: [team#member, team#admin]
     define can_discover: can_read
     define can_read: reader or can_use or can_manage or owner
     define can_use: user or can_write or can_manage or owner
@@ -186,7 +184,6 @@ type agent
     define can_delete: can_manage
     define can_manage: manager or owner
     define can_audit: auditor or can_manage
-    define can_schedule: automator and can_use
 
 type mcp_server
   relations

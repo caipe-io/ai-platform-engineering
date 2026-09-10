@@ -18,6 +18,9 @@ const versionsConfigPath = path.join(__dirname, 'versions-config.json');
 const versionsConfig: VersionsConfig | null = fs.existsSync(versionsConfigPath)
   ? (JSON.parse(fs.readFileSync(versionsConfigPath, 'utf8')) as VersionsConfig)
   : null;
+const currentDocsPrefix = versionsConfig?.versions.current.path
+  ? `/docs/${versionsConfig.versions.current.path}`
+  : '/docs';
 
 // Release notes are published once per minor series, under the series' `x.y.0` slug, and
 // cover everything since the previous minor. Every retired per-patch post and standalone
@@ -33,7 +36,7 @@ const legacyMigrationSlugs = [
   ...Array.from({length: 8}, (_, i) => `migration-0.4.${i}-to-0.4.${i + 1}`),
 ];
 
-const currentReleaseSlugs = ['release-0.4.0', 'release-0.5.0', 'release-0.6.0'];
+const currentReleaseSlugs = ['release-0.4.0', 'release-0.5.0', 'release-0.6.0', 'release-1.0.0'];
 
 // Keyed by the surviving post; the values are slugs that no longer resolve to a page. A
 // current slug must never appear in its own list, or it would redirect to itself.
@@ -68,6 +71,9 @@ const config: Config = {
   // GitHub Pages serves the project from the custom domain root.
   url: 'https://caipe.io',
   baseUrl: '/',
+  customFields: {
+    currentDocsPrefix,
+  },
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
@@ -108,6 +114,7 @@ const config: Config = {
           // historically published docs links also omitted the /docs route.
           {from: '/getting-started/quick-start', to: '/docs/getting-started/quick-start'},
           {from: '/knowledge_bases/graph_rag', to: '/docs/knowledge_bases/'},
+          {from: '/docs/features/custom-agents', to: `${currentDocsPrefix}/features/agent-builder`},
           // /docs/index has no real page; redirect to Quick Start
           {from: '/docs/index', to: '/docs/getting-started/quick-start'},
           ...releaseRedirects,
@@ -267,7 +274,7 @@ const config: Config = {
             },
             {
               label: 'Meeting Recordings',
-              href: 'https://www.youtube.com/@cnoe-community',
+              href: 'https://www.youtube.com/@caipe-io',
             },
             {
               label: 'Governance',
