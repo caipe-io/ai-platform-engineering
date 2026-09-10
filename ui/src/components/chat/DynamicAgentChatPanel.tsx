@@ -210,6 +210,7 @@ export function ChatPanel({
   // then reload the page so ChatContainer picks up the new participants.
   const handleStartNewConversation = useCallback(async () => {
     if (!conversationId) return;
+    setHasRelinkedAgent(true);
     try {
       const agentId = await resolveUsableChatAgentId();
       const newParticipants = buildParticipants(agentId);
@@ -226,6 +227,7 @@ export function ChatPanel({
       }));
       onAgentRelinked?.(agentId);
     } catch (err) {
+      setHasRelinkedAgent(false);
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
   }, [conversationId, onAgentRelinked, toast]);
@@ -251,6 +253,7 @@ export function ChatPanel({
 
   const handleResumeWithChosenAgent = useCallback(async () => {
     if (!conversationId || !chosenAgentId) return;
+    setHasRelinkedAgent(true);
     try {
       const newParticipants = buildParticipants(chosenAgentId);
       await apiClient.updateConversation(conversationId, { participants: newParticipants });
@@ -262,6 +265,7 @@ export function ChatPanel({
       }));
       onAgentRelinked?.(chosenAgentId);
     } catch (err) {
+      setHasRelinkedAgent(false);
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
   }, [conversationId, chosenAgentId, onAgentRelinked, toast]);
