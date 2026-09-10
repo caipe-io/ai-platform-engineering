@@ -485,6 +485,9 @@ services:
       - .env
     environment:
       - NODE_ENV=development
+      # Safe release metadata shown by System Health. A specific
+      # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
+      - CAIPE_RELEASE_VERSION=${IMAGE_TAG:-localtag}
       # Pass the active Compose profile set through to the UI so product
       # health can show profile-enabled integrations as degraded/down even
       # when their container crashes before serving traffic.
@@ -765,6 +768,9 @@ services:
       - .env
     environment:
       - NODE_ENV=production
+      # Safe release metadata shown by System Health. A specific
+      # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
+      - CAIPE_RELEASE_VERSION=${IMAGE_TAG:-localtag}
       # Pass the active Compose profile set through to the UI so product
       # health can show profile-enabled integrations as degraded/down even
       # when their container crashes before serving traffic.
