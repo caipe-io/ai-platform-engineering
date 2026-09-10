@@ -872,10 +872,16 @@ export const authOptions: NextAuthOptions = {
   jwt: {
     async encode({ token, secret, maxAge }) {
       if (token?.sub) {
-        await storeTokens(token.sub, {
+        // Token persistence is deliberately best-effort. The L1 cache is
+        // updated synchronously by storeTokens; waiting for a remote MongoDB
+        // write here would block SSR and App Router navigations when the
+        // database is temporarily unavailable.
+        void storeTokens(token.sub, {
           accessToken: token.accessToken as string | undefined,
           refreshToken: token.refreshToken as string | undefined,
           idToken: token.idToken as string | undefined,
+        }).catch((error) => {
+          console.error("[Auth] Failed to persist token metadata:", error);
         });
       }
       const slimToken = { ...(token ?? {}) } as Record<string, unknown>;
@@ -889,7 +895,16 @@ export const authOptions: NextAuthOptions = {
     async decode({ token, secret }) {
       const { decode } = await import("next-auth/jwt");
       const decoded = await decode({ token, secret });
-      if (decoded?.sub) {
+      // Test and short-lived local cookies may already carry the access token.
+      // Avoid an unnecessary MongoDB lookup in that case; production cookies
+      // created by the custom encoder omit these fields and still rehydrate
+      // from the server-side token store as before.
+      if (
+        decoded?.sub &&
+        !decoded.accessToken &&
+        !decoded.refreshToken &&
+        !decoded.idToken
+      ) {
         const stored = await getStoredTokens(decoded.sub);
         if (stored) {
           if (stored.accessToken) decoded.accessToken = stored.accessToken;
