@@ -4036,7 +4036,7 @@ prepare_corporate_ca() {
 
   log "Fetching system CA bundle from container image..."
   kubectl delete pod ca-extract -n "$ns" --force --grace-period=0 &>/dev/null 2>&1 || true
-  kubectl run ca-extract -n "$ns" --image=python:3.13-slim --restart=Never \
+  kubectl run ca-extract -n "$ns" --image=python:3.14-slim --restart=Never \
     --command -- sleep 300 &>/dev/null 2>&1 || true
   local retries=0
   while [[ $retries -lt 24 ]]; do

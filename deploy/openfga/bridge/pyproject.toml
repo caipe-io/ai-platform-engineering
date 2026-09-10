@@ -7,10 +7,10 @@ readme = "README.md"
 authors = [
     { name = "CNOE Team", email = "info@cnoe.io" },
 ]
-requires-python = ">=3.13,<4.0"
+requires-python = ">=3.14,<3.15"
 dependencies = [
-    "cryptography==50.0.0",
-    "grpcio==1.74.0",
+    "cryptography==50.0.1",
+    "grpcio==1.83.0",
     "httpx==0.28.1",
     "protobuf==6.33.5",
     "pyjwt==2.13.0",
@@ -18,8 +18,8 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "pytest==9.0.3",
-    "pyyaml==6.0.2",
+    "pytest==9.1.1",
+    "pyyaml==6.0.3",
 ]
 
 [tool.hatch.build.targets.wheel]

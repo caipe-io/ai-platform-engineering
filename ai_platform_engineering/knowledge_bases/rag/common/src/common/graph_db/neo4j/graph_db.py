@@ -182,6 +182,13 @@ class Neo4jDB(GraphDB):
       logger.error(f"Neo4j connection check failed: {e}", exc_info=True)
       return False
 
+  async def close(self) -> None:
+    """Close the async and sync Neo4j drivers owned by this instance."""
+    try:
+      await self.driver.close()
+    finally:
+      self.non_async_driver.close()
+
   def get_tenant_label(self) -> str:
     return self.tenant_label
 

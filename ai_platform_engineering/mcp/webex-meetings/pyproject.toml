@@ -9,27 +9,26 @@ dynamic = [
 ]
 readme = "README.md"
 keywords = ["webex", "meetings", "mcp"]
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.14,<3.15"
 dependencies = [
-    "click==8.3.1",
-    "mcp==1.28.1",
-    "pydantic==2.12.5",
+    "click==8.5.0",
+    "mcp==1.29.1",
+    "pydantic==2.13.4",
     "httpx==0.28.1",
     "python-dotenv==1.2.2",
-    "fastmcp==3.2.4",
-    "typing-extensions==4.15.0",
+    "fastmcp==3.4.7",
 ]
 
 [tool.uv]
-constraint-dependencies = ["uv==0.11.18"]
+constraint-dependencies = ["uv==0.12.6"]
 
 [dependency-groups]
 dev = [
-    "pyright==1.1.408",
-    "ruff==0.15.1",
-    "pytest==9.0.3",
-    "pytest-asyncio==1.3.0",
-    "hatch==1.16.3",
+    "pyright==1.1.411",
+    "ruff==0.16.4",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "hatch==1.18.0",
 ]
 
 [tool.hatch.version]

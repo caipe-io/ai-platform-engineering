@@ -1,5 +1,6 @@
 import os
 import asyncio
+import inspect
 import time
 from typing import List, Optional, Dict, Any, Callable
 import aiohttp
@@ -928,7 +929,7 @@ class IngestorBuilder:
       # Start optional startup function concurrently (e.g., server)
       if self._startup_function:
         logger.info("Starting user-provided startup function...")
-        if asyncio.iscoroutinefunction(self._startup_function):
+        if inspect.iscoroutinefunction(self._startup_function):
           startup_task = asyncio.create_task(self._startup_function(client))
         else:
           # Run sync function in executor to avoid blocking
@@ -955,7 +956,7 @@ class IngestorBuilder:
         logger.info("Running single sync cycle...")
 
         # Call user's sync function with client (original signature)
-        if asyncio.iscoroutinefunction(self._sync_function):
+        if inspect.iscoroutinefunction(self._sync_function):
           await self._sync_function(client)
         else:
           self._sync_function(client)
@@ -1004,7 +1005,7 @@ class IngestorBuilder:
           logger.info("Running sync cycle...")
 
           # Call user's sync function (original signature - no changes needed!)
-          if asyncio.iscoroutinefunction(self._sync_function):
+          if inspect.iscoroutinefunction(self._sync_function):
             await self._sync_function(client)
           else:
             self._sync_function(client)

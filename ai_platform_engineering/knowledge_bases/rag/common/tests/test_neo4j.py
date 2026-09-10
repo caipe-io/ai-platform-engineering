@@ -42,7 +42,7 @@ async def test_single_query():
     print(f"  - Match: {results[0][0][0].all_properties['id']}")
 
   await db.remove_entity(None, None)
-  await db.driver.close()
+  await db.close()
 
 
 async def test_multiple_queries():
@@ -74,7 +74,7 @@ async def test_multiple_queries():
     print(f"    Found: {results[2][0][0].all_properties['id']}")
 
   await db.remove_entity(None, None)
-  await db.driver.close()
+  await db.close()
 
 
 async def test_type_filter():
@@ -100,7 +100,7 @@ async def test_type_filter():
       print(f"  - StructuredEntity type: {entity.entity_type}, id: {entity.all_properties['id']}")
 
   await db.remove_entity(None, None)
-  await db.driver.close()
+  await db.close()
 
 
 if __name__ == "__main__":

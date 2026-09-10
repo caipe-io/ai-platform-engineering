@@ -85,7 +85,7 @@ Here's a basic ingestor that ingests some strings and manages job state:
 ### Prerequisites
 
 - uv
-- Python 3.8+ installed with necessary dependencies.
+- Python 3.14 installed with the necessary dependencies.
 - Ensure you have the RAG server running and accessible.
 
 

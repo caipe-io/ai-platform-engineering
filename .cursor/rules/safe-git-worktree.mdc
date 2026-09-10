@@ -46,7 +46,7 @@ Worktree caveats to handle (don't assume the worktree "just works"):
   `.env` is absent in a fresh worktree — copy or symlink what the task needs.
 - **Virtualenvs are not shared.** Per `CLAUDE.md`, each worktree (and each
   subpackage: RAG ingestors/server, MCP agents) needs its own
-  `uv venv --python python3.13 --clear .venv && uv sync`.
+  `uv venv --python python3.14 --clear .venv && uv sync`.
 - `/tmp` is cleared on reboot and duplicates large caches — fine for short tasks,
   not for long-lived state.
 

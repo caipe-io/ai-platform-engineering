@@ -25,7 +25,7 @@
 FROM cgr.dev/chainguard/wolfi-base:latest
 
 RUN for i in 1 2 3; do \
-      apk add --no-cache python-3.13 curl ca-certificates-bundle grep sed gawk && break; \
+      apk add --no-cache python-3.14 curl ca-certificates-bundle grep sed gawk && break; \
       [ $i -lt 3 ] && sleep $((i * 5)); \
     done && \
     rm -rf /var/cache/apk/*

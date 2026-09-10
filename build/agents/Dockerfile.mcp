@@ -1,6 +1,5 @@
 # ---------- Stage 1: Build dependencies ----------
-# assisted-by Codex Codex-sonnet-4-6
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 ARG AGENT_NAME
 
@@ -13,7 +12,7 @@ RUN if [ -z "$AGENT_NAME" ]; then \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     tzdata \
-    && pip install uv \
+    && pip install uv==0.12.6 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -42,8 +41,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     UV_HTTP_TIMEOUT=900 uv sync --locked --no-dev
 
 # ---------- Stage 2: Final runtime image ----------
-# Wolfi (Chainguard) base: 0 CVEs, continuously patched packages, replaces
-# python:3.13-slim to eliminate the ~300 Debian system-package CVEs per image.
+# Wolfi provides a minimal, continuously patched glibc runtime while preserving
+# compatibility with the manylinux wheels installed by the builder stage.
 FROM cgr.dev/chainguard/wolfi-base
 
 ARG AGENT_NAME
@@ -61,7 +60,7 @@ ARG INSTALL_AWS_CLI=false
 ARG INSTALL_KUBECTL=false
 
 RUN echo "https://packages.wolfi.dev/os" > /etc/apk/repositories && \
-    for i in 1 2 3; do apk add --no-cache python-3.13 shadow tzdata && break; [ $i -lt 3 ] && sleep $((i * 5)); done && \
+    for i in 1 2 3; do apk add --no-cache python-3.14 shadow tzdata && break; [ $i -lt 3 ] && sleep $((i * 5)); done && \
     if [ "$INSTALL_NETUTILS" = "true" ]; then \
         for i in 1 2 3; do \
             apk add --no-cache \
@@ -71,39 +70,20 @@ RUN echo "https://packages.wolfi.dev/os" > /etc/apk/repositories && \
         done; \
     fi && \
     if [ "$INSTALL_AWS_CLI" = "true" ]; then \
-        for i in 1 2 3; do apk add --no-cache curl unzip bash && break; [ $i -lt 3 ] && sleep $((i * 10)); done; \
+        for i in 1 2 3; do apk add --no-cache aws-cli-2 && break; [ $i -lt 3 ] && sleep $((i * 10)); done; \
     fi && \
     if [ "$INSTALL_KUBECTL" = "true" ]; then \
         for i in 1 2 3; do apk add --no-cache kubectl-1.36-default && break; [ $i -lt 3 ] && sleep $((i * 10)); done; \
     fi && \
     apk upgrade --no-cache
 
-# Install AWS CLI v2 (opt-in: --build-arg INSTALL_AWS_CLI=true)
-RUN if [ "$INSTALL_AWS_CLI" = "true" ]; then \
-        ARCH=$(uname -m) && \
-        if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
-            AWS_URL="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"; \
-        else \
-            AWS_URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"; \
-        fi && \
-        for i in 1 2 3 4 5; do \
-            curl -sL --connect-timeout 30 --max-time 300 --retry 3 --retry-all-errors --retry-delay 5 "$AWS_URL" -o "awscliv2.zip" && break; \
-            echo "Download attempt $i/5 failed, retrying..."; \
-            sleep $((i * 10)); \
-        done && \
-        [ -s awscliv2.zip ] || (echo "Failed to download AWS CLI after 5 attempts" && exit 1) && \
-        unzip -q awscliv2.zip && \
-        ./aws/install && \
-        rm -rf awscliv2.zip aws; \
-    fi
-
-# The builder stage uses python:3.13-slim which places Python at
-# /usr/local/bin/python3.13; Wolfi places it at /usr/bin/python3.13.
+# The builder stage uses python:3.14-slim which places Python at
+# /usr/local/bin/python3.14; Wolfi places it at /usr/bin/python3.14.
 # These symlinks keep the venv's internal python symlinks from breaking.
 RUN mkdir -p /usr/local/bin \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python3.13 \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python3 \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python3.14 \
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python3 \
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python
 
 # Create appuser in final image
 RUN groupadd -r appuser && useradd -r -g appuser -u 1001 -m appuser

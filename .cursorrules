@@ -4,7 +4,7 @@
 
 **Project**: AI Platform Engineering
 **Type**: Python Backend for AI Agents & Multi-Agent System
-**Language**: Python 3.11+
+**Language**: Python 3.14
 **Framework**: LangGraph, LangChain, A2A Protocol
 **Package Manager**: uv
 **Testing**: pytest

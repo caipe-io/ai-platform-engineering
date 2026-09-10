@@ -5,6 +5,7 @@ Builds Scrapy settings dict from ScrapySettings model.
 """
 
 from typing import Dict, Any
+
 from common.models.server import ScrapySettings
 
 
@@ -54,8 +55,8 @@ def build_scrapy_settings(settings: ScrapySettings) -> Dict[str, Any]:
     "DOWNLOAD_TIMEOUT": settings.page_load_timeout,
     # DNS timeout (helps with unreachable hosts)
     "DNS_TIMEOUT": 5,
-    # Use threaded DNS resolver to work around Twisted DNS bug with Python 3.13
-    # (Twisted's async DNS resolver has a str/bytes mismatch issue)
+    # Use the threaded resolver because Twisted's async resolver has a
+    # str/bytes mismatch for these requests.
     "DNS_RESOLVER": "scrapy.resolver.CachingThreadedResolver",
     # Disable cookies by default (for scraping)
     "COOKIES_ENABLED": False,
