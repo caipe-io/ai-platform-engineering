@@ -8,17 +8,17 @@ Parent chart to deploy CAIPE — dynamic agents, per-agent MCP servers, RBAC, an
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install ai-platform-engineering oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 0.5.68
+helm install ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade ai-platform-engineering oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 0.5.68
+helm upgrade ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install ai-platform-engineering oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 0.5.68 \
+helm install ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install ai-platform-engineering oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 0.5.68 \
+helm install ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -58,6 +58,33 @@ helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 
 | agentgateway.image.repository | string | `"cr.agentgateway.dev/agentgateway"` |  |
 | agentgateway.image.tag | string | `"v1.1.0"` |  |
 | agentgateway.skillScanner.enabled | bool | `false` |  |
+| autonomous-agents.config.DYNAMIC_AGENTS_URL | string | `""` |  |
+| autonomous-agents.config.MINIMUM_SCHEDULE_INTERVAL_SECONDS | string | `"1800"` |  |
+| autonomous-agents.config.MONGODB_DATABASE | string | `"caipe"` |  |
+| autonomous-agents.config.WEBHOOK_MAX_CONCURRENT_GLOBAL | string | `"100"` |  |
+| autonomous-agents.config.WEBHOOK_MAX_CONCURRENT_PER_OWNER | string | `"20"` |  |
+| autonomous-agents.config.WEBHOOK_MAX_PAYLOAD_BYTES | string | `"1048576"` |  |
+| autonomous-agents.config.WEBHOOK_MAX_PENDING_GLOBAL | string | `"5000"` |  |
+| autonomous-agents.config.WEBHOOK_MAX_PENDING_PAYLOAD_BYTES_GLOBAL | string | `"67108864"` |  |
+| autonomous-agents.config.WEBHOOK_MAX_PENDING_PER_OWNER | string | `"500"` |  |
+| autonomous-agents.config.WEBHOOK_MAX_PENDING_PER_TASK | string | `"100"` |  |
+| autonomous-agents.dynamicAgentsAuth.clientId | string | `"caipe-platform"` |  |
+| autonomous-agents.dynamicAgentsAuth.clientSecretRef.key | string | `"OIDC_CLIENT_SECRET"` |  |
+| autonomous-agents.dynamicAgentsAuth.clientSecretRef.name | string | `"caipe-platform-secret"` |  |
+| autonomous-agents.dynamicAgentsAuth.enabled | bool | `true` |  |
+| autonomous-agents.dynamicAgentsAuth.scope | string | `"openid profile email"` |  |
+| autonomous-agents.dynamicAgentsAuth.tokenUrl | string | `""` |  |
+| autonomous-agents.existingSecret | string | `""` |  |
+| autonomous-agents.externalSecrets.apiVersion | string | `"v1beta1"` |  |
+| autonomous-agents.externalSecrets.data | list | `[]` |  |
+| autonomous-agents.externalSecrets.enabled | bool | `false` |  |
+| autonomous-agents.externalSecrets.secretStoreRef.kind | string | `"ClusterSecretStore"` |  |
+| autonomous-agents.externalSecrets.secretStoreRef.name | string | `"vault"` |  |
+| autonomous-agents.image.pullPolicy | string | `"IfNotPresent"` |  |
+| autonomous-agents.image.repository | string | `"ghcr.io/caipe-io/caipe-autonomous-agents"` |  |
+| autonomous-agents.image.tag | string | `""` |  |
+| autonomous-agents.nameOverride | string | `"autonomous-agents"` |  |
+| autonomous-agents.service.port | int | `8002` |  |
 | caipe-ui.config.APP_NAME | string | `"CAIPE"` |  |
 | caipe-ui.config.CAIPE_CREDENTIALS_ENABLED | string | `"false"` |  |
 | caipe-ui.config.CAIPE_ORG_DISPLAY_NAME | string | `"CAIPE"` |  |
@@ -71,6 +98,8 @@ helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 
 | caipe-ui.config.CREDENTIAL_STORE_BACKEND | string | `"mongodb-envelope"` |  |
 | caipe-ui.config.DEFAULT_AGENT_ID | string | `""` |  |
 | caipe-ui.config.DESCRIPTION | string | `"Where Humans and AI agents collaborate to deliver high quality outcomes."` |  |
+| caipe-ui.config.DYNAMIC_AGENTS_ENABLED | string | `"false"` |  |
+| caipe-ui.config.ENABLE_AUTONOMOUS_AGENTS | string | `"false"` |  |
 | caipe-ui.config.ENABLE_SUBAGENT_CARDS | string | `"true"` |  |
 | caipe-ui.config.ENV_BADGE | string | `""` |  |
 | caipe-ui.config.IDENTITY_SYNC_LOGIN_AUTO_CREATE_TEAMS | string | `"false"` |  |
@@ -169,8 +198,10 @@ helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 
 | dynamic-agents.agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
 | dynamic-agents.agentContext.existingSecret.name | string | `""` |  |
 | dynamic-agents.config.AGENT_GATEWAY_MCP_SERVER_IDS | string | `"all"` |  |
+| dynamic-agents.config.AUTHZ_SERVICE_URL | string | `""` |  |
 | dynamic-agents.config.CAIPE_API_URL | string | `""` |  |
 | dynamic-agents.config.CAIPE_CREDENTIALS_ENABLED | string | `"false"` |  |
+| dynamic-agents.config.CAIPE_ORG_KEY | string | `"caipe"` |  |
 | dynamic-agents.config.CREDENTIAL_API_URL | string | `""` |  |
 | dynamic-agents.config.CREDENTIAL_SERVICE_AUDIENCE | string | `"caipe-credential-service"` |  |
 | dynamic-agents.config.KEYCLOAK_URL | string | `""` |  |
@@ -190,7 +221,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 
 | dynamic-agents.nameOverride | string | `"dynamic-agents"` |  |
 | dynamic-agents.service.metricsPort | int | `0` |  |
 | dynamic-agents.service.port | int | `8001` |  |
-| extraDeploy | list | `[]` |  |
+| extraDeployMap | object | `{}` |  |
 | global.agentgateway.enabled | bool | `true` |  |
 | global.agentgateway.extAuth.enabled | bool | `false` |  |
 | global.agentgateway.extAuth.port | int | `9100` |  |
@@ -234,7 +265,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 
 | global.createLlmSecret | bool | `false` |  |
 | global.externalSecrets.apiVersion | string | `"v1beta1"` |  |
 | global.externalSecrets.enabled | bool | `false` |  |
-| global.image | object | `{"channel":"","tag":""}` | Global image tag override. When set, overrides the default appVersion-based image tag for ALL subcharts (MCP servers, dynamic agents, UI, etc.) in a single place. Individual subchart `image.tag` values still take highest precedence. |
+| global.image | object | `{"tag":""}` | Global image tag override. When set, overrides the default appVersion-based image tag for ALL subcharts (MCP servers, dynamic agents, UI, etc.) in a single place. Individual subchart `image.tag` values still take highest precedence. |
 | global.llmSecrets.create | bool | `false` |  |
 | global.llmSecrets.secretName | string | `"llm-secret"` |  |
 | global.mcp.vpa.controlledResources[0] | string | `"cpu"` |  |
@@ -563,6 +594,11 @@ helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 
 | openfga.image.repository | string | `"openfga/openfga"` |  |
 | openfga.image.tag | string | `"v1.15.1"` |  |
 | openfga.init.enabled | bool | `true` |  |
+| openfga.init.platformClient.clientId | string | `"caipe-platform"` |  |
+| openfga.init.platformClient.clientSecretRef.key | string | `"OIDC_CLIENT_SECRET"` |  |
+| openfga.init.platformClient.clientSecretRef.name | string | `"caipe-platform-secret"` |  |
+| openfga.init.platformClient.enabled | bool | `false` |  |
+| openfga.init.platformClient.orgObject | string | `"organization:caipe"` |  |
 | openfga.init.seedTuples | list | `[]` |  |
 | openfga.init.storeName | string | `"caipe-openfga"` |  |
 | openfga.migrate.enabled | bool | `true` |  |
@@ -634,6 +670,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 
 | slack-bot.resources.limits.memory | string | `"512Mi"` |  |
 | slack-bot.resources.requests.cpu | string | `"100m"` |  |
 | slack-bot.resources.requests.memory | string | `"256Mi"` |  |
+| tags.autonomous-agents | bool | `false` |  |
 | tags.basic | bool | `false` |  |
 | tags.caipe-ui | bool | `false` |  |
 | tags.complete | bool | `false` |  |
@@ -697,31 +734,32 @@ helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 
 
 | Name | Version | Condition / Tags |
 |------|---------|------------------|
-| mcp-argocd (mcp-server) | `0.5.68` | tags: mcp-argocd, basic, complete |
-| mcp-aws (mcp-server) | `0.5.68` | tags: mcp-aws, complete |
-| mcp-backstage (mcp-server) | `0.5.68` | tags: mcp-backstage, basic, complete |
-| mcp-confluence (mcp-server) | `0.5.68` | tags: mcp-confluence, complete |
-| mcp-github (mcp-server) | `0.5.68` | tags: mcp-github, basic, complete |
-| mcp-gitlab (mcp-server) | `0.5.68` | tags: mcp-gitlab, complete |
-| mcp-jira (mcp-server) | `0.5.68` | tags: mcp-jira, complete |
-| mcp-komodor (mcp-server) | `0.5.68` | tags: mcp-komodor, complete |
-| mcp-pagerduty (mcp-server) | `0.5.68` | tags: mcp-pagerduty, complete |
-| mcp-slack (mcp-server) | `0.5.68` | tags: mcp-slack, complete |
-| mcp-splunk (mcp-server) | `0.5.68` | tags: mcp-splunk, complete |
-| mcp-victorops (mcp-server) | `0.5.68` | tags: mcp-victorops |
-| mcp-webex (mcp-server) | `0.5.68` | tags: mcp-webex, complete |
-| mcp-webex-meetings (mcp-server) | `0.5.68` | tags: mcp-webex-meetings, complete |
-| mcp-netutils (mcp-server) | `0.5.68` | tags: mcp-netutils, complete |
-| rag-stack | `0.5.68` | tags: rag-stack, complete |
-| caipe-ui | `0.5.68` | tags: caipe-ui |
-| audit-service | `0.5.68` |  |
-| dynamic-agents | `0.5.68` | tags: dynamic-agents |
-| scheduler | `0.5.68` | `global.scheduler.enabled` |
-| mongodb (caipe-ui-mongodb) | `0.5.68` | `caipe-ui.mongodb.enabled` |
-| skill-scanner | `0.5.68` | `global.skillScanner.enabled` |
-| slack-bot | `0.5.68` | tags: slack-bot |
-| webex-bot | `0.5.68` | tags: webex-bot |
-| keycloak | `0.5.68` | tags: keycloak |
-| openfga | `0.5.68` | `openfga.enabled` |
-| openfga-authz-bridge | `0.5.68` | `openfgaAuthzBridge.enabled` |
-| agentgateway | `0.5.68` | `agentgateway.enabled` |
+| mcp-argocd (mcp-server) | `1.0.1` | tags: mcp-argocd, basic, complete |
+| mcp-aws (mcp-server) | `1.0.1` | tags: mcp-aws, complete |
+| mcp-backstage (mcp-server) | `1.0.1` | tags: mcp-backstage, basic, complete |
+| mcp-confluence (mcp-server) | `1.0.1` | tags: mcp-confluence, complete |
+| mcp-github (mcp-server) | `1.0.1` | tags: mcp-github, basic, complete |
+| mcp-gitlab (mcp-server) | `1.0.1` | tags: mcp-gitlab, complete |
+| mcp-jira (mcp-server) | `1.0.1` | tags: mcp-jira, complete |
+| mcp-komodor (mcp-server) | `1.0.1` | tags: mcp-komodor, complete |
+| mcp-pagerduty (mcp-server) | `1.0.1` | tags: mcp-pagerduty, complete |
+| mcp-slack (mcp-server) | `1.0.1` | tags: mcp-slack, complete |
+| mcp-splunk (mcp-server) | `1.0.1` | tags: mcp-splunk, complete |
+| mcp-victorops (mcp-server) | `1.0.1` | tags: mcp-victorops |
+| mcp-webex (mcp-server) | `1.0.1` | tags: mcp-webex, complete |
+| mcp-webex-meetings (mcp-server) | `1.0.1` | tags: mcp-webex-meetings, complete |
+| mcp-netutils (mcp-server) | `1.0.1` | tags: mcp-netutils, complete |
+| rag-stack | `1.0.1` | tags: rag-stack, complete |
+| caipe-ui | `1.0.1` | tags: caipe-ui |
+| audit-service | `1.0.1` |  |
+| dynamic-agents | `1.0.1` | tags: dynamic-agents |
+| autonomous-agents | `1.0.1` | tags: autonomous-agents |
+| scheduler | `1.0.1` | `global.scheduler.enabled` |
+| mongodb (caipe-ui-mongodb) | `1.0.1` | `caipe-ui.mongodb.enabled` |
+| skill-scanner | `1.0.1` | `global.skillScanner.enabled` |
+| slack-bot | `1.0.1` | tags: slack-bot |
+| webex-bot | `1.0.1` | tags: webex-bot |
+| keycloak | `1.0.1` | tags: keycloak |
+| openfga | `1.0.1` | `openfga.enabled` |
+| openfga-authz-bridge | `1.0.1` | `openfgaAuthzBridge.enabled` |
+| agentgateway | `1.0.1` | `agentgateway.enabled` |

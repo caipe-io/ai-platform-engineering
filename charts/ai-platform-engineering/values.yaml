@@ -374,8 +374,8 @@ metrics:
     labels:
       grafana_dashboard: "1"
 
-# Extra Kubernetes resources to deploy
-extraDeploy: []
+# -- Extra Kubernetes resources keyed by a stable, deployment-defined name. Use this form when Helm --set/--set-file must target individual resources.
+extraDeployMap: {}
 
 # ---------------------------------------------------------------------------
 # Live-skills command template (rendered as the `/skills` slash command

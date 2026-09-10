@@ -43,7 +43,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "rag-ingestors.serviceAccountName" $ }}
-      automountServiceAccountToken: {{ $.Values.serviceAccount.automount | default true }}
+      automountServiceAccountToken: {{ $.Values.serviceAccount.automount }}
       {{- with $.Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}

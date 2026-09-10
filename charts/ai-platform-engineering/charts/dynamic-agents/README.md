@@ -8,17 +8,17 @@ A Helm chart for Dynamic Agents - Standalone agent builder service with MCP tool
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68
+helm install dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68
+helm upgrade dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68 \
+helm install dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install dynamic-agents oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68 \
+helm install dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -61,9 +61,11 @@ helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68
 | config.AGENT_GATEWAY_MCP_SERVER_IDS | string | `"all"` |  |
 | config.AGENT_RUNTIME_TTL_SECONDS | string | `"60"` |  |
 | config.ATTACHMENT_LOCAL_PATH | string | `"/var/lib/caipe-attachments"` |  |
+| config.AUTHZ_SERVICE_URL | string | `""` |  |
 | config.AWS_BEDROCK_ENABLE_PROMPT_CACHE | string | `"false"` |  |
 | config.CAIPE_API_URL | string | `""` |  |
 | config.CAIPE_CREDENTIALS_ENABLED | string | `"false"` |  |
+| config.CAIPE_ORG_KEY | string | `"caipe"` |  |
 | config.CORS_ORIGINS | string | `"[\"*\"]"` |  |
 | config.CREDENTIAL_API_URL | string | `""` |  |
 | config.CREDENTIAL_SERVICE_AUDIENCE | string | `"caipe-credential-service"` |  |
@@ -124,7 +126,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68
 | service.port | int | `8001` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.annotations | object | `{}` |  |
-| serviceAccount.automount | bool | `true` |  |
+| serviceAccount.automount | bool | `false` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
 | startupProbe.failureThreshold | int | `30` |  |

@@ -211,8 +211,21 @@ neo4j:
       cpu: "1"
       memory: "2Gi"
 
+  # The Neo4j dependency does not expose pod-level token automount control.
+  # Use a dedicated account with automount disabled by this parent chart.
+  serviceAccount:
+    create: true
+    name: rag-neo4j
+    automount: false
+    annotations: {}
+
+  containerSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+
   podSpec:
     annotations: {}
+    serviceAccountName: rag-neo4j
 
   volumes:
     data:
@@ -258,6 +271,32 @@ rag-redis:
 # Minimal Milvus cluster configuration using Zilliz Helm chart defaults
 milvus:
   # Only override what differs from chart defaults
+  enabled: true
+  serviceAccount:
+    create: false
+    name: rag-milvus
+    # The Milvus dependency cannot disable token automount on its own ServiceAccount.
+    ragStackManaged: true
+    annotations: {}
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+
   pulsarv3:
     enabled: false  # Default is true, we need false
   woodpecker:
@@ -265,9 +304,23 @@ milvus:
 
   mixCoordinator:
     annotations: {}
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
 
   proxy:
     annotations: {}
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
 
   dataNode:
     annotations: {}
@@ -297,6 +350,31 @@ milvus:
 
   etcd:
     podAnnotations: {}
+    serviceAccount:
+      create: true
+      automountServiceAccountToken: false
+    podSecurityContext:
+      enabled: true
+      fsGroup: 1001
+      seccompProfile:
+        type: RuntimeDefault
+    containerSecurityContext:
+      enabled: true
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      runAsUser: 1001
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
     # PodDisruptionBudget configuration for etcd
     # Recommended for production to maintain etcd quorum during voluntary disruptions
     podDisruptionBudget:

@@ -17,17 +17,17 @@ cluster-internal (ClusterIP only — no Ingress).
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install skill-scanner oci://ghcr.io/cnoe-io/charts/skill-scanner --version 0.5.68
+helm install skill-scanner oci://ghcr.io/caipe-io/charts/skill-scanner --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade skill-scanner oci://ghcr.io/cnoe-io/charts/skill-scanner --version 0.5.68
+helm upgrade skill-scanner oci://ghcr.io/caipe-io/charts/skill-scanner --version 1.0.0
 ```
 
 ## Customizing Values
@@ -36,15 +36,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install skill-scanner oci://ghcr.io/cnoe-io/charts/skill-scanner --version 0.5.68 \
+helm install skill-scanner oci://ghcr.io/caipe-io/charts/skill-scanner --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install skill-scanner oci://ghcr.io/cnoe-io/charts/skill-scanner --version 0.5.68 \
+helm install skill-scanner oci://ghcr.io/caipe-io/charts/skill-scanner --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/skill-scanner --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/skill-scanner --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -90,6 +90,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/skill-scanner --version 0.5.68
 | securityContext.runAsGroup | int | `1001` | GID to run as |
 | securityContext.runAsNonRoot | bool | `true` | Run as non-root user (matches Dockerfile.skill-scanner) |
 | securityContext.runAsUser | int | `1001` | UID to run as |
+| securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | service.port | int | `8000` |  |
 | service.type | string | `"ClusterIP"` | ClusterIP only — never expose this Service externally. The scanner API is unauthenticated and accepts arbitrary ZIP uploads. |
 | serviceAccount.annotations | object | `{}` | Annotations to add to the service account |

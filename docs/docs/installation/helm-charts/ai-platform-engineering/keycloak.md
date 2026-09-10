@@ -14,17 +14,17 @@ Keycloak identity provider for CAIPE RBAC, token exchange, and identity federati
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install keycloak oci://ghcr.io/cnoe-io/charts/keycloak --version 0.5.68
+helm install keycloak oci://ghcr.io/caipe-io/charts/keycloak --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade keycloak oci://ghcr.io/cnoe-io/charts/keycloak --version 0.5.68
+helm upgrade keycloak oci://ghcr.io/caipe-io/charts/keycloak --version 1.0.0
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install keycloak oci://ghcr.io/cnoe-io/charts/keycloak --version 0.5.68 \
+helm install keycloak oci://ghcr.io/caipe-io/charts/keycloak --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install keycloak oci://ghcr.io/cnoe-io/charts/keycloak --version 0.5.68 \
+helm install keycloak oci://ghcr.io/caipe-io/charts/keycloak --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/keycloak --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -148,6 +148,15 @@ helm show values oci://ghcr.io/cnoe-io/charts/keycloak --version 0.5.68
 | initImage.pullPolicy | string | `"IfNotPresent"` |  |
 | initImage.repository | string | `"ghcr.io/caipe-io/keycloak-init"` |  |
 | initImage.tag | string | `""` |  |
+| jobPodSecurityContext.runAsNonRoot | bool | `true` |  |
+| jobResources.limits.cpu | string | `"500m"` |  |
+| jobResources.limits.memory | string | `"512Mi"` |  |
+| jobResources.requests.cpu | string | `"100m"` |  |
+| jobResources.requests.memory | string | `"128Mi"` |  |
+| jobSecurityContext.allowPrivilegeEscalation | bool | `false` |  |
+| jobSecurityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| jobSecurityContext.runAsNonRoot | bool | `true` |  |
+| jobSecurityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` |  |
 | platformClient.externalSecret.enabled | bool | `false` |  |
@@ -159,6 +168,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/keycloak --version 0.5.68
 | platformClient.secretKey | string | `"OIDC_CLIENT_SECRET"` |  |
 | platformClient.secretRef | string | `""` |  |
 | podAnnotations | object | `{}` |  |
+| podSecurityContext.runAsNonRoot | bool | `true` |  |
 | realm.accessTokenLifespan | int | `3600` |  |
 | realm.accessTokenLifespanForImplicitFlow | int | `900` |  |
 | realm.name | string | `"caipe"` |  |
@@ -180,9 +190,14 @@ helm show values oci://ghcr.io/cnoe-io/charts/keycloak --version 0.5.68
 | schedulerTokenExchange.externalSecret.secretStoreRef.kind | string | `"ClusterSecretStore"` |  |
 | schedulerTokenExchange.externalSecret.secretStoreRef.name | string | `"vault"` |  |
 | schedulerTokenExchange.secretRef | string | `""` |  |
+| securityContext.allowPrivilegeEscalation | bool | `false` |  |
+| securityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| securityContext.runAsNonRoot | bool | `true` |  |
+| securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | service.port | int | `8080` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.annotations | object | `{}` |  |
+| serviceAccount.automount | bool | `false` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
 | strictClientSecrets | bool | `false` |  |

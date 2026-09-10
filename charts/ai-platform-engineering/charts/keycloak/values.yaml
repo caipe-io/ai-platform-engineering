@@ -23,8 +23,41 @@ fullnameOverride: ""
 
 serviceAccount:
   create: true
+  automount: false
   annotations: {}
   name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+jobPodSecurityContext:
+  runAsNonRoot: true
+
+jobSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+jobResources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
 
 # ---------- Admin credentials ----------
 # Three ways to provide:

@@ -8,17 +8,17 @@ AgentGateway standalone proxy for CAIPE MCP traffic
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install agentgateway oci://ghcr.io/cnoe-io/charts/agentgateway --version 0.5.68
+helm install agentgateway oci://ghcr.io/caipe-io/charts/agentgateway --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade agentgateway oci://ghcr.io/cnoe-io/charts/agentgateway --version 0.5.68
+helm upgrade agentgateway oci://ghcr.io/caipe-io/charts/agentgateway --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install agentgateway oci://ghcr.io/cnoe-io/charts/agentgateway --version 0.5.68 \
+helm install agentgateway oci://ghcr.io/caipe-io/charts/agentgateway --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install agentgateway oci://ghcr.io/cnoe-io/charts/agentgateway --version 0.5.68 \
+helm install agentgateway oci://ghcr.io/caipe-io/charts/agentgateway --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/agentgateway --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/agentgateway --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -97,6 +97,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/agentgateway --version 0.5.68
 | service.statsPort | int | `15020` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.annotations | object | `{}` |  |
+| serviceAccount.automount | bool | `false` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
 | tolerations | list | `[]` |  |

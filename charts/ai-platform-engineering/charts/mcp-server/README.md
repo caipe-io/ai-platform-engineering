@@ -8,17 +8,17 @@ Deploys one agent's MCP server (Deployment + Service) for CAIPE
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68
+helm install mcp-server oci://ghcr.io/caipe-io/charts/mcp-server --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68
+helm upgrade mcp-server oci://ghcr.io/caipe-io/charts/mcp-server --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68 \
+helm install mcp-server oci://ghcr.io/caipe-io/charts/mcp-server --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install mcp-server oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68 \
+helm install mcp-server oci://ghcr.io/caipe-io/charts/mcp-server --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/mcp-server --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -82,7 +82,10 @@ helm show values oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68
 | mcp.readinessProbe.periodSeconds | int | `5` |  |
 | mcp.readinessProbe.tcpSocket.port | string | `"http"` |  |
 | mcp.readinessProbe.timeoutSeconds | int | `3` |  |
-| mcp.resources | object | `{}` |  |
+| mcp.resources.limits.cpu | string | `"500m"` |  |
+| mcp.resources.limits.memory | string | `"2Gi"` |  |
+| mcp.resources.requests.cpu | string | `"100m"` |  |
+| mcp.resources.requests.memory | string | `"500Mi"` |  |
 | mcp.service.port | int | `8000` |  |
 | mcp.service.type | string | `"ClusterIP"` |  |
 | mcp.startupProbe.failureThreshold | int | `30` |  |
@@ -107,7 +110,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/mcp-server --version 0.5.68
 | securityContext.runAsUser | int | `1001` |  |
 | securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | serviceAccount.annotations | object | `{}` |  |
-| serviceAccount.automount | bool | `true` |  |
+| serviceAccount.automount | bool | `false` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
 | tolerations | list | `[]` |  |

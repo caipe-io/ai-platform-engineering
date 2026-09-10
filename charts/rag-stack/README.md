@@ -8,17 +8,17 @@ A complete RAG stack including server, agents, Redis, Neo4j and Milvus
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install rag-stack oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
+helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade rag-stack oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
+helm upgrade rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install rag-stack oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68 \
+helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install rag-stack oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68 \
+helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -91,7 +91,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 | agent-ontology.startupProbe.timeoutSeconds | int | `5` |  |
 | agent-ontology.syncInterval | int | `0` |  |
 | agentExports.data.enabled | bool | `true` |  |
-| global.image | object | `{"channel":"","tag":""}` | Global image tag override. When set, overrides appVersion-based image tags for all rag-stack subcharts. Individual subchart image.tag values still take highest precedence. |
+| global.image | object | `{"tag":""}` | Global image tag override. When set, overrides appVersion-based image tags for all rag-stack subcharts. Individual subchart image.tag values still take highest precedence. |
 | global.llmSecrets.create | bool | `true` |  |
 | global.llmSecrets.data | object | `{}` |  |
 | global.llmSecrets.externalSecrets.data | list | `[]` |  |
@@ -119,21 +119,60 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 | global.rag.redis.db | int | `0` |  |
 | global.rag.redis.host | string | `"rag-redis"` |  |
 | global.rag.redis.port | int | `6379` |  |
+| milvus.containerSecurityContext.allowPrivilegeEscalation | bool | `false` |  |
+| milvus.containerSecurityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| milvus.containerSecurityContext.runAsGroup | int | `1000` |  |
+| milvus.containerSecurityContext.runAsNonRoot | bool | `true` |  |
+| milvus.containerSecurityContext.runAsUser | int | `1000` |  |
+| milvus.containerSecurityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | milvus.dataNode.annotations | object | `{}` |  |
 | milvus.dataNode.podDisruptionBudget.enabled | bool | `false` |  |
 | milvus.dataNode.resources.limits.cpu | string | `"200m"` |  |
 | milvus.dataNode.resources.limits.memory | string | `"256Mi"` |  |
+| milvus.enabled | bool | `true` |  |
+| milvus.etcd.containerSecurityContext.allowPrivilegeEscalation | bool | `false` |  |
+| milvus.etcd.containerSecurityContext.capabilities.drop[0] | string | `"ALL"` |  |
+| milvus.etcd.containerSecurityContext.enabled | bool | `true` |  |
+| milvus.etcd.containerSecurityContext.runAsNonRoot | bool | `true` |  |
+| milvus.etcd.containerSecurityContext.runAsUser | int | `1001` |  |
+| milvus.etcd.containerSecurityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | milvus.etcd.podAnnotations | object | `{}` |  |
 | milvus.etcd.podDisruptionBudget.enabled | bool | `false` |  |
+| milvus.etcd.podSecurityContext.enabled | bool | `true` |  |
+| milvus.etcd.podSecurityContext.fsGroup | int | `1001` |  |
+| milvus.etcd.podSecurityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
+| milvus.etcd.resources.limits.cpu | string | `"500m"` |  |
+| milvus.etcd.resources.limits.memory | string | `"512Mi"` |  |
+| milvus.etcd.resources.requests.cpu | string | `"100m"` |  |
+| milvus.etcd.resources.requests.memory | string | `"128Mi"` |  |
+| milvus.etcd.serviceAccount.automountServiceAccountToken | bool | `false` |  |
+| milvus.etcd.serviceAccount.create | bool | `true` |  |
 | milvus.minio.podAnnotations | object | `{}` |  |
 | milvus.minio.podDisruptionBudget.enabled | bool | `false` |  |
 | milvus.mixCoordinator.annotations | object | `{}` |  |
+| milvus.mixCoordinator.resources.limits.cpu | string | `"500m"` |  |
+| milvus.mixCoordinator.resources.limits.memory | string | `"512Mi"` |  |
+| milvus.mixCoordinator.resources.requests.cpu | string | `"100m"` |  |
+| milvus.mixCoordinator.resources.requests.memory | string | `"128Mi"` |  |
 | milvus.proxy.annotations | object | `{}` |  |
+| milvus.proxy.resources.limits.cpu | string | `"500m"` |  |
+| milvus.proxy.resources.limits.memory | string | `"512Mi"` |  |
+| milvus.proxy.resources.requests.cpu | string | `"100m"` |  |
+| milvus.proxy.resources.requests.memory | string | `"128Mi"` |  |
 | milvus.pulsarv3.enabled | bool | `false` |  |
 | milvus.queryNode.annotations | object | `{}` |  |
 | milvus.queryNode.podDisruptionBudget.enabled | bool | `false` |  |
 | milvus.queryNode.resources.limits.cpu | string | `"200m"` |  |
 | milvus.queryNode.resources.limits.memory | string | `"256Mi"` |  |
+| milvus.securityContext.fsGroup | int | `1000` |  |
+| milvus.securityContext.fsGroupChangePolicy | string | `"OnRootMismatch"` |  |
+| milvus.securityContext.runAsGroup | int | `1000` |  |
+| milvus.securityContext.runAsNonRoot | bool | `true` |  |
+| milvus.securityContext.runAsUser | int | `1000` |  |
+| milvus.serviceAccount.annotations | object | `{}` |  |
+| milvus.serviceAccount.create | bool | `false` |  |
+| milvus.serviceAccount.name | string | `"rag-milvus"` |  |
+| milvus.serviceAccount.ragStackManaged | bool | `true` |  |
 | milvus.woodpecker.enabled | bool | `true` |  |
 | neo4j.apoc_config."apoc.import.file.enabled" | string | `"true"` |  |
 | neo4j.apoc_config."apoc.trigger.enabled" | string | `"true"` |  |
@@ -141,6 +180,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 | neo4j.config."dbms.security.procedures.unrestricted" | string | `"apoc.*"` |  |
 | neo4j.config."server.config.strict_validation.enabled" | string | `"false"` |  |
 | neo4j.config."server.directories.plugins" | string | `"/var/lib/neo4j/labs"` |  |
+| neo4j.containerSecurityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | neo4j.disableLookups | bool | `true` |  |
 | neo4j.enabled | bool | `true` |  |
 | neo4j.fullnameOverride | string | `"rag-neo4j"` |  |
@@ -149,6 +189,11 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 | neo4j.neo4j.resources.cpu | string | `"1"` |  |
 | neo4j.neo4j.resources.memory | string | `"2Gi"` |  |
 | neo4j.podSpec.annotations | object | `{}` |  |
+| neo4j.podSpec.serviceAccountName | string | `"rag-neo4j"` |  |
+| neo4j.serviceAccount.annotations | object | `{}` |  |
+| neo4j.serviceAccount.automount | bool | `false` |  |
+| neo4j.serviceAccount.create | bool | `true` |  |
+| neo4j.serviceAccount.name | string | `"rag-neo4j"` |  |
 | neo4j.services.neo4j.enabled | bool | `false` |  |
 | neo4j.volumes.data.dynamic.storageClassName | string | `"gp2"` |  |
 | neo4j.volumes.data.mode | string | `"dynamic"` |  |
@@ -222,9 +267,9 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 
 | Name | Version | Condition / Tags |
 |------|---------|------------------|
-| rag-server | `0.5.68` | `rag-server.enabled` |
-| agent-ontology | `0.5.68` | `agent-ontology.enabled` |
-| rag-ingestors | `0.5.68` | `rag-ingestors.enabled` |
+| rag-server | `1.0.1` | `rag-server.enabled` |
+| agent-ontology | `1.0.1` | `agent-ontology.enabled` |
+| rag-ingestors | `1.0.1` | `rag-ingestors.enabled` |
 | neo4j | `2025.07.1` | `neo4j.enabled` |
-| rag-redis | `0.5.68` | `rag-redis.enabled` |
+| rag-redis | `1.0.1` | `rag-redis.enabled` |
 | milvus | `5.0.2` | `milvus.enabled` |
