@@ -216,6 +216,7 @@ export function ChatPanel({
       await apiClient.updateConversation(conversationId, {
         participants: newParticipants,
       });
+      setHasRelinkedAgent(true);
       // Patch the Zustand store in-place so ChatContainer sees the new participants
       // immediately — it skips the API fetch when the conversation is already cached.
       useChatStore.setState((state) => ({
@@ -224,7 +225,6 @@ export function ChatPanel({
         ),
       }));
       onAgentRelinked?.(agentId);
-      setHasRelinkedAgent(true);
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
@@ -254,13 +254,13 @@ export function ChatPanel({
     try {
       const newParticipants = buildParticipants(chosenAgentId);
       await apiClient.updateConversation(conversationId, { participants: newParticipants });
+      setHasRelinkedAgent(true);
       useChatStore.setState((state) => ({
         conversations: state.conversations.map((c) =>
           c.id === conversationId ? { ...c, participants: newParticipants } : c,
         ),
       }));
       onAgentRelinked?.(chosenAgentId);
-      setHasRelinkedAgent(true);
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
