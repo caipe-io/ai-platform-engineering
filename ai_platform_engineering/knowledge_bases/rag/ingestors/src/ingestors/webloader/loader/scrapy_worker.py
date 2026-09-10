@@ -932,24 +932,27 @@ class WorkerSpider(Spider):
           parts.append(f"Sitemaps checked: {', '.join(self.sitemap_urls_checked)}.")
         if self.robots_urls_checked:
           parts.append(f"robots.txt checked: {', '.join(self.robots_urls_checked)}.")
-      elif self.pages_failed == 0 and self.pages_fetched_no_content > 0:
-        # Every request returned 200, so nothing tripped the non-200 error
-        # path above, yet no content could be extracted. A login wall
-        # commonly redirects an unauthenticated request to a 200 sign-in
-        # page rather than a 401/403, so say so instead of implying the
-        # page was simply empty.
-        parts.append(
-          f"{self.pages_fetched_no_content} page(s) loaded successfully but had "
-          "no extractable content. If this site requires signing in, an "
-          "unauthenticated request commonly lands on a login page instead of "
-          "returning an error - confirm the URL is reachable without "
-          "authentication."
-        )
       else:
         parts.append("No pages were crawled.")
 
       if self.pages_failed > 0:
         parts.append(f"{self.pages_failed} requests failed.")
+
+    # At least one page returned 200 with nothing to extract. A login wall
+    # commonly redirects an unauthenticated request to a 200 sign-in page
+    # rather than a 401/403, so that's a signal worth naming even when other
+    # pages also failed outright - it can be the dominant cause when most
+    # pages are empty-200 and only a few hit a real error. Applies regardless
+    # of which branch above ran, including a sitemap crawl that found URLs
+    # and dispatched them to parse_page but scraped none of them.
+    if self.pages_fetched_no_content > 0:
+      parts.append(
+        f"{self.pages_fetched_no_content} page(s) loaded successfully but had "
+        "no extractable content. If this site requires signing in, an "
+        "unauthenticated request commonly lands on a login page instead of "
+        "returning an error - confirm the URL is reachable without "
+        "authentication."
+      )
 
     # Include collected error messages for more detail
     if self.errors:
