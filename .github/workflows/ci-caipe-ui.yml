@@ -16,7 +16,7 @@ on:
         required: false
         type: string
       force_build:
-        description: 'Force a fresh build of all components (bypass change-detection/retag). Use for coordinated releases.'
+        description: 'Force a fresh build of all components (bypass change-detection). Use for coordinated releases.'
         required: false
         type: boolean
         default: false
@@ -34,7 +34,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_build: ${{ steps.set-outputs.outputs.should_build }}
-      should_retag: ${{ steps.set-outputs.outputs.should_retag }}
       tag_version: ${{ steps.version.outputs.tag_version }}
     steps:
       - name: Checkout repository
@@ -50,29 +49,10 @@ jobs:
           manual_tag: ${{ inputs.tag_version }}
           token: ${{ github.token }}
 
-      - name: 🔎 Determine diff base for tag-push change detection
-        id: diffbase
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
-        run: |
-          set -euo pipefail
-          # dorny/paths-filter defaults `base` to the repo's default branch
-          # (main). The tagged commit is already on main, so diffing
-          # tag-vs-main is a near-empty no-op — every tag push reported
-          # "no changes" and silently retagged a stale image instead of
-          # rebuilding. Diff against the previous tag instead.
-          BASE_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || true)
-          echo "base=$BASE_TAG" >> "$GITHUB_OUTPUT"
-          if [ -n "$BASE_TAG" ]; then
-            echo "📍 Diffing against previous tag: $BASE_TAG"
-          else
-            echo "⚠️ No previous tag found; leaving paths-filter base unset"
-          fi
-
       - name: Detect changed paths
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         with:
-          base: ${{ steps.diffbase.outputs.base }}
           filters: |
             ui:
               - 'ui/**'
@@ -86,50 +66,27 @@ jobs:
           FORCE_BUILD: ${{ inputs.force_build }}
         run: |
           SHOULD_BUILD="false"
-          SHOULD_RETAG="false"
 
           # Chart-only tag: skip image builds entirely
           if [[ "$TAG_VERSION" =~ -chart\.[0-9]+$ ]]; then
             echo "📊 Chart-only tag: skipping image builds"
             echo "should_build=false" >> $GITHUB_OUTPUT
-            echo "should_retag=false" >> $GITHUB_OUTPUT
             exit 0
-          fi
-
-          # Determine pre-release type and number
-          if [[ "$TAG_VERSION" =~ -(dev|rc|hotfix)\.([0-9]+)$ ]]; then
-            IS_PRERELEASE="true"
-            PRERELEASE_NUM="${BASH_REMATCH[2]}"
-          else
-            IS_PRERELEASE="false"
-            PRERELEASE_NUM=0
           fi
 
           if [ "$FORCE_BUILD" == "true" ]; then
             SHOULD_BUILD="true"
-            SHOULD_RETAG="false"
             echo "🔁 force_build requested: building fresh regardless of changes"
           elif [ -n "$TAG_VERSION" ]; then
-            if [ "$IS_PRERELEASE" == "true" ] && [ "$PRERELEASE_NUM" -gt 1 ]; then
-              if [ "$UI_CHANGED" == "true" ]; then
-                SHOULD_BUILD="true"
-                echo "🔨 Pre-release tag with UI changes: building"
-              else
-                SHOULD_RETAG="true"
-                echo "🏷️ Pre-release tag without UI changes: retagging"
-              fi
-            else
-              SHOULD_BUILD="true"
-              echo "🚀 Build all: first pre-release or final release"
-            fi
+            SHOULD_BUILD="true"
+            echo "🏷️ Tag push: building fresh"
           elif [ "$UI_CHANGED" == "true" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             SHOULD_BUILD="true"
             echo "📦 UI files changed or manual trigger: building"
           fi
 
           echo "should_build=$SHOULD_BUILD" >> $GITHUB_OUTPUT
-          echo "should_retag=$SHOULD_RETAG" >> $GITHUB_OUTPUT
-          echo "Outputs: build=$SHOULD_BUILD, retag=$SHOULD_RETAG"
+          echo "Outputs: build=$SHOULD_BUILD"
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -307,177 +264,12 @@ jobs:
         run: |
           docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
 
-  retag-unchanged:
-    runs-on: ubuntu-latest
-    needs: determine-changes
-    if: needs.determine-changes.outputs.should_retag == 'true'
-    permissions:
-      contents: read
-      packages: write
-
-    env:
-      REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/caipe-ui
-      DOCKERFILE: build/Dockerfile.caipe-ui
-
-    steps:
-      - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
-        with:
-          egress-policy: audit
-
-      - name: 🔑 Generate GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ secrets.CI_BUILD_APP_ID }}
-          private-key: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-packages: write
-
-      - name: 📦 Install crane
-        run: |
-          VERSION="v0.20.2"
-          curl -sL "https://github.com/google/go-containerregistry/releases/download/${VERSION}/go-containerregistry_Linux_x86_64.tar.gz" | tar xz crane
-          sudo mv crane /usr/local/bin/
-
-      - name: 🔐 Log in to registry
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_ACTOR: ${{ github.actor }}
-        run: |
-          echo "$GH_TOKEN" | crane auth login ghcr.io -u "$GH_ACTOR" --password-stdin
-
-      - name: 🔍 Check source image and retag or build
-        id: retag-or-build
-        env:
-          TAG_VERSION: ${{ needs.determine-changes.outputs.tag_version }}
-        run: |
-          FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}"
-          echo "🏷️ Processing caipe-ui..."
-
-          # Determine source tag (previous version). Walk back from N-1 to the
-          # latest rc/hotfix that actually has a published image, so a component
-          # that was skipped for an intermediate tag (e.g. rc.9 missing) still
-          # retags from the most recent real image (rc.8) instead of a phantom
-          # rc.9. Falls back to the base version, then to a fresh build.
-          if [[ "$TAG_VERSION" =~ ^(.+)-(dev|rc|hotfix)\.([0-9]+)$ ]]; then
-            BASE_VERSION="${BASH_REMATCH[1]}"
-            SUFFIX_TYPE="${BASH_REMATCH[2]}"
-            SUFFIX_NUM="${BASH_REMATCH[3]}"
-
-            SOURCE_TAG=""
-            if [[ "$SUFFIX_NUM" -gt 1 ]]; then
-              for ((p=SUFFIX_NUM-1; p>=1; p--)); do
-                CANDIDATE="${BASE_VERSION}-${SUFFIX_TYPE}.${p}"
-                if crane manifest "${FULL_IMAGE}:${CANDIDATE}" >/dev/null 2>&1; then
-                  SOURCE_TAG="$CANDIDATE"
-                  echo "  ↩️  Latest existing source: ${SOURCE_TAG}"
-                  break
-                fi
-              done
-            fi
-            if [[ -z "$SOURCE_TAG" ]]; then
-              SOURCE_TAG="${BASE_VERSION}"
-            fi
-          else
-            SOURCE_TAG="latest"
-          fi
-
-          echo "  Source: ${SOURCE_TAG}"
-          echo "  Target: ${TAG_VERSION}"
-
-          if crane manifest "${FULL_IMAGE}:${SOURCE_TAG}" >/dev/null 2>&1; then
-            echo "  ✅ Source image exists, retagging..."
-            if crane tag "${FULL_IMAGE}:${SOURCE_TAG}" "${TAG_VERSION}"; then
-              echo "  ✅ Successfully retagged from ${SOURCE_TAG}"
-              echo "needs_build=false" >> $GITHUB_OUTPUT
-            else
-              echo "  ⚠️ Retag failed unexpectedly, will build instead"
-              echo "needs_build=true" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "  ⚠️ Source image ${SOURCE_TAG} not found"
-            echo "  📦 Will build fresh instead"
-            echo "needs_build=true" >> $GITHUB_OUTPUT
-          fi
-
-      # Fallback build if retag not possible
-      - name: Free disk space
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        run: |
-          echo "Disk usage before cleanup:"
-          df -h
-          sudo apt-get remove -y '^ghc-*' || true
-          sudo apt-get remove -y '^dotnet-*' || true
-          sudo apt-get remove -y '^llvm-*' || true
-          sudo apt-get remove -y 'php*' || true
-          sudo apt-get remove -y azure-cli google-cloud-cli hhvm google-chrome-stable firefox powershell mono-devel || true
-          sudo apt-get autoremove -y
-          sudo apt-get clean
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          docker system prune -af --volumes || true
-          echo "Disk usage after cleanup:"
-          df -h
-
-      - name: Checkout repository
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
-        with:
-          persist-credentials: false
-      - name: Set up Docker Buildx
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
-      - name: Log in to GitHub Container Registry
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Set up QEMU
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
-      # Known gap: this fallback still cross-builds arm64 under QEMU rather
-      # than a native runner (unlike build-and-push above). It only runs when
-      # the source image for retagging is missing — rare — so it hasn't been
-      # split per-platform. Apply the same native-runner + digest-merge
-      # treatment here if this path ever times out/OOMs.
-      - name: 🔨 Build and Push (fallback)
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          file: ${{ env.DOCKERFILE }}
-          target: runner
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.determine-changes.outputs.tag_version }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=min
-          build-args: |
-            CAIPE_URL=http://caipe-supervisor:8000
-            BUILDKIT_INLINE_CACHE=1
-            IMAGE_TAG=${{ needs.determine-changes.outputs.tag_version || github.sha }}
-            GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
-          provenance: false
-          sbom: false
-
   # Notify release-finalize workflow when this CI completes
   notify-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # Required for repository_dispatch via gh api
-    needs: [determine-changes, build-and-push, merge-manifests, retag-unchanged]
+    needs: [determine-changes, build-and-push, merge-manifests]
     if: |
       always() &&
       needs.determine-changes.outputs.tag_version != '' &&
@@ -499,19 +291,16 @@ jobs:
           TAG_VERSION: ${{ needs.determine-changes.outputs.tag_version }}
           BUILD_PUSH_RESULT: ${{ needs.build-and-push.result }}
           MERGE_RESULT: ${{ needs.merge-manifests.result }}
-          RETAG_UNCHANGED_RESULT: ${{ needs.retag-unchanged.result }}
           GH_REPOSITORY: ${{ github.repository }}
           GH_WORKFLOW: ${{ github.workflow }}
         run: |
           BUILD_RESULT="$BUILD_PUSH_RESULT"
           MERGE_RESULT_VAL="$MERGE_RESULT"
-          RETAG_RESULT="$RETAG_UNCHANGED_RESULT"
 
           if [[ "$BUILD_RESULT" == "skipped" ]]; then BUILD_RESULT="success"; fi
           if [[ "$MERGE_RESULT_VAL" == "skipped" ]]; then MERGE_RESULT_VAL="success"; fi
-          if [[ "$RETAG_RESULT" == "skipped" ]]; then RETAG_RESULT="success"; fi
 
-          if [[ "$BUILD_RESULT" == "success" && "$MERGE_RESULT_VAL" == "success" && "$RETAG_RESULT" == "success" ]]; then
+          if [[ "$BUILD_RESULT" == "success" && "$MERGE_RESULT_VAL" == "success" ]]; then
             CONCLUSION="success"
           else
             CONCLUSION="failure"

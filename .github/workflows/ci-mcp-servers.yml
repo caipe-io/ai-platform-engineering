@@ -12,12 +12,12 @@ on:
   workflow_dispatch:
     inputs:
       build_all:
-        description: 'Force a fresh build of all components (bypass change-detection/retag). Use for coordinated releases.'
+        description: 'Force a fresh build of all components (bypass change-detection). Use for coordinated releases.'
         required: false
         default: false
         type: boolean
       tag_version:
-        description: 'Version tag to apply (e.g., 0.3.0-dev.5). If provided, unchanged agents will be retagged from previous version.'
+        description: 'Version tag to apply (e.g., 0.3.0-dev.5).'
         required: false
         type: string
 
@@ -56,9 +56,7 @@ jobs:
       (github.event_name == 'workflow_dispatch')
     outputs:
       agents_to_build: ${{ steps.set-matrix.outputs.agents_to_build }}
-      agents_to_retag: ${{ steps.set-matrix.outputs.agents_to_retag }}
       should_build: ${{ steps.set-matrix.outputs.should_build }}
-      should_retag: ${{ steps.set-matrix.outputs.should_retag }}
       tag_version: ${{ steps.version.outputs.tag_version }}
     env:
       ALL_AGENTS: ${{ needs.load-config.outputs.all_agents }}
@@ -105,29 +103,10 @@ jobs:
             });
             core.setOutput('filters', filters);
 
-      - name: 🔎 Determine diff base for tag-push change detection
-        id: diffbase
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
-        run: |
-          set -euo pipefail
-          # dorny/paths-filter defaults `base` to the repo's default branch
-          # (main). The tagged commit is already on main, so diffing
-          # tag-vs-main is a near-empty no-op — every tag push reported
-          # "no changes" and silently retagged stale images instead of
-          # rebuilding. Diff against the previous tag instead.
-          BASE_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || true)
-          echo "base=$BASE_TAG" >> "$GITHUB_OUTPUT"
-          if [ -n "$BASE_TAG" ]; then
-            echo "📍 Diffing against previous tag: $BASE_TAG"
-          else
-            echo "⚠️ No previous tag found; leaving paths-filter base unset"
-          fi
-
       - name: Detect changed paths (MCP)
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         with:
-          base: ${{ steps.diffbase.outputs.base }}
           filters: ${{ steps.generate-filters.outputs.filters }}
 
       - name: Set matrix based on changes (MCP)
@@ -148,44 +127,25 @@ jobs:
             if (/-chart\.\d+$/.test(tagVersion)) {
               console.log("📊 Chart-only tag: skipping image builds");
               core.setOutput('agents_to_build', '[]');
-              core.setOutput('agents_to_retag', '[]');
               core.setOutput('should_build', 'false');
-              core.setOutput('should_retag', 'false');
               return;
             }
 
-            const preReleaseMatch = tagVersion ? tagVersion.match(/-(dev|rc|hotfix)\.(\d+)$/) : null;
-            const isPreRelease = !!preReleaseMatch;
-            const preReleaseNum = preReleaseMatch ? parseInt(preReleaseMatch[2]) : 0;
             const isSharedChanged = filterOutputs.shared_config === 'true' ||
                                    filterOutputs.shared_dockerfile === 'true';
 
-            // Build all if: manual, shared changed, first pre-release (N==1), or final release
-            const shouldForceBuildAll = manualBuildAll || isSharedChanged ||
-              (tagVersion && !isPreRelease) ||
-              (isPreRelease && preReleaseNum === 1);
-
             let agentsToBuild;
-            let agentsToRetag = [];
-
-            if (shouldForceBuildAll) {
-              console.log("🚀 Build all: " + (manualBuildAll ? "manual" : isSharedChanged ? "shared changed" : "first pre-release or final release"));
+            if (manualBuildAll || isSharedChanged || tagVersion) {
+              console.log("🚀 Build all: " + (manualBuildAll ? "manual" : isSharedChanged ? "shared changed" : "tag push"));
               agentsToBuild = allAgents;
-            } else if (isPreRelease && preReleaseNum > 1) {
-              console.log(`🏷️ Pre-release N>1 (${tagVersion}): build changed / retag unchanged`);
-              agentsToBuild = allAgents.filter(a => filterOutputs[a] === 'true');
-              agentsToRetag = allAgents.filter(a => filterOutputs[a] !== 'true');
             } else {
               console.log("🔍 Standard PR: building only changed agents");
               agentsToBuild = allAgents.filter(a => filterOutputs[a] === 'true');
             }
 
             core.setOutput('agents_to_build', JSON.stringify(agentsToBuild));
-            core.setOutput('agents_to_retag', JSON.stringify(agentsToRetag));
             core.setOutput('should_build', String(agentsToBuild.length > 0));
-            core.setOutput('should_retag', String(agentsToRetag.length > 0 && !!tagVersion));
             console.log(`Agents to build: ${agentsToBuild.join(', ') || 'none'}`);
-            console.log(`Agents to retag: ${agentsToRetag.join(', ') || 'none'}`);
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -351,154 +311,12 @@ jobs:
         run: |
           docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
 
-  # Retag unchanged agents from previous version when tag_version is provided
-  # If source image doesn't exist (still building), falls back to full build
-  retag-unchanged:
-    runs-on: ubuntu-latest
-    needs: determine-agents
-    if: needs.determine-agents.outputs.should_retag == 'true'
-    permissions:
-      contents: read
-      packages: write
-
-    strategy:
-      matrix:
-        agent: ${{ fromJson(needs.determine-agents.outputs.agents_to_retag) }}
-      fail-fast: false
-
-    env:
-      REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/mcp-${{ matrix.agent }}
-
-    steps:
-      - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
-        with:
-          egress-policy: audit
-
-      - name: 🔑 Generate GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ secrets.CI_MCP_APP_ID }}
-          private-key: ${{ secrets.CI_MCP_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-packages: write
-
-      - name: 📦 Install crane
-        run: |
-          VERSION="v0.20.2"
-          curl -sL "https://github.com/google/go-containerregistry/releases/download/${VERSION}/go-containerregistry_Linux_x86_64.tar.gz" | tar xz crane
-          sudo mv crane /usr/local/bin/
-
-      - name: 🔐 Log in to registry
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          REGISTRY_USER: ${{ github.actor }}
-        run: |
-          echo "$GH_TOKEN" | crane auth login ghcr.io -u "$REGISTRY_USER" --password-stdin
-
-      - name: 🔍 Check source image and retag or build
-        id: retag-or-build
-        env:
-          TAG_VERSION: ${{ needs.determine-agents.outputs.tag_version }}
-        run: |
-          FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}"
-          echo "🏷️ Processing mcp-${{ matrix.agent }}..."
-
-          # Determine source tag (previous version). Walk back from N-1 to the
-          # latest rc/hotfix that actually has a published image, so a component
-          # that was skipped for an intermediate tag (e.g. rc.9 missing) still
-          # retags from the most recent real image (rc.8) instead of a phantom
-          # rc.9. Falls back to the base version, then to a fresh build.
-          if [[ "$TAG_VERSION" =~ ^(.+)-(dev|rc|hotfix)\.([0-9]+)$ ]]; then
-            BASE_VERSION="${BASH_REMATCH[1]}"
-            SUFFIX_TYPE="${BASH_REMATCH[2]}"
-            SUFFIX_NUM="${BASH_REMATCH[3]}"
-
-            SOURCE_TAG=""
-            if [[ "$SUFFIX_NUM" -gt 1 ]]; then
-              for ((p=SUFFIX_NUM-1; p>=1; p--)); do
-                CANDIDATE="${BASE_VERSION}-${SUFFIX_TYPE}.${p}"
-                if crane manifest "${FULL_IMAGE}:${CANDIDATE}" >/dev/null 2>&1; then
-                  SOURCE_TAG="$CANDIDATE"
-                  echo "  ↩️  Latest existing source: ${SOURCE_TAG}"
-                  break
-                fi
-              done
-            fi
-            if [[ -z "$SOURCE_TAG" ]]; then
-              SOURCE_TAG="${BASE_VERSION}"
-            fi
-          else
-            SOURCE_TAG="latest"
-          fi
-
-          echo "  Source: ${SOURCE_TAG}"
-          echo "  Target: ${TAG_VERSION}"
-
-          # Check if source image exists
-          if crane manifest "${FULL_IMAGE}:${SOURCE_TAG}" >/dev/null 2>&1; then
-            echo "  ✅ Source image exists, retagging..."
-            if crane tag "${FULL_IMAGE}:${SOURCE_TAG}" "${TAG_VERSION}"; then
-              echo "  ✅ Successfully retagged from ${SOURCE_TAG}"
-              echo "needs_build=false" >> $GITHUB_OUTPUT
-            else
-              echo "  ⚠️ Retag failed unexpectedly, will build instead"
-              echo "needs_build=true" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "  ⚠️ Source image ${SOURCE_TAG} not found (may still be building)"
-            echo "  📦 Will build fresh instead of using stale fallback"
-            echo "needs_build=true" >> $GITHUB_OUTPUT
-          fi
-
-      # Fallback build if retag not possible
-      - name: Checkout repository
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
-      - name: Set up Docker Buildx
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
-      - name: Log in to GitHub Container Registry
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Set up QEMU
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
-
-      # Known gap: this fallback still cross-builds arm64 under QEMU rather
-      # than a native runner (unlike build-and-push above). It only runs when
-      # the source image for retagging is missing — rare — so it hasn't been
-      # split per-platform. Apply the same native-runner + digest-merge
-      # treatment here if this path ever times out/OOMs.
-      - name: 🔨 Build and Push (fallback)
-        if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          file: build/agents/Dockerfile.mcp
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.determine-agents.outputs.tag_version }}
-          build-args: |
-            AGENT_NAME=${{ matrix.agent }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
   # Notify release-finalize workflow when this CI completes (for final release builds only)
   notify-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # Required for repository_dispatch via gh api
-    needs: [determine-agents, build-and-push, merge-manifests, retag-unchanged]
+    needs: [determine-agents, build-and-push, merge-manifests]
     if: |
       always() &&
       needs.determine-agents.outputs.tag_version != '' &&
@@ -523,14 +341,12 @@ jobs:
           # Determine overall conclusion
           BUILD_RESULT="${{ needs.build-and-push.result }}"
           MERGE_RESULT="${{ needs.merge-manifests.result }}"
-          RETAG_RESULT="${{ needs.retag-unchanged.result }}"
 
           # Consider skipped as success (job conditions not met)
           if [[ "$BUILD_RESULT" == "skipped" ]]; then BUILD_RESULT="success"; fi
           if [[ "$MERGE_RESULT" == "skipped" ]]; then MERGE_RESULT="success"; fi
-          if [[ "$RETAG_RESULT" == "skipped" ]]; then RETAG_RESULT="success"; fi
 
-          if [[ "$BUILD_RESULT" == "success" && "$MERGE_RESULT" == "success" && "$RETAG_RESULT" == "success" ]]; then
+          if [[ "$BUILD_RESULT" == "success" && "$MERGE_RESULT" == "success" ]]; then
             CONCLUSION="success"
           else
             CONCLUSION="failure"
