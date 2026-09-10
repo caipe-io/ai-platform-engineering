@@ -224,7 +224,7 @@ export function ChatPanel({
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
-  }, [conversationId, onAgentRelinked, router, toast]);
+  }, [conversationId, onAgentRelinked, toast]);
 
   // "Choose agent" picker state — loaded lazily when the deprecated-agent banner is shown.
   const [showAgentPicker, setShowAgentPicker] = useState(false);
@@ -259,7 +259,7 @@ export function ChatPanel({
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
-  }, [conversationId, chosenAgentId, onAgentRelinked, router, toast]);
+  }, [conversationId, chosenAgentId, onAgentRelinked, toast]);
 
   // Slash command registry
   const slashCommands = useSlashCommands(agentSkills);
