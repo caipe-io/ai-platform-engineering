@@ -28,7 +28,6 @@ import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
-import { useRouter } from "next/navigation";
 import Image from "next/image";
 import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
 import TextareaAutosize from "react-textarea-autosize";
@@ -84,7 +83,6 @@ export function ChatPanel({
   const agentSkills = agent?.skills;
   const { data: session } = useSession();
   const { toast } = useToast();
-  const router = useRouter();
   const autoScrollEnabled = useFeatureFlagStore((s) => s.flags.autoScroll ?? true);
   const showTimestamps = useFeatureFlagStore((s) => s.flags.showTimestamps ?? false);
 
