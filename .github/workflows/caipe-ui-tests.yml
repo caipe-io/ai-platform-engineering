@@ -352,6 +352,9 @@ jobs:
           MONGODB_URI: 'mongodb://mock:27017'
           MONGODB_DATABASE: 'mock'
           NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
+          CAIPE_UNSAFE_RBAC_BYPASS: 'true'
+          CAIPE_CREDENTIALS_ENABLED: 'true'
+          CAIPE_USER_CONNECTIONS_ENABLED: 'true'
         run: npm run build
 
       - name: Start CAIPE UI server
@@ -362,6 +365,9 @@ jobs:
           MONGODB_URI: 'mongodb://mock:27017'
           MONGODB_DATABASE: 'mock'
           NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
+          CAIPE_UNSAFE_RBAC_BYPASS: 'true'
+          CAIPE_CREDENTIALS_ENABLED: 'true'
+          CAIPE_USER_CONNECTIONS_ENABLED: 'true'
         run: |
           # Run the production server, not `next dev`: React StrictMode
           # double-invokes effects only in dev, which breaks exact
@@ -393,6 +399,11 @@ jobs:
           CAIPE_UI_BASE_URL: http://localhost:3000
           WORKFLOWS_ENABLED: 'true'
           NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
+          # The mocked credentials specs exercise protected personal pages. In
+          # this isolated browser lane, use the explicit test-only bypass so
+          # they do not require a live OpenFGA service; authorization remains
+          # covered by the route mocks and the live RBAC lane.
+          CAIPE_UNSAFE_RBAC_BYPASS: 'true'
         run: |
           # Run every mocked-RBAC spec under e2e/rbac/, excluding the
           # *-live.spec.ts files (those need live Keycloak/OpenFGA infra and
