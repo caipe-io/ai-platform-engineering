@@ -2,5 +2,5 @@ apiVersion: v2
 name: scheduler
 description: A Helm chart for caipe-scheduler - cron schedule registry + k8s CronJob orchestrator. Owns the only RBAC permission to create batch/v1 CronJobs from a hard-coded podTemplate.
 type: application
-version: 1.0.1-rc.3 # Do NOT bump this. It will be updated automatically using the PR or release workflow
-appVersion: 1.0.1-rc.3 # Do NOT modify. It will be updated automatically using the release workflow
+version: 1.0.1-dev.8 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+appVersion: 1.0.1-dev.8 # Do NOT modify. It will be updated automatically using the release workflow
