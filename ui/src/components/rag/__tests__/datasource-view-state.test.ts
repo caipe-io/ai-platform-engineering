@@ -61,7 +61,7 @@ describe("datasource view state", () => {
     expect(JSON.stringify(projection)).not.toContain("test-user-subject");
   });
 
-  it("includes collection-derived teams in Search filters without using collection names", () => {
+  it("does not treat collection membership as Search access in the filter facet", () => {
     const projection = dataSourceFilterProjection(datasource({
       search_with_teams: [],
       rag_collections: [
@@ -80,10 +80,6 @@ describe("datasource view state", () => {
       ],
     }));
 
-    expect(projection.searchAccess).toEqual([
-      "Team: everyone",
-      "Team: primary",
-    ]);
-    expect(JSON.stringify(projection.searchAccess)).not.toContain("Platform RAG");
+    expect(projection.searchAccess).toEqual([]);
   });
 });

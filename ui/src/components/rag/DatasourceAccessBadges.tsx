@@ -1,6 +1,5 @@
 import { Badge } from "@/components/ui/badge";
 import { Clock3, Search, User, Users } from "lucide-react";
-import type { RagCollectionMembershipLabel } from "@/types/rag-collection";
 import type { PendingPublicationRequestView } from "@/types/publication-approval";
 import {
   effectiveSearchTeamSlugs,
@@ -13,7 +12,6 @@ interface DatasourceAccessBadgesProps {
   ownerDisplayName?: string | null;
   searchTeamSlugs?: string[] | null;
   searchUserDisplayNames?: string[] | null;
-  ragCollections?: RagCollectionMembershipLabel[] | null;
   pendingPublicationRequest?: PendingPublicationRequestView | null;
   detailsKnown: boolean;
   canReadContent?: boolean;
@@ -36,7 +34,6 @@ export function DatasourceAccessBadges({
   ownerDisplayName,
   searchTeamSlugs,
   searchUserDisplayNames,
-  ragCollections,
   pendingPublicationRequest,
   detailsKnown,
   canReadContent = false,
@@ -44,7 +41,6 @@ export function DatasourceAccessBadges({
   const ownerTeam = ownerTeamSlug?.trim();
   const searchTeams = effectiveSearchTeamSlugs({
     searchTeamSlugs,
-    ragCollections,
   }).map(searchTeamLabel);
   const personal = !ownerTeam && Boolean(ownerSubject?.trim());
   const personalLabel = ownerDisplayName?.trim() || "Unknown user";

@@ -530,17 +530,17 @@ export function RagCollectionsView() {
       subtitle: "Collection datasource",
     };
   });
+  function canAddDatasource(datasource: DatasourceOption | undefined): boolean {
+    return datasource?.can_search === true;
+  }
+
   const filteredDatasources = datasources.filter((datasource) => {
     if (draftSources.includes(datasource.datasource_id)) return false;
-    if (datasource.can_search !== true) return false;
+    if (!canAddDatasource(datasource)) return false;
     const query = sourceSearch.trim().toLowerCase();
     if (!query) return true;
     return datasource.name.toLowerCase().includes(query);
   });
-
-  function canAddDatasource(datasource: DatasourceOption | undefined): boolean {
-    return datasource?.can_search === true;
-  }
 
   function addDatasourceToDraft(datasourceId: string): void {
     if (
