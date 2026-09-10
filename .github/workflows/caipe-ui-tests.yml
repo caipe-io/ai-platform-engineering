@@ -351,6 +351,7 @@ jobs:
           # those components exist in the server markup for the mocks to drive.
           MONGODB_URI: 'mongodb://mock:27017'
           MONGODB_DATABASE: 'mock'
+          NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
         run: npm run build
 
       - name: Start CAIPE UI server
@@ -360,6 +361,7 @@ jobs:
           NEXT_PUBLIC_SSO_ENABLED: 'true'
           MONGODB_URI: 'mongodb://mock:27017'
           MONGODB_DATABASE: 'mock'
+          NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
         run: |
           # Run the production server, not `next dev`: React StrictMode
           # double-invokes effects only in dev, which breaks exact
