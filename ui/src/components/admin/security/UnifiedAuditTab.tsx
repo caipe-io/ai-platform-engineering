@@ -137,6 +137,12 @@ const TYPE_FILTER_GROUPS: {
         description:
           "Allow/deny results when the Centralized Authorization Service evaluates whether a subject may act on a resource.",
       },
+      {
+        value: "cas_reconcile",
+        label: "Policy reconciliations",
+        description:
+          "OpenFGA relationship changes applied by CAS, including the reconciliation scope and applied tuple counts.",
+      },
     ],
   },
   {
@@ -302,6 +308,14 @@ function TypeBadge({ type }: { type: AuditEventType }) {
         </Badge>
       );
       break;
+    case "cas_reconcile":
+      badge = (
+        <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-950 dark:text-amber-400 dark:border-amber-800 gap-1">
+          <RefreshCw className="h-3 w-3" />
+          Policy reconciliation
+        </Badge>
+      );
+      break;
     case "agent_delegation":
       badge = (
         <Badge variant="outline" className="text-purple-600 border-purple-300 bg-purple-50 dark:bg-purple-950 dark:text-purple-400 dark:border-purple-800 gap-1">
@@ -435,7 +449,7 @@ function hasReadableSubject(evt: UnifiedAuditEvent): boolean {
 }
 
 function actorLabel(evt: UnifiedAuditEvent): string {
-  return (
+  const label =
     evt.actor_display ||
     evt.caller_display ||
     evt.subject_display ||
@@ -444,20 +458,23 @@ function actorLabel(evt: UnifiedAuditEvent): string {
     evt.actor_ref ||
     evt.subject_ref ||
     compactHash(evt.actor_hash) ||
-    compactHash(evt.subject_hash) ||
-    "unknown"
-  );
+    compactHash(evt.subject_hash);
+  if (label) return label;
+  return evt.type === "cas_reconcile" ? "CAS reconciler" : "unknown";
 }
 
 function subjectLabel(evt: UnifiedAuditEvent): string {
-  return (
+  if (evt.type === "cas_reconcile") {
+    return "OpenFGA relationships";
+  }
+  const label =
     evt.subject_display ||
     evt.user_email ||
     evt.subject_ref ||
     evt.caller_ref ||
-    compactHash(evt.subject_hash) ||
-    "unknown"
-  );
+    compactHash(evt.subject_hash);
+  if (label) return label;
+  return "unknown";
 }
 
 function decisionPathLabel(evt: UnifiedAuditEvent): string {
@@ -476,6 +493,16 @@ function decisionPathLabel(evt: UnifiedAuditEvent): string {
 function requestStory(evt: UnifiedAuditEvent): string {
   const resource = getResourceParts(evt).label;
   const action = humanizeToken(evt.action);
+  if (evt.type === "cas_reconcile") {
+    const target = evt.reconcile_scope
+      ? humanizeToken(evt.reconcile_scope)
+      : "OpenFGA relationships";
+    if (evt.outcome === "error") return `Failed to reconcile ${target}`;
+    const changes = relationshipChangeSummary(evt.writes, evt.deletes);
+    return changes
+      ? `Reconciled ${target} — ${changes}`
+      : `Reconciled ${target}`;
+  }
   if (evt.type === "cas_grant") {
     const op = evt.operation === "revoke" ? "Revoked" : "Granted";
     return `${op} ${action} on ${resource}`;
@@ -487,6 +514,26 @@ function requestStory(evt: UnifiedAuditEvent): string {
         ? "Denied"
         : "Failed";
   return `${verb} to ${action} ${resource}`;
+}
+
+function relationshipChangeSummary(
+  writes?: number,
+  deletes?: number,
+): string | undefined {
+  if (writes == null && deletes == null) return undefined;
+  if ((writes ?? 0) === 0 && (deletes ?? 0) === 0) return "no policy changes";
+  return `${writes ?? 0} added, ${deletes ?? 0} removed`;
+}
+
+function reconcileRequestSummary(evt: UnifiedAuditEvent): string {
+  const scope = evt.reconcile_scope
+    ? humanizeToken(evt.reconcile_scope)
+    : "OpenFGA relationships";
+  const requested = relationshipChangeSummary(
+    evt.requested_writes,
+    evt.requested_deletes,
+  );
+  return requested ? `Scope ${scope} · Requested ${requested}` : `Scope ${scope}`;
 }
 
 function reasonPhrase(evt: UnifiedAuditEvent): string {
@@ -501,6 +548,18 @@ function reasonPhrase(evt: UnifiedAuditEvent): string {
   if (evt.type === "cas_grant") {
     const op = evt.operation === "revoke" ? "revoke" : "grant";
     return `CAS recorded a ${op} attempt with result ${evt.outcome}.`;
+  }
+  if (evt.type === "cas_reconcile") {
+    const scope = evt.reconcile_scope
+      ? humanizeToken(evt.reconcile_scope)
+      : "OpenFGA relationships";
+    if (evt.outcome === "error") {
+      return `CAS failed to reconcile ${scope} because ${reason}.`;
+    }
+    const changes = relationshipChangeSummary(evt.writes, evt.deletes);
+    return changes === "no policy changes"
+      ? `CAS checked ${scope}; OpenFGA required no relationship changes.`
+      : `CAS applied ${changes ?? "the requested relationship changes"} through OpenFGA.`;
   }
   return `${sentenceCase(displaySource(evt.source))} recorded ${evt.outcome} with reason ${reason}.`;
 }
@@ -1194,8 +1253,12 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
 	                          <td className="px-3 py-2 min-w-[260px]" title={`${evt.action} ${evt.resource_ref || ""}`.trim()}>
 	                            <div className="font-medium text-sm">{story}</div>
 	                            <div className="text-[11px] text-muted-foreground mt-0.5">
-	                              {evt.workflow_run_id ? `Workflow run ${evt.workflow_run_id}` : `Resource ${resource.label}`}
-	                              {evt.action ? ` · Action ${evt.action}` : ""}
+	                              {evt.type === "cas_reconcile"
+	                                ? reconcileRequestSummary(evt)
+	                                : evt.workflow_run_id
+	                                  ? `Workflow run ${evt.workflow_run_id}`
+	                                  : `Resource ${resource.label}`}
+	                              {evt.type !== "cas_reconcile" && evt.action ? ` · Action ${evt.action}` : ""}
 	                            </div>
 	                          </td>
 	                          <td className="px-3 py-2 text-xs max-w-[180px] truncate" title={path}>
@@ -1227,8 +1290,18 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
 	                              </div>
 	                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
 	                                <DetailField label="Actor" value={actor} />
-	                                <DetailField label="Subject" value={subject} />
-	                                <DetailField label="Request" value={`${humanizeToken(evt.action)} ${resource.label}`} />
+	                                <DetailField
+	                                  label={evt.type === "cas_reconcile" ? "Target" : "Subject"}
+	                                  value={subject}
+	                                />
+	                                <DetailField
+	                                  label="Request"
+	                                  value={
+	                                    evt.type === "cas_reconcile"
+	                                      ? reconcileRequestSummary(evt)
+	                                      : `${humanizeToken(evt.action)} ${resource.label}`
+	                                  }
+	                                />
 	                                <DetailField label="Decision Path" value={path} />
 	                                <DetailField label="Correlation ID" value={evt.correlation_id} />
 	                                <DetailField label="Context ID" value={evt.context_id} />
@@ -1244,6 +1317,11 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
 	                                <DetailField label="Workflow Run ID" value={evt.workflow_run_id} />
 	                                <DetailField label="Raw Decision Path" value={evt.decision_via} />
                                 <DetailField label="Operation" value={evt.operation} />
+                                <DetailField label="Reconciliation Scope" value={evt.reconcile_scope ? humanizeToken(evt.reconcile_scope) : undefined} />
+                                <DetailField label="Requested Additions" value={evt.requested_writes?.toString()} />
+                                <DetailField label="Requested Removals" value={evt.requested_deletes?.toString()} />
+                                <DetailField label="Applied Additions" value={evt.writes?.toString()} />
+                                <DetailField label="Applied Removals" value={evt.deletes?.toString()} />
                                 <DetailField label="Caller" value={evt.caller_display || evt.caller_ref} />
                                 <DetailField label="Grantee" value={evt.grantee_display || evt.grantee_ref} />
                                 <DetailField label="Actor Hash" value={hasReadableActor(evt) ? undefined : evt.actor_hash} mono />
