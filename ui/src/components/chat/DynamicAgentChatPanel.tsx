@@ -61,9 +61,22 @@ interface ChatPanelProps {
   agentId: string; // Mandatory for Dynamic Agents
   agent?: DynamicAgentConfig | null; // Full agent config object
   isLoadingMessages?: boolean; // Whether messages are still loading (show skeleton)
+  /** Called after a deprecated conversation is linked to a usable agent. */
+  onAgentRelinked?: (agentId: string) => void;
+  /** Bounded, host-validated metadata attached to each app-assistant turn. */
+  clientContext?: Record<string, unknown>;
 }
 
-export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, agent, isLoadingMessages }: ChatPanelProps) {
+export function ChatPanel({
+  conversationId,
+  readOnly,
+  readOnlyReason,
+  agentId,
+  agent,
+  isLoadingMessages,
+  onAgentRelinked,
+  clientContext: suppliedClientContext,
+}: ChatPanelProps) {
   // Derive display values from agent object
   const agentGradient = agent?.ui?.gradient_theme ?? null;
   const agentCustomTheme = agent?.ui?.custom_theme_config ?? null;
@@ -209,11 +222,12 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
           c.id === conversationId ? { ...c, participants: newParticipants } : c,
         ),
       }));
+      onAgentRelinked?.(agentId);
       router.refresh();
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
-  }, [conversationId, router, toast]);
+  }, [conversationId, onAgentRelinked, router, toast]);
 
   // "Choose agent" picker state — loaded lazily when the deprecated-agent banner is shown.
   const [showAgentPicker, setShowAgentPicker] = useState(false);
@@ -244,11 +258,12 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
           c.id === conversationId ? { ...c, participants: newParticipants } : c,
         ),
       }));
+      onAgentRelinked?.(chosenAgentId);
       router.refresh();
     } catch (err) {
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
-  }, [conversationId, chosenAgentId, router, toast]);
+  }, [conversationId, chosenAgentId, onAgentRelinked, router, toast]);
 
   // Slash command registry
   const slashCommands = useSlashCommands(agentSkills);
@@ -1037,6 +1052,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     const conv = getActiveConversation();
     const clientContext: Record<string, unknown> = {
       source: "webui",
+      ...suppliedClientContext,
       ...(conv?.sharing && { chat_sharing: conv.sharing }),
     };
     clearStreamEvents(convId);
@@ -1131,7 +1147,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       });
       setConversationStreaming(convId, null);
     }
-  }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, toast]);
+  }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
 
   // The Home page hero composer creates a conversation and navigates here
   // before a message can be sent (this panel only mounts once a conversation
@@ -1455,6 +1471,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     const conv = getActiveConversation();
     const clientContext: Record<string, unknown> = {
       source: "webui",
+      ...suppliedClientContext,
       ...(conv?.sharing && { chat_sharing: conv.sharing }),
     };
 
@@ -1497,7 +1514,8 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     }
   }, [pendingUserInput, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       appendToMessage, addStreamEvent, setConversationStreaming,
-      clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop]);
+      clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop,
+      suppliedClientContext]);
 
   // Handle tool approval decisions (approve/reject/edit)
   // Shows cards sequentially; only resumes after all tools are decided.
@@ -1554,7 +1572,10 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       accessToken,
     });
 
-    const clientContext: Record<string, unknown> = { source: "webui" };
+    const clientContext: Record<string, unknown> = {
+      source: "webui",
+      ...suppliedClientContext,
+    };
 
     // Build resume payload using the format expected by the runtime.
     let resumePayload: Record<string, unknown>;
@@ -1613,7 +1634,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     }
   }, [pendingToolApproval, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       addStreamEvent, setConversationStreaming, clearStreamEvents, getActiveConversation,
-      buildStreamCallbacks, finalizeStreamLoop]);
+      buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext]);
 
   // Handle slash command detection in input
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
