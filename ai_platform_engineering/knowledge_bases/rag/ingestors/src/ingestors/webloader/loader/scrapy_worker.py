@@ -105,6 +105,11 @@ class WorkerSpider(Spider):
     # Tracking
     self.pages_crawled = 0
     self.pages_failed = 0
+    # Pages that loaded (HTTP 200) but had no extractable content. A login
+    # wall commonly redirects to a 200 sign-in page rather than a 401/403,
+    # so this is the only signal available to tell that failure mode apart
+    # from a page that is genuinely empty.
+    self.pages_fetched_no_content = 0
     self.documents: List[dict] = []
     self.visited_urls: set = set()
     self.start_time = time.time()
@@ -628,6 +633,7 @@ class WorkerSpider(Spider):
       else:
         # Skip pages with no meaningful content (redirects, images, etc.)
         # This is not an error, just nothing to extract
+        self.pages_fetched_no_content += 1
         self._log(logging.DEBUG, f"Skipped page with no content: {response.url}")
 
     except Exception as e:
@@ -931,6 +937,22 @@ class WorkerSpider(Spider):
 
       if self.pages_failed > 0:
         parts.append(f"{self.pages_failed} requests failed.")
+
+    # At least one page returned 200 with nothing to extract. A login wall
+    # commonly redirects an unauthenticated request to a 200 sign-in page
+    # rather than a 401/403, so that's a signal worth naming even when other
+    # pages also failed outright - it can be the dominant cause when most
+    # pages are empty-200 and only a few hit a real error. Applies regardless
+    # of which branch above ran, including a sitemap crawl that found URLs
+    # and dispatched them to parse_page but scraped none of them.
+    if self.pages_fetched_no_content > 0:
+      parts.append(
+        f"{self.pages_fetched_no_content} page(s) loaded successfully but had "
+        "no extractable content. If this site requires signing in, an "
+        "unauthenticated request commonly lands on a login page instead of "
+        "returning an error - confirm the URL is reachable without "
+        "authentication."
+      )
 
     # Include collected error messages for more detail
     if self.errors:

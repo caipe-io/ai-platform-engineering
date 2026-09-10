@@ -411,6 +411,76 @@ class TestWorkerSpiderRedirectHandling:
     # effective_domain should remain None since no redirect occurred
     assert spider.effective_domain is None
 
+  def test_parse_page_tracks_200_responses_with_no_extractable_content(self):
+    """A 200 response with nothing to extract must not look like a real error."""
+    from scrapy.http import HtmlResponse
+
+    spider = self._make_worker_spider(start_url="https://docs.example.com")
+
+    response = HtmlResponse(
+      url="https://docs.example.com/",
+      body=b"<html><body></body></html>",
+    )
+
+    list(spider.parse_page(response))
+
+    assert spider.pages_fetched_no_content == 1
+    assert spider.pages_failed == 0
+    assert spider.errors == []
+
+  def test_failure_message_calls_out_a_likely_login_wall(self):
+    """A crawl where every page 200'd but nothing was extracted should hint at a login wall.
+
+    A site behind auth commonly redirects an unauthenticated request to a
+    200 sign-in page rather than a 401/403, so genuine request failures
+    (pages_failed) give no signal here - pages_fetched_no_content is the
+    only distinguishing evidence available.
+    """
+    spider = self._make_worker_spider(start_url="https://docs.example.com")
+    spider.pages_fetched_no_content = 3
+
+    message = spider._build_failure_message()
+
+    assert "3 page(s) loaded successfully but had no extractable content" in message
+    assert "requires signing in" in message
+    assert message != "No pages were crawled."
+
+  def test_failure_message_calls_out_a_login_wall_even_when_sitemap_found_urls(self):
+    """The login-wall hint must survive the sitemap-found-urls branch too.
+
+    A sitemap crawl that discovers URLs dispatches every one of them to
+    parse_page (see parse_sitemap), so a login wall shows up here exactly
+    the same way it does for a single-URL crawl: 200 responses with nothing
+    to extract. This must not be shadowed by the "Found N URLs in sitemap"
+    message.
+    """
+    spider = self._make_worker_spider(start_url="https://docs.example.com", crawl_mode="sitemap")
+    spider.urls_found_in_sitemap = 5
+    spider.pages_fetched_no_content = 5
+
+    message = spider._build_failure_message()
+
+    assert "Found 5 URLs in sitemap but 0 were scraped." in message
+    assert "5 page(s) loaded successfully but had no extractable content" in message
+    assert "requires signing in" in message
+
+  def test_failure_message_calls_out_a_login_wall_alongside_real_request_failures(self):
+    """The login-wall hint must not be suppressed by unrelated request failures.
+
+    A crawl can have a handful of genuine failures (DNS blips, one real
+    403) *and* a login wall dominating the rest; both are worth surfacing.
+    """
+    spider = self._make_worker_spider(start_url="https://docs.example.com")
+    spider.pages_failed = 1
+    spider.errors = ["HTTP 403: https://docs.example.com/one-off"]
+    spider.pages_fetched_no_content = 99
+
+    message = spider._build_failure_message()
+
+    assert "1 requests failed." in message
+    assert "99 page(s) loaded successfully but had no extractable content" in message
+    assert "requires signing in" in message
+
   def test_legacy_host_redirects_to_canonical_domain(self):
     """A crawl should follow links on the canonical domain after redirecting from a legacy host."""
     spider = self._make_worker_spider(start_url="https://legacy.example.com", crawl_mode="recursive")
