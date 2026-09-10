@@ -75,6 +75,30 @@ def test_is_trivial_does_not_exempt_real_code() -> None:
     assert mod._is_trivial("ai_platform_engineering/utils/auth/audit.py") is False
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "# Copyright 2025 CAIPE Contributors",
+        "// Copyright CAIPE Contributors (https://caipe.io)",
+        "# SPDX-FileCopyrightText: 2025 CAIPE Contributors",
+        "# SPDX-License-Identifier: Apache-2.0",
+    ],
+)
+def test_is_license_header_line_matches_supported_metadata(line: str) -> None:
+    assert mod._is_license_header_line(line) is True
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "# Verify copyright ownership",
+        "Copyright = True",
+    ],
+)
+def test_is_license_header_line_rejects_non_metadata(line: str) -> None:
+    assert mod._is_license_header_line(line) is False
+
+
 # ── End-to-end main() against a temp git repo ──────────────────────────
 
 
@@ -150,6 +174,40 @@ def test_e2e_rbac_change_without_doc_fails(tmp_path: Path) -> None:
     # The validator now lists multiple canonical docs; assert one is mentioned.
     assert "how-rbac-works.md" in err or "security/rbac" in err
     assert "ai_platform_engineering/utils/auth/audit.py" in err
+
+
+def test_e2e_rbac_license_header_only_change_passes(tmp_path: Path) -> None:
+    """Ownership metadata changes must not require RBAC documentation."""
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git_init_repo(repo)
+    auth_file = repo / "ai_platform_engineering/utils/auth/audit.py"
+    auth_file.parent.mkdir(parents=True)
+    auth_file.write_text(
+        "# Copyright 2025 CNOE Contributors\n"
+        "# SPDX-License-Identifier: Apache-2.0\n"
+        "VALUE = 1\n"
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "add auth"],
+        check=True,
+    )
+    _git_branch_and_commit(
+        repo,
+        "feat",
+        {
+            "ai_platform_engineering/utils/auth/audit.py": (
+                "# Copyright 2025 CAIPE Contributors\n"
+                "# SPDX-License-Identifier: Apache-2.0\n"
+                "VALUE = 1\n"
+            )
+        },
+    )
+
+    rc, out, err = _run_validator(repo)
+    assert rc == 0, err
+    assert "doc update not required" in out
 
 
 def test_e2e_rbac_change_with_doc_passes(tmp_path: Path) -> None:

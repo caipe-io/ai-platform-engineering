@@ -18,7 +18,7 @@
  * - Trash listing with auto-purge of 7-day-old conversations
  * - Normal listing excludes soft-deleted conversations
  * - Ownership enforcement
- * - UUID validation
+ * - UUID and legacy conversation identifier validation
  */
 
 import { NextRequest } from 'next/server';
@@ -135,6 +135,7 @@ function makeConversation(overrides: unknown = {}) {
 // ============================================================================
 
 import { DELETE } from '../chat/conversations/[id]/route';
+import { POST as TOGGLE_ARCHIVE } from '../chat/conversations/[id]/archive/route';
 import { POST as RESTORE } from '../chat/conversations/[id]/restore/route';
 import { GET as GET_TRASH } from '../chat/conversations/trash/route';
 import { GET as GET_CONVERSATIONS } from '../chat/conversations/route';
@@ -237,13 +238,57 @@ describe('Archive API', () => {
       expect(res.status).toBe(403);
     });
 
-    it('returns 400 for invalid UUID', async () => {
-      const req = makeRequest('http://localhost:3000/api/chat/conversations/not-a-uuid', {
+    it('soft-deletes a legacy conversation identifier', async () => {
+      const legacyId = 'legacy-demo-conversation';
+      const conv = makeConversation({ _id: legacyId });
+      const convCollection = createMockCollection();
+      convCollection.findOne.mockResolvedValue(conv);
+      mockCollections['conversations'] = convCollection;
+
+      const req = makeRequest(`http://localhost:3000/api/chat/conversations/${legacyId}`, {
         method: 'DELETE',
       });
 
-      const res = await DELETE(req, { params: Promise.resolve({ id: 'not-a-uuid' }) });
+      const res = await DELETE(req, { params: Promise.resolve({ id: legacyId }) });
+
+      expect(res.status).toBe(200);
+      expect(convCollection.updateOne).toHaveBeenCalledWith(
+        { _id: legacyId },
+        { $set: expect.objectContaining({ is_archived: true, deleted_at: expect.any(Date) }) },
+      );
+    });
+
+    it('returns 400 for an unsafe conversation identifier', async () => {
+      const invalidId = 'conversation?permanent=true';
+      const req = makeRequest('http://localhost:3000/api/chat/conversations/invalid', {
+        method: 'DELETE',
+      });
+
+      const res = await DELETE(req, { params: Promise.resolve({ id: invalidId }) });
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe('POST /api/chat/conversations/[id]/archive', () => {
+    it('toggles archive for a legacy conversation identifier', async () => {
+      const legacyId = 'legacy-demo-conversation';
+      const conv = makeConversation({ _id: legacyId });
+      const convCollection = createMockCollection();
+      convCollection.findOne
+        .mockResolvedValueOnce(conv)
+        .mockResolvedValueOnce({ ...conv, is_archived: true });
+      mockCollections['conversations'] = convCollection;
+
+      const req = makeRequest(`http://localhost:3000/api/chat/conversations/${legacyId}/archive`, {
+        method: 'POST',
+      });
+      const res = await TOGGLE_ARCHIVE(req, { params: Promise.resolve({ id: legacyId }) });
+
+      expect(res.status).toBe(200);
+      expect(convCollection.updateOne).toHaveBeenCalledWith(
+        { _id: legacyId },
+        { $set: expect.objectContaining({ is_archived: true, updated_at: expect.any(Date) }) },
+      );
     });
   });
 
@@ -488,12 +533,13 @@ describe('Archive API', () => {
       );
     });
 
-    it('default listing INCLUDES autonomous conversations (only excludes slack)', async () => {
+    it('default listing INCLUDES autonomous conversations (only excludes slack and api)', async () => {
       // Regression: pre-fix the default branch used
       // ``$nin: ['slack', 'autonomous']`` which contradicted the
       // sidebar's "All" filter and made autonomous threads vanish
       // from the All view. The fix narrows the exclusion to slack
-      // only so autonomous chats appear alongside human ones.
+      // (and api, for script-created conversations with no UI
+      // transcript) so autonomous chats appear alongside human ones.
       const convCollection = createMockCollection();
       convCollection.find.mockReturnValue({
         sort: jest.fn().mockReturnValue({
@@ -512,7 +558,7 @@ describe('Archive API', () => {
       const findCall = convCollection.find.mock.calls[0][0];
       // Source filter lives in $and alongside the ownership $or.
       expect(findCall.$and).toEqual(
-        expect.arrayContaining([{ source: { $nin: ['slack'] } }]),
+        expect.arrayContaining([{ source: { $nin: ['slack', 'api'] } }]),
       );
     });
 

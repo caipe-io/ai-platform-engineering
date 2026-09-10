@@ -26,7 +26,6 @@ jobs:
     outputs:
       should_build: ${{ steps.set-outputs.outputs.should_build }}
       tag_version: ${{ steps.version.outputs.tag_version }}
-      image_prefix: ${{ steps.set-outputs.outputs.image_prefix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -50,15 +49,9 @@ jobs:
 
           if [[ "$TAG_VERSION" =~ -chart\.[0-9]+$ ]]; then
             SHOULD_BUILD="false"
-            IMAGE_PREFIX=""
-          elif [[ "$TAG_VERSION" =~ -(rc|hotfix)\.[0-9]+ ]]; then
-            IMAGE_PREFIX="pre-release/"
-          else
-            IMAGE_PREFIX=""
           fi
 
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
-          echo "image_prefix=$IMAGE_PREFIX" >> "$GITHUB_OUTPUT"
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -83,11 +76,11 @@ jobs:
             arch: arm64
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}agentgateway-config-bridge
+      IMAGE_NAME: ${{ github.repository_owner }}/agentgateway-config-bridge
       DOCKERFILE: deploy/agentgateway/Dockerfile.config-bridge
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -157,10 +150,10 @@ jobs:
       packages: write
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}agentgateway-config-bridge
+      IMAGE_NAME: ${{ github.repository_owner }}/agentgateway-config-bridge
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 

@@ -64,7 +64,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-server --version 0.5.68
 | extraVolumes | list | `[]` |  |
 | fullnameOverride | string | `"rag-server"` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-rag-server"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-rag-server"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | initContainers | list | `[]` |  |

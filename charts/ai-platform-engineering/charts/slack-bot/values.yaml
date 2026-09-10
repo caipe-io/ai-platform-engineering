@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/cnoe-io/caipe-slack-bot
+  repository: ghcr.io/caipe-io/caipe-slack-bot
   tag: ""
   pullPolicy: Always
 
@@ -56,10 +56,10 @@ serviceAccount:
 #                                        federated-only Keycloak shell user
 #                                        on first Slack DM when no Keycloak
 #                                        user with the Slack profile email
-#                                        exists yet. "false" falls back to
-#                                        sending the existing HMAC-signed
-#                                        linking URL so the user onboards
-#                                        via the web UI before Slack use.
+#                                        exists yet. "false" treats the user
+#                                        as unlinked so they must contact an
+#                                        admin to onboard via the web UI
+#                                        before Slack use.
 #                                        Provisioning (and all other Keycloak
 #                                        user access) flows through the CAIPE
 #                                        UI BFF using the bot's own service
@@ -152,10 +152,6 @@ externalSecrets:
     #   remoteRef:
     #     key: prod/slack-bot
     #     property: slack_client_secret
-    # - secretKey: SLACK_LINK_HMAC_SECRET
-    #   remoteRef:
-    #     key: prod/slack-bot
-    #     property: slack_link_hmac_secret
     # - secretKey: OAUTH2_CLIENT_SECRET
     #   remoteRef:
     #     key: prod/slack-bot

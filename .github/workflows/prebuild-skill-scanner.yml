@@ -4,7 +4,7 @@ description: "Build and push Skill Scanner Docker image for prebuild branches"
 # Mirrors prebuild-caipe-ui.yml. The skill-scanner image is referenced by the
 # `skill-scanner` Helm subchart (charts/ai-platform-engineering/charts/skill-scanner)
 # but, until this workflow landed, it had no per-PR build pipeline at all —
-# `ghcr.io/<owner>/prebuild/skill-scanner:<branch>-<count>` simply didn't exist
+# `ghcr.io/<owner>/skill-scanner:<branch>-<count>` simply didn't exist
 # for prebuild branches, so reviewers had to build locally to test scanner
 # changes against the chart. This workflow closes that gap.
 
@@ -46,7 +46,7 @@ on:
         default: ''
 
 env:
-  IMAGE_NAME: ${{ github.repository_owner }}/prebuild/skill-scanner
+  IMAGE_NAME: ${{ github.repository_owner }}/skill-scanner
 
 permissions:
   contents: write
@@ -82,7 +82,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -235,7 +235,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 

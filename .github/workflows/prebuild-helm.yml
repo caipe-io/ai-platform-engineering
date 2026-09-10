@@ -294,9 +294,9 @@ jobs:
           source: helm
           type: helm
           name: rag-stack
-          repository: ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts
+          repository: ghcr.io/${{ github.repository_owner }}/charts
           tag: ${{ steps.version.outputs.rag-stack-version }}
-          ref: oci://ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts/rag-stack
+          ref: oci://ghcr.io/${{ github.repository_owner }}/charts/rag-stack
           version: ${{ steps.version.outputs.rag-stack-version }}
           release_name: rag
           status: building
@@ -312,9 +312,9 @@ jobs:
           source: helm
           type: helm
           name: ai-platform-engineering
-          repository: ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts
+          repository: ghcr.io/${{ github.repository_owner }}/charts
           tag: ${{ steps.version.outputs.ai-platform-version }}
-          ref: oci://ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts/ai-platform-engineering
+          ref: oci://ghcr.io/${{ github.repository_owner }}/charts/ai-platform-engineering
           version: ${{ steps.version.outputs.ai-platform-version }}
           release_name: ai-platform
           status: building
@@ -407,7 +407,7 @@ jobs:
         if: steps.version-check.outputs.skip != 'true'
         id: push
         run: |
-          REGISTRY="oci://ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts"
+          REGISTRY="oci://ghcr.io/${{ github.repository_owner }}/charts"
 
           echo "📦 Pushing prebuild charts to $REGISTRY"
 
@@ -432,9 +432,9 @@ jobs:
           source: helm
           type: helm
           name: rag-stack
-          repository: ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts
+          repository: ghcr.io/${{ github.repository_owner }}/charts
           tag: ${{ steps.version.outputs.rag-stack-version }}
-          ref: oci://ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts/rag-stack
+          ref: oci://ghcr.io/${{ github.repository_owner }}/charts/rag-stack
           version: ${{ steps.version.outputs.rag-stack-version }}
           release_name: rag
           status: ${{ steps.push.outcome == 'success' && 'published' || 'failed' }}
@@ -450,9 +450,9 @@ jobs:
           source: helm
           type: helm
           name: ai-platform-engineering
-          repository: ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts
+          repository: ghcr.io/${{ github.repository_owner }}/charts
           tag: ${{ steps.version.outputs.ai-platform-version }}
-          ref: oci://ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts/ai-platform-engineering
+          ref: oci://ghcr.io/${{ github.repository_owner }}/charts/ai-platform-engineering
           version: ${{ steps.version.outputs.ai-platform-version }}
           release_name: ai-platform
           status: ${{ steps.push.outcome == 'success' && 'published' || 'failed' }}

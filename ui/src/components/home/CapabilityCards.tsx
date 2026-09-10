@@ -4,11 +4,8 @@
 
 import { cn } from "@/lib/utils";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
+import { config } from "@/lib/config";
 import { ArrowRight,Bot,Database,MessageSquare,Server,Workflow,Zap } from "lucide-react";
-
-interface CapabilityCardsProps {
-  ragEnabled: boolean;
-}
 
 const capabilities = [
   {
@@ -74,9 +71,9 @@ const capabilities = [
   },
 ];
 
-export function CapabilityCards({ ragEnabled }: CapabilityCardsProps) {
+export function CapabilityCards() {
   const visibleCapabilities = capabilities.filter(
-    (c) => !c.requiresRag || ragEnabled
+    (c) => !c.requiresRag || config.ragEnabled
   );
 
   return (

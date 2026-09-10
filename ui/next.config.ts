@@ -22,7 +22,10 @@ const nextConfig: NextConfig = {
   // HTTP security headers — applied to all responses
   headers: async () => [
     {
-      source: '/(.*)',
+      // External App responses arrive on their canonical /apps/* URLs after
+      // an internal proxy rewrite. Keep every route outside that surface and
+      // the private runtime gateway unframeable.
+      source: '/((?!apps(?:/|$)|api/agentic-apps/runtime/).*)',
       headers: [
         { key: 'X-Frame-Options', value: 'DENY' },
         { key: 'X-Content-Type-Options', value: 'nosniff' },
@@ -45,9 +48,58 @@ const nextConfig: NextConfig = {
         },
       ],
     },
+    {
+      source: '/apps/:path*',
+      headers: [
+        { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+        { key: 'X-Content-Type-Options', value: 'nosniff' },
+        { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+        { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
+        { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+        {
+          key: 'Content-Security-Policy-Report-Only',
+          value: [
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: blob: https:",
+            "font-src 'self' data:",
+            "connect-src 'self' wss: https:",
+            "frame-ancestors 'self'",
+          ].join('; '),
+        },
+      ],
+    },
+    {
+      source: '/api/agentic-apps/runtime/(.*)',
+      headers: [
+        { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+        { key: 'X-Content-Type-Options', value: 'nosniff' },
+        { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+        { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+        {
+          key: 'Content-Security-Policy-Report-Only',
+          value: [
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: blob: https:",
+            "font-src 'self' data:",
+            "connect-src 'self' wss: https:",
+            "frame-ancestors 'self'",
+          ].join('; '),
+        },
+      ],
+    },
   ],
 
   experimental: {
+    // Proxy middleware must retain the body while rewriting /apps/<id> to the
+    // authenticated runtime route. Keep this aligned with the maximum allowed
+    // External App runtime limit; each app enforces its own (smaller) bound.
+    // One MiB of transport headroom lets the runtime return its own clean 413
+    // at the advertised 64 MiB per-app ceiling instead of forwarding a prefix.
+    proxyClientMaxBodySize: "65mb",
     serverActions: {
       bodySizeLimit: "2mb",
     },

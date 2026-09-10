@@ -43,7 +43,7 @@ class Settings(BaseModel):
 
   # Kubernetes
   namespace: str = Field(default_factory=lambda: os.environ.get("SCHEDULER_NAMESPACE", "caipe"))
-  cron_runner_image: str = Field(default_factory=lambda: os.environ.get("CRON_RUNNER_IMAGE", "ghcr.io/cnoe-io/caipe-cron-runner:latest"))
+  cron_runner_image: str = Field(default_factory=lambda: os.environ.get("CRON_RUNNER_IMAGE", "ghcr.io/caipe-io/caipe-cron-runner:latest"))
   cron_runner_image_pull_policy: str = Field(default_factory=lambda: os.environ.get("CRON_RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"))
   # ServiceAccount for the per-schedule CronJob runner pods. No perms.
   cron_runner_service_account: str = Field(default_factory=lambda: os.environ.get("CRON_RUNNER_SERVICE_ACCOUNT", "caipe-cron-runner"))
@@ -56,6 +56,11 @@ class Settings(BaseModel):
   # Limits
   max_schedules_per_owner: int = Field(default_factory=lambda: int(os.environ.get("MAX_SCHEDULES_PER_OWNER", "50")))
   max_message_chars: int = Field(default_factory=lambda: int(os.environ.get("MAX_MESSAGE_CHARS", "2000")))
+  minimum_schedule_interval_seconds: int = Field(
+    default_factory=lambda: int(os.environ.get("MINIMUM_SCHEDULE_INTERVAL_SECONDS", "1800")),
+    ge=1,
+    validate_default=True,
+  )
 
   # One-off run dispatcher. One-off records are stored in Mongo with UTC run_at;
   # the scheduler pod wakes near the next due record and creates a normal Job.

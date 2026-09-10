@@ -1,24 +1,17 @@
 """Slack-to-Keycloak identity linking (FR-025).
 
-Generates time-bounded, HMAC-signed HTTPS linking URLs. When a user
-clicks the link and completes the OIDC login, the UI callback stores
-``slack_user_id`` as a Keycloak user attribute via the Admin API.
-
-Security constraints:
-- Linking URLs are HMAC-SHA256 signed with a shared secret.
-- Each URL is time-bounded (default TTL 10 minutes).
-- HTTPS-only URLs in production.
+Links a Slack identity to a Keycloak user by matching Slack profile email
+to an existing Keycloak account, or (if enabled) just-in-time provisioning
+a new federated-only Keycloak user. There is no interactive/bearer-link
+onboarding path: a signed link is redeemable by whoever holds it, not
+provably by the intended Slack user, so it is not offered as a fallback.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import logging
 import os
-import time
 from typing import Optional
-from urllib.parse import quote
 
 import httpx
 
@@ -33,16 +26,6 @@ from .keycloak_admin import (
 
 logger = logging.getLogger("caipe.slack_bot.identity_linker")
 
-_LINK_BASE_URL = os.environ.get(
-    "SLACK_LINKING_BASE_URL",
-    os.environ.get("CAIPE_UI_BASE_URL", "http://localhost:3000"),
-)
-
-# When True, users must explicitly click the HMAC link to link their account.
-# When False (default), the bot auto-links on first message by matching the
-# Slack profile email to an existing Keycloak user.
-SLACK_FORCE_LINK = os.environ.get("SLACK_FORCE_LINK", "false").lower() == "true"
-
 
 def _jit_enabled() -> bool:
     """Read the JIT feature flag at call time (not import time) so tests
@@ -52,7 +35,8 @@ def _jit_enabled() -> bool:
     (no more "Slack account could not be automatically linked" dead-end)
     ships on by default in dev. Operators in production explicitly opt
     out by setting ``SLACK_JIT_CREATE_USER=false`` in their values.yaml /
-    .env, which falls back to the existing HMAC link-onboarding flow.
+    .env, in which case an unmatched user is treated as unlinked and told
+    to contact an admin.
     """
     return os.environ.get("SLACK_JIT_CREATE_USER", "true").lower() == "true"
 
@@ -78,49 +62,6 @@ _SLACK_BOT_TOKEN = os.environ.get(
     "SLACK_INTEGRATION_BOT_TOKEN",
     os.environ.get("SLACK_BOT_TOKEN", ""),
 )
-
-
-def _hmac_secret() -> str:
-    secret = os.environ.get("SLACK_LINK_HMAC_SECRET", "").strip()
-    if not secret:
-        secret = os.environ.get("SLACK_SIGNING_SECRET", "").strip()
-    if not secret:
-        raise RuntimeError(
-            "SLACK_LINK_HMAC_SECRET or SLACK_SIGNING_SECRET is required "
-            "for Slack identity linking"
-        )
-    return secret
-
-
-def _sign(slack_user_id: str, ts: int) -> str:
-    """Produce HMAC-SHA256 hex digest for the linking URL."""
-    msg = f"{slack_user_id}:{ts}"
-    return hmac.new(
-        _hmac_secret().encode(), msg.encode(), hashlib.sha256
-    ).hexdigest()
-
-
-async def generate_linking_url(slack_user_id: str) -> str:
-    """Create a time-bounded, HMAC-signed linking URL for the given Slack user.
-
-    Returns an HTTPS URL (in production) containing the Slack user ID,
-    a UNIX timestamp, and an HMAC-SHA256 signature. TTL enforcement
-    (default 10 minutes, override via ``SLACK_LINK_TTL_SECONDS``) is
-    performed by the consuming endpoint when it validates the embedded
-    timestamp.
-    """
-    ts = int(time.time())
-    sig = _sign(slack_user_id, ts)
-
-    base = _LINK_BASE_URL.rstrip("/")
-    q_sid = quote(slack_user_id, safe="")
-    url = f"{base}/api/auth/slack-link?slack_user_id={q_sid}&ts={ts}&sig={sig}"
-
-    if os.environ.get("NODE_ENV") == "production" and not url.startswith("https://"):
-        raise ValueError("Linking URLs must use HTTPS in production")
-
-    logger.info("Generated HMAC linking URL for slack_user_id=%s (ts=%d)", slack_user_id, ts)
-    return url
 
 
 async def _get_slack_user_email(slack_user_id: str) -> Optional[str]:
@@ -162,8 +103,8 @@ async def auto_bootstrap_slack_user(slack_user_id: str) -> Optional[str]:
        federated-only Keycloak shell user via
        :func:`keycloak_admin.create_user_from_slack` and return its
        UUID. Spec 103 G1 / FR-002.
-    3. Else, return ``None`` so the caller can send the existing HMAC
-       link-onboarding prompt (FR-007).
+    3. Else, return ``None`` so the caller treats the user as unlinked
+       (minimum-access fallback, contact-admin messaging).
 
     Logging contract (FR-010, FR-011): all log lines that reference the
     Slack profile email do so via :func:`mask_email`. JIT failures log
@@ -194,8 +135,8 @@ async def auto_bootstrap_slack_user(slack_user_id: str) -> Optional[str]:
     # No Keycloak user with that email yet. Decide whether to JIT.
     if not _jit_enabled():
         logger.info(
-            "JIT disabled (SLACK_JIT_CREATE_USER=false); falling back to "
-            "link-onboarding for slack=%s email=%s",
+            "JIT disabled (SLACK_JIT_CREATE_USER=false); treating as "
+            "unlinked for slack=%s email=%s",
             slack_user_id, mask_email(email),
         )
         return None
@@ -280,55 +221,3 @@ async def complete_linking(slack_user_id: str, keycloak_user_id: str) -> bool:
     return True
 
 
-async def mark_preauth_prompted(slack_user_id: str) -> None:
-    """Mark user as having received pre-auth prompt.
-
-    Stores a timestamp in Keycloak as a temporary attribute so we don't spam
-    the same user with multiple pre-auth prompts.
-    """
-    try:
-        # Query by slack_user_id to find any existing link (may not exist yet)
-        user = await get_user_by_attribute("slack_preauth_prompted", slack_user_id)
-        if user:
-            keycloak_user_id = user.get("id")
-        else:
-            # User not in system yet — store prompt flag for future linking
-            # This is handled by storing in temporary cache or messaging queue
-            logger.debug("User %s not yet in Keycloak, skipping preauth prompt flag", slack_user_id)
-            return
-
-        await set_user_attribute(
-            user_id=keycloak_user_id,
-            attr="slack_preauth_prompted_at",
-            value=str(int(time.time())),
-        )
-        logger.debug("Marked user %s as preauth prompted", slack_user_id)
-    except Exception as e:
-        logger.warning("Failed to mark preauth prompt for user %s: %s", slack_user_id, e)
-
-
-async def should_preauth_prompt(slack_user_id: str, prompt_ttl_seconds: int = 3600) -> bool:
-    """Check if user should receive pre-auth prompt.
-
-    Returns True if:
-    - User is not linked to Keycloak, AND
-    - We haven't already prompted them recently (within prompt_ttl_seconds)
-    """
-    # Check if already linked
-    keycloak_user_id = await resolve_slack_user(slack_user_id)
-    if keycloak_user_id is not None:
-        return False  # Already linked, no prompt needed
-
-    # Check if recently prompted
-    try:
-        user = await get_user_by_attribute("slack_preauth_prompted_at", slack_user_id)
-        if user:
-            prompted_at_str = user.get("attributes", {}).get("slack_preauth_prompted_at", ["0"])[0]
-            prompted_at = int(prompted_at_str)
-            if int(time.time()) - prompted_at < prompt_ttl_seconds:
-                logger.debug("User %s was recently prompted, skipping", slack_user_id)
-                return False
-    except Exception as e:
-        logger.debug("Error checking preauth prompt status: %s", e)
-
-    return True

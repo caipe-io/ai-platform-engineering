@@ -61,7 +61,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5
 | callerToolCheck.enabled | bool | `false` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/openfga-authz-bridge"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/openfga-authz-bridge"` |  |
 | image.tag | string | `""` |  |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` |  |

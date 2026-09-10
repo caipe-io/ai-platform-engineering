@@ -134,7 +134,7 @@ describe("SchedulesPage", () => {
                 project: "platform",
                 workflow: "report",
               },
-              cron: "*/5 * * * *",
+              cron: "*/30 * * * *",
               tz: "UTC",
               enabled: true,
               cronjob_name: "caipe-sched-schedule-1",
@@ -159,6 +159,9 @@ describe("SchedulesPage", () => {
 
     expect(screen.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
     expect(screen.getByText("Enabled")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Minimum recurring interval: 30 minutes\./)
+    ).toBeInTheDocument();
   });
 
   it("renders the job title, agent, schedule id, and display attributes", async () => {
@@ -174,7 +177,7 @@ describe("SchedulesPage", () => {
     expect(screen.getByText("platform")).toBeInTheDocument();
     expect(screen.getByText("workflow:")).toBeInTheDocument();
     expect(screen.getByText("report")).toBeInTheDocument();
-    expect(screen.getByText("Every 5 minutes")).toBeInTheDocument();
+    expect(screen.getByText("Every 30 minutes")).toBeInTheDocument();
     expect(screen.getByText("Timezone: UTC")).toBeInTheDocument();
     expect(screen.queryByText("caipe-sched-schedule-1")).not.toBeInTheDocument();
   });
@@ -195,7 +198,7 @@ describe("SchedulesPage", () => {
               title: "Daily Platform Report",
               message_template: "Run the job",
               attributes: {},
-              cron: "*/5 * * * *",
+              cron: "*/30 * * * *",
               tz: "UTC",
               enabled: true,
               cronjob_name: "caipe-sched-schedule-1",
@@ -339,7 +342,7 @@ describe("SchedulesPage", () => {
               title: "Daily Platform Report",
               message_template: "Run the job",
               attributes: {},
-              cron: "*/5 * * * *",
+              cron: "*/30 * * * *",
               tz: "UTC",
               enabled: true,
               cronjob_name: null,
@@ -365,7 +368,7 @@ describe("SchedulesPage", () => {
           title: "Renamed Platform Report",
           message_template: "Run the job",
           attributes: {},
-          cron: "*/5 * * * *",
+          cron: "*/30 * * * *",
           tz: "UTC",
           enabled: true,
           cronjob_name: null,
@@ -399,6 +402,52 @@ describe("SchedulesPage", () => {
         })
       )
     );
+  });
+
+  it("shows the deployment-configured minimum schedule interval", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          total: 1,
+          minimum_schedule_interval_seconds: 600,
+          items: [
+            {
+              schedule_id: "schedule-1",
+              agent_id: "agent-1",
+              edit_agent_id: null,
+              agent_name: "Agent One",
+              title: "Daily Platform Report",
+              message_template: "Run the job",
+              attributes: {},
+              cron: "0 9 * * *",
+              tz: "UTC",
+              enabled: true,
+              cronjob_name: null,
+              version: 1,
+              versions: [],
+              events: [],
+              created_at: "2026-05-25T00:00:00Z",
+              updated_at: null,
+              last_run: null,
+            },
+          ],
+        },
+      }),
+    });
+
+    render(<SchedulesPage />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Daily Platform Report")).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /modify schedule-1/i }));
+
+    expect(
+      screen.getByText(/Minimum recurring interval: 10 minutes\./)
+    ).toBeInTheDocument();
+    expect(screen.getByText("Runs must be at least 10 minutes apart.")).toBeInTheDocument();
   });
 
   it("starts schedule edit chat with the schedule-specific edit agent", async () => {
@@ -439,7 +488,7 @@ describe("SchedulesPage", () => {
                 title: "Daily Platform Report",
                 message_template: "Run the job",
                 attributes: {},
-                cron: "*/5 * * * *",
+                cron: "*/30 * * * *",
                 tz: "UTC",
                 enabled: true,
                 cronjob_name: null,

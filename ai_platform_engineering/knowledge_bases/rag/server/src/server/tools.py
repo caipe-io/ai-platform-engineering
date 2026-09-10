@@ -18,6 +18,7 @@ from server.rbac import (
   authorize_mcp_tool_call,
   authorize_search,
   get_accessible_datasource_ids,
+  get_datasource_ids_for_collection,
   is_unsafe_rbac_bypass_enabled,
 )
 from server.doc_acl import merge_acl_filter
@@ -255,6 +256,10 @@ class AgentTools:
     has_structured_entity_search = any(ps.extra_filters.get("is_structured_entity") in (True, "true", "True") for ps in config.parallel_searches)
     if not (graph_rag_enabled and has_structured_entity_search):
       valid_filter_keys = [k for k in valid_filter_keys if "structured_entity" not in k]
+    # collection_id is not stored document metadata (chunks only carry
+    # datasource_id) — it is resolved to member datasource ids at query time,
+    # so it is documented here rather than added to valid_metadata_keys().
+    valid_filter_keys = valid_filter_keys + ["collection_id"]
 
     # Add note about nested metadata filters
     filters_line = f"    filters (dict): Optional metadata filters. Valid keys: {valid_filter_keys}. Also supports nested metadata filters like metadata.custom_field.\n" if config.allow_runtime_filters else ""
@@ -303,11 +308,19 @@ class AgentTools:
         if runtime_filters:
           q_filters.update(runtime_filters)
         runtime_datasources = q_filters.pop("datasource_id", None)
+        runtime_collections = self._normalize_datasource_constraint(q_filters.pop("collection_id", None))
+        collection_datasources: Optional[List[str]] = None
+        if runtime_collections is not None:
+          resolved: set[str] = set()
+          for collection_id in runtime_collections:
+            resolved.update(await get_datasource_ids_for_collection(collection_id))
+          collection_datasources = list(resolved)
         q_filters.update(ps.extra_filters)
         extra_datasources = q_filters.pop("datasource_id", None)
         configured_datasources = list(ps.datasource_ids) if ps.datasource_ids else None
         datasource_scope = self._intersect_datasource_constraints(
           runtime_datasources,
+          collection_datasources,
           extra_datasources,
           configured_datasources,
           accessible,

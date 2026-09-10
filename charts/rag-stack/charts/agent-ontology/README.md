@@ -62,7 +62,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/agent-ontology --version 0.5.68
 | env | object | `{}` |  |
 | fullnameOverride | string | `"agent-ontology"` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-rag-agent-ontology"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-rag-agent-ontology"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | ingress.annotations | object | `{}` |  |

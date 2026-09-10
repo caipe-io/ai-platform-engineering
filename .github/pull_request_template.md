@@ -20,12 +20,12 @@ Please ensure commits conform to the [Commit Guideline](https://www.conventional
 - [ ] Documentation
 - [ ] Other (please describe)
 
-## Pre-release Helm Charts (Optional)
+## Temporary Helm Charts (Optional)
 
-For chart changes, you can test pre-release versions before merging:
-- **Base repo contributors:** Create a branch starting with `pre/` for automatic pre-release builds
+For chart changes, you can test temporary versions before merging:
+- **Base repo contributors:** Create a branch starting with `prebuild/` for automatic prebuilds
 - **Fork contributors:** Ask a maintainer to add the `helm-prerelease` label
-- Pre-release charts are published to `ghcr.io/cnoe-io/pre-release-helm-charts`
+- Temporary charts are published to `ghcr.io/caipe-io/charts` with PR-specific versions
 - Cleanup happens automatically when the PR closes or label is removed
 
 ## Checklist
@@ -34,6 +34,7 @@ For chart changes, you can test pre-release versions before merging:
 - [ ] Existing issues have been referenced (where applicable)
 - [ ] I have verified this change is not present in other open pull requests
 - [ ] Functionality is documented
+- [ ] New selection controls follow the [selection-control decision table](https://github.com/caipe-io/ai-platform-engineering/blob/main/docs/docs/ui/selection-controls.md), or the custom interaction is justified
 - [ ] All code style checks pass
 - [ ] New code contribution is covered by automated tests
 - [ ] All new and existing tests pass

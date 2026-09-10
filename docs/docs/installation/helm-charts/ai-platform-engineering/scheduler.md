@@ -70,7 +70,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
 | caipe.apiUrl | string | `"http://caipe-ui:3000"` |  |
 | caipe.chatPath | string | `"/api/v1/chat/invoke"` |  |
 | cronRunner.image.pullPolicy | string | `"IfNotPresent"` |  |
-| cronRunner.image.repository | string | `"ghcr.io/cnoe-io/caipe-cron-runner"` |  |
+| cronRunner.image.repository | string | `"ghcr.io/caipe-io/caipe-cron-runner"` |  |
 | cronRunner.image.tag | string | `""` |  |
 | cronRunner.resources.limits.cpu | string | `"100m"` |  |
 | cronRunner.resources.limits.memory | string | `"128Mi"` |  |
@@ -80,11 +80,12 @@ helm show values oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
 | cronRunnerServiceAccount.name | string | `"caipe-cron-runner"` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"Always"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-scheduler"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-scheduler"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | limits.maxMessageChars | int | `2000` |  |
 | limits.maxSchedulesPerOwner | int | `50` |  |
+| limits.minimumScheduleIntervalSeconds | int | `1800` | Minimum permitted gap, in seconds, between recurring cron fires. |
 | livenessProbe.failureThreshold | int | `3` |  |
 | livenessProbe.httpGet.path | string | `"/healthz"` |  |
 | livenessProbe.httpGet.port | string | `"http"` |  |

@@ -211,7 +211,8 @@ describe("UnlinkedServiceAccountModal", () => {
 
     // sre-agent is not in ANON_SA.scopes so it should appear in the ref picker.
     const refSelect = screen.getByRole("combobox", { name: /scope ref/i });
-    fireEvent.change(refSelect, { target: { value: "sre-agent" } });
+    fireEvent.click(refSelect);
+    fireEvent.click(await screen.findByRole("option", { name: "SRE Agent" }));
     fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
     await waitFor(() => {
@@ -237,7 +238,8 @@ describe("UnlinkedServiceAccountModal", () => {
     await waitFor(() => screen.getByText(/add a scope/i));
 
     const refSelect = screen.getByRole("combobox", { name: /scope ref/i });
-    fireEvent.change(refSelect, { target: { value: "sre-agent" } });
+    fireEvent.click(refSelect);
+    fireEvent.click(await screen.findByRole("option", { name: "SRE Agent" }));
     fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
     await waitFor(() => {

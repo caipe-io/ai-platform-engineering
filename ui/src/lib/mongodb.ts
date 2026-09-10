@@ -327,8 +327,6 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'slack_channel_agent_routes', { workspace_id: 1, channel_id: 1, agent_id: 1 }, { unique: true }),
     safeCreateIndex(db, 'slack_channel_agent_routes', { workspace_id: 1, channel_id: 1, status: 1 }),
     safeCreateIndex(db, 'slack_channel_agent_routes', { channel_id: 1, status: 1, priority: 1 }),
-    safeCreateIndex(db, 'slack_link_nonces', { nonce: 1 }, { unique: true }),
-    safeCreateIndex(db, 'slack_link_nonces', { created_at: 1 }, { expireAfterSeconds: 600 }),
     safeCreateIndex(db, 'slack_user_metrics', { slack_user_id: 1 }, { unique: true }),
 
     // RAG ingestion source configuration (self-service ingestion, PR1)
@@ -357,13 +355,17 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'requested_state.channel_defaults.channel_id': 1, status: 1 }),
     safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'requested_state.space_id': 1, status: 1 }),
 
-    // Durable header notifications. Team and direct-user audiences share a
-    // notification while read state remains personal to each recipient.
+    // Durable header notifications. Direct, team, organization-admin, and
+    // global platform audiences share the feed while read state remains
+    // personal to each viewer.
     safeCreateIndex(db, 'in_app_notifications', { event_key: 1 }, { unique: true }),
     safeCreateIndex(db, 'in_app_notifications', { recipient_user_subjects: 1, created_at: -1 }),
     safeCreateIndex(db, 'in_app_notifications', { recipient_team_slugs: 1, created_at: -1 }),
     safeCreateIndex(db, 'in_app_notifications', { recipient_organization_admins: 1, created_at: -1 }),
+    safeCreateIndex(db, 'in_app_notifications', { recipient_platform_users: 1, created_at: -1 }),
     safeCreateIndex(db, 'in_app_notifications', { archived_at: 1, created_at: -1 }),
+    safeCreateIndex(db, 'platform_health_notification_states', { active_incident_id: 1 }),
+    safeCreateIndex(db, 'platform_health_notification_states', { current_status: 1, updated_at: -1 }),
   ]);
 
   console.log('✅ MongoDB indexes ensured');

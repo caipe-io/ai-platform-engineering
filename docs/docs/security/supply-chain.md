@@ -19,7 +19,7 @@ Every Python dependency across all subpackages (`pyproject.toml` files) must be 
 
 **Why exact pins?** Range specifiers allow the resolver to silently upgrade a package the next time a lock file is regenerated. An exact pin means the version you test is the version that ships.
 
-**Enforcement:** The [`check-pinned-deps`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.github/workflows/check-pinned-deps.yml) CI gate runs `scripts/check_pinned_deps.py` on every PR and `main` push. The job fails if any `pyproject.toml` or `package.json` contains an unpinned dependency.
+**Enforcement:** The [`check-pinned-deps`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.github/workflows/check-pinned-deps.yml) CI gate runs `scripts/check_pinned_deps.py` on every PR and `main` push. The job fails if any `pyproject.toml` or `package.json` contains an unpinned dependency.
 
 ### Node.js / JavaScript
 
@@ -47,11 +47,11 @@ Every Python subpackage with its own `pyproject.toml` ships a committed `uv.lock
 | Bot integrations | `ai_platform_engineering/integrations/<name>_bot/uv.lock` |
 | Shared utilities | `ai_platform_engineering/utils/uv.lock` |
 
-**Enforcement:** The [`uv-lock-check`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.github/workflows/uv-lock-check.yml) CI gate runs `scripts/check_uv_lock_sync.sh` on every PR and `main` push. It re-runs `uv lock --check` across all subpackages and fails if any lock file is out of sync with its `pyproject.toml`.
+**Enforcement:** The [`uv-lock-check`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.github/workflows/uv-lock-check.yml) CI gate runs `scripts/check_uv_lock_sync.sh` on every PR and `main` push. It re-runs `uv lock --check` across all subpackages and fails if any lock file is out of sync with its `pyproject.toml`.
 
 ## Vulnerability Scanning (Grype)
 
-CAIPE uses [Anchore Grype](https://github.com/anchore/grype) for vulnerability scanning, configured via the [`security-scan`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.github/workflows/security-scan.yml) workflow. Scan results are uploaded as SARIF to [GitHub Code Scanning](https://github.com/cnoe-io/ai-platform-engineering/security/code-scanning).
+CAIPE uses [Anchore Grype](https://github.com/anchore/grype) for vulnerability scanning, configured via the [`security-scan`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.github/workflows/security-scan.yml) workflow. Scan results are uploaded as SARIF to [GitHub Code Scanning](https://github.com/caipe-io/ai-platform-engineering/security/code-scanning).
 
 ### Filesystem scan (PRs and main)
 
@@ -70,7 +70,7 @@ Runs on every pull request to `main` and every push to `main`. Scans the full re
 Instead, CAIPE uses **GitHub Code Scanning's PR diff mode** as the blocking gate. When SARIF is uploaded for a PR, GitHub compares the results against the base branch scan. Only alerts that are *new in the PR* surface as a blocking check:
 
 - A PR that introduces a new vulnerable dependency → **new alert → PR blocked**, with a direct link to the CVE and the package name so the author knows exactly what to fix
-- An upstream CVE already present on `main` → **not new → PR not blocked**; the alert remains visible in the [Security tab](https://github.com/cnoe-io/ai-platform-engineering/security/code-scanning) for maintainers to track and upgrade when a patch ships
+- An upstream CVE already present on `main` → **not new → PR not blocked**; the alert remains visible in the [Security tab](https://github.com/caipe-io/ai-platform-engineering/security/code-scanning) for maintainers to track and upgrade when a patch ships
 
 The required check is **`Code scanning results / Grype`** under Settings → Branches → Branch protection rules for `main`.
 
@@ -161,11 +161,11 @@ This is enforced by the Probot DCO app on every PR. Sign-off is added automatica
 
 ### Conventional Commits
 
-The [`conventional_commits`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.github/workflows/conventional_commits.yml) workflow enforces the [Conventional Commits](https://www.conventionalcommits.org/) specification on every PR title and commit message. This provides a structured audit trail and enables automated changelog generation.
+The [`conventional_commits`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.github/workflows/conventional_commits.yml) workflow enforces the [Conventional Commits](https://www.conventionalcommits.org/) specification on every PR title and commit message. This provides a structured audit trail and enables automated changelog generation.
 
 ### No proprietary content
 
-The [`check-proprietary-content`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.github/workflows/check-proprietary-content.yml) workflow scans every changed file in a PR for patterns associated with proprietary infrastructure (internal domains, email suffixes, internal team names). Any match blocks the PR and posts a comment identifying the exact lines. This prevents accidental leakage of internal tooling references into the open-source repository.
+The [`check-proprietary-content`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.github/workflows/check-proprietary-content.yml) workflow scans every changed file in a PR for patterns associated with proprietary infrastructure (internal domains, email suffixes, internal team names). Any match blocks the PR and posts a comment identifying the exact lines. This prevents accidental leakage of internal tooling references into the open-source repository.
 
 ## Container Image Hardening
 

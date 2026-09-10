@@ -2,10 +2,9 @@
 
 from datetime import datetime, timezone
 from enum import Enum
-from math import isfinite
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class TriggerType(str, Enum):
@@ -53,7 +52,14 @@ class IntervalTrigger(BaseModel):
 class WebhookTrigger(BaseModel):
     """Trigger for webhook-scheduled tasks"""
     type: Literal[TriggerType.WEBHOOK] = TriggerType.WEBHOOK
-    secret: str | None = Field(None, description="Optional HMAC secret for payload validation")
+    secret: str | None = Field(
+        None,
+        description=(
+            "HMAC secret for payload validation. The create route always generates "
+            "this value; None is accepted only so redacted update payloads can "
+            "preserve the already-stored secret."
+        ),
+    )
     provider: str = Field(
         default="generic_hmac",
         description=(
@@ -194,14 +200,6 @@ class TaskDefinition(BaseModel):
     )
     enabled: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
-    timeout_seconds: float | None = Field(
-        default=None,
-        gt=0,
-        description=(
-            "Override the dynamic-agents call timeout for this task "
-            "(seconds, > 0). Defaults to DYNAMIC_AGENTS_TIMEOUT_SECONDS."
-        ),
-    )
     owner_id: str | None = Field(
         default=None,
         description=(
@@ -224,16 +222,6 @@ class TaskDefinition(BaseModel):
             "recreated."
         ),
     )
-
-    @field_validator("timeout_seconds")
-    @classmethod
-    def _timeout_must_be_finite(cls, v: float | None) -> float | None:
-        """Reject non-finite values that would break httpx timeouts at runtime."""
-        if v is None:
-            return v
-        if not isfinite(v):
-            raise ValueError("timeout_seconds must be a finite number")
-        return v
 
     @model_validator(mode="after")
     def _drop_deprecated_agent_hint(self) -> "TaskDefinition":
@@ -303,6 +291,17 @@ class FollowUpContext(BaseModel):
     )
 
 
+class TaskRunFollowUpCreate(BaseModel):
+    """Authenticated UI request to continue one webhook run."""
+
+    user_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=10_000,
+        description="Operator message to send in the selected run's context.",
+    )
+
+
 
 class TaskCreate(TaskDefinition):
     """Request body for ``POST /tasks``.
@@ -333,6 +332,18 @@ class TaskRun(BaseModel):
     # threaded timeline instead of unrelated rows. ``None`` for the
     # original webhook fire and for cron / interval / manual runs.
     parent_run_id: str | None = None
+    # Root delivery for a webhook conversation branch. Initial deliveries set
+    # this to their own run_id; follow-ups inherit it from the selected parent.
+    # None for cron/interval runs and legacy webhook records.
+    root_run_id: str | None = None
+    # Dynamic Agents conversation/checkpointer id used for execution. This is
+    # intentionally distinct from ``conversation_id`` below: the latter is a
+    # UI chat-history link, while this field protects execution isolation.
+    execution_context_id: str | None = None
+    # Exact operator message for a follow-up run. Stored separately from the
+    # augmented request_prompt so timeline clients can render a clean user turn.
+    follow_up_text: str | None = None
+    follow_up_transport: str | None = None
     # Prompt materialised for this specific run. For normal scheduled
     # runs this is the task prompt; for inbound follow-ups it includes
     # the operator reply appended by task_runner. The UI's autonomous

@@ -60,7 +60,6 @@ jobs:
       should_build: ${{ steps.set-matrix.outputs.should_build }}
       should_retag: ${{ steps.set-matrix.outputs.should_retag }}
       tag_version: ${{ steps.version.outputs.tag_version }}
-      image_prefix: ${{ steps.set-matrix.outputs.image_prefix }}
     env:
       ALL_AGENTS: ${{ needs.load-config.outputs.all_agents }}
     steps:
@@ -133,7 +132,6 @@ jobs:
               core.setOutput('agents_to_retag', '[]');
               core.setOutput('should_build', 'false');
               core.setOutput('should_retag', 'false');
-              core.setOutput('image_prefix', '');
               return;
             }
 
@@ -142,9 +140,6 @@ jobs:
             const preReleaseNum = preReleaseMatch ? parseInt(preReleaseMatch[2]) : 0;
             const isSharedChanged = filterOutputs.shared_config === 'true' ||
                                    filterOutputs.shared_dockerfile === 'true';
-
-            // GHCR prefix: -rc.N and -hotfix.N go to pre-release/
-            const imagePrefix = tagVersion && /-(rc|hotfix)\.\d+/.test(tagVersion) ? 'pre-release/' : '';
 
             // Build all if: manual, shared changed, first pre-release (N==1), or final release
             const shouldForceBuildAll = manualBuildAll || isSharedChanged ||
@@ -170,11 +165,8 @@ jobs:
             core.setOutput('agents_to_retag', JSON.stringify(agentsToRetag));
             core.setOutput('should_build', String(agentsToBuild.length > 0));
             core.setOutput('should_retag', String(agentsToRetag.length > 0 && !!tagVersion));
-            core.setOutput('image_prefix', imagePrefix);
-
             console.log(`Agents to build: ${agentsToBuild.join(', ') || 'none'}`);
             console.log(`Agents to retag: ${agentsToRetag.join(', ') || 'none'}`);
-            console.log(`Image prefix: '${imagePrefix}'`);
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -203,11 +195,11 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
+      IMAGE_NAME: ${{ github.repository_owner }}/mcp-${{ matrix.agent }}
 
     steps:
       - name: 🔒 harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -293,11 +285,11 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
+      IMAGE_NAME: ${{ github.repository_owner }}/mcp-${{ matrix.agent }}
 
     steps:
       - name: 🔒 harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -357,11 +349,11 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
+      IMAGE_NAME: ${{ github.repository_owner }}/mcp-${{ matrix.agent }}
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -460,7 +452,7 @@ jobs:
 
       - name: Set up QEMU
         if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
 
       # Known gap: this fallback still cross-builds arm64 under QEMU rather
       # than a native runner (unlike build-and-push above). It only runs when

@@ -10,11 +10,9 @@ import {
   getAuthFromBearerOrSession,
   getPaginationParams,
   paginatedResponse,
-  requireRbacPermission,
   successResponse,
   withErrorHandler,
 } from "@/lib/api-middleware";
-import { findUserRoleInTeam } from "@/lib/rbac/team-membership-store";
 import { getCollection } from "@/lib/mongodb";
 import {
   RAG_COLLECTION_ID_PATTERN,
@@ -586,7 +584,7 @@ async function validateSubagentVisibility(
  * - search=<string>: Filter agents by name or description (case-insensitive)
  */
 export const GET = withErrorHandler(async (request: NextRequest) => {
-  const { user, session } = await getAuthFromBearerOrSession(request);
+  const { session } = await getAuthFromBearerOrSession(request);
 
   const collection = await getCollection<DynamicAgentConfig>(COLLECTION_NAME);
   const { page, pageSize, skip } = getPaginationParams(request);
@@ -645,53 +643,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     pageItems.map((agent) => String(agent._id)),
   );
 
-  // can_automate — may the caller flip per-agent autonomous enablement?
-  // Platform admins or admins of the agent's owner team only. Deliberately
-  // narrower than can_manage: the team "Manage" grant extends can_manage to
-  // every member, but enabling autonomous for the whole team is a
-  // team-admin decision (mirrors the automation route's server-side gate).
-  let isPlatformAdmin = false;
-  try {
-    await requireRbacPermission(session, "admin_ui", "admin");
-    isPlatformAdmin = true;
-  } catch {
-    isPlatformAdmin = false;
-  }
-  const ownerSlugs = [
-    ...new Set(
-      pageItems
-        .map((agent) => agent.owner_team_slug)
-        .filter(
-          (slug): slug is string =>
-            typeof slug === "string" && slug.length > 0,
-        ),
-    ),
-  ];
-  const adminOfTeams = new Set<string>();
-  if (!isPlatformAdmin && user?.email && ownerSlugs.length > 0) {
-    const roles = await Promise.all(
-      ownerSlugs.map(
-        async (slug) =>
-          [
-            slug,
-            await findUserRoleInTeam(slug, { user_email: user.email }),
-          ] as const,
-      ),
-    );
-    for (const [slug, role] of roles) {
-      if (role === "admin") adminOfTeams.add(slug);
-    }
-  }
-
   const items: DynamicAgentConfigWithPermissions[] = pageItems.map((agent) => ({
     ...(agent as DynamicAgentConfig),
-    permissions: {
-      ...agentRowPermissionsOrDefault(rows, String(agent._id)),
-      can_automate:
-        isPlatformAdmin ||
-        (typeof agent.owner_team_slug === "string" &&
-          adminOfTeams.has(agent.owner_team_slug)),
-    },
+    permissions: agentRowPermissionsOrDefault(rows, String(agent._id)),
   }));
 
   return paginatedResponse(items, visibleItems.length, page, pageSize);

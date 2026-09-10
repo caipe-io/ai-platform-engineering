@@ -34,16 +34,12 @@ The CI/CD system uses self-describing tags. The suffix tells workflows where the
 
 ## Artifact Locations
 
-Docker image and Helm chart registry paths are separated by artifact lifecycle.
+Artifact lifecycle is encoded in immutable tags, while registry paths remain stable.
 
 | Artifact type | Flow | Registry path |
 | --- | --- | --- |
-| Docker images | `-dev.N` and final `x.y.z` | `ghcr.io/cnoe-io/<image>` |
-| Docker images | `-rc.N` and `-hotfix.N` | `ghcr.io/cnoe-io/pre-release/<image>` |
-| Docker images | `prebuild/*` branches | `ghcr.io/cnoe-io/prebuild/<image>` |
-| Helm charts | final `x.y.z` | `ghcr.io/cnoe-io/charts` |
-| Helm charts | prerelease and chart-only tags | `ghcr.io/cnoe-io/pre-release-helm-charts` |
-| Helm charts | prebuild PR testing | `ghcr.io/cnoe-io/prebuild-helm-charts` |
+| Docker images | all release and prebuild flows | `ghcr.io/caipe-io/<image>` |
+| Helm charts | all release and prebuild flows | `ghcr.io/caipe-io/charts` |
 
 ## PR Flow
 
@@ -108,7 +104,7 @@ For prerelease tags with `N > 1`, workflows build only changed images and retag 
 
 For first prerelease tags and final release tags, workflows build all relevant images.
 
-For `-rc.N` and `-hotfix.N` tags, images publish under `pre-release/`. For `-dev.N` and final release tags, images publish at the normal image path.
+Development, release-candidate, hotfix, final, and prebuild tags all publish to the same image package. Deployments change only the tag, not the image repository.
 
 ## Prebuild Artifacts
 
@@ -116,11 +112,11 @@ Prebuild artifacts are temporary test artifacts published from PRs before merge.
 
 Use prebuilds when you want to test Docker images or Helm charts without waiting for a branch merge and official tag.
 
-1. Create a branch called `prebuild/*` e.g. `prebuild/feat/add-feature-A
+1. Create a branch called `prebuild/*`, for example `prebuild/feat/add-feature-a`.
 2. Open a PR from the prebuild branch to the intended target branch (this can be any).
-3. THe `pr-version-bump.yml` workflow detects the `prebuild/*` source branch and dispatches a prebuild workflow (as well as the normal version bump flow if the target branch is `main` or `release/**`).
-4. The prebuild workflow builds and publishes images to `ghcr.io/cnoe-io/prebuild/<image>` and charts to `ghcr.io/cnoe-io/prebuild-charts` with a tag matching the branch name *Note: only changed images / charts are built*.
-5. Each new commit to the prebuild branch triggers a new prebuild with the same tag, overwriting the previous prebuild artifacts.
+3. The `pr-version-bump.yml` workflow detects the `prebuild/*` source branch and dispatches a prebuild workflow (as well as the normal version bump flow if the target branch is `main` or `release/**`).
+4. The prebuild workflow publishes changed images to their canonical packages and charts to `ghcr.io/caipe-io/charts` with branch- and commit-specific tags.
+5. Each new commit to the prebuild branch publishes a new temporary tag.
 6. Use the prebuild artifacts for testing.
 7. Upon PR merge or closure, all prebuild artifacts with the branch tag are automatically deleted.
 
@@ -136,9 +132,9 @@ Use a `release/x.y.z` branch when preparing a new release.
 6. Tag pushes trigger Docker and Helm CI.
 7. Test the published RC artifacts from GHCR.
 
-RC Docker images are under `ghcr.io/cnoe-io/pre-release/<image>`.
+RC Docker images are under `ghcr.io/caipe-io/<image>`.
 
-RC Helm charts are under `ghcr.io/cnoe-io/pre-release-helm-charts`.
+RC Helm charts are under `ghcr.io/caipe-io/charts`.
 
 ## Final Release Flow
 

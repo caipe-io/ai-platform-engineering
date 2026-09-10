@@ -553,7 +553,8 @@ class DynamicAgentConfigBase(BaseModel):
             "search tool is pinned to. Narrows, never widens: the runtime "
             "intersects this list with the caller's RBAC-accessible datasources, "
             "so None preserves the legacy 'search everything the caller can see' "
-            "behavior, while an explicit empty list disables RAG tools."
+            "behavior, while an explicit empty list keeps RAG tools available "
+            "with no indexed content in scope."
         ),
     )
     rag_collection_ids: list[str] | None = Field(
@@ -674,7 +675,7 @@ class ChatRequest(BaseModel):
         False,
         description=(
             "True when the scheduler/webhook runtime drives this call unattended. "
-            "Adds a can_schedule authorization check on top of can_use."
+            "Requires autonomous team entitlement in addition to agent use access."
         ),
     )
     client_context: ClientContext | None = Field(None, description="Opaque client context for system prompt rendering")

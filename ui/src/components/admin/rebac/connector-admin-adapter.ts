@@ -245,12 +245,10 @@ export interface ConnectorAdminAdapter {
   itemSingular: string;     // "channel" | "space"
   itemPlural: string;       // "channels" | "spaces"
   singlePanelView?: "channels" | "onboard" | "advanced";
+  // When set, the Advanced tab shows only the Reload Bot Cache action,
+  // hiding the runtime status tiles, Refresh Runtime Status, and YAML import.
+  advancedTabMinimal?: boolean;
   directMessagesPanel?: {
-    title: string;
-    description: string;
-    render: (options: { disabled: boolean }) => ReactNode;
-  };
-  migrationPanel?: {
     title: string;
     description: string;
     render: (options: { disabled: boolean }) => ReactNode;

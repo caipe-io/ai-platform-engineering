@@ -14,7 +14,12 @@ import {
 import { AgentPicker,type AgentPickerOption } from "@/components/ui/agent-picker";
 import type { AutoSaveState } from "@/hooks/use-keyed-auto-save";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
-import { AlertTriangle,Bot,CalendarClock,Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  CalendarClock,
+  Loader2,
+} from "lucide-react";
 import { useEffect,useState } from "react";
 
 type PendingAction = "set" | "clear";

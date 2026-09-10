@@ -9,12 +9,12 @@ sidebar_position: 2
 No clone required. Run this in your terminal and follow the interactive prompts:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cnoe-io/ai-platform-engineering/main/setup-caipe.sh | bash
+curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh | bash
 ```
 
 The script asks for your LLM provider, API key, and optional components (RAG, tracing, persistence). It creates a local KinD cluster or deploys to an existing one.
 
-> **Want to inspect the script first?** View [`setup-caipe.sh`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/setup-caipe.sh) on GitHub before running.
+> **Want to inspect the script first?** View [`setup-caipe.sh`](https://github.com/caipe-io/ai-platform-engineering/blob/main/setup-caipe.sh) on GitHub before running.
 
 <iframe src="https://asciinema.org/a/845278/iframe" width="100%" height="600" style={{border: 'none', borderRadius: '8px', overflow: 'hidden'}} scrolling="no" allowFullScreen />
 

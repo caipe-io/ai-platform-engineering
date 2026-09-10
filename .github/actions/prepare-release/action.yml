@@ -6,7 +6,7 @@ description: >
 
 inputs:
   version:
-    description: 'Release version (bare x.y.z, e.g. 0.3.0)'
+    description: 'Release version (e.g. 1.0.0 or 1.0.0-rc.1)'
     required: true
 
 runs:

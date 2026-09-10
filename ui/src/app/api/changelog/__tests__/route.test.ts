@@ -1,9 +1,18 @@
 /**
  * @jest-environment node
  */
+import fs from "fs";
+import path from "path";
+
 import type { ChangelogRelease } from "../route";
 
-const CHANGELOG = `## 0.5.19 (2026-06-22)
+const CHANGELOG = `## 0.6.0-rc.1 (2026-06-23)
+
+### Feat
+
+- **ui**: preview the next stable release
+
+## 0.5.19 (2026-06-22)
 
 ### Fix
 
@@ -53,6 +62,24 @@ function mockChangelog(markdown = CHANGELOG) {
   })) as unknown as typeof fetch;
 }
 
+const VERSION_JSON_SUFFIX = path.join("public", "version.json");
+
+// Pin what the running build reports, so the route's deployed-version lookup is
+// deterministic instead of reading the checked-in placeholder.
+function mockDeployedVersion(version: string) {
+  const realExistsSync = fs.existsSync;
+  const realReadFileSync = fs.readFileSync;
+  const isVersionFile = (target: unknown) => String(target).endsWith(VERSION_JSON_SUFFIX);
+
+  jest
+    .spyOn(fs, "existsSync")
+    .mockImplementation((target) => (isVersionFile(target) ? true : realExistsSync(target)));
+  jest.spyOn(fs, "readFileSync").mockImplementation(((target: unknown, ...rest: unknown[]) =>
+    isVersionFile(target)
+      ? JSON.stringify({ version })
+      : (realReadFileSync as (...args: unknown[]) => unknown)(target, ...rest)) as typeof fs.readFileSync);
+}
+
 async function callGet() {
   jest.resetModules();
   mockChangelog();
@@ -76,6 +103,32 @@ describe("/api/changelog", () => {
       "migrations",
       "rbac",
       "workflows",
+    ]);
+  });
+
+  it("surfaces the deployed prerelease ahead of the stable releases", async () => {
+    mockDeployedVersion("0.6.0-rc.1");
+    const data = await callGet();
+
+    expect(data.releases.map((release) => release.version)).toEqual([
+      "0.6.0-rc.1",
+      "0.5.19",
+      "0.5.18",
+      "0.5.17",
+      "0.5.16",
+    ]);
+    expect(data.scopes).toContain("ui");
+  });
+
+  it("omits prereleases other than the deployed one", async () => {
+    mockDeployedVersion("0.5.19");
+    const data = await callGet();
+
+    expect(data.releases.map((release) => release.version)).toEqual([
+      "0.5.19",
+      "0.5.18",
+      "0.5.17",
+      "0.5.16",
     ]);
   });
 

@@ -57,7 +57,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/skill-scanner --version 0.5.68
 | affinity | object | `{}` | Pod affinity rules |
 | fullnameOverride | string | `""` | Override the full release name |
 | image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
-| image.repository | string | `"ghcr.io/cnoe-io/skill-scanner"` | Container image repository. Build via build/Dockerfile.skill-scanner and push to your registry; override in the parent values.yaml. |
+| image.repository | string | `"ghcr.io/caipe-io/skill-scanner"` | Container image repository. Build via build/Dockerfile.skill-scanner and push to your registry; override in the parent values.yaml. |
 | image.tag | string | `""` | Image tag. Defaults to the parent chart's appVersion. |
 | imagePullSecrets | list | `[]` | Image pull secrets for private registries |
 | livenessProbe | object | `{"failureThreshold":3,"httpGet":{"path":"/health","port":"http"},"initialDelaySeconds":0,"periodSeconds":20,"timeoutSeconds":3}` | Liveness probe — hits the FastAPI /health endpoint. |

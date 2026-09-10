@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 # assisted-by Codex Codex-sonnet-4-6
 """Tests for the unlinked-fallback gate in _rbac_enrich_context.

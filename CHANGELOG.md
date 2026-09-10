@@ -1,3 +1,351 @@
+## 1.0.1-rc.3 (2026-09-10)
+
+### Fix
+
+- **ui**: preserve agent colors in chat avatars (#2699)
+- **setup-caipe**: let caipe-ui trust the self-signed cert for OIDC login (#2677)
+- **setup-caipe**: set litellm drop_params so Ollama embeddings work (#2674)
+- **setup-caipe**: pin in-cluster Ollama to the real model in LiteLLM mode (#2673)
+- **identity-sync**: unarchive teams when their group regains membership
+- **docs**: resolve versioned agent builder links (#2704)
+
+## 1.0.1-dev.7 (2026-09-08)
+
+### Feat
+
+- **rag**: seed datasources from app config (#2701)
+- **homepage**: pair product tour with full demo (#2703)
+- **docs**: polish homepage and feature navigation (#2702)
+
+### Fix
+
+- **docs**: restore star history chart (#2643)
+- **workflows**: validate stale tool overrides before execution (#2692)
+- **setup-caipe**: default local domain to *.localtest.me not *.local.me (#2671)
+- **setup-caipe**: harden interactive input and Kind cluster selection (#2667)
+- **setup-caipe**: make Langfuse tracing non-fatal and pin the chart (#2665)
+- **setup-caipe**: use the caipe-io chart registry and validate versions (#2666)
+
+### Refactor
+
+- **setup-caipe**: drop cnoe-agent-utils attribution from user-facing text (#2669)
+
+## 1.0.1-dev.6 (2026-09-07)
+
+## 1.0.1-rc.2 (2026-09-07)
+
+## 1.0.1-dev.5 (2026-09-07)
+
+### Fix
+
+- **agentic-apps**: support bounded large request bodies
+
+## 1.0.1-dev.4 (2026-09-06)
+
+### Feat
+
+- **projects**: add projects workspace skeleton (#2648)
+
+## 1.0.1-dev.3 (2026-09-06)
+
+### Feat
+
+- **projects**: add projects navigation (#2647)
+
+## 1.0.1-dev.2 (2026-09-06)
+
+### Feat
+
+- **projects**: add projects feature flag (#2646)
+
+### Fix
+
+- **ci**: allow autonomous path detection on pull requests (#2653)
+
+## 1.0.1-dev.1 (2026-09-04)
+
+## 1.0.1-rc.1 (2026-09-04)
+
+## 1.0.0-dev.24 (2026-09-04)
+
+### Feat
+
+- **agentic-apps**: add Weather reference runtime
+- **ui**: add config-driven hosted application runtime
+- **scheduler**: min interval restriction
+- **autonomous**: remove redundent max retires and timeout
+- **autonomous**: webhook to be in a single chat with each run having "continue this run" button to chat on that particular run
+- **docs**: up to date autonomous agent docs
+- **autonomous**: add min run interval (configurable) and wehook should NOT appear in the chat
+- **ui**: autonomous and schedule chats in separate sections to history
+- **autonomous**: simply team access and separate admin control to a tab
+
+### Fix
+
+- **autonomous-agents**: address code quality review
+- **ui**: test
+- **autonomous**: webhook secret ffs
+- **autonomous**: add webhook limits and address security concerns
+- **autonomous**: better admin tab and remove task oversight
+- **autonomous**: secret should be secretly handled
+- **ui**: autonomous page scroll issue
+- **docs**: version historical internal links (#2641)
+
+## 1.0.0 (2026-09-03)
+
+## 1.0.0-dev.23 (2026-09-03)
+
+### Feat
+
+- add timezone support and userhub metadata
+
+## 1.0.0-dev.22 (2026-09-02)
+
+## 1.0.0-rc.7 (2026-09-02)
+
+## 1.0.0-dev.21 (2026-09-02)
+
+### Fix
+
+- **rbac**: allow self-service read access to Webex bot picker
+
+## 1.0.0-dev.20 (2026-09-02)
+
+### Feat
+
+- **ui**: add re-upload modal for file datasources
+- **rag**: add file datasource re-upload endpoint
+
+### Fix
+
+- **rag**: preserve job history across file datasource re-uploads
+
+## 1.0.0-dev.19 (2026-09-02)
+
+### Fix
+
+- **ci**: use built-in token for Dependabot Grype scans (#2628)
+- Update README.md (#2542)
+
+## 1.0.0-dev.18 (2026-09-01)
+
+## 1.0.0-rc.6 (2026-09-01)
+
+## 1.0.0-dev.17 (2026-09-01)
+
+### Feat
+
+- **ui**: add an API section to Insights Statistics
+- **ui**: add a Webex section to Insights Statistics, mirroring Slack
+
+### Fix
+
+- **ui**: force client_type to 'api' for non-first-party Bearer callers
+- **audit**: attach real identity to bridge authz-decision audit events
+- **webex**: stop agent-flash on pinned threads; exclude DMs from Top Spaces
+- **ui**: exclude Webex conversations from the default sidebar listing
+- **ui**: stop the picker chevron from shifting when a value is cleared
+- **ui**: stop wide line charts from stretching data points and text
+- **audit**: capture openfga_rebac events at standard verbosity
+- **audit**: return a clean error instead of a bare 500 on retention failures
+- **webex**: redirect to sign-in instead of a bare 401 on webex-link/start
+- **ui**: fix chart hover misalignment on wide line charts
+- **ui**: make DAU/MAU "Today"/"This Month" cards rolling windows
+- **ui**: show a Webex source option in the Insights stats picker
+- **webex**: tag Webex message turns with source "webex" for Insights
+- **ui**: clear the ?request= param after approving/rejecting it
+- **ui**: paginate the Default agents picker's accessible-agents fetch
+- **webex**: pin threads to their first-responding agent
+
+### Perf
+
+- **audit**: parallelize S3 list/fetch calls in the audit-service read path
+
+## 1.0.0-dev.16 (2026-09-01)
+
+## 1.0.0-rc.5 (2026-09-01)
+
+## 1.0.0-dev.15 (2026-09-01)
+
+## 1.0.0-dev.14 (2026-08-31)
+
+### Feat
+
+- **ui**: add owner team editor to Webex configured space detail
+- **ui**: add Webex Advanced admin tab and harden Slack/Webex parity
+- **ui**: unify Webex/Slack DM default-agent settings
+- **rag**: show collection id in the collections detail pane
+- **rag**: filter search MCP tool by collection_id
+
+### Fix
+
+- **ui**: skip unused runtime-status fetch, filter malformed direct-user rows
+- **webex-bot**: silence linked users on disabled DMs, recognize legacy reply marker
+- **ui**: fix stale-response race and double-fetch in Webex 1:1 panel
+- **rbac**: revoke stale team grant and avoid duplicate Webex space mapping
+- **webex-bot**: stop nesting bold and italic in agent-reply footer
+- **rbac**: require bot_id on Webex team-space assignments
+- **ui**: use public origin for Webex link callback redirect
+
+### Perf
+
+- **ui**: paginate and search the 1:1 Messages admin tab
+
+## 1.0.0-dev.13 (2026-08-28)
+
+## 1.0.0-rc.4 (2026-08-28)
+
+## 1.0.0-dev.12 (2026-08-28)
+
+### Refactor
+
+- **ui**: remove Webex legacy migration tab and backend
+
+## 1.0.0-dev.11 (2026-08-27)
+
+### Feat
+
+- **charts**: wire self-service Webex identity-linking vars into caipe-ui chart
+
+### Fix
+
+- **ui**: revert prior Webex fix, correct e2e tests to match intended tab order
+- **ui**: restore Webex onboard default tab and listen-mode diagnostic fix
+- **integrations**: remove insecure Slack HMAC identity-link mechanism
+- **ui**: align accent theming and navigation state (#2605)
+
+### Refactor
+
+- **ui**: standardize reusable selection controls (#2597)
+
+## 1.0.0-dev.10 (2026-08-27)
+
+## 1.0.0-rc.3 (2026-08-27)
+
+## 1.0.0-dev.9 (2026-08-26)
+
+### Fix
+
+- **platform**: align RAG access and application controls (#2599)
+
+## 1.0.0-dev.8 (2026-08-26)
+
+## 1.0.0-rc.2 (2026-08-26)
+
+## 1.0.0-dev.7 (2026-08-26)
+
+### Feat
+
+- **ui**: add global command palette (#2463)
+
+### Fix
+
+- **ui**: show deployed version in about, refresh homepage, and consolidate release docs (#2595)
+- **ui**: hide API-created conversations from chat history (#2588)
+
+## 1.0.0-dev.6 (2026-08-26)
+
+### Feat
+
+- **ui**: add global platform health notifications (#2416)
+
+## 1.0.0-dev.5 (2026-08-25)
+
+### Feat
+
+- **ui**: restore feature-gated feedback shortcut (#2435)
+- **ui**: add agent completion browser alerts (#2413)
+
+### Fix
+
+- **ui**: redirect personal insights to filtered admin statistics (#2586)
+- **ui**: align new chat agent resolution (#2464)
+- **ui**: support legacy conversation identifiers (#2466)
+
+## 1.0.0-dev.4 (2026-08-25)
+
+### Feat
+
+- **ui**: improve global navigation and breadcrumbs (#2407)
+- **ui**: standardize searchable agent pickers (#2403)
+
+## 1.0.0-dev.3 (2026-08-25)
+
+## 1.0.0-dev.2 (2026-08-25)
+
+### Feat
+
+- **ui**: customizable Home page with Quick Start and optional widgets (#2408)
+
+### Fix
+
+- update README.md (#2472)
+- **ci**: remove unused Helm publish app token (#2399)
+
+### Refactor
+
+- **ui**: retire legacy agent builder (#2443)
+
+## 1.0.0-dev.1 (2026-08-24)
+
+## 1.0.0-rc.1 (2026-08-24)
+
+### Fix
+
+- **docs**: replace restricted star history embed (#2471)
+- **ci**: support RC versions in manual releases
+
+## 0.6.0-dev.8 (2026-08-24)
+
+### Fix
+
+- **ci**: restore RBAC and Playwright checks
+
+## 0.6.0-dev.7 (2026-08-24)
+
+## 0.6.0-dev.6 (2026-08-24)
+
+## 0.6.0-dev.4 (2026-08-24)
+
+## 0.6.0-dev.2 (2026-08-24)
+
+## 0.6.0-dev.1 (2026-08-24)
+
+### Feat
+
+- **webex**: add self-service Webex identity linking in settings
+
+### Fix
+
+- **webex**: disable Relink button while an unlink request is in flight
+- **webex**: fall back to raw id in admin panel when no email captured
+- **auth**: enforce max age on signed OAuth state cookies
+- **webex**: close check-then-write race on identity link claim
+- **webex**: resolve false revision-conflict on publication approval
+- **webex**: show linked account email instead of raw id in admin panel
+
+## 0.6.0 (2026-08-21)
+
+## 0.5.69-dev.4 (2026-08-20)
+
+### Fix
+
+- **security**: resolve dependency vulnerabilities (#2415)
+
+### Refactor
+
+- **dynamic-agents**: use immutable prompt rendering (#2369)
+
+## 0.5.69-dev.2 (2026-08-20)
+
+## 0.5.69-dev.1 (2026-08-19)
+
+### Fix
+
+- **skills**: repair zip import ownership and file access
+
+## 0.5.69 (2026-08-18)
+
 ## 0.5.68-dev.8 (2026-08-18)
 
 ## 0.5.68-dev.7 (2026-08-17)

@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -49,6 +49,10 @@ jobs:
       - name: Install dependencies
         working-directory: ui
         run: npm ci
+
+      - name: Test External App examples
+        working-directory: ui
+        run: npm run test:external-app-examples
 
       - name: Run Jest tests
         id: jest
@@ -243,7 +247,6 @@ jobs:
 
             **Medium Priority:**
             - components/chat/ChatPanel.tsx - Main chat interface
-            - components/agent-builder/* - Agent builder UI
             - lib/mongodb.ts - MongoDB integration
 
             </details>
@@ -302,15 +305,11 @@ jobs:
       contents: read
       packages: read
     container:
-      # assisted-by Codex Codex-sonnet-4-6
-      image: ghcr.io/cnoe-io/playwright:v1.61.0-noble
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      image: mcr.microsoft.com/playwright:v1.61.0-noble
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -341,6 +340,10 @@ jobs:
         working-directory: ui
         env:
           WORKFLOWS_ENABLED: 'true'
+          # The mocked Settings regression opens the authenticated user menu.
+          # This public setting is compiled into the client bundle, so set it
+          # while building as well as when serving the app below.
+          NEXT_PUBLIC_SSO_ENABLED: 'true'
           # The specs mock every API, so no real database is contacted. But the
           # home page gates shared-conversation / insights UI on server-side
           # storage mode (getStorageMode reads MONGODB_URI + MONGODB_DATABASE at
@@ -354,6 +357,7 @@ jobs:
         working-directory: ui
         env:
           WORKFLOWS_ENABLED: 'true'
+          NEXT_PUBLIC_SSO_ENABLED: 'true'
           MONGODB_URI: 'mongodb://mock:27017'
           MONGODB_DATABASE: 'mock'
         run: |
@@ -433,7 +437,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 

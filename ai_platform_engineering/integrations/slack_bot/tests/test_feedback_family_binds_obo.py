@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Regression tests: feedback/retry/escalation button and modal handlers must
 bind the per-request OBO token before calling into `sse_client`.

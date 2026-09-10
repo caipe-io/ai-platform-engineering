@@ -194,7 +194,7 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
             <p className="text-xs text-muted-foreground">
               {data.unread_count > 0
                 ? `${data.unread_count} unread`
-                : "You’re all caught up"}
+                : "You’re all caught up ✅"}
             </p>
           </div>
           {data.unread_count > 0 && (
@@ -212,7 +212,7 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
             </div>
           ) : data.notifications.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-              No notifications yet.
+              No notifications yet... but why not try to change that?
             </div>
           ) : (
             <ul role="list">
@@ -230,10 +230,20 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
                       {notificationIcon(notification)}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2">
-                        <span className="truncate text-sm font-medium">
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium">
                           {notification.title}
                         </span>
+                        {notification.source_label ? (
+                          <span className="shrink-0 rounded-full border border-primary/25 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                            {notification.source_label}
+                          </span>
+                        ) : null}
+                        {notification.lifecycle_status === "resolved" ? (
+                          <span className="shrink-0 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                            Resolved
+                          </span>
+                        ) : null}
                         {!notification.read && (
                           <span className="h-2 w-2 shrink-0 rounded-full bg-primary" />
                         )}

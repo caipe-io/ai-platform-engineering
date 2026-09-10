@@ -28,6 +28,22 @@ investigating an incident.
 | Skill hub | External GitHub/GitLab source crawled into CAIPE | MongoDB `skill_hubs`, `hub_skills` |
 | Scanner | Optional prompt-injection and unsafe-tool scanner | `SKILL_SCANNER_URL` sidecar |
 
+## Legacy Agentic Workflows URLs
+
+The retired `/agent-builder` page was an older **Agentic Workflows** UI over
+the same `AgentSkill` records used by Skills. It was not the supported
+**Agents → New Agent** wizard.
+
+| Legacy URL | Canonical destination |
+|---|---|
+| `/agent-builder` | `/skills` |
+| `/agent-builder/history` | `/skills` |
+
+Both legacy URLs redirect to the Skills Gallery so existing bookmarks do not
+fail. Persisted `agent_skills`, favorites, workflow run records, APIs, stores,
+and authorization rules remain unchanged. Use `/dynamic-agents` to create or
+edit an agent, and `/workflows` to author multi-agent workflows.
+
 ## Use Skills In CAIPE
 
 Attach skills to a dynamic agent from the UI. The runtime exposes the selected

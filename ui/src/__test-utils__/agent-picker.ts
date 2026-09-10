@@ -5,8 +5,6 @@ type ScreenLike = Pick<typeof defaultScreen, "getByLabelText" | "getByRole" | "g
 /**
  * Open the AgentPicker whose trigger is labelled by `triggerLabel`,
  * then click the option whose rendered row contains `agent:<id>`.
- * Mirrors `pickTeam` for the new searchable AgentPicker that replaced
- * the per-row native `<select>` in the connector onboarding wizard.
  */
 export async function pickAgent(
   screenOrLabel: ScreenLike | string | RegExp,
@@ -48,7 +46,10 @@ async function waitForEnabledTrigger(
   let trigger: HTMLElement | null = null;
   await waitFor(() => {
     const node = screenObj.getByLabelText(triggerLabel);
-    if ((node as HTMLButtonElement).disabled) {
+    if (
+      (node as HTMLButtonElement).disabled ||
+      node.getAttribute("aria-disabled") === "true"
+    ) {
       throw new Error(
         `Trigger labelled "${String(triggerLabel)}" is still disabled.`,
       );

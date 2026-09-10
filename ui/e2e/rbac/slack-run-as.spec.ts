@@ -288,8 +288,7 @@ test.describe("mocked Slack Run as browser regression", () => {
 
     await dialog.getByLabel("Service Account").check();
     await expect(dialog.getByText(/No active service accounts found/)).not.toBeVisible();
-    await dialog.getByRole("button", { name: "Service account" }).click();
-    await page.getByLabel("Search service accounts").fill("runner");
+    await dialog.getByRole("combobox", { name: "Service account" }).click();
     await page.getByRole("option", { name: "slack-runner" }).click();
 
     await dialog.getByRole("button", { name: "Add Agent" }).click();

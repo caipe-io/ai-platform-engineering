@@ -31,11 +31,6 @@ global:
   # Individual subchart `image.tag` values still take highest precedence.
   image:
     tag: ""
-    # -- Image repository channel for maintained CAIPE images.
-    # Empty means auto: rc/hotfix/dev chart appVersions use `pre-release/`,
-    # final release appVersions use the root published image repositories.
-    # Set to `pre-release` or `release` to force either repository channel.
-    channel: ""
 
   # -- Shared object storage for CAIPE. Set the bucket ONCE here and every
   # subchart that needs durable object storage derives from it:
@@ -195,7 +190,7 @@ global:
       configBridge:
         enabled: true
         image:
-          repository: ghcr.io/cnoe-io/agentgateway-config-bridge
+          repository: ghcr.io/caipe-io/agentgateway-config-bridge
           tag: ""              # defaults to agentgateway subchart appVersion
           pullPolicy: IfNotPresent
         pollSeconds: 5
@@ -405,11 +400,11 @@ skillsLiveSkills: ""           # Inline custom live-skills skill (overrides ever
 mcp-argocd:
   nameOverride: "mcp-argocd"
   image:
-    repository: "ghcr.io/cnoe-io/mcp-argocd"
+    repository: "ghcr.io/caipe-io/mcp-argocd"
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-argocd"
+      repository: "ghcr.io/caipe-io/mcp-argocd"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -429,7 +424,7 @@ mcp-backstage:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-backstage"
+      repository: "ghcr.io/caipe-io/mcp-backstage"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -460,7 +455,7 @@ mcp-confluence:
 mcp-github:
   nameOverride: "mcp-github"
   image:
-    repository: "ghcr.io/cnoe-io/mcp-github"
+    repository: "ghcr.io/caipe-io/mcp-github"
     pullPolicy: "IfNotPresent"
   mcp:
     mode: "stdio"
@@ -533,7 +528,7 @@ mcp-jira:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-jira"
+      repository: "ghcr.io/caipe-io/mcp-jira"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -550,7 +545,7 @@ mcp-pagerduty:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-pagerduty"
+      repository: "ghcr.io/caipe-io/mcp-pagerduty"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -590,7 +585,7 @@ mcp-aws:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-aws"
+      repository: "ghcr.io/caipe-io/mcp-aws"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -620,7 +615,7 @@ mcp-splunk:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-splunk"
+      repository: "ghcr.io/caipe-io/mcp-splunk"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -637,7 +632,7 @@ mcp-victorops:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-victorops"
+      repository: "ghcr.io/caipe-io/mcp-victorops"
       tag: ""
       pullPolicy: "IfNotPresent"
     mode: "http" # Options: stdio, http
@@ -653,7 +648,7 @@ mcp-webex:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-webex"
+      repository: "ghcr.io/caipe-io/mcp-webex"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -669,7 +664,7 @@ mcp-webex-meetings:
     requiresSecret: false
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-webex-meetings"
+      repository: "ghcr.io/caipe-io/mcp-webex-meetings"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -693,7 +688,7 @@ mcp-komodor:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-komodor"
+      repository: "ghcr.io/caipe-io/mcp-komodor"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -712,7 +707,7 @@ mcp-netutils:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-netutils"
+      repository: "ghcr.io/caipe-io/mcp-netutils"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -748,7 +743,7 @@ caipe-ui:
     secretKey: "KC_SCHEDULER_CLIENT_SECRET"
     clientId: "caipe-scheduler-runner"
   image:
-    repository: "ghcr.io/cnoe-io/caipe-ui"
+    repository: "ghcr.io/caipe-io/caipe-ui"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: "IfNotPresent"
@@ -1057,7 +1052,7 @@ litellmMcp:
   replicaCount: 1
   revisionHistoryLimit: 3
   image:
-    repository: "ghcr.io/cnoe-io/mcp-litellm"
+    repository: "ghcr.io/caipe-io/mcp-litellm"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: "IfNotPresent"
@@ -1128,7 +1123,7 @@ litellmMcp:
 dynamic-agents:
   nameOverride: "dynamic-agents"
   image:
-    repository: "ghcr.io/cnoe-io/caipe-dynamic-agents"
+    repository: "ghcr.io/caipe-io/caipe-dynamic-agents"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: "IfNotPresent"
@@ -1169,6 +1164,9 @@ dynamic-agents:
     # the in-cluster default http://<release-name>-caipe-ui:3000; override only
     # when pointing dynamic-agents at an external CAIPE UI/BFF.
     CAIPE_API_URL: ""
+    AUTHZ_SERVICE_URL: ""
+    # Must match caipe-ui.config.CAIPE_ORG_KEY.
+    CAIPE_ORG_KEY: "caipe"
     CREDENTIAL_SERVICE_AUDIENCE: "caipe-credential-service"
     USE_IMPERSONATION_TOKENS: "false"
     # MCP server IDs routed through AgentGateway. "all" only applies to
@@ -1211,7 +1209,7 @@ dynamic-agents:
 autonomous-agents:
   nameOverride: "autonomous-agents"
   image:
-    repository: "ghcr.io/cnoe-io/caipe-autonomous-agents"
+    repository: "ghcr.io/caipe-io/caipe-autonomous-agents"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: "IfNotPresent"
@@ -1235,6 +1233,18 @@ autonomous-agents:
     # Dynamic-agents runtime endpoint -- every autonomous task runs against a
     # dynamic agent selected by the task's dynamic_agent_id.
     DYNAMIC_AGENTS_URL: ""
+    # Minimum gap between cron/interval fires. Webhook triggers are exempt.
+    MINIMUM_SCHEDULE_INTERVAL_SECONDS: "1800"
+    # Reject larger webhook bodies before parsing/signature verification.
+    WEBHOOK_MAX_PAYLOAD_BYTES: "1048576"
+    # Each task is a single-consumer FIFO. Bound queued work separately from
+    # execution concurrency across different tasks.
+    WEBHOOK_MAX_PENDING_PER_TASK: "100"
+    WEBHOOK_MAX_PENDING_PER_OWNER: "500"
+    WEBHOOK_MAX_PENDING_GLOBAL: "5000"
+    WEBHOOK_MAX_PENDING_PAYLOAD_BYTES_GLOBAL: "67108864"
+    WEBHOOK_MAX_CONCURRENT_PER_OWNER: "20"
+    WEBHOOK_MAX_CONCURRENT_GLOBAL: "100"
     # MongoDB configuration (uses same database as CAIPE UI)
     MONGODB_DATABASE: "caipe"
   # Pre-existing secret with MONGODB_URI (required), WEBHOOK_SECRET, and
@@ -1263,14 +1273,14 @@ autonomous-agents:
 scheduler:
   fullnameOverride: "caipe-scheduler"
   image:
-    repository: "ghcr.io/cnoe-io/caipe-scheduler"
+    repository: "ghcr.io/caipe-io/caipe-scheduler"
     tag: ""
     pullPolicy: "IfNotPresent"
   command: []
   args: []
   cronRunner:
     image:
-      repository: "ghcr.io/cnoe-io/caipe-cron-runner"
+      repository: "ghcr.io/caipe-io/caipe-cron-runner"
       tag: ""
       pullPolicy: "IfNotPresent"
   caipe:
@@ -1288,13 +1298,16 @@ scheduler:
     existingSecret: ""
     existingSecretKey: "token"
     value: ""
+  limits:
+    # -- Minimum permitted gap, in seconds, between recurring cron fires.
+    minimumScheduleIntervalSeconds: 1800
 # Scheduler MCP. Rendered whenever the scheduler feature is enabled unless this
 # narrower switch is disabled. It shares the scheduler service token Secret.
 schedulerMcp:
   enabled: true
   nameOverride: "mcp-scheduler"
   image:
-    repository: "ghcr.io/cnoe-io/mcp-scheduler"
+    repository: "ghcr.io/caipe-io/mcp-scheduler"
     tag: ""
     pullPolicy: "IfNotPresent"
   command: ["mcp-server-scheduler"]
@@ -1320,7 +1333,7 @@ schedulerMcp:
 # Enable with: global.integrations.slackBot.enabled=true
 slack-bot:
   image:
-    repository: "ghcr.io/cnoe-io/caipe-slack-bot"
+    repository: "ghcr.io/caipe-io/caipe-slack-bot"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: "IfNotPresent"
@@ -1397,10 +1410,6 @@ slack-bot:
       #   remoteRef:
       #     key: prod/slack-bot
       #     property: slack_client_secret
-      # - secretKey: SLACK_LINK_HMAC_SECRET
-      #   remoteRef:
-      #     key: prod/slack-bot
-      #     property: slack_link_hmac_secret
       # - secretKey: OAUTH2_CLIENT_SECRET
       #   remoteRef:
       #     key: prod/slack-bot
@@ -1423,7 +1432,7 @@ slack-bot:
 # Enable with Helm tag: webex-bot=true
 webex-bot:
   image:
-    repository: "ghcr.io/cnoe-io/caipe-webex-bot"
+    repository: "ghcr.io/caipe-io/caipe-webex-bot"
     tag: ""
     pullPolicy: "IfNotPresent"
 
@@ -1608,7 +1617,7 @@ openfgaAuthzBridge:
 # above is kept as the dependency condition flag.
 openfga-authz-bridge:
   image:
-    repository: ghcr.io/cnoe-io/openfga-authz-bridge
+    repository: ghcr.io/caipe-io/openfga-authz-bridge
     tag: ""
     pullPolicy: IfNotPresent
   # Must match caipe-ui.config.CAIPE_ORG_KEY.
@@ -1651,7 +1660,7 @@ rag-stack:
   rag-server:
     enabled: true
     image:
-      repository: "ghcr.io/cnoe-io/caipe-rag-server"
+      repository: "ghcr.io/caipe-io/caipe-rag-server"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -1662,7 +1671,7 @@ rag-stack:
   agent-rag:
     enabled: true
     image:
-      repository: "ghcr.io/cnoe-io/caipe-rag-agent-rag"
+      repository: "ghcr.io/caipe-io/caipe-rag-agent-rag"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"

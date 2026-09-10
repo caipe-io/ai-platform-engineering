@@ -335,7 +335,7 @@ const _inflightRefreshes = new Map<string, Promise<ExchangeResult>>();
 // L2: MongoDB collection `auth_token_cache` — shared across all replicas,
 //     tokens AES-256-GCM encrypted at rest (key derived from NEXTAUTH_SECRET).
 //
-// See: https://github.com/cnoe-io/ai-platform-engineering/issues/1986
+// See: https://github.com/caipe-io/ai-platform-engineering/issues/1986
 import { getStoredTokens, storeTokens, resetTokenStore } from './auth-token-store';
 
 // Claim groups are only needed for in-process authorization checks and are

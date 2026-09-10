@@ -64,11 +64,7 @@ volumes/**
 **/volumes
 **/volumes/
 **/volumes/**
-docker-compose/volumes
-docker-compose/volumes/
-docker-compose/volumes/**
 docs/**
-workshop/**
 
 # Python virtual environment - exclude ALL venv directories
 .venv/

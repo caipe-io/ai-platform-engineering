@@ -4,7 +4,7 @@
 
 # Global image configuration
 image:
-  repository: "ghcr.io/cnoe-io/caipe-rag-ingestors"
+  repository: "ghcr.io/caipe-io/caipe-rag-ingestors"
   # tag defaults to .Chart.AppVersion when not specified
   tag: ""
   pullPolicy: IfNotPresent
@@ -220,21 +220,9 @@ ingestors: []
   #
   #   # Slack-specific configuration
   #   env:
-  #     SLACK_BOT_NAME: mybot                # SLACK_BOT_NAME (required)
-  #     SLACK_WORKSPACE_URL: https://mycompany.slack.com  # SLACK_WORKSPACE_URL (required)
-  #     SLACK_CHANNELS: |                    # SLACK_CHANNELS (JSON)
-  #       {
-  #         "C1234567890": {
-  #           "name": "general",
-  #           "lookback_days": 30,
-  #           "include_bots": false
-  #         },
-  #         "C0987654321": {
-  #           "name": "engineering",
-  #           "lookback_days": 90,
-  #           "include_bots": true
-  #         }
-  #       }
+  #     SLACK_BOT_NAME: example-bot          # SLACK_BOT_NAME (required)
+  #     SLACK_WORKSPACE_URL: https://example.com  # SLACK_WORKSPACE_URL (required)
+  #   # Datasources are declared under caipe-ui.appConfig.rag_sources.
   #
   #   # Slack bot token from secret
   #   envFrom:
@@ -257,14 +245,8 @@ ingestors: []
   #
   #   # Webex-specific configuration
   #   env:
-  #     WEBEX_BOT_NAME: mybot                # WEBEX_BOT_NAME (required)
-  #     WEBEX_SPACES: |                      # WEBEX_SPACES (JSON)
-  #       {
-  #         "Y2lzY29zcGFyazovL3VzL1JPT00vYmJjZWIxYWQtNDNmMS0zYjU4LTkxNDctZjE0YmIwYzRkMTU0": {
-  #           "name": "general",
-  #           "lookback_days": 30
-  #         }
-  #       }
+  #     WEBEX_BOT_NAME: example-bot          # WEBEX_BOT_NAME (required)
+  #   # Datasources are declared under caipe-ui.appConfig.rag_sources.
   #
   #   # Webex access token from secret
   #   envFrom:
@@ -311,31 +293,10 @@ ingestors: []
   #
   #   # Jira-specific configuration
   #   env:
-  #     JIRA_URL: https://mycompany.atlassian.net  # JIRA_URL (required)
-  #     JIRA_EMAIL: bot@mycompany.com        # JIRA_EMAIL (required)
+  #     JIRA_URL: https://jira.example.com   # JIRA_URL (required)
+  #     JIRA_EMAIL: bot@example.com          # JIRA_EMAIL (required)
   #     JIRA_PAGE_SIZE: "100"                # JIRA_PAGE_SIZE
-  #     JIRA_PROJECTS: |                     # JIRA_PROJECTS (JSON)
-  #       {
-  #         "PROJ": [
-  #           {
-  #             "name": "My Project",
-  #             "jql": "project = PROJ AND updated >= -30d ORDER BY updated DESC",
-  #             "include_comments": true,
-  #             "include_links": true
-  #           }
-  #         ],
-  #         "OPS": [
-  #           {
-  #             "name": "untriaged",
-  #             "jql": "project = OPS AND status = Open ORDER BY updated DESC",
-  #             "custom_fields": {"slo": "customfield_12345"}
-  #           },
-  #           {
-  #             "name": "all-issues",
-  #             "jql": "project = OPS AND status != Done ORDER BY updated DESC"
-  #           }
-  #         ]
-  #       }
+  #   # Datasources are declared under caipe-ui.appConfig.rag_sources.
   #
   #   # Jira API token from secret
   #   envFrom:
@@ -358,16 +319,10 @@ ingestors: []
   #
   #   # Confluence-specific configuration
   #   env:
-  #     CONFLUENCE_URL: https://mycompany.atlassian.net/wiki  # CONFLUENCE_URL (required)
+  #     CONFLUENCE_URL: https://confluence.example.com/wiki  # CONFLUENCE_URL (required)
   #     CONFLUENCE_SSL_VERIFY: "true"         # CONFLUENCE_SSL_VERIFY
   #     CONFLUENCE_MAX_CONCURRENCY: "5"       # CONFLUENCE_MAX_CONCURRENCY
-  #     CONFLUENCE_SPACES: |                  # CONFLUENCE_SPACES (JSON, optional)
-  #       {
-  #         "SRE": [
-  #           {"page_id": "123456", "get_child_pages": true}
-  #         ],
-  #         "DEVOPS": []
-  #       }
+  #   # Datasources are declared under caipe-ui.appConfig.rag_sources.
   #
   #   # Confluence credentials from secret
   #   envFrom:

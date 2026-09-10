@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Regression tests for `get_channel_context` graceful handling of
 `missing_scope` from Slack's `conversations.info` endpoint.

@@ -23,6 +23,12 @@ chart_version: 0.5.1-rc.25
 namespace: caipe-rbac
 ```
 
+This is the legacy location for the currently pinned RC. New prerelease and
+release charts are published to the same canonical package as every other
+lifecycle: `ghcr.io/caipe-io/charts/ai-platform-engineering`. Change the
+repository and version together after the selected chart version exists in the
+new organization; do not publish new charts to `pre-release-helm-charts`.
+
 The deployment already enables the RBAC runtime stack:
 
 - `tags.keycloak: true`

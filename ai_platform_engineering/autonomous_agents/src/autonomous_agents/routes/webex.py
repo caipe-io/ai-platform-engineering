@@ -29,6 +29,7 @@ Failure-mode contract
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -51,6 +52,7 @@ from autonomous_agents.services.webex_inbound import (
     dispatch_message_event,
 )
 from autonomous_agents.services.webhook_adapters import get_adapter
+from autonomous_agents.services.webhook_limits import read_limited_webhook_body
 from autonomous_agents.services.webhook_runtime import (
     dispatch_webhook_run,
     get_webhook_task,
@@ -151,7 +153,9 @@ async def receive_webex_event(
         response.status_code = 503
         return {"detail": "webex inbound not initialised"}
 
-    body = await request.body()
+    body = await read_limited_webhook_body(
+        request, max_bytes=settings.webhook_max_payload_bytes
+    )
 
     # ---- HMAC verify -------------------------------------------------
     adapter = get_adapter("webex")
@@ -165,7 +169,7 @@ async def receive_webex_event(
 
     # ---- Parse + dispatch -------------------------------------------
     try:
-        event = await request.json()
+        event = json.loads(body) if body else {}
     except Exception:
         raise HTTPException(status_code=400, detail="invalid JSON body")
 
@@ -288,6 +292,14 @@ async def receive_webex_event(
         context={},
         follow_up=follow_up,
         background_tasks=background_tasks,
+        max_pending_per_task=settings.webhook_max_pending_per_task,
+        max_pending_per_owner=settings.webhook_max_pending_per_owner,
+        max_pending_global=settings.webhook_max_pending_global,
+        max_pending_payload_bytes_global=(
+            settings.webhook_max_pending_payload_bytes_global
+        ),
+        max_concurrent_per_owner=settings.webhook_max_concurrent_per_owner,
+        max_concurrent_global=settings.webhook_max_concurrent_global,
     )
 
     response.status_code = outcome.status_code

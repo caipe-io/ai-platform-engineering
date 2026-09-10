@@ -386,7 +386,8 @@ ai-platform-engineering/
 │       └── changes/             # ← ADRs HERE
 ├── integration/                 # Integration tests
 ├── charts/                      # Helm charts
-├── docker-compose/              # Docker configs
+├── docker-compose.yaml           # Canonical production Compose config
+├── docker-compose.dev.yaml       # Canonical development Compose config
 └── pyproject.toml
 ```
 

@@ -427,8 +427,6 @@ describe("DynamicAgentsTab search + pagination", () => {
                 can_manage: true,
                 can_write: true,
                 can_discover: true,
-                can_schedule: true,
-                can_automate: true,
               },
             }),
           ],

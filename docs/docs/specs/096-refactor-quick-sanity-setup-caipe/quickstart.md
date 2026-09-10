@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Push access to the `cnoe-io/ai-platform-engineering` repository
+- Push access to the `caipe-io/ai-platform-engineering` repository
 - GitHub Actions enabled on the repository
 - The `caipe-integration-tests` self-hosted runner is online
 

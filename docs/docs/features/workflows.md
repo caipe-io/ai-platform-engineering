@@ -4,60 +4,138 @@ sidebar_position: 2
 
 # Workflows
 
-Chain dynamic agents into multi-step automations with the visual workflow builder. Workflows run on demand from the chat UI, on a cron schedule, or when triggered by an approved agent tool call.
+Use Workflows to compose agents into repeatable, inspectable processes. Each
+workflow runs an ordered sequence of agent steps, passes context forward, applies
+a failure policy to each step, and records the complete run timeline.
 
-**Quick links**: [Helm Chart Docs](../installation/helm-charts/ai-platform-engineering/caipe-ui-chart) · [Security — Workflow RBAC](../security/rbac/workflows)
+**Quick links**:
+[CAIPE UI Helm chart](../installation/helm-charts/ai-platform-engineering/caipe-ui-chart) ·
+[Workflow RBAC](../security/rbac/workflows)
 
----
+## How it works
 
-## Visual Workflow Builder
+```mermaid
+flowchart TB
+  T(["Start anywhere<br/>CAIPE UI · authorized agent · REST API"])
+  W(["Workflow<br/>run"])
 
-Build workflows directly in the CAIPE web UI without writing code.
+  subgraph FLOW["Ordered execution"]
+    direction LR
+    S1["1 · Gather<br/>context"]
+    S2["2 · Analyze<br/>evidence"]
+    H{"Input or<br/>approval?"}
+    P["Pause on<br/>timeline"]
+    S3["3 · Publish<br/>result"]
 
-- Drag-and-drop step ordering with per-step agent assignment and prompt
-- Each step runs a named dynamic agent with a custom prompt and optional config overrides
-- Error handling per step: `abort`, `retry` (with configurable max attempts and delay), or `continue`
-- Workflow configs stored in MongoDB; optionally bootstrapped via `appConfig.workflow_configs` in the Helm chart
+    S1 -->|"previous_output"| S2 --> H
+    H -->|"No"| S3
+    H -->|"Yes"| P -->|"Resume"| S2
+  end
 
-## Run History and Event Timelines
+  O(["Run record<br/>timeline · artifacts"])
+  E["Per-step failure policy<br/>abort · skip · retry"]
 
-Every execution creates a persistent run record.
+  T --> W
+  W --> S1
+  S3 --> O
+  E -. "Applied to every step" .-> S2
 
-- Live status updates: `pending → running → waiting_for_input → completed / failed / cancelled`
-- Per-step event timeline showing agent responses, tool calls, and errors
-- Artifact storage for files produced during a run
-- Shared run visibility: owners can share a run with a team for collaborative debugging
+  classDef trigger fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:2px
+  classDef run fill:#ede9fe,stroke:#7c3aed,color:#4c1d95,stroke-width:3px
+  classDef step fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
+  classDef decision fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:2px
+  classDef pause fill:#ffe4e6,stroke:#e11d48,color:#881337,stroke-width:2px
+  classDef policy fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:2px
+  classDef outcome fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:2px
 
-## Human-in-the-Loop (HITL)
+  class T trigger
+  class W run
+  class S1,S2,S3 step
+  class H decision
+  class P pause
+  class E policy
+  class O outcome
+  style FLOW fill:#eff6ff,stroke:#93c5fd,color:#1e3a8a,stroke-width:2px
+```
 
-Workflows can pause mid-execution and wait for human input or tool approval.
+## Visual workflow builder
 
-- Steps can emit an interrupt with a custom prompt and structured form fields
-- The HITL form renders inline in the chat UI — no page navigation required
-- Subagent HITL is supported: a sub-step can interrupt independently of the parent workflow
-- Resume data is validated and forwarded to the waiting agent step
+Build an ordered workflow in the CAIPE UI without writing orchestration code.
 
-## Scheduling
+- Add or insert agent steps on the visual canvas.
+- Assign a named agent and custom prompt to each step.
+- Apply optional model, tool, or runtime configuration overrides to a step.
+- Choose `abort`, `skip`, or `retry` when a step fails.
+- Set the maximum attempt count for retrying steps.
+- Import or export workflow definitions as YAML.
 
-Workflows can run on a cron schedule without human intervention.
+Workflow definitions are stored in MongoDB and can also be bootstrapped through `appConfig.workflow_configs` in the CAIPE UI Helm chart.
 
-- Configure cron expressions per workflow in the UI or via `appConfig.workflow_configs`
-- Scheduled runs are owned by the service account and visible to team admins
-- Schedule history and next-run time shown in the workflow list
+## Passing context between steps
 
-## Agent Workflow Tools
+Step prompts use Jinja-compatible templates. The available context includes:
 
-Approved agents can trigger and monitor workflows as built-in tools.
+| Variable | Purpose |
+|----------|---------|
+| `previous_output` | Output from the most recently completed step |
+| `steps` | Named results and metadata from completed steps |
+| `user_context` | Context supplied when the workflow run starts |
 
-- Add the `workflows` built-in tool to any custom agent and grant access to specific workflow configs
-- The agent receives the run ID and can poll for status or surface results inline in chat
-- Webhook triggers: POST to `/api/workflow-runs` with a valid Bearer token to start a run from external systems
+For example:
 
-## Access Control
+```jinja2
+Review the release evidence below and identify blocking risks:
 
-Workflow configs and runs follow CAIPE's RBAC model.
+{{ previous_output }}
+```
 
-- Config visibility: `private` (owner only), `team` (shared with named teams), or `global`
-- Run visibility: private by default; owners can share a run with a team via the share dialog
-- OpenFGA enforces per-config and per-run access on every API call
-- Org admins can access any run for troubleshooting regardless of share settings
+## Run history and timelines
+
+Every execution creates a persistent workflow-run record.
+
+- Status progression includes `pending`, `running`, `waiting_for_input`, `completed`, `failed`, and `cancelled`.
+- The run timeline shows agent responses, tool calls, errors, human input events,
+  and approvals.
+- Files produced during a run are retained as artifacts.
+- A running workflow can be cancelled.
+- Runs are private by default. The owner can share a run with the workspace for
+  collaborative review.
+
+## Human input and approval
+
+An agent step can pause the workflow when it needs structured input or approval
+to use a protected tool.
+
+1. The agent emits an interrupt containing a prompt and form fields.
+2. The workflow enters `waiting_for_input`.
+3. The run timeline presents the request to an authorized user.
+4. The submitted data is validated and returned to the waiting step.
+5. Execution resumes from that step and preserves the existing run history.
+
+Interrupts raised by a subagent are propagated to the parent workflow run.
+
+## Starting a workflow
+
+Supported trigger paths are:
+
+- **CAIPE UI** — start and inspect a run interactively.
+- **Agent** — add the `workflows` built-in tool and grant the agent access to
+  specific workflow definitions.
+- **REST API** — create a run through `POST /api/workflow-runs` with a valid
+  bearer token.
+
+Workflow definitions do not currently contain cron schedules. For scheduled
+automation, configure a scheduled or autonomous agent and grant that agent
+access to the workflow.
+
+## Access control
+
+Workflow definitions and workflow runs use separate visibility models.
+
+- Definition visibility can be `private`, `team`, or `global`.
+- Run visibility can be `private`, `workspace`, or `admin`.
+- Sharing a run creates workspace-readable access; it does not change the definition's team grants.
+- OpenFGA relationships authorize access to definitions and runs on API requests.
+- Admins can inspect runs for authorized troubleshooting.
+
+UI controls help explain the current access state, but server-side authorization remains authoritative.

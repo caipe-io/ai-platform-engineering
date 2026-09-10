@@ -87,11 +87,11 @@ describe("PlatformDefaultsSettings",() => {
     const fetchMock = installFetchMock();
     render(<PlatformDefaultsSettings />);
 
-    const picker = await screen.findByRole("button",{ name: /Platform default agent for new chats/i });
+    const picker = await screen.findByRole("combobox",{ name: /Platform default agent for new chats/i });
     fireEvent.click(picker);
     fireEvent.click(await screen.findByRole("option",{ name: "No default agent" }));
 
-    const schedulePicker = screen.getByRole("button",{ name: "Scheduler editor agent" });
+    const schedulePicker = screen.getByRole("combobox",{ name: "Scheduler editor agent" });
     fireEvent.click(schedulePicker);
     expect(
       await screen.findByRole("option",{ name: "Use deployment/default chat agent" }),
@@ -115,16 +115,16 @@ describe("PlatformDefaultsSettings",() => {
     render(<PlatformDefaultsSettings readOnly />);
 
     expect(
-      await screen.findByRole("button",{ name: /Platform default agent for new chats/i }),
+      await screen.findByRole("combobox",{ name: /Platform default agent for new chats/i }),
     ).toBeDisabled();
-    expect(screen.getByRole("button",{ name: "Scheduler editor agent" })).toBeDisabled();
+    expect(screen.getByRole("combobox",{ name: "Scheduler editor agent" })).toBeDisabled();
   });
 
   it("opens confirmation as soon as a consequential selection is made",async () => {
     const fetchMock = installFetchMock();
     render(<PlatformDefaultsSettings />);
 
-    fireEvent.click(await screen.findByRole("button",{ name: /Platform default agent for new chats/i }));
+    fireEvent.click(await screen.findByRole("combobox",{ name: /Platform default agent for new chats/i }));
     fireEvent.click(await screen.findByRole("option",{ name: "Basic SRE" }));
 
     expect(await screen.findByText(/Make “Basic SRE” the platform default/)).toBeInTheDocument();
@@ -138,7 +138,7 @@ describe("PlatformDefaultsSettings",() => {
     const fetchMock = installFetchMock();
     render(<PlatformDefaultsSettings />);
 
-    fireEvent.click(await screen.findByRole("button",{ name: /Platform default agent for new chats/i }));
+    fireEvent.click(await screen.findByRole("combobox",{ name: /Platform default agent for new chats/i }));
     fireEvent.click(await screen.findByRole("option",{ name: "Basic SRE" }));
     fireEvent.click(await screen.findByRole("button",{ name: "Make it the default" }));
 
@@ -161,7 +161,7 @@ describe("PlatformDefaultsSettings",() => {
     installFetchMock({ defaultAgentId: "sre" });
     render(<PlatformDefaultsSettings />);
 
-    const picker = await screen.findByRole("button",{ name: /Platform default agent for new chats/i });
+    const picker = await screen.findByRole("combobox",{ name: /Platform default agent for new chats/i });
     fireEvent.click(picker);
     fireEvent.click(await screen.findByRole("option",{ name: "Knowledge Base Agent" }));
     fireEvent.click(await screen.findByRole("button",{ name: "Cancel" }));
@@ -173,7 +173,7 @@ describe("PlatformDefaultsSettings",() => {
     const fetchMock = installFetchMock({ defaultAgentId: "sre" });
     render(<PlatformDefaultsSettings />);
 
-    fireEvent.click(await screen.findByRole("button",{ name: /Platform default agent for new chats/i }));
+    fireEvent.click(await screen.findByRole("combobox",{ name: /Platform default agent for new chats/i }));
     fireEvent.click(await screen.findByRole("option",{ name: "No default agent" }));
     expect(await screen.findByText(/Remove the platform default agent/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{ name: "Remove default" }));

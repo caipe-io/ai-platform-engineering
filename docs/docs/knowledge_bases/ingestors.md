@@ -2,7 +2,7 @@
 
 Ingestors are services that pull data from external sources and submit it to the RAG server for indexing. Each ingestor connects to a specific data source, transforms the data into documents or graph entities, and manages its own sync schedule.
 
-For implementation details and creating custom ingestors, see the [Ingestors README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/README.md).
+For implementation details and creating custom ingestors, see the [Ingestors README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/README.md).
 
 ## How Ingestors Work
 
@@ -23,6 +23,27 @@ Ingestors can produce two types of data:
 |------|---------|----------|
 | **Documents** | Milvus (vectors) | Unstructured text like web pages, chat messages, wiki pages |
 | **Graph Entities** | Milvus + Neo4j | Structured data with relationships like infrastructure resources |
+
+## Datasource Configuration
+
+Web, Slack, Confluence, Jira, and Webex datasources use one persisted source
+model:
+
+- Create editable sources in the Web UI.
+- Seed deployment-managed, view-only sources through `rag_sources` in
+  `config/app-config.yaml` for Compose.
+- Use `caipe-ui.appConfig.rag_sources` for Helm.
+- Keep connector credentials in environment variables or deployment secrets.
+
+The ingestors reload only persisted sources. They do not read channel, space,
+project, or page selections from environment variables.
+
+Application-config sources are seeded into the database automatically and stay
+read-only while configuration remains the source of truth. An administrator can
+use **Admin → Settings → RAG → Adopt App-Config RAG Sources** to transfer selected
+sources to editable database management and add them to a collection. Adoption
+does not re-ingest indexed content; subsequent application-config changes no
+longer overwrite an adopted source.
 
 ## Available Ingestors
 
@@ -45,7 +66,7 @@ Discovers and ingests AWS resources across all regions.
 | **Input** | AWS API (via boto3) |
 | **Output** | Graph Entities |
 | **Entity Types** | EC2, S3, RDS, Lambda, EKS, DynamoDB, VPC, IAM, and more |
-| **Documentation** | [AWS README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/aws/README.md) |
+| **Documentation** | [AWS README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/aws/README.md) |
 
 ### Kubernetes
 
@@ -56,7 +77,7 @@ Ingests Kubernetes resources including custom resources.
 | **Input** | Kubernetes API (via kubeconfig) |
 | **Output** | Graph Entities |
 | **Entity Types** | Pods, Deployments, Services, ConfigMaps, Secrets, CRDs |
-| **Documentation** | [Kubernetes README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/k8s/README.md) |
+| **Documentation** | [Kubernetes README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/k8s/README.md) |
 
 ### Backstage
 
@@ -67,7 +88,7 @@ Ingests entities from a Backstage service catalog.
 | **Input** | Backstage Catalog API |
 | **Output** | Graph Entities |
 | **Entity Types** | Components, APIs, Systems, Domains, Groups, Users |
-| **Documentation** | [Backstage README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/backstage/README.md) |
+| **Documentation** | [Backstage README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/backstage/README.md) |
 
 ### ArgoCD
 
@@ -78,7 +99,7 @@ Ingests GitOps resources from ArgoCD.
 | **Input** | ArgoCD API |
 | **Output** | Graph Entities |
 | **Entity Types** | Applications, Projects, Clusters, Repositories, ApplicationSets |
-| **Documentation** | [ArgoCD README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/argocdv3/README.md) |
+| **Documentation** | [ArgoCD README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/argocdv3/README.md) |
 
 ### GitHub
 
@@ -89,7 +110,7 @@ Ingests organizational data from GitHub.
 | **Input** | GitHub API |
 | **Output** | Graph Entities |
 | **Entity Types** | Organizations, Repositories, Teams, Users |
-| **Documentation** | [GitHub README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/github/README.md) |
+| **Documentation** | [GitHub README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/github/README.md) |
 
 ### Confluence
 
@@ -100,7 +121,7 @@ Ingests pages from Confluence spaces with incremental sync support.
 | **Input** | Confluence REST API |
 | **Output** | Documents |
 | **Features** | Incremental sync, space filtering, title-based include/exclude regex patterns |
-| **Documentation** | [Confluence README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/confluence/README.md) |
+| **Documentation** | [Confluence README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/confluence/README.md) |
 
 ### Slack
 
@@ -111,7 +132,7 @@ Ingests conversations from Slack channels.
 | **Input** | Slack API |
 | **Output** | Documents |
 | **Features** | Threads grouped as single documents, channel filtering |
-| **Documentation** | [Slack README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/slack/README.md) |
+| **Documentation** | [Slack README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/slack/README.md) |
 
 ### Webex
 
@@ -122,7 +143,7 @@ Ingests messages from Webex spaces.
 | **Input** | Webex API |
 | **Output** | Documents |
 | **Features** | Space filtering, message threading |
-| **Documentation** | [Webex README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/webex/README.md) |
+| **Documentation** | [Webex README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/webex/README.md) |
 
 ## Common Configuration
 
@@ -174,10 +195,10 @@ IngestorBuilder()\
     .run()
 ```
 
-See the [Ingestors README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/README.md) for a complete example with job management and error handling.
+See the [Ingestors README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/README.md) for a complete example with job management and error handling.
 
 ## Further Reading
 
-- [Ingestors README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/README.md) - Creating custom ingestors
-- [Common Package](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/common/README.md) - Shared models and utilities
+- [Ingestors README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/ingestors/README.md) - Creating custom ingestors
+- [Common Package](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/common/README.md) - Shared models and utilities
 - [Authentication Overview](authentication-overview.md) - RBAC and security concepts

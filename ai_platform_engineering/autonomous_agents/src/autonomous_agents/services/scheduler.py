@@ -12,12 +12,14 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger as APSCronTrigger
 from apscheduler.triggers.interval import IntervalTrigger as APSIntervalTrigger
 
+from autonomous_agents.config import get_settings
 from autonomous_agents.models import (
     CronTrigger,
     IntervalTrigger,
     TaskDefinition,
     TriggerType,
 )
+from autonomous_agents.services.schedule_validation import validate_trigger_frequency
 
 # ``execute_task`` is the APScheduler job target wired up below. The
 # default ``MemoryJobStore`` stores callables by reference, so moving the
@@ -84,6 +86,10 @@ def register_scheduler_task(task: TaskDefinition) -> None:
                 f"{type(trigger).__name__} -- skipping"
             )
             return
+        validate_trigger_frequency(
+            trigger,
+            get_settings().minimum_schedule_interval_seconds,
+        )
         aps_trigger = APSCronTrigger.from_crontab(trigger.schedule, timezone="UTC")
         logger.info(f"[{task.id}] Scheduling cron: {trigger.schedule}")
 
@@ -94,6 +100,10 @@ def register_scheduler_task(task: TaskDefinition) -> None:
                 f"{type(trigger).__name__} -- skipping"
             )
             return
+        validate_trigger_frequency(
+            trigger,
+            get_settings().minimum_schedule_interval_seconds,
+        )
         aps_trigger = APSIntervalTrigger(
             seconds=trigger.seconds or 0,
             minutes=trigger.minutes or 0,
@@ -142,7 +152,13 @@ def register_scheduler_tasks(tasks: list[TaskDefinition]) -> None:
     directly so the scheduler is never restarted at runtime.
     """
     for task in tasks:
-        register_scheduler_task(task)
+        try:
+            register_scheduler_task(task)
+        except ValueError as exc:
+            # Existing tasks may pre-date the configured frequency floor. Keep
+            # the service available so an operator can edit them, but never
+            # register the unsafe schedule.
+            logger.error("[%s] Schedule rejected during startup: %s", task.id, exc)
 
     scheduler = get_scheduler()
     if not scheduler.running:

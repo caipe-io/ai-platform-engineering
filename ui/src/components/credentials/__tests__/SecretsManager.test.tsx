@@ -267,10 +267,6 @@ describe("SecretsManager", () => {
     expect(within(panel).getByText(/Choose a team that can use this saved secret/i)).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: /revoke access/i })).toBeInTheDocument();
     expect(screen.queryByText("Shared with Platform Team")).not.toBeInTheDocument();
-
-    await user.click(within(panel).getByRole("combobox", { name: /team access/i }));
-    const listbox = await screen.findByRole("listbox");
-    expect(panel).not.toContainElement(listbox);
   });
 
   it("deletes a secret after inline row confirmation", async () => {

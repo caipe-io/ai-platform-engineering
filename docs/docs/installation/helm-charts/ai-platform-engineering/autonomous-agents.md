@@ -72,7 +72,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/autonomous-agents --version 0.4.10
 | externalSecrets.secretStoreRef.name | string | `"vault"` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"Always"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-autonomous-agents"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-autonomous-agents"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | ingress.annotations | object | `{}` |  |

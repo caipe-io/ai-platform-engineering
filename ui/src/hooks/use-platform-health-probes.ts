@@ -29,6 +29,7 @@ export interface PlatformHealthCapability {
   description: string;
   detail: string;
   latency_ms: number | null;
+  version: string | null;
 }
 
 export interface PlatformDiagnosticProbe {

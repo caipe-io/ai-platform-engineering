@@ -140,7 +140,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/keycloak --version 0.5.68
 | ingress.hosts[0].paths[1].pathType | string | `"Prefix"` |  |
 | ingress.tls | list | `[]` |  |
 | initImage.pullPolicy | string | `"IfNotPresent"` |  |
-| initImage.repository | string | `"ghcr.io/cnoe-io/keycloak-init"` |  |
+| initImage.repository | string | `"ghcr.io/caipe-io/keycloak-init"` |  |
 | initImage.tag | string | `""` |  |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` |  |

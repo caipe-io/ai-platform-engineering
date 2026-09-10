@@ -10,14 +10,14 @@ spec:
   sources:
     # Main chart from GHCR
     - chart: ai-platform-engineering
-      repoURL: ghcr.io/cnoe-io/charts
+      repoURL: ghcr.io/caipe-io/charts
       targetRevision: <CHART VERSION>
       helm:
         valueFiles:
           - $values/helm/values.yaml
           - $values/helm/values-existing-secrets.yaml
     # Values files from Git repository (your custom branch)
-    - repoURL: https://github.com/cnoe-io/ai-platform-engineering.git
+    - repoURL: https://github.com/caipe-io/ai-platform-engineering.git
       targetRevision: <YOUR BRANCH NAME>
       ref: values
   destination:

@@ -195,6 +195,7 @@ import {
   validateRequired,
   validateEmail,
   validateUUID,
+  validateConversationId,
   getPaginationParams,
   successResponse,
   paginatedResponse,
@@ -702,6 +703,23 @@ describe('validateUUID', () => {
 
   it('invalid UUID returns false - invalid chars', () => {
     expect(validateUUID('550e8400-e29b-41d4-a716-44665544000g')).toBe(false);
+  });
+});
+
+describe('validateConversationId', () => {
+  it('accepts UUIDs and legacy URL-safe identifiers', () => {
+    expect(validateConversationId('550e8400-e29b-41d4-a716-446655440000')).toBe(true);
+    expect(validateConversationId('legacy-demo-conversation')).toBe(true);
+    expect(validateConversationId('legacy.chat:thread_42')).toBe(true);
+  });
+
+  it('rejects unsafe, ambiguous, and overlong identifiers', () => {
+    expect(validateConversationId('')).toBe(false);
+    expect(validateConversationId('../conversation')).toBe(false);
+    expect(validateConversationId('conversation?archived=true')).toBe(false);
+    expect(validateConversationId('$conversation')).toBe(false);
+    expect(validateConversationId('conversation with spaces')).toBe(false);
+    expect(validateConversationId('a'.repeat(129))).toBe(false);
   });
 });
 
@@ -1286,7 +1304,6 @@ describe('withAuth', () => {
       ['/api/users/me', 'PATCH', 'can_manage_self'],
       ['/api/users/search?q=alice', 'GET', 'can_search_directory'],
       ['/api/auth/my-roles', 'GET', 'can_read_self'],
-      ['/api/auth/slack-link', 'POST', 'can_manage_self'],
       ['/api/settings/preferences', 'GET', 'can_manage_self'],
       ['/api/settings/preferences', 'PATCH', 'can_manage_self'],
       ['/api/feedback', 'POST', 'can_submit_feedback'],

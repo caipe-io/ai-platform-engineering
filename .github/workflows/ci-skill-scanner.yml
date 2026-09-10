@@ -8,10 +8,8 @@ description: "Build and push Skill Scanner Docker image"
 #     PR validation only (push=false except for tags / workflow_dispatch).
 #   - workflow_dispatch: manual rebuild with an explicit tag override.
 #
-# Pre-release tags (-rc.N, -hotfix.N) push to ghcr.io/<owner>/pre-release/skill-scanner.
-# Final release / -dev.N tags push to ghcr.io/<owner>/skill-scanner — this is
-# the path the parent chart's `image.repository` (ghcr.io/cnoe-io/skill-scanner)
-# expects. -chart.N tags skip image work entirely (chart-only releases).
+# All image tags publish to ghcr.io/<owner>/skill-scanner, matching the parent
+# chart's image repository. -chart.N tags skip image work entirely.
 #
 # This workflow notifies release-finalize.yml via repository_dispatch so the
 # gating logic in release-finalize.yml's REQUIRED_WORKFLOWS can include it.
@@ -52,7 +50,6 @@ jobs:
       should_build: ${{ steps.set-outputs.outputs.should_build }}
       should_retag: ${{ steps.set-outputs.outputs.should_retag }}
       tag_version: ${{ steps.version.outputs.tag_version }}
-      image_prefix: ${{ steps.set-outputs.outputs.image_prefix }}
       scanner_version: ${{ steps.scanner_version.outputs.scanner_version }}
     steps:
       - name: Checkout repository
@@ -117,7 +114,6 @@ jobs:
             echo "📊 Chart-only tag: skipping image builds"
             echo "should_build=false" >> $GITHUB_OUTPUT
             echo "should_retag=false" >> $GITHUB_OUTPUT
-            echo "image_prefix=" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -128,13 +124,6 @@ jobs:
           else
             IS_PRERELEASE="false"
             PRERELEASE_NUM=0
-          fi
-
-          # GHCR prefix: -rc.N and -hotfix.N go to pre-release/
-          if [[ "$TAG_VERSION" =~ -(rc|hotfix)\.[0-9]+ ]]; then
-            IMAGE_PREFIX="pre-release/"
-          else
-            IMAGE_PREFIX=""
           fi
 
           if [ "$FORCE_BUILD" == "true" ]; then
@@ -161,8 +150,7 @@ jobs:
 
           echo "should_build=$SHOULD_BUILD" >> $GITHUB_OUTPUT
           echo "should_retag=$SHOULD_RETAG" >> $GITHUB_OUTPUT
-          echo "image_prefix=$IMAGE_PREFIX" >> $GITHUB_OUTPUT
-          echo "Outputs: build=$SHOULD_BUILD, retag=$SHOULD_RETAG, prefix=$IMAGE_PREFIX"
+          echo "Outputs: build=$SHOULD_BUILD, retag=$SHOULD_RETAG"
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -191,12 +179,12 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}skill-scanner
+      IMAGE_NAME: ${{ github.repository_owner }}/skill-scanner
       DOCKERFILE: build/Dockerfile.skill-scanner
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -301,10 +289,10 @@ jobs:
       packages: write
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}skill-scanner
+      IMAGE_NAME: ${{ github.repository_owner }}/skill-scanner
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -357,12 +345,12 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}skill-scanner
+      IMAGE_NAME: ${{ github.repository_owner }}/skill-scanner
       DOCKERFILE: build/Dockerfile.skill-scanner
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -482,7 +470,7 @@ jobs:
 
       - name: Set up QEMU
         if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
       # Known gap: this fallback still cross-builds arm64 under QEMU rather
       # than a native runner (unlike build-and-push above). It only runs when
       # the source image for retagging is missing — rare — so it hasn't been

@@ -1,10 +1,10 @@
 import { openFgaCheckRelation, openFgaRelation } from "@/lib/rbac/tuple-builders";
 
-describe("schedule action vocabulary", () => {
-  it("maps schedule -> can_schedule for checks", () => {
-    expect(openFgaCheckRelation("schedule")).toBe("can_schedule");
+describe("Autonomous entitlement action vocabulary", () => {
+  it("maps automate -> can_automate for checks", () => {
+    expect(openFgaCheckRelation("automate")).toBe("can_automate");
   });
-  it("maps schedule -> automator for writes", () => {
-    expect(openFgaRelation("schedule")).toBe("automator");
+  it("maps automate -> automation_eligible for writes", () => {
+    expect(openFgaRelation("automate")).toBe("automation_eligible");
   });
 });

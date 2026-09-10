@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { cn } from "@/lib/utils";
 import { KeyRound,Layers,Loader2,RefreshCw,Shield,Users } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useCallback,useEffect,useState } from "react";
 
 interface RbacPosture {
@@ -17,12 +18,30 @@ interface RbacPosture {
   role: string;
   slack_linked: boolean;
   teams: Array<{ _id: string;name: string;role?: string;slug?: string }>;
+  webex_link_available: boolean;
+  webex_linked: boolean;
+}
+
+const WEBEX_LINK_ERROR_MESSAGES: Record<string, string> = {
+  WEBEX_ID_ALREADY_LINKED: "That Webex account is already linked to a different user.",
+  WEBEX_ORG_MISMATCH: "That Webex account does not belong to this organization.",
+  WEBEX_PROFILE_FETCH_FAILED: "Could not read your Webex profile. Please try again.",
+  TOKEN_EXCHANGE_FAILED: "Could not complete the Webex sign-in. Please try again.",
+  INVALID_OAUTH_STATE: "Your Webex sign-in session expired. Please try again.",
+};
+
+function webexLinkErrorMessage(reason: string | null): string {
+  if (reason && WEBEX_LINK_ERROR_MESSAGES[reason]) return WEBEX_LINK_ERROR_MESSAGES[reason];
+  return "Could not link your Webex account. Please try again.";
 }
 
 export function AccessSettings(): React.ReactElement {
+  const searchParams = useSearchParams();
   const [posture,setPosture] = useState<RbacPosture | null>(null);
   const [loading,setLoading] = useState(true);
   const [error,setError] = useState<string | null>(null);
+  const [unlinkingWebex,setUnlinkingWebex] = useState(false);
+  const [unlinkWebexError,setUnlinkWebexError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -41,6 +60,30 @@ export function AccessSettings(): React.ReactElement {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  const webexLinkStatus = searchParams.get("webex_link");
+  const webexLinkReason = searchParams.get("reason");
+
+  useEffect(() => {
+    if (webexLinkStatus === "success") void load();
+    // Re-check posture once after returning from the Webex OAuth grant.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webexLinkStatus]);
+
+  const unlinkWebex = useCallback(async () => {
+    setUnlinkingWebex(true);
+    setUnlinkWebexError(null);
+    try {
+      const response = await fetch("/api/auth/webex-link/unlink", { method: "DELETE" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "Could not unlink your Webex account");
+      await load();
+    } catch (reason) {
+      setUnlinkWebexError(reason instanceof Error ? reason.message : "Could not unlink your Webex account");
+    } finally {
+      setUnlinkingWebex(false);
+    }
   }, [load]);
 
   if (loading) {
@@ -66,6 +109,16 @@ export function AccessSettings(): React.ReactElement {
 
   return (
     <div className="space-y-6">
+      {webexLinkStatus === "success" ? (
+        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm" role="status">
+          Your Webex account has been linked.
+        </div>
+      ) : null}
+      {webexLinkStatus === "error" ? (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm" role="alert">
+          {webexLinkErrorMessage(webexLinkReason)}
+        </div>
+      ) : null}
       <SettingsCard
         description="This information comes from your identity provider and platform access policy."
         title={<span className="flex items-center gap-2"><Shield className="h-5 w-5 text-primary" />Identity and role</span>}
@@ -91,6 +144,40 @@ export function AccessSettings(): React.ReactElement {
             <p className="mt-2 text-xs text-muted-foreground">
               Slack account: {posture.slack_linked ? "Linked" : "Not linked"}
             </p>
+            {posture.webex_link_available ? (
+              <div className="mt-2 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    Webex account: {posture.webex_linked ? "Linked" : "Not linked"}
+                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      className="h-7 px-2 text-xs"
+                      disabled={unlinkingWebex}
+                      onClick={() => { window.location.href = "/api/auth/webex-link/start"; }}
+                      size="sm"
+                      variant="outline"
+                    >
+                      {posture.webex_linked ? "Relink" : "Link Webex account"}
+                    </Button>
+                    {posture.webex_linked ? (
+                      <Button
+                        className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                        disabled={unlinkingWebex}
+                        onClick={() => void unlinkWebex()}
+                        size="sm"
+                        variant="outline"
+                      >
+                        {unlinkingWebex ? "Unlinking…" : "Unlink"}
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+                {unlinkWebexError ? (
+                  <p className="text-xs text-destructive" role="alert">{unlinkWebexError}</p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       </SettingsCard>

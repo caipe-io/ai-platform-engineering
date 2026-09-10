@@ -6,8 +6,8 @@ title: "Streaming Comparison: v0.2.41 vs v0.3.0"
 
 # Streaming Comparison: v0.2.41 (Golden) vs v0.3.0
 
-> Captured 2026-04-13 using [`scripts/trace_a2a_streaming.py`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/scripts/trace_a2a_streaming.py)
-> and [`scripts/capture_a2a_events.py`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/scripts/capture_a2a_events.py).
+> Captured 2026-04-13 using [`scripts/trace_a2a_streaming.py`](https://github.com/caipe-io/ai-platform-engineering/blob/main/scripts/trace_a2a_streaming.py)
+> and [`scripts/capture_a2a_events.py`](https://github.com/caipe-io/ai-platform-engineering/blob/main/scripts/capture_a2a_events.py).
 >
 > See also: [Streaming Architecture Knowledge Base](./streaming-architecture-knowledge-base.md)
 > for the full architectural deep-dive, root-cause analysis, and fix documentation.
@@ -365,7 +365,7 @@ To restore v0.2.41's streaming UX in v0.3.0:
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| [`scripts/trace_a2a_streaming.py`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/scripts/trace_a2a_streaming.py) | Trace all SSE events with timestamps and summary stats | `python3 scripts/trace_a2a_streaming.py 8000 "what can you do?"` |
-| [`scripts/capture_a2a_events.py`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/scripts/capture_a2a_events.py) | Capture raw A2A events to JSON for offline analysis | `python3 scripts/capture_a2a_events.py http://localhost:8000/ "query" /tmp/out.json` |
+| [`scripts/trace_a2a_streaming.py`](https://github.com/caipe-io/ai-platform-engineering/blob/main/scripts/trace_a2a_streaming.py) | Trace all SSE events with timestamps and summary stats | `python3 scripts/trace_a2a_streaming.py 8000 "what can you do?"` |
+| [`scripts/capture_a2a_events.py`](https://github.com/caipe-io/ai-platform-engineering/blob/main/scripts/capture_a2a_events.py) | Capture raw A2A events to JSON for offline analysis | `python3 scripts/capture_a2a_events.py http://localhost:8000/ "query" /tmp/out.json` |
 
 Both scripts use only the Python stdlib (`http.client`, `json`, `uuid`) -- no pip dependencies required.

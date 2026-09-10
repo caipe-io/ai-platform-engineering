@@ -140,7 +140,7 @@ def test_umbrella_values_define_webex_bot_section() -> None:
     assert webex["config"]["WEBEX_ADMIN_JWT_AUDIENCE"] == "caipe-webex-bot-admin"
     assert webex["config"]["WEBEX_ADMIN_API_ENABLED"] == "true"
     assert webex["config"]["WEBEX_ADMIN_API_PORT"] == "3002"
-    assert "ghcr.io/cnoe-io/caipe-webex-bot" in webex["image"]["repository"]
+    assert "ghcr.io/caipe-io/caipe-webex-bot" in webex["image"]["repository"]
 
 
 def test_caipe_ui_values_wire_webex_bot_admin_env() -> None:

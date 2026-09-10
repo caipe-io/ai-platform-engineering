@@ -1334,9 +1334,6 @@
         "auditor": {
           "this": {}
         },
-        "automator": {
-          "this": {}
-        },
         "can_discover": {
           "computedUserset": {
             "relation": "can_read"
@@ -1447,22 +1444,6 @@
               {
                 "computedUserset": {
                   "relation": "can_manage"
-                }
-              }
-            ]
-          }
-        },
-        "can_schedule": {
-          "intersection": {
-            "child": [
-              {
-                "computedUserset": {
-                  "relation": "automator"
-                }
-              },
-              {
-                "computedUserset": {
-                  "relation": "can_use"
                 }
               }
             ]
@@ -1595,18 +1576,6 @@
               },
               {
                 "type": "service_account"
-              },
-              {
-                "type": "team",
-                "relation": "admin"
-              }
-            ]
-          },
-          "automator": {
-            "directly_related_user_types": [
-              {
-                "type": "team",
-                "relation": "member"
               },
               {
                 "type": "team",

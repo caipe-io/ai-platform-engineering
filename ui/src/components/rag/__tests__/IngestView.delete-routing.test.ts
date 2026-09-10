@@ -55,13 +55,18 @@ describe("IngestView delete routing", () => {
     expect(source).toMatch(
       /rowPermissions\.can_manage_query\s*\|\|\s*rowPermissions\.can_manage_source/,
     );
-    expect(source).toContain("{canManageDatasource && (");
+    expect(source).toContain("{canManageDatasource && !isConfigDriven && (");
     expect(source).toMatch(
       /const canOpenDatasourceManager\s*=\s*canManageQueryAccess\s*\|\|\s*canManageSourceConfig/,
     );
-    expect(source).toContain('title="Manage Datasource"');
+    expect(source).toContain(
+      'title={isConfigDriven ? "View Datasource" : "Manage Datasource"}',
+    );
     expect(source).toMatch(
-      /if\s*\(\s*cachedConfig\s*&&\s*canManageConfig\s*\)/,
+      /if\s*\(\s*cachedConfig\s*&&\s*\(canManageConfig\s*\|\|\s*cachedConfig\.config_driven\)\s*\)/,
+    );
+    expect(source).toContain(
+      "readOnly={editingSourceConfig?.config_driven === true}",
     );
     expect(source).toMatch(
       /datasource\.has_source_config\s*&&\s*datasource\._permissions\?\.can_manage_source/,

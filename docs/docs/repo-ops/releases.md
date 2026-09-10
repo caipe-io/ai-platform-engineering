@@ -50,13 +50,13 @@ Trigger `release-finalize.yml` via GitHub Actions or CLI:
 
 ```bash
 gh workflow run release-finalize.yml \
-  --repo cnoe-io/ai-platform-engineering \
+  --repo caipe-io/ai-platform-engineering \
   -f version=x.y.z
 ```
 
 This workflow:
 - Promotes `x.y.z-rc.N` → `x.y.z`
-- Publishes the Helm chart to `oci://ghcr.io/cnoe-io/charts/ai-platform-engineering`
+- Publishes the Helm chart to `oci://ghcr.io/caipe-io/charts/ai-platform-engineering`
 - Creates a GitHub Release with auto-generated notes
 
 ---
@@ -72,7 +72,10 @@ To run manually:
 /release-docs
 ```
 
-The `/release-docs` skill produces `docs/releases/YYYY-MM-DD-release-x-y-z.md` with release notes and the upgrade guide inline.
+The `/release-docs` skill maintains one post per minor series,
+`docs/releases/YYYY-MM-DD-release-x-y-0.md`, with release notes and the upgrade guide
+inline. Each post covers the cumulative diff since the previous minor's `.0`. An `x.y.0`
+tag starts a new post; a patch tag updates the existing one instead of adding a post.
 
 ---
 
@@ -104,7 +107,7 @@ See [Skills → Overview](./skills/) for the full checklist.
 
 | Channel | What to post |
 |---|---|
-| `#cnoe-sig-agentic-ai` Slack | Link to release blog post + one-line highlight |
+| CAIPE community Slack channel | Link to release blog post + one-line highlight |
 | GitHub Discussions | Announce new release with upgrade notes link |
 | Weekly community meeting | Demo new features if significant |
 

@@ -873,6 +873,34 @@ describe('chat-store', () => {
       });
     });
 
+    it('preserves autonomous provenance from the server conversation list', async () => {
+      mockApiClient.getConversations.mockResolvedValue({
+        items: [
+          {
+            _id: 'autonomous-conversation',
+            title: '[Autonomous] Review open pull requests',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            source: 'autonomous',
+            task_id: 'review-open-prs-a1b2',
+            metadata: { task_name: 'Review open pull requests' },
+          },
+        ],
+        total: 1,
+        page: 1,
+        page_size: 100,
+        has_more: false,
+      });
+
+      await useChatStore.getState().loadConversationsFromServer();
+
+      expect(useChatStore.getState().conversations[0]).toMatchObject({
+        source: 'autonomous',
+        task_id: 'review-open-prs-a1b2',
+        metadata: { task_name: 'Review open pull requests' },
+      });
+    });
+
     it('removes conversations that exist locally but not on server', async () => {
       // Local state has 3 conversations
       const conv1 = makeConversation({ id: 'keep-1', title: 'Keep Me' });

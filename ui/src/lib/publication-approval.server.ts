@@ -654,11 +654,18 @@ export function planConnectorPublication(
   };
 }
 
+// Drop undefined-valued keys before they ever reach Mongo. The driver's BSON
+// serializer converts an undefined-valued key to a stored `null` on insert,
+// but JSON.stringify (used by publicationResourceRevision) drops it entirely.
+// Without this filter, the revision hashed before storage never matches the
+// hash recomputed from the round-tripped document, so every approval trips
+// a false "changed after approval was requested" conflict.
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
+        .filter(([, nested]) => nested !== undefined)
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([key, nested]) => [key, canonicalize(nested)]),
     );

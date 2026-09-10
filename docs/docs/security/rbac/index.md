@@ -11,6 +11,7 @@ This is the canonical reference for how authentication and authorization work in
 | Get the short end-to-end summary of the Comprehensive RBAC refactor, including Keycloak roles, AgentGateway, and OpenFGA | [Comprehensive RBAC Refactor](./comprehensive-rbac-refactor.md) |
 | Understand how JWT identity and OpenFGA relationship checks work together | [JWT and OpenFGA](./jwt-and-openfga.md) |
 | Understand exactly where OpenFGA union/computed permissions are evaluated, what gets stored vs. computed, and follow a worked end-to-end Probe-button example | [OpenFGA Permission Evaluation](./openfga-permission-evaluation.md) |
+| See which authorization decisions and relationship mutations still bypass CAS, why, and in what order to migrate them | [CAS Coverage and Migration Gaps](./cas-coverage-gaps.md) |
 | Trace a request — login, OBO token-exchange, end-to-end Slack/Webex flow, Slack channel or Webex space → agent routing | [Workflows](./workflows.md) |
 | Log in, exercise a role, verify a denial, link a Slack/Webex user, run the demo | [Usage](./usage.md) |
 | Find the file that owns a specific piece of the auth path | [File map](./file-map.md) |

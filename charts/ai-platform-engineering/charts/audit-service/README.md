@@ -57,7 +57,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/audit-service --version 0.5.68
 | extraEnvFrom | list | `[]` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-audit-service"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-audit-service"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | livenessProbe.failureThreshold | int | `3` |  |

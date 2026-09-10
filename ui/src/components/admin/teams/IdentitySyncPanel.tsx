@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import type { IdpSyncRun,IdpSyncSettings } from "@/lib/rbac/mongo-collections";
 
@@ -472,7 +473,7 @@ export function IdentitySyncPanel({ isAdmin }: IdentitySyncPanelProps) {
                   <label className="text-xs font-medium text-muted-foreground" htmlFor="idp-schedule">
                     Sync schedule
                   </label>
-                  <select
+                  <Select
                     id="idp-schedule"
                     value={scheduleSelection}
                     onChange={(e) => {
@@ -493,7 +494,7 @@ export function IdentitySyncPanel({ isAdmin }: IdentitySyncPanelProps) {
                         {opt.label}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   {formScheduleMode === "cron" && (
                     <div className="space-y-1">
                       <Input

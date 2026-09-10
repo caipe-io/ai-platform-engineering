@@ -1,7 +1,7 @@
 /**
  * Unit tests for the security-scanner gate in SkillsSelector.
  *
- * The agent-builder picker (Step 5 of the custom-agents wizard)
+ * The skills picker (Step 5 of the custom-agent wizard)
  * historically dropped `scan_status` when projecting CatalogSkill →
  * AgentSkill, which let users attach flagged skills to their custom
  * agents. Runtime execution enforces the same scan gate, so these tests
@@ -38,6 +38,9 @@ jest.mock("lucide-react", () => {
   return {
     Loader2: stub("loader"),
     AlertCircle: stub("alert"),
+    Check: stub("check"),
+    ChevronDown: stub("chevron-down"),
+    Search: stub("search"),
     Sparkles: stub("sparkles"),
     CheckSquare: stub("check-square"),
     TriangleAlert: stub("triangle-alert"),

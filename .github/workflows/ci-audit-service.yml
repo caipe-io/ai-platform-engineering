@@ -38,7 +38,6 @@ jobs:
       should_build: ${{ steps.set-outputs.outputs.should_build }}
       should_retag: ${{ steps.set-outputs.outputs.should_retag }}
       tag_version: ${{ steps.version.outputs.tag_version }}
-      image_prefix: ${{ steps.set-outputs.outputs.image_prefix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -87,7 +86,6 @@ jobs:
             {
               echo "should_build=false"
               echo "should_retag=false"
-              echo "image_prefix="
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -98,12 +96,6 @@ jobs:
           else
             IS_PRERELEASE="false"
             PRERELEASE_NUM=0
-          fi
-
-          if [[ "$TAG_VERSION" =~ -(rc|hotfix)\.[0-9]+ ]]; then
-            IMAGE_PREFIX="pre-release/"
-          else
-            IMAGE_PREFIX=""
           fi
 
           if [ "$FORCE_BUILD" == "true" ]; then
@@ -126,7 +118,6 @@ jobs:
           {
             echo "should_build=$SHOULD_BUILD"
             echo "should_retag=$SHOULD_RETAG"
-            echo "image_prefix=$IMAGE_PREFIX"
           } >> "$GITHUB_OUTPUT"
 
   # Build natively per-platform (no QEMU) and push by digest only;
@@ -152,11 +143,11 @@ jobs:
             arch: arm64
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-audit-service
+      IMAGE_NAME: ${{ github.repository_owner }}/caipe-audit-service
       DOCKERFILE: build/Dockerfile.audit-service
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -226,10 +217,10 @@ jobs:
       packages: write
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-audit-service
+      IMAGE_NAME: ${{ github.repository_owner }}/caipe-audit-service
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -281,11 +272,11 @@ jobs:
       packages: write
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-audit-service
+      IMAGE_NAME: ${{ github.repository_owner }}/caipe-audit-service
       DOCKERFILE: build/Dockerfile.audit-service
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -353,7 +344,7 @@ jobs:
 
       - name: Set up QEMU
         if: steps.retag-or-build.outputs.needs_build == 'true'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
 
       # Known gap: this fallback still cross-builds arm64 under QEMU rather
       # than a native runner (unlike build-and-push above). It only runs when

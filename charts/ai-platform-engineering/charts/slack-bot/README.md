@@ -58,7 +58,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/slack-bot --version 0.5.68
 | externalSecrets | object | `{"apiVersion":"v1beta1","data":[],"enabled":false,"secretStoreRef":{"kind":"ClusterSecretStore","name":"vault"}}` | External Secrets configuration for sensitive data (Slack tokens, OAuth2 client secret, etc.) |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"Always"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-slack-bot"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-slack-bot"` |  |
 | image.tag | string | `""` |  |
 | keycloakBot | object | `{"clientSecretFromSecret":{"key":"KC_BOT_CLIENT_SECRET","name":""}}` | Cross-chart binding to the Keycloak bot client_secret used by the Slack bot's RFC 8693 OBO exchange helper. In umbrella installs this usually points at the same Secret/key as oauth2.clientSecretFromSecret. |
 | nameOverride | string | `""` |  |

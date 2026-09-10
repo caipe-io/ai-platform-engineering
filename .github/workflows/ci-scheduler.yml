@@ -36,7 +36,6 @@ jobs:
       should_build_scheduler:    ${{ steps.set-outputs.outputs.should_build_scheduler }}
       should_build_cron_runner:  ${{ steps.set-outputs.outputs.should_build_cron_runner }}
       tag_version:               ${{ steps.version.outputs.tag_version }}
-      image_prefix:              ${{ steps.set-outputs.outputs.image_prefix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -83,20 +82,12 @@ jobs:
         run: |
           BUILD_SCHED="false"
           BUILD_RUNNER="false"
-          IMAGE_PREFIX=""
-
           # Chart-only tag: skip image builds entirely
           if [[ "$TAG_VERSION" =~ -chart\.[0-9]+$ ]]; then
             echo "Chart-only tag: skipping image builds"
             echo "should_build_scheduler=false"   >> $GITHUB_OUTPUT
             echo "should_build_cron_runner=false" >> $GITHUB_OUTPUT
-            echo "image_prefix="                  >> $GITHUB_OUTPUT
             exit 0
-          fi
-
-          # GHCR prefix: -rc.N and -hotfix.N go to pre-release/
-          if [[ "$TAG_VERSION" =~ -(rc|hotfix)\.[0-9]+ ]]; then
-            IMAGE_PREFIX="pre-release/"
           fi
 
           # On any tag push or manual dispatch, always build both.
@@ -111,8 +102,7 @@ jobs:
 
           echo "should_build_scheduler=$BUILD_SCHED"     >> $GITHUB_OUTPUT
           echo "should_build_cron_runner=$BUILD_RUNNER"  >> $GITHUB_OUTPUT
-          echo "image_prefix=$IMAGE_PREFIX"              >> $GITHUB_OUTPUT
-          echo "Outputs: scheduler=$BUILD_SCHED, cron_runner=$BUILD_RUNNER, prefix=$IMAGE_PREFIX"
+          echo "Outputs: scheduler=$BUILD_SCHED, cron_runner=$BUILD_RUNNER"
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -162,7 +152,7 @@ jobs:
             arch: arm64
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}${{ matrix.image }}
+      IMAGE_NAME: ${{ github.repository_owner }}/${{ matrix.image }}
 
     steps:
       - name: Skip if not building this image
@@ -171,7 +161,7 @@ jobs:
 
       - name: Harden runner
         if: matrix.should_build == 'true'
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -257,7 +247,7 @@ jobs:
             should_build: ${{ needs.determine-changes.outputs.should_build_cron_runner }}
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}${{ matrix.image }}
+      IMAGE_NAME: ${{ github.repository_owner }}/${{ matrix.image }}
     steps:
       - name: Skip if not building this image
         if: matrix.should_build != 'true'
@@ -265,7 +255,7 @@ jobs:
 
       - name: Harden runner
         if: matrix.should_build == 'true'
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 

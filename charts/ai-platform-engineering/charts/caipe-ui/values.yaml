@@ -8,7 +8,7 @@ fullnameOverride: ""
 
 # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
 image:
-  repository: "ghcr.io/cnoe-io/caipe-ui"
+  repository: "ghcr.io/caipe-io/caipe-ui"
   pullPolicy: "Always"
   # tag defaults to .Chart.AppVersion when not specified
   tag: ""
@@ -250,7 +250,16 @@ config:
   WEBEX_BOT_ADMIN_AUDIENCE: "caipe-webex-bot-admin"
   # WEBEX_BOT_ADMIN_TOKEN_URL: "http://keycloak:7080/realms/caipe/protocol/openid-connect/token"
   # WEBEX_BOT_ADMIN_SCOPE: "webex:routes:read webex:routes:reload webex:routes:sync"
-  # WEBEX_LINK_HMAC_SECRET is sensitive and must come from existingSecret/externalSecrets.
+  # Self-service Webex identity linking (Settings > Account & access) — a
+  # separate Webex OAuth Integration from any WEBEX_CLIENT_ID connector app;
+  # this one only reads the caller's Webex identity to link it to their
+  # platform account. All four vars must be set (including the org allowlist)
+  # or the link button stays hidden. WEBEX_LINK_CLIENT_SECRET is sensitive and
+  # must come from existingSecret/externalSecrets.
+  WEBEX_LINK_CLIENT_ID: ""
+  WEBEX_LINK_REDIRECT_URI: ""
+  WEBEX_LINK_ALLOWED_ORG_ID: ""
+  # WEBEX_LINK_SCOPES: "spark:people_read"
   WEBEX_THREAD_CONTEXT_ENABLED: "true"
   WEBEX_THREAD_CONTEXT_MAX_MESSAGES: "10"
   WEBEX_THREAD_CONTEXT_MAX_CHARS: "4000"
@@ -487,10 +496,6 @@ externalSecrets:
     #   remoteRef:
     #     key: dev/caipe-ui
     #     property: WEBEX_BOT_ADMIN_CLIENT_SECRET
-    # - secretKey: WEBEX_LINK_HMAC_SECRET
-    #   remoteRef:
-    #     key: dev/caipe-ui
-    #     property: WEBEX_LINK_HMAC_SECRET
     # Credential OAuth connector bootstrap fields. These are consumed only when
     # config.CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=true.
     # - secretKey: GITHUB_CLIENT_ID
@@ -546,7 +551,7 @@ externalSecrets:
     #     key: dev/credential-oauth-connectors
     #     property: PAGERDUTY_SCOPES
 
-# Structured application config (models, MCP servers, agents).
+# Structured application config (models, MCP servers, agents, workflows, and RAG sources).
 # Rendered as a YAML file and volume-mounted into the container at /etc/caipe-ui/app-config.yaml.
 # Loaded at startup and marked as config_driven (cannot be edited via UI).
 # Auto-mounted only when at least one key below is non-empty.
@@ -601,10 +606,10 @@ appConfig:
   # Example:
   # - source_type: "slack_channel"
   #   channel_id: "C1234567890"
-  #   name: "eng-general"
-  #   description: "Engineering general channel"
-  #   owner_team: "team-example"          # optional management owner
-  #   search_with_teams: ["search-team"]  # optional, independent Search & Ingest access
+  #   name: "team-updates"
+  #   description: "Team updates channel"
+  #   owner_team: "primary"               # optional management owner
+  #   search_with_teams: ["secondary"]    # optional, independent Search access
   #   visibility: "global"                 # optional, defaults to "global" for config-driven sources
   #   default_chunk_size: 10000
   #   default_chunk_overlap: 2000
@@ -615,13 +620,13 @@ appConfig:
   # Workflow configurations (multi-step automated pipelines)
   workflow_configs: []
   # Example:
-  # - id: "my-workflow"
-  #   name: "My Workflow"
+  # - id: "example-workflow"
+  #   name: "Example Workflow"
   #   description: "A multi-step workflow"
   #   config_driven: true
   #   steps:
   #     - type: "step"
   #       display_text: "Step description"
-  #       agent_id: "mcp-sre"
+  #       agent_id: "example-agent"
   #       prompt: "Do something"
   #       on_error: "abort"

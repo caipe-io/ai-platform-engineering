@@ -3,7 +3,7 @@
 **Feature Branch**: `2026-06-18-audit-logs-local-storage`
 **Created**: 2026-06-18
 **Status**: Draft
-**Issue**: [#1903](https://github.com/cnoe-io/ai-platform-engineering/issues/1903)
+**Issue**: [#1903](https://github.com/caipe-io/ai-platform-engineering/issues/1903)
 
 ## Summary
 

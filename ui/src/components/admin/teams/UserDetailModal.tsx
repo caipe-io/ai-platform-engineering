@@ -1,6 +1,5 @@
 "use client";
 
-// assisted-by Codex Codex-sonnet-4-6
 import { TeamPicker, type TeamPickerOption } from "@/components/ui/team-picker";
 import {
   withAdminSimulationParams,
@@ -48,8 +47,10 @@ type AccessVia = {
   /**
    * `team` — granted through team membership (attributed to team_slug/role).
    * `owned` — the user personally owns the resource, independent of any team.
+   * `effective` — access is direct, global, collection-derived, or inherited
+   * through an external identity group.
    */
-  kind?: "team" | "owned";
+  kind?: "team" | "owned" | "effective";
   team_slug: string;
   team_name: string;
   role: "member" | "admin";
@@ -73,7 +74,7 @@ type AccessGroups = {
 const ACCESS_GROUP_LABELS: Array<{ key: keyof AccessGroups; label: string }> = [
   { key: "agents", label: "Agents" },
   { key: "tools", label: "Tools" },
-  { key: "knowledge_bases", label: "Knowledge bases" },
+  { key: "knowledge_bases", label: "RAG" },
   { key: "skills", label: "Skills" },
   { key: "workflows", label: "Workflows" },
 ];
@@ -116,6 +117,14 @@ function AccessGroupList({ label, items }: { label: string; items: AccessItem[] 
                     title="Owned directly by this user"
                   >
                     Owned by user
+                  </span>
+                ) : v.kind === "effective" ? (
+                  <span
+                    key="effective"
+                    className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground"
+                    title="Granted directly, globally, through a collection, or through an external group"
+                  >
+                    Effective access
                   </span>
                 ) : (
                   <span
@@ -415,6 +424,7 @@ export function UserDetailModal({
 
   const slackUserId = user?.attributes?.slack_user_id?.[0]?.trim() ?? "";
   const webexUserId = user?.attributes?.webex_user_id?.[0]?.trim() ?? "";
+  const webexUserEmail = user?.attributes?.webex_user_email?.[0]?.trim() ?? "";
   const webexLinked = webexUserId.length > 0;
 
   const lastLoginLabel =
@@ -686,7 +696,7 @@ export function UserDetailModal({
               <div className="flex items-baseline justify-between mb-3">
                 <h3 className="text-sm font-semibold text-foreground">Access</h3>
                 <span className="text-xs text-muted-foreground">
-                  Granted through team membership
+                  Effective permissions
                 </span>
               </div>
               {accessLoading ? (
@@ -776,7 +786,11 @@ export function UserDetailModal({
                             </button>
                           )}
                         </span>
-                        <span className="font-mono text-xs text-muted-foreground">{webexUserId}</span>
+                        {webexUserEmail ? (
+                          <span className="text-xs text-muted-foreground">{webexUserEmail}</span>
+                        ) : webexUserId ? (
+                          <span className="font-mono text-xs text-muted-foreground">{webexUserId}</span>
+                        ) : null}
                       </span>
                     ) : (
                       <span className="inline-flex rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">

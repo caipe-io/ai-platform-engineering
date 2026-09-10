@@ -59,7 +59,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-ingestors --version 0.5.68
 | defaultResources.requests.ephemeral-storage | string | `"256Mi"` |  |
 | defaultResources.requests.memory | string | `"256Mi"` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-rag-ingestors"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-rag-ingestors"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | ingestors | list | `[]` |  |

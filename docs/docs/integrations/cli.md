@@ -5,7 +5,7 @@ sidebar_position: 4
 # CAIPE CLI
 
 :::caution Refactor in Progress
-The CLI is under active development. Track progress in [PR #1184](https://github.com/cnoe-io/ai-platform-engineering/pull/1184). Commands, flags, and installation paths may change before the final merge.
+The CLI is under active development. Track progress in [PR #1184](https://github.com/caipe-io/ai-platform-engineering/pull/1184). Commands, flags, and installation paths may change before the final merge.
 :::
 
 
@@ -18,7 +18,7 @@ CAIPE CLI is a TypeScript/Bun CLI that connects to a CAIPE server via the A2A or
 ### Quick install (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cnoe-io/ai-platform-engineering/main/cli/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/cli/install.sh | sh
 ```
 
 Installs the correct binary for your platform (macOS/Linux, arm64/x64) to `/usr/local/bin/caipe`.
@@ -36,7 +36,7 @@ npm install -g caipe
 ### Build from source
 
 ```bash
-git clone https://github.com/cnoe-io/ai-platform-engineering.git
+git clone https://github.com/caipe-io/ai-platform-engineering.git
 cd ai-platform-engineering/cli
 bun install
 npm run compile   # produces dist/caipe (Bun single-file binary)
@@ -129,4 +129,4 @@ Settings are stored in `~/.config/caipe/settings.json`.
 
 ## Source
 
-[`cli/` directory in ai-platform-engineering](https://github.com/cnoe-io/ai-platform-engineering/tree/main/cli)
+[`cli/` directory in ai-platform-engineering](https://github.com/caipe-io/ai-platform-engineering/tree/main/cli)

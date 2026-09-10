@@ -1,0 +1,41 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//CAIPE Community//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+BEGIN:VTIMEZONE
+TZID:Europe/Berlin
+X-LIC-LOCATION:Europe/Berlin
+BEGIN:STANDARD
+DTSTART:20241027T030000
+RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+TZNAME:CET
+END:STANDARD
+BEGIN:DAYLIGHT
+DTSTART:20250330T020000
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU
+TZOFFSETFROM:+0100
+TZOFFSETTO:+0200
+TZNAME:CEST
+END:DAYLIGHT
+END:VTIMEZONE
+BEGIN:VEVENT
+DTSTART;TZID=Europe/Berlin:20250717T180000
+DTEND;TZID=Europe/Berlin:20250717T190000
+RRULE:FREQ=WEEKLY;BYDAY=TH
+SUMMARY:CAIPE Community Weekly Meeting
+DESCRIPTION:Join the CAIPE community for weekly discussions on multi-agent systems, platform engineering, and project updates.\n\nLinks:\n- Getting Started: https://caipe.io/docs/getting-started/quick-start\n- Meeting Recordings: https://caipe.io/docs/community/meeting-recordings\n- Governance: https://github.com/caipe-io/governance\n- Roadmap: https://github.com/orgs/cnoe-io/projects/9\n\nJoin Webex: https://go.webex.com/meet/cnoe
+LOCATION:https://go.webex.com/meet/cnoe
+ORGANIZER;CN=CAIPE Community:MAILTO:caipe-community@googlegroups.com
+UID:caipe-community-meeting@caipe.io
+SEQUENCE:0
+STATUS:CONFIRMED
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:CAIPE Community meeting starts in 15 minutes
+END:VALARM
+END:VEVENT
+END:VCALENDAR

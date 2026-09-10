@@ -85,7 +85,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/dynamic-agents --version 0.5.68
 | externalSecrets.secretStoreRef.name | string | `"vault"` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"Always"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-dynamic-agents"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-dynamic-agents"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | ingress.annotations | object | `{}` |  |

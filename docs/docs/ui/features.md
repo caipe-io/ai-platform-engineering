@@ -18,6 +18,35 @@ knowledge bases, credentials, RBAC, audit logs, and platform health.
 | Credentials | Connect user and service credentials for MCP-backed tools |
 | Admin | Platform settings, users, teams, RBAC, audit, metrics, and health |
 
+## Global Search and Command Palette
+
+- Select the **Search** control in the top-right application header, or press **Command+K** on macOS and
+  **Ctrl+K** on Windows or Linux.
+- Navigation results are built from the same feature flags and admin tab gates
+  as the sidebar. Hidden or disabled destinations are not added to the index.
+- Resource results use existing user-scoped BFF endpoints. Their authorization
+  checks run before data reaches the palette.
+- Use Up/Down Arrow to select a result and Enter to open it.
+
+Initial resource coverage:
+
+| Resource | Authorization source | Destination |
+|---|---|---|
+| Agents | OpenFGA `agent#use` filtering | Agent editor |
+| Conversations | Ownership, sharing, and OpenFGA discovery filtering | Chat thread |
+| Skills | Skill catalog OpenFGA read filtering | Skill workspace |
+| Workflows | Workflow visibility and OpenFGA read filtering | Workflows |
+
+Deferred resource types:
+
+- Knowledge Base collections: add after the collection page supports a stable
+  item deep link.
+- Schedules, MCP servers, and models: add after their list APIs expose
+  user-scoped search contracts and stable item deep links.
+- A dedicated search service is intentionally deferred. The palette performs
+  small parallel queries against authoritative APIs and tolerates a partial
+  endpoint failure.
+
 ## Chat
 
 - Conversations are stored in MongoDB when `MONGODB_URI` is configured.

@@ -9,11 +9,6 @@ global:
   # Individual subchart image.tag values still take highest precedence.
   image:
     tag: ""
-    # -- Image repository channel for maintained CAIPE images.
-    # Empty means auto: rc/hotfix/dev chart appVersions use `pre-release/`,
-    # final release appVersions use the root published image repositories.
-    # Set to `pre-release` or `release` to force either repository channel.
-    channel: ""
 
   rag:
     enableGraphRag: true
@@ -77,7 +72,7 @@ rag-server:
   enabled: true
   fullnameOverride: "rag-server"
   image:
-    repository: "ghcr.io/cnoe-io/caipe-rag-server"
+    repository: "ghcr.io/caipe-io/caipe-rag-server"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: Always
@@ -133,7 +128,7 @@ agent-ontology:
   enabled: true
   fullnameOverride: "agent-ontology"
   image:
-    repository: "ghcr.io/cnoe-io/caipe-rag-agent-ontology"
+    repository: "ghcr.io/caipe-io/caipe-rag-agent-ontology"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: "Always"

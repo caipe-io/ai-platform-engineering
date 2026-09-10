@@ -57,7 +57,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 | agent-ontology.enabled | bool | `true` |  |
 | agent-ontology.fullnameOverride | string | `"agent-ontology"` |  |
 | agent-ontology.image.pullPolicy | string | `"Always"` |  |
-| agent-ontology.image.repository | string | `"ghcr.io/cnoe-io/caipe-rag-agent-ontology"` |  |
+| agent-ontology.image.repository | string | `"ghcr.io/caipe-io/caipe-rag-agent-ontology"` |  |
 | agent-ontology.image.tag | string | `""` |  |
 | agent-ontology.livenessProbe.failureThreshold | int | `3` |  |
 | agent-ontology.livenessProbe.httpGet.path | string | `"/v1/graph/ontology/agent/status"` |  |
@@ -92,7 +92,6 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 | agent-ontology.syncInterval | int | `0` |  |
 | agentExports.data.enabled | bool | `true` |  |
 | global.image | object | `{"channel":"","tag":""}` | Global image tag override. When set, overrides appVersion-based image tags for all rag-stack subcharts. Individual subchart image.tag values still take highest precedence. |
-| global.image.channel | string | `""` | Image repository channel for maintained CAIPE images. Empty means auto: rc/hotfix/dev chart appVersions use `pre-release/`, final release appVersions use the root published image repositories. Set to `pre-release` or `release` to force either repository channel. |
 | global.llmSecrets.create | bool | `true` |  |
 | global.llmSecrets.data | object | `{}` |  |
 | global.llmSecrets.externalSecrets.data | list | `[]` |  |
@@ -206,7 +205,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 | rag-server.envFrom | list | `[]` |  |
 | rag-server.fullnameOverride | string | `"rag-server"` |  |
 | rag-server.image.pullPolicy | string | `"Always"` |  |
-| rag-server.image.repository | string | `"ghcr.io/cnoe-io/caipe-rag-server"` |  |
+| rag-server.image.repository | string | `"ghcr.io/caipe-io/caipe-rag-server"` |  |
 | rag-server.image.tag | string | `""` |  |
 | rag-server.podAnnotations | object | `{}` |  |
 | rag-server.resources.limits.cpu | string | `"500m"` |  |

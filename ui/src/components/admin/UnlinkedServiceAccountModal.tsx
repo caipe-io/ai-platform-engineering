@@ -28,6 +28,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Bot, Loader2, Lock, Plus, Shield, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
+import { Select } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -334,7 +336,7 @@ export function UnlinkedServiceAccountModal({
                       className="flex min-w-0 flex-col gap-2 sm:flex-row"
                       data-testid="unlinked-add-scope-controls"
                     >
-                      <select
+                      <Select
                         aria-label="Scope type"
                         value={addType}
                         onChange={(e) => {
@@ -345,24 +347,27 @@ export function UnlinkedServiceAccountModal({
                       >
                         <option value="agent">Agent</option>
                         <option value="tool">Tool</option>
-                      </select>
-                      <select
-                        aria-label="Scope ref"
-                        value={addRef}
-                        onChange={(e) => setAddRef(e.target.value)}
-                        className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm"
-                      >
-                        <option value="">
-                          {addableOptions.length === 0
+                      </Select>
+                      <SearchablePicker
+                        options={addableOptions}
+                        selected={addableOptions.find((item) => item.ref === addRef)}
+                        onSelect={(item) => setAddRef(item.ref)}
+                        getOptionKey={(item) => item.ref}
+                        getOptionLabel={(item) => item.name}
+                        getSearchText={(item) => [item.ref, item.name]}
+                        placeholder={
+                          addableOptions.length === 0
                             ? `No more ${addType}s available`
-                            : `Select a ${addType}...`}
-                        </option>
-                        {addableOptions.map((item) => (
-                          <option key={item.ref} value={item.ref}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
+                            : `Select a ${addType}...`
+                        }
+                        searchPlaceholder={`Search ${addType}s...`}
+                        emptyLabel={`No ${addType}s match`}
+                        ariaLabel="Scope ref"
+                        disabled={addableOptions.length === 0}
+                        onClear={() => setAddRef("")}
+                        clearLabel="Clear scope ref"
+                        triggerClassName="h-9 min-w-0 flex-1 text-sm"
+                      />
                       <Button
                         onClick={addScope}
                         disabled={busy || !addRef}

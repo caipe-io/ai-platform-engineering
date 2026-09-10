@@ -146,14 +146,6 @@ export const ADMIN_CATEGORIES: AdminCategoryDefinition[] = [
         gateKey: "agents",
       },
       {
-        id: "autonomous",
-        href: "/admin/platform/autonomous",
-        label: "Autonomous",
-        description: "Monitor and manage autonomous agent task execution.",
-        icon: Bot,
-        gateKey: "autonomous",
-      },
-      {
         id: "mcp",
         href: "/admin/platform/mcp-catalog",
         label: "MCP Catalog",
@@ -285,6 +277,15 @@ export const ADMIN_CATEGORIES: AdminCategoryDefinition[] = [
         description: "Configure review policy for AI-generated changes.",
         icon: ListChecks,
         gateKey: "platform_settings",
+        subgroup: "Policy",
+      },
+      {
+        id: "autonomous",
+        href: "/admin/security/autonomous-enablement",
+        label: "Autonomous Enablement",
+        description: "Control which teams may use autonomous agents.",
+        icon: Bot,
+        gateKey: "autonomous",
         subgroup: "Policy",
       },
       {

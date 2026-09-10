@@ -243,6 +243,16 @@ class TestInitialFireSecrets:
         assert call["run_id"] == body["run_id"]
         assert call["trigger_instance_id"] is None
 
+    def test_oversize_payload_is_dropped_before_dispatch(self, client, monkeypatch):
+        """Bodies above the configured cap never become agent runs."""
+        _set_settings(monkeypatch, webhook_max_payload_bytes=8)
+        _register(_make_task(secret="task-secret"))
+
+        resp = client.post("/api/v1/hooks/wh-1", content=b"123456789")
+
+        assert resp.status_code == 413
+        assert client.captured["calls"] == []
+
     def test_per_task_secret_required_when_set(self, client, monkeypatch):
         """A configured per-task secret rejects unsigned requests with 401."""
         _set_settings(monkeypatch)

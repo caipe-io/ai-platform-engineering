@@ -130,14 +130,15 @@ Available font families:
 
 | Variable | Default | Allowed Values | Description |
 |----------|---------|----------------|-------------|
-| `DEFAULT_THEME` | `dark` | `system`, `light`, `dark`, `midnight`, `nord`, `tokyo`, `cyberpunk`, `tron`, `matrix` | Default color theme for new users |
+| `DEFAULT_THEME` | `dark` | `system`, `light`, `legacy-light`, `dark`, `midnight`, `nord`, `tokyo`, `cyberpunk`, `tron`, `matrix` | Default color theme for new users. `legacy-light` preserves the original bright palette for comparison. |
 
 Available themes:
 
 | Value | Description |
 |-------|-------------|
 | `system` | Follow the operating system light or dark preference |
-| `light` | Bright and clean, white backgrounds |
+| `light` | Balanced tonal surfaces with restrained brand color |
+| `legacy-light` | Original bright, near-white light palette for comparison |
 | `dark` | Dark backgrounds, easy on the eyes |
 | `midnight` | Pure black (optimized for OLED displays) |
 | `nord` | Arctic cool tones (inspired by Nord color palette) |
@@ -203,7 +204,7 @@ Control which links appear in the application header.
 
 ```bash
 DOCS_URL=https://docs.caipe.example.com
-SOURCE_URL=https://github.com/cnoe-io/ai-platform-engineering
+SOURCE_URL=https://github.com/caipe-io/ai-platform-engineering
 ```
 
 ## Login Page Customization
