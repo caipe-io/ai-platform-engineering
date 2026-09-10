@@ -28,6 +28,10 @@ describe("admin route registry", () => {
       "autonomous",
     );
     expect(findAdminDestinationByPath("/admin/security/ai-review/")?.id).toBe("ai-review");
+    expect(findAdminDestinationByPath("/admin/security/audit")?.id).toBe("audit");
+    expect(findAdminDestinationByPath("/admin/security/access-operations")?.id).toBe("access-operations");
+    expect(findAdminDestinationByPath("/admin/security/rbac-audit")).toBeUndefined();
+    expect(findAdminDestinationByPath("/admin/security/access-explorer")).toBeUndefined();
     expect(findAdminDestinationByPath("/admin/configuration/defaults")?.id).toBe("defaults");
     expect(findAdminDestinationByPath("/admin/configuration/announcements")?.id).toBe("announcements");
     expect(findAdminDestinationByPath("/admin/platform/defaults")).toBeUndefined();
@@ -36,7 +40,9 @@ describe("admin route registry", () => {
 
   it("filters destinations by access and removes empty categories", () => {
     const gates = Object.fromEntries(
-      [...new Set(ADMIN_DESTINATIONS.map((destination) => destination.gateKey))].map(
+      [...new Set(ADMIN_DESTINATIONS.flatMap(
+        (destination) => destination.gateKeys ?? [destination.gateKey],
+      ))].map(
         (gateKey) => [gateKey, false],
       ),
     );
@@ -48,6 +54,23 @@ describe("admin route registry", () => {
     expect(categories.map((category) => category.id)).toEqual(["people", "operations"]);
     expect(categories[0].destinations.map((destination) => destination.id)).toEqual(["users"]);
     expect(categories[1].destinations.map((destination) => destination.id)).toEqual(["health"]);
+  });
+
+  it("shows consolidated security destinations when any child gate is available",() => {
+    const categories = filterAdminCategories({
+      action_audit: false,
+      approvals: false,
+      audit_logs: true,
+      migrations: true,
+      openfga: false,
+      platform_settings: false,
+    });
+
+    expect(categories).toHaveLength(1);
+    expect(categories[0].destinations.map((destination) => destination.id)).toEqual([
+      "audit",
+      "access-operations",
+    ]);
   });
 
   it("keeps deterministic defaults for admins and read-only viewers", () => {

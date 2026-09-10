@@ -41,6 +41,7 @@ import { MigrationTab } from "@/components/admin/security/MigrationTab";
 import { PublicationApprovalQueue } from "@/components/admin/security/PublicationApprovalQueue";
 import { AccessExplorerTab } from "@/components/admin/security/AccessExplorerTab";
 import { RbacSelfCheckTab } from "@/components/admin/security/RbacSelfCheckTab";
+import { SecurityWorkspaceTabs } from "@/components/admin/security/SecurityWorkspaceTabs";
 import { UnifiedAuditTab } from "@/components/admin/security/UnifiedAuditTab";
 import { ImportAgentsFromConfigCard } from "@/components/admin/settings/ImportAgentsFromConfigCard";
 import { MCPCatalogSettingsCard } from "@/components/admin/settings/MCPCatalogSettingsCard";
@@ -573,7 +574,11 @@ function AdminPage() {
     if (adminRoleLoading || adminTabGatesLoading) return;
     if (visibleCategories.length === 0) return;
     const params = new URLSearchParams(searchParams.toString());
-    if (activeDestination.id !== 'access-explorer') {
+    if (activeDestination.id !== 'audit') {
+      params.delete('auditTab');
+    }
+    if (activeDestination.id !== 'access-operations') {
+      params.delete('operationsTab');
       params.delete('subtab');
       params.delete('openfgaTab');
     }
@@ -3154,15 +3159,29 @@ function AdminPage() {
                 <HealthTab />
               </TabsContent>
 
-              {tabGateValues.audit_logs && (
-                <TabsContent value="audit-logs" className="space-y-4">
-                  <AuditLogsTab onUserClick={setSelectedUserEmail} />
-                </TabsContent>
-              )}
-
-              {tabGateValues.action_audit && (
-                <TabsContent value="action-audit" className="space-y-4">
-                  <UnifiedAuditTab isAdmin={canMutateAdminData} />
+              {(tabGateValues.action_audit || tabGateValues.audit_logs || tabGateValues.openfga) && (
+                <TabsContent value="audit" className="space-y-4">
+                  <SecurityWorkspaceTabs
+                    ariaLabel="Audit sections"
+                    items={[
+                      ...(tabGateValues.action_audit ? [{
+                        id: "rbac",
+                        label: "RBAC",
+                        content: <UnifiedAuditTab isAdmin={canMutateAdminData} />,
+                      }] : []),
+                      ...(tabGateValues.audit_logs ? [{
+                        id: "chat",
+                        label: "Chat",
+                        content: <AuditLogsTab onUserClick={setSelectedUserEmail} />,
+                      }] : []),
+                      ...(tabGateValues.openfga ? [{
+                        id: "self-check",
+                        label: "Self-check",
+                        content: <RbacSelfCheckTab isAdmin={canMutateAdminData} />,
+                      }] : []),
+                    ]}
+                    queryKey="auditTab"
+                  />
                 </TabsContent>
               )}
 
@@ -3172,27 +3191,29 @@ function AdminPage() {
                 </TabsContent>
               )}
 
-              {tabGateValues.openfga && (
-                <TabsContent value="access-explorer" className="space-y-4">
-                  <AccessExplorerTab isAdmin={canMutateAdminData} />
-                </TabsContent>
-              )}
-
-              {tabGateValues.openfga && (
-                <TabsContent value="rbac-self-check" className="space-y-4">
-                  <RbacSelfCheckTab isAdmin={canMutateAdminData} />
-                </TabsContent>
-              )}
-
-              {tabGateValues.migrations && (
-                <TabsContent value="keycloak" className="space-y-4">
-                  <KeycloakMigrationHealthPanel />
-                </TabsContent>
-              )}
-
-              {tabGateValues.migrations && (
-                <TabsContent value="migrations" className="space-y-4">
-                  <MigrationTab isAdmin={canMutateAdminData && tabGateValues.migrations} />
+              {(tabGateValues.openfga || tabGateValues.migrations) && (
+                <TabsContent value="access-operations" className="space-y-4">
+                  <SecurityWorkspaceTabs
+                    ariaLabel="Access operations sections"
+                    items={[
+                      ...(tabGateValues.openfga ? [{
+                        id: "access-explorer",
+                        label: "Access Explorer",
+                        content: <AccessExplorerTab isAdmin={canMutateAdminData} />,
+                      }] : []),
+                      ...(tabGateValues.migrations ? [{
+                        id: "keycloak",
+                        label: "Keycloak",
+                        content: <KeycloakMigrationHealthPanel />,
+                      },{
+                        id: "migrations",
+                        label: "Migrations",
+                        content: <MigrationTab isAdmin={canMutateAdminData && tabGateValues.migrations} />,
+                      }] : []),
+                    ]}
+                    queryKey="operationsTab"
+                    resetParams={["subtab","openfgaTab"]}
+                  />
                 </TabsContent>
               )}
 

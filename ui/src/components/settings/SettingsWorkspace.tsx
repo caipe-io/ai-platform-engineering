@@ -21,9 +21,22 @@ function SettingsContent({ route }: { route: SettingsRouteDefinition }): React.R
     case "notifications":
       return <NotificationsSettings />;
     case "access":
-      return <AccessSettings />;
-    case "developer":
-      return <DeveloperSettings />;
+      return (
+        <div className="space-y-10">
+          <AccessSettings />
+          <section aria-labelledby="developer-settings-heading" className="space-y-6 border-t border-border pt-8">
+            <div className="space-y-1">
+              <h2 className="text-xl font-semibold tracking-tight" id="developer-settings-heading">
+                Developer (Dangerous)
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Debugging and session tools can expose sensitive access information.
+              </p>
+            </div>
+            <DeveloperSettings />
+          </section>
+        </div>
+      );
   }
 }
 

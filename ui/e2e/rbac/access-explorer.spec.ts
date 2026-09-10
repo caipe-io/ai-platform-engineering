@@ -288,13 +288,13 @@ async function installAccessExplorerMocks(
 }
 
 async function gotoAccessExplorer(page: Page) {
-  await page.goto("/admin/security/access-explorer", {
+  await page.goto("/admin/security/access-operations?operationsTab=access-explorer", {
     waitUntil: "domcontentloaded",
   });
   await expect(
     page
       .getByRole("navigation",{ name: "Admin sections" })
-      .getByRole("link", { name: "Access Explorer" }),
+      .getByRole("link", { name: "Access Operations" }),
   ).toHaveAttribute("aria-current","page");
 }
 
@@ -323,9 +323,10 @@ test.describe("mocked Access Explorer browser regression", () => {
     await installAccessExplorerMocks(page);
     await gotoAccessExplorer(page);
 
-    await expect(page).toHaveURL(/\/admin\/security\/access-explorer$/);
+    await expect(page).toHaveURL(/\/admin\/security\/access-operations\?operationsTab=access-explorer$/);
     await expect(page.getByRole("button", { name: "Security & Policy" })).toHaveAttribute("data-active", "true");
-    await expect(page.getByRole("heading", { level: 1,name: "Access Explorer" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1,name: "Access Operations" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Access Explorer" })).toHaveAttribute("data-state","active");
     await expect(page.getByTestId("access-explorer-search-stage")).toBeVisible();
     await expect(page.getByTestId("access-explorer-header")).toHaveCount(0);
     await expect(

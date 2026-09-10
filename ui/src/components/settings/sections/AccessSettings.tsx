@@ -3,18 +3,13 @@
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { cn } from "@/lib/utils";
-import { KeyRound,Layers,Loader2,RefreshCw,Shield,Users } from "lucide-react";
+import { Loader2,RefreshCw,Shield,Users } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useCallback,useEffect,useState } from "react";
 
 interface RbacPosture {
   email?: string;
-  idp_source: string;
-  legacy_resource_roles_hidden_count?: number;
   name?: string;
-  per_agent_roles: string[];
-  per_kb_roles: string[];
-  realm_roles: string[];
   role: string;
   slack_linked: boolean;
   teams: Array<{ _id: string;name: string;role?: string;slug?: string }>;
@@ -204,36 +199,6 @@ export function AccessSettings(): React.ReactElement {
         )}
       </SettingsCard>
 
-      <SettingsCard
-        description="Technical identity details can help an administrator troubleshoot unexpected access."
-        title={<span className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-primary" />Technical access details</span>}
-      >
-        <details className="rounded-lg border border-border/70 p-4">
-          <summary className="cursor-pointer text-sm font-medium">Show identity-provider details</summary>
-          <dl className="mt-4 space-y-3 text-sm">
-            <div>
-              <dt className="text-xs text-muted-foreground">Identity provider</dt>
-              <dd className="break-all font-mono text-xs">{posture.idp_source}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Realm roles</dt>
-              <dd className="mt-1 flex flex-wrap gap-1.5">
-                {posture.realm_roles.length ? posture.realm_roles.map((role) => (
-                  <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 font-mono text-xs text-primary" key={role}>
-                    {role}
-                  </span>
-                )) : <span className="text-xs text-muted-foreground">None</span>}
-              </dd>
-            </div>
-            {posture.legacy_resource_roles_hidden_count ? (
-              <div className="flex items-start gap-2 rounded-md bg-muted p-3 text-xs text-muted-foreground">
-                <Layers className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                {posture.legacy_resource_roles_hidden_count} legacy resource role(s) are hidden because current access is evaluated by policy.
-              </div>
-            ) : null}
-          </dl>
-        </details>
-      </SettingsCard>
     </div>
   );
 }
