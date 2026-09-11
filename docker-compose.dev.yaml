@@ -47,10 +47,40 @@ services:
       start_period: 40s
     profiles:
       - caipe-mongodb
-      - caipe-ui
-      - deps
-      # Auto-include Mongo whenever the autonomous-agents profile is selected.
-      - autonomous-agents
+
+  # Opt-in MIT-licensed, PostgreSQL-backed MongoDB-compatible provider.
+  caipe-documentdb:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:${DOCUMENTDB_IMAGE_TAG:-pg17-0.113.0}
+    container_name: caipe-documentdb-dev
+    command:
+      - --username
+      - ${MONGODB_ROOT_USERNAME:-admin}
+      - --password
+      - ${MONGODB_ROOT_PASSWORD:-changeme}
+      - --data-path
+      - /data
+      - --documentdb-port
+      - "10260"
+      - --pg-port
+      - "9712"
+      - --tlsMode
+      - allowTLS
+      - --log-level
+      - warn
+      - --enable-telemetry
+      - "false"
+    ports:
+      - "${DOCUMENTDB_HOST_PORT:-10260}:10260"
+    volumes:
+      - documentdb_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -p 9712 -U documentdb -d postgres && pgrep -f documentdb-gateway >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    profiles:
+      - caipe-documentdb
 
   # MongoDB Admin UI
   caipe-ui-mongo-express:
@@ -1171,6 +1201,9 @@ services:
       caipe-mongodb:
         condition: service_healthy
         required: false
+      caipe-documentdb:
+        condition: service_healthy
+        required: false
       dynamic-agents:
         condition: service_started
         required: false
@@ -1946,8 +1979,8 @@ services:
       - SLACK_INTEGRATION_AUTH_SCOPE=${SLACK_INTEGRATION_AUTH_SCOPE:-}
       - SLACK_INTEGRATION_AUTH_AUDIENCE=${SLACK_INTEGRATION_AUTH_AUDIENCE:-}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
-      - MONGODB_URI=mongodb://admin:changeme@caipe-mongodb:27017
-      - MONGODB_DATABASE=caipe
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - SLACK_WORKSPACE_URL=${SLACK_WORKSPACE_URL:-}
       # Canonical Slack workspace namespace; incoming Slack team_id values map to this alias.
       - SLACK_WORKSPACE_ALIAS=${SLACK_WORKSPACE_ALIAS:-CAIPE}
@@ -1995,6 +2028,10 @@ services:
         required: false
       caipe-mongodb:
         condition: service_started
+        required: false
+      caipe-documentdb:
+        condition: service_started
+        required: false
     profiles:
       - slack-bot
       - all-integrations
@@ -2031,8 +2068,8 @@ services:
       - WEBEX_WORKSPACE_ID=${WEBEX_WORKSPACE_ID:-}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
       - CAIPE_UI_BASE_URL=${CAIPE_UI_BASE_URL:-http://localhost:3000}
-      - MONGODB_URI=mongodb://admin:changeme@caipe-mongodb:27017
-      - MONGODB_DATABASE=caipe
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - WEBEX_AGENT_ROUTES_MODE=${WEBEX_AGENT_ROUTES_MODE:-db_prefer}
       - WEBEX_THREAD_CONTEXT_ENABLED=${WEBEX_THREAD_CONTEXT_ENABLED:-true}
       - WEBEX_THREAD_CONTEXT_MAX_MESSAGES=${WEBEX_THREAD_CONTEXT_MAX_MESSAGES:-10}
@@ -2060,6 +2097,10 @@ services:
         required: false
       caipe-mongodb:
         condition: service_started
+        required: false
+      caipe-documentdb:
+        condition: service_started
+        required: false
     profiles:
       - webex-bot
       - all-integrations
@@ -2563,6 +2604,8 @@ volumes:
   mongodb_data:
     driver: local
   mongodb_config:
+    driver: local
+  documentdb_data:
     driver: local
   langfuse_postgres_data:
     driver: local

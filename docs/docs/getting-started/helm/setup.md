@@ -91,7 +91,8 @@ Set the chart version:
 export CAIPE_VERSION=<release-version>
 ```
 
-Minimal install — UI, Dynamic Agents, MongoDB, and a starter MCP server:
+Minimal install — UI, Dynamic Agents, the configured MongoDB-compatible
+database, and a starter MCP server:
 
 ```bash
 helm install ai-platform-engineering oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \
@@ -102,6 +103,9 @@ helm install ai-platform-engineering oci://ghcr.io/cnoe-io/charts/ai-platform-en
   --set-string tags.dynamic-agents=true \
   --set-string tags.mcp-netutils=true
 ```
+
+MongoDB remains the default. For the opt-in DocumentDB values and required
+shared `MONGODB_URI` Secret, see [Persistence](../../installation/persistence.md).
 
 With GitHub, ArgoCD, and RAG:
 

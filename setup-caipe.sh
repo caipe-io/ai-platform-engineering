@@ -33,9 +33,11 @@ NC='\033[0m'
 CLUSTER_NAME=""
 ENABLE_RAG=false
 ENABLE_TRACING=false
-# Dynamic-agent runtime persistence is backed by MongoDB in the baseline stack.
+# Dynamic-agent runtime persistence uses a MongoDB-compatible database.
 # The persistence flags are accepted below for CLI compatibility.
 ENABLE_PERSISTENCE="${ENABLE_PERSISTENCE:-true}"
+DATABASE_PROVIDER="${DATABASE_PROVIDER:-}"
+DOCUMENTDB_IMAGE_TAG="${DOCUMENTDB_IMAGE_TAG:-pg17-0.113.0}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 OPENAI_ENDPOINT="https://api.openai.com/v1"
 OPENAI_MODEL_NAME="gpt-5.2"
@@ -2292,6 +2294,8 @@ _choose_agents() {
 choose_features() {
   step "Feature selection"
 
+  _choose_database_provider
+
   echo -e "  ${DIM}Base setup always includes: dynamic agents runtime and NetUtils agent${NC}"
 
   if $NON_INTERACTIVE; then
@@ -2307,7 +2311,7 @@ choose_features() {
     $ENABLE_TRACING && log "Tracing enabled (--tracing)" || log "Tracing skipped (pass --tracing to enable)"
     log "AgentGateway enabled (required)"
     log "RBAC runtime enabled (required — Keycloak + OpenFGA)"
-    log "Dynamic-agent persistence uses caipe-mongodb"
+    log "Dynamic-agent persistence uses $(_database_service_name) (${DATABASE_PROVIDER})"
     log "Dynamic Agents runtime included"
     $ENABLE_METALLB && log "MetalLB enabled (default; pass --no-metallb to skip)" || log "MetalLB disabled (--no-metallb)"
     if $ENABLE_INGRESS; then
@@ -2923,7 +2927,7 @@ choose_features() {
   log "RBAC runtime enabled (required — Keycloak + OpenFGA + ext_authz)"
 
   echo ""
-  echo -e "  ${DIM}Dynamic-agent checkpoints use the caipe-mongodb service in the baseline stack.${NC}"
+  echo -e "  ${DIM}Dynamic-agent checkpoints use the selected MongoDB-compatible database.${NC}"
 
   echo ""
   echo -e "  ${DIM}MetalLB provides real LoadBalancer IPs for kind clusters. Required for ingress.${NC}"
@@ -3052,6 +3056,63 @@ _env_true() {
   local val
   val=$(echo "$1" | tr '[:upper:]' '[:lower:]')
   [[ "$val" == "true" || "$val" == "yes" || "$val" == "1" ]]
+}
+
+_choose_database_provider() {
+  local env_file="${1:-}"
+  if [[ -z "${DATABASE_PROVIDER:-}" && -n "$env_file" && -f "$env_file" ]]; then
+    DATABASE_PROVIDER=$(_env_get "$env_file" DATABASE_PROVIDER)
+  fi
+
+  if [[ -z "${DATABASE_PROVIDER:-}" ]]; then
+    if $NON_INTERACTIVE; then
+      DATABASE_PROVIDER="mongodb"
+    else
+      echo ""
+      echo -e "  ${BOLD}Choose the document database${NC}"
+      echo -e "    ${CYAN}1)${NC} MongoDB ${DIM}(default)${NC}"
+      echo -e "    ${CYAN}2)${NC} DocumentDB ${DIM}(MIT-licensed, PostgreSQL-backed)${NC}"
+      prompt "Select database [1]: "
+      local choice
+      tty_read -r choice
+      case "${choice:-1}" in
+        1|mongodb|mongo) DATABASE_PROVIDER="mongodb" ;;
+        2|documentdb|docdb) DATABASE_PROVIDER="documentdb" ;;
+        *) err "Unknown database provider '${choice}'"; exit 1 ;;
+      esac
+    fi
+  fi
+
+  DATABASE_PROVIDER=$(echo "$DATABASE_PROVIDER" | tr '[:upper:]' '[:lower:]')
+  case "$DATABASE_PROVIDER" in
+    mongodb|documentdb) ;;
+    *) err "DATABASE_PROVIDER must be 'mongodb' or 'documentdb' (got '${DATABASE_PROVIDER}')"; exit 1 ;;
+  esac
+  log "Database provider: ${DATABASE_PROVIDER}"
+}
+
+_database_service_name() {
+  [[ "${DATABASE_PROVIDER:-mongodb}" == "documentdb" ]] \
+    && echo "caipe-documentdb" \
+    || echo "caipe-mongodb"
+}
+
+_database_secret_name() {
+  [[ "${DATABASE_PROVIDER:-mongodb}" == "documentdb" ]] \
+    && echo "caipe-documentdb-credentials" \
+    || echo "caipe-mongodb-credentials"
+}
+
+_database_uri() {
+  local password="${1:-${MONGODB_ROOT_PASSWORD:-MONGODB_ROOT_PASSWORD_UNSET}}"
+  local username="${2:-admin}"
+  local service
+  service=$(_database_service_name)
+  if [[ "${DATABASE_PROVIDER:-mongodb}" == "documentdb" ]]; then
+    echo "mongodb://${username}:${password}@${service}:10260/caipe?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true"
+  else
+    echo "mongodb://${username}:${password}@${service}:27017/caipe?authSource=caipe"
+  fi
 }
 
 _compose_env_file() {
@@ -3405,7 +3466,8 @@ _write_bot_values() {
   local values_file
   values_file=$(mktemp /tmp/caipe-bot-values-XXXXXX)
   local _mongo_pw="${MONGODB_ROOT_PASSWORD:-MONGODB_ROOT_PASSWORD_UNSET}"
-  local _mongo_uri="mongodb://admin:${_mongo_pw}@caipe-mongodb:27017/caipe?authSource=caipe"
+  local _mongo_uri
+  _mongo_uri=$(_database_uri "$_mongo_pw")
   local _kc="http://caipe-keycloak:8080"
   local _issuer="${_kc}/realms/caipe"
 
@@ -5074,24 +5136,30 @@ PGINIT
 }
 
 _resolve_mongodb_password() {
-  local existing_pw
-  existing_pw=$(kubectl get secret caipe-mongodb-credentials -n caipe \
+  local existing_pw secret_name provider
+  provider="${DATABASE_PROVIDER:-mongodb}"
+  if [[ "$provider" == "documentdb" ]]; then
+    secret_name="caipe-documentdb-credentials"
+  else
+    secret_name="caipe-mongodb-credentials"
+  fi
+  existing_pw=$(kubectl get secret "$secret_name" -n caipe \
     -o jsonpath='{.data.MONGODB_ROOT_PASSWORD}' 2>/dev/null \
     | base64 -d 2>/dev/null || true)
   if [[ -n "$existing_pw" ]]; then
     MONGODB_ROOT_PASSWORD="$existing_pw"
-    log "Reusing existing MongoDB root password from caipe-mongodb-credentials Secret"
+    log "Reusing existing ${provider} password from ${secret_name} Secret"
   else
     # `openssl rand -hex 24` → 48 hex chars (24 bytes of entropy). Hex
     # avoids any character that would need URL-encoding inside the
     # MONGODB_URI connection string (no '@', '/', ':', '?', etc.).
     MONGODB_ROOT_PASSWORD="$(openssl rand -hex 24)"
-    log "Generated random MongoDB root password"
+    log "Generated random ${provider} password"
   fi
   # Persist (or refresh) the Secret so re-runs reuse it. --dry-run +
   # apply is the standard idempotent pattern used elsewhere in this
   # script.
-  kubectl create secret generic caipe-mongodb-credentials \
+  kubectl create secret generic "$secret_name" \
     --namespace caipe \
     --from-literal=MONGODB_ROOT_USERNAME="admin" \
     --from-literal=MONGODB_ROOT_PASSWORD="${MONGODB_ROOT_PASSWORD}" \
@@ -5150,26 +5218,54 @@ _ensure_caipe_platform_secret() {
 }
 
 _ensure_dynamic_agents_mongodb() {
-  local mongo_svc="caipe-mongodb"
+  local mongo_svc
+  mongo_svc=$(_database_service_name)
   _resolve_mongodb_password
-  local mongo_uri="mongodb://admin:${MONGODB_ROOT_PASSWORD}@${mongo_svc}:27017/caipe?authSource=caipe"
+  local mongo_uri
+  mongo_uri=$(_database_uri "$MONGODB_ROOT_PASSWORD")
 
-  if ! kubectl get deploy "${mongo_svc}" -n caipe &>/dev/null; then
-    step "Deploying MongoDB for dynamic-agents"
-    helm repo add bitnami https://charts.bitnami.com/bitnami &>/dev/null 2>&1 || true
-    helm upgrade --install "${mongo_svc}" bitnami/mongodb \
-      -n caipe \
-      --set auth.enabled=true \
-      --set "auth.rootPassword=${MONGODB_ROOT_PASSWORD}" \
-      --set "auth.databases[0]=caipe" \
-      --set "auth.usernames[0]=admin" \
-      --set "auth.passwords[0]=${MONGODB_ROOT_PASSWORD}" \
-      --set persistence.size=2Gi \
-      --timeout 3m &>/dev/null
-    kubectl rollout status deploy/"${mongo_svc}" -n caipe --timeout=180s &>/dev/null
-    log "MongoDB deployed (${mongo_svc}) with random root password"
+  if [[ "$DATABASE_PROVIDER" == "documentdb" ]]; then
+    if helm status caipe-mongodb -n caipe &>/dev/null; then
+      warn "MongoDB is already installed. Selecting DocumentDB does not migrate its data automatically."
+      warn "Back up and restore with mongodump/mongorestore before switching production traffic."
+    fi
+    if ! kubectl get statefulset "${mongo_svc}" -n caipe &>/dev/null; then
+      step "Deploying DocumentDB for dynamic-agents"
+      helm upgrade --install "${mongo_svc}" \
+        oci://ghcr.io/cnoe-io/charts/caipe-ui-mongodb \
+        --version "$CAIPE_CHART_VERSION" \
+        -n caipe \
+        --set provider=documentdb \
+        --set fullnameOverride="${mongo_svc}" \
+        --set "documentdb.image.tag=${DOCUMENTDB_IMAGE_TAG}" \
+        --set "auth.rootUsername=admin" \
+        --set "auth.rootPassword=${MONGODB_ROOT_PASSWORD}" \
+        --set "auth.database=caipe" \
+        --set persistence.size=2Gi \
+        --timeout 5m &>/dev/null
+      kubectl rollout status statefulset/"${mongo_svc}" -n caipe --timeout=300s &>/dev/null
+      log "DocumentDB deployed (${mongo_svc})"
+    else
+      log "DocumentDB already present (${mongo_svc}) — skipping install"
+    fi
   else
-    log "MongoDB already present (${mongo_svc}) — skipping install"
+    if ! kubectl get deploy "${mongo_svc}" -n caipe &>/dev/null; then
+      step "Deploying MongoDB for dynamic-agents"
+      helm repo add bitnami https://charts.bitnami.com/bitnami &>/dev/null 2>&1 || true
+      helm upgrade --install "${mongo_svc}" bitnami/mongodb \
+        -n caipe \
+        --set auth.enabled=true \
+        --set "auth.rootPassword=${MONGODB_ROOT_PASSWORD}" \
+        --set "auth.databases[0]=caipe" \
+        --set "auth.usernames[0]=admin" \
+        --set "auth.passwords[0]=${MONGODB_ROOT_PASSWORD}" \
+        --set persistence.size=2Gi \
+        --timeout 3m &>/dev/null
+      kubectl rollout status deploy/"${mongo_svc}" -n caipe --timeout=180s &>/dev/null
+      log "MongoDB deployed (${mongo_svc})"
+    else
+      log "MongoDB already present (${mongo_svc}) — skipping install"
+    fi
   fi
 
   # Patch MONGODB_URI into dynamic-agents ConfigMap using python3 to avoid
@@ -6179,11 +6275,13 @@ deploy_caipe() {
     # graph and skips the MongoDB step), so the failure surfaces loudly
     # at pod start rather than silently using "changeme".
     local _mongo_pw="${MONGODB_ROOT_PASSWORD:-MONGODB_ROOT_PASSWORD_UNSET}"
+    local _database_uri_value
+    _database_uri_value=$(_database_uri "$_mongo_pw")
     cat > "$_da_values_file" <<DAEOF
 dynamic-agents:
   config:
-    # MongoDB URI baked in at deploy time so the pod can start before post_deploy_patches.
-    MONGODB_URI: "mongodb://admin:${_mongo_pw}@caipe-mongodb:27017/caipe?authSource=caipe"
+    # MongoDB-compatible URI baked in before post_deploy_patches.
+    MONGODB_URI: "${_database_uri_value}"
 DAEOF
     if [[ -n "$CAIPE_DOMAIN" && -n "$da_oidc_issuer" ]]; then
       cat >> "$_da_values_file" <<DAEOF
@@ -7489,8 +7587,10 @@ monitor_port_forwards() {
     echo -e "    ${DIM}kubectl get secret langfuse-credentials -n langfuse -o jsonpath='{.data}' | python3 -c \"import sys,json,base64; d=json.load(sys.stdin); print('\n'.join(f'{k}: {base64.b64decode(v).decode()}' for k,v in sorted(d.items())))\"${NC}"
     echo ""
   fi
-  echo -e "  ${BOLD}Retrieve MongoDB credentials${NC} ${DIM}(R2: random per-install, persisted in caipe-mongodb-credentials):${NC}"
-  echo -e "    ${DIM}kubectl get secret caipe-mongodb-credentials -n caipe -o jsonpath='{.data}' | python3 -c \"import sys,json,base64; d=json.load(sys.stdin); print('\n'.join(f'{k}: {base64.b64decode(v).decode()}' for k,v in sorted(d.items())))\"${NC}"
+  local _database_credentials_secret
+  _database_credentials_secret=$(_database_secret_name)
+  echo -e "  ${BOLD}Retrieve ${DATABASE_PROVIDER} credentials${NC} ${DIM}(random per-install, persisted in ${_database_credentials_secret}):${NC}"
+  echo -e "    ${DIM}kubectl get secret ${_database_credentials_secret} -n caipe -o jsonpath='{.data}' | python3 -c \"import sys,json,base64; d=json.load(sys.stdin); print('\n'.join(f'{k}: {base64.b64decode(v).decode()}' for k,v in sorted(d.items())))\"${NC}"
   echo ""
   echo -e "  ${BOLD}Chat:${NC} open the CAIPE UI at ${CYAN}http://localhost:${UI_PORT}${NC}"
   echo ""
@@ -7633,6 +7733,15 @@ cmd_cleanup() {
     fi
   else
     log "No MongoDB release found"
+  fi
+
+  if helm status caipe-documentdb -n caipe &>/dev/null; then
+    if ask_yn "Uninstall DocumentDB Helm release (caipe-documentdb)?" "y"; then
+      helm uninstall caipe-documentdb -n caipe
+      log "DocumentDB uninstalled"
+    fi
+  else
+    log "No DocumentDB release found"
   fi
 
   if helm status langfuse -n langfuse &>/dev/null; then
@@ -7871,6 +7980,7 @@ cmd_docker_compose() {
   env_file=$(_compose_env_file)
   _ensure_compose_env_file "$env_file"
   _update_compose_image_tag "$env_file"
+  _choose_database_provider "$env_file"
 
   if [[ "$(uname -s)" == "Darwin" && -x "/usr/local/bin/docker" && ! "$(command -v docker 2>/dev/null)" ]]; then
     export PATH="/usr/local/bin:$PATH"
@@ -7894,11 +8004,27 @@ cmd_docker_compose() {
 
   COMPOSE_PROFILES="${COMPOSE_PROFILES:-$(_env_get "$env_file" COMPOSE_PROFILES)}"
   COMPOSE_PROFILES="${COMPOSE_PROFILES:-$COMPOSE_PROFILES_DEFAULT}"
+  if [[ "$DATABASE_PROVIDER" == "documentdb" ]]; then
+    COMPOSE_PROFILES=$(echo "$COMPOSE_PROFILES" | sed 's/caipe-mongodb/caipe-documentdb/g')
+    if [[ ",$COMPOSE_PROFILES," != *,caipe-documentdb,* ]]; then
+      COMPOSE_PROFILES="${COMPOSE_PROFILES},caipe-documentdb"
+    fi
+    local compose_db_password compose_db_username
+    compose_db_password=$(_env_get "$env_file" MONGODB_ROOT_PASSWORD)
+    compose_db_username=$(_env_get "$env_file" MONGODB_ROOT_USERNAME)
+    compose_db_password="${compose_db_password:-$(openssl rand -hex 24)}"
+    compose_db_username="${compose_db_username:-admin}"
+    export MONGODB_ROOT_PASSWORD="$compose_db_password"
+    export MONGODB_ROOT_USERNAME="$compose_db_username"
+    export MONGODB_URI
+    MONGODB_URI=$(_database_uri "$compose_db_password" "$compose_db_username")
+  fi
   export COMPOSE_PROFILES
 
   step "Starting Docker Compose all-in-one stack from docker-compose.yaml"
   log "Env file: ${env_file}"
   log "Profiles: ${COMPOSE_PROFILES}"
+  log "Database: ${DATABASE_PROVIDER} ($(_database_service_name))"
   docker compose --env-file "$env_file" -f docker-compose.yaml up -d
 
   log "CAIPE UI: http://localhost:3000"
@@ -7938,6 +8064,15 @@ choose_setup_target() {
 
 # ─── Auto-Detect Features ────────────────────────────────────────────────────
 detect_deployed_features() {
+  if [[ -z "${DATABASE_PROVIDER:-}" ]]; then
+    if helm status caipe-documentdb -n caipe &>/dev/null; then
+      DATABASE_PROVIDER="documentdb"
+      log "Detected deployed database provider: documentdb"
+    elif helm status caipe-mongodb -n caipe &>/dev/null; then
+      DATABASE_PROVIDER="mongodb"
+      log "Detected deployed database provider: mongodb"
+    fi
+  fi
   if helm status langfuse -n langfuse &>/dev/null; then
     ENABLE_TRACING=true
   fi
@@ -8198,6 +8333,7 @@ _save_caipe_config() {
 cluster_context: "$(kubectl config current-context 2>/dev/null || echo '')"
 chart_version: "${CAIPE_CHART_VERSION:-}"
 llm_provider: "${LLM_PROVIDER:-}"
+database_provider: "${DATABASE_PROVIDER:-mongodb}"
 enable_ollama: "${ENABLE_OLLAMA:-false}"
 ollama_model: "${OLLAMA_MODEL:-qwen3:0.6b}"
 embeddings_provider: "${EMBEDDINGS_PROVIDER:-}"
@@ -8221,10 +8357,11 @@ _load_caipe_config() {
   echo -e "  ${DIM}Saved configuration found: ${CAIPE_CONFIG_FILE}${NC}"
   echo ""
 
-  local _ctx _chart _llm _ollama _omodel _eprov _emodel _rag _grag _tracing _metallb _ingress _domain _agents
+  local _ctx _chart _llm _database _ollama _omodel _eprov _emodel _rag _grag _tracing _metallb _ingress _domain _agents
   _ctx=$(_cfg_get cluster_context)
   _chart=$(_cfg_get chart_version)
   _llm=$(_cfg_get llm_provider)
+  _database=$(_cfg_get database_provider)
   _ollama=$(_cfg_get enable_ollama)
   _omodel=$(_cfg_get ollama_model)
   _eprov=$(_cfg_get embeddings_provider)
@@ -8245,6 +8382,7 @@ _load_caipe_config() {
     echo -e "    ${DIM}LLM:             ${NC}${_llm}"
   fi
   [[ -n "$_eprov" ]]      && echo -e "    ${DIM}embeddings:      ${NC}${_eprov} (${_emodel})"
+  [[ -n "$_database" ]]   && echo -e "    ${DIM}database:        ${NC}${_database}"
   [[ -n "$_rag" ]]        && echo -e "    ${DIM}RAG:             ${NC}${_rag}  graph-RAG: ${_grag:-false}"
   [[ -n "$_tracing" ]]    && echo -e "    ${DIM}tracing:         ${NC}${_tracing}"
   [[ -n "$_metallb" ]]    && echo -e "    ${DIM}metallb:         ${NC}${_metallb}  ingress: ${_ingress:-false}"
@@ -8259,6 +8397,7 @@ _load_caipe_config() {
   # Apply saved values — only set if not already overridden by CLI flags / env
   [[ -n "$_chart"      && -z "${CAIPE_CHART_VERSION:-}"   ]] && CAIPE_CHART_VERSION="$_chart"
   [[ -n "$_llm"        && -z "${LLM_PROVIDER:-}"          ]] && LLM_PROVIDER="$_llm"
+  [[ -n "$_database"   && -z "${DATABASE_PROVIDER:-}"     ]] && DATABASE_PROVIDER="$_database"
   [[ "$_ollama" == "true" ]] && ENABLE_OLLAMA=true
   [[ -n "$_omodel"     && -z "${OLLAMA_MODEL:-}"          ]] && OLLAMA_MODEL="$_omodel"
   [[ -n "$_eprov"      && -z "${EMBEDDINGS_PROVIDER:-}"   ]] && EMBEDDINGS_PROVIDER="$_eprov"
@@ -8713,6 +8852,7 @@ Options:
   --litellm-db          Like --litellm, plus persist LiteLLM virtual keys/spend in the shared Postgres
   --persistence      Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --no-persistence   Accepted for compatibility; dynamic-agent persistence uses MongoDB
+  --database=NAME    MongoDB-compatible database: mongodb (default) or documentdb
   --slack-bot        Deploy the Slack bot surface (slack-bot subchart). Auto-enabled when
                      --env-file sets ENABLE_SLACK_BOT/ENABLE_SLACK; needs SLACK_BOT_TOKEN etc.
   --no-slack-bot     Skip the Slack bot surface (overrides the env-file value)
@@ -8816,6 +8956,8 @@ Environment variables (all optional):
                           or set ENABLE_SLACK in --env-file)
   ENABLE_WEBEX_BOT        Deploy the Webex bot surface (default: false; --webex-bot,
                           or set ENABLE_WEBEX in --env-file)
+  DATABASE_PROVIDER       Persistence provider: mongodb (default) or documentdb
+  DOCUMENTDB_IMAGE_TAG    DocumentDB Local image tag (default: pg17-0.113.0)
   AGENTGATEWAY_VERSION    AgentGateway Helm chart version (default: v2.2.1)
 
 LLM provider credentials are read from (in order):
@@ -8905,6 +9047,7 @@ for arg in "$@"; do
     --litellm-db)         LLM_VIA_LITELLM=true; ENABLE_LITELLM_DB=true ;;
     --persistence)     ENABLE_PERSISTENCE=true ;;
     --no-persistence)  ENABLE_PERSISTENCE=false ;;
+    --database=*)      DATABASE_PROVIDER="${arg#--database=}" ;;
     --metallb)         ENABLE_METALLB=true ;;
     --no-metallb)      ENABLE_METALLB=false; ENABLE_INGRESS=false ;;
     --ingress)         ENABLE_INGRESS=true; ENABLE_METALLB=true ;;

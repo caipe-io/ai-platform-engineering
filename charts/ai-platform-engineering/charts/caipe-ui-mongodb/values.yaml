@@ -1,6 +1,12 @@
-# Default values for mongodb
+# Default values for the MongoDB-compatible persistence service.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
+
+# -- Database engine to run: mongodb (default) or documentdb.
+# DocumentDB is the MIT-licensed, PostgreSQL-backed project from
+# https://github.com/documentdb/documentdb. Both providers expose the MongoDB
+# wire protocol, so CAIPE consumers continue to use MONGODB_URI.
+provider: mongodb
 
 # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1
@@ -16,6 +22,21 @@ image:
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: "7.0"
+
+# DocumentDB Local image settings. Used only when provider=documentdb.
+# 0.113.0 is pinned because upstream 0.114.0 has a documented two-hour
+# active-connection regression.
+documentdb:
+  image:
+    repository: ghcr.io/documentdb/documentdb/documentdb-local
+    tag: "pg17-0.113.0"
+    pullPolicy: IfNotPresent
+  port: 10260
+  postgresPort: 9712
+  dataPath: /data
+  tlsMode: allowTLS
+  logLevel: warn
+  telemetryEnabled: false
 
 # This is for the secrets for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
 imagePullSecrets: []
@@ -111,7 +132,7 @@ tolerations: []
 
 affinity: {}
 
-# Persistence configuration for MongoDB data
+# Persistence configuration for database data
 persistence:
   # Enable persistent storage
   enabled: true

@@ -1,6 +1,6 @@
 apiVersion: v2
 name: caipe-ui-mongodb
-description: MongoDB database for CAIPE UI persistence
+description: MongoDB-compatible persistence for CAIPE using MongoDB or DocumentDB
 type: application
 version: 1.0.1-dev.10
 appVersion: "1.0.1-dev.10"

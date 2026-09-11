@@ -5,7 +5,8 @@ sidebar_position: 1
 # Run with Docker Compose
 
 Use Docker Compose for a local CAIPE stack with the UI, Dynamic Agents, MCP
-servers, MongoDB, RBAC services, and optional RAG/tracing components.
+servers, a MongoDB-compatible database, RBAC services, and optional RAG/tracing
+components. MongoDB is the default; DocumentDB is opt-in.
 
 ## Prerequisites
 
@@ -101,6 +102,12 @@ To let the setup helper update `.env` and start Compose:
 ./setup-caipe.sh --docker-compose
 ```
 
+Choose the MIT-licensed DocumentDB provider instead:
+
+```bash
+./setup-caipe.sh --docker-compose --database=documentdb
+```
+
 ## Profiles
 
 | Profile | Description |
@@ -108,6 +115,7 @@ To let the setup helper update `.env` and start Compose:
 | `mcp-servers` | Packaged MCP server containers |
 | `caipe-ui-prod` | Production CAIPE UI image |
 | `caipe-mongodb` | MongoDB for UI state, Dynamic Agents, RBAC metadata, and checkpoints |
+| `caipe-documentdb` | Opt-in DocumentDB provider for the same MongoDB-compatible state |
 | `rbac` | Local Keycloak, OpenFGA, AgentGateway, and config bridge |
 | `dynamic-agents` | Dynamic Agents runtime used by chat, skills, and custom agents |
 | `rag` | Vector RAG services |

@@ -8,7 +8,7 @@ spec:
   type: {{ .Values.service.type }}
   clusterIP: None  # Headless service for StatefulSet
   ports:
-    - port: {{ .Values.service.port }}
+    - port: {{ include "mongodb.port" . }}
       targetPort: mongodb
       protocol: TCP
       name: mongodb
