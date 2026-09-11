@@ -13,6 +13,7 @@ spec:
     metadata:
       annotations:
         checksum/keycloak-realm: {{ include (print $.Template.BasePath "/configmap-realm.yaml") . | sha256sum }}
+        checksum/keycloak-openid-configuration: {{ include (print $.Template.BasePath "/configmap-openid-configuration.yaml") . | sha256sum }}
         {{- if and .Values.theme.enabled (not .Values.theme.existingConfigMap) }}
         checksum/keycloak-theme: {{ include (print $.Template.BasePath "/configmap-theme.yaml") . | sha256sum }}
         {{- end }}
@@ -30,6 +31,10 @@ spec:
           args:
             - {{ if .Values.database.enabled }}start{{ else }}start-dev{{ end }}
             - --import-realm
+            {{- /* Codex currently loses the RFC 9207 `iss` parameter while relaying
+                   its loopback callback. Keep Keycloak emitting `iss`, but advertise
+                   false so the client does not require the missing relayed value. */}}
+            - --spi-well-known--openid-configuration--openid-configuration-override=/opt/keycloak/conf/openid-configuration-override.json
             {{- $features := list }}
             {{- if .Values.features.tokenExchange }}
             {{- $features = append $features "token-exchange" }}
@@ -112,6 +117,10 @@ spec:
             - name: realm-config
               mountPath: /opt/keycloak/data/import
               readOnly: true
+            - name: openid-configuration
+              mountPath: /opt/keycloak/conf/openid-configuration-override.json
+              subPath: openid-configuration-override.json
+              readOnly: true
             {{- if .Values.theme.enabled }}
             - name: keycloak-theme
               mountPath: /opt/keycloak/themes/{{ .Values.theme.name }}
@@ -128,6 +137,9 @@ spec:
         - name: realm-config
           configMap:
             name: {{ include "keycloak.fullname" . }}-realm
+        - name: openid-configuration
+          configMap:
+            name: {{ include "keycloak.fullname" . }}-openid-configuration
         {{- if .Values.theme.enabled }}
         - name: keycloak-theme
           configMap:

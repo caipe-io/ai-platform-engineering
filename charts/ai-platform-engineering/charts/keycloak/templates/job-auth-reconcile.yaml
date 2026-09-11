@@ -131,6 +131,11 @@ spec:
             - name: KEYCLOAK_CLI_WEB_ORIGINS
               value: {{ join " " . | quote }}
             {{- end }}
+            {{- /* RAG ingestor M2M client — provisioned imperatively so it lands
+                   on existing realms. Default caipe-rag-ingestor; override via
+                   ragIngestorClient.clientId in values. */}}
+            - name: RAG_INGESTOR_OIDC_CLIENT_ID
+              value: {{ (.Values.ragIngestorClient).clientId | default "caipe-rag-ingestor" | quote }}
             - name: IDP_ACCESS_GROUP
               value: {{ .Values.idp.accessGroup | quote }}
             - name: IDP_ADMIN_GROUP

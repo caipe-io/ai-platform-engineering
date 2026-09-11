@@ -5,6 +5,8 @@ metadata:
   labels:
     {{- include "keycloak.labels" . | nindent 4 }}
 data:
+  mcp-dcr.sh: |-
+    {{- .Files.Get "scripts/mcp-dcr.sh" | nindent 4 }}
   init-token-exchange.sh: |-
     {{- .Files.Get "scripts/init-token-exchange.sh" | nindent 4 }}
   init-idp.sh: |-

@@ -163,6 +163,14 @@ cliClient:
     - "http://localhost:8085"
     - "http://127.0.0.1:8085"
 
+# ---------- RAG ingestor M2M OIDC client ----------
+# Machine-to-machine client used by RAG ingestors (web-ingestor, confluence-ingestor,
+# etc.) to authenticate against rag-server via client_credentials. The init-idp Job
+# creates/updates it imperatively so it lands on existing realms on upgrade.
+# rag-server validates ingestor JWTs with audience=ragIngestorClient.clientId.
+ragIngestorClient:
+  clientId: "caipe-rag-ingestor"
+
 # ---------- CAIPE platform OIDC client ----------
 # The realm import ships the `caipe-platform` confidential client with a
 # placeholder secret ("caipe-platform-dev-secret") so first-boot import works
