@@ -29,9 +29,9 @@ CAIPE_SECONDARY_OIDC_PROVIDER_ID
 The target public surface is:
 
 ~~~text
-/api/mcp/{serverId}          one registered MCP server
+/api/mcp/:serverId           one registered MCP server
 /api/mcp/custom              the caller's default curated virtual server
-/api/mcp/custom/{profileId}  an optional named curated virtual server
+/api/mcp/custom/:profileId   an optional named curated virtual server
 /api/mcp/servers             authenticated server catalog (not an MCP transport)
 ~~~
 
@@ -295,7 +295,7 @@ TLS, service-actor binding, and optional nonce caching at the bridge.
 
 ### 8.1 Direct server endpoint
 
-**/api/mcp/{serverId}** resolves a registered **mcp_servers** row and exposes
+**/api/mcp/:serverId** resolves a registered **mcp_servers** row and exposes
 that server's authorized tool catalog. Reserved IDs include **custom** and
 **servers**.
 
@@ -303,19 +303,19 @@ The same resource URL supports MCP Streamable HTTP POST, GET, and DELETE.
 OAuth protected-resource metadata is published at:
 
 ~~~text
-/.well-known/oauth-protected-resource/api/mcp/{serverId}
+/.well-known/oauth-protected-resource/api/mcp/:serverId
 ~~~
 
 ### 8.2 Curated virtual endpoint
 
 **/api/mcp/custom** resolves the authenticated user's default profile.
-**/api/mcp/custom/{profileId}** resolves a named profile owned by that user.
+**/api/mcp/custom/:profileId** resolves a named profile owned by that user.
 Profiles are not shareable in the first release.
 
 Backing tool names are namespaced to prevent collision:
 
 ~~~text
-{serverId}__{toolName}
+serverId__toolName
 ~~~
 
 The BFF rewrites a virtual tool call to the backing server and original tool
@@ -482,12 +482,12 @@ audience, time claims, token length, and a truncated SHA-256 fingerprint.
 Suggested metrics:
 
 ~~~text
-caipe_secondary_oidc_validation_total{provider,result}
-caipe_secondary_oidc_link_total{provider,result}
-caipe_mcp_tool_call_total{surface,server,tool,result}
-caipe_mcp_tool_result_bytes{surface,server,tool}
-caipe_mcp_profile_visible_tools{profile}
-caipe_mcp_authz_duration_seconds{decision}
+caipe_secondary_oidc_validation_total [provider, result]
+caipe_secondary_oidc_link_total [provider, result]
+caipe_mcp_tool_call_total [surface, server, tool, result]
+caipe_mcp_tool_result_bytes [surface, server, tool]
+caipe_mcp_profile_visible_tools [profile]
+caipe_mcp_authz_duration_seconds [decision]
 ~~~
 
 ## 15. Security analysis
@@ -523,7 +523,7 @@ must not silently relink by email.
 
 ### Phase 1 — generic direct MCP surface
 
-- Add **/api/mcp/{serverId}** and protected-resource metadata.
+- Add **/api/mcp/:serverId** and protected-resource metadata.
 - Route registered servers through AgentGateway.
 - Add signed delegated-user context and bridge verification.
 - Prove secondary and Keycloak callers receive identical OpenFGA outcomes.
@@ -536,7 +536,7 @@ must not silently relink by email.
 
 ### Phase 3 — named profiles and output controls
 
-- Add **/api/mcp/custom/{profileId}**.
+- Add **/api/mcp/custom/:profileId**.
 - Add per-profile image/output controls and optional connection selection.
 - Add revision-aware caching and catalog-health feedback.
 
