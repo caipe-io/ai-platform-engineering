@@ -311,10 +311,10 @@ _trim_input() {
 ask_yn() {
   local question="$1" default="${2:-y}"
   if $AUTO_YES; then return 0; fi
-  local yn_hint
+  local yn_hint answer
   if [[ "$default" == "y" ]]; then yn_hint="${CYAN}[Y/n]${NC}${BOLD}"; else yn_hint="${CYAN}[y/N]${NC}${BOLD}"; fi
   prompt "$question $yn_hint "
-  tty_read -r answer
+  tty_read -r answer || return 1
   answer="${answer:-$default}"
   [[ "$answer" =~ ^[Yy]$ ]]
 }
@@ -323,6 +323,7 @@ ask_yn() {
 # user explicitly allows it — a working passwordless sudo is NOT treated as
 # permission. The answer is cached for the rest of the run so we prompt once.
 # --yes / AUTO_YES pre-consents (non-interactive convenience).
+# Non-interactive runs without --yes deny sudo without prompting.
 _sudo_consent() {
   local reason="${1:-a system change}"
   case "$SUDO_CONSENT" in
@@ -330,6 +331,7 @@ _sudo_consent() {
     no)  return 1 ;;
   esac
   if $AUTO_YES; then SUDO_CONSENT="yes"; return 0; fi
+  if $NON_INTERACTIVE; then SUDO_CONSENT="no"; return 1; fi
   if ask_yn "This step needs sudo (${reason}). Allow this script to run sudo?" "y"; then
     SUDO_CONSENT="yes"; return 0
   fi
