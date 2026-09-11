@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ModelPicker } from "@/components/ui/model-picker";
+import { Switch } from "@/components/ui/switch";
 import { type TeamPickerOption } from "@/components/ui/team-picker";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
@@ -461,6 +462,19 @@ export function DynamicAgentEditor({
   const [ragCollectionIds, setRagCollectionIds] = React.useState<string[]>(() =>
     normalizeKnowledgeIds(source?.rag_collection_ids),
   );
+  // An agent with neither field configured is unrestricted: it searches
+  // whatever the calling user can already access, with no additional
+  // agent-level narrowing. This toggle is how the editor distinguishes that
+  // intentional default from "restricted, but to nothing" (both fields
+  // present as explicit empty arrays). Default a brand-new agent to
+  // unrestricted; preserve whatever an existing agent already has.
+  const [restrictKnowledge, setRestrictKnowledge] = React.useState<boolean>(
+    () => source?.datasource_ids != null || source?.rag_collection_ids != null,
+  );
+  // Stable snapshot of whether this agent had an explicit restriction when
+  // the editor opened, so turning the toggle off only sends a clearing
+  // `null` when there is actually something to clear.
+  const hadExplicitKnowledgeScope = React.useRef(restrictKnowledge).current;
   const [features, setFeatures] = React.useState<FeaturesConfig | undefined>(
     source?.features,
   );
@@ -1119,6 +1133,15 @@ export function DynamicAgentEditor({
       // overwrite a prior `last_review` with null.
       const lastReview = buildLastReview(reviewResult, "agent-system-prompt");
 
+      // Restricted: send the real (possibly empty) arrays. Unrestricted with
+      // nothing to clear: omit both fields entirely. Unrestricted after
+      // having been restricted: explicitly clear both back to unset.
+      const knowledgeFields = restrictKnowledge
+        ? { datasource_ids: datasourceIds, rag_collection_ids: ragCollectionIds }
+        : hadExplicitKnowledgeScope
+          ? { datasource_ids: null, rag_collection_ids: null }
+          : {};
+
       if (isEditing) {
         // Update existing agent
         const updateData: DynamicAgentConfigUpdate & {
@@ -1135,12 +1158,7 @@ export function DynamicAgentEditor({
           builtin_tools: builtinTools,
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
-          // Always send the array, even empty — `pickMutableFields` only
-          // omits keys that are `undefined`, so sending `undefined` here
-          // when the picker is cleared would leave the previously-saved
-          // restriction in place instead of clearing it.
-          datasource_ids: datasourceIds,
-          rag_collection_ids: ragCollectionIds,
+          ...knowledgeFields,
           model: { id: modelId, provider: modelProvider },
           ui: uiConfig,
           features: features,
@@ -1190,11 +1208,7 @@ export function DynamicAgentEditor({
           builtin_tools: builtinTools,
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
-          // New agents follow the combined collection + datasource hand
-          // exactly. Empty arrays keep RAG tools available with no indexed
-          // content in scope.
-          datasource_ids: datasourceIds,
-          rag_collection_ids: ragCollectionIds,
+          ...knowledgeFields,
           model: { id: modelId, provider: modelProvider },
           ui: uiConfig,
           features: features,
@@ -1280,8 +1294,38 @@ export function DynamicAgentEditor({
           step: "instructions",
         });
       }
+      // Restrict was just turned on (it wasn't already an explicit scope
+      // when this editor opened) and nothing has been picked yet - saving
+      // now would send explicit empty arrays, a deliberate opt-out that
+      // disables this agent's RAG tools entirely, not "unrestricted"
+      // (that's what leaving Restrict off does). Block the save instead of
+      // silently locking the agent out of every datasource. An agent that
+      // already had an explicit scope may still be intentionally cleared
+      // to opt out - only gate the "just enabled, nothing picked" case.
+      if (
+        restrictKnowledge &&
+        !hadExplicitKnowledgeScope &&
+        datasourceIds.length === 0 &&
+        ragCollectionIds.length === 0
+      ) {
+        list.push({
+          field: "knowledgeScope",
+          label: "Pick at least one collection or datasource, or turn off Restrict",
+          step: "knowledge",
+        });
+      }
       return list;
-    }, [name, systemPrompt, modelId, availableModels.length, ownerTeamMissing]);
+    }, [
+      name,
+      systemPrompt,
+      modelId,
+      availableModels.length,
+      ownerTeamMissing,
+      restrictKnowledge,
+      hadExplicitKnowledgeScope,
+      datasourceIds,
+      ragCollectionIds,
+    ]);
 
   const isValid = blockers.length === 0;
   const firstBlocker = blockers[0];
@@ -2281,21 +2325,38 @@ export function DynamicAgentEditor({
                     !hasRagToolAccess(allowedTools) && "opacity-50",
                   )}
                 >
-                  <DatasourcePicker
-                    ownerTeamSlug={ownerTeamSlug}
-                    value={datasourceIds}
-                    onChange={setDatasourceIds}
-                    collectionValue={ragCollectionIds}
-                    onCollectionChange={setRagCollectionIds}
-                    // A new RAG-enabled agent starts with Platform RAG only
-                    // after migration has actually created that collection.
-                    defaultToPlatform={
-                      !source && hasRagToolAccess(allowedTools)
-                    }
-                    disabled={
-                      loading || !!readOnly || !hasRagToolAccess(allowedTools)
-                    }
-                  />
+                  <div className="mb-4 flex items-center justify-between gap-4 rounded-lg border p-3">
+                    <div>
+                      <Label htmlFor="restrict-knowledge">
+                        Restrict to collections or datasources
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        {restrictKnowledge
+                          ? "This agent's RAG tools are pinned to the picks below. Every query still respects the calling user's own Search access."
+                          : "Off: this agent searches everything the calling user can already access, with no additional restriction. Turn this on to pin it to specific collections or datasources instead."}
+                      </p>
+                    </div>
+                    <Switch
+                      id="restrict-knowledge"
+                      checked={restrictKnowledge}
+                      disabled={
+                        loading || !!readOnly || !hasRagToolAccess(allowedTools)
+                      }
+                      onCheckedChange={setRestrictKnowledge}
+                    />
+                  </div>
+                  {restrictKnowledge && (
+                    <DatasourcePicker
+                      ownerTeamSlug={ownerTeamSlug}
+                      value={datasourceIds}
+                      onChange={setDatasourceIds}
+                      collectionValue={ragCollectionIds}
+                      onCollectionChange={setRagCollectionIds}
+                      disabled={
+                        loading || !!readOnly || !hasRagToolAccess(allowedTools)
+                      }
+                    />
+                  )}
                 </div>
               </div>
             )}

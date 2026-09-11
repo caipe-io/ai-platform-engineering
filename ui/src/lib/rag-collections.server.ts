@@ -5,16 +5,11 @@ import {
   type OpenFgaTupleKey,
 } from "@/lib/rbac/openfga";
 import { organizationObjectId } from "@/lib/rbac/organization";
-import {
-  EVERYONE_TEAM_SLUG,
-  SUPER_ADMINS_TEAM_SLUG,
-} from "@/lib/rbac/reserved-teams";
 import type {
   RagCollection,
   RagCollectionMembershipLabel,
 } from "@/types/rag-collection";
 import {
-  PLATFORM_RAG_COLLECTION_ID,
   RAG_COLLECTIONS_COLLECTION,
   RAG_COLLECTION_ID_PATTERN,
 } from "@/types/rag-collection";
@@ -29,7 +24,6 @@ import {
 } from "@/lib/rbac/unlinked-knowledge-access";
 
 export { RAG_COLLECTIONS_COLLECTION, RAG_COLLECTION_ID_PATTERN };
-const PLATFORM_RAG_BOOTSTRAP_SUBJECT = "platform";
 
 /** Build a Mongo `$set` document without the immutable `_id` field. */
 export function ragCollectionSetFields(
@@ -175,47 +169,6 @@ export async function ensureRagCollectionReaderTeamsCanSearch(
   );
 }
 
-/** Create the built-in collection once and repair its current access projection. */
-export async function bootstrapPlatformRagCollection(): Promise<RagCollection> {
-  const collection = await getCollection<RagCollection>(
-    RAG_COLLECTIONS_COLLECTION,
-  );
-  const now = new Date().toISOString();
-  const initial: RagCollection = {
-    _id: PLATFORM_RAG_COLLECTION_ID,
-    name: "Platform RAG",
-    description: "Shared organization knowledge available to agents by default.",
-    is_platform: true,
-    source_ids: [],
-    owner_subject: undefined,
-    maintainer_team_slugs: [SUPER_ADMINS_TEAM_SLUG],
-    reader_team_slugs: [EVERYONE_TEAM_SLUG],
-    global_read: false,
-    created_by: PLATFORM_RAG_BOOTSTRAP_SUBJECT,
-    created_at: now,
-    updated_at: now,
-  };
-
-  await collection.updateOne(
-    { _id: PLATFORM_RAG_COLLECTION_ID } as never,
-    { $setOnInsert: ragCollectionSetFields(initial) },
-    { upsert: true },
-  );
-  const stored = await collection.findOne({
-    _id: PLATFORM_RAG_COLLECTION_ID,
-  } as never);
-  if (!stored) {
-    throw new Error("Platform RAG was not available after bootstrap");
-  }
-
-  await reconcileCollectionRelationships(null, stored);
-  await ensureRagCollectionReaderTeamsCanSearch(
-    stored.reader_team_slugs,
-    PLATFORM_RAG_BOOTSTRAP_SUBJECT,
-  );
-  return stored;
-}
-
 export async function replaceCollectionSources(
   collectionId: string,
   nextSourceIds: readonly string[],
@@ -260,88 +213,6 @@ export async function replaceCollectionSources(
   return { ...previous, source_ids: nextIds, updated_at: updatedAt };
 }
 
-export async function ensurePlatformRagCollection(input: {
-  actorSubject: string;
-  maintainerTeamSlugs: string[];
-  readerTeamSlugs: string[];
-  sourceIds?: string[];
-  /** Preserve manually-added Platform RAG members while adopting legacy data. */
-  mergeSourceIds?: boolean;
-}): Promise<RagCollection> {
-  const collection = await getCollection<RagCollection>(
-    RAG_COLLECTIONS_COLLECTION,
-  );
-  const previous = await collection.findOne({
-    _id: PLATFORM_RAG_COLLECTION_ID,
-  } as never);
-  const now = new Date().toISOString();
-  const next: RagCollection = {
-    _id: PLATFORM_RAG_COLLECTION_ID,
-    name: "Platform RAG",
-    description:
-      "Trusted organization-wide knowledge, automatically available to agents by default.",
-    is_platform: true,
-    source_ids: unique(
-      input.sourceIds
-        ? [
-            ...(input.mergeSourceIds ? (previous?.source_ids ?? []) : []),
-            ...input.sourceIds,
-          ]
-        : (previous?.source_ids ?? []),
-    ),
-    owner_subject: undefined,
-    maintainer_team_slugs: unique(input.maintainerTeamSlugs),
-    reader_team_slugs: unique(input.readerTeamSlugs),
-    global_read: false,
-    created_by: previous?.created_by ?? input.actorSubject,
-    created_at: previous?.created_at ?? now,
-    updated_at: now,
-  };
-
-  await reconcileCollectionRelationships(previous, next);
-  const persisted = input.sourceIds
-    ? { ...next, source_ids: previous?.source_ids ?? [] }
-    : next;
-  try {
-    await collection.updateOne(
-      { _id: PLATFORM_RAG_COLLECTION_ID } as never,
-      {
-        $set: ragCollectionSetFields(persisted),
-        $unset: { owner_subject: "" },
-      },
-      { upsert: true },
-    );
-  } catch (error) {
-    if (previous) {
-      await reconcileCollectionRelationships(next, previous).catch(() => {});
-    } else {
-      await reconcileCollectionRelationships(next, null).catch(() => {});
-    }
-    throw error;
-  }
-  if (input.sourceIds) {
-    try {
-      return await replaceCollectionSources(
-        PLATFORM_RAG_COLLECTION_ID,
-        next.source_ids,
-      );
-    } catch (error) {
-      if (previous) {
-        await collection
-          .replaceOne({ _id: PLATFORM_RAG_COLLECTION_ID } as never, previous)
-          .catch(() => {});
-        await reconcileCollectionRelationships(next, previous).catch(() => {});
-      } else {
-        await collection
-          .deleteOne({ _id: PLATFORM_RAG_COLLECTION_ID } as never)
-          .catch(() => {});
-        await reconcileCollectionRelationships(next, null).catch(() => {});
-      }
-      throw error;
-    }
-  }
-  return next;
-}
 
 export async function canPublishCollection(
   subject: string,
@@ -508,7 +379,6 @@ export async function visibleRagCollectionsByDatasource(
     const label: RagCollectionMembershipLabel = {
       id: ragCollection._id,
       name: ragCollection.name,
-      is_platform: ragCollection.is_platform,
     };
     for (const datasourceId of ragCollection.source_ids ?? []) {
       if (!idSet.has(datasourceId)) continue;

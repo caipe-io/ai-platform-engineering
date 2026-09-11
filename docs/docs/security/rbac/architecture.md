@@ -1442,10 +1442,14 @@ removing stale pages when a source shrinks.
   expands collection membership live for every RAG tool call, unions it with
   direct pins, and the RAG server intersects the result with the caller's live
   OpenFGA access.
-- Missing pin fields are a temporary pre-migration legacy state. Explicit empty
-  arrays are a deny/opt-out. The migration attaches otherwise-unscoped
-  RAG-enabled agents to `platform-rag`; new RAG-enabled agents default to that
-  collection when their owner can read it, and may remove it.
+- Missing pin fields (`datasource_ids`/`rag_collection_ids` both unset, not
+  sent as `[]`) are the intentional default for a new RAG-enabled agent: it is
+  unrestricted, searching whatever the calling user can already access with
+  no additional agent-level narrowing — safe because `tools.py` always
+  independently intersects with the caller's own OpenFGA-accessible set
+  regardless of agent config. There is no special default collection; an
+  editor opts into a narrower scope explicitly. Explicit empty arrays remain
+  a deliberate deny/opt-out, distinct from unset fields.
 - A personal collection writes separate owner and reader relationships. Any
   editor can publish any datasource they can search — publishing never
   extends read access to that datasource for anyone else, including the

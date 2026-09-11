@@ -534,13 +534,6 @@ export const DELETE = withErrorHandler(
     const { session } = await getAuthFromBearerOrSession(request);
     requireHumanCollectionEditor(session);
     const doc = await loadCollection(id);
-    if (doc.is_platform) {
-      throw new ApiError(
-        "Platform RAG cannot be deleted",
-        409,
-        "PLATFORM_RAG_PROTECTED",
-      );
-    }
     await requireManage(session, id);
     await invalidatePublicationRequests(
       { kind: "rag_collection", id, label: doc.name },

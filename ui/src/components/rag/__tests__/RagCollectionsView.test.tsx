@@ -126,7 +126,6 @@ describe("RagCollectionsView", () => {
                   _id: "primary-collection",
                   name: "Primary collection",
                   description: "Shared operational knowledge",
-                  is_platform: false,
                   source_ids: ["slack-channel-C00000000"],
                   owner_subject: "owner-subject",
                   maintainer_team_slugs: [],
@@ -146,7 +145,6 @@ describe("RagCollectionsView", () => {
                   _id: "platform-rag",
                   name: "Platform RAG",
                   description: "Shared organization knowledge",
-                  is_platform: true,
                   source_ids: [],
                   maintainer_team_slugs: ["super-admins"],
                   reader_team_slugs: ["everyone"],
@@ -167,7 +165,6 @@ describe("RagCollectionsView", () => {
                         _id: "new-collection",
                         name: "New collection",
                         description: "New description",
-                        is_platform: false,
                         source_ids: ["web-docs"],
                         owner_subject: "owner-subject",
                         maintainer_team_slugs: [],
@@ -226,16 +223,6 @@ describe("RagCollectionsView", () => {
         throw new Error(`Unexpected fetch: ${href}`);
       },
     );
-  });
-
-  it("marks Platform RAG as a built-in collection", async () => {
-    render(<RagCollectionsView />);
-
-    expect(
-      await screen.findByLabelText(
-        "Built-in collection for shared organization knowledge.",
-      ),
-    ).toBeInTheDocument();
   });
 
   it("keeps the detail pane closed until a collection is selected", async () => {

@@ -25,22 +25,18 @@ jest.mock("@/lib/rbac/resource-authz", () => ({
 }));
 
 import {
-  bootstrapPlatformRagCollection,
   collectionMembershipTuple,
   collectionRelationshipTuples,
-  ensurePlatformRagCollection,
   searchableDatasourceIdsForCollectionPublishing,
   removeDatasourceFromAgentPins,
   removeRagCollectionFromAgentPins,
   replaceCollectionSources,
 } from "@/lib/rag-collections.server";
 import type { RagCollection } from "@/types/rag-collection";
-import { PLATFORM_RAG_COLLECTION_ID } from "@/types/rag-collection";
 
 const previous: RagCollection = {
   _id: "primary",
   name: "Primary knowledge",
-  is_platform: false,
   source_ids: ["source-a", "source-b"],
   owner_subject: "owner-sub",
   maintainer_team_slugs: ["maintainers"],
@@ -192,158 +188,6 @@ describe("replaceCollectionSources", () => {
         deletes: [collectionMembershipTuple("primary", "source-c")],
       },
       { source: "rag_collection_membership_rollback" },
-    );
-  });
-});
-
-describe("ensurePlatformRagCollection", () => {
-  it("merges legacy sources with manually maintained Platform membership", async () => {
-    const platform = {
-      ...previous,
-      _id: "platform-rag",
-      name: "Platform RAG",
-      is_platform: true,
-      source_ids: ["source-manual"],
-    };
-    const updateOne = jest
-      .fn()
-      .mockResolvedValue({ matchedCount: 1, modifiedCount: 1 });
-    mockGetCollection.mockResolvedValue({
-      findOne: jest.fn().mockResolvedValue(platform),
-      updateOne,
-      replaceOne: jest.fn(),
-      deleteOne: jest.fn(),
-    });
-
-    const result = await ensurePlatformRagCollection({
-      actorSubject: "admin-sub",
-      maintainerTeamSlugs: ["maintainers"],
-      readerTeamSlugs: ["readers"],
-      sourceIds: ["source-legacy", "source-manual"],
-      mergeSourceIds: true,
-    });
-
-    expect(result.source_ids).toEqual(["source-manual", "source-legacy"]);
-    expect(mockWriteOpenFgaTuples).toHaveBeenLastCalledWith(
-      {
-        writes: [collectionMembershipTuple("platform-rag", "source-legacy")],
-        deletes: [],
-      },
-      { source: "rag_collection_membership" },
-    );
-  });
-});
-
-describe("bootstrapPlatformRagCollection", () => {
-  it("creates an empty collection for Super Admins and Everyone", async () => {
-    let stored: RagCollection | null = null;
-    const updateOne = jest.fn(
-      async (
-        filter: { _id: string },
-        update: { $setOnInsert?: Record<string, unknown> },
-      ) => {
-        if (!stored) {
-          stored = {
-            _id: filter._id,
-            ...(update.$setOnInsert ?? {}),
-          } as RagCollection;
-        }
-        return { matchedCount: 0, upsertedCount: 1 };
-      },
-    );
-    mockGetCollection.mockResolvedValue({
-      updateOne,
-      findOne: jest.fn(async () => stored),
-    });
-
-    const result = await bootstrapPlatformRagCollection();
-
-    expect(result).toMatchObject({
-      _id: PLATFORM_RAG_COLLECTION_ID,
-      name: "Platform RAG",
-      is_platform: true,
-      source_ids: [],
-      maintainer_team_slugs: ["super-admins"],
-      reader_team_slugs: ["everyone"],
-      global_read: false,
-    });
-    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith(
-      expect.objectContaining({
-        writes: expect.arrayContaining([
-          {
-            user: "team:super-admins#admin",
-            relation: "manager",
-            object: "rag_collection:platform-rag",
-          },
-          {
-            user: "team:everyone#member",
-            relation: "reader",
-            object: "rag_collection:platform-rag",
-          },
-        ]),
-      }),
-      { source: "rag_collection_relationships" },
-    );
-    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith(
-      {
-        writes: [
-          {
-            user: "team:everyone#member",
-            relation: "searcher",
-            object: "organization:caipe",
-          },
-        ],
-        deletes: [],
-      },
-      {
-        caller: { type: "user", id: "platform" },
-        source: "rag_collection_reader_search_capability",
-      },
-    );
-  });
-
-  it("preserves an existing Platform RAG configuration", async () => {
-    const existing: RagCollection = {
-      ...previous,
-      _id: PLATFORM_RAG_COLLECTION_ID,
-      name: "Company knowledge",
-      is_platform: true,
-      owner_subject: undefined,
-      source_ids: ["source-custom"],
-      maintainer_team_slugs: ["knowledge-maintainers"],
-      reader_team_slugs: ["knowledge-readers"],
-    };
-    const updateOne = jest.fn().mockResolvedValue({
-      matchedCount: 1,
-      upsertedCount: 0,
-    });
-    mockGetCollection.mockResolvedValue({
-      updateOne,
-      findOne: jest.fn().mockResolvedValue(existing),
-    });
-
-    await expect(bootstrapPlatformRagCollection()).resolves.toBe(existing);
-
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: PLATFORM_RAG_COLLECTION_ID },
-      { $setOnInsert: expect.objectContaining({ name: "Platform RAG" }) },
-      { upsert: true },
-    );
-    expect(mockWriteOpenFgaTuples).toHaveBeenLastCalledWith(
-      {
-        writes: [
-          {
-            user: "team:knowledge-readers#member",
-            relation: "searcher",
-            object: "organization:caipe",
-          },
-        ],
-        deletes: [],
-      },
-      {
-        caller: { type: "user", id: "platform" },
-        source: "rag_collection_reader_search_capability",
-      },
     );
   });
 });

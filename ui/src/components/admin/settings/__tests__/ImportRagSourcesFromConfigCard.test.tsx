@@ -5,6 +5,70 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 
+jest.mock("@/components/ui/access-subject-picker", () => ({
+  AccessSubjectPicker: ({
+    teams,
+    value,
+    onChange,
+    ariaLabel,
+  }: {
+    teams: { slug: string; name: string }[];
+    value: { kind: "team" | "user"; id: string } | null;
+    onChange: (ref: { kind: "team"; id: string } | null) => void;
+    ariaLabel?: string;
+  }) => (
+    <select
+      aria-label={ariaLabel}
+      value={value?.id ?? ""}
+      onChange={(event) =>
+        onChange(
+          event.target.value
+            ? { kind: "team", id: event.target.value }
+            : null,
+        )
+      }
+    >
+      <option value="">Select a person or team</option>
+      {teams.map((team) => (
+        <option key={team.slug} value={team.slug}>
+          {team.name}
+        </option>
+      ))}
+    </select>
+  ),
+  AccessSubjectMultiPicker: ({
+    teams,
+    selected,
+    onChange,
+    ariaLabel,
+  }: {
+    teams: { slug: string; name: string }[];
+    selected: { kind: "team" | "user"; id: string }[];
+    onChange: (next: { kind: "team"; id: string }[]) => void;
+    ariaLabel?: string;
+  }) => (
+    <fieldset aria-label={ariaLabel}>
+      {teams.map((team) => (
+        <label key={team.slug}>
+          <input
+            type="checkbox"
+            checked={selected.some((ref) => ref.id === team.slug)}
+            onChange={() => {
+              const exists = selected.some((ref) => ref.id === team.slug);
+              onChange(
+                exists
+                  ? selected.filter((ref) => ref.id !== team.slug)
+                  : [...selected, { kind: "team", id: team.slug }],
+              );
+            }}
+          />
+          {team.name}
+        </label>
+      ))}
+    </fieldset>
+  ),
+}));
+
 import { ImportRagSourcesFromConfigCard } from "../ImportRagSourcesFromConfigCard";
 
 const PREVIEW_SOURCES = [
@@ -35,58 +99,15 @@ const PREVIEW_SOURCES = [
   },
 ];
 
-const COLLECTIONS = [
-  {
-    _id: "platform-rag",
-    name: "Platform RAG",
-    description: "Shared knowledge",
-    is_platform: true,
-    source_ids: [],
-    maintainer_team_slugs: ["owner-team"],
-    reader_team_slugs: ["reader-team"],
-    global_read: false,
-    created_by: "platform",
-    created_at: "2026-08-01T00:00:00.000Z",
-    updated_at: "2026-08-01T00:00:00.000Z",
-    _permissions: {
-      can_read: true,
-      can_publish: true,
-      can_manage: true,
-      can_delegate: true,
-    },
-  },
-  {
-    _id: "primary-collection",
-    name: "Primary Collection",
-    description: "Team knowledge",
-    is_platform: false,
-    source_ids: [],
-    maintainer_team_slugs: ["primary-team"],
-    reader_team_slugs: ["primary-team"],
-    global_read: false,
-    created_by: "admin-sub",
-    created_at: "2026-08-01T00:00:00.000Z",
-    updated_at: "2026-08-01T00:00:00.000Z",
-    _permissions: {
-      can_read: true,
-      can_publish: true,
-      can_manage: true,
-      can_delegate: true,
-    },
-  },
+const TEAMS = [
+  { slug: "owner-team", name: "Owner Team" },
+  { slug: "primary-team", name: "Primary Team" },
 ];
 
 function mockFetch({
   preview = {
     success: true,
-    data: {
-      sources: PREVIEW_SOURCES,
-      configured_source_count: 3,
-      destination_collection: {
-        id: "platform-rag",
-        source_count: 0,
-      },
-    },
+    data: { sources: PREVIEW_SOURCES, configured_source_count: 3 },
   },
   apply = {
     success: true,
@@ -95,10 +116,6 @@ function mockFetch({
       adopted: ["slack-channel-C1"],
       skipped: [],
       configured_source_count: 3,
-      destination_collection: {
-        id: "platform-rag",
-        source_count: 2,
-      },
     },
   },
 }: {
@@ -114,23 +131,9 @@ function mockFetch({
         json: () => Promise.resolve(payload),
       } as Response);
     }
-    if (href === "/api/rag/collections") {
-      return Promise.resolve({
-        json: () =>
-          Promise.resolve({ success: true, data: { collections: COLLECTIONS } }),
-      } as Response);
-    }
     if (href === "/api/dynamic-agents/teams") {
       return Promise.resolve({
-        json: () =>
-          Promise.resolve({
-            success: true,
-            data: [
-              { slug: "owner-team", name: "Owner Team" },
-              { slug: "reader-team", name: "Reader Team" },
-              { slug: "primary-team", name: "Primary Team" },
-            ],
-          }),
+        json: () => Promise.resolve({ success: true, data: TEAMS }),
       } as Response);
     }
     return Promise.reject(new Error(`Unexpected fetch: ${href}`));
@@ -175,19 +178,33 @@ describe("ImportRagSourcesFromConfigCard", () => {
     expect(screen.getByText("Already adopted")).toBeInTheDocument();
     expect(screen.getByText("Unavailable")).toBeInTheDocument();
     expect(screen.getByText(/Found 3 sources in app config/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Destination collection")).toHaveTextContent(
-      "Platform RAG",
-    );
-    expect(screen.getByText("Owner:").closest("p")).toHaveTextContent(
-      "Owner: Owner Team · Search: Reader Team",
-    );
+    expect(screen.getByLabelText("Owner")).toBeInTheDocument();
+    expect(screen.getByLabelText("Search Access")).toBeInTheDocument();
   });
 
-  it("adopts only selected app-config source ids", async () => {
+  it("disables Adopt until an Owner is selected", async () => {
     render(<ImportRagSourcesFromConfigCard isAdmin />);
     fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
 
     await screen.findByTestId("import-rag-source-checkbox-slack-channel-C1");
+    expect(screen.getByTestId("import-rag-sources-apply-button")).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Owner"), {
+      target: { value: "owner-team" },
+    });
+    expect(
+      screen.getByTestId("import-rag-sources-apply-button"),
+    ).not.toBeDisabled();
+  });
+
+  it("adopts selected app-config source ids with the chosen Owner and no Search Access", async () => {
+    render(<ImportRagSourcesFromConfigCard isAdmin />);
+    fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
+
+    await screen.findByTestId("import-rag-source-checkbox-slack-channel-C1");
+    fireEvent.change(screen.getByLabelText("Owner"), {
+      target: { value: "owner-team" },
+    });
     fireEvent.click(screen.getByTestId("import-rag-sources-apply-button"));
 
     await waitFor(() => {
@@ -202,22 +219,25 @@ describe("ImportRagSourcesFromConfigCard", () => {
     expect(JSON.parse(String(applyCall?.[1]?.body))).toEqual(
       expect.objectContaining({
         source_ids: ["slack-channel-C1"],
-        destination_collection_id: "platform-rag",
+        owner_team_slug: "owner-team",
+        search_team_slugs: [],
+        search_user_subjects: [],
       }),
     );
   });
 
-  it("adopts into another collection when selected", async () => {
+  it("adopts with an Owner and Search Access team both selected", async () => {
     render(<ImportRagSourcesFromConfigCard isAdmin />);
     fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
 
-    const destination = await screen.findByLabelText("Destination collection");
-    fireEvent.click(destination);
+    await screen.findByTestId("import-rag-source-checkbox-slack-channel-C1");
+    fireEvent.change(screen.getByLabelText("Owner"), {
+      target: { value: "primary-team" },
+    });
     fireEvent.click(
-      await screen.findByRole("option", { name: "Primary Collection" }),
-    );
-    expect(screen.getByText("Owner:").closest("p")).toHaveTextContent(
-      "Owner: Primary Team · Search: Primary Team",
+      screen.getByLabelText("Search Access").querySelector(
+        'input[type="checkbox"]',
+      ) as HTMLInputElement,
     );
 
     fireEvent.click(screen.getByTestId("import-rag-sources-apply-button"));
@@ -228,7 +248,8 @@ describe("ImportRagSourcesFromConfigCard", () => {
       });
       expect(JSON.parse(String(applyCall?.[1]?.body))).toEqual(
         expect.objectContaining({
-          destination_collection_id: "primary-collection",
+          owner_team_slug: "primary-team",
+          search_team_slugs: ["owner-team"],
         }),
       );
     });
@@ -244,7 +265,6 @@ describe("ImportRagSourcesFromConfigCard", () => {
           skipped: [
             { source_id: "slack-channel-C1", reason: "already_adopted" },
           ],
-          destination_collection: { id: "platform-rag", source_count: 1 },
         },
       },
     });
@@ -252,6 +272,9 @@ describe("ImportRagSourcesFromConfigCard", () => {
     fireEvent.click(screen.getByTestId("import-rag-sources-from-config-button"));
 
     await screen.findByTestId("import-rag-source-checkbox-slack-channel-C1");
+    fireEvent.change(screen.getByLabelText("Owner"), {
+      target: { value: "owner-team" },
+    });
     fireEvent.click(screen.getByTestId("import-rag-sources-apply-button"));
 
     await waitFor(() => {

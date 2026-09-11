@@ -19,7 +19,6 @@ import {
   type KnowledgeCardStats,
   type KnowledgeDragCandidate,
 } from "@/components/rag/KnowledgeCardSelector";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 
 interface AvailableDatasource {
@@ -34,7 +33,6 @@ interface AvailableCollection {
   _id: string;
   name: string;
   description?: string;
-  is_platform?: boolean;
   source_ids?: string[];
   _permissions?: { can_read?: boolean };
 }
@@ -46,8 +44,6 @@ interface DatasourcePickerProps {
   onChange: (datasourceIds: string[]) => void;
   collectionValue: string[];
   onCollectionChange: (collectionIds: string[]) => void;
-  /** Select Platform RAG once, but only when it actually exists. */
-  defaultToPlatform?: boolean;
   disabled?: boolean;
 }
 
@@ -62,7 +58,6 @@ export function DatasourcePicker({
   onChange,
   collectionValue,
   onCollectionChange,
-  defaultToPlatform = false,
   disabled,
 }: DatasourcePickerProps) {
   const [available, setAvailable] = React.useState<AvailableDatasource[]>([]);
@@ -74,7 +69,6 @@ export function DatasourcePicker({
   const [search, setSearch] = React.useState("");
   const [dragCandidate, setDragCandidate] =
     React.useState<KnowledgeDragCandidate | null>(null);
-  const appliedPlatformDefault = React.useRef(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -117,22 +111,6 @@ export function DatasourcePicker({
       cancelled = true;
     };
   }, [ownerTeamSlug]);
-
-  React.useEffect(() => {
-    if (!defaultToPlatform || appliedPlatformDefault.current) return;
-    const platform = collections.find((item) => item.is_platform === true);
-    if (!platform) return;
-    appliedPlatformDefault.current = true;
-    if (collectionValue.length === 0 && value.length === 0) {
-      onCollectionChange([platform._id]);
-    }
-  }, [
-    collections,
-    collectionValue.length,
-    defaultToPlatform,
-    onCollectionChange,
-    value.length,
-  ]);
 
   const datasource = (id: string): AvailableDatasource | undefined =>
     available.find((item) => item.datasource_id === id);
@@ -339,9 +317,6 @@ export function DatasourcePicker({
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2 text-sm font-medium">
                     <span className="truncate">{collection.name}</span>
-                    {collection.is_platform && (
-                      <Badge variant="secondary">Default</Badge>
-                    )}
                   </span>
                   <span className="mt-0.5 block truncate text-xs text-muted-foreground">
                     {collection.description ||
