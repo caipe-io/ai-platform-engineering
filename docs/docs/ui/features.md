@@ -4,8 +4,22 @@ sidebar_position: 2
 
 # Features and Components
 
-The CAIPE UI is an operational interface for chat, Dynamic Agents, skills,
-knowledge bases, credentials, RBAC, audit logs, and platform health.
+The CAIPE UI is where people use CAIPE day to day. It brings chat, Agent
+Builder, Skills, Knowledge Bases, credentials, workflows, and administration
+into one signed-in workspace.
+
+## Start with the task you need
+
+- **Ask for help:** open **Chat**, choose an agent, and send a request.
+- **Create a reusable assistant:** open **Agents**, choose **Create Agent**, and
+  follow the [Agent Builder guide](../features/agent-builder.md).
+- **Give an agent access to trusted information:** create or search a source in
+  **Knowledge Bases**, then attach it in Agent Builder.
+- **Coordinate several steps:** open **Workflows** and add agents in order.
+- **Reuse a procedure:** browse **Skills**, review its scan status, and attach
+  it to an agent.
+- **Connect an existing web product:** open **Apps** when an administrator has
+  enabled an External App.
 
 ## Main Surfaces
 

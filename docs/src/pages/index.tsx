@@ -381,7 +381,7 @@ function AgentsSection() {
   return (
     <section className={styles.integrations}>
       <p className={styles.integrationsTitle}>
-        Pre-built integrations for your platform stack, or bring your own MCP server and build custom agents
+        Pre-built integrations for your platform stack, or bring your own MCP server and build agents with Agent Builder
       </p>
       <div className={styles.integrationsList}>
         {AGENTS.map((a) => (

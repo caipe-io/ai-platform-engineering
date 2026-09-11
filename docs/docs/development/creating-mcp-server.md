@@ -954,7 +954,7 @@ spec:
 
 ## Next Steps
 
-- **[Connect Agent to MCP](./creating-an-agent#step-4-implement-the-agent-logic)** - Use your MCP server in an agent
+- **[Connect an agent to MCP](./creating-an-agent.md)** - Use your MCP server in an agent
 - **[Add Evaluations](../evaluations/index.md)** - Test MCP server quality
 - **[Deploy to Production](../installation/index.md)** - Deploy with Kubernetes
 

@@ -183,7 +183,7 @@ export interface TaskRun {
    */
   conversation_id?: string | null;
   /**
-   * Spec #099 Phase B — full supervisor response text and captured A2A
+   * Spec #099 Phase B — full runtime response text and captured stream
    * streaming events. The synthesiser replays ``events`` so past
    * scheduled fires render with the same plan / tools / timeline a
    * typed chat reply gets, instead of the 500-char ``response_preview``

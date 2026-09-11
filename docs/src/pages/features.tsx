@@ -5,6 +5,23 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './features.module.css';
 
+const FEATURE_DEMOS = [
+  {
+    title: 'Agent Builder',
+    description: 'Configure agents, tools, knowledge, skills, and runtime guardrails from one guided workspace.',
+    gif: 'https://raw.githubusercontent.com/wiki/caipe-io/ai-platform-engineering/agent-builder-demo.gif',
+    vidcast: 'https://app.vidcast.io/share/70f22189-0a44-42d3-b601-b5730504a8e3',
+    alt: 'Agent Builder demo showing agent configuration steps',
+  },
+  {
+    title: 'Knowledge Bases',
+    description: 'Ingest sources, search governed content, and organize reusable collections for agents.',
+    gif: 'https://raw.githubusercontent.com/wiki/caipe-io/ai-platform-engineering/knowledge-bases-demo.gif',
+    vidcast: 'https://app.vidcast.io/share/e4c72165-7164-4dde-9e3d-7f0087b6bc13',
+    alt: 'Knowledge Bases demo showing data sources, search, and collections',
+  },
+];
+
 const FEATURES = [
   {
     title: 'Agent Builder',
@@ -47,6 +64,19 @@ const FEATURES = [
     ],
   },
   {
+    title: 'External Apps',
+    icon: '🧩',
+    color: '#9333ea',
+    to: '/docs/features/agentic-apps',
+    items: [
+      'Publish independently deployed web apps in the CAIPE Apps hub',
+      'Reuse the signed-in CAIPE session for app-scoped access',
+      'Protect routes with explicit roles and token scopes',
+      'Keep app data, UI, and domain authorization independent',
+      'Same-origin hosting with a short-lived identity token per request',
+    ],
+  },
+  {
     title: 'Credentials & Secrets',
     icon: '🔑',
     color: '#0d9488',
@@ -67,7 +97,7 @@ const FEATURES = [
     items: [
       'Multi-agent and deep agent interactions with access to multiple tools and sub-agents based on customizable system prompts',
       '10+ first-party curated sub-agents and MCP servers',
-      'Ability to create custom Agents',
+      'Create agents with Agent Builder',
       'Ability to customize system prompts',
       '[Middleware] Custom Skills Integration',
     ],
@@ -82,6 +112,32 @@ const FEATURES = [
       'Share chat with teams · Archive/Delete chats',
       'Agent Builder',
       'Skills Gateway — AI Assist, API access, security scanner, GitHub crawling',
+    ],
+  },
+  {
+    title: 'Skills',
+    icon: '🧰',
+    color: '#7c3aed',
+    to: '/docs/features/skills/',
+    items: [
+      'Browse and reuse focused procedures stored as SKILL.md files',
+      'Import, revise, and attach skills to agents',
+      'Scan skills for prompt injection and unsafe tool behavior',
+      'Use scan gates to warn or block flagged skills',
+      'Install catalog skills into supported coding agents through the Gateway',
+    ],
+  },
+  {
+    title: 'Settings & Admin',
+    icon: '⚙️',
+    color: '#475569',
+    to: '/docs/features/admin-settings',
+    items: [
+      'Set personal defaults for chat, agents, appearance, and notifications',
+      'Review platform health and component status',
+      'Manage users, teams, resources, integrations, and credentials',
+      'Review audit, metrics, security policy, and migrations',
+      'Keep administrative controls separate from personal preferences',
     ],
   },
   {
@@ -173,10 +229,16 @@ const FEATURES = [
 
 export default function FeaturesPage() {
   const {siteConfig} = useDocusaurusContext();
+  const [selectedDemo, setSelectedDemo] = React.useState<(typeof FEATURE_DEMOS)[number] | null>(null);
   const currentDocsPrefix = siteConfig.customFields?.currentDocsPrefix ?? '/docs';
 
+  const docsPathForDemo = (title: string) => title === 'Agent Builder'
+    ? `${currentDocsPrefix}/features/agent-builder`
+    : `${currentDocsPrefix}/knowledge_bases/`;
+
   return (
-    <Layout
+    <>
+      <Layout
       title="Features · CAIPE"
       description="Full feature list for CAIPE — multi-agent orchestration, rich web UI, knowledge bases, enterprise security, and more."
     >
@@ -208,12 +270,50 @@ export default function FeaturesPage() {
           </div>
         </section>
 
+        <section className={styles.demos}>
+          <div className={styles.demosInner}>
+            <div className={styles.demosHeader}>
+              <Heading as="h2" className={styles.demosTitle}>See it in action</Heading>
+              <p className={styles.demosSubtitle}>
+                Explore the two workflows that make CAIPE useful from the first day.
+              </p>
+            </div>
+            <div className={styles.demoGrid}>
+              {FEATURE_DEMOS.map((demo) => {
+                return (
+                  <article key={demo.title} className={styles.demoCard}>
+                    <div className={styles.demoCopy}>
+                      <Heading as="h3" className={styles.demoTitle}>{demo.title}</Heading>
+                      <p className={styles.demoDescription}>{demo.description}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.demoPreview}
+                      onClick={() => setSelectedDemo(demo)}
+                      aria-label={`Open the ${demo.title} demo preview`}
+                    >
+                      <img src={demo.gif} alt={demo.alt} loading="lazy" />
+                      <span className={styles.demoPreviewLabel}>Expand preview ↗</span>
+                    </button>
+                    <div className={styles.demoActions}>
+                      <Link className={styles.demoDocsLink} to={docsPathForDemo(demo.title)}>Read the docs →</Link>
+                      <a className={styles.demoVidcastLink} href={demo.vidcast}>Watch on Vidcast ↗</a>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
         <section className={styles.grid}>
           <div className={styles.gridInner}>
             {FEATURES.map((f) => {
               const target = f.title === 'Agent Builder'
                 ? `${currentDocsPrefix}/features/agent-builder`
-                : f.to;
+                : f.to?.startsWith('/docs/')
+                  ? `${currentDocsPrefix}${f.to.slice('/docs'.length)}`
+                  : f.to;
               const card = (
                 <div key={f.title} className={styles.card} style={target ? {cursor: 'pointer'} : undefined}>
                   <div className={styles.cardHeader} style={{'--card-color': f.color} as React.CSSProperties}>
@@ -254,5 +354,67 @@ export default function FeaturesPage() {
         </section>
       </main>
     </Layout>
+      {selectedDemo && (
+        <DemoLightbox
+          demo={selectedDemo}
+          docsPath={docsPathForDemo(selectedDemo.title)}
+          onClose={() => setSelectedDemo(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function DemoLightbox({
+  demo,
+  docsPath,
+  onClose,
+}: {
+  demo: (typeof FEATURE_DEMOS)[number];
+  docsPath: string;
+  onClose: () => void;
+}) {
+  React.useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className={styles.demoModalBackdrop} onClick={onClose} role="presentation">
+      <div
+        className={styles.demoModalDialog}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="feature-demo-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          className={styles.demoModalClose}
+          onClick={onClose}
+          aria-label={`Close ${demo.title} demo preview`}
+        >
+          ×
+        </button>
+        <img className={styles.demoModalGif} src={demo.gif} alt={demo.alt} />
+        <div className={styles.demoModalFooter}>
+          <div>
+            <Heading as="h2" className={styles.demoModalTitle} id="feature-demo-title">
+              {demo.title}
+            </Heading>
+            <p className={styles.demoModalHint}>Preview the workflow, then watch the complete walkthrough.</p>
+          </div>
+          <div className={styles.demoModalActions}>
+            <Link className={styles.demoDocsLink} to={docsPath}>Read the docs →</Link>
+            <a className={styles.demoModalVidcast} href={demo.vidcast} target="_blank" rel="noopener noreferrer">
+              Watch the full demo on Vidcast ↗
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

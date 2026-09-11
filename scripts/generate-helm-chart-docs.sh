@@ -225,7 +225,14 @@ HEADER
     fi
 
     local clean_version
-    clean_version="$(strip_prerelease_version "$dep_version")"
+    if [[ "$dep_version" == *-* ]]; then
+      # Dependencies in a published umbrella chart are released together.
+      # Use the resolved OCI version so local development suffixes do not leak
+      # into public documentation as a newer, nonexistent stable release.
+      clean_version="$PUBLISHED_VERSION"
+    else
+      clean_version="$(strip_prerelease_version "$dep_version")"
+    fi
 
     local cond_display=""
     if [[ -n "$dep_condition" && "$dep_condition" != "null" ]]; then

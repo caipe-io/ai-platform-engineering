@@ -112,7 +112,7 @@ headers["Authorization"] = `Bearer ${session.accessToken}`;
 - `httpOnly` session cookie prevents direct cookie theft
 - `sameSite: 'lax'` limits CSRF surface
 
-**Recommendation:** Consider a Backend-For-Frontend (BFF) pattern where A2A streaming calls are proxied through Next.js server-side routes (like the RAG proxy already does). This eliminates client-side token exposure entirely. The `accessToken` would never leave the server.
+**Recommendation:** Keep streaming calls proxied through Next.js server-side routes (like the RAG proxy already does). This eliminates client-side token exposure entirely. The `accessToken` would never leave the server.
 
 For routes that already proxy (RAG, skills, MCP servers, dynamic agents), the server-side `getServerSession()` pattern is correct and does not expose the token.
 
@@ -226,10 +226,10 @@ Browser                         Next.js Server                    Backend Servic
 │  (slim)   │   metadata only) │   token store)   │               │   JWT sig)   │
 │           │                  │                 │               │              │
 │           │   /api/auth/     │  JWT Callback   │  Bearer JWT   │              │
-│  useSession()  session       │  (refresh if    │──────────────>│  Supervisor  │
+│  useSession()  session       │  (refresh if    │──────────────>│  Agent API   │
 │           │<────────────────│   near expiry)   │               │              │
 │           │                  │                 │               │              │
-│ A2A SDK   │  Direct Bearer   │  JWT Encode     │               │              │
+│ Chat UI   │  Direct Bearer   │  JWT Encode     │               │              │
 │ (client)  │──────────────────┤  (strip tokens, │               │              │
 │           │  (⚠ token in JS) │   encrypt slim) │               │              │
 └───────────┘                  └─────────────────┘               └──────────────┘
@@ -269,4 +269,4 @@ Browser                         Next.js Server                    Backend Servic
 | X-Frame-Options header | **FAIL** |
 | X-Content-Type-Options header | **FAIL** |
 | Server-side session revocation | **FAIL** |
-| Token not exposed to client JS | **PARTIAL** (server routes good, A2A direct bad) |
+| Token not exposed to client JS | **PARTIAL** (server routes good, direct streaming path bad) |

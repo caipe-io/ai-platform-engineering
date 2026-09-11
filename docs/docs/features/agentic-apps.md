@@ -13,6 +13,26 @@ authorization.
 This integration is useful when a product should be discoverable from CAIPE
 without rebuilding it as a CAIPE agent or merging its source into the UI.
 
+## What users see
+
+After an administrator registers and enables an app, users can:
+
+1. Open **Apps** in CAIPE.
+2. Select an app they are allowed to use.
+3. Work in the app inside the CAIPE shell while the host supplies the signed-in
+   identity for approved requests.
+
+The app remains responsible for its own screens, data, and business rules.
+Users do not need a second CAIPE login, but they still need the roles and scopes
+required by that app.
+
+## When to use External Apps
+
+Choose External Apps for a complete web experience with its own UI and domain
+model. Choose Agent Builder when the experience is primarily a conversation;
+choose an MCP server when an agent needs a tool or service operation without a
+separate web interface.
+
 ## Request flow
 
 ```mermaid

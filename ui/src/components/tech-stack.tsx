@@ -38,9 +38,9 @@ const techStack: TechItem[] = [
 
   // Protocols
   {
-    name: "A2A Protocol",
-    description: "Agent-to-Agent protocol for inter-agent communication (by Google)",
-    url: "https://google.github.io/A2A/",
+    name: "AG-UI",
+    description: "Agent-User Interaction protocol for real-time streaming interfaces",
+    url: "https://docs.ag-ui.com/",
     category: "protocol",
   },
   {

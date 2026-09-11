@@ -159,7 +159,7 @@ helm upgrade --install ai-platform-engineering oci://ghcr.io/cnoe-io/charts/ai-p
 | Component | Tag | Purpose |
 |-----------|-----|---------|
 | CAIPE UI | `tags.caipe-ui=true` | Web UI and BFF API |
-| Dynamic Agents | `tags.dynamic-agents=true` | Chat, custom agents, workflows, checkpointed state |
+| Dynamic Agents | `tags.dynamic-agents=true` | Chat, Agent Builder, workflows, checkpointed state |
 | MCP servers | `tags.mcp-<name>=true` | Tool integrations exposed to agents |
 | RAG stack | `tags.rag-stack=true` | Knowledge base and embeddings |
 | Slack bot | `tags.slack-bot=true` | Slack integration |

@@ -10,21 +10,21 @@ Regenerate with `make docs-helm-charts`.
 
 # autonomous-agents
 
-A Helm chart for Autonomous Agents - Standalone scheduler that fires tasks (cron / interval / webhook) at the CAIPE supervisor over A2A
+A Helm chart for Autonomous Agents - Standalone scheduler that fires tasks (cron / interval / webhook) at the configured CAIPE agent runtime
 
 | | |
 |---|---|
-| **Version** | `0.4.10-dev.1` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install autonomous-agents oci://ghcr.io/cnoe-io/charts/autonomous-agents --version 0.4.10-dev.1
+helm install autonomous-agents oci://ghcr.io/caipe-io/charts/autonomous-agents --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade autonomous-agents oci://ghcr.io/cnoe-io/charts/autonomous-agents --version 0.4.10-dev.1
+helm upgrade autonomous-agents oci://ghcr.io/caipe-io/charts/autonomous-agents --version 1.0.0
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install autonomous-agents oci://ghcr.io/cnoe-io/charts/autonomous-agents --version 0.4.10-dev.1 \
+helm install autonomous-agents oci://ghcr.io/caipe-io/charts/autonomous-agents --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install autonomous-agents oci://ghcr.io/cnoe-io/charts/autonomous-agents --version 0.4.10-dev.1 \
+helm install autonomous-agents oci://ghcr.io/caipe-io/charts/autonomous-agents --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/autonomous-agents --version 0.4.10-dev.1
+helm show values oci://ghcr.io/caipe-io/charts/autonomous-agents --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -61,9 +61,25 @@ helm show values oci://ghcr.io/cnoe-io/charts/autonomous-agents --version 0.4.10
 | config.CHAT_HISTORY_OWNER_EMAIL | string | `"autonomous@system"` |  |
 | config.CHAT_HISTORY_PUBLISH_ENABLED | string | `"false"` |  |
 | config.CORS_ORIGINS | string | `""` |  |
+| config.CREDENTIAL_KMS_CMK_ID | string | `""` |  |
+| config.CREDENTIAL_KMS_REGION | string | `""` |  |
 | config.DYNAMIC_AGENTS_URL | string | `""` |  |
+| config.MINIMUM_SCHEDULE_INTERVAL_SECONDS | string | `"1800"` |  |
 | config.MONGODB_DATABASE | string | `"caipe"` |  |
 | config.SUPERVISOR_URL | string | `""` |  |
+| config.WEBHOOK_MAX_CONCURRENT_GLOBAL | string | `"100"` |  |
+| config.WEBHOOK_MAX_CONCURRENT_PER_OWNER | string | `"20"` |  |
+| config.WEBHOOK_MAX_PAYLOAD_BYTES | string | `"1048576"` |  |
+| config.WEBHOOK_MAX_PENDING_GLOBAL | string | `"5000"` |  |
+| config.WEBHOOK_MAX_PENDING_PAYLOAD_BYTES_GLOBAL | string | `"67108864"` |  |
+| config.WEBHOOK_MAX_PENDING_PER_OWNER | string | `"500"` |  |
+| config.WEBHOOK_MAX_PENDING_PER_TASK | string | `"100"` |  |
+| dynamicAgentsAuth.clientId | string | `"caipe-platform"` |  |
+| dynamicAgentsAuth.clientSecretRef.key | string | `"OIDC_CLIENT_SECRET"` |  |
+| dynamicAgentsAuth.clientSecretRef.name | string | `""` |  |
+| dynamicAgentsAuth.enabled | bool | `false` |  |
+| dynamicAgentsAuth.scope | string | `"openid profile email"` |  |
+| dynamicAgentsAuth.tokenUrl | string | `""` |  |
 | existingSecret | string | `""` |  |
 | externalSecrets.apiVersion | string | `"v1beta1"` |  |
 | externalSecrets.data | list | `[]` |  |
