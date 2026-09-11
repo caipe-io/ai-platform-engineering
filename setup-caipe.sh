@@ -6184,6 +6184,10 @@ dynamic-agents:
   config:
     # MongoDB URI baked in at deploy time so the pod can start before post_deploy_patches.
     MONGODB_URI: "mongodb://admin:${_mongo_pw}@caipe-mongodb:27017/caipe?authSource=caipe"
+    # Dynamic-agents delegates agent authorization to the UI/BFF CAS endpoint.
+    # Set this explicitly because older packaged charts omit empty config keys
+    # and therefore do not render their deployment-level fallback.
+    AUTHZ_SERVICE_URL: "http://caipe-caipe-ui:3000"
 DAEOF
     if [[ -n "$CAIPE_DOMAIN" && -n "$da_oidc_issuer" ]]; then
       cat >> "$_da_values_file" <<DAEOF
