@@ -483,7 +483,15 @@ _install_kubectl_linux() {
 
 _install_helm_linux() {
   log "Installing helm..."
-  curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash &>/dev/null
+  local use_sudo=true install_dir=/usr/local/bin
+  if ! _sudo_consent "install Helm into /usr/local/bin"; then
+    use_sudo=false
+    install_dir="$HOME/.local/bin"
+    mkdir -p "$install_dir"
+    export PATH="$install_dir:$PATH"
+  fi
+  curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
+    | USE_SUDO="$use_sudo" HELM_INSTALL_DIR="$install_dir" bash &>/dev/null
   log "helm installed"
 }
 
