@@ -1,6 +1,6 @@
 apiVersion: v2
 name: keycloak
 description: Keycloak identity provider for CAIPE RBAC, token exchange, and identity federation
-version: 1.0.1-dev.10 # Do NOT bump this. It will be updated automatically using the PR or release workflow
-appVersion: 1.0.1-dev.10
+version: 1.0.1-dev.11 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+appVersion: 1.0.1-dev.11
 type: application
