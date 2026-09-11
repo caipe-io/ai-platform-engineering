@@ -17,6 +17,7 @@ You can:
 
 This section helps you install CAIPE, sign in, and try a first request. For a
 feature-by-feature map, see the [Features overview](../features/index.md).
+For scenario-based examples, see the [Platform Engineer use cases](../usecases/platform-engineer.md).
 
 ---
 
