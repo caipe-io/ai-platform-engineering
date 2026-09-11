@@ -76,6 +76,7 @@ from dynamic_agents.services.mcp_client import (
     mcp_credential_connect_warning,
     pin_datasource_filters,
     resolve_mcp_connections_credential_refs,
+    sanitize_server_id_for_prefix,
     wrap_tools_with_error_handling,
 )
 from dynamic_agents.services.middleware import (
@@ -1358,6 +1359,7 @@ class AgentRuntime:
         config = agent_config or self.config
         interrupt_config: dict[str, Any] = {}
         for server_id, tools_map in (config.interrupt_on or {}).items():
+            safe_id = sanitize_server_id_for_prefix(server_id)
             for tool_name, cfg in tools_map.items():
                 resolved_cfg = cfg.model_dump() if isinstance(cfg, InterruptConfig) else cfg
                 if tool_name == "*":
@@ -1366,12 +1368,12 @@ class AgentRuntime:
                             if t.name in builtin_tool_names:
                                 interrupt_config[t.name] = resolved_cfg
                     else:
-                        prefix = f"{server_id}_"
+                        prefix = f"{safe_id}_"
                         for t in tools:
                             if t.name not in builtin_tool_names and t.name.startswith(prefix):
                                 interrupt_config[t.name] = resolved_cfg
                 else:
-                    full_name = tool_name if server_id == "builtin" else f"{server_id}_{tool_name}"
+                    full_name = tool_name if server_id == "builtin" else f"{safe_id}_{tool_name}"
                     interrupt_config[full_name] = resolved_cfg
         return interrupt_config
 
