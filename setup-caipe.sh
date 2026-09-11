@@ -582,6 +582,11 @@ _install_kind_macos() {
 
 
 _install_docker_linux() {
+  if ! _sudo_consent "install Docker Engine and configure system access"; then
+    err "Automatic Docker installation requires sudo."
+    err "Install Docker manually: https://docs.docker.com/engine/install/ and re-run this script."
+    return 1
+  fi
   log "Installing Docker..."
   local os_id
   os_id=$(. /etc/os-release && echo "$ID")
