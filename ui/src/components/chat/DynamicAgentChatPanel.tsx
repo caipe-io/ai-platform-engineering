@@ -28,7 +28,6 @@ import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
-import { useRouter } from "next/navigation";
 import Image from "next/image";
 import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
 import TextareaAutosize from "react-textarea-autosize";
@@ -61,9 +60,22 @@ interface ChatPanelProps {
   agentId: string; // Mandatory for Dynamic Agents
   agent?: DynamicAgentConfig | null; // Full agent config object
   isLoadingMessages?: boolean; // Whether messages are still loading (show skeleton)
+  /** Called after a deprecated conversation is linked to a usable agent. */
+  onAgentRelinked?: (agentId: string) => void;
+  /** Bounded, host-validated metadata attached to each app-assistant turn. */
+  clientContext?: Record<string, unknown>;
 }
 
-export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, agent, isLoadingMessages }: ChatPanelProps) {
+export function ChatPanel({
+  conversationId,
+  readOnly,
+  readOnlyReason,
+  agentId,
+  agent,
+  isLoadingMessages,
+  onAgentRelinked,
+  clientContext: suppliedClientContext,
+}: ChatPanelProps) {
   // Derive display values from agent object
   const agentGradient = agent?.ui?.gradient_theme ?? null;
   const agentCustomTheme = agent?.ui?.custom_theme_config ?? null;
@@ -71,7 +83,6 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
   const agentSkills = agent?.skills;
   const { data: session } = useSession();
   const { toast } = useToast();
-  const router = useRouter();
   const autoScrollEnabled = useFeatureFlagStore((s) => s.flags.autoScroll ?? true);
   const showTimestamps = useFeatureFlagStore((s) => s.flags.showTimestamps ?? false);
 
@@ -117,6 +128,9 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
   }, [session?.user?.name]);
 
   const [input, setInput] = useState("");
+  const [hasRelinkedAgent, setHasRelinkedAgent] = useState(false);
+  const panelReadOnly = readOnly && !hasRelinkedAgent;
+  const panelReadOnlyReason = hasRelinkedAgent ? undefined : readOnlyReason;
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   // Files staged in the composer for the next turn (multimodal input).
@@ -196,12 +210,14 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
   // then reload the page so ChatContainer picks up the new participants.
   const handleStartNewConversation = useCallback(async () => {
     if (!conversationId) return;
+    setHasRelinkedAgent(true);
     try {
       const agentId = await resolveUsableChatAgentId();
       const newParticipants = buildParticipants(agentId);
       await apiClient.updateConversation(conversationId, {
         participants: newParticipants,
       });
+      setHasRelinkedAgent(true);
       // Patch the Zustand store in-place so ChatContainer sees the new participants
       // immediately — it skips the API fetch when the conversation is already cached.
       useChatStore.setState((state) => ({
@@ -209,11 +225,12 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
           c.id === conversationId ? { ...c, participants: newParticipants } : c,
         ),
       }));
-      router.refresh();
+      onAgentRelinked?.(agentId);
     } catch (err) {
+      setHasRelinkedAgent(false);
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
-  }, [conversationId, router, toast]);
+  }, [conversationId, onAgentRelinked, toast]);
 
   // "Choose agent" picker state — loaded lazily when the deprecated-agent banner is shown.
   const [showAgentPicker, setShowAgentPicker] = useState(false);
@@ -236,19 +253,22 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
 
   const handleResumeWithChosenAgent = useCallback(async () => {
     if (!conversationId || !chosenAgentId) return;
+    setHasRelinkedAgent(true);
     try {
       const newParticipants = buildParticipants(chosenAgentId);
       await apiClient.updateConversation(conversationId, { participants: newParticipants });
+      setHasRelinkedAgent(true);
       useChatStore.setState((state) => ({
         conversations: state.conversations.map((c) =>
           c.id === conversationId ? { ...c, participants: newParticipants } : c,
         ),
       }));
-      router.refresh();
+      onAgentRelinked?.(chosenAgentId);
     } catch (err) {
+      setHasRelinkedAgent(false);
       toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
     }
-  }, [conversationId, chosenAgentId, router, toast]);
+  }, [conversationId, chosenAgentId, onAgentRelinked, toast]);
 
   // Slash command registry
   const slashCommands = useSlashCommands(agentSkills);
@@ -1037,6 +1057,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     const conv = getActiveConversation();
     const clientContext: Record<string, unknown> = {
       source: "webui",
+      ...suppliedClientContext,
       ...(conv?.sharing && { chat_sharing: conv.sharing }),
     };
     clearStreamEvents(convId);
@@ -1131,7 +1152,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       });
       setConversationStreaming(convId, null);
     }
-  }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, toast]);
+  }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
 
   // The Home page hero composer creates a conversation and navigates here
   // before a message can be sent (this panel only mounts once a conversation
@@ -1139,13 +1160,13 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
   // through the normal pipeline rather than duplicating it there.
   const pendingFirstMessageSentRef = useRef(false);
   useEffect(() => {
-    if (pendingFirstMessageSentRef.current || readOnly) return;
+    if (pendingFirstMessageSentRef.current || panelReadOnly) return;
     const pending = takePendingFirstMessage(conversationId);
     if (pending) {
       pendingFirstMessageSentRef.current = true;
       void submitMessage(pending.text, pending.files);
     }
-  }, [conversationId, readOnly, submitMessage]);
+  }, [conversationId, panelReadOnly, submitMessage]);
 
   // Handle queued messages after streaming completes
   useEffect(() => {
@@ -1455,6 +1476,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     const conv = getActiveConversation();
     const clientContext: Record<string, unknown> = {
       source: "webui",
+      ...suppliedClientContext,
       ...(conv?.sharing && { chat_sharing: conv.sharing }),
     };
 
@@ -1497,7 +1519,8 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     }
   }, [pendingUserInput, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       appendToMessage, addStreamEvent, setConversationStreaming,
-      clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop]);
+      clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop,
+      suppliedClientContext]);
 
   // Handle tool approval decisions (approve/reject/edit)
   // Shows cards sequentially; only resumes after all tools are decided.
@@ -1554,7 +1577,10 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       accessToken,
     });
 
-    const clientContext: Record<string, unknown> = { source: "webui" };
+    const clientContext: Record<string, unknown> = {
+      source: "webui",
+      ...suppliedClientContext,
+    };
 
     // Build resume payload using the format expected by the runtime.
     let resumePayload: Record<string, unknown>;
@@ -1613,7 +1639,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
     }
   }, [pendingToolApproval, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       addStreamEvent, setConversationStreaming, clearStreamEvents, getActiveConversation,
-      buildStreamCallbacks, finalizeStreamLoop]);
+      buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext]);
 
   // Handle slash command detection in input
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -2014,22 +2040,22 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
       </AnimatePresence>
 
       {/* Input Area - Fixed bottom, doesn't scroll */}
-      {readOnly ? (
-        <div className={`border-t border-border shrink-0 ${readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
+      {panelReadOnly ? (
+        <div className={`border-t border-border shrink-0 ${panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
           <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
-            <div className={`flex items-center gap-2 ${readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled' ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>
+            <div className={`flex items-center gap-2 ${panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled' ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>
               <ShieldCheck className="h-4 w-4 shrink-0" />
-              {readOnlyReason === 'admin_audit' ? (
+              {panelReadOnlyReason === 'admin_audit' ? (
                 <>
                   <span className="text-sm font-medium">Read-Only Audit Mode</span>
                   <span className="text-xs text-amber-600 dark:text-amber-500">— You are viewing this conversation as an admin auditor.</span>
                 </>
-              ) : readOnlyReason === 'agent_deleted' ? (
+              ) : panelReadOnlyReason === 'agent_deleted' ? (
                 <>
                   <span className="text-sm font-medium">Agent No Longer Available</span>
                   <span className="text-xs text-red-600 dark:text-red-500">— This agent has been deprecated or deleted. You can view the history but cannot send new messages.</span>
                 </>
-              ) : readOnlyReason === 'agent_disabled' ? (
+              ) : panelReadOnlyReason === 'agent_disabled' ? (
                 <>
                   <span className="text-sm font-medium">Agent Disabled</span>
                   <span className="text-xs text-red-600 dark:text-red-500">— This agent has been disabled by an administrator. You can view the history but cannot send new messages.</span>
@@ -2041,7 +2067,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
                 </>
               )}
             </div>
-            {readOnlyReason === 'admin_audit' ? (
+            {panelReadOnlyReason === 'admin_audit' ? (
             <NavigationProgressLink
               href="/admin/insights/feedback"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-amber-600/20 text-amber-700 dark:text-amber-300 hover:bg-amber-600/30 transition-colors"
@@ -2049,7 +2075,7 @@ export function ChatPanel({ conversationId, readOnly, readOnlyReason, agentId, a
               <ArrowLeft className="h-3 w-3" />
               Back to Feedback
             </NavigationProgressLink>
-            ) : (readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled') ? (
+            ) : (panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled') ? (
             <div className="flex items-center gap-2 flex-wrap">
               {showAgentPicker ? (
                 <>

@@ -8,7 +8,7 @@ import { useChatStore } from "@/store/chat-store";
 import type { UserPublicInfo } from "@/types/mongodb";
 import type { Team } from "@/types/teams";
 import { Check,Copy,Mail,Trash2,Users,X } from "lucide-react";
-import { useCallback,useEffect,useState } from "react";
+import { useCallback,useEffect,useRef,useState } from "react";
 import { createPortal } from "react-dom";
 
 type SharePermission = 'view' | 'comment';
@@ -77,6 +77,7 @@ export function ShareDialog({
   const [userPermissions, setUserPermissions] = useState<Record<string, SharePermission>>({});
   const [teamPermissions, setTeamPermissions] = useState<Record<string, SharePermission>>({});
   const [defaultPermission, setDefaultPermission] = useState<SharePermission>('comment');
+  const loadedShareKey = useRef<string | null>(null);
 
   const shareUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/chat/${conversationId}`;
   const sharedByLabel = sharedBy?.trim();
@@ -163,11 +164,27 @@ export function ShareDialog({
 
   // Load current sharing info
   useEffect(() => {
-    if (open) {
-      applySharingSnapshot(initialSharing);
-      void loadSharingInfo();
+    if (!open) {
+      loadedShareKey.current = null;
+      return;
     }
-  }, [open, canManageSharing, initialSharing, applySharingSnapshot, loadSharingInfo]);
+    const shareKey = `${conversationId}:${canManageSharing ? "owner" : "viewer"}`;
+    if (loadedShareKey.current === shareKey) return;
+    loadedShareKey.current = shareKey;
+    applySharingSnapshot(initialSharing);
+    void loadSharingInfo();
+    // `initialSharing` is assembled by the chat parent and may be a new
+    // object on every store update. Re-running this effect for that identity
+    // would refetch the sharing endpoint indefinitely while the dialog is
+    // open. The conversation id is the stable boundary for a new snapshot.
+  }, [
+    open,
+    conversationId,
+    canManageSharing,
+    initialSharing,
+    applySharingSnapshot,
+    loadSharingInfo,
+  ]);
 
   // Search users and teams as they type
   useEffect(() => {

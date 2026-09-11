@@ -189,6 +189,27 @@ describe("External Apps security contracts", () => {
     ).toBe("http://example-app.example.svc/api/items/with%20space?limit=2");
   });
 
+  it("preserves the mount path and trailing slash for apps using a base path", () => {
+    const basePathApp = {
+      ...app,
+      manifest: {
+        ...app.manifest,
+        runtime: { ...app.manifest.runtime, preserveMountPath: true },
+      },
+    };
+
+    expect(
+      buildAgenticAppTargetUrl(basePathApp, [], "https://host.example/apps").toString(),
+    ).toBe("http://example-app.example.svc/apps/example-app/");
+    expect(
+      buildAgenticAppTargetUrl(
+        basePathApp,
+        ["assets", "bundle.js"],
+        "https://host.example/apps",
+      ).toString(),
+    ).toBe("http://example-app.example.svc/apps/example-app/assets/bundle.js");
+  });
+
   it("keeps runtime redirects under the public app mount", () => {
     const target = new URL("http://example-app.example.svc/current");
     expect(
