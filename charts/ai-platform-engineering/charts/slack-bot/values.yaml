@@ -90,6 +90,13 @@ config:
   CAIPE_PLATFORM_AUDIENCE: "caipe-platform"
   SLACK_JIT_CREATE_USER: "true"
   SLACK_JIT_ALLOWED_EMAIL_DOMAINS: ""
+  # OBO (On-Behalf-Of) identity enforcement. Requires MONGODB_URI,
+  # KEYCLOAK_REALM, KEYCLOAK_BOT_CLIENT_ID, and keycloakBot.clientSecretFromSecret
+  # to be wired. When enabled the bot exchanges each Slack user's identity for a
+  # user-scoped Keycloak token so requests hit the CAIPE BFF as the human caller
+  # rather than the bot service account — enabling per-user FGA grants and team
+  # membership checks. assisted-by claude code claude-sonnet-4-6
+  SLACK_RBAC_ENABLED: "true"
 
 # -- Cross-chart binding to the Keycloak bot client_secret.
 # When set, the pod's OAUTH2_CLIENT_SECRET env var is sourced via
