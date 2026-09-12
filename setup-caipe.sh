@@ -19,6 +19,7 @@ LANGFUSE_PORT=3100
 DYNAMIC_AGENTS_PORT=8001
 UI_PORT=3000
 RAG_SERVER_PORT=9446
+RAG_EVALUATOR_PORT=8000
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -32,6 +33,7 @@ NC='\033[0m'
 # ─── State ───────────────────────────────────────────────────────────────────
 CLUSTER_NAME=""
 ENABLE_RAG=false
+ENABLE_RAG_EVALUATOR="${ENABLE_RAG_EVALUATOR:-}"
 ENABLE_TRACING=false
 # Dynamic-agent runtime persistence is backed by MongoDB in the baseline stack.
 # The persistence flags are accepted below for CLI compatibility.
@@ -135,6 +137,7 @@ SHARED_PG_ADMIN_PASSWORD=""
 KEYCLOAK_DB_PASSWORD=""
 OPENFGA_DB_PASSWORD=""
 LITELLM_DB_PASSWORD=""
+EVALUATOR_DB_PASSWORD=""
 # LiteLLM unified front: route all chat + embeddings credentials through a single
 # in-cluster LiteLLM proxy (OpenAI-compatible). Set via --litellm.
 LLM_VIA_LITELLM="${LLM_VIA_LITELLM:-false}"
@@ -4573,6 +4576,132 @@ JSON
   fi
 }
 
+# Idempotently creates a `caipe-evaluator-obo` Keycloak client (client-credentials
+# grant, service-account enabled, token-exchange enabled) and stores the secret in
+# the k8s Secret `caipe-evaluator-obo-secret`.
+# Must be called after Keycloak is Ready and before helm install/upgrade.
+provision_evaluator_obo_client() {
+  $ENABLE_RBAC_RUNTIME || return 0
+
+  local issuer_base
+  if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+    issuer_base="https://${CAIPE_DOMAIN}"
+  else
+    issuer_base="http://caipe-keycloak.${CAIPE_NAMESPACE:-caipe}.svc.cluster.local:8080"
+  fi
+
+  local kcadm_user kcadm_pw="${KEYCLOAK_ADMIN_PASSWORD:-}"
+  kcadm_user=$(kubectl get secret caipe-keycloak-admin -n caipe \
+    -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)
+  [[ -z "$kcadm_user" ]] && kcadm_user="admin"
+  if [[ -z "$kcadm_pw" ]]; then
+    kcadm_pw=$(kubectl get secret caipe-keycloak-admin -n caipe \
+      -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+  fi
+  if [[ -z "$kcadm_pw" ]]; then
+    warn "Evaluator OBO client: no Keycloak admin password available; skipping"
+    return 0
+  fi
+
+  local _pf_port=17086
+  kubectl port-forward svc/caipe-keycloak -n caipe ${_pf_port}:8080 >/dev/null 2>&1 &
+  local _pf=$!
+  sleep 4
+  local kc="http://localhost:${_pf_port}"
+
+  local tok
+  tok=$(curl -s "$kc/realms/master/protocol/openid-connect/token" \
+    -d grant_type=password -d client_id=admin-cli \
+    --data-urlencode "username=${kcadm_user}" --data-urlencode "password=${kcadm_pw}" \
+    | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+  if [[ -z "$tok" ]]; then
+    warn "Evaluator OBO client: could not obtain Keycloak admin token; skipping"
+    kill "$_pf" 2>/dev/null || true
+    return 0
+  fi
+
+  local client_id="caipe-evaluator-obo"
+  local token_url="${issuer_base}/realms/caipe/protocol/openid-connect/token"
+
+  # Check if client already exists
+  local existing_uuid
+  existing_uuid=$(curl -s -H "Authorization: Bearer $tok" \
+    "$kc/admin/realms/caipe/clients?clientId=${client_id}" \
+    | jq -r '.[0].id // empty' 2>/dev/null)
+
+  local client_secret
+  if [[ -n "$existing_uuid" ]]; then
+    client_secret=$(curl -s -H "Authorization: Bearer $tok" \
+      "$kc/admin/realms/caipe/clients/${existing_uuid}/client-secret" \
+      | jq -r '.value // empty' 2>/dev/null)
+    if [[ -z "$client_secret" ]]; then
+      client_secret=$(curl -s -X POST -H "Authorization: Bearer $tok" \
+        "$kc/admin/realms/caipe/clients/${existing_uuid}/client-secret" \
+        | jq -r '.value // empty' 2>/dev/null)
+    fi
+    log "Evaluator OBO client: reused existing '${client_id}'"
+  else
+    local create_body
+    create_body=$(cat <<JSON
+{
+  "clientId": "${client_id}",
+  "name": "CAIPE Evaluator OBO",
+  "description": "Confidential client scoped to evaluator submitter impersonation (RFC 8693 token exchange)",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "bearerOnly": false,
+  "standardFlowEnabled": false,
+  "implicitFlowEnabled": false,
+  "directAccessGrantsEnabled": false,
+  "serviceAccountsEnabled": true,
+  "clientAuthenticatorType": "client-secret",
+  "secret": "caipe-evaluator-obo-dev-secret",
+  "attributes": {
+    "oidc.token.exchange.enabled": "true"
+  }
+}
+JSON
+)
+    local create_code
+    create_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+      -H "Authorization: Bearer $tok" -H "Content-Type: application/json" \
+      "$kc/admin/realms/caipe/clients" -d "$create_body")
+    if [[ ! "$create_code" =~ ^20 ]]; then
+      warn "Evaluator OBO client: Keycloak client creation returned HTTP ${create_code}; skipping"
+      kill "$_pf" 2>/dev/null || true
+      return 0
+    fi
+    existing_uuid=$(curl -s -H "Authorization: Bearer $tok" \
+      "$kc/admin/realms/caipe/clients?clientId=${client_id}" \
+      | jq -r '.[0].id // empty' 2>/dev/null)
+    client_secret=$(curl -s -H "Authorization: Bearer $tok" \
+      "$kc/admin/realms/caipe/clients/${existing_uuid}/client-secret" \
+      | jq -r '.value // empty' 2>/dev/null)
+    [[ -z "$client_secret" ]] && client_secret="caipe-evaluator-obo-dev-secret"
+    log "Evaluator OBO client: created '${client_id}' in Keycloak realm 'caipe'"
+  fi
+
+  kill "$_pf" 2>/dev/null || true
+
+  if [[ -z "$client_secret" ]]; then
+    client_secret="caipe-evaluator-obo-dev-secret"
+  fi
+
+  # Store in k8s secret caipe-evaluator-obo-secret
+  kubectl create secret generic caipe-evaluator-obo-secret -n caipe \
+    --from-literal=client-secret="${client_secret}" \
+    --from-literal=EVALUATOR_OBO_CLIENT_ID="${client_id}" \
+    --from-literal=EVALUATOR_OBO_CLIENT_SECRET="${client_secret}" \
+    --from-literal=EVALUATOR_OBO_TOKEN_URL="${token_url}" \
+    --from-literal=EVALUATOR_OBO_AUDIENCE="caipe-platform" \
+    --dry-run=client -o yaml | kubectl apply -f - &>/dev/null
+
+  log "Evaluator OBO client: credentials stored in caipe-evaluator-obo-secret"
+  EVALUATOR_OBO_SECRET_READY=true
+  EVALUATOR_OBO_CLIENT_ID="${client_id}"
+}
+
 # Update caipe-ui and caipe-platform Keycloak client redirect URIs, web origins,
 # and root URL to match CAIPE_DOMAIN. Keycloak imports the realm once at first
 # install; the imported URIs are never updated by helm upgrade, so a domain
@@ -4999,6 +5128,8 @@ CREATE ROLE keycloak WITH LOGIN PASSWORD '${KEYCLOAK_DB_PASSWORD}';
 CREATE DATABASE keycloak OWNER keycloak;
 CREATE ROLE openfga WITH LOGIN PASSWORD '${OPENFGA_DB_PASSWORD}';
 CREATE DATABASE openfga OWNER openfga;
+CREATE ROLE evaluator WITH LOGIN PASSWORD '${EVALUATOR_DB_PASSWORD}';
+CREATE DATABASE evaluator OWNER evaluator;
 PGINIT
   if $ENABLE_LITELLM_DB; then
     cat >> "$initdb_file" <<PGINIT
@@ -6378,6 +6509,7 @@ DAEOF
     helm_args+=(
       --set tags.rag-stack=true
       --set 'rag-stack.rag-webui.enabled=false'
+      --set "rag-stack.rag-evaluator.enabled=${ENABLE_RAG_EVALUATOR}"
       --set caipe-ui.env.RAG_URL=/api/rag
       --set caipe-ui.env.RAG_SERVER_URL=http://rag-server:${RAG_SERVER_PORT}
       --set caipe-ui.env.RAG_ENABLED=true
@@ -6430,6 +6562,20 @@ DAEOF
     else
       helm_args+=(--set 'rag-stack.rag-server.webIngestor.enabled=false')
       log "RAG web-ingestor: disabled (no Keycloak credentials available)"
+    fi
+
+    # Wire Keycloak client credentials into rag-evaluator when enabled
+    if $ENABLE_RAG_EVALUATOR; then
+      if [[ "${EVALUATOR_OBO_SECRET_READY:-false}" == "true" ]]; then
+        helm_args+=(
+          --set 'rag-stack.rag-evaluator.existingSecret=caipe-evaluator-obo-secret'
+          --set 'rag-stack.rag-evaluator.env.EVALUATOR_OBO_ENABLED=true'
+        )
+        log "RAG evaluator: Keycloak OBO credentials wired via caipe-evaluator-obo-secret"
+      elif [[ "${RAG_INGESTOR_SECRET_READY:-false}" == "true" ]]; then
+        helm_args+=(--set 'rag-stack.rag-evaluator.existingSecret=rag-ingestor-secret')
+        log "RAG evaluator: Keycloak OIDC credentials wired via rag-ingestor-secret"
+      fi
     fi
 
     if [[ "$EMBEDDINGS_PROVIDER" == "litellm" && -n "${LITELLM_ENDPOINT:-}" ]]; then
@@ -8891,6 +9037,8 @@ for arg in "$@"; do
     --non-interactive) NON_INTERACTIVE=true ;;
     --create-cluster)  CREATE_CLUSTER=true ;;
     --rag)             ENABLE_RAG=true ;;
+    --rag-evaluator)   ENABLE_RAG_EVALUATOR=true; ENABLE_RAG=true ;;
+    --no-rag-evaluator) ENABLE_RAG_EVALUATOR=false ;;
     --graph-rag)       ENABLE_GRAPH_RAG=true ;;
     --corporate-ca)    INJECT_CORPORATE_CA=true ;;
     --tracing)         ENABLE_TRACING=true ;;
@@ -8951,6 +9099,8 @@ fi
 $ENABLE_RBAC_RUNTIME && ENABLE_AGENTGATEWAY=true
 $ENABLE_GRAPH_RAG && ENABLE_RAG=true
 [[ ${#INGEST_URLS[@]} -gt 0 ]] && ENABLE_RAG=true
+$ENABLE_RAG && [[ -z "$ENABLE_RAG_EVALUATOR" ]] && ENABLE_RAG_EVALUATOR=true
+ENABLE_RAG_EVALUATOR="${ENABLE_RAG_EVALUATOR:-false}"
 
 case "${args[0]:-setup}" in
   setup)        cmd_setup ;;

@@ -124,6 +124,23 @@ spec:
                   name: {{ include "keycloak.schedulerRunnerSecretName" . }}
                   key: KC_SCHEDULER_CLIENT_SECRET
             {{- end }}
+            {{- /* Evaluator-obo client. The
+                   script reconciles its client_secret so it matches what the
+                   evaluator background worker uses to mint submitter bearers. */}}
+            {{- if eq (include "keycloak.evaluatorTokenExchangeEnabled" .) "true" }}
+            - name: KC_EVALUATOR_CLIENT_ID
+              value: {{ .Values.evaluatorTokenExchange.botClientId | quote }}
+            {{- end }}
+            {{- if and (eq (include "keycloak.evaluatorTokenExchangeEnabled" .) "true")
+                      (or .Values.evaluatorTokenExchange.secretRef
+                           .Values.evaluatorTokenExchange.externalSecret.enabled
+                           (eq (include "keycloak.shouldCreateEvaluatorOboSecret" .) "true")) }}
+            - name: KC_EVALUATOR_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.evaluatorOboSecretName" . }}
+                  key: KC_EVALUATOR_CLIENT_SECRET
+            {{- end }}
             {{- /* Strict client-secret mode — fail the Job if any of the four
                    dev placeholder secrets is still accepted by Keycloak after
                    reconciliation. See values.yaml `strictClientSecrets`. */}}

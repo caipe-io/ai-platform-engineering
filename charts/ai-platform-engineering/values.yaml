@@ -1616,11 +1616,15 @@ openfga-authz-bridge:
 # Below values are only a subset of the values that are available in the rag-stack chart.
 # For more values, please refer to the rag-stack chart values.yaml file.
 rag-stack:
-######### RAG Stack configuration #########
-# RAG Stack - Complete stack including web, server, agent, Redis, and Milvus
-# Below values are only a subset of the values that are available in the rag-stack chart.
-# For more values, please refer to the rag-stack chart values.yaml file.
-rag-stack:
+  rag-evaluator:
+    enabled: true
+    postgresql:
+      database: "evaluator"
+      user: "evaluator"
+    image:
+      repository: "ghcr.io/cnoe-io/caipe-rag-evaluator"
+      tag: "test"
+      pullPolicy: "IfNotPresent"
 
   rag-server:
     enabled: true

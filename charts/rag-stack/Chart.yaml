@@ -17,6 +17,10 @@ dependencies:
     version: 1.0.1-dev.10 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     repository: "file://./charts/rag-ingestors"
     condition: rag-ingestors.enabled
+  - name: rag-evaluator
+    version: 0.5.68-dev.3 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    repository: "file://./charts/rag-evaluator"
+    condition: rag-evaluator.enabled
   - name: neo4j
     version: "2025.07.1"
     repository: "https://helm.neo4j.com/neo4j"

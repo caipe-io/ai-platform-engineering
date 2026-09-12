@@ -88,6 +88,19 @@ rag-server:
   env:
     # Feature Flags
     ENABLE_MCP: "true"
+
+# RAG Evaluator configuration
+rag-evaluator:
+  enabled: true
+  fullnameOverride: "caipe-rag-evaluator"
+  image:
+    repository: "ghcr.io/ucl-2026-comp0111-project2/caipe-rag-evaluator"
+    tag: ""
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    port: 8000
     SKIP_INIT_TESTS: "false"
     # Embeddings Configuration
     EMBEDDINGS_PROVIDER: "azure-openai"
@@ -314,6 +327,11 @@ milvus:
       # maxUnavailable: 1  # Only allow 1 pod to be unavailable during voluntary disruptions
       # OR use minAvailable to ensure a minimum number of pods are available
       # minAvailable: 3  # Ensure at least 3 out of 4 pods are available (maintains quorum)
+
+# RAG Evaluator configuration
+rag-evaluator:
+  enabled: true
+  fullnameOverride: "caipe-rag-evaluator"
 
 # RAG Ingestors configuration
 rag-ingestors:

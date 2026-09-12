@@ -88,7 +88,6 @@ type organization
     # custom tools. It is a feature-level capability layered ABOVE the narrower
     # per-tool `mcp_tool#can_call` and per-datasource `data_source#can_read`
     # checks; holding `can_call` alone does NOT grant search.
-    # assisted-by Cursor claude-opus-4.8
     # Service accounts receive this implementation-level baseline when their
     # owner delegates at least one datasource. The datasource reader tuples
     # remain the actual content boundary; users never manage this separately.
@@ -96,12 +95,19 @@ type organization
     # Autonomous eligibility is a user capability inherited from membership in
     # any enabled team. Agent access remains independently gated by can_use.
     define automation_eligible: [team#member, team#admin]
+    # Explicit "evaluate" capability (spec 2026-08-evaluator).
+    # Granted to teams only (no direct user/service_account grants) and only by
+    # org admins. `can_evaluate` gates access to the RAG Evaluator service
+    # submission endpoints AND question set creation. Org admins evaluate
+    # implicitly via `admin`.
+    define evaluator: [team#member, team#admin]
     define can_use: member or admin
     define can_manage: admin
     define can_audit: auditor or admin
     define can_ingest: ingestor or admin
     define can_search: searcher or admin
     define can_automate: automation_eligible or admin
+    define can_evaluate: evaluator or admin
     define can_read_self: member or admin
     define can_manage_self: member or admin
     define can_search_directory: member or admin
@@ -504,4 +510,34 @@ type system_config
     define can_read: reader or can_write or can_manage
     define can_write: writer or can_manage
     define can_manage: manager
+    define can_audit: auditor or can_manage
+
+# RAG evaluation experiment result — shareable resource.
+# Spec: 2026-08-evaluator
+type evaluation
+  relations
+    define creator: [user]
+    define owner: [user, service_account]
+    define reader: [user, user:*, service_account, team#member, team#admin, external_group#member]
+    define manager: [user, service_account, team#admin, organization#admin]
+    define auditor: [user, service_account, team#admin, organization#auditor]
+    define can_discover: can_read
+    define can_read: reader or can_manage or owner
+    define can_delete: can_manage
+    define can_manage: manager or owner
+    define can_audit: auditor or can_manage
+
+# RAG evaluation question set — shareable resource.
+# Spec: 2026-08-evaluator
+type question_set
+  relations
+    define creator: [user]
+    define owner: [user, service_account]
+    define reader: [user, user:*, service_account, team#member, team#admin, external_group#member]
+    define manager: [user, service_account, team#admin, organization#admin]
+    define auditor: [user, service_account, team#admin, organization#auditor]
+    define can_discover: can_read
+    define can_read: reader or can_manage or owner
+    define can_delete: can_manage
+    define can_manage: manager or owner
     define can_audit: auditor or can_manage

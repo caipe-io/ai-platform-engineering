@@ -508,6 +508,36 @@ services:
       - rag
       - graph_rag
 
+  caipe-rag-evaluator:
+    image: ghcr.io/ucl-2026-comp0111-project2/caipe-rag-evaluator:${IMAGE_TAG:-latest}
+    build:
+      context: ./ai_platform_engineering/knowledge_bases/rag
+      dockerfile: build/Dockerfile.evaluator
+    container_name: caipe-rag-evaluator
+    ports:
+      - "8000:8000"
+    environment:
+      - RAG_SERVER_URL=http://rag-server:9446
+      - OPENFGA_HTTP=${OPENFGA_HTTP:-http://openfga:8080}
+      - OPENFGA_STORE_NAME=${OPENFGA_STORE_NAME:-caipe-openfga}
+      - CAIPE_ORG_KEY=caipe
+      - POSTGRES_HOST=${POSTGRES_HOST:-caipe-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-caipe}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_ENDPOINT=${OPENAI_ENDPOINT:-https://api.openai.com/v1}
+      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o}
+    env_file: [.env]
+    restart: unless-stopped
+    depends_on:
+      - rag-server
+      - openfga
+    profiles:
+      - rag
+      - evaluator
+
   ####################################################################################################
   #                                    Dynamic Agents Service                                        #
   ####################################################################################################

@@ -1,0 +1,44 @@
+# DeepEval quality-gate thresholds.
+#
+# gate.py reads this file, aggregates the evaluation results, compares them
+# against these thresholds, and decides whether CI should pass or fail.
+# Each metric accepts:
+#   mean       - the average score must be >= this value
+#   pass_rate  - the fraction of scored cases passing the metric must be >= this value
+#   severity   - hard: fail the build when missed; soft: warn only
+
+
+metrics:
+  answer_relevancy:
+    mean: 0.70
+    pass_rate: 0.90
+    severity: soft
+  faithfulness:
+    mean: 0.80
+    pass_rate: 0.90
+    severity: soft
+  contextual_relevancy:
+    mean: 0.60
+    severity: soft
+  contextual_precision:
+    mean: 0.60
+    severity: soft
+  contextual_recall:
+    mean: 0.60
+    severity: soft
+
+# Retrieval metrics. Meaningful only when questions carry ground-truth
+# expected_doc_ids; without gold doc ids the doc_id_* values are 0, so keep this
+# section soft or remove it entirely for such datasets.
+retrieval:
+  doc_id_recall:
+    mean: 0.60
+    severity: soft
+  doc_id_precision:
+    mean: 0.50
+    severity: soft
+
+# Infrastructure tolerance: the fraction of metric evaluations allowed to error
+# out (e.g. LLM timeouts) without a score. Exceeding it means the gate result is
+# untrustworthy -> hard failure.
+error_tolerance: 0.10

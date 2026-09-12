@@ -341,6 +341,25 @@ schedulerTokenExchange:
       key: ""
       property: ""
 
+# ---------- Token exchange for the evaluator background worker (RFC 8693 / impersonation) ----------
+# Used by the evaluator background worker to mint submitter bearers for RAG/agent evaluations.
+# The generated Secret key is KC_EVALUATOR_CLIENT_SECRET.
+# When `enabled` is omitted, inherits tokenExchange.enabled.
+evaluatorTokenExchange:
+  enabled: true
+  botClientId: "caipe-evaluator-obo"
+  botClientSecret: ""
+  secretRef: ""
+  externalSecret:
+    enabled: false
+    refreshInterval: "1h"
+    secretStoreRef:
+      name: "vault"
+      kind: "ClusterSecretStore"
+    remoteRef:
+      key: ""
+      property: ""
+
 # ---------- User profile ----------
 userProfile:
   unmanagedAttributePolicy: "ADMIN_EDIT"
