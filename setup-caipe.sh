@@ -166,6 +166,12 @@ KEYCLOAK_PORT=7080
 OPENFGA_PORT=18080
 INJECT_CORPORATE_CA=false
 CA_SSL_FIX_PROMPTED=false
+SUDO_CONSENT=""   # "", "yes" or "no" — cached answer for _sudo_consent (ask once)
+# Sudo policy, independent of prompt suppression. "" asks (default), "0" denies
+# every sudo step, "1" permits them without asking. Unattended runs need this
+# separate from --yes, because --yes also answers unrelated feature prompts
+# (RAG, Graph RAG, tracing) that default to "n". "0" wins over "1" and --yes.
+ALLOW_SUDO="${CAIPE_ALLOW_SUDO:-}"
 RAG_INGESTOR_SECRET_READY=false
 RAG_INGESTOR_OIDC_ISSUER=""
 RAG_INGESTOR_OIDC_CLIENT_ID=""
@@ -310,12 +316,37 @@ _trim_input() {
 ask_yn() {
   local question="$1" default="${2:-y}"
   if $AUTO_YES; then return 0; fi
-  local yn_hint
+  local yn_hint answer
   if [[ "$default" == "y" ]]; then yn_hint="${CYAN}[Y/n]${NC}${BOLD}"; else yn_hint="${CYAN}[y/N]${NC}${BOLD}"; fi
   prompt "$question $yn_hint "
-  tty_read -r answer
+  tty_read -r answer || return 1
   answer="${answer:-$default}"
   [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+# Consent gate for anything that shells out to `sudo`. Returns 0 only after the
+# user explicitly allows it — a working passwordless sudo is NOT treated as
+# permission. The answer is cached for the rest of the run so we prompt once.
+# --yes / AUTO_YES pre-consents (non-interactive convenience).
+# Non-interactive runs without --yes deny sudo without prompting.
+# --no-sudo / CAIPE_ALLOW_SUDO=0 denies outright; --allow-sudo /
+# CAIPE_ALLOW_SUDO=1 permits without prompting. --no-sudo wins over both.
+_sudo_consent() {
+  local reason="${1:-a system change}"
+  case "$SUDO_CONSENT" in
+    yes) return 0 ;;
+    no)  return 1 ;;
+  esac
+  case "$ALLOW_SUDO" in
+    0) SUDO_CONSENT="no";  return 1 ;;
+    1) SUDO_CONSENT="yes"; return 0 ;;
+  esac
+  if $AUTO_YES; then SUDO_CONSENT="yes"; return 0; fi
+  if $NON_INTERACTIVE; then SUDO_CONSENT="no"; return 1; fi
+  if ask_yn "This step needs sudo (${reason}). Allow this script to run sudo?" "y"; then
+    SUDO_CONSENT="yes"; return 0
+  fi
+  SUDO_CONSENT="no"; return 1
 }
 
 wait_for_pods() {
@@ -449,19 +480,42 @@ kill_port_on() {
 }
 
 # ─── Interactive Setup ───────────────────────────────────────────────────────
+_ensure_local_bin() {
+  mkdir -p "$HOME/.local/bin"
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *)
+      export PATH="$HOME/.local/bin:$PATH"
+      warn 'For future shells, add this to your shell configuration: export PATH="$HOME/.local/bin:$PATH"'
+      ;;
+  esac
+}
+
 _install_kubectl_linux() {
   log "Installing kubectl..."
   local ver
   ver=$(curl -sL https://dl.k8s.io/release/stable.txt)
   curl -sLo /tmp/kubectl "https://dl.k8s.io/release/${ver}/bin/linux/amd64/kubectl"
   chmod +x /tmp/kubectl
-  sudo mv /tmp/kubectl /usr/local/bin/kubectl || mv /tmp/kubectl "$HOME/.local/bin/kubectl"
+  if _sudo_consent "move kubectl into /usr/local/bin" &&
+     sudo mv /tmp/kubectl /usr/local/bin/kubectl; then
+    :
+  else
+    _ensure_local_bin && mv /tmp/kubectl "$HOME/.local/bin/kubectl"
+  fi
   log "kubectl ${ver} installed"
 }
 
 _install_helm_linux() {
   log "Installing helm..."
-  curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash &>/dev/null
+  local use_sudo=true install_dir=/usr/local/bin
+  if ! _sudo_consent "install Helm into /usr/local/bin"; then
+    use_sudo=false
+    install_dir="$HOME/.local/bin"
+    _ensure_local_bin
+  fi
+  curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
+    | USE_SUDO="$use_sudo" HELM_INSTALL_DIR="$install_dir" bash &>/dev/null
   log "helm installed"
 }
 
@@ -512,11 +566,8 @@ _install_jq_linux() {
       sudo dnf install -y jq &>/dev/null
       ;;
     *)
-      local ver
-      ver=$(curl -sL https://api.github.com/repos/jqlang/jq/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
-      curl -sLo /tmp/jq "https://github.com/jqlang/jq/releases/download/${ver}/jq-linux-amd64"
-      chmod +x /tmp/jq
-      sudo mv /tmp/jq /usr/local/bin/jq || mv /tmp/jq "$HOME/.local/bin/jq"
+      err "Cannot auto-install jq on distro '${os_id}' — install it with your distro's package manager and re-run"
+      return 1
       ;;
   esac
   log "jq installed"
@@ -528,7 +579,12 @@ _install_kind_linux() {
   ver=$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
   curl -sLo /tmp/kind "https://kind.sigs.k8s.io/dl/${ver}/kind-linux-amd64"
   chmod +x /tmp/kind
-  sudo mv /tmp/kind /usr/local/bin/kind || mv /tmp/kind "$HOME/.local/bin/kind"
+  if _sudo_consent "move kind into /usr/local/bin" &&
+     sudo mv /tmp/kind /usr/local/bin/kind; then
+    :
+  else
+    _ensure_local_bin && mv /tmp/kind "$HOME/.local/bin/kind"
+  fi
   log "kind ${ver} installed"
 }
 
@@ -541,13 +597,23 @@ _install_kind_macos() {
     ver=$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
     curl -sLo /tmp/kind "https://kind.sigs.k8s.io/dl/${ver}/kind-darwin-arm64"
     chmod +x /tmp/kind
-    sudo mv /tmp/kind /usr/local/bin/kind || mv /tmp/kind "$HOME/.local/bin/kind"
+    if _sudo_consent "move kind into /usr/local/bin" &&
+       sudo mv /tmp/kind /usr/local/bin/kind; then
+      :
+    else
+      _ensure_local_bin && mv /tmp/kind "$HOME/.local/bin/kind"
+    fi
     log "kind ${ver} installed"
   fi
 }
 
 
 _install_docker_linux() {
+  if ! _sudo_consent "install Docker Engine and configure system access"; then
+    err "Automatic Docker installation requires sudo."
+    err "Install Docker manually: https://docs.docker.com/engine/install/ and re-run this script."
+    return 1
+  fi
   log "Installing Docker..."
   local os_id
   os_id=$(. /etc/os-release && echo "$ID")
@@ -597,6 +663,11 @@ _install_docker_macos() {
     exit 0
   fi
   if command -v brew &>/dev/null; then
+    if ! _sudo_consent "install Docker Desktop with Homebrew, which may require privileged system changes"; then
+      err "Automatic Docker Desktop installation requires permission to use sudo."
+      err "Install Docker Desktop manually: https://docs.docker.com/desktop/mac/install/ and re-run this script."
+      return 1
+    fi
     brew install --cask docker
     log "Docker Desktop installed — open the Docker app to complete setup, then re-run this script"
     exit 0
@@ -638,24 +709,42 @@ _check_kubeconfig() {
 }
 
 _check_docker_access() {
-  # Docker binary present but socket not accessible without sudo
-  if command -v docker &>/dev/null && ! docker info &>/dev/null 2>&1; then
-    if sudo docker info &>/dev/null 2>&1; then
-      warn "Docker is running but your user (${USER}) cannot reach the socket."
-      if ! groups | grep -qw docker; then
-        if ask_yn "Add ${USER} to the 'docker' group so kind can use Docker?" "y"; then
-          sudo usermod -aG docker "$USER"
-          warn "Done — open a new terminal (or run 'newgrp docker'), then re-run this script."
-        else
-          warn "Skipped — you can run the script with 'sudo' or add yourself manually:"
-          warn "  sudo usermod -aG docker \$USER && newgrp docker"
-        fi
+  # Only relevant when the daemon can't be reached as the current user.
+  command -v docker &>/dev/null || return 0
+  docker info &>/dev/null 2>&1 && return 0
+
+  # macOS/Windows: Docker Desktop is per-user, never root-socket based — a
+  # failing `docker info` means the daemon isn't up, and `sudo docker` cannot
+  # fix it. Never prompt for a password here.
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    err "Docker does not appear to be running (\`docker info\` failed)."
+    err "Start Docker Desktop, wait until \`docker info\` succeeds, then re-run."
+    exit 1
+  fi
+
+  # Linux: the daemon may be up but the socket unreadable by this user. Only
+  # probe with sudo after explicit consent (a working passwordless sudo is not
+  # permission). If the user declines, fall through with a manual hint.
+  if ! _sudo_consent "check whether Docker is reachable via sudo"; then
+    warn "Cannot verify Docker socket access without sudo."
+    warn "If kind fails, add yourself to the 'docker' group: sudo usermod -aG docker \$USER && newgrp docker"
+    return 0
+  fi
+  if sudo docker info &>/dev/null 2>&1; then
+    warn "Docker is running but your user (${USER}) cannot reach the socket."
+    if ! groups | grep -qw docker; then
+      if ask_yn "Add ${USER} to the 'docker' group so kind can use Docker?" "y"; then
+        sudo usermod -aG docker "$USER"
+        warn "Done — open a new terminal (or run 'newgrp docker'), then re-run this script."
       else
-        warn "You are in the 'docker' group but this shell session predates the change."
-        warn "Open a new terminal (or run 'newgrp docker'), then re-run this script."
+        warn "Skipped — you can run the script with 'sudo' or add yourself manually:"
+        warn "  sudo usermod -aG docker \$USER && newgrp docker"
       fi
-      exit 0
+    else
+      warn "You are in the 'docker' group but this shell session predates the change."
+      warn "Open a new terminal (or run 'newgrp docker'), then re-run this script."
     fi
+    exit 0
   fi
 }
 
@@ -683,16 +772,10 @@ check_prerequisites() {
         esac
       done
 
-      # If any tools need sudo, check whether sudo is usable and user consents
+      # If any tools need sudo, get explicit consent first (a working
+      # passwordless sudo does not imply permission).
       if [[ ${#needs_sudo[@]} -gt 0 ]]; then
-        local sudo_ok=false
-        if sudo -n true 2>/dev/null; then
-          sudo_ok=true
-        elif ask_yn "Installing ${needs_sudo[*]} requires sudo. Allow this script to run sudo?" "y"; then
-          sudo_ok=true
-        fi
-
-        if [[ "$sudo_ok" == false ]]; then
+        if ! _sudo_consent "install ${needs_sudo[*]}"; then
           warn "Cannot install ${needs_sudo[*]} without sudo."
           warn "Please run the following command(s) on your machine first, then re-run this script:"
           warn ""
@@ -715,8 +798,7 @@ check_prerequisites() {
       fi
 
       log "Auto-installing missing tools on Linux: ${missing[*]}"
-      mkdir -p "$HOME/.local/bin"
-      export PATH="$HOME/.local/bin:$PATH"
+      _ensure_local_bin
       for tool in "${missing[@]}"; do
         case "$tool" in
           kubectl) _install_kubectl_linux ;;
@@ -781,13 +863,7 @@ check_prerequisites() {
   # k9s — optional but strongly recommended; auto-install if missing
   if ! command -v k9s &>/dev/null; then
     if [[ "$(uname -s)" == "Linux" ]]; then
-      local _k9s_sudo_ok=false
-      if sudo -n true 2>/dev/null; then
-        _k9s_sudo_ok=true
-      elif ask_yn "Installing k9s (Kubernetes TUI) requires sudo. Allow?" "y"; then
-        _k9s_sudo_ok=true
-      fi
-      if [[ "$_k9s_sudo_ok" == true ]]; then
+      if _sudo_consent "install k9s (Kubernetes TUI)"; then
         log "Installing k9s (Kubernetes TUI)..."
         local _k9s_url
         _k9s_url=$(curl -s https://api.github.com/repos/derailed/k9s/releases/latest \
@@ -1980,6 +2056,14 @@ install_nginx_ingress() {
   # network is not routable from the host regardless, so external DNAT can't
   # work — local access is via `*.localtest.me` → 127.0.0.1 and/or port-forward.
   if $ENABLE_METALLB && [[ -n "$CAIPE_DOMAIN" ]] && [[ "$(uname -s)" == "Linux" ]]; then
+    if ! _sudo_consent "configure ingress host networking, /etc/hosts, and persistence across reboots"; then
+      warn "Skipped host routing, /etc/hosts changes, and ingress persistence because sudo was declined."
+      warn "The Kubernetes ingress controller is installed, but external access and local domain resolution may require manual configuration."
+      warn "For local access, run: kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8443:443"
+      warn "Then test with: curl --resolve '${CAIPE_DOMAIN}:8443:127.0.0.1' 'https://${CAIPE_DOMAIN}:8443/'"
+      warn "For external access, configure host IP forwarding, firewall/NAT rules to ${ingress_ip}, domain resolution, and reboot persistence manually."
+      return 0
+    fi
     # DNAT requires IP forwarding to be enabled at runtime — not just in sysctl.conf.
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]]; then
       sudo sysctl -w net.ipv4.ip_forward=1 &>/dev/null \
@@ -2079,6 +2163,10 @@ install_nginx_ingress() {
 # Persist iptables rules across reboots (no iptables-persistent package needed).
 _persist_iptables() {
   local ingress_ip="$1"
+  if ! _sudo_consent "persist ingress networking and install the iptables restore service"; then
+    warn "Skipped ingress persistence because sudo was declined; networking and container restart settings were not changed."
+    return 0
+  fi
 
   # 1. Ensure ip_forward=1 survives reboot via sysctl.conf.
   if sudo grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf 2>/dev/null; then
@@ -8688,6 +8776,10 @@ Commands:
 Options:
   --non-interactive  Skip all prompts (use current context, latest chart,
                      defaults for endpoint/model, no RAG/tracing unless flagged)
+  --no-sudo          Never run sudo; steps needing it are skipped or fail with
+                     manual instructions (also CAIPE_ALLOW_SUDO=0)
+  --allow-sudo       Allow sudo without prompting, without answering unrelated
+                     prompts the way --yes does (also CAIPE_ALLOW_SUDO=1)
   --docker-compose   Run the Docker Compose setup path instead of the default
                      Kind/Kubernetes setup path
   --load-config=FILE Load wizard config from FILE instead of the default
@@ -8887,6 +8979,8 @@ args=()
 for arg in "$@"; do
   case "$arg" in
     --yes|-y)          AUTO_YES=true ;;
+    --no-sudo)         ALLOW_SUDO=0 ;;
+    --allow-sudo)      ALLOW_SUDO=1 ;;
     --docker-compose)  USE_DOCKER_COMPOSE=true ;;
     --non-interactive) NON_INTERACTIVE=true ;;
     --create-cluster)  CREATE_CLUSTER=true ;;
