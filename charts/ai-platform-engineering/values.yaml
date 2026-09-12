@@ -1587,6 +1587,7 @@ openfga-authz-bridge:
     pullPolicy: IfNotPresent
   # Must match caipe-ui.config.CAIPE_ORG_KEY.
   organizationKey: caipe
+  imagePullSecrets: []
   openfga:
     httpUrl: ""
     storeName: caipe-openfga
