@@ -18,6 +18,16 @@ jest.mock("@/lib/auth-config", () => ({
   isBootstrapAdmin: jest.fn().mockReturnValue(false),
 }));
 
+const mockIsDevAnonymousAuthEnabled = jest.fn().mockReturnValue(false);
+jest.mock("@/lib/auth/dev-auth-provider", () => ({
+  isDevAnonymousAuthEnabled: () => mockIsDevAnonymousAuthEnabled(),
+  getDevAnonymousSession: () => ({
+    sub: "anonymous-local-dev",
+    role: "admin",
+    user: { email: "anonymous@local", name: "Anonymous Local Admin", role: "admin" },
+  }),
+}));
+
 const mockCheckOpenFgaTuple = jest.fn();
 const mockReadOpenFgaTuples = jest.fn();
 jest.mock("@/lib/rbac/openfga", () => ({
@@ -61,6 +71,7 @@ describe("GET /api/rbac/ingest-teams", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (isBootstrapAdmin as jest.Mock).mockReturnValue(false);
+    mockIsDevAnonymousAuthEnabled.mockReturnValue(false);
     mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
     mockReadOpenFgaTuples.mockResolvedValue({ tuples: [] });
     mockIsUserInTeam.mockResolvedValue(false);
@@ -71,6 +82,20 @@ describe("GET /api/rbac/ingest-teams", () => {
     (getServerSession as jest.Mock).mockResolvedValue(null);
     const res = await GET();
     expect(res.status).toBe(401);
+  });
+
+  it("treats the explicit no-SSO development session as an org admin", async () => {
+    (getServerSession as jest.Mock).mockResolvedValue(null);
+    mockIsDevAnonymousAuthEnabled.mockReturnValue(true);
+    mockCollections.teams = teamsCollection([
+      { slug: "super-admins", name: "Super Admins" },
+    ]);
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.org_admin).toBe(true);
+    expect(body.teams.map((t: { slug: string }) => t.slug)).toEqual(["super-admins"]);
+    expect(mockCheckOpenFgaTuple).not.toHaveBeenCalled();
   });
 
   it("org admin receives all teams", async () => {

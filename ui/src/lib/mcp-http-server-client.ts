@@ -7,7 +7,10 @@
 import crypto from "crypto";
 
 import { ApiError } from "@/lib/api-middleware";
-import { resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
+import {
+  resolveMcpHeaderCredentials,
+  type McpCredentialResolution,
+} from "@/lib/mcp-credential-headers";
 import { writeOpenFgaTuples, type OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import type { MCPServerConfig, MCPToolInfo } from "@/types/dynamic-agent";
 import type { NextRequest } from "next/server";
@@ -108,21 +111,32 @@ function diagnosticOpenFgaTuples(
   serverId: string,
   agentId: string,
   session: AuthSession,
+  authorizationSubject?: McpCredentialResolution["authorizationSubject"],
 ): OpenFgaTupleKey[] {
-  const subject = typeof session?.sub === "string" ? session.sub.trim() : "";
+  const sessionSubject = typeof session?.sub === "string" ? session.sub.trim() : "";
+  const subject = authorizationSubject
+    ? `service_account:${authorizationSubject.id}`
+    : sessionSubject
+      ? `user:${sessionSubject}`
+      : "";
   if (!subject) return [];
-  return [
-    { user: `user:${subject}`, relation: "user", object: `agent:${agentId}` },
+  const tuples: OpenFgaTupleKey[] = [
+    { user: subject, relation: "user", object: `agent:${agentId}` },
     { user: `agent:${agentId}`, relation: "caller", object: `tool:${serverId}/*` },
   ];
+  if (authorizationSubject) {
+    tuples.unshift({ user: subject, relation: "caller", object: "mcp_gateway:list" });
+  }
+  return tuples;
 }
 
 export async function grantDiagnosticAgentAccess(
   serverId: string,
   agentId: string,
   session: AuthSession,
+  authorizationSubject?: McpCredentialResolution["authorizationSubject"],
 ): Promise<OpenFgaTupleKey[]> {
-  const writes = diagnosticOpenFgaTuples(serverId, agentId, session);
+  const writes = diagnosticOpenFgaTuples(serverId, agentId, session, authorizationSubject);
   if (!writes.length) return [];
   await writeOpenFgaTuples({ writes, deletes: [] });
   return writes;
@@ -226,9 +240,9 @@ async function buildMcpRequestHeaders(input: {
   server: MCPServerConfig;
   viaAgentGateway: boolean;
   serverId: string;
-}): Promise<Record<string, string>> {
+}): Promise<Pick<McpCredentialResolution, "headers" | "authorizationSubject">> {
   try {
-    const { headers } = await resolveMcpHeaderCredentials({
+    const { headers, authorizationSubject } = await resolveMcpHeaderCredentials({
       request: input.request,
       session: input.session,
       server: input.server,
@@ -236,8 +250,11 @@ async function buildMcpRequestHeaders(input: {
       retrievalCaller: "mcp-http-server-client",
     });
     return {
-      ...headers,
-      ...buildAgentContextHeaders(diagnosticAgentId(input.serverId, input.session)),
+      headers: {
+        ...headers,
+        ...buildAgentContextHeaders(diagnosticAgentId(input.serverId, input.session)),
+      },
+      ...(authorizationSubject ? { authorizationSubject } : {}),
     };
   } catch (error) {
     if (error instanceof Error && error.message === "MCP_AUTH_REQUIRED") {
@@ -259,18 +276,24 @@ export async function listHttpMcpTools(input: {
 }): Promise<{ tools: MCPToolInfo[]; sessionId?: string }> {
   const viaAgentGateway = isAgentGatewayEndpoint(input.server);
   const diagnosticAgent = diagnosticAgentId(input.serverId, input.session);
+  const requestCredentials = await buildMcpRequestHeaders({
+    request: input.request,
+    session: input.session,
+    server: input.server,
+    viaAgentGateway,
+    serverId: input.serverId,
+  });
   const diagnosticTuples = viaAgentGateway
-    ? await grantDiagnosticAgentAccess(input.serverId, diagnosticAgent, input.session)
+    ? await grantDiagnosticAgentAccess(
+        input.serverId,
+        diagnosticAgent,
+        input.session,
+        requestCredentials.authorizationSubject,
+      )
     : [];
 
   try {
-    const headers = await buildMcpRequestHeaders({
-      request: input.request,
-      session: input.session,
-      server: input.server,
-      viaAgentGateway,
-      serverId: input.serverId,
-    });
+    const headers = requestCredentials.headers;
 
     const first = await mcpJsonRpc({
       endpoint: input.server.endpoint,
