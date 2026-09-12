@@ -2044,6 +2044,14 @@ install_nginx_ingress() {
   # network is not routable from the host regardless, so external DNAT can't
   # work — local access is via `*.localtest.me` → 127.0.0.1 and/or port-forward.
   if $ENABLE_METALLB && [[ -n "$CAIPE_DOMAIN" ]] && [[ "$(uname -s)" == "Linux" ]]; then
+    if ! _sudo_consent "configure ingress host networking, /etc/hosts, and persistence across reboots"; then
+      warn "Skipped host routing, /etc/hosts changes, and ingress persistence because sudo was declined."
+      warn "The Kubernetes ingress controller is installed, but external access and local domain resolution may require manual configuration."
+      warn "For local access, run: kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8443:443"
+      warn "Then test with: curl --resolve '${CAIPE_DOMAIN}:8443:127.0.0.1' 'https://${CAIPE_DOMAIN}:8443/'"
+      warn "For external access, configure host IP forwarding, firewall/NAT rules to ${ingress_ip}, domain resolution, and reboot persistence manually."
+      return 0
+    fi
     # DNAT requires IP forwarding to be enabled at runtime — not just in sysctl.conf.
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]]; then
       sudo sysctl -w net.ipv4.ip_forward=1 &>/dev/null \
@@ -2143,6 +2151,10 @@ install_nginx_ingress() {
 # Persist iptables rules across reboots (no iptables-persistent package needed).
 _persist_iptables() {
   local ingress_ip="$1"
+  if ! _sudo_consent "persist ingress networking and install the iptables restore service"; then
+    warn "Skipped ingress persistence because sudo was declined; networking and container restart settings were not changed."
+    return 0
+  fi
 
   # 1. Ensure ip_forward=1 survives reboot via sysctl.conf.
   if sudo grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf 2>/dev/null; then
