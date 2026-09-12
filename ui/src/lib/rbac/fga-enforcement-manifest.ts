@@ -116,6 +116,15 @@ export const FGA_ENFORCEMENT_MANIFEST: Record<
     notes:
       "agent#can_use gates execution; reconcileAgentRelationships writes ownership/share tuples.",
   },
+  agentic_app: {
+    status: "rebac_enforced",
+    surfaces: [
+      "ui/src/lib/agentic-apps/cas-compat.ts",
+      "ui/src/app/api/agentic-apps/runtime/[appId]/[[...path]]/route.ts",
+    ],
+    notes:
+      "Configured External Apps opt into agentic_app CAS checks; startup reconciliation grants visible apps and runtime token minting fails closed.",
+  },
   llm_model: {
     status: "rebac_enforced",
     surfaces: ["ui/src/app/api/llm-models/route.ts"],
