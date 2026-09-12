@@ -186,6 +186,7 @@ export function UserDefaultAgentsPanel({
   const [preferenceLoading,setPreferenceLoading] = useState(true);
   const [platformDefaultId,setPlatformDefaultId] = useState<string | null>(null);
   const [loadError,setLoadError] = useState<string | null>(null);
+  const [preferenceRetryCount,setPreferenceRetryCount] = useState(0);
 
   const autoSave = useKeyedAutoSave<RowKey,string>({
     persist: persistPreference,
@@ -235,7 +236,7 @@ export function UserDefaultAgentsPanel({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [preferenceRetryCount]);
 
   const handleSelect = useCallback((key: RowKey,value: string) => {
     if (disabled || selected[key] === value) return;
@@ -278,10 +279,17 @@ export function UserDefaultAgentsPanel({
     return (
       <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
         <p>Failed to load defaults: {agentsError ?? loadError}</p>
-        {agentsError ? (
+        {agentsError || loadError ? (
           <button
             className="mt-2 rounded border border-input bg-background px-2 py-1 text-xs"
-            onClick={() => void refreshAgents()}
+            onClick={() => {
+              if (agentsError) void refreshAgents();
+              if (loadError) {
+                setLoadError(null);
+                setPreferenceLoading(true);
+                setPreferenceRetryCount((count) => count + 1);
+              }
+            }}
             type="button"
           >
             Retry
