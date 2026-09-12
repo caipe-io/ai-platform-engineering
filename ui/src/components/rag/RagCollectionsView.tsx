@@ -26,7 +26,6 @@ import {
 import { DatasourceAccessFields } from "@/components/rag/DatasourceAccessFields";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
-import { BuiltInResourceHint } from "@/components/ui/built-in-resource-hint";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -465,7 +464,7 @@ export function RagCollectionsView() {
   }
 
   async function deleteCollection(): Promise<void> {
-    if (!selected || selected.is_platform) return;
+    if (!selected) return;
     if (
       !window.confirm(
         `Delete “${selected.name}”? Datasources and indexed data are not deleted.`,
@@ -618,12 +617,6 @@ export function RagCollectionsView() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate font-medium">{collection.name}</p>
-                    {collection.is_platform && (
-                      <BuiltInResourceHint
-                        text="Built-in collection for shared organization knowledge."
-                        focusable={false}
-                      />
-                    )}
                   </div>
                   <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                     {collection.description ||
@@ -863,7 +856,6 @@ export function RagCollectionsView() {
                     </Button>
                   ) : (
                     selected &&
-                    !selected.is_platform &&
                     selected._permissions.can_manage && (
                       <Button
                         variant="ghost"

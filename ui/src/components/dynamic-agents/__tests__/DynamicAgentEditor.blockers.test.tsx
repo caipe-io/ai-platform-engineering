@@ -62,6 +62,19 @@ jest.mock("@/components/dynamic-agents/SubagentPicker", () => ({
 jest.mock("@/components/dynamic-agents/SkillsSelector", () => ({
   SkillsSelector: () => <div data-testid="skills-selector" />,
 }));
+jest.mock("@/components/dynamic-agents/DatasourcePicker", () => ({
+  DatasourcePicker: ({
+    onChange,
+  }: {
+    onChange: (v: string[]) => void;
+  }) => (
+    <div data-testid="datasource-picker-mock">
+      <button type="button" onClick={() => onChange(["ds-1"])}>
+        Pick a datasource
+      </button>
+    </div>
+  ),
+}));
 
 jest.mock("react-markdown", () => ({
   __esModule: true,
@@ -365,5 +378,57 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
       confirm_not_member: false,
     });
     expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks saving when Restrict is turned on but nothing is picked yet", async () => {
+    const agent = {
+      _id: "agent-knowledge-toggle",
+      name: "Existing Agent",
+      description: "",
+      system_prompt: "You exist.",
+      allowed_tools: { "knowledge-base": true },
+      builtin_tools: undefined,
+      model: { id: "gpt-4o", provider: "openai" as const },
+      visibility: "team" as const,
+      owner_team_slug: "platform",
+      owner_team_id: "team-1",
+      shared_with_teams: [],
+      subagents: [],
+      skills: [],
+      ui: { gradient_theme: "default" as const },
+      enabled: true,
+      owner_id: "user-1",
+      is_system: false,
+      created_at: "2026-04-29T00:00:00Z",
+      updated_at: "2026-04-29T00:00:00Z",
+    };
+
+    render(
+      <DynamicAgentEditor
+        agent={agent}
+        initialStep="knowledge"
+        onCancel={jest.fn()}
+        onSave={jest.fn()}
+      />,
+    );
+    await flushAsync();
+
+    // This agent has no explicit datasource_ids/rag_collection_ids, so it
+    // starts unrestricted and Restrict starts off — the button is enabled.
+    const saveButton = screen.getByRole("button", { name: /Save Changes/i });
+    expect(saveButton).not.toBeDisabled();
+
+    fireEvent.click(screen.getByRole("switch"));
+    expect(screen.getByTestId("datasource-picker-mock")).toBeInTheDocument();
+    expect(saveButton).toBeDisabled();
+    expect(saveButton).toHaveAttribute(
+      "title",
+      expect.stringContaining(
+        "Pick at least one collection or datasource, or turn off Restrict",
+      ) as unknown as string,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Pick a datasource/i }));
+    expect(saveButton).not.toBeDisabled();
   });
 });

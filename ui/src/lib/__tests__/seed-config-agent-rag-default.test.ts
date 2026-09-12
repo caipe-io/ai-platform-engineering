@@ -2,17 +2,11 @@
 
 const replaceOne = jest.fn();
 const findAgent = jest.fn();
-const findPlatformRag = jest.fn();
 const mockGetCollection = jest.fn(async (name: string) => {
   if (name === "dynamic_agents") {
     return {
       findOne: findAgent,
       replaceOne,
-    };
-  }
-  if (name === "rag_collections") {
-    return {
-      findOne: findPlatformRag,
     };
   }
   throw new Error(`unexpected collection ${name}`);
@@ -37,25 +31,25 @@ const baseAgent = {
   allowed_tools: { "knowledge-base": true },
 };
 
-describe("seedAgents Platform RAG default", () => {
+describe("seedAgents RAG scope default", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     findAgent.mockResolvedValue(null);
-    findPlatformRag.mockResolvedValue({ _id: "platform-rag" });
     replaceOne.mockResolvedValue({ acknowledged: true });
   });
 
-  it("pins a new config-driven RAG agent after Platform RAG exists", async () => {
+  it("leaves a new config-driven RAG agent unrestricted by default", async () => {
     await seedAgents([baseAgent]);
 
     expect(replaceOne).toHaveBeenCalledWith(
       { _id: "agent-example" },
       expect.objectContaining({
-        datasource_ids: [],
-        rag_collection_ids: ["platform-rag"],
+        datasource_ids: undefined,
+        rag_collection_ids: undefined,
       }),
       { upsert: true },
     );
+    expect(mockGetCollection).not.toHaveBeenCalledWith("rag_collections");
   });
 
   it("preserves explicit empty arrays as an opt-out", async () => {
@@ -72,10 +66,9 @@ describe("seedAgents Platform RAG default", () => {
       expect.objectContaining({ datasource_ids: [], rag_collection_ids: [] }),
       { upsert: true },
     );
-    expect(mockGetCollection).not.toHaveBeenCalledWith("rag_collections");
   });
 
-  it("pins an existing config agent when RAG is enabled after migration", async () => {
+  it("leaves an existing config agent unrestricted when RAG is enabled without an explicit scope", async () => {
     findAgent.mockResolvedValue({
       _id: "agent-example",
       allowed_tools: { jira: true },
@@ -88,14 +81,14 @@ describe("seedAgents Platform RAG default", () => {
     expect(replaceOne).toHaveBeenCalledWith(
       { _id: "agent-example" },
       expect.objectContaining({
-        datasource_ids: [],
-        rag_collection_ids: ["platform-rag"],
+        datasource_ids: undefined,
+        rag_collection_ids: undefined,
       }),
       { upsert: true },
     );
   });
 
-  it("preserves an existing explicit empty hand", async () => {
+  it("preserves an existing explicit empty scope", async () => {
     findAgent.mockResolvedValue({
       _id: "agent-example",
       allowed_tools: { "knowledge-base": true },
@@ -112,6 +105,5 @@ describe("seedAgents Platform RAG default", () => {
       expect.objectContaining({ datasource_ids: [], rag_collection_ids: [] }),
       { upsert: true },
     );
-    expect(mockGetCollection).not.toHaveBeenCalledWith("rag_collections");
   });
 });

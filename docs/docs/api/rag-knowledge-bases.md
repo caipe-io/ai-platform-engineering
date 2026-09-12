@@ -64,23 +64,30 @@ Same forwarding rules as the catch-all proxy, but each method is gated by enterp
 
 ## RAG collections
 
-A RAG collection is a control-plane grouping of datasource IDs. It does not
-copy chunks or create another Milvus collection. Datasource ingestion,
-scheduled reload, and stale-chunk replacement continue to operate on the
-original `datasource_id`.
+A RAG collection is a saved search-time filter over datasource IDs - a
+control-plane grouping, not an access grant. It does not copy chunks or
+create another Milvus collection, and it never widens who can read a member
+datasource's content: each member remains independently governed by its own
+`data_source`/`knowledge_base` grants. Datasource ingestion, scheduled
+reload, and stale-chunk replacement continue to operate on the original
+`datasource_id`.
 
 Collection authorization is intentionally split into the same two concepts the
 UI uses everywhere: **Owner** and **Search**. The API and OpenFGA model retain
 the internal relation names for compatibility:
 
-- Search (`reader`) can query member datasources. It never permits ingestion,
-  reloads, or configuration changes.
+- Search (`reader`) lets the caller use the collection as a `collection_id`
+  query scope. It grants no access to member datasources — each one still
+  requires its own independent Search grant to actually appear in results.
 - Owner members (`publisher`) can add or remove member datasources.
 - Owner admins (`manager`) can edit collection settings.
-- Adding a datasource requires Owner access to that datasource.
-- Owner access does not imply Search access.
-- A new personal collection gives its owner a separate Search grant. It may
-  include only datasources that owner can already manage and query.
+- Adding a datasource requires Search access to that datasource, not Owner
+  access. Because membership grants no one new access, a caller who can only
+  search a datasource can never turn that into access for someone else by
+  publishing it into a shared collection.
+- A new personal collection gives its owner a separate Search grant on the
+  collection itself. It may include only datasources that owner can already
+  search.
 - Only organization admins can delegate Owner teams. Collection Owners can
   propose Search teams or global Search; publication policy decides whether
   the change is immediate or remains pending for an approver.
@@ -93,9 +100,8 @@ Returns collections the caller may read, publish, or manage. Each row includes:
 
 ```json
 {
-  "_id": "platform-rag",
-  "name": "Platform RAG",
-  "is_platform": true,
+  "_id": "team-runbooks",
+  "name": "Team runbooks",
   "source_ids": ["source-a", "source-b"],
   "maintainer_team_slugs": ["knowledge-maintainers"],
   "reader_team_slugs": ["all-users"],
@@ -123,8 +129,8 @@ Creates a personal collection. Service-account callers are rejected.
 ### GET|PATCH|DELETE `/api/rag/collections/{collectionId}`
 
 - `GET` requires collection discovery access.
-- `PATCH source_ids` requires collection membership access and datasource Owner
-  access for additions.
+- `PATCH source_ids` requires collection publish access and Search access on
+  each datasource being added (not Owner/manage access — see above).
 - `PATCH name|description` requires collection management.
 - `PATCH maintainer_team_slugs` requires organization administration.
 - `PATCH reader_team_slugs|global_read` requires collection management. New
@@ -135,7 +141,7 @@ Creates a personal collection. Service-account callers are rejected.
   capability. Removing Search does not revoke a capability that may still be
   used by another collection; datasource relationships remain authoritative.
 - `DELETE` requires collection management, preserves indexed data, and removes
-  stale agent references. `platform-rag` cannot be deleted.
+  stale agent references.
 
 ### Agent and service-account behavior
 
@@ -143,32 +149,40 @@ Creates a personal collection. Service-account callers are rejected.
   access.
 - An agent stores optional `datasource_ids` and `rag_collection_ids`.
 - Collection membership is expanded from MongoDB at each RAG tool call, then
-  unioned with direct datasource pins.
+  unioned with direct datasource pins — this only affects the agent's
+  configured *scope* (which sources it's allowed to search), never who can
+  read those sources' content.
 - The RAG server intersects that union with the caller's current OpenFGA
   datasource access. Agent configuration can narrow access; it never grants it.
-- Explicit empty arrays disable the agent's RAG tools. Missing fields are a
-  temporary legacy state used only before migration.
+- Leaving both fields unset (not sent) is the intentional default: the agent
+  is unrestricted, searching whatever the calling user can already access
+  with no additional agent-level narrowing. An explicit empty array on either
+  field is a deliberate opt-out that disables that part of the agent's RAG
+  scope.
 - Service accounts can receive a collection or an individual datasource in the
-  existing scope editor. Collection membership is inherited live, so changing
-  the collection does not require editing each service account. Calls still
-  require an assigned agent/tool as applicable.
+  existing scope editor. A collection scope grant mirrors the same semantics
+  as above: it lets the service account use the collection as a search-time
+  filter, but grants no access to its member datasources — grant datasources
+  directly for content access. Calls still require an assigned agent/tool as
+  applicable.
 
-### Legacy global-RAG migration
+### Admin RAG source management
 
-Admin → Settings → RAG migrates the current global corpus into `platform-rag`:
+Admin → Settings → RAG has two superadmin tools for datasource-level access,
+both bypassing the publication-approval workflow (immediate effect):
 
-- Every unscoped datasource from the legacy global corpus becomes a Platform
-  RAG member. New personal/team-scoped direct sources are excluded, including
-  source types such as local-file uploads that do not have a Mongo config row.
-- One selected team becomes Owner of the legacy source configuration.
-- One selected team receives Platform RAG Search access and the organization
-  search capability.
-- Existing RAG-enabled agents with no explicit pins are attached to Platform
-  RAG. Existing explicit empty selections remain opt-outs.
-- Supported connector settings are adopted into MongoDB; unsupported legacy
-  connectors remain usable and managed through their existing ingestors.
-- The migration is retry-safe and does not replace later datasource grants or
-  publish newly created scoped sources.
+- **Adopt App-Config RAG Sources** (`POST /api/admin/rag/sources/migrate-from-config`)
+  moves read-only, app-config-seeded sources into MongoDB as editable
+  records, setting a real Owner and, optionally, Search Access directly on
+  each adopted source. It never adds sources to a collection on the admin's
+  behalf — a collection grants no access, so there is nothing to gain by
+  defaulting one.
+- **Apply Permissions to a Collection** (`POST /api/admin/rag/collections/{collectionId}/apply-permissions`)
+  bulk-applies an Owner (overwrite) and/or Search Access (replace or
+  additive) directly to every datasource currently in a chosen collection.
+  This is a remediation tool for datasources that used to be searchable only
+  through collection membership before that propagation was removed — it is
+  not a way to make collection membership grant access again.
 
 ---
 

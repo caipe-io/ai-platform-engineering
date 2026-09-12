@@ -5,7 +5,6 @@
  * groups those ids for reusable authorization and agent configuration.
  */
 
-export const PLATFORM_RAG_COLLECTION_ID = "platform-rag";
 export const RAG_COLLECTIONS_COLLECTION = "rag_collections";
 export const RAG_COLLECTION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -20,7 +19,6 @@ export interface RagCollection {
   _id: string;
   name: string;
   description?: string;
-  is_platform: boolean;
   /** Stable datasource references; membership is mutable and content is never copied. */
   source_ids: string[];
   /** Personal owner for user-created collections. */
@@ -45,5 +43,4 @@ export type RagCollectionWithPermissions = RagCollection & {
 export interface RagCollectionMembershipLabel {
   id: string;
   name: string;
-  is_platform: boolean;
 }

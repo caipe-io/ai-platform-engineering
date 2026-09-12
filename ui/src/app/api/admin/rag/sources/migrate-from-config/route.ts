@@ -3,8 +3,11 @@
  *
  * Startup seeding already persists each valid `rag_sources` entry as a
  * read-only `config_driven` row. Adoption transfers configuration ownership
- * to MongoDB, adds the selected sources to a managed collection, and makes
- * them editable without re-ingesting their indexed content.
+ * to MongoDB and, when the admin picks one, grants Search Access directly -
+ * both applied straight to the source rather than inherited from a
+ * destination collection (a collection is a saved search-time filter and
+ * grants no access to its members) - and makes the source editable without
+ * re-ingesting its indexed content.
  */
 
 import { NextRequest } from "next/server";
@@ -23,11 +26,11 @@ import {
 import { computeIngestionSourceId } from "@/lib/ingestion-source-id";
 import { getCollection } from "@/lib/mongodb";
 import {
-  bootstrapPlatformRagCollection,
-  RAG_COLLECTION_ID_PATTERN,
-  RAG_COLLECTIONS_COLLECTION,
-  replaceCollectionSources,
-} from "@/lib/rag-collections.server";
+  isValidTeamSlug,
+  loadOwnerTeam,
+  normalizeString,
+  OPENFGA_ID_PATTERN,
+} from "@/lib/rag-admin-access.server";
 import {
   adoptConfigImportedRagSources,
   loadSeedConfig,
@@ -39,10 +42,6 @@ import type {
   IngestionSourceConfig,
   IngestionSourceType,
 } from "@/types/ingestion-source";
-import {
-  PLATFORM_RAG_COLLECTION_ID,
-  type RagCollection,
-} from "@/types/rag-collection";
 
 const MAX_ADOPTION_SOURCES = 500;
 
@@ -73,14 +72,110 @@ interface AdoptFromConfigResult {
   adopted?: string[];
   skipped?: AdoptSkip[];
   configured_source_count: number;
-  destination_collection: {
-    id: string;
-    source_count: number;
-  };
 }
 
-function normalizeString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+const MAX_ADOPTION_SEARCH_TEAMS = 50;
+const MAX_ADOPTION_SEARCH_USERS = 200;
+
+async function parseOwner(body: Record<string, unknown>): Promise<{
+  ownerTeamSlug: string | null;
+  ownerSubject: string | null;
+}> {
+  const ownerTeamSlug = normalizeString(body.owner_team_slug);
+  const ownerSubject = ownerTeamSlug
+    ? null
+    : normalizeString(body.owner_subject);
+  if (ownerTeamSlug) {
+    if (!isValidTeamSlug(ownerTeamSlug)) {
+      throw new ApiError(
+        "owner_team_slug must be a valid team slug",
+        400,
+        "INVALID_OWNER_TEAM_SLUG",
+      );
+    }
+    if (!(await loadOwnerTeam(ownerTeamSlug))) {
+      throw new ApiError("Owner team not found", 404, "OWNER_TEAM_NOT_FOUND");
+    }
+  } else if (ownerSubject && !OPENFGA_ID_PATTERN.test(ownerSubject)) {
+    throw new ApiError(
+      "owner_subject must be a valid user subject",
+      400,
+      "INVALID_OWNER_SUBJECT",
+    );
+  }
+  if (!ownerTeamSlug && !ownerSubject) {
+    throw new ApiError(
+      "An Owner (team or person) is required to adopt sources",
+      400,
+      "OWNER_REQUIRED",
+    );
+  }
+  return { ownerTeamSlug, ownerSubject };
+}
+
+async function parseSearchAccess(body: Record<string, unknown>): Promise<{
+  teamSlugs: string[];
+  userSubjects: string[];
+}> {
+  const rawTeamSlugs = body.search_team_slugs;
+  const teamSlugs = Array.isArray(rawTeamSlugs)
+    ? Array.from(
+        new Set(
+          rawTeamSlugs.map((value) => {
+            const slug = normalizeString(value);
+            if (!slug || !isValidTeamSlug(slug)) {
+              throw new ApiError(
+                "search_team_slugs must contain valid team slugs",
+                400,
+                "INVALID_SEARCH_TEAM_SLUGS",
+              );
+            }
+            return slug;
+          }),
+        ),
+      )
+    : [];
+  if (teamSlugs.length > MAX_ADOPTION_SEARCH_TEAMS) {
+    throw new ApiError(
+      `Search Access can include at most ${MAX_ADOPTION_SEARCH_TEAMS} teams`,
+      400,
+      "TOO_MANY_SEARCH_TEAMS",
+    );
+  }
+  const teams = await Promise.all(teamSlugs.map((slug) => loadOwnerTeam(slug)));
+  if (teams.some((team) => !team)) {
+    throw new ApiError(
+      "One or more Search teams do not exist",
+      404,
+      "SEARCH_TEAM_NOT_FOUND",
+    );
+  }
+  const rawUserSubjects = body.search_user_subjects;
+  const userSubjects = Array.isArray(rawUserSubjects)
+    ? Array.from(
+        new Set(
+          rawUserSubjects.map((value) => {
+            const subject = normalizeString(value);
+            if (!subject || !OPENFGA_ID_PATTERN.test(subject)) {
+              throw new ApiError(
+                "search_user_subjects must contain valid user subjects",
+                400,
+                "INVALID_SEARCH_USER_SUBJECTS",
+              );
+            }
+            return subject;
+          }),
+        ),
+      )
+    : [];
+  if (userSubjects.length > MAX_ADOPTION_SEARCH_USERS) {
+    throw new ApiError(
+      `Search Access can include at most ${MAX_ADOPTION_SEARCH_USERS} people`,
+      400,
+      "TOO_MANY_SEARCH_USERS",
+    );
+  }
+  return { teamSlugs, userSubjects };
 }
 
 function parseSourceIds(raw: unknown): string[] {
@@ -181,50 +276,6 @@ async function previewSourcesFromConfig(): Promise<ConfigSourcePreview[]> {
   });
 }
 
-async function loadAdoptionDestination(rawId: unknown): Promise<RagCollection> {
-  const id = normalizeString(rawId) ?? PLATFORM_RAG_COLLECTION_ID;
-  if (!RAG_COLLECTION_ID_PATTERN.test(id)) {
-    throw new ApiError(
-      "Destination collection id is invalid",
-      400,
-      "INVALID_DESTINATION_COLLECTION_ID",
-    );
-  }
-  if (id === PLATFORM_RAG_COLLECTION_ID) {
-    return bootstrapPlatformRagCollection();
-  }
-  const collections = await getCollection<RagCollection>(
-    RAG_COLLECTIONS_COLLECTION,
-  );
-  const destination = await collections.findOne({ _id: id } as never);
-  if (!destination) {
-    throw new ApiError(
-      "Destination collection not found",
-      404,
-      "DESTINATION_COLLECTION_NOT_FOUND",
-    );
-  }
-  return destination;
-}
-
-function managementOwnerForCollection(collection: RagCollection): {
-  ownerSubject: string | null;
-  ownerTeamSlug: string | null;
-} {
-  const ownerTeamSlug = collection.maintainer_team_slugs?.[0] ?? null;
-  const ownerSubject = ownerTeamSlug
-    ? null
-    : normalizeString(collection.owner_subject);
-  if (!ownerTeamSlug && !ownerSubject) {
-    throw new ApiError(
-      "The destination collection needs an Owner before sources can be adopted",
-      409,
-      "DESTINATION_COLLECTION_HAS_NO_OWNER",
-    );
-  }
-  return { ownerSubject, ownerTeamSlug };
-}
-
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const { session } = await getAuthFromBearerOrSession(request);
   await requireRbacPermission(session, "admin_ui", "admin");
@@ -247,19 +298,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   const previews = await previewSourcesFromConfig();
-  const destination = await loadAdoptionDestination(
-    body.destination_collection_id,
-  );
   if (body.dry_run !== false) {
     return successResponse<AdoptFromConfigResult>({
       sources: previews,
       configured_source_count: previews.length,
-      destination_collection: {
-        id: destination._id,
-        source_count: destination.source_ids?.length ?? 0,
-      },
     });
   }
+
+  const [owner, search] = await Promise.all([
+    parseOwner(body),
+    parseSearchAccess(body),
+  ]);
 
   const requestedIds = Object.prototype.hasOwnProperty.call(body, "source_ids")
     ? parseSourceIds(body.source_ids)
@@ -282,29 +331,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
   }
 
-  const managementOwner = managementOwnerForCollection(destination);
-  const adoption = await adoptConfigImportedRagSources(
-    eligibleIds,
-    managementOwner,
-  );
+  const adoption = await adoptConfigImportedRagSources(eligibleIds, owner, {
+    teamSlugs: search.teamSlugs,
+    userSubjects: search.userSubjects,
+  });
   skipped.push(...adoption.skipped);
-
-  const destinationSources = Array.from(
-    new Set([...(destination.source_ids ?? []), ...adoption.adopted]),
-  );
-  const updatedDestination =
-    adoption.adopted.length > 0
-      ? await replaceCollectionSources(destination._id, destinationSources)
-      : destination;
 
   return successResponse<AdoptFromConfigResult>({
     sources: previews,
     adopted: adoption.adopted,
     skipped,
     configured_source_count: previews.length,
-    destination_collection: {
-      id: updatedDestination._id,
-      source_count: updatedDestination.source_ids?.length ?? 0,
-    },
   });
 });

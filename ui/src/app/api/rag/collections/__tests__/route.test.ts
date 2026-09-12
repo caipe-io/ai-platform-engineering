@@ -159,7 +159,6 @@ const personalCollection = {
   _id: "primary",
   name: "Primary knowledge",
   description: "Example knowledge",
-  is_platform: false,
   source_ids: ["source-a"],
   owner_subject: "owner-sub",
   maintainer_team_slugs: [],
@@ -495,21 +494,6 @@ describe("DELETE /api/rag/collections/[id]", () => {
 
     expect(response.status).toBe(403);
     expect(mockGetCollection).not.toHaveBeenCalled();
-  });
-
-  it("protects Platform RAG from deletion", async () => {
-    mockGetCollection.mockResolvedValue({
-      findOne: jest.fn().mockResolvedValue({
-        ...personalCollection,
-        _id: "platform-rag",
-        is_platform: true,
-      }),
-    });
-
-    const response = await DELETE(request("DELETE"), context("platform-rag"));
-
-    expect(response.status).toBe(409);
-    expect(mockReconcileTupleDiff).not.toHaveBeenCalled();
   });
 
   it("deletes only collection tuples and removes stale agent references", async () => {

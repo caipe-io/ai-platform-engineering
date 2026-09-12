@@ -3,6 +3,7 @@
 import { Database, Loader2, Save, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { ApplyCollectionPermissionsCard } from "@/components/admin/settings/ApplyCollectionPermissionsCard";
 import { ImportRagSourcesFromConfigCard } from "@/components/admin/settings/ImportRagSourcesFromConfigCard";
 import { RagIngestorLimitsEditor } from "@/components/admin/settings/RagIngestorLimitsEditor";
 import { AdminBadge } from "@/components/admin/shared/AdminBadge";
@@ -339,6 +340,7 @@ export function RagSettingsTab({
       </Card>
 
       <ImportRagSourcesFromConfigCard isAdmin={isAdmin} readOnly={readOnly} />
+      <ApplyCollectionPermissionsCard isAdmin={isAdmin} readOnly={readOnly} />
     </div>
   );
 }

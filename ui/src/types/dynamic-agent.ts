@@ -420,10 +420,11 @@ export interface DynamicAgentConfig {
   /**
    * RAG datasource ids (== source_id == knowledge_base_id) this agent's
    * search tool is pinned to. Narrows, never widens: the runtime intersects
-   * this list with the caller's RBAC-accessible datasources, so leaving it
-   * unset preserves the legacy "search everything the caller can see"
-   * behavior; an explicit empty list disables RAG tools. Populated from the
-   * owning team's visible datasources.
+   * this list with the caller's RBAC-accessible datasources. Leaving both
+   * this and rag_collection_ids unset is the intentional "unrestricted"
+   * default - the agent searches whatever the calling user can already
+   * access, with no additional agent-level narrowing. An explicit empty
+   * list is a deliberate opt-out that disables RAG tools entirely.
    */
   datasource_ids?: string[];
   /**
@@ -494,7 +495,9 @@ export interface DynamicAgentConfigCreate {
   owner_team_id?: string;
   subagents?: SubAgentRef[];
   skills?: string[];
+  /** Omit entirely for the unrestricted default (see DynamicAgentConfig). */
   datasource_ids?: string[];
+  /** Omit entirely for the unrestricted default (see DynamicAgentConfig). */
   rag_collection_ids?: string[];
   ui?: AgentUIConfig;
   features?: FeaturesConfig;
@@ -518,8 +521,10 @@ export interface DynamicAgentConfigUpdate {
   shared_with_teams?: string[];
   subagents?: SubAgentRef[];
   skills?: string[];
-  datasource_ids?: string[];
-  rag_collection_ids?: string[];
+  /** `null` clears back to the unrestricted default; omit to leave as-is. */
+  datasource_ids?: string[] | null;
+  /** `null` clears back to the unrestricted default; omit to leave as-is. */
+  rag_collection_ids?: string[] | null;
   ui?: AgentUIConfig;
   features?: FeaturesConfig;
   interrupt_on?: InterruptOn;

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 
 jest.mock("framer-motion", () => {
@@ -81,7 +81,6 @@ function mockKnowledgeCatalog() {
               _id: "platform-rag",
               name: "Platform RAG",
               description: "Trusted shared knowledge",
-              is_platform: true,
               source_ids: ["slack-primary"],
               _permissions: { can_read: true },
             },
@@ -270,23 +269,5 @@ describe("DatasourcePicker", () => {
     fireEvent.drop(hand, { dataTransfer: transfer });
 
     expect(onChange).toHaveBeenCalledWith(["slack-primary"]);
-  });
-
-  it("defaults a new RAG-enabled agent to the readable Platform collection", async () => {
-    const onCollectionChange = jest.fn();
-    render(
-      <DatasourcePicker
-        ownerTeamSlug="primary"
-        value={[]}
-        onChange={jest.fn()}
-        collectionValue={[]}
-        onCollectionChange={onCollectionChange}
-        defaultToPlatform
-      />,
-    );
-
-    await waitFor(() =>
-      expect(onCollectionChange).toHaveBeenCalledWith(["platform-rag"]),
-    );
   });
 });

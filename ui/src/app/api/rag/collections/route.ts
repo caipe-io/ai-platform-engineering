@@ -53,7 +53,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   );
   const candidates = await collection
     .find({})
-    .sort({ is_platform: -1, name: 1 })
+    .sort({ name: 1 })
     .toArray();
   if (candidates.length === 0) return successResponse({ collections: [] });
 
@@ -130,16 +130,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
   const requestedId = normalizeString(body.id);
   const id = requestedId ?? collectionSlug(name);
-  if (
-    !id ||
-    !RAG_COLLECTION_ID_PATTERN.test(id) ||
-    id.toLowerCase() === "platform-rag"
-  ) {
-    throw new ApiError(
-      "id is invalid or reserved",
-      400,
-      "INVALID_COLLECTION_ID",
-    );
+  if (!id || !RAG_COLLECTION_ID_PATTERN.test(id)) {
+    throw new ApiError("id is invalid", 400, "INVALID_COLLECTION_ID");
   }
   const description = normalizeString(body.description) ?? undefined;
   if (description && description.length > 500) {
@@ -182,7 +174,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     _id: id,
     name,
     description,
-    is_platform: false,
     source_ids: [],
     owner_subject: ownerSubject,
     maintainer_team_slugs: [],
