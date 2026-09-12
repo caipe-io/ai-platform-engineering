@@ -4207,18 +4207,28 @@ post_deploy_patches() {
       -o jsonpath='{.data.INGESTOR_OIDC_ISSUER}' 2>/dev/null | base64 -d || true)
     _rag_ingestor_client_id=$(kubectl get secret rag-ingestor-secret -n caipe \
       -o jsonpath='{.data.INGESTOR_OIDC_CLIENT_ID}' 2>/dev/null | base64 -d || true)
+    local _rag_env_args=()
+    # UI SSO provider — only when the UI is actually running SSO.
     if [[ -n "$_rag_oidc_issuer" && -n "$_rag_oidc_client_id" ]]; then
-      local _rag_env_args=(
+      _rag_env_args+=(
         "OIDC_ISSUER=$_rag_oidc_issuer"
         "OIDC_CLIENT_ID=$_rag_oidc_client_id"
         "OIDC_GROUP_CLAIM=members,groups"
       )
-      [[ -n "$_rag_ingestor_issuer" ]]    && _rag_env_args+=("INGESTOR_OIDC_ISSUER=$_rag_ingestor_issuer")
-      [[ -n "$_rag_ingestor_client_id" ]] && _rag_env_args+=("INGESTOR_OIDC_CLIENT_ID=$_rag_ingestor_client_id")
+    fi
+    # Ingestor provider — client-credentials auth for the web-ingestor, which is
+    # independent of UI SSO. Without INGESTOR_OIDC_ISSUER the rag-server auth
+    # manager builds the "ingestor" provider with issuer="" and rejects every
+    # ingestor token ("Invalid issuer"), so the UI shows "No ingestors detected"
+    # on a no-SSO install.
+    [[ -n "$_rag_ingestor_issuer" ]]    && _rag_env_args+=("INGESTOR_OIDC_ISSUER=$_rag_ingestor_issuer")
+    [[ -n "$_rag_ingestor_client_id" ]] && _rag_env_args+=("INGESTOR_OIDC_CLIENT_ID=$_rag_ingestor_client_id")
+
+    if [[ ${#_rag_env_args[@]} -gt 0 ]]; then
       kubectl set env deployment/rag-server -n caipe "${_rag_env_args[@]}" &>/dev/null \
-        && log "rag-server: OIDC providers configured (issuer=${_rag_oidc_issuer})"
+        && log "rag-server: OIDC providers configured (ui=${_rag_oidc_issuer:-off}, ingestor=${_rag_ingestor_issuer:-off})"
     else
-      log "rag-server: No OIDC config found in caipe-ui-secret — skipping OIDC patch (no-SSO deployment)"
+      log "rag-server: no OIDC config available — skipping (no SSO, no ingestor client)"
     fi
 
     # Self-signed cert: pin rag-server's OIDC discovery / JWKS to the in-cluster
