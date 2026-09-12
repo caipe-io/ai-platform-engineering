@@ -18,6 +18,10 @@ APP_NAME = os.environ.get("SLACK_INTEGRATION_APP_NAME", os.environ.get("APP_NAME
 
 THREAD_HISTORY_LIMIT = int(os.environ.get("SLACK_INTEGRATION_THREAD_HISTORY_LIMIT", "50"))
 
+# Characters per individual message in context; longer messages are truncated.
+# Prevents a single large paste from inflating the context window.
+MESSAGE_CHAR_LIMIT = int(os.environ.get("SLACK_INTEGRATION_MESSAGE_CHAR_LIMIT", "2000"))
+
 
 def fetch_thread_history(
   app,
@@ -84,17 +88,44 @@ def _label_speaker(app, msg: Dict[str, Any], bot_user_id: str) -> str:
   return "Unknown"
 
 
-def build_thread_context(app, channel_id: str, thread_ts: str, current_message: str, bot_user_id: str) -> str:
+def _truncate_message(text: str, limit: int = MESSAGE_CHAR_LIMIT) -> str:
+  """Truncate a single message to ``limit`` characters if needed."""
+  if len(text) <= limit:
+    return text
+  return text[:limit] + f"\n[... truncated, {len(text) - limit} characters omitted]"
+
+
+def build_thread_context(
+  app,
+  channel_id: str,
+  thread_ts: str,
+  current_message: str,
+  bot_user_id: str,
+  current_ts: Optional[str] = None,
+) -> str:
   """Build formatted conversation context from a full thread.
 
   Used on the **first** bot interaction in a thread (``created=True``) to
   give the agent awareness of all prior messages, including those between
   humans that happened before the bot was invoked.
 
-  Messages are capped to :data:`THREAD_HISTORY_LIMIT`.
+  Messages are capped to :data:`THREAD_HISTORY_LIMIT`. Individual messages
+  longer than :data:`MESSAGE_CHAR_LIMIT` characters are truncated to prevent
+  large pastes from overflowing the model context window.
+
+  ``current_ts``, when provided, filters the triggering message from the
+  history to avoid duplicating it in the "Current question" line.
   """
   messages = fetch_thread_history(app, channel_id, thread_ts)
 
+  if not messages:
+    return current_message
+
+  # Filter out the current message to avoid duplicating it below
+  if current_ts:
+    messages = [m for m in messages if m.get("ts") != current_ts]
+
+  # All messages were filtered (e.g. single-message thread where only msg is current)
   if not messages:
     return current_message
 
@@ -112,7 +143,7 @@ def build_thread_context(app, channel_id: str, thread_ts: str, current_message: 
       continue
 
     speaker = _label_speaker(app, msg, bot_user_id)
-    conversation_lines.append(f"{speaker}: {full_text}")
+    conversation_lines.append(f"{speaker}: {_truncate_message(full_text)}")
 
   conversation_lines.append("---")
   conversation_lines.append(f"Current question: {current_message}")
@@ -176,7 +207,7 @@ def build_delta_context(
     if not full_text.strip():
       continue
     speaker = _label_speaker(app, msg, bot_user_id)
-    lines.append(f"{speaker}: {full_text}")
+    lines.append(f"{speaker}: {_truncate_message(full_text)}")
 
   lines.append("---")
   lines.append(f"Current question: {current_message}")

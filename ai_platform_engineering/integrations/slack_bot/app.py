@@ -1542,7 +1542,7 @@ def handle_mention(event, say, client, context=None):
     context_message = message_text
     if event.get("thread_ts"):
       if conv_created:
-        context_message = slack_context.build_thread_context(app, channel_id, thread_ts, message_text, bot_user_id)
+        context_message = slack_context.build_thread_context(app, channel_id, thread_ts, message_text, bot_user_id, current_ts=event.get("ts"))
       else:
         since_ts = conv_metadata.get("last_processed_ts", thread_ts)
         context_message = slack_context.build_delta_context(app, channel_id, thread_ts, message_text, bot_user_id, since_ts=since_ts)
@@ -2083,7 +2083,7 @@ def handle_dm_message(event, say, client, context=None):
     context_message = message_text
     if event.get("thread_ts"):
       if conv_created:
-        context_message = slack_context.build_thread_context(app, channel_id, thread_ts, message_text, bot_user_id)
+        context_message = slack_context.build_thread_context(app, channel_id, thread_ts, message_text, bot_user_id, current_ts=event.get("ts"))
       else:
         since_ts = conv_metadata.get("last_processed_ts", thread_ts)
         context_message = slack_context.build_delta_context(app, channel_id, thread_ts, message_text, bot_user_id, since_ts=since_ts)
