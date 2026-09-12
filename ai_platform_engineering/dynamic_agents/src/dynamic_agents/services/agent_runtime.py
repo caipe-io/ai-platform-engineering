@@ -89,6 +89,12 @@ from dynamic_agents.services.model_capabilities import (
     get_model_capabilities,
 )
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.structured_response import (
+    StructuredResponseFormat,
+    build_structured_response_instruction,
+    create_submit_structured_response_tool,
+    extract_response_format,
+)
 
 if TYPE_CHECKING:
     from dynamic_agents.services.mongo import MongoDBService
@@ -707,6 +713,8 @@ class AgentRuntime:
         self._failed_skills_error: str = ""  # Error message for display
         self._failed_workflows: list[str] = []  # Workflow config IDs not found
         self._failed_workflows_error: str = ""  # Error message for display
+        self._structured_response: dict[str, Any] | None = None
+        self._structured_response_schema_id: str | None = None
         self._mcp_credential_warnings: list[str] = []
         self._mcp_credential_failed_server_ids: set[str] = set()
         self._valid_workflow_configs: list[str] = []  # Validated workflow config IDs
@@ -976,6 +984,10 @@ class AgentRuntime:
             logger.error(f"Agent '{self.config.name}' failed to initialize: {exc}")
             raise RuntimeError(f"Agent '{self.config.name}' failed to initialize: {exc}") from exc
 
+        response_format = self._get_allowed_structured_response_format(client_ctx)
+        if response_format:
+            system_prompt += build_structured_response_instruction(response_format)
+
         # 5. Instantiate LLM
         logger.info(
             f"[llm] Instantiating LLM for agent '{self.config.name}': "
@@ -1235,6 +1247,50 @@ class AgentRuntime:
             f"tools={len(tools)}, subagents={len(subagents) if subagents else 0}"
         )
 
+    def _capture_structured_response(
+        self, payload: dict[str, Any], schema_id: str | None
+    ) -> None:
+        """Capture the latest validated structured response submitted by the agent."""
+        self._structured_response = payload
+        self._structured_response_schema_id = schema_id
+
+    def get_structured_response(self) -> dict[str, Any] | None:
+        """Return the latest validated structured response for this runtime turn."""
+        return self._structured_response
+
+    def get_structured_response_schema_id(self) -> str | None:
+        """Return the schema ID for the captured structured response."""
+        return self._structured_response_schema_id
+
+    def _get_allowed_structured_response_format(
+        self, client_context: dict | None
+    ) -> StructuredResponseFormat | None:
+        """Return requested structured output only when the agent allows it."""
+        response_format = extract_response_format(client_context)
+        if response_format is None or self.config.features is None:
+            return None
+
+        for entry in self.config.features.middleware:
+            if entry.type != "structured_response" or not entry.enabled:
+                continue
+
+            allowed_schema_ids = str(entry.params.get("allowed_schema_ids", "")).strip()
+            if not allowed_schema_ids:
+                return response_format
+
+            allowed = {item.strip() for item in allowed_schema_ids.split(",") if item.strip()}
+            if response_format.schema_id in allowed:
+                return response_format
+
+            logger.warning(
+                "Agent '%s': structured response schema '%s' not allowed",
+                self.config.name,
+                response_format.schema_id,
+            )
+            return None
+
+        return None
+
     def _build_builtin_tools(
         self,
         user: UserContext | None = None,
@@ -1256,7 +1312,25 @@ class AgentRuntime:
         tools = []
         config_summary: dict[str, Any] = {}
 
+        response_format = self._get_allowed_structured_response_format(client_context)
+        is_parent_agent = agent_config is None or config.id == self.config.id
+        if response_format and is_parent_agent:
+            tools.append(
+                create_submit_structured_response_tool(
+                    response_format=response_format,
+                    on_submit=lambda payload: self._capture_structured_response(
+                        payload,
+                        response_format.schema_id,
+                    ),
+                )
+            )
+            config_summary["submit_structured_response"] = {
+                "schema_id": response_format.schema_id
+            }
+
         if not config.builtin_tools:
+            if tools:
+                logger.info(f"Agent '{config.name}': added built-in tools: {config_summary}")
             return tools
 
         # fetch_url tool (disabled by default)
@@ -1759,6 +1833,8 @@ class AgentRuntime:
         assert encoder is not None, "encoder must be provided"
 
         self._cancelled = False
+        self._structured_response = None
+        self._structured_response_schema_id = None
 
         config = self._build_stream_config(session_id, user_id, trace_id)
         run_id = f"run-{uuid4().hex[:12]}"
@@ -1887,6 +1963,16 @@ class AgentRuntime:
             for frame in self._emit_interrupt(encoder, interrupt_data):
                 yield frame
             return
+
+        structured_response = self.get_structured_response()
+        if structured_response is not None:
+            on_structured_output = getattr(encoder, "on_structured_output", None)
+            if callable(on_structured_output):
+                for frame in on_structured_output(
+                    structured_response,
+                    self.get_structured_response_schema_id(),
+                ):
+                    yield frame
 
         # ── Core lifecycle: run finish ──
         logger.info(
@@ -2169,6 +2255,8 @@ class AgentRuntime:
         assert encoder is not None, "encoder must be provided"
 
         self._cancelled = False
+        self._structured_response = None
+        self._structured_response_schema_id = None
 
         config = self._build_stream_config(session_id, user_id, trace_id)
         run_id = f"run-{uuid4().hex[:12]}"
@@ -2218,6 +2306,16 @@ class AgentRuntime:
             for frame in self._emit_interrupt(encoder, interrupt_data):
                 yield frame
             return
+
+        structured_response = self.get_structured_response()
+        if structured_response is not None:
+            on_structured_output = getattr(encoder, "on_structured_output", None)
+            if callable(on_structured_output):
+                for frame in on_structured_output(
+                    structured_response,
+                    self.get_structured_response_schema_id(),
+                ):
+                    yield frame
 
         # ── Core lifecycle: run finish ──
         logger.info(
