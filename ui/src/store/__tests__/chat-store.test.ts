@@ -1282,6 +1282,29 @@ describe('chat-store', () => {
       );
     });
 
+    it('persists an app-scoped title and metadata on server and local state', async () => {
+      const metadata = {
+        conversation_surface: 'agentic-app',
+        agentic_app_id: 'weather',
+        agentic_app_agent_id: 'agent-weather',
+      };
+
+      const id = await useChatStore.getState().createConversation('agent-weather', {
+        title: 'Weather Lab Assistant',
+        metadata,
+      });
+
+      expect(mockApiClient.createConversation).toHaveBeenCalledWith({
+        title: 'Weather Lab Assistant',
+        client_type: 'webui',
+        agent_id: 'agent-weather',
+        metadata,
+      });
+      expect(useChatStore.getState().conversations.find((item) => item.id === id)).toEqual(
+        expect.objectContaining({ title: 'Weather Lab Assistant', metadata }),
+      );
+    });
+
     it('does not call server in localStorage mode', async () => {
       (global as unknown).__mockStorageMode = 'localStorage';
 
