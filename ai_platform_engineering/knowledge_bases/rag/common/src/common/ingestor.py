@@ -3,6 +3,7 @@ import asyncio
 import time
 from typing import List, Optional, Dict, Any, Callable
 import aiohttp
+import tenacity
 from common.models.rag import DataSourceInfo, DocumentMetadata, StructuredEntity
 from common.models.server import DocumentIngestRequest, IngestorPingRequest, ExploreDataEntityRequest
 from common.job_manager import JobStatus, JobInfo
@@ -18,6 +19,11 @@ import dotenv
 dotenv.load_dotenv()
 
 logger = utils.get_logger(__name__)
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+  """True for a 429 from the RAG server, the only ingest failure this client retries in place."""
+  return isinstance(exc, aiohttp.ClientResponseError) and exc.status == 429
 
 
 class Client:
@@ -444,6 +450,23 @@ class Client:
     # Fallback: Just the entity type
     return f"Structured Entity {entity.entity_type}"
 
+  @tenacity.retry(
+    retry=tenacity.retry_if_exception(_is_rate_limited),
+    wait=tenacity.wait_exponential(multiplier=1, min=1, max=30),
+    stop=tenacity.stop_after_attempt(5),
+    reraise=True,
+  )
+  async def _post_ingest_request(self, ingest_request: DocumentIngestRequest) -> Dict[str, Any]:
+    """
+    POST a single ingest request, retrying with exponential backoff on a 429 from the RAG server.
+    """
+    headers = await self._get_auth_headers()
+
+    async with aiohttp.ClientSession() as session:
+      async with session.post(url=f"{self.server_addr}/v1/ingest", headers=headers, json=ingest_request.model_dump()) as resp:
+        resp.raise_for_status()
+        return await resp.json()
+
   async def _ingest_documents_batch(self, job_id: str, datasource_id: str, documents: List[Document], fresh_until: int) -> Dict[str, Any]:
     """
     Internal method to ingest a single batch of documents
@@ -458,12 +481,17 @@ class Client:
     # Create DocumentIngestRequest using Pydantic model
     ingest_request = DocumentIngestRequest(datasource_id=datasource_id, job_id=job_id, ingestor_id=self.ingestor_id, documents=documents, fresh_until=fresh_until)
 
-    headers = await self._get_auth_headers()
-
-    async with aiohttp.ClientSession() as session:
-      async with session.post(url=f"{self.server_addr}/v1/ingest", headers=headers, json=ingest_request.model_dump()) as resp:
-        resp.raise_for_status()
-        return await resp.json()
+    try:
+      return await self._post_ingest_request(ingest_request)
+    except aiohttp.ClientResponseError as e:
+      # 413: the server rejected this batch as too large. Split it and retry as two
+      # smaller batches instead of aborting the whole ingestion job.
+      if e.status == 413 and len(documents) > 1:
+        logger.warning(f"Ingestor '{self.ingestor_name}': server rejected a {len(documents)}-document batch (413), retrying as two smaller batches")
+        mid = len(documents) // 2
+        await self._ingest_documents_batch(job_id, datasource_id, documents[:mid], fresh_until)
+        return await self._ingest_documents_batch(job_id, datasource_id, documents[mid:], fresh_until)
+      raise
 
   async def list_datasources(self, ingestor_id: Optional[str] = None) -> List[DataSourceInfo]:
     """

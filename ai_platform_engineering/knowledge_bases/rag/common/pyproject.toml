@@ -12,6 +12,7 @@ dependencies = [
     "neo4j==5.28.2",
     "pydantic==2.12.5",
     "redis==6.4.0",
+    "tenacity==9.1.2",
     # Embedding providers - lightweight API-based (always included)
     "langchain-openai==1.2.1",
     "langchain-aws==1.1.0",
