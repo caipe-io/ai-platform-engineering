@@ -167,6 +167,11 @@ OPENFGA_PORT=18080
 INJECT_CORPORATE_CA=false
 CA_SSL_FIX_PROMPTED=false
 SUDO_CONSENT=""   # "", "yes" or "no" — cached answer for _sudo_consent (ask once)
+# Sudo policy, independent of prompt suppression. "" asks (default), "0" denies
+# every sudo step, "1" permits them without asking. Unattended runs need this
+# separate from --yes, because --yes also answers unrelated feature prompts
+# (RAG, Graph RAG, tracing) that default to "n". "0" wins over "1" and --yes.
+ALLOW_SUDO="${CAIPE_ALLOW_SUDO:-}"
 RAG_INGESTOR_SECRET_READY=false
 RAG_INGESTOR_OIDC_ISSUER=""
 RAG_INGESTOR_OIDC_CLIENT_ID=""
@@ -324,11 +329,17 @@ ask_yn() {
 # permission. The answer is cached for the rest of the run so we prompt once.
 # --yes / AUTO_YES pre-consents (non-interactive convenience).
 # Non-interactive runs without --yes deny sudo without prompting.
+# --no-sudo / CAIPE_ALLOW_SUDO=0 denies outright; --allow-sudo /
+# CAIPE_ALLOW_SUDO=1 permits without prompting. --no-sudo wins over both.
 _sudo_consent() {
   local reason="${1:-a system change}"
   case "$SUDO_CONSENT" in
     yes) return 0 ;;
     no)  return 1 ;;
+  esac
+  case "$ALLOW_SUDO" in
+    0) SUDO_CONSENT="no";  return 1 ;;
+    1) SUDO_CONSENT="yes"; return 0 ;;
   esac
   if $AUTO_YES; then SUDO_CONSENT="yes"; return 0; fi
   if $NON_INTERACTIVE; then SUDO_CONSENT="no"; return 1; fi
@@ -8765,6 +8776,10 @@ Commands:
 Options:
   --non-interactive  Skip all prompts (use current context, latest chart,
                      defaults for endpoint/model, no RAG/tracing unless flagged)
+  --no-sudo          Never run sudo; steps needing it are skipped or fail with
+                     manual instructions (also CAIPE_ALLOW_SUDO=0)
+  --allow-sudo       Allow sudo without prompting, without answering unrelated
+                     prompts the way --yes does (also CAIPE_ALLOW_SUDO=1)
   --docker-compose   Run the Docker Compose setup path instead of the default
                      Kind/Kubernetes setup path
   --load-config=FILE Load wizard config from FILE instead of the default
@@ -8964,6 +8979,8 @@ args=()
 for arg in "$@"; do
   case "$arg" in
     --yes|-y)          AUTO_YES=true ;;
+    --no-sudo)         ALLOW_SUDO=0 ;;
+    --allow-sudo)      ALLOW_SUDO=1 ;;
     --docker-compose)  USE_DOCKER_COMPOSE=true ;;
     --non-interactive) NON_INTERACTIVE=true ;;
     --create-cluster)  CREATE_CLUSTER=true ;;
