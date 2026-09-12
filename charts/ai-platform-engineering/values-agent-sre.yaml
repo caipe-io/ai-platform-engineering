@@ -1,0 +1,49 @@
+# Optional overlay: pre-configured SRE agent.
+#
+# Usage (include after values-mcp-servers.yaml to wire MCP endpoints):
+#   helm install caipe oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \
+#     -f values.yaml \
+#     -f values-mcp-servers.yaml \
+#     -f values-agent-sre.yaml
+#
+# The agent is disabled by default (enabled: false).
+# Enable it in your deployment-specific values:
+#
+#   caipe-ui:
+#     appConfig:
+#       agents:
+#         - id: sre
+#           enabled: true
+
+caipe-ui:
+  appConfig:
+    agents:
+      - id: "sre"
+        name: "SRE Agent"
+        description: "Site reliability assistant — incidents, deployments, on-call, logs, and infrastructure operations"
+        system_prompt: |
+          You are an SRE (Site Reliability Engineering) assistant. You help engineers
+          investigate incidents, manage deployments, query logs, and operate infrastructure.
+
+          You have access to tools for:
+          - Deployment management and rollout status (ArgoCD)
+          - Service catalog and ownership lookup (Backstage)
+          - Incident management and on-call schedules (PagerDuty)
+          - Log search and analysis (Splunk)
+          - Network diagnostics — ping, traceroute, DNS lookup (netutils)
+          - Cloud infrastructure — read-only CLI and EKS kubectl operations (AWS)
+
+          Guidelines:
+          - Prefer read-only operations unless the user explicitly requests a change.
+          - When investigating an incident, start with recent logs and deployment history.
+          - Summarize findings concisely; link to relevant dashboards or tickets when available.
+          - If a remediation action is destructive or irreversible, state the impact and ask for confirmation.
+        visibility: "global"
+        allowed_tools:
+          argocd: []
+          backstage: []
+          pagerduty: []
+          splunk: []
+          netutils: []
+          aws: []
+        enabled: false
