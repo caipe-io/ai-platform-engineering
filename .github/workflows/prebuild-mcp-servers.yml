@@ -176,6 +176,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -205,7 +206,7 @@ jobs:
           echo "prebuild_tag=${PREBUILD_TAG}" >> $GITHUB_OUTPUT
 
       - name: Upload building prebuild status
-        if: matrix.arch == 'amd64'
+        if: matrix.arch == 'amd64' && github.event_name != 'pull_request'
         uses: ./.github/actions/prebuild-status
         with:
           pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
@@ -254,13 +255,14 @@ jobs:
             AGENT_NAME=${{ matrix.agent }}
             ${{ steps.mcp_build_args.outputs.extra }}
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', env.REGISTRY, env.IMAGE_NAME) }}
           cache-from: type=gha,scope=prebuild-${{ matrix.agent }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=prebuild-${{ matrix.agent }}-${{ matrix.arch }}
           provenance: false
           sbom: false
 
       - name: Export digest
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           mkdir -p /tmp/digests
@@ -268,6 +270,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: digests-${{ matrix.agent }}--${{ matrix.arch }}
@@ -282,6 +285,7 @@ jobs:
       always() &&
       needs.determine-agents.result == 'success' &&
       needs.determine-agents.outputs.should_build == 'true' &&
+      github.event_name != 'pull_request' &&
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
       github.event.action != 'closed'
     permissions:
