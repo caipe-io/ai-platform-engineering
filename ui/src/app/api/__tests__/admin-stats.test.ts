@@ -391,15 +391,13 @@ describe('GET /api/admin/stats — Overview', () => {
   it('returns overview with correct counts', async () => {
     const { usersCol, convCol, msgCol } = setupAdminWithCollections();
 
-    // Promise.all order (no filters):
-    // users: totalUsers, dau, mau
+    // Promise.all order (no filters): users: totalUsers only. DAU/MAU come
+    // from distinct conversation owners, not users.last_login.
     // conversations: totalConversations, conversationsToday, sharedConversations
     // messages: totalMessages, messagesToday — assistant rows across every
     // metadata.source (not just 'web'/'slack').
     usersCol.countDocuments
-      .mockResolvedValueOnce(15)   // totalUsers
-      .mockResolvedValueOnce(3)    // dau
-      .mockResolvedValueOnce(10);  // mau
+      .mockResolvedValueOnce(15);  // totalUsers
 
     convCol.countDocuments
       .mockResolvedValueOnce(50)   // totalConversations
@@ -421,8 +419,8 @@ describe('GET /api/admin/stats — Overview', () => {
         total_users: 15,
         total_conversations: 50,
         total_messages: 200,
-        dau: 3,
-        mau: 10,
+        dau: 0,
+        mau: 0,
         conversations_today: 5,
         messages_today: 20,
         shared_conversations: 2,
@@ -521,21 +519,19 @@ describe('GET /api/admin/stats — Rolling DAU/MAU windows', () => {
     jest.useFakeTimers();
     jest.setSystemTime(frozenNow);
 
-    const { usersCol } = setupAdminWithCollections();
+    const { convCol } = setupAdminWithCollections();
 
     const req = makeRequest('/api/admin/stats');
     await GET(req);
 
-    const [, dauCall, mauCall] = usersCol.countDocuments.mock.calls as [
-      unknown,
-      [{ last_login: { $gte: Date } }],
-      [{ last_login: { $gte: Date } }],
-    ];
-    const dauStart = dauCall[0].last_login.$gte;
-    const mauStart = mauCall[0].last_login.$gte;
+    const activityStarts = convCol.aggregate.mock.calls
+      .flatMap((call: unknown[]) => call[0] as Array<Record<string, unknown>>)
+      .map((stage) => (stage.$match as { updated_at?: { $gte?: Date } } | undefined)?.updated_at?.$gte)
+      .filter((date): date is Date => date instanceof Date)
+      .map((date) => date.getTime());
 
-    expect(dauStart.getTime()).toBe(frozenNow.getTime() - DAY_MS);
-    expect(mauStart.getTime()).toBe(frozenNow.getTime() - 30 * DAY_MS);
+    expect(activityStarts).toContain(frozenNow.getTime() - DAY_MS);
+    expect(activityStarts).toContain(frozenNow.getTime() - 30 * DAY_MS);
   });
 });
 
@@ -597,8 +593,9 @@ describe('GET /api/admin/stats — Daily Activity', () => {
     const req = makeRequest('/api/admin/stats');
     await GET(req);
 
-    // Each collection should have aggregate called (for daily activity)
-    expect(usersCol.aggregate).toHaveBeenCalled();
+    // Activity now uses the same conversation-owner aggregation as DAU/MAU;
+    // login timestamps are not an activity source.
+    expect(usersCol.aggregate).not.toHaveBeenCalled();
     expect(convCol.aggregate).toHaveBeenCalled();
     expect(msgCol.aggregate).toHaveBeenCalled();
   });
