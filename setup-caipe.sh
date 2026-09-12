@@ -646,6 +646,11 @@ _install_docker_macos() {
     exit 0
   fi
   if command -v brew &>/dev/null; then
+    if ! _sudo_consent "install Docker Desktop with Homebrew, which may require privileged system changes"; then
+      err "Automatic Docker Desktop installation requires permission to use sudo."
+      err "Install Docker Desktop manually: https://docs.docker.com/desktop/mac/install/ and re-run this script."
+      return 1
+    fi
     brew install --cask docker
     log "Docker Desktop installed — open the Docker app to complete setup, then re-run this script"
     exit 0
