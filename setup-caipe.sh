@@ -469,16 +469,28 @@ kill_port_on() {
 }
 
 # ─── Interactive Setup ───────────────────────────────────────────────────────
+_ensure_local_bin() {
+  mkdir -p "$HOME/.local/bin"
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *)
+      export PATH="$HOME/.local/bin:$PATH"
+      warn 'For future shells, add this to your shell configuration: export PATH="$HOME/.local/bin:$PATH"'
+      ;;
+  esac
+}
+
 _install_kubectl_linux() {
   log "Installing kubectl..."
   local ver
   ver=$(curl -sL https://dl.k8s.io/release/stable.txt)
   curl -sLo /tmp/kubectl "https://dl.k8s.io/release/${ver}/bin/linux/amd64/kubectl"
   chmod +x /tmp/kubectl
-  if _sudo_consent "move kubectl into /usr/local/bin"; then
-    sudo mv /tmp/kubectl /usr/local/bin/kubectl || { mkdir -p "$HOME/.local/bin" && mv /tmp/kubectl "$HOME/.local/bin/kubectl"; }
+  if _sudo_consent "move kubectl into /usr/local/bin" &&
+     sudo mv /tmp/kubectl /usr/local/bin/kubectl; then
+    :
   else
-    mkdir -p "$HOME/.local/bin" && mv /tmp/kubectl "$HOME/.local/bin/kubectl"
+    _ensure_local_bin && mv /tmp/kubectl "$HOME/.local/bin/kubectl"
   fi
   log "kubectl ${ver} installed"
 }
@@ -489,8 +501,7 @@ _install_helm_linux() {
   if ! _sudo_consent "install Helm into /usr/local/bin"; then
     use_sudo=false
     install_dir="$HOME/.local/bin"
-    mkdir -p "$install_dir"
-    export PATH="$install_dir:$PATH"
+    _ensure_local_bin
   fi
   curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
     | USE_SUDO="$use_sudo" HELM_INSTALL_DIR="$install_dir" bash &>/dev/null
@@ -544,15 +555,8 @@ _install_jq_linux() {
       sudo dnf install -y jq &>/dev/null
       ;;
     *)
-      local ver
-      ver=$(curl -sL https://api.github.com/repos/jqlang/jq/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
-      curl -sLo /tmp/jq "https://github.com/jqlang/jq/releases/download/${ver}/jq-linux-amd64"
-      chmod +x /tmp/jq
-      if _sudo_consent "move jq into /usr/local/bin"; then
-        sudo mv /tmp/jq /usr/local/bin/jq || { mkdir -p "$HOME/.local/bin" && mv /tmp/jq "$HOME/.local/bin/jq"; }
-      else
-        mkdir -p "$HOME/.local/bin" && mv /tmp/jq "$HOME/.local/bin/jq"
-      fi
+      err "Cannot auto-install jq on distro '${os_id}' — install it with your distro's package manager and re-run"
+      return 1
       ;;
   esac
   log "jq installed"
@@ -564,10 +568,11 @@ _install_kind_linux() {
   ver=$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
   curl -sLo /tmp/kind "https://kind.sigs.k8s.io/dl/${ver}/kind-linux-amd64"
   chmod +x /tmp/kind
-  if _sudo_consent "move kind into /usr/local/bin"; then
-    sudo mv /tmp/kind /usr/local/bin/kind || { mkdir -p "$HOME/.local/bin" && mv /tmp/kind "$HOME/.local/bin/kind"; }
+  if _sudo_consent "move kind into /usr/local/bin" &&
+     sudo mv /tmp/kind /usr/local/bin/kind; then
+    :
   else
-    mkdir -p "$HOME/.local/bin" && mv /tmp/kind "$HOME/.local/bin/kind"
+    _ensure_local_bin && mv /tmp/kind "$HOME/.local/bin/kind"
   fi
   log "kind ${ver} installed"
 }
@@ -581,10 +586,11 @@ _install_kind_macos() {
     ver=$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
     curl -sLo /tmp/kind "https://kind.sigs.k8s.io/dl/${ver}/kind-darwin-arm64"
     chmod +x /tmp/kind
-    if _sudo_consent "move kind into /usr/local/bin"; then
-      sudo mv /tmp/kind /usr/local/bin/kind || { mkdir -p "$HOME/.local/bin" && mv /tmp/kind "$HOME/.local/bin/kind"; }
+    if _sudo_consent "move kind into /usr/local/bin" &&
+       sudo mv /tmp/kind /usr/local/bin/kind; then
+      :
     else
-      mkdir -p "$HOME/.local/bin" && mv /tmp/kind "$HOME/.local/bin/kind"
+      _ensure_local_bin && mv /tmp/kind "$HOME/.local/bin/kind"
     fi
     log "kind ${ver} installed"
   fi
@@ -758,12 +764,7 @@ check_prerequisites() {
       # If any tools need sudo, get explicit consent first (a working
       # passwordless sudo does not imply permission).
       if [[ ${#needs_sudo[@]} -gt 0 ]]; then
-        local sudo_ok=false
-        if _sudo_consent "install ${needs_sudo[*]}"; then
-          sudo_ok=true
-        fi
-
-        if [[ "$sudo_ok" == false ]]; then
+        if ! _sudo_consent "install ${needs_sudo[*]}"; then
           warn "Cannot install ${needs_sudo[*]} without sudo."
           warn "Please run the following command(s) on your machine first, then re-run this script:"
           warn ""
@@ -786,8 +787,7 @@ check_prerequisites() {
       fi
 
       log "Auto-installing missing tools on Linux: ${missing[*]}"
-      mkdir -p "$HOME/.local/bin"
-      export PATH="$HOME/.local/bin:$PATH"
+      _ensure_local_bin
       for tool in "${missing[@]}"; do
         case "$tool" in
           kubectl) _install_kubectl_linux ;;
@@ -852,11 +852,7 @@ check_prerequisites() {
   # k9s — optional but strongly recommended; auto-install if missing
   if ! command -v k9s &>/dev/null; then
     if [[ "$(uname -s)" == "Linux" ]]; then
-      local _k9s_sudo_ok=false
       if _sudo_consent "install k9s (Kubernetes TUI)"; then
-        _k9s_sudo_ok=true
-      fi
-      if [[ "$_k9s_sudo_ok" == true ]]; then
         log "Installing k9s (Kubernetes TUI)..."
         local _k9s_url
         _k9s_url=$(curl -s https://api.github.com/repos/derailed/k9s/releases/latest \
