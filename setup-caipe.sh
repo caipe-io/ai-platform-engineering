@@ -333,20 +333,27 @@ ask_yn() {
 # CAIPE_ALLOW_SUDO=1 permits without prompting. --no-sudo wins over both.
 _sudo_consent() {
   local reason="${1:-a system change}"
-  case "$SUDO_CONSENT" in
-    yes) return 0 ;;
-    no)  return 1 ;;
-  esac
-  case "$ALLOW_SUDO" in
-    0) SUDO_CONSENT="no";  return 1 ;;
-    1) SUDO_CONSENT="yes"; return 0 ;;
-  esac
-  if $AUTO_YES; then SUDO_CONSENT="yes"; return 0; fi
-  if $NON_INTERACTIVE; then SUDO_CONSENT="no"; return 1; fi
-  if ask_yn "This step needs sudo (${reason}). Allow this script to run sudo?" "y"; then
-    SUDO_CONSENT="yes"; return 0
+
+  # Explicit policy denial overrides even a previously cached approval.
+  if [[ "$ALLOW_SUDO" == "0" ]]; then
+    SUDO_CONSENT="no"
+  # Otherwise, preserve the cached answer and resolve consent only once.
+  elif [[ -z "$SUDO_CONSENT" ]]; then
+    # Explicit approval or --yes permits sudo without a consent prompt.
+    if [[ "$ALLOW_SUDO" == "1" ]] || $AUTO_YES; then
+      SUDO_CONSENT="yes"
+    # Unattended execution alone does not authorize sudo.
+    elif $NON_INTERACTIVE; then
+      SUDO_CONSENT="no"
+    # Interactive runs use the user's answer; ask_yn rejects failed reads.
+    elif ask_yn "This step needs sudo (${reason}). Allow this script to run sudo?" "y"; then
+      SUDO_CONSENT="yes"
+    else
+      SUDO_CONSENT="no"
+    fi
   fi
-  SUDO_CONSENT="no"; return 1
+
+  [[ "$SUDO_CONSENT" == "yes" ]]
 }
 
 wait_for_pods() {
@@ -8778,8 +8785,11 @@ Options:
                      defaults for endpoint/model, no RAG/tracing unless flagged)
   --no-sudo          Never run sudo; steps needing it are skipped or fail with
                      manual instructions (also CAIPE_ALLOW_SUDO=0)
+                     Either denial overrides --allow-sudo and --yes, regardless
+                     of argument order.
   --allow-sudo       Allow sudo without prompting, without answering unrelated
                      prompts the way --yes does (also CAIPE_ALLOW_SUDO=1)
+                     Has no effect when --no-sudo or CAIPE_ALLOW_SUDO=0 is set.
   --docker-compose   Run the Docker Compose setup path instead of the default
                      Kind/Kubernetes setup path
   --load-config=FILE Load wizard config from FILE instead of the default
@@ -8980,7 +8990,7 @@ for arg in "$@"; do
   case "$arg" in
     --yes|-y)          AUTO_YES=true ;;
     --no-sudo)         ALLOW_SUDO=0 ;;
-    --allow-sudo)      ALLOW_SUDO=1 ;;
+    --allow-sudo)      if [[ "$ALLOW_SUDO" != "0" ]]; then ALLOW_SUDO=1; fi ;;
     --docker-compose)  USE_DOCKER_COMPOSE=true ;;
     --non-interactive) NON_INTERACTIVE=true ;;
     --create-cluster)  CREATE_CLUSTER=true ;;
