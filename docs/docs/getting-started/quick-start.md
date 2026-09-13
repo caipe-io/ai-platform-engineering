@@ -14,6 +14,8 @@ curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/ma
 
 The script asks for your LLM provider, API key, and optional components (RAG, tracing, persistence). It creates a local KinD cluster or deploys to an existing one.
 
+The setup script asks before using sudo. Use `--no-sudo` to forbid it or `--allow-sudo` to permit it without a consent prompt. See [sudo consent](kind/setup.md#sudo-consent) for automation and fallback behavior.
+
 > **Want to inspect the script first?** View [`setup-caipe.sh`](https://github.com/caipe-io/ai-platform-engineering/blob/main/setup-caipe.sh) on GitHub before running.
 
 <iframe src="https://asciinema.org/a/845278/iframe" width="100%" height="600" style={{border: 'none', borderRadius: '8px', overflow: 'hidden'}} scrolling="no" allowFullScreen />

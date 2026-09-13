@@ -41,6 +41,8 @@ The minimal install (UI + Dynamic Agents + MongoDB) is enough to run chat with c
 bash <(curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh)
 ```
 
+The setup script asks before using sudo. Use `--no-sudo` to forbid it or `--allow-sudo` to permit it without a consent prompt. See [sudo consent](../getting-started/kind/setup.md#sudo-consent) for automation and fallback behavior.
+
 Or via Helm directly:
 
 ```bash

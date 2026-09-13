@@ -101,6 +101,8 @@ To let the setup helper update `.env` and start Compose:
 ./setup-caipe.sh --docker-compose
 ```
 
+The setup script asks before using sudo. Use `--no-sudo` to forbid it or `--allow-sudo` to permit it without a consent prompt. See [sudo consent](../kind/setup.md#sudo-consent) for automation and fallback behavior.
+
 ## Profiles
 
 | Profile | Description |
