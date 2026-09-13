@@ -171,7 +171,16 @@ SUDO_CONSENT=""   # "", "yes" or "no" — cached answer for _sudo_consent (ask o
 # every sudo step, "1" permits them without asking. Unattended runs need this
 # separate from --yes, because --yes also answers unrelated feature prompts
 # (RAG, Graph RAG, tracing) that default to "n". "0" wins over "1" and --yes.
-ALLOW_SUDO="${CAIPE_ALLOW_SUDO:-}"
+# Normalize the environment policy before parsing flags so denial stays binding.
+case "${CAIPE_ALLOW_SUDO:-}" in
+  "") ALLOW_SUDO="" ;;
+  0|[Ff][Aa][Ll][Ss][Ee]) ALLOW_SUDO=0 ;;
+  1|[Tt][Rr][Uu][Ee]) ALLOW_SUDO=1 ;;
+  *)
+    echo "ERROR: CAIPE_ALLOW_SUDO must be 0/false (deny), 1/true (allow), or empty (ask); boolean values are case-insensitive." >&2
+    exit 1
+    ;;
+esac
 RAG_INGESTOR_SECRET_READY=false
 RAG_INGESTOR_OIDC_ISSUER=""
 RAG_INGESTOR_OIDC_CLIENT_ID=""
@@ -8784,12 +8793,14 @@ Options:
   --non-interactive  Skip all prompts (use current context, latest chart,
                      defaults for endpoint/model, no RAG/tracing unless flagged)
   --no-sudo          Never run sudo; steps needing it are skipped or fail with
-                     manual instructions (also CAIPE_ALLOW_SUDO=0)
+                     manual instructions (also CAIPE_ALLOW_SUDO=0 or false)
                      Either denial overrides --allow-sudo and --yes, regardless
                      of argument order.
   --allow-sudo       Allow sudo without prompting, without answering unrelated
-                     prompts the way --yes does (also CAIPE_ALLOW_SUDO=1)
-                     Has no effect when --no-sudo or CAIPE_ALLOW_SUDO=0 is set.
+                     prompts the way --yes does (also CAIPE_ALLOW_SUDO=1 or true)
+                     Has no effect when --no-sudo or CAIPE_ALLOW_SUDO=0/false is set.
+                     Environment booleans are case-insensitive; unset/empty uses
+                     normal consent handling. Other values are rejected.
   --docker-compose   Run the Docker Compose setup path instead of the default
                      Kind/Kubernetes setup path
   --load-config=FILE Load wizard config from FILE instead of the default
