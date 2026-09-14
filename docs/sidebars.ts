@@ -250,6 +250,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Features',
       items: [
+        { type: 'doc', id: 'features/index', label: 'Overview' },
         { type: 'doc', id: 'features/agent-builder', label: 'Agent Builder' },
         { type: 'doc', id: 'features/workflows', label: 'Workflows' },
         { type: 'doc', id: 'features/agentic-apps', label: 'External Apps' },

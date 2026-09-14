@@ -57,6 +57,10 @@ export interface IngestionSourceCardProps {
   onDelete: (source: IngestionSourceConfigWithPermissions) => Promise<void>;
   onRetry?: (source: IngestionSourceConfigWithPermissions) => Promise<void>;
   pendingPublicationRequest?: PendingPublicationRequestView | null;
+  /** Bulk-edit selection — only rendered for sources the caller can manage. */
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (source: IngestionSourceConfigWithPermissions) => void;
 }
 
 export function IngestionSourceCard({
@@ -65,12 +69,16 @@ export function IngestionSourceCard({
   onDelete,
   onRetry,
   pendingPublicationRequest,
+  selectionMode,
+  selected,
+  onToggleSelect,
 }: IngestionSourceCardProps) {
   const [pendingDelete, setPendingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
   const canManage = source._permissions.can_manage;
+  const canSelect = canManage && !source.config_driven;
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -95,6 +103,17 @@ export function IngestionSourceCard({
   return (
     <div className="rounded-xl border border-border/50 bg-card/50 p-4 space-y-2">
       <div className="flex items-start justify-between gap-3">
+        {selectionMode && (
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4 shrink-0"
+            checked={Boolean(selected)}
+            disabled={!canSelect}
+            onChange={() => onToggleSelect?.(source)}
+            aria-label={`Select ${source.name}`}
+            title={canSelect ? undefined : "You do not manage this source"}
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-sm truncate">{source.name}</span>
@@ -116,7 +135,6 @@ export function IngestionSourceCard({
                 ?? (source.search_owner_team_slug ? [source.search_owner_team_slug] : [])
               }
               searchUserDisplayNames={source.search_user_display_names}
-              ragCollections={source.rag_collections}
               pendingPublicationRequest={pendingPublicationRequest}
               detailsKnown
             />

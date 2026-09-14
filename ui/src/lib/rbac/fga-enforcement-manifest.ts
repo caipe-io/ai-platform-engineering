@@ -146,7 +146,7 @@ export const FGA_ENFORCEMENT_MANIFEST: Record<
       "ui/src/app/api/rag/collections/[id]/route.ts",
     ],
     notes:
-      "Collection read/publish/manage is checked in the BFF; member sources inherit collection read access through knowledge_base#parent_collection.",
+      "Collection read/publish/manage is checked in the BFF; membership is a saved query filter only — it grants no read access to member sources, so publishing requires only can_read on the datasource being added.",
   },
   knowledge_base: {
     status: "rebac_enforced",

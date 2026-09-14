@@ -39,7 +39,7 @@ const agentGatewayRagServer = {
 
 const listCapabilities = { repair_agentgateway: true };
 
-describe("MCPServersTab AgentGateway repair", () => {
+describe("MCPServersTab", () => {
   let serverItems: Record<string, unknown>[];
 
   beforeEach(() => {
@@ -60,28 +60,6 @@ describe("MCPServersTab AgentGateway repair", () => {
       if (url === "/api/mcp-servers?id=jira") {
         return Promise.resolve({
           json: async () => ({ success: true, data: jiraServer }),
-        } as Response);
-      }
-      if (url === "/api/mcp-servers/agentgateway/sync" && init?.method === "POST") {
-        return Promise.resolve({
-          json: async () => ({
-            success: true,
-            data: {
-              added: ["rag"],
-              skipped: [{ id: "jira", reason: "conflict" }],
-              summary: { added: 1, existing: 0, conflicts: 1, skipped: 1 },
-              migration_warnings: [
-                {
-                  id: "jira",
-                  endpoint: "http://agentgateway:4000/mcp",
-                  target_endpoint: "http://mcp-jira:8000/mcp",
-                  existing_endpoint: "http://legacy-jira:8000/mcp",
-                  message:
-                    "Legacy MCP server conflicts with AgentGateway target \"jira\". Remove or rename the legacy MCP server to let AgentGateway manage it.",
-                },
-              ],
-            },
-          }),
         } as Response);
       }
       if (url === "/api/mcp-servers/probe?id=jira" && init?.method === "POST") {
@@ -144,34 +122,15 @@ describe("MCPServersTab AgentGateway repair", () => {
     }) as unknown as typeof fetch;
   });
 
-  it("repairs AgentGateway MCP server registrations and shows migration conflicts", async () => {
+  it("does not expose the unsafe AgentGateway repair action", async () => {
     render(<MCPServersTab />);
 
     await screen.findByText("Jira");
-    fireEvent.click(screen.getByRole("button", { name: /Repair AgentGateway/i }));
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith(
-        "/api/mcp-servers/agentgateway/sync",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({}),
-        }),
-      );
-    });
-
-    // Message format changed to break down counts:
-    //   "Added 1, migrated 0, and refreshed 0 MCP server from AgentGateway."
-    expect(
-      await screen.findByText(/Added 1, migrated 0, and refreshed 0 MCP server/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/1 legacy MCP server conflicts with AgentGateway targets/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/Remove or rename the legacy MCP server/i)).toBeInTheDocument();
-    expect(screen.getAllByText("jira").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Current: http:\/\/legacy-jira:8000\/mcp/i)).toBeInTheDocument();
-    expect(screen.getByText(/AgentGateway: http:\/\/mcp-jira:8000\/mcp/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Repair AgentGateway/i })).not.toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      "/api/mcp-servers/agentgateway/sync",
+      expect.anything(),
+    );
   });
 
   it("marks AgentGateway-registered MCP servers in the table", async () => {
@@ -382,7 +341,7 @@ describe("MCPServersTab AgentGateway repair", () => {
     jest.useRealTimers();
   });
 
-  it("hides repair, probe, test, and delete actions when row permissions deny them", async () => {
+  it("hides probe, test, and delete actions when row permissions deny them", async () => {
     serverItems = [
       {
         ...jiraServer,
@@ -407,7 +366,6 @@ describe("MCPServersTab AgentGateway repair", () => {
     render(<MCPServersTab />);
 
     await screen.findByText("Jira");
-    expect(screen.queryByRole("button", { name: /Repair AgentGateway/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Probe tools for Jira/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /test mcp tools for jira/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Delete Jira/i })).not.toBeInTheDocument();
@@ -421,11 +379,10 @@ describe("MCPServersTab AgentGateway repair", () => {
     expect(await screen.findByText("Add MCP Server")).toBeInTheDocument();
   });
 
-  it("shows repair, probe, test, and delete when list permissions allow them", async () => {
+  it("shows probe, test, and delete when list permissions allow them", async () => {
     render(<MCPServersTab />);
 
     await screen.findByText("Jira");
-    expect(screen.getByRole("button", { name: /Repair AgentGateway/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Probe tools for Jira/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /test mcp tools for jira/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Delete Jira/i })).toBeInTheDocument();
@@ -449,11 +406,13 @@ describe("MCPServersTab AgentGateway repair", () => {
 
   it("loads a directly linked MCP server and reports when its editor closes", async () => {
     const onSelectedServerChange = jest.fn();
+    const onSelectedServerNameChange = jest.fn();
 
     render(
       <MCPServersTab
         selectedServerId="jira"
         onSelectedServerChange={onSelectedServerChange}
+        onSelectedServerNameChange={onSelectedServerNameChange}
       />,
     );
 
@@ -462,9 +421,11 @@ describe("MCPServersTab AgentGateway repair", () => {
       "/api/mcp-servers?id=jira",
       { cache: "no-store" },
     );
+    expect(onSelectedServerNameChange).toHaveBeenCalledWith("Jira");
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onSelectedServerChange).toHaveBeenCalledWith(null);
+    expect(onSelectedServerNameChange).toHaveBeenCalledWith(null);
   });
 
   it("keeps the selected row open when the page adds the server ID to the URL", async () => {

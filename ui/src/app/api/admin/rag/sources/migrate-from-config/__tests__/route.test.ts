@@ -8,8 +8,6 @@ const mockGetAuthFromBearerOrSession = jest.fn();
 const mockRequireRbacPermission = jest.fn();
 const mockRequireResourcePermission = jest.fn();
 const mockGetCollection = jest.fn();
-const mockBootstrapPlatformRagCollection = jest.fn();
-const mockReplaceCollectionSources = jest.fn();
 const mockAdoptConfigImportedRagSources = jest.fn();
 const mockLoadSeedConfig = jest.fn();
 
@@ -43,15 +41,6 @@ jest.mock("@/lib/api-middleware", () => {
 
 jest.mock("@/lib/mongodb", () => ({
   getCollection: (...args: unknown[]) => mockGetCollection(...args),
-}));
-
-jest.mock("@/lib/rag-collections.server", () => ({
-  RAG_COLLECTION_ID_PATTERN: /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/,
-  RAG_COLLECTIONS_COLLECTION: "rag_collections",
-  bootstrapPlatformRagCollection: (...args: unknown[]) =>
-    mockBootstrapPlatformRagCollection(...args),
-  replaceCollectionSources: (...args: unknown[]) =>
-    mockReplaceCollectionSources(...args),
 }));
 
 jest.mock("@/lib/seed-config", () => ({
@@ -93,6 +82,8 @@ const CONFIG_SOURCES = [
   },
 ];
 
+const EXISTING_TEAMS = [{ slug: "owner-team" }, { slug: "search-team" }];
+
 function postRequest(body: unknown): NextRequest {
   return new NextRequest(
     "http://localhost/api/admin/rag/sources/migrate-from-config",
@@ -113,7 +104,7 @@ function mockCollections(
       config_import_adopted: true,
     },
   ],
-  ragCollections: Array<Record<string, unknown>> = [],
+  teams: Array<Record<string, unknown>> = EXISTING_TEAMS,
 ): void {
   mockGetCollection.mockImplementation(async (name: string) => {
     if (name === "rag_ingestion_sources") {
@@ -124,10 +115,10 @@ function mockCollections(
         }),
       };
     }
-    if (name === "rag_collections") {
+    if (name === "teams") {
       return {
-        findOne: jest.fn(async ({ _id }: { _id: string }) =>
-          ragCollections.find((collection) => collection._id === _id) ?? null,
+        findOne: jest.fn(async ({ slug }: { slug: string }) =>
+          teams.find((team) => team.slug === slug) ?? null,
         ),
       };
     }
@@ -147,18 +138,6 @@ describe("POST /api/admin/rag/sources/migrate-from-config", () => {
     mockRequireRbacPermission.mockResolvedValue(undefined);
     mockRequireResourcePermission.mockResolvedValue(undefined);
     mockLoadSeedConfig.mockReturnValue({ rag_sources: CONFIG_SOURCES });
-    mockBootstrapPlatformRagCollection.mockResolvedValue({
-      _id: "platform-rag",
-      source_ids: ["existing-source"],
-      maintainer_team_slugs: ["owner-team"],
-      reader_team_slugs: ["reader-team"],
-    });
-    mockReplaceCollectionSources.mockImplementation(
-      async (id: string, sourceIds: string[]) => ({
-        _id: id,
-        source_ids: sourceIds,
-      }),
-    );
     mockAdoptConfigImportedRagSources.mockResolvedValue({
       adopted: ["slack-channel-C1"],
       skipped: [],
@@ -240,13 +219,13 @@ describe("POST /api/admin/rag/sources/migrate-from-config", () => {
     expect(mockLoadSeedConfig).not.toHaveBeenCalled();
   });
 
-  it("adopts selected seeded sources and adds only those sources to the collection", async () => {
+  it("adopts selected seeded sources with the given owner and no search access", async () => {
     const { POST } = await import("../route");
     const response = await POST(
       postRequest({
         dry_run: false,
         source_ids: ["slack-channel-C1"],
-        destination_collection_id: "platform-rag",
+        owner_team_slug: "owner-team",
       }),
     );
     const body = await response.json();
@@ -255,12 +234,29 @@ describe("POST /api/admin/rag/sources/migrate-from-config", () => {
     expect(mockAdoptConfigImportedRagSources).toHaveBeenCalledWith(
       ["slack-channel-C1"],
       { ownerTeamSlug: "owner-team", ownerSubject: null },
-    );
-    expect(mockReplaceCollectionSources).toHaveBeenCalledWith(
-      "platform-rag",
-      ["existing-source", "slack-channel-C1"],
+      { teamSlugs: [], userSubjects: [] },
     );
     expect(body.data.adopted).toEqual(["slack-channel-C1"]);
+  });
+
+  it("adopts selected sources with an owner subject and search access", async () => {
+    const { POST } = await import("../route");
+    const response = await POST(
+      postRequest({
+        dry_run: false,
+        source_ids: ["slack-channel-C1"],
+        owner_subject: "owner-person",
+        search_team_slugs: ["search-team"],
+        search_user_subjects: ["reader-person"],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockAdoptConfigImportedRagSources).toHaveBeenCalledWith(
+      ["slack-channel-C1"],
+      { ownerTeamSlug: null, ownerSubject: "owner-person" },
+      { teamSlugs: ["search-team"], userSubjects: ["reader-person"] },
+    );
   });
 
   it("does not adopt ids outside app config or entries that were not seeded", async () => {
@@ -273,63 +269,64 @@ describe("POST /api/admin/rag/sources/migrate-from-config", () => {
       postRequest({
         dry_run: false,
         source_ids: ["unknown-source", "slack-channel-C3"],
+        owner_team_slug: "owner-team",
       }),
     );
     const body = await response.json();
 
-    expect(mockAdoptConfigImportedRagSources).toHaveBeenCalledWith([], {
-      ownerTeamSlug: "owner-team",
-      ownerSubject: null,
-    });
-    expect(mockReplaceCollectionSources).not.toHaveBeenCalled();
+    expect(mockAdoptConfigImportedRagSources).toHaveBeenCalledWith(
+      [],
+      { ownerTeamSlug: "owner-team", ownerSubject: null },
+      { teamSlugs: [], userSubjects: [] },
+    );
     expect(body.data.skipped).toEqual([
       { source_id: "unknown-source", reason: "not_in_config" },
       { source_id: "slack-channel-C3", reason: "not_seeded" },
     ]);
   });
 
-  it("uses the selected collection owner for adopted source management", async () => {
-    mockCollections(undefined, [
-      {
-        _id: "primary-collection",
-        source_ids: [],
-        owner_subject: "collection-owner",
-        maintainer_team_slugs: [],
-      },
-    ]);
-
-    const { POST } = await import("../route");
-    const response = await POST(
-      postRequest({
-        dry_run: false,
-        source_ids: ["slack-channel-C1"],
-        destination_collection_id: "primary-collection",
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(mockAdoptConfigImportedRagSources).toHaveBeenCalledWith(
-      ["slack-channel-C1"],
-      { ownerTeamSlug: null, ownerSubject: "collection-owner" },
-    );
-  });
-
-  it("rejects an adoption destination without an Owner", async () => {
-    mockBootstrapPlatformRagCollection.mockResolvedValue({
-      _id: "platform-rag",
-      source_ids: [],
-      maintainer_team_slugs: [],
-      owner_subject: null,
-    });
-
+  it("rejects adoption when neither an owner team nor an owner person is given", async () => {
     const { POST } = await import("../route");
     const response = await POST(
       postRequest({ dry_run: false, source_ids: ["slack-channel-C1"] }),
     );
     const body = await response.json();
 
-    expect(response.status).toBe(409);
-    expect(body.code).toBe("DESTINATION_COLLECTION_HAS_NO_OWNER");
+    expect(response.status).toBe(400);
+    expect(body.code).toBe("OWNER_REQUIRED");
+    expect(mockAdoptConfigImportedRagSources).not.toHaveBeenCalled();
+  });
+
+  it("rejects an owner team that does not exist", async () => {
+    const { POST } = await import("../route");
+    const response = await POST(
+      postRequest({
+        dry_run: false,
+        source_ids: ["slack-channel-C1"],
+        owner_team_slug: "missing-team",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body.code).toBe("OWNER_TEAM_NOT_FOUND");
+    expect(mockAdoptConfigImportedRagSources).not.toHaveBeenCalled();
+  });
+
+  it("rejects a search team that does not exist", async () => {
+    const { POST } = await import("../route");
+    const response = await POST(
+      postRequest({
+        dry_run: false,
+        source_ids: ["slack-channel-C1"],
+        owner_team_slug: "owner-team",
+        search_team_slugs: ["missing-team"],
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body.code).toBe("SEARCH_TEAM_NOT_FOUND");
     expect(mockAdoptConfigImportedRagSources).not.toHaveBeenCalled();
   });
 });

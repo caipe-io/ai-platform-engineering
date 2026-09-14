@@ -215,7 +215,15 @@ export interface CasReconcileEvent {
   actor_hash?: string;
   actor_ref?: string;
   caller_ref?: string;
-  source?: string;
+  /** CAS is the emitting subsystem; `reconcile_scope` identifies the caller. */
+  source: "cas";
+  reconcile_scope: string;
+  action: "reconcile";
+  resource_ref: "authorization_policy:openfga_relationship_tuples";
+  resource_type: "authorization_policy";
+  resource_id: "openfga_relationship_tuples";
+  requested_writes: number;
+  requested_deletes: number;
   writes: number;
   deletes: number;
   outcome: ReconcileAuditOutcome;
@@ -228,6 +236,21 @@ export interface CasReconcileEvent {
   span_id?: string;
 }
 
+const DEFAULT_RECONCILE_SCOPE = "cas-reconciler";
+
+function reconcileScope(source: string | undefined): string {
+  return source?.trim() || DEFAULT_RECONCILE_SCOPE;
+}
+
+function systemPrincipalRef(scope: string): string {
+  const normalized = scope
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `system:${normalized || DEFAULT_RECONCILE_SCOPE}`;
+}
+
 export function emitReconcileAudit(
   diff: { writes: unknown[]; deletes: unknown[] },
   result: { enabled: boolean; writes: number; deletes: number },
@@ -235,7 +258,11 @@ export function emitReconcileAudit(
   options: ReconcileAuditOptions = {},
 ): void {
   const outcome = options.outcome ?? "success";
+  if (outcome === "success" && result.writes === 0 && result.deletes === 0) return;
+
+  const scope = reconcileScope(ctx.source);
   const callerRef = ctx.caller ? principalRef(ctx.caller.type, ctx.caller.id) : undefined;
+  const systemRef = systemPrincipalRef(scope);
   const event: CasReconcileEvent = {
     audit_event_id: randomUUID(),
     ts: new Date(),
@@ -249,8 +276,18 @@ export function emitReconcileAudit(
           actor_ref: callerRef,
           caller_ref: callerRef,
         }
-      : {}),
-    source: ctx.source,
+      : {
+          subject_ref: systemRef,
+          actor_ref: systemRef,
+        }),
+    source: "cas",
+    reconcile_scope: scope,
+    action: "reconcile",
+    resource_ref: "authorization_policy:openfga_relationship_tuples",
+    resource_type: "authorization_policy",
+    resource_id: "openfga_relationship_tuples",
+    requested_writes: diff.writes.length,
+    requested_deletes: diff.deletes.length,
     writes: result.writes,
     deletes: result.deletes,
     outcome,

@@ -57,7 +57,8 @@ export interface IngestionSourceConfigBase {
   creator_display_name?: string | null;
   creator_email?: string | null;
   search_user_display_names?: string[];
-  /** Search access inherited through RAG collections. */
+  /** Collections this source is a member of. Informational only - membership
+   * grants no Search access; see search_with_teams/search_with_users. */
   rag_collections?: RagCollectionMembershipLabel[];
   /** Active publication request created by the current user, when present. */
   _publication_request?: PendingPublicationRequestView;

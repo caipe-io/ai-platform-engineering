@@ -46,6 +46,8 @@ function DynamicAgentsPageContent() {
   const selectedAgentId = searchParams.get("agent");
   const selectedServerId = searchParams.get("server");
   const selectedModelId = searchParams.get("model");
+  const [selectedAgentName, setSelectedAgentName] = React.useState<string | null>(null);
+  const [selectedServerName, setSelectedServerName] = React.useState<string | null>(null);
   const requestedAgentStep = searchParams.get("step");
   const agentStep = isAgentSetupStep(requestedAgentStep) ? requestedAgentStep : "basic";
 
@@ -73,6 +75,8 @@ function DynamicAgentsPageContent() {
   }
 
   function performTabSwitch(tab: string) {
+    setSelectedAgentName(null);
+    setSelectedServerName(null);
     router.push(hrefForTab(tab));
   }
 
@@ -80,6 +84,8 @@ function DynamicAgentsPageContent() {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", tab);
     clearResourceSelection(params);
+    if (key === "agent") setSelectedAgentName(null);
+    if (key === "server") setSelectedServerName(null);
     if (id) {
       params.set(key, id);
       if (key === "agent") params.set("step", "basic");
@@ -137,6 +143,11 @@ function DynamicAgentsPageContent() {
   const agentHomeHref = hrefForTab("agents");
   const modelsHref = hrefForTab("model-providers");
   const currentHref = hrefFor(new URLSearchParams(searchParams.toString()));
+  const selectedResourceName = activeTab === "agents" && selectedAgentId
+    ? selectedAgentName
+    : activeTab === "mcp-servers" && selectedServerId
+      ? selectedServerName
+      : null;
   const switchFromBreadcrumb = (
     tab: string,
   ): React.MouseEventHandler<HTMLAnchorElement> => (event) => {
@@ -159,7 +170,10 @@ function DynamicAgentsPageContent() {
             breadcrumbs={[
               { label: "Home",href: "/" },
               ...(activeTab === "agents"
-                ? [{ label: "Agents",href: currentHref }]
+                ? [{
+                    label: "Agents",
+                    href: selectedResourceName ? agentHomeHref : currentHref,
+                  }]
                 : [{
                     label: "Agents",
                     href: agentHomeHref,
@@ -174,7 +188,13 @@ function DynamicAgentsPageContent() {
                 : []),
               ...(activeTab === "agents"
                 ? []
-                : [{ label: activeNavigationItem.label,href: currentHref }]),
+                : [{
+                    label: activeNavigationItem.label,
+                    href: selectedResourceName ? hrefForTab(activeTab) : currentHref,
+                  }]),
+              ...(selectedResourceName
+                ? [{ label: selectedResourceName, href: currentHref }]
+                : []),
             ]}
             description={activeDescription}
             title={activeNavigationItem.label}
@@ -195,6 +215,7 @@ function DynamicAgentsPageContent() {
             selectedAgentId={selectedAgentId}
             initialStep={agentStep}
             onSelectedAgentChange={(id) => selectResource("agents", "agent", id)}
+            onSelectedAgentNameChange={setSelectedAgentName}
             onStepChange={setAgentStep}
           />
         ) : null}
@@ -203,6 +224,7 @@ function DynamicAgentsPageContent() {
           <MCPServersTab
             selectedServerId={selectedServerId}
             onSelectedServerChange={(id) => selectResource("mcp-servers", "server", id)}
+            onSelectedServerNameChange={setSelectedServerName}
           />
         ) : null}
 
