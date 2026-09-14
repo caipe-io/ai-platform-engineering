@@ -52,15 +52,14 @@ jobs:
           path: ${{ runner.temp }}/coverage/main-coverage/
         continue-on-error: true
 
-      # RAG tests disabled - uncomment when re-enabled
-      # - name: Download RAG coverage reports
-      #   uses: actions/download-artifact@v8
-      #   with:
-      #     name: coverage-reports-rag
-      #     run-id: ${{ github.event.workflow_run.id }}
-      #     github-token: ${{ secrets.GITHUB_TOKEN }}
-      #     path: ./rag-coverage/
-      #   continue-on-error: true
+      - name: Download RAG coverage reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-reports-rag
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ steps.app-token.outputs.token }}
+          path: ${{ runner.temp }}/coverage/rag-coverage/
+        continue-on-error: true
 
       - name: Generate coverage summary
         run: |
