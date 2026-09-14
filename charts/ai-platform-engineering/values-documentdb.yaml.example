@@ -1,0 +1,32 @@
+# Opt-in in-cluster DocumentDB persistence for CAIPE.
+# MongoDB remains the default provider in values.yaml.
+
+tags:
+  caipe-ui: true
+  dynamic-agents: true
+
+caipe-ui:
+  mongodb:
+    enabled: true
+  existingSecret: caipe-documentdb-uri
+
+mongodb:
+  provider: documentdb
+  nameOverride: documentdb
+  strictPasswords: true
+  auth:
+    rootUsername: admin
+    rootPassword: replace-with-a-random-password
+    database: caipe
+
+# Every CAIPE service continues to use the MongoDB wire-protocol variable.
+# DocumentDB Local uses TLS with a self-signed certificate; this example is for
+# an in-cluster development installation. Production deployments should provide
+# a trusted certificate and remove tlsAllowInvalidCertificates.
+dynamic-agents:
+  existingSecret: caipe-documentdb-uri
+
+scheduler:
+  mongo:
+    existingSecret: caipe-documentdb-uri
+    existingSecretKey: MONGODB_URI

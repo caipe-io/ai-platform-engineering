@@ -11,7 +11,10 @@ set -euo pipefail
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
 CAIPE_CHART_VERSION="${CAIPE_CHART_VERSION:-}"
-CAIPE_OCI_REPO="oci://ghcr.io/cnoe-io/charts/ai-platform-engineering"
+# Helm chart OCI registry. Charts publish to ghcr.io/<repo owner>/charts (see
+# .github/workflows/helm.yml), which moved to the caipe-io org — the cnoe-io
+# path is frozen pre-migration at 0.6.0. Override with CAIPE_OCI_REPO.
+CAIPE_OCI_REPO="${CAIPE_OCI_REPO:-oci://ghcr.io/caipe-io/charts/ai-platform-engineering}"
 LANGFUSE_PORT=3100
 DYNAMIC_AGENTS_PORT=8001
 UI_PORT=3000
@@ -30,9 +33,11 @@ NC='\033[0m'
 CLUSTER_NAME=""
 ENABLE_RAG=false
 ENABLE_TRACING=false
-# Dynamic-agent runtime persistence is backed by MongoDB in the baseline stack.
+# Dynamic-agent runtime persistence uses a MongoDB-compatible database.
 # The persistence flags are accepted below for CLI compatibility.
 ENABLE_PERSISTENCE="${ENABLE_PERSISTENCE:-true}"
+DATABASE_PROVIDER="${DATABASE_PROVIDER:-}"
+DOCUMENTDB_IMAGE_TAG="${DOCUMENTDB_IMAGE_TAG:-pg17-0.113.0}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 OPENAI_ENDPOINT="https://api.openai.com/v1"
 OPENAI_MODEL_NAME="gpt-5.2"
@@ -143,6 +148,17 @@ LITELLM_DB_PASSWORD=""
 # LiteLLM unified front: route all chat + embeddings credentials through a single
 # in-cluster LiteLLM proxy (OpenAI-compatible). Set via --litellm.
 LLM_VIA_LITELLM="${LLM_VIA_LITELLM:-false}"
+# Onboard extra models. These SEED two operator-owned objects that setup never
+# regenerates — a later `kubectl edit` / GitOps on them sticks across re-runs:
+#   LITELLM_EXTRA_MODELS_FILE  -> litellm-extra-models ConfigMap (key models.yaml):
+#     raw model_list entries, each `- model_name:` ... authored at column 0.
+#     Appended to the generated model_list every deploy.
+#   LITELLM_UPSTREAM_ENV_FILE  -> litellm-extra-upstream Secret: KEY=VALUE creds
+#     mounted onto the proxy as an optional envFrom, so `api_key:
+#     "os.environ/<KEY>"` refs in the models file resolve.
+# See deploy/kind/litellm-models.example.yaml. Scan with `setup-caipe.sh models`.
+LITELLM_EXTRA_MODELS_FILE="${LITELLM_EXTRA_MODELS_FILE:-}"
+LITELLM_UPSTREAM_ENV_FILE="${LITELLM_UPSTREAM_ENV_FILE:-}"
 # Persist LiteLLM virtual keys / spend tracking in the shared Postgres (opt-in).
 ENABLE_LITELLM_DB="${ENABLE_LITELLM_DB:-false}"
 # Captured at finalize time so the proxy's model_list can be built from the real
@@ -171,11 +187,32 @@ KEYCLOAK_PORT=7080
 OPENFGA_PORT=18080
 INJECT_CORPORATE_CA=false
 CA_SSL_FIX_PROMPTED=false
+SUDO_CONSENT=""   # "", "yes" or "no" — cached answer for _sudo_consent (ask once)
+# Sudo policy, independent of prompt suppression. "" asks (default), "0" denies
+# every sudo step, "1" permits them without asking. Unattended runs need this
+# separate from --yes, because --yes also answers unrelated feature prompts
+# (RAG, Graph RAG, tracing) that default to "n". "0" wins over "1" and --yes.
+# Normalize the environment policy before parsing flags so denial stays binding.
+case "${CAIPE_ALLOW_SUDO:-}" in
+  "") ALLOW_SUDO="" ;;
+  0|[Ff][Aa][Ll][Ss][Ee]) ALLOW_SUDO=0 ;;
+  1|[Tt][Rr][Uu][Ee]) ALLOW_SUDO=1 ;;
+  *)
+    echo "ERROR: CAIPE_ALLOW_SUDO must be 0/false (deny), 1/true (allow), or empty (ask); boolean values are case-insensitive." >&2
+    exit 1
+    ;;
+esac
 RAG_INGESTOR_SECRET_READY=false
 RAG_INGESTOR_OIDC_ISSUER=""
 RAG_INGESTOR_OIDC_CLIENT_ID=""
 LANGFUSE_PUBLIC_KEY=""
 LANGFUSE_SECRET_KEY=""
+# Langfuse Helm chart version. Pinned to the last 1.x release on purpose: the
+# 2.x line hard-requires cert-manager + the ClickHouse operator (ClickHouseCluster
+# / KeeperCluster CRs, ~15 extra pods, 100Gi+ PVCs) and bumps the minimum
+# Kubernetes version — far too heavy for a first-install laptop stack. 1.5.41
+# bundles ClickHouse + MinIO as plain pods. Override with LANGFUSE_CHART_VERSION.
+LANGFUSE_CHART_VERSION="${LANGFUSE_CHART_VERSION:-1.5.41}"
 PF_PIDS=()
 AUTO_YES=false
 NON_INTERACTIVE=false
@@ -192,12 +229,13 @@ ENABLE_METALLB="${ENABLE_METALLB:-true}"
 # ENABLE_INGRESS=false or pass --no-ingress to skip.
 ENABLE_INGRESS="${ENABLE_INGRESS:-true}"
 # Default ingress hostname used when ingress is enabled but no domain is
-# supplied. *.local.me resolves to 127.0.0.1 via public DNS, so this works
+# supplied. *.localtest.me resolves to 127.0.0.1 via public DNS, so this works
 # out-of-the-box on any laptop without /etc/hosts edits.
-CAIPE_DOMAIN_DEFAULT="${CAIPE_DOMAIN_DEFAULT:-caipe.local.me}"
+CAIPE_DOMAIN_DEFAULT="${CAIPE_DOMAIN_DEFAULT:-caipe.localtest.me}"
 CAIPE_DOMAIN=""
 TLS_CERT_FILE=""
 TLS_KEY_FILE=""
+TLS_SELF_SIGNED=false   # true when setup generates the cert (no --tls-cert)
 ENV_FILE=""
 UI_ENV_FILE=""
 COMPOSE_ENV_FILE=""
@@ -291,15 +329,61 @@ tty_read() { read "$@" <&3; }
 # Returns 0 (true) when the user wants to go back — accepts "b", "back", "0"
 _is_back() { local _v; _v="$(echo "$1" | tr '[:upper:]' '[:lower:]')"; [[ "$_v" == "b" || "$_v" == "back" || "$1" == "0" ]]; }
 
+# Sanitise an interactive answer: strip CR/LF/tabs, trim surrounding spaces, and
+# drop a single leading backslash. When run via "curl | bash", prompts are read
+# from /dev/tty while bash still consumes the script on stdin; a stray keystroke
+# (e.g. a shell line-continuation "\") can prepend "\" or a trailing CR to the
+# value, so "1" arrives as "\1". Menu / version / model reads route through here.
+_trim_input() {
+  local s="$1"
+  s="${s//$'\r'/}"; s="${s//$'\n'/}"; s="${s//$'\t'/}"
+  s="${s#"${s%%[![:space:]]*}"}"   # ltrim
+  s="${s%"${s##*[![:space:]]}"}"   # rtrim
+  s="${s#\\}"                      # drop one leading backslash
+  printf '%s' "$s"
+}
+
 ask_yn() {
   local question="$1" default="${2:-y}"
   if $AUTO_YES; then return 0; fi
-  local yn_hint
+  local yn_hint answer
   if [[ "$default" == "y" ]]; then yn_hint="${CYAN}[Y/n]${NC}${BOLD}"; else yn_hint="${CYAN}[y/N]${NC}${BOLD}"; fi
   prompt "$question $yn_hint "
-  tty_read -r answer
+  tty_read -r answer || return 1
   answer="${answer:-$default}"
   [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+# Consent gate for anything that shells out to `sudo`. Returns 0 only after the
+# user explicitly allows it — a working passwordless sudo is NOT treated as
+# permission. The answer is cached for the rest of the run so we prompt once.
+# --yes / AUTO_YES pre-consents (non-interactive convenience).
+# Non-interactive runs without --yes deny sudo without prompting.
+# --no-sudo / CAIPE_ALLOW_SUDO=0 denies outright; --allow-sudo /
+# CAIPE_ALLOW_SUDO=1 permits without prompting. --no-sudo wins over both.
+_sudo_consent() {
+  local reason="${1:-a system change}"
+
+  # Explicit policy denial overrides even a previously cached approval.
+  if [[ "$ALLOW_SUDO" == "0" ]]; then
+    SUDO_CONSENT="no"
+  # Otherwise, preserve the cached answer and resolve consent only once.
+  elif [[ -z "$SUDO_CONSENT" ]]; then
+    # Explicit approval or --yes permits sudo without a consent prompt.
+    if [[ "$ALLOW_SUDO" == "1" ]] || $AUTO_YES; then
+      SUDO_CONSENT="yes"
+    # Unattended execution alone does not authorize sudo.
+    elif $NON_INTERACTIVE; then
+      SUDO_CONSENT="no"
+    # Interactive runs use the user's answer; ask_yn rejects failed reads.
+    elif ask_yn "This step needs sudo (${reason}). Allow this script to run sudo?" "y"; then
+      SUDO_CONSENT="yes"
+    else
+      SUDO_CONSENT="no"
+    fi
+  fi
+
+  [[ "$SUDO_CONSENT" == "yes" ]]
 }
 
 wait_for_pods() {
@@ -433,19 +517,42 @@ kill_port_on() {
 }
 
 # ─── Interactive Setup ───────────────────────────────────────────────────────
+_ensure_local_bin() {
+  mkdir -p "$HOME/.local/bin"
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *)
+      export PATH="$HOME/.local/bin:$PATH"
+      warn 'For future shells, add this to your shell configuration: export PATH="$HOME/.local/bin:$PATH"'
+      ;;
+  esac
+}
+
 _install_kubectl_linux() {
   log "Installing kubectl..."
   local ver
   ver=$(curl -sL https://dl.k8s.io/release/stable.txt)
   curl -sLo /tmp/kubectl "https://dl.k8s.io/release/${ver}/bin/linux/amd64/kubectl"
   chmod +x /tmp/kubectl
-  sudo mv /tmp/kubectl /usr/local/bin/kubectl || mv /tmp/kubectl "$HOME/.local/bin/kubectl"
+  if _sudo_consent "move kubectl into /usr/local/bin" &&
+     sudo mv /tmp/kubectl /usr/local/bin/kubectl; then
+    :
+  else
+    _ensure_local_bin && mv /tmp/kubectl "$HOME/.local/bin/kubectl"
+  fi
   log "kubectl ${ver} installed"
 }
 
 _install_helm_linux() {
   log "Installing helm..."
-  curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash &>/dev/null
+  local use_sudo=true install_dir=/usr/local/bin
+  if ! _sudo_consent "install Helm into /usr/local/bin"; then
+    use_sudo=false
+    install_dir="$HOME/.local/bin"
+    _ensure_local_bin
+  fi
+  curl -sfL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
+    | USE_SUDO="$use_sudo" HELM_INSTALL_DIR="$install_dir" bash &>/dev/null
   log "helm installed"
 }
 
@@ -496,11 +603,8 @@ _install_jq_linux() {
       sudo dnf install -y jq &>/dev/null
       ;;
     *)
-      local ver
-      ver=$(curl -sL https://api.github.com/repos/jqlang/jq/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
-      curl -sLo /tmp/jq "https://github.com/jqlang/jq/releases/download/${ver}/jq-linux-amd64"
-      chmod +x /tmp/jq
-      sudo mv /tmp/jq /usr/local/bin/jq || mv /tmp/jq "$HOME/.local/bin/jq"
+      err "Cannot auto-install jq on distro '${os_id}' — install it with your distro's package manager and re-run"
+      return 1
       ;;
   esac
   log "jq installed"
@@ -512,7 +616,12 @@ _install_kind_linux() {
   ver=$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
   curl -sLo /tmp/kind "https://kind.sigs.k8s.io/dl/${ver}/kind-linux-amd64"
   chmod +x /tmp/kind
-  sudo mv /tmp/kind /usr/local/bin/kind || mv /tmp/kind "$HOME/.local/bin/kind"
+  if _sudo_consent "move kind into /usr/local/bin" &&
+     sudo mv /tmp/kind /usr/local/bin/kind; then
+    :
+  else
+    _ensure_local_bin && mv /tmp/kind "$HOME/.local/bin/kind"
+  fi
   log "kind ${ver} installed"
 }
 
@@ -525,13 +634,23 @@ _install_kind_macos() {
     ver=$(curl -sL https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
     curl -sLo /tmp/kind "https://kind.sigs.k8s.io/dl/${ver}/kind-darwin-arm64"
     chmod +x /tmp/kind
-    sudo mv /tmp/kind /usr/local/bin/kind || mv /tmp/kind "$HOME/.local/bin/kind"
+    if _sudo_consent "move kind into /usr/local/bin" &&
+       sudo mv /tmp/kind /usr/local/bin/kind; then
+      :
+    else
+      _ensure_local_bin && mv /tmp/kind "$HOME/.local/bin/kind"
+    fi
     log "kind ${ver} installed"
   fi
 }
 
 
 _install_docker_linux() {
+  if ! _sudo_consent "install Docker Engine and configure system access"; then
+    err "Automatic Docker installation requires sudo."
+    err "Install Docker manually: https://docs.docker.com/engine/install/ and re-run this script."
+    return 1
+  fi
   log "Installing Docker..."
   local os_id
   os_id=$(. /etc/os-release && echo "$ID")
@@ -581,6 +700,11 @@ _install_docker_macos() {
     exit 0
   fi
   if command -v brew &>/dev/null; then
+    if ! _sudo_consent "install Docker Desktop with Homebrew, which may require privileged system changes"; then
+      err "Automatic Docker Desktop installation requires permission to use sudo."
+      err "Install Docker Desktop manually: https://docs.docker.com/desktop/mac/install/ and re-run this script."
+      return 1
+    fi
     brew install --cask docker
     log "Docker Desktop installed — open the Docker app to complete setup, then re-run this script"
     exit 0
@@ -622,24 +746,42 @@ _check_kubeconfig() {
 }
 
 _check_docker_access() {
-  # Docker binary present but socket not accessible without sudo
-  if command -v docker &>/dev/null && ! docker info &>/dev/null 2>&1; then
-    if sudo docker info &>/dev/null 2>&1; then
-      warn "Docker is running but your user (${USER}) cannot reach the socket."
-      if ! groups | grep -qw docker; then
-        if ask_yn "Add ${USER} to the 'docker' group so kind can use Docker?" "y"; then
-          sudo usermod -aG docker "$USER"
-          warn "Done — open a new terminal (or run 'newgrp docker'), then re-run this script."
-        else
-          warn "Skipped — you can run the script with 'sudo' or add yourself manually:"
-          warn "  sudo usermod -aG docker \$USER && newgrp docker"
-        fi
+  # Only relevant when the daemon can't be reached as the current user.
+  command -v docker &>/dev/null || return 0
+  docker info &>/dev/null 2>&1 && return 0
+
+  # macOS/Windows: Docker Desktop is per-user, never root-socket based — a
+  # failing `docker info` means the daemon isn't up, and `sudo docker` cannot
+  # fix it. Never prompt for a password here.
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    err "Docker does not appear to be running (\`docker info\` failed)."
+    err "Start Docker Desktop, wait until \`docker info\` succeeds, then re-run."
+    exit 1
+  fi
+
+  # Linux: the daemon may be up but the socket unreadable by this user. Only
+  # probe with sudo after explicit consent (a working passwordless sudo is not
+  # permission). If the user declines, fall through with a manual hint.
+  if ! _sudo_consent "check whether Docker is reachable via sudo"; then
+    warn "Cannot verify Docker socket access without sudo."
+    warn "If kind fails, add yourself to the 'docker' group: sudo usermod -aG docker \$USER && newgrp docker"
+    return 0
+  fi
+  if sudo docker info &>/dev/null 2>&1; then
+    warn "Docker is running but your user (${USER}) cannot reach the socket."
+    if ! groups | grep -qw docker; then
+      if ask_yn "Add ${USER} to the 'docker' group so kind can use Docker?" "y"; then
+        sudo usermod -aG docker "$USER"
+        warn "Done — open a new terminal (or run 'newgrp docker'), then re-run this script."
       else
-        warn "You are in the 'docker' group but this shell session predates the change."
-        warn "Open a new terminal (or run 'newgrp docker'), then re-run this script."
+        warn "Skipped — you can run the script with 'sudo' or add yourself manually:"
+        warn "  sudo usermod -aG docker \$USER && newgrp docker"
       fi
-      exit 0
+    else
+      warn "You are in the 'docker' group but this shell session predates the change."
+      warn "Open a new terminal (or run 'newgrp docker'), then re-run this script."
     fi
+    exit 0
   fi
 }
 
@@ -667,16 +809,10 @@ check_prerequisites() {
         esac
       done
 
-      # If any tools need sudo, check whether sudo is usable and user consents
+      # If any tools need sudo, get explicit consent first (a working
+      # passwordless sudo does not imply permission).
       if [[ ${#needs_sudo[@]} -gt 0 ]]; then
-        local sudo_ok=false
-        if sudo -n true 2>/dev/null; then
-          sudo_ok=true
-        elif ask_yn "Installing ${needs_sudo[*]} requires sudo. Allow this script to run sudo?" "y"; then
-          sudo_ok=true
-        fi
-
-        if [[ "$sudo_ok" == false ]]; then
+        if ! _sudo_consent "install ${needs_sudo[*]}"; then
           warn "Cannot install ${needs_sudo[*]} without sudo."
           warn "Please run the following command(s) on your machine first, then re-run this script:"
           warn ""
@@ -699,8 +835,7 @@ check_prerequisites() {
       fi
 
       log "Auto-installing missing tools on Linux: ${missing[*]}"
-      mkdir -p "$HOME/.local/bin"
-      export PATH="$HOME/.local/bin:$PATH"
+      _ensure_local_bin
       for tool in "${missing[@]}"; do
         case "$tool" in
           kubectl) _install_kubectl_linux ;;
@@ -765,13 +900,7 @@ check_prerequisites() {
   # k9s — optional but strongly recommended; auto-install if missing
   if ! command -v k9s &>/dev/null; then
     if [[ "$(uname -s)" == "Linux" ]]; then
-      local _k9s_sudo_ok=false
-      if sudo -n true 2>/dev/null; then
-        _k9s_sudo_ok=true
-      elif ask_yn "Installing k9s (Kubernetes TUI) requires sudo. Allow?" "y"; then
-        _k9s_sudo_ok=true
-      fi
-      if [[ "$_k9s_sudo_ok" == true ]]; then
+      if _sudo_consent "install k9s (Kubernetes TUI)"; then
         log "Installing k9s (Kubernetes TUI)..."
         local _k9s_url
         _k9s_url=$(curl -s https://api.github.com/repos/derailed/k9s/releases/latest \
@@ -881,9 +1010,10 @@ choose_cluster() {
   local default_choice=1
   prompt "Select an option ${CYAN}[${default_choice}]${NC}${BOLD}: "
   tty_read -r choice
+  choice="$(_trim_input "$choice")"
   choice="${choice:-$default_choice}"
 
-  if [[ "$choice" -lt 1 || "$choice" -gt "${#options[@]}" ]]; then
+  if [[ ! "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 || "$choice" -gt "${#options[@]}" ]]; then
     err "Invalid choice"
     exit 1
   fi
@@ -907,11 +1037,55 @@ choose_cluster() {
           exit 1
         fi
       fi
-      prompt "Enter a name for the new cluster ${CYAN}[caipe]${NC}${BOLD}: "
-      tty_read -r CLUSTER_NAME
-      CLUSTER_NAME="${CLUSTER_NAME:-caipe}"
-      log "Creating Kind cluster '${CLUSTER_NAME}'..."
-      kind create cluster --name "$CLUSTER_NAME" </dev/null
+      # `kind create cluster` fails hard ("node(s) already exist for a cluster
+      # with the name ...") when the name is taken, which aborts the whole
+      # script under `set -e`. Detect the collision first and let the user
+      # reuse / recreate / rename instead.
+      local _want _existing
+      while :; do
+        prompt "Enter a name for the new cluster ${CYAN}[caipe]${NC}${BOLD}: "
+        tty_read -r _want
+        _want="$(_trim_input "$_want")"
+        _want="${_want:-caipe}"
+
+        if kind get clusters 2>/dev/null | grep -qxF "$_want"; then
+          warn "A Kind cluster named '${_want}' already exists."
+          echo -e "    ${BOLD}1)${NC} Reuse it"
+          echo -e "    ${BOLD}2)${NC} Delete and recreate it  ${DIM}(destroys everything in it)${NC}"
+          echo -e "    ${BOLD}3)${NC} Pick a different name"
+          prompt "Select an option ${CYAN}[1]${NC}${BOLD}: "
+          tty_read -r _existing
+          _existing="$(_trim_input "$_existing")"
+          case "${_existing:-1}" in
+            1)
+              CLUSTER_NAME="$_want"
+              kubectl config use-context "kind-${CLUSTER_NAME}" 2>/dev/null \
+                || kind export kubeconfig --name "$CLUSTER_NAME" 2>/dev/null || true
+              log "Reusing existing Kind cluster '${CLUSTER_NAME}'"
+              break
+              ;;
+            2)
+              log "Deleting Kind cluster '${_want}'..."
+              kind delete cluster --name "$_want" \
+                || { err "Could not delete Kind cluster '${_want}'"; return 1; }
+              CLUSTER_NAME="$_want"
+              ;;
+            3) continue ;;
+            *) warn "Enter 1, 2, or 3."; continue ;;
+          esac
+        else
+          CLUSTER_NAME="$_want"
+        fi
+
+        # Reached with a fresh name, or after deleting the old cluster.
+        log "Creating Kind cluster '${CLUSTER_NAME}'..."
+        if ! kind create cluster --name "$CLUSTER_NAME" </dev/null; then
+          err "Kind cluster creation failed for '${CLUSTER_NAME}'."
+          if ask_yn "Try a different name?" "y"; then continue; fi
+          return 1
+        fi
+        break
+      done
       kubectl config use-context "kind-${CLUSTER_NAME}" 2>/dev/null || true
       log "Context set to kind-${CLUSTER_NAME}"
       ;;
@@ -1000,7 +1174,7 @@ choose_chart_version() {
   if command -v crane &>/dev/null; then
     while IFS= read -r v; do
       [[ -n "$v" ]] && versions+=("$v")
-    done < <(crane ls ghcr.io/cnoe-io/charts/ai-platform-engineering 2>/dev/null | sort -Vr | head -10)
+    done < <(crane ls "${CAIPE_OCI_REPO#oci://}" 2>/dev/null | sort -Vr | head -10)
   fi
 
   if [[ ${#versions[@]} -eq 0 && -n "$versions_raw" ]]; then
@@ -1012,45 +1186,71 @@ choose_chart_version() {
     warn "Could not fetch version list; using known default"
   fi
 
-  if [[ ${#versions[@]} -eq 1 ]]; then
-    echo -e "  ${DIM}Latest version: ${versions[0]}${NC}"
-    prompt "Chart version ${CYAN}[${versions[0]}]${NC} (or 'b' to go back)${BOLD}: "
-    tty_read -r input
-    if _is_back "$input"; then return 1; fi
-    CAIPE_CHART_VERSION="${input:-${versions[0]}}"
-  else
-    echo -e "  ${DIM}Available versions (most recent first):${NC}"
-    echo -e "    ${BOLD}0)${NC} ${DIM}← Back to previous step${NC}"
-    local i=1
-    for v in "${versions[@]}"; do
-      if [[ $i -eq 1 ]]; then
-        echo -e "    ${BOLD}${i})${NC} $v  ${DIM}(latest)${NC}"
-      else
-        echo -e "    ${BOLD}${i})${NC} $v"
-      fi
-      i=$((i + 1))
-    done
-    echo -e "    ${BOLD}${i})${NC} Enter a custom version"
-
-    prompt "Select a version ${CYAN}[1]${NC}${BOLD}: "
-    tty_read -r choice
-    choice="${choice:-1}"
-    if _is_back "$choice"; then return 1; fi
-
-    if [[ "$choice" -eq "$i" ]]; then
-      prompt "Enter chart version: "
-      tty_read -r CAIPE_CHART_VERSION
-      if [[ -z "$CAIPE_CHART_VERSION" ]]; then
-        err "Version is required"
-        exit 1
-      fi
-    elif [[ "$choice" -ge 1 && "$choice" -lt "$i" ]]; then
-      CAIPE_CHART_VERSION="${versions[$((choice - 1))]}"
+  # Resolve one value into CAIPE_CHART_VERSION. Any free-form entry (custom
+  # version, or an override typed at the single-version prompt) is checked
+  # against the OCI registry so a version that does not exist can't sail
+  # through to a failing `helm upgrade --install caipe --version <x>` later.
+  local _picked=""
+  while [[ -z "$_picked" ]]; do
+    if [[ ${#versions[@]} -eq 1 ]]; then
+      echo -e "  ${DIM}Latest version: ${versions[0]}${NC}"
+      prompt "Chart version ${CYAN}[${versions[0]}]${NC} (or 'b' to go back)${BOLD}: "
+      tty_read -r input
+      input="${input//[$'\t\r\n ']/}"; input="${input#\\}"
+      if _is_back "$input"; then return 1; fi
+      _picked="${input:-${versions[0]}}"
     else
-      err "Invalid choice"
-      exit 1
+      echo -e "  ${DIM}Available versions (most recent first):${NC}"
+      echo -e "    ${BOLD}0)${NC} ${DIM}← Back to previous step${NC}"
+      local i=1
+      for v in "${versions[@]}"; do
+        if [[ $i -eq 1 ]]; then
+          echo -e "    ${BOLD}${i})${NC} $v  ${DIM}(latest)${NC}"
+        else
+          echo -e "    ${BOLD}${i})${NC} $v"
+        fi
+        i=$((i + 1))
+      done
+      echo -e "    ${BOLD}${i})${NC} Enter a custom version"
+
+      prompt "Select a version ${CYAN}[1]${NC}${BOLD}: "
+      tty_read -r choice
+      choice="${choice//[$'\t\r\n ']/}"; choice="${choice#\\}"
+      choice="${choice:-1}"
+      if _is_back "$choice"; then return 1; fi
+
+      if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
+        warn "Enter a number between 0 and ${i}."
+        continue
+      fi
+      if [[ "$choice" -eq "$i" ]]; then
+        prompt "Enter chart version: "
+        tty_read -r input
+        _picked="${input//[$'\t\r\n ']/}"; _picked="${_picked#\\}"
+        if [[ -z "$_picked" ]]; then
+          warn "Version is required."
+          continue
+        fi
+      elif [[ "$choice" -ge 1 && "$choice" -lt "$i" ]]; then
+        _picked="${versions[$((choice - 1))]}"
+      else
+        warn "Enter a number between 0 and ${i}."
+        continue
+      fi
     fi
-  fi
+
+    # Menu picks come from the registry already; only validate free-form values.
+    if [[ " ${versions[*]} " != *" ${_picked} "* ]]; then
+      if ! helm show chart "$CAIPE_OCI_REPO" --version "$_picked" &>/dev/null; then
+        warn "Chart version '${_picked}' was not found in ${CAIPE_OCI_REPO}."
+        if ! ask_yn "Use it anyway?" "n"; then
+          _picked=""
+          continue
+        fi
+      fi
+    fi
+  done
+  CAIPE_CHART_VERSION="$_picked"
 
   log "Using chart version ${CAIPE_CHART_VERSION}"
 }
@@ -1110,7 +1310,7 @@ collect_credentials() {
       ENABLE_OLLAMA=false
 
       echo ""
-      echo -e "  ${DIM}Select your LLM provider (powered by cnoe-agent-utils LLMFactory):${NC}"
+      echo -e "  ${DIM}Select your LLM provider:${NC}"
       echo -e "    ${BOLD}0)${NC} ${DIM}← Back to previous step${NC}"
       echo -e "    ${BOLD}1)${NC} Ollama            ${DIM}(in-cluster: qwen3:0.6b, qwen2.5:1.5b, lfm2.5, arcee-ai/arcee-agent, etc.) — default${NC}"
       echo -e "    ${BOLD}2)${NC} Anthropic Claude  ${DIM}(claude-haiku-4-5, claude-sonnet-4, etc.)${NC}"
@@ -1575,7 +1775,17 @@ _collect_ollama_config() {
     echo -e "  ${DIM}arcee-ai/arcee-agent: https://ollama.com/arcee-ai/arcee-agent${NC}"
     prompt "Ollama model to use ${CYAN}[${OLLAMA_MODEL}]${NC}${BOLD}: "
     tty_read -r input
+    input="$(_trim_input "$input")"
     OLLAMA_MODEL="${input:-$OLLAMA_MODEL}"
+
+    # Soft validation only — the Ollama init container can pull anything from the
+    # registry, but a typo here costs a multi-GB pull and a crash-looping agent
+    # before it's noticed. Warn on an unrecognised name and echo the final value.
+    local _known_ollama=" qwen3:0.6b qwen3:1.7b qwen2.5:1.5b lfm2.5 arcee-ai/arcee-agent qwen2.5:7b qwen2.5:14b mistral:7b ministral3:3b phi4-mini smollm2:1.7b smollm2:360m smollm2:135m gemma3 llama3.2 "
+    if [[ "$_known_ollama" != *" ${OLLAMA_MODEL} "* ]]; then
+      warn "'${OLLAMA_MODEL}' is not in the suggested model list — will attempt to pull it as-is."
+    fi
+    log "Ollama model: ${OLLAMA_MODEL}"
   fi
 
   # Ollama runs in-cluster; use the FQDN so DNS resolution works regardless of
@@ -1881,8 +2091,16 @@ install_nginx_ingress() {
   # This whole block is Linux-only: it relies on `hostname -I`, /proc/sys, and
   # iptables, none of which exist on macOS. On Docker Desktop (macOS) the kind
   # network is not routable from the host regardless, so external DNAT can't
-  # work — local access is via `*.local.me` → 127.0.0.1 and/or port-forward.
+  # work — local access is via `*.localtest.me` → 127.0.0.1 and/or port-forward.
   if $ENABLE_METALLB && [[ -n "$CAIPE_DOMAIN" ]] && [[ "$(uname -s)" == "Linux" ]]; then
+    if ! _sudo_consent "configure ingress host networking, /etc/hosts, and persistence across reboots"; then
+      warn "Skipped host routing, /etc/hosts changes, and ingress persistence because sudo was declined."
+      warn "The Kubernetes ingress controller is installed, but external access and local domain resolution may require manual configuration."
+      warn "For local access, run: kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8443:443"
+      warn "Then test with: curl --resolve '${CAIPE_DOMAIN}:8443:127.0.0.1' 'https://${CAIPE_DOMAIN}:8443/'"
+      warn "For external access, configure host IP forwarding, firewall/NAT rules to ${ingress_ip}, domain resolution, and reboot persistence manually."
+      return 0
+    fi
     # DNAT requires IP forwarding to be enabled at runtime — not just in sysctl.conf.
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]]; then
       sudo sysctl -w net.ipv4.ip_forward=1 &>/dev/null \
@@ -1966,7 +2184,7 @@ install_nginx_ingress() {
     _persist_iptables "$ingress_ip"
 
     # Update /etc/hosts so local health-check curls (run_validation, sanity tests)
-    # resolve the domain to the MetalLB IP directly, bypassing the *.local.me →
+    # resolve the domain to the MetalLB IP directly, bypassing the *.localtest.me →
     # 127.0.0.1 special-domain default. Idempotent: removes stale entry first.
     if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
       local _hosts_marker="# caipe-ingress"
@@ -1975,13 +2193,17 @@ install_nginx_ingress() {
         && log "/etc/hosts: ${CAIPE_DOMAIN} → ${ingress_ip} (local health-check resolution)"
     fi
   elif $ENABLE_METALLB && [[ "$(uname -s)" != "Linux" ]]; then
-    log "Skipping iptables DNAT (non-Linux host) — use port-forward or *.local.me → 127.0.0.1 for local access"
+    log "Skipping iptables DNAT (non-Linux host) — use port-forward or *.localtest.me → 127.0.0.1 for local access"
   fi
 }
 
 # Persist iptables rules across reboots (no iptables-persistent package needed).
 _persist_iptables() {
   local ingress_ip="$1"
+  if ! _sudo_consent "persist ingress networking and install the iptables restore service"; then
+    warn "Skipped ingress persistence because sudo was declined; networking and container restart settings were not changed."
+    return 0
+  fi
 
   # 1. Ensure ip_forward=1 survives reboot via sysctl.conf.
   if sudo grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf 2>/dev/null; then
@@ -2071,7 +2293,7 @@ setup_tls() {
     # Always announce self-signed up-front, even if the interactive flow
     # already did — duplication is cheap and makes scripted/CI runs honest.
     local _reason=""
-    [[ "$CAIPE_DOMAIN" == *.local.me ]] && _reason="*.local.me has no public CA"
+    [[ "$CAIPE_DOMAIN" == *.localtest.me ]] && _reason="*.localtest.me has no public CA"
     _announce_self_signed "${CAIPE_DOMAIN}" "${_reason}"
     log "Generating self-signed certificate for ${CAIPE_DOMAIN}"
     # Trailing X's only: BSD mktemp (macOS) treats any chars after the X's as a
@@ -2091,6 +2313,7 @@ setup_tls() {
       -subj "/CN=${CAIPE_DOMAIN}/O=CAIPE" \
       -addext "subjectAltName=${_san}" \
       2>/dev/null
+    TLS_SELF_SIGNED=true
     log "Self-signed cert generated (valid 365 days)"
   fi
 
@@ -2194,6 +2417,8 @@ _choose_agents() {
 choose_features() {
   step "Feature selection"
 
+  _choose_database_provider
+
   echo -e "  ${DIM}Base setup always includes: dynamic agents runtime and NetUtils agent${NC}"
 
   if $NON_INTERACTIVE; then
@@ -2209,13 +2434,13 @@ choose_features() {
     $ENABLE_TRACING && log "Tracing enabled (--tracing)" || log "Tracing skipped (pass --tracing to enable)"
     log "AgentGateway enabled (required)"
     log "RBAC runtime enabled (required — Keycloak + OpenFGA)"
-    log "Dynamic-agent persistence uses caipe-mongodb"
+    log "Dynamic-agent persistence uses $(_database_service_name) (${DATABASE_PROVIDER})"
     log "Dynamic Agents runtime included"
     $ENABLE_METALLB && log "MetalLB enabled (default; pass --no-metallb to skip)" || log "MetalLB disabled (--no-metallb)"
     if $ENABLE_INGRESS; then
       if [[ -z "$CAIPE_DOMAIN" ]]; then
         CAIPE_DOMAIN="$CAIPE_DOMAIN_DEFAULT"
-        log "Ingress enabled with default domain: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.local.me; override with --domain=<hostname>)"
+        log "Ingress enabled with default domain: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.localtest.me; override with --domain=<hostname>)"
       else
         log "Ingress enabled for domain: ${CAIPE_DOMAIN} (--ingress --domain)"
       fi
@@ -2825,7 +3050,7 @@ choose_features() {
   log "RBAC runtime enabled (required — Keycloak + OpenFGA + ext_authz)"
 
   echo ""
-  echo -e "  ${DIM}Dynamic-agent checkpoints use the caipe-mongodb service in the baseline stack.${NC}"
+  echo -e "  ${DIM}Dynamic-agent checkpoints use the selected MongoDB-compatible database.${NC}"
 
   echo ""
   echo -e "  ${DIM}MetalLB provides real LoadBalancer IPs for kind clusters. Required for ingress.${NC}"
@@ -2845,16 +3070,16 @@ choose_features() {
       if [[ -z "$CAIPE_DOMAIN" ]]; then
         CAIPE_DOMAIN="$CAIPE_DOMAIN_DEFAULT"
         _used_default_domain=true
-        log "No hostname provided — using default: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.local.me)"
+        log "No hostname provided — using default: ${CAIPE_DOMAIN} (resolves to 127.0.0.1 via *.localtest.me)"
       fi
       log "Ingress enabled for: ${CAIPE_DOMAIN}"
 
       echo ""
       if $_used_default_domain; then
-        # Local-dev default (*.local.me) — no public cert authority will
+        # Local-dev default (*.localtest.me) — no public cert authority will
         # issue for this, so always self-sign and skip the auto-detect /
         # manual prompt flow entirely.
-        _announce_self_signed "${CAIPE_DOMAIN}" "default hostname — no public CA can issue for *.local.me"
+        _announce_self_signed "${CAIPE_DOMAIN}" "default hostname — no public CA can issue for *.localtest.me"
       else
         # Auto-detect certs in common locations
         local _auto_cert="" _auto_key=""
@@ -2954,6 +3179,63 @@ _env_true() {
   local val
   val=$(echo "$1" | tr '[:upper:]' '[:lower:]')
   [[ "$val" == "true" || "$val" == "yes" || "$val" == "1" ]]
+}
+
+_choose_database_provider() {
+  local env_file="${1:-}"
+  if [[ -z "${DATABASE_PROVIDER:-}" && -n "$env_file" && -f "$env_file" ]]; then
+    DATABASE_PROVIDER=$(_env_get "$env_file" DATABASE_PROVIDER)
+  fi
+
+  if [[ -z "${DATABASE_PROVIDER:-}" ]]; then
+    if $NON_INTERACTIVE; then
+      DATABASE_PROVIDER="mongodb"
+    else
+      echo ""
+      echo -e "  ${BOLD}Choose the document database${NC}"
+      echo -e "    ${CYAN}1)${NC} MongoDB ${DIM}(default)${NC}"
+      echo -e "    ${CYAN}2)${NC} DocumentDB ${DIM}(MIT-licensed, PostgreSQL-backed)${NC}"
+      prompt "Select database [1]: "
+      local choice
+      tty_read -r choice
+      case "${choice:-1}" in
+        1|mongodb|mongo) DATABASE_PROVIDER="mongodb" ;;
+        2|documentdb|docdb) DATABASE_PROVIDER="documentdb" ;;
+        *) err "Unknown database provider '${choice}'"; exit 1 ;;
+      esac
+    fi
+  fi
+
+  DATABASE_PROVIDER=$(echo "$DATABASE_PROVIDER" | tr '[:upper:]' '[:lower:]')
+  case "$DATABASE_PROVIDER" in
+    mongodb|documentdb) ;;
+    *) err "DATABASE_PROVIDER must be 'mongodb' or 'documentdb' (got '${DATABASE_PROVIDER}')"; exit 1 ;;
+  esac
+  log "Database provider: ${DATABASE_PROVIDER}"
+}
+
+_database_service_name() {
+  [[ "${DATABASE_PROVIDER:-mongodb}" == "documentdb" ]] \
+    && echo "caipe-documentdb" \
+    || echo "caipe-mongodb"
+}
+
+_database_secret_name() {
+  [[ "${DATABASE_PROVIDER:-mongodb}" == "documentdb" ]] \
+    && echo "caipe-documentdb-credentials" \
+    || echo "caipe-mongodb-credentials"
+}
+
+_database_uri() {
+  local password="${1:-${MONGODB_ROOT_PASSWORD:-MONGODB_ROOT_PASSWORD_UNSET}}"
+  local username="${2:-admin}"
+  local service
+  service=$(_database_service_name)
+  if [[ "${DATABASE_PROVIDER:-mongodb}" == "documentdb" ]]; then
+    echo "mongodb://${username}:${password}@${service}:10260/caipe?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true"
+  else
+    echo "mongodb://${username}:${password}@${service}:27017/caipe?authSource=caipe"
+  fi
 }
 
 _compose_env_file() {
@@ -3307,7 +3589,8 @@ _write_bot_values() {
   local values_file
   values_file=$(mktemp /tmp/caipe-bot-values-XXXXXX)
   local _mongo_pw="${MONGODB_ROOT_PASSWORD:-MONGODB_ROOT_PASSWORD_UNSET}"
-  local _mongo_uri="mongodb://admin:${_mongo_pw}@caipe-mongodb:27017/caipe?authSource=caipe"
+  local _mongo_uri
+  _mongo_uri=$(_database_uri "$_mongo_pw")
   local _kc="http://caipe-keycloak:8080"
   local _issuer="${_kc}/realms/caipe"
 
@@ -3733,7 +4016,15 @@ deploy_langfuse() {
   minio_pw=$(openssl rand -hex 16)
   log "Generated Langfuse secrets"
 
-  helm upgrade --install langfuse langfuse/langfuse -n langfuse \
+  # Pin the chart version (LANGFUSE_CHART_VERSION) and DO NOT swallow stderr: a
+  # failed langfuse install must be visible and must return non-zero so the
+  # caller can continue without tracing instead of aborting the whole install
+  # under `set -e`. (Prior behaviour: `&>/dev/null` + unguarded call meant an
+  # optional observability add-on silently killed the entire deploy.)
+  local _lf_log
+  _lf_log=$(mktemp)
+  if ! helm upgrade --install langfuse langfuse/langfuse -n langfuse \
+    --version "$LANGFUSE_CHART_VERSION" \
     --set langfuse.salt.value="$salt" \
     --set langfuse.encryptionKey.value="$enc_key" \
     --set langfuse.nextauth.secret.value="$nextauth_secret" \
@@ -3743,10 +4034,16 @@ deploy_langfuse() {
     --set s3.accessKeyId.value=minio \
     --set s3.secretAccessKey.value="$minio_pw" \
     --set s3.auth.rootUser=minio \
-    --set s3.auth.rootPassword="$minio_pw" &>/dev/null
-  log "Langfuse Helm release deployed"
+    --set s3.auth.rootPassword="$minio_pw" >"$_lf_log" 2>&1; then
+    err "Langfuse Helm install failed (chart ${LANGFUSE_CHART_VERSION}):"
+    sed 's/^/    /' "$_lf_log" >&2
+    rm -f "$_lf_log"
+    return 1
+  fi
+  rm -f "$_lf_log"
+  log "Langfuse Helm release deployed (chart ${LANGFUSE_CHART_VERSION})"
 
-  wait_for_pods langfuse 420
+  wait_for_pods langfuse 420 || return 1
 }
 
 create_langfuse_api_keys() {
@@ -4108,6 +4405,19 @@ post_deploy_patches() {
     else
       log "rag-server: No OIDC config found in caipe-ui-secret — skipping OIDC patch (no-SSO deployment)"
     fi
+
+    # Self-signed cert: pin rag-server's OIDC discovery / JWKS to the in-cluster
+    # HTTP Keycloak so token validation (ui + ingestor providers) doesn't fetch
+    # from the untrusted public https issuer and 500 on CERTIFICATE_VERIFY_FAILED.
+    if [[ "${TLS_SELF_SIGNED:-false}" == true ]]; then
+      local _kc_int="http://caipe-keycloak:8080/realms/caipe"
+      kubectl set env deployment/rag-server -n caipe \
+        OIDC_DISCOVERY_URL="${_kc_int}/.well-known/openid-configuration" \
+        OIDC_JWKS_URL="${_kc_int}/protocol/openid-connect/certs" \
+        INGESTOR_OIDC_DISCOVERY_URL="${_kc_int}/.well-known/openid-configuration" \
+        INGESTOR_OIDC_JWKS_URL="${_kc_int}/protocol/openid-connect/certs" &>/dev/null \
+        && log "rag-server: OIDC discovery/JWKS pinned to in-cluster Keycloak (self-signed cert)"
+    fi
   fi
 
   # ── 6. caipe-ui: raise Node.js HTTP header size limit ──
@@ -4122,6 +4432,36 @@ post_deploy_patches() {
     kubectl set env deployment/caipe-caipe-ui -n caipe \
       NODE_OPTIONS="--max-http-header-size=65536" &>/dev/null \
       && log "caipe-ui: NODE_OPTIONS set to --max-http-header-size=65536"
+  fi
+
+  # ── 6b. caipe-ui: trust the generated self-signed cert for server-side OIDC ──
+  # NextAuth does the OIDC token exchange / JWKS fetch server-side against the
+  # public HTTPS domain (KC_HOSTNAME). With a setup-generated self-signed cert
+  # Node.js rejects it (DEPTH_ZERO_SELF_SIGNED_CERT -> OAUTH_CALLBACK_ERROR) and
+  # login silently bounces back to the sign-in page. Local dev only — skipped
+  # entirely when a real cert was supplied via --tls-cert.
+  if [[ "${TLS_SELF_SIGNED:-false}" == true ]]; then
+    kubectl set env deployment/caipe-caipe-ui -n caipe \
+      NODE_TLS_REJECT_UNAUTHORIZED=0 &>/dev/null \
+      && log "caipe-ui: NODE_TLS_REJECT_UNAUTHORIZED=0 (self-signed cert, local dev only)"
+  fi
+
+  # ── 6c. dynamic-agents: point CAS agent-use checks at the BFF ──
+  # The 1.0.0 chart's dynamic-agents deployment ships no AUTHZ_SERVICE_URL, so
+  # every RBAC-gated agent call hits `AUTHZ_SERVICE_URL is not configured` and
+  # returns 503 PDP_UNAVAILABLE (chat + agent-builder test are unusable). main
+  # (-> 1.0.1) adds the env with a `http://<release>-caipe-ui:3000` default;
+  # backfill it here for 1.0.0. Harmless once the chart sets it.
+  if $ENABLE_RBAC_RUNTIME; then
+    local _cur_authz
+    _cur_authz=$(kubectl get deployment caipe-dynamic-agents -n caipe \
+      -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="AUTHZ_SERVICE_URL")].value}' \
+      2>/dev/null || true)
+    if [[ -z "$_cur_authz" ]]; then
+      kubectl set env deployment/caipe-dynamic-agents -n caipe \
+        AUTHZ_SERVICE_URL="http://caipe-caipe-ui:3000" &>/dev/null \
+        && log "dynamic-agents: AUTHZ_SERVICE_URL set to http://caipe-caipe-ui:3000 (1.0.0 chart gap)"
+    fi
   fi
 
   # ── 7. MongoDB for dynamic-agents ──
@@ -4421,7 +4761,7 @@ JSON
 # Update caipe-ui and caipe-platform Keycloak client redirect URIs, web origins,
 # and root URL to match CAIPE_DOMAIN. Keycloak imports the realm once at first
 # install; the imported URIs are never updated by helm upgrade, so a domain
-# change (e.g. caipe.local.me → caipe.example.com) leaves stale URIs
+# change (e.g. caipe.localtest.me → caipe.example.com) leaves stale URIs
 # that cause "Invalid parameter: redirect_uri" on login.
 update_keycloak_client_urls() {
   $ENABLE_RBAC_RUNTIME || return 0
@@ -4919,24 +5259,30 @@ PGINIT
 }
 
 _resolve_mongodb_password() {
-  local existing_pw
-  existing_pw=$(kubectl get secret caipe-mongodb-credentials -n caipe \
+  local existing_pw secret_name provider
+  provider="${DATABASE_PROVIDER:-mongodb}"
+  if [[ "$provider" == "documentdb" ]]; then
+    secret_name="caipe-documentdb-credentials"
+  else
+    secret_name="caipe-mongodb-credentials"
+  fi
+  existing_pw=$(kubectl get secret "$secret_name" -n caipe \
     -o jsonpath='{.data.MONGODB_ROOT_PASSWORD}' 2>/dev/null \
     | base64 -d 2>/dev/null || true)
   if [[ -n "$existing_pw" ]]; then
     MONGODB_ROOT_PASSWORD="$existing_pw"
-    log "Reusing existing MongoDB root password from caipe-mongodb-credentials Secret"
+    log "Reusing existing ${provider} password from ${secret_name} Secret"
   else
     # `openssl rand -hex 24` → 48 hex chars (24 bytes of entropy). Hex
     # avoids any character that would need URL-encoding inside the
     # MONGODB_URI connection string (no '@', '/', ':', '?', etc.).
     MONGODB_ROOT_PASSWORD="$(openssl rand -hex 24)"
-    log "Generated random MongoDB root password"
+    log "Generated random ${provider} password"
   fi
   # Persist (or refresh) the Secret so re-runs reuse it. --dry-run +
   # apply is the standard idempotent pattern used elsewhere in this
   # script.
-  kubectl create secret generic caipe-mongodb-credentials \
+  kubectl create secret generic "$secret_name" \
     --namespace caipe \
     --from-literal=MONGODB_ROOT_USERNAME="admin" \
     --from-literal=MONGODB_ROOT_PASSWORD="${MONGODB_ROOT_PASSWORD}" \
@@ -4995,26 +5341,54 @@ _ensure_caipe_platform_secret() {
 }
 
 _ensure_dynamic_agents_mongodb() {
-  local mongo_svc="caipe-mongodb"
+  local mongo_svc
+  mongo_svc=$(_database_service_name)
   _resolve_mongodb_password
-  local mongo_uri="mongodb://admin:${MONGODB_ROOT_PASSWORD}@${mongo_svc}:27017/caipe?authSource=caipe"
+  local mongo_uri
+  mongo_uri=$(_database_uri "$MONGODB_ROOT_PASSWORD")
 
-  if ! kubectl get deploy "${mongo_svc}" -n caipe &>/dev/null; then
-    step "Deploying MongoDB for dynamic-agents"
-    helm repo add bitnami https://charts.bitnami.com/bitnami &>/dev/null 2>&1 || true
-    helm upgrade --install "${mongo_svc}" bitnami/mongodb \
-      -n caipe \
-      --set auth.enabled=true \
-      --set "auth.rootPassword=${MONGODB_ROOT_PASSWORD}" \
-      --set "auth.databases[0]=caipe" \
-      --set "auth.usernames[0]=admin" \
-      --set "auth.passwords[0]=${MONGODB_ROOT_PASSWORD}" \
-      --set persistence.size=2Gi \
-      --timeout 3m &>/dev/null
-    kubectl rollout status deploy/"${mongo_svc}" -n caipe --timeout=180s &>/dev/null
-    log "MongoDB deployed (${mongo_svc}) with random root password"
+  if [[ "$DATABASE_PROVIDER" == "documentdb" ]]; then
+    if helm status caipe-mongodb -n caipe &>/dev/null; then
+      warn "MongoDB is already installed. Selecting DocumentDB does not migrate its data automatically."
+      warn "Back up and restore with mongodump/mongorestore before switching production traffic."
+    fi
+    if ! kubectl get statefulset "${mongo_svc}" -n caipe &>/dev/null; then
+      step "Deploying DocumentDB for dynamic-agents"
+      helm upgrade --install "${mongo_svc}" \
+        oci://ghcr.io/cnoe-io/charts/caipe-ui-mongodb \
+        --version "$CAIPE_CHART_VERSION" \
+        -n caipe \
+        --set provider=documentdb \
+        --set fullnameOverride="${mongo_svc}" \
+        --set "documentdb.image.tag=${DOCUMENTDB_IMAGE_TAG}" \
+        --set "auth.rootUsername=admin" \
+        --set "auth.rootPassword=${MONGODB_ROOT_PASSWORD}" \
+        --set "auth.database=caipe" \
+        --set persistence.size=2Gi \
+        --timeout 5m &>/dev/null
+      kubectl rollout status statefulset/"${mongo_svc}" -n caipe --timeout=300s &>/dev/null
+      log "DocumentDB deployed (${mongo_svc})"
+    else
+      log "DocumentDB already present (${mongo_svc}) — skipping install"
+    fi
   else
-    log "MongoDB already present (${mongo_svc}) — skipping install"
+    if ! kubectl get deploy "${mongo_svc}" -n caipe &>/dev/null; then
+      step "Deploying MongoDB for dynamic-agents"
+      helm repo add bitnami https://charts.bitnami.com/bitnami &>/dev/null 2>&1 || true
+      helm upgrade --install "${mongo_svc}" bitnami/mongodb \
+        -n caipe \
+        --set auth.enabled=true \
+        --set "auth.rootPassword=${MONGODB_ROOT_PASSWORD}" \
+        --set "auth.databases[0]=caipe" \
+        --set "auth.usernames[0]=admin" \
+        --set "auth.passwords[0]=${MONGODB_ROOT_PASSWORD}" \
+        --set persistence.size=2Gi \
+        --timeout 3m &>/dev/null
+      kubectl rollout status deploy/"${mongo_svc}" -n caipe --timeout=180s &>/dev/null
+      log "MongoDB deployed (${mongo_svc})"
+    else
+      log "MongoDB already present (${mongo_svc}) — skipping install"
+    fi
   fi
 
   # Patch MONGODB_URI into dynamic-agents ConfigMap using python3 to avoid
@@ -5489,7 +5863,10 @@ deploy_litellm() {
       master_key: "os.environ/LITELLM_MASTER_KEY"'
     envfrom_yaml='        envFrom:
         - secretRef:
-            name: litellm-upstream-secret'
+            name: litellm-upstream-secret
+        - secretRef:
+            name: litellm-extra-upstream
+            optional: true'
     if $ENABLE_LITELLM_DB; then
       envfrom_yaml+='
         - secretRef:
@@ -5510,6 +5887,41 @@ deploy_litellm() {
           api_key: \"not-needed\""
   fi
 
+  # Operator-owned extra models. --litellm-models=FILE seeds/replaces the
+  # `litellm-extra-models` ConfigMap; setup never regenerates it, so a later
+  # `kubectl edit cm litellm-extra-models -n caipe` (or GitOps) sticks across
+  # re-runs. Its `models.yaml` is column-0 `- model_name:` entries; re-indent to
+  # the 6-space model_list level and append. Matching credentials live in the
+  # `litellm-extra-upstream` Secret (optional envFrom, added above).
+  if [[ -n "${LITELLM_EXTRA_MODELS_FILE:-}" ]]; then
+    if [[ -r "$LITELLM_EXTRA_MODELS_FILE" ]]; then
+      kubectl create configmap litellm-extra-models -n caipe \
+        --from-file=models.yaml="$LITELLM_EXTRA_MODELS_FILE" \
+        --dry-run=client -o yaml | kubectl apply -f - &>/dev/null \
+        && log "litellm-extra-models ConfigMap seeded from ${LITELLM_EXTRA_MODELS_FILE}"
+    else
+      warn "--litellm-models: file not readable: ${LITELLM_EXTRA_MODELS_FILE}"
+    fi
+  fi
+  if [[ -n "${LITELLM_UPSTREAM_ENV_FILE:-}" ]]; then
+    if [[ -r "$LITELLM_UPSTREAM_ENV_FILE" ]]; then
+      kubectl create secret generic litellm-extra-upstream -n caipe \
+        --from-env-file="$LITELLM_UPSTREAM_ENV_FILE" \
+        --dry-run=client -o yaml | kubectl apply -f - &>/dev/null \
+        && log "litellm-extra-upstream Secret seeded from ${LITELLM_UPSTREAM_ENV_FILE}"
+    else
+      warn "--litellm-upstream-env: file not readable: ${LITELLM_UPSTREAM_ENV_FILE}"
+    fi
+  fi
+  local _xtra
+  _xtra=$(kubectl get configmap litellm-extra-models -n caipe \
+    -o jsonpath='{.data.models\.yaml}' 2>/dev/null || true)
+  if [[ -n "${_xtra//[[:space:]]/}" ]]; then
+    _xtra=$(printf '%s\n' "$_xtra" | grep -vE '^[[:space:]]*#' | sed 's/^/      /')
+    model_list_yaml="${model_list_yaml}"$'\n'"${_xtra}"
+    log "LiteLLM: appended $(printf '%s' "$_xtra" | grep -cE '^[[:space:]]*- model_name:') model(s) from the litellm-extra-models ConfigMap"
+  fi
+
   kubectl apply -n caipe -f - <<LITELLM_EOF
 ---
 apiVersion: v1
@@ -5524,6 +5936,12 @@ data:
   config.yaml: |
     model_list:
 ${model_list_yaml}
+    litellm_settings:
+      # Ollama's embedding + chat APIs reject OpenAI-only params the langchain
+      # OpenAI client always sends (e.g. encoding_format: base64), which
+      # otherwise 400s the RAG server's startup embedding test. Drop unsupported
+      # params instead of forwarding them.
+      drop_params: true
 ${general_yaml}
 ---
 apiVersion: apps/v1
@@ -5623,12 +6041,21 @@ _write_rbac_runtime_values() {
   # discovery via the in-cluster service still resolves to public endpoints),
   # and register the public NextAuth callback on the caipe-ui client. Skipped
   # for IP domains (Ingress host must be a DNS name) and local installs.
+  # With a setup-generated self-signed cert, server-to-server OIDC (rag-server
+  # JWKS, web-ingestor token fetch, ...) against the public HTTPS issuer fails
+  # cert verification. hostname-backchannel-dynamic keeps the browser-facing
+  # issuer public but lets in-cluster callers that hit http://caipe-keycloak:8080
+  # get back plain-HTTP token/JWKS endpoints, so the self-signed cert never
+  # enters back-channel flows.
+  local _kc_backchannel=""
+  [[ "${TLS_SELF_SIGNED:-false}" == true ]] && _kc_backchannel=$'\n    KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"'
+
   local _kc_public_yaml=""
   if [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     _kc_public_yaml=$(cat <<KCPUB
   env:
     KC_HOSTNAME: "https://${CAIPE_DOMAIN}"
-    KC_PROXY_HEADERS: "xforwarded"
+    KC_PROXY_HEADERS: "xforwarded"${_kc_backchannel}
   ingress:
     enabled: true
     className: "nginx"
@@ -6027,11 +6454,13 @@ deploy_caipe() {
     # graph and skips the MongoDB step), so the failure surfaces loudly
     # at pod start rather than silently using "changeme".
     local _mongo_pw="${MONGODB_ROOT_PASSWORD:-MONGODB_ROOT_PASSWORD_UNSET}"
+    local _database_uri_value
+    _database_uri_value=$(_database_uri "$_mongo_pw")
     cat > "$_da_values_file" <<DAEOF
 dynamic-agents:
   config:
-    # MongoDB URI baked in at deploy time so the pod can start before post_deploy_patches.
-    MONGODB_URI: "mongodb://admin:${_mongo_pw}@caipe-mongodb:27017/caipe?authSource=caipe"
+    # MongoDB-compatible URI baked in before post_deploy_patches.
+    MONGODB_URI: "${_database_uri_value}"
 DAEOF
     if [[ -n "$CAIPE_DOMAIN" && -n "$da_oidc_issuer" ]]; then
       cat >> "$_da_values_file" <<DAEOF
@@ -7293,7 +7722,7 @@ monitor_port_forwards() {
     fi
     echo ""
     echo -e "    ${DIM}Re-print these any time: ./$(basename "$0") creds${NC}"
-    if [[ "$CAIPE_DOMAIN" == *.local.me ]]; then
+    if [[ "$CAIPE_DOMAIN" == *.localtest.me ]]; then
       echo -e "    ${DIM}${CAIPE_DOMAIN} resolves to 127.0.0.1 — on a remote host, tunnel 443 (ssh -L 8443:127.0.0.1:443 <host>) or re-run with --domain=<public-dns>.${NC}"
     fi
   fi
@@ -7369,8 +7798,10 @@ monitor_port_forwards() {
     echo -e "    ${DIM}kubectl get secret langfuse-credentials -n langfuse -o jsonpath='{.data}' | python3 -c \"import sys,json,base64; d=json.load(sys.stdin); print('\n'.join(f'{k}: {base64.b64decode(v).decode()}' for k,v in sorted(d.items())))\"${NC}"
     echo ""
   fi
-  echo -e "  ${BOLD}Retrieve MongoDB credentials${NC} ${DIM}(R2: random per-install, persisted in caipe-mongodb-credentials):${NC}"
-  echo -e "    ${DIM}kubectl get secret caipe-mongodb-credentials -n caipe -o jsonpath='{.data}' | python3 -c \"import sys,json,base64; d=json.load(sys.stdin); print('\n'.join(f'{k}: {base64.b64decode(v).decode()}' for k,v in sorted(d.items())))\"${NC}"
+  local _database_credentials_secret
+  _database_credentials_secret=$(_database_secret_name)
+  echo -e "  ${BOLD}Retrieve ${DATABASE_PROVIDER} credentials${NC} ${DIM}(random per-install, persisted in ${_database_credentials_secret}):${NC}"
+  echo -e "    ${DIM}kubectl get secret ${_database_credentials_secret} -n caipe -o jsonpath='{.data}' | python3 -c \"import sys,json,base64; d=json.load(sys.stdin); print('\n'.join(f'{k}: {base64.b64decode(v).decode()}' for k,v in sorted(d.items())))\"${NC}"
   echo ""
   echo -e "  ${BOLD}Chat:${NC} open the CAIPE UI at ${CYAN}http://localhost:${UI_PORT}${NC}"
   echo ""
@@ -7513,6 +7944,15 @@ cmd_cleanup() {
     fi
   else
     log "No MongoDB release found"
+  fi
+
+  if helm status caipe-documentdb -n caipe &>/dev/null; then
+    if ask_yn "Uninstall DocumentDB Helm release (caipe-documentdb)?" "y"; then
+      helm uninstall caipe-documentdb -n caipe
+      log "DocumentDB uninstalled"
+    fi
+  else
+    log "No DocumentDB release found"
   fi
 
   if helm status langfuse -n langfuse &>/dev/null; then
@@ -7751,6 +8191,7 @@ cmd_docker_compose() {
   env_file=$(_compose_env_file)
   _ensure_compose_env_file "$env_file"
   _update_compose_image_tag "$env_file"
+  _choose_database_provider "$env_file"
 
   if [[ "$(uname -s)" == "Darwin" && -x "/usr/local/bin/docker" && ! "$(command -v docker 2>/dev/null)" ]]; then
     export PATH="/usr/local/bin:$PATH"
@@ -7774,11 +8215,27 @@ cmd_docker_compose() {
 
   COMPOSE_PROFILES="${COMPOSE_PROFILES:-$(_env_get "$env_file" COMPOSE_PROFILES)}"
   COMPOSE_PROFILES="${COMPOSE_PROFILES:-$COMPOSE_PROFILES_DEFAULT}"
+  if [[ "$DATABASE_PROVIDER" == "documentdb" ]]; then
+    COMPOSE_PROFILES=$(echo "$COMPOSE_PROFILES" | sed 's/caipe-mongodb/caipe-documentdb/g')
+    if [[ ",$COMPOSE_PROFILES," != *,caipe-documentdb,* ]]; then
+      COMPOSE_PROFILES="${COMPOSE_PROFILES},caipe-documentdb"
+    fi
+    local compose_db_password compose_db_username
+    compose_db_password=$(_env_get "$env_file" MONGODB_ROOT_PASSWORD)
+    compose_db_username=$(_env_get "$env_file" MONGODB_ROOT_USERNAME)
+    compose_db_password="${compose_db_password:-$(openssl rand -hex 24)}"
+    compose_db_username="${compose_db_username:-admin}"
+    export MONGODB_ROOT_PASSWORD="$compose_db_password"
+    export MONGODB_ROOT_USERNAME="$compose_db_username"
+    export MONGODB_URI
+    MONGODB_URI=$(_database_uri "$compose_db_password" "$compose_db_username")
+  fi
   export COMPOSE_PROFILES
 
   step "Starting Docker Compose all-in-one stack from docker-compose.yaml"
   log "Env file: ${env_file}"
   log "Profiles: ${COMPOSE_PROFILES}"
+  log "Database: ${DATABASE_PROVIDER} ($(_database_service_name))"
   docker compose --env-file "$env_file" -f docker-compose.yaml up -d
 
   log "CAIPE UI: http://localhost:3000"
@@ -7797,6 +8254,7 @@ choose_setup_target() {
 
   local choice
   tty_read -r choice
+  choice="$(_trim_input "$choice")"
   choice="${choice:-1}"
   choice="$(echo "$choice" | tr '[:upper:]' '[:lower:]')"
 
@@ -7817,6 +8275,15 @@ choose_setup_target() {
 
 # ─── Auto-Detect Features ────────────────────────────────────────────────────
 detect_deployed_features() {
+  if [[ -z "${DATABASE_PROVIDER:-}" ]]; then
+    if helm status caipe-documentdb -n caipe &>/dev/null; then
+      DATABASE_PROVIDER="documentdb"
+      log "Detected deployed database provider: documentdb"
+    elif helm status caipe-mongodb -n caipe &>/dev/null; then
+      DATABASE_PROVIDER="mongodb"
+      log "Detected deployed database provider: mongodb"
+    fi
+  fi
   if helm status langfuse -n langfuse &>/dev/null; then
     ENABLE_TRACING=true
   fi
@@ -8077,6 +8544,7 @@ _save_caipe_config() {
 cluster_context: "$(kubectl config current-context 2>/dev/null || echo '')"
 chart_version: "${CAIPE_CHART_VERSION:-}"
 llm_provider: "${LLM_PROVIDER:-}"
+database_provider: "${DATABASE_PROVIDER:-mongodb}"
 enable_ollama: "${ENABLE_OLLAMA:-false}"
 ollama_model: "${OLLAMA_MODEL:-qwen3:0.6b}"
 embeddings_provider: "${EMBEDDINGS_PROVIDER:-}"
@@ -8102,10 +8570,11 @@ _load_caipe_config() {
   echo -e "  ${DIM}Saved configuration found: ${CAIPE_CONFIG_FILE}${NC}"
   echo ""
 
-  local _ctx _chart _llm _ollama _omodel _eprov _emodel _rag _grag _tracing _metallb _ingress _domain _agents
+  local _ctx _chart _llm _database _ollama _omodel _eprov _emodel _rag _grag _tracing _metallb _ingress _domain _agents
   _ctx=$(_cfg_get cluster_context)
   _chart=$(_cfg_get chart_version)
   _llm=$(_cfg_get llm_provider)
+  _database=$(_cfg_get database_provider)
   _ollama=$(_cfg_get enable_ollama)
   _omodel=$(_cfg_get ollama_model)
   _eprov=$(_cfg_get embeddings_provider)
@@ -8126,6 +8595,7 @@ _load_caipe_config() {
     echo -e "    ${DIM}LLM:             ${NC}${_llm}"
   fi
   [[ -n "$_eprov" ]]      && echo -e "    ${DIM}embeddings:      ${NC}${_eprov} (${_emodel})"
+  [[ -n "$_database" ]]   && echo -e "    ${DIM}database:        ${NC}${_database}"
   [[ -n "$_rag" ]]        && echo -e "    ${DIM}RAG:             ${NC}${_rag}  graph-RAG: ${_grag:-false}"
   [[ -n "$_tracing" ]]    && echo -e "    ${DIM}tracing:         ${NC}${_tracing}"
   [[ -n "$_metallb" ]]    && echo -e "    ${DIM}metallb:         ${NC}${_metallb}  ingress: ${_ingress:-false}"
@@ -8140,6 +8610,7 @@ _load_caipe_config() {
   # Apply saved values — only set if not already overridden by CLI flags / env
   [[ -n "$_chart"      && -z "${CAIPE_CHART_VERSION:-}"   ]] && CAIPE_CHART_VERSION="$_chart"
   [[ -n "$_llm"        && -z "${LLM_PROVIDER:-}"          ]] && LLM_PROVIDER="$_llm"
+  [[ -n "$_database"   && -z "${DATABASE_PROVIDER:-}"     ]] && DATABASE_PROVIDER="$_database"
   [[ "$_ollama" == "true" ]] && ENABLE_OLLAMA=true
   [[ -n "$_omodel"     && -z "${OLLAMA_MODEL:-}"          ]] && OLLAMA_MODEL="$_omodel"
   [[ -n "$_eprov"      && -z "${EMBEDDINGS_PROVIDER:-}"   ]] && EMBEDDINGS_PROVIDER="$_eprov"
@@ -8221,16 +8692,16 @@ cmd_setup() {
    ╚═════╝╚═╝  ╚═╝╚═╝╚═╝     ╚══════╝
 BANNER
   echo -e "${NC}"
-  echo -e "${BLUE}${BOLD}╔═══════════════════════════════════════════════╗${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${BOLD}Welcome to CAIPE Setup${NC}                       ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  Your 🤖 Agentic AI automation super hero 🦸  ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}                                               ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}Multi-Agent System on Kubernetes${NC}             ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}                                               ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}github.com/caipe-io/ai-platform-engineering${NC}   ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}Powered by cnoe-agent-utils LLMFactory${NC}       ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}github.com/cnoe-io/cnoe-agent-utils${NC}          ${BLUE}${BOLD}║${NC}"
-  echo -e "${BLUE}${BOLD}╚═══════════════════════════════════════════════╝${NC}"
+  # Full https:// URL so terminals auto-linkify it (Cmd/Ctrl-click); avoids OSC 8
+  # escapes, which render as visible junk and break this box in terminals that
+  # don't support them (tmux w/o passthrough, CI logs, older Terminal.app).
+  echo -e "${BLUE}${BOLD}╔══════════════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  ${BOLD}Open Source AI Platform for All${NC}                                     ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}                                                                      ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  CAIPE empowers individuals and teams with 🤖 agentic AI automation. ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}                                                                      ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}║${NC}  ${DIM}https://github.com/caipe-io/ai-platform-engineering${NC}                 ${BLUE}${BOLD}║${NC}"
+  echo -e "${BLUE}${BOLD}╚══════════════════════════════════════════════════════════════════════╝${NC}"
   echo ""
 
   # On hosts where kubectl is a k3s symlink (/usr/local/bin/kubectl -> k3s),
@@ -8386,8 +8857,17 @@ BANNER
   fi
 
   if $ENABLE_TRACING; then
-    deploy_langfuse
-    create_langfuse_api_keys
+    # Non-fatal: using these functions as an `if` condition disables `set -e`
+    # inside them, so a Langfuse failure degrades to "tracing off" instead of
+    # aborting the core platform deploy (deploy_langfuse returns non-zero on a
+    # helm/rollout failure).
+    if deploy_langfuse && create_langfuse_api_keys; then
+      log "Langfuse tracing ready"
+    else
+      warn "Langfuse tracing setup failed — continuing WITHOUT tracing; the core platform is unaffected."
+      warn "Resolve the error above and re-run, or set LANGFUSE_CHART_VERSION to a working chart."
+      ENABLE_TRACING=false
+    fi
   fi
 
   if $INJECT_CORPORATE_CA; then
@@ -8420,6 +8900,21 @@ BANNER
     fi
     kubectl apply -f "$_ollama_yaml" 2>&1 \
       | grep -v "^$" | while IFS= read -r line; do log "$line"; done
+
+    # deploy/kind/ollama.yaml reads OPENAI_MODEL_NAME/EMBEDDINGS_MODEL from
+    # llm-secret. In LiteLLM proxy mode _finalize_litellm_mode has already
+    # rewritten those to the proxy aliases (caipe-chat / caipe-embeddings), so
+    # the pod would `ollama pull caipe-chat` (fails) and its readiness probe
+    # `ollama show caipe-chat` would loop forever. Pin the pod's env to the real
+    # Ollama model names instead.
+    if $LLM_VIA_LITELLM; then
+      local _real_embed="${LITELLM_EMBED_MODEL_REAL:-${EMBEDDINGS_MODEL:-}}"
+      kubectl set env deployment/ollama -n caipe --containers='*' \
+        "OPENAI_MODEL_NAME=${OLLAMA_MODEL}" \
+        ${_real_embed:+"EMBEDDINGS_MODEL=${_real_embed}"} >/dev/null 2>&1 \
+        && log "Ollama pod pinned to real model '${OLLAMA_MODEL}' (llm-secret holds the LiteLLM alias)"
+    fi
+
     log "Waiting for Ollama to be ready (model pull may take several minutes on first run)..."
     kubectl rollout status deployment/ollama -n caipe --timeout=10m 2>&1 \
       | while IFS= read -r line; do log "$line"; done
@@ -8483,6 +8978,51 @@ BANNER
 # Re-print the default local Keycloak logins from the persisted Secrets. Lets an
 # operator recover credentials any time after install without re-running setup or
 # scrolling back through the install log (caipe-local-admin / caipe-local-user).
+# Scan the in-cluster LiteLLM proxy: what it currently serves (/v1/models) and
+# what the generated ConfigMap declares. Read-only.
+cmd_litellm_models() {
+  step "LiteLLM models"
+  if ! kubectl get deploy litellm-proxy -n caipe &>/dev/null; then
+    warn "litellm-proxy is not deployed (run setup with --litellm)."
+    return 0
+  fi
+
+  local _pf=14411
+  kill_port_on "$_pf" 2>/dev/null || true
+  kubectl port-forward -n caipe svc/litellm-proxy "${_pf}:4000" &>/dev/null &
+  local _pfpid=$!
+  disown "$_pfpid" 2>/dev/null || true
+  sleep 3
+
+  local _mk
+  _mk=$(kubectl get secret litellm-upstream-secret -n caipe \
+    -o jsonpath='{.data.LITELLM_MASTER_KEY}' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+  echo -e "  ${BOLD}Serving now${NC} ${DIM}(proxy /v1/models):${NC}"
+  curl -sf "http://localhost:${_pf}/v1/models" -H "Authorization: Bearer ${_mk}" 2>/dev/null \
+    | python3 -c "import sys,json;[print('    •',m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null \
+    || warn "    (proxy not reachable)"
+  kill "$_pfpid" 2>/dev/null || true
+
+  echo -e "\n  ${BOLD}Declared${NC} ${DIM}(litellm-config model_list — alias → upstream):${NC}"
+  kubectl get cm litellm-config -n caipe -o jsonpath='{.data.config\.yaml}' 2>/dev/null \
+    | awk '
+        /model_name:/ { s=$0; sub(/.*model_name:[[:space:]]*/,"",s); gsub(/["'"'"' ,]/,"",s); a=s }
+        /^[[:space:]]*model:[[:space:]]/ { s=$0; sub(/.*model:[[:space:]]*/,"",s); gsub(/["'"'"' ,]/,"",s); printf "    %-30s %s\n", a, s }'
+
+  local _xtra
+  _xtra=$(kubectl get cm litellm-extra-models -n caipe -o jsonpath='{.data.models\.yaml}' 2>/dev/null || true)
+  if [[ -n "${_xtra//[[:space:]]/}" ]]; then
+    echo -e "\n  ${BOLD}Operator-onboarded${NC} ${DIM}(litellm-extra-models ConfigMap — edit-safe, survives re-runs):${NC}"
+    printf '%s\n' "$_xtra" | grep -E 'model_name:' | sed -E 's/.*model_name:[[:space:]]*/    • /; s/["'"'"',]//g'
+    echo -e "  ${DIM}  kubectl edit configmap litellm-extra-models -n caipe   # then: kubectl rollout restart deploy/litellm-proxy -n caipe${NC}"
+  fi
+
+  echo -e "\n  ${DIM}Onboard more (seeds the ConfigMap + Secret, then persists):${NC}"
+  echo -e "  ${DIM}  cp deploy/kind/litellm-models.example.yaml my-models.yaml   # edit${NC}"
+  echo -e "  ${DIM}  ./setup-caipe.sh --litellm-models=my-models.yaml --litellm-upstream-env=keys.env${NC}"
+}
+
 cmd_creds() {
   local ns="caipe"
   local domain admin_email admin_pw user_email user_pw
@@ -8530,6 +9070,8 @@ Commands:
   validate      Run validation and sanity tests (dynamic agents, agents, RAG, tracing)
   creds         Re-print the default local Keycloak logins (admin + standard
                 user) from the persisted Secrets — run any time after install
+  models        Scan the LiteLLM proxy: models it serves now (/v1/models) and
+                the alias -> upstream map from litellm-config
   cleanup       Interactive teardown: uninstall releases, delete secrets,
                 PVCs, namespaces, and optionally the Kind cluster
   nuke          Non-interactive cleanup (same as: cleanup --yes)
@@ -8545,6 +9087,15 @@ Commands:
 Options:
   --non-interactive  Skip all prompts (use current context, latest chart,
                      defaults for endpoint/model, no RAG/tracing unless flagged)
+  --no-sudo          Never run sudo; steps needing it are skipped or fail with
+                     manual instructions (also CAIPE_ALLOW_SUDO=0 or false)
+                     Either denial overrides --allow-sudo and --yes, regardless
+                     of argument order.
+  --allow-sudo       Allow sudo without prompting, without answering unrelated
+                     prompts the way --yes does (also CAIPE_ALLOW_SUDO=1 or true)
+                     Has no effect when --no-sudo or CAIPE_ALLOW_SUDO=0/false is set.
+                     Environment booleans are case-insensitive; unset/empty uses
+                     normal consent handling. Other values are rejected.
   --docker-compose   Run the Docker Compose setup path instead of the default
                      Kind/Kubernetes setup path
   --load-config=FILE Load wizard config from FILE instead of the default
@@ -8568,8 +9119,14 @@ Options:
                         Agents talk to one OpenAI-compatible endpoint; upstream provider creds live
                         only in the proxy. Supports anthropic/openai/aws-bedrock/azure-openai. Default OFF.
   --litellm-db          Like --litellm, plus persist LiteLLM virtual keys/spend in the shared Postgres
+  --litellm-models=FILE Onboard extra models: seeds the litellm-extra-models ConfigMap (never regenerated;
+                        kubectl-editable) whose entries are appended to the proxy config each deploy. See
+                        deploy/kind/litellm-models.example.yaml; scan with `setup-caipe.sh models`.
+  --litellm-upstream-env=FILE  KEY=VALUE .env -> litellm-extra-upstream Secret (optional envFrom) so
+                        `api_key: "os.environ/<KEY>"` refs in --litellm-models resolve.
   --persistence      Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --no-persistence   Accepted for compatibility; dynamic-agent persistence uses MongoDB
+  --database=NAME    MongoDB-compatible database: mongodb (default) or documentdb
   --slack-bot        Deploy the Slack bot surface (slack-bot subchart). Auto-enabled when
                      --env-file sets ENABLE_SLACK_BOT/ENABLE_SLACK; needs SLACK_BOT_TOKEN etc.
   --no-slack-bot     Skip the Slack bot surface (overrides the env-file value)
@@ -8579,7 +9136,7 @@ Options:
   --metallb          Install MetalLB to give LoadBalancer services real IPs in kind clusters — default ON
   --no-metallb       Skip MetalLB (also disables --ingress, which depends on it)
   --ingress          Install nginx-ingress + MetalLB and expose UI via domain — default ON
-                     If --domain is omitted, falls back to ${CAIPE_DOMAIN_DEFAULT} (resolves to 127.0.0.1 via *.local.me)
+                     If --domain is omitted, falls back to ${CAIPE_DOMAIN_DEFAULT} (resolves to 127.0.0.1 via *.localtest.me)
   --no-ingress       Skip nginx-ingress
   --domain=HOST      Hostname for the UI ingress (e.g. my-caipe.example.com)
                      Default when ingress is enabled and --domain is omitted: ${CAIPE_DOMAIN_DEFAULT}
@@ -8678,6 +9235,8 @@ Environment variables (all optional):
   ENABLE_AUTONOMOUS_AGENTS  Autonomous cron/interval/webhook agents
                           (default: true; ENABLE_AUTONOMOUS_AGENTS=false to skip).
                           Together these add ~4-5 pods.
+  DATABASE_PROVIDER       Persistence provider: mongodb (default) or documentdb
+  DOCUMENTDB_IMAGE_TAG    DocumentDB Local image tag (default: pg17-0.113.0)
   AGENTGATEWAY_VERSION    AgentGateway Helm chart version (default: v2.2.1)
 
 LLM provider credentials are read from (in order):
@@ -8705,7 +9264,7 @@ Embeddings provider credentials are read from (in order):
     key-pair (single line):   ACCESS_KEY_ID:SECRET_ACCESS_KEY
     profile name (single line): my-profile-name
 
-Supported providers (via cnoe-agent-utils LLMFactory):
+Supported LLM providers:
   openai, anthropic-claude, azure-openai, aws-bedrock,
   google-gemini, gcp-vertexai, groq
 
@@ -8749,6 +9308,8 @@ args=()
 for arg in "$@"; do
   case "$arg" in
     --yes|-y)          AUTO_YES=true ;;
+    --no-sudo)         ALLOW_SUDO=0 ;;
+    --allow-sudo)      if [[ "$ALLOW_SUDO" != "0" ]]; then ALLOW_SUDO=1; fi ;;
     --docker-compose)  USE_DOCKER_COMPOSE=true ;;
     --non-interactive) NON_INTERACTIVE=true ;;
     --create-cluster)  CREATE_CLUSTER=true ;;
@@ -8765,8 +9326,11 @@ for arg in "$@"; do
     --litellm)            LLM_VIA_LITELLM=true ;;
     --no-litellm)         LLM_VIA_LITELLM=false ;;
     --litellm-db)         LLM_VIA_LITELLM=true; ENABLE_LITELLM_DB=true ;;
+    --litellm-models=*)      LITELLM_EXTRA_MODELS_FILE="${1#*=}"; LLM_VIA_LITELLM=true ;;
+    --litellm-upstream-env=*) LITELLM_UPSTREAM_ENV_FILE="${1#*=}" ;;
     --persistence)     ENABLE_PERSISTENCE=true ;;
     --no-persistence)  ENABLE_PERSISTENCE=false ;;
+    --database=*)      DATABASE_PROVIDER="${arg#--database=}" ;;
     --metallb)         ENABLE_METALLB=true ;;
     --no-metallb)      ENABLE_METALLB=false; ENABLE_INGRESS=false ;;
     --ingress)         ENABLE_INGRESS=true; ENABLE_METALLB=true ;;
@@ -8819,6 +9383,7 @@ case "${args[0]:-setup}" in
   port-forward) cmd_port_forward ;;
   validate)     cmd_validate ;;
   creds)        cmd_creds ;;
+  models|litellm-models) cmd_litellm_models ;;
   cleanup)      cmd_cleanup ;;
   nuke)         AUTO_YES=true; cmd_cleanup ;;
   status)       cmd_status ;;

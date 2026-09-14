@@ -784,9 +784,8 @@ class IngestorBuilder:
       datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
 
       if self._datasource_scheduled and self._last_sync_time is None:
-        # Run once at worker startup. This materializes newly-added legacy
-        # environment config while every persisted source still performs its
-        # own due check before contacting the upstream connector.
+        # Run once at worker startup so persisted sources perform their own due
+        # checks without waiting for the fallback interval.
         return (0, bool(datasources))
 
       if not datasources:
@@ -797,10 +796,9 @@ class IngestorBuilder:
           return (0, False)
 
         if self._datasource_scheduled:
-          # Startup already reconciled legacy configuration. UI-created
-          # sources arrive through the command listener and create their
+          # Sources arrive through the command listener and create their
           # datasource record, so an empty worker only needs to re-read
-          # schedule metadata from here onward.
+          # schedule metadata.
           self._schedule_check_only = True
           logger.info(
             "No datasources found, checking schedule metadata again in "

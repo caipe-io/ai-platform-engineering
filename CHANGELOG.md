@@ -1,8 +1,139 @@
+## 1.0.1-dev.12 (2026-09-14)
+
+### Feat
+
+- **persistence**: add opt-in DocumentDB support (#2418)
+
+### Fix
+
+- Update ADOPTERS.md
+- **ui**: remove unsafe AgentGateway repair action (#2696)
+- **agentic-apps**: preserve root mount trailing slash (#2656)
+- **ui**: include resource names in agent breadcrumbs (#2698)
+
+## 1.0.1-dev.10 (2026-09-10)
+
+### Feat
+
+- **rag**: allow adding any searchable datasource to a collection
+
+### Fix
+
+- **rag**: check data_source#can_read, not ingestion_source#can_read, for collection publishing
+- **rag**: stop treating collection membership as Search access in the UI
+- **ci**: remove retag-unchanged, always build fresh on tag push
+- **ci**: give paths-filter a real base ref on tag pushes
+- **ui**: fail closed on application routes (#2654)
+- **audit**: suppress no-op policy reconciliation events (#2720)
+
+### Refactor
+
+- **rag**: clean up leftover dead field and sequential await from the collections change
+- **ui**: consolidate security and account settings (#2721)
+
+## 1.0.1-dev.9 (2026-09-10)
+
+### Fix
+
+- **rag**: surface the login-wall hint for sitemap crawls and mixed failures
+- **rag**: explain why a webpage crawl found no content when it may be a login wall
+- **rag**: surface auth-walled page failures during webpage ingestion
+- **rag**: return 400 instead of 500 for non-public webpage URLs
+- **setup-caipe**: backfill dynamic-agents AUTHZ_SERVICE_URL for the 1.0.0 chart (#2679)
+
+## 1.0.1-dev.8 (2026-09-10)
+
+## 1.0.1-rc.3 (2026-09-10)
+
+### Fix
+
+- **ui**: preserve agent colors in chat avatars (#2699)
+- **setup-caipe**: let caipe-ui trust the self-signed cert for OIDC login (#2677)
+- **setup-caipe**: set litellm drop_params so Ollama embeddings work (#2674)
+- **setup-caipe**: pin in-cluster Ollama to the real model in LiteLLM mode (#2673)
+- **identity-sync**: unarchive teams when their group regains membership
+- **docs**: resolve versioned agent builder links (#2704)
+
+## 1.0.1-dev.7 (2026-09-08)
+
+### Feat
+
+- **rag**: seed datasources from app config (#2701)
+- **homepage**: pair product tour with full demo (#2703)
+- **docs**: polish homepage and feature navigation (#2702)
+
+### Fix
+
+- **docs**: restore star history chart (#2643)
+- **workflows**: validate stale tool overrides before execution (#2692)
+- **setup-caipe**: default local domain to *.localtest.me not *.local.me (#2671)
+- **setup-caipe**: harden interactive input and Kind cluster selection (#2667)
+- **setup-caipe**: make Langfuse tracing non-fatal and pin the chart (#2665)
+- **setup-caipe**: use the caipe-io chart registry and validate versions (#2666)
+
+### Refactor
+
+- **setup-caipe**: drop cnoe-agent-utils attribution from user-facing text (#2669)
+
+## 1.0.1-dev.6 (2026-09-07)
+
+## 1.0.1-rc.2 (2026-09-07)
+
+## 1.0.1-dev.5 (2026-09-07)
+
+### Fix
+
+- **agentic-apps**: support bounded large request bodies
+
+## 1.0.1-dev.4 (2026-09-06)
+
+### Feat
+
+- **projects**: add projects workspace skeleton (#2648)
+
+## 1.0.1-dev.3 (2026-09-06)
+
+### Feat
+
+- **projects**: add projects navigation (#2647)
+
+## 1.0.1-dev.2 (2026-09-06)
+
+### Feat
+
+- **projects**: add projects feature flag (#2646)
+
+### Fix
+
+- **ci**: allow autonomous path detection on pull requests (#2653)
+
+## 1.0.1-dev.1 (2026-09-04)
+
+## 1.0.1-rc.1 (2026-09-04)
+
 ## 1.0.0-dev.24 (2026-09-04)
+
+### Feat
+
+- **agentic-apps**: add Weather reference runtime
+- **ui**: add config-driven hosted application runtime
+- **scheduler**: min interval restriction
+- **autonomous**: remove redundent max retires and timeout
+- **autonomous**: webhook to be in a single chat with each run having "continue this run" button to chat on that particular run
+- **docs**: up to date autonomous agent docs
+- **autonomous**: add min run interval (configurable) and wehook should NOT appear in the chat
+- **ui**: autonomous and schedule chats in separate sections to history
+- **autonomous**: simply team access and separate admin control to a tab
 
 ### Fix
 
 - **autonomous-agents**: address code quality review
+- **ui**: test
+- **autonomous**: webhook secret ffs
+- **autonomous**: add webhook limits and address security concerns
+- **autonomous**: better admin tab and remove task oversight
+- **autonomous**: secret should be secretly handled
+- **ui**: autonomous page scroll issue
 - **docs**: version historical internal links (#2641)
 
 ## 1.0.0 (2026-09-03)
@@ -12,8 +143,6 @@
 ### Feat
 
 - add timezone support and userhub metadata
-- **agentic-apps**: add Weather reference runtime
-- **ui**: add config-driven hosted application runtime
 
 ## 1.0.0-dev.22 (2026-09-02)
 
@@ -37,10 +166,6 @@
 - **rag**: preserve job history across file datasource re-uploads
 
 ## 1.0.0-dev.19 (2026-09-02)
-
-### Feat
-
-- **scheduler**: min interval restriction
 
 ### Fix
 
@@ -157,14 +282,11 @@
 ### Feat
 
 - **ui**: add global command palette (#2463)
-- **autonomous**: remove redundent max retires and timeout
-- **autonomous**: webhook to be in a single chat with each run having "continue this run" button to chat on that particular run
 
 ### Fix
 
 - **ui**: show deployed version in about, refresh homepage, and consolidate release docs (#2595)
 - **ui**: hide API-created conversations from chat history (#2588)
-- **ui**: test
 
 ## 1.0.0-dev.6 (2026-08-26)
 
@@ -261,36 +383,15 @@
 
 ## 0.5.69-dev.2 (2026-08-20)
 
-### Feat
-
-- **docs**: up to date autonomous agent docs
-
-### Fix
-
-- **autonomous**: webhook secret ffs
-
 ## 0.5.69-dev.1 (2026-08-19)
-
-### Feat
-
-- **autonomous**: add min run interval (configurable) and wehook should NOT appear in the chat
-- **ui**: autonomous and schedule chats in separate sections to history
 
 ### Fix
 
 - **skills**: repair zip import ownership and file access
-- **autonomous**: add webhook limits and address security concerns
-- **autonomous**: better admin tab and remove task oversight
-- **autonomous**: secret should be secretly handled
-- **ui**: autonomous page scroll issue
 
 ## 0.5.69 (2026-08-18)
 
 ## 0.5.68-dev.8 (2026-08-18)
-
-### Feat
-
-- **autonomous**: simply team access and separate admin control to a tab
 
 ## 0.5.68-dev.7 (2026-08-17)
 

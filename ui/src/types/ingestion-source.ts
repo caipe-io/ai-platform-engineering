@@ -57,7 +57,8 @@ export interface IngestionSourceConfigBase {
   creator_display_name?: string | null;
   creator_email?: string | null;
   search_user_display_names?: string[];
-  /** Search access inherited through RAG collections. */
+  /** Collections this source is a member of. Informational only - membership
+   * grants no Search access; see search_with_teams/search_with_users. */
   rag_collections?: RagCollectionMembershipLabel[];
   /** Active publication request created by the current user, when present. */
   _publication_request?: PendingPublicationRequestView;
@@ -72,6 +73,10 @@ export interface IngestionSourceConfigBase {
   ingestion_job_id?: string;
   /** Human-readable trigger failure retained so the UI can offer a retry. */
   last_error?: string;
+  /** Hash of the config-driven fields used to detect declarative changes. */
+  config_hash?: string;
+  /** Short-lived claim preventing duplicate seed ingestion across UI replicas. */
+  config_seed_claimed_at?: string;
 
   created_at: string;
   updated_at: string;
@@ -90,14 +95,14 @@ export interface ConfluenceSpaceSource extends IngestionSourceConfigBase {
   space_key: string;
   /** Concrete page used to start the initial crawl for this space. */
   start_page_url?: string;
-  /** Adopted legacy configuration selected the entire space (no root page). */
+  /** Imported configuration selected the entire space (no root page). */
   whole_space?: boolean;
   get_child_pages?: boolean;
   allowed_title_patterns?: string[];
   denied_title_patterns?: string[];
   /**
-   * Full legacy page selection retained during config migration. New sources
-   * normally contain one entry, while an adopted env-configured space may
+   * Full imported page selection retained during config migration. New sources
+   * normally contain one entry, while an adopted whole-space source may
    * contain several roots or an empty array meaning "the whole space".
    */
   page_configs?: Array<{

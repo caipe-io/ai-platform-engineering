@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TeamMultiPicker, TeamPicker } from "@/components/ui/team-picker";
@@ -50,6 +51,7 @@ import {
   HelpCircle,
   Info,
   Layers,
+  ListChecks,
   Link as LinkIcon,
   Loader2,
   Pencil,
@@ -78,6 +80,8 @@ import type {
   PendingPublicationRequestView,
   PublicationRequestDocument,
 } from "@/types/publication-approval";
+import type { RagCollectionWithPermissions } from "@/types/rag-collection";
+import { BulkEditSourcesModal } from "./BulkEditSourcesModal";
 import { DatasourceAccessBadges } from "./DatasourceAccessBadges";
 import { DatasourceAccessFields } from "./DatasourceAccessFields";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
@@ -342,6 +346,18 @@ export default function IngestView() {
   // Legacy/direct datasource whose unified management/access dialog is open.
   const [sharingDatasource, setSharingDatasource] =
     useState<DataSourceInfo | null>(null);
+
+  // Bulk-edit selection — a self-service tool: the caller can only select
+  // sources they manage, and applying goes through the same publication-
+  // approval workflow a single edit would trigger (see BulkEditSourcesModal).
+  const [bulkSelectionMode, setBulkSelectionMode] = useState(false);
+  const [bulkSelectedSourceIds, setBulkSelectedSourceIds] = useState<
+    Set<string>
+  >(new Set());
+  const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
+  const [bulkCollectionOptions, setBulkCollectionOptions] = useState<
+    RagCollectionWithPermissions[]
+  >([]);
 
   // Ingestion state
   const [url, setUrl] = useState("");
@@ -1060,7 +1076,7 @@ export default function IngestView() {
       cachedConfig: IngestionSourceConfigWithPermissions | undefined,
       canManageConfig: boolean,
     ) => {
-      if (cachedConfig && canManageConfig) {
+      if (cachedConfig && (canManageConfig || cachedConfig.config_driven)) {
         setEditingSourceConfig(cachedConfig);
         setSourceDialogOpen(true);
         return;
@@ -1731,6 +1747,81 @@ export default function IngestView() {
       await fetchIngestionSourceConfigs();
     }
   };
+
+  const manageableSourceIds = useMemo(
+    () =>
+      new Set(
+        Array.from(ingestionSourceConfigs.values())
+          .filter((source) => source._permissions.can_manage && !source.config_driven)
+          .map((source) => source.source_id),
+      ),
+    [ingestionSourceConfigs],
+  );
+
+  const toggleBulkSelected = (source: IngestionSourceConfigWithPermissions) => {
+    if (!manageableSourceIds.has(source.source_id)) return;
+    setBulkSelectedSourceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(source.source_id)) next.delete(source.source_id);
+      else next.add(source.source_id);
+      return next;
+    });
+  };
+
+  const exitBulkSelectionMode = () => {
+    setBulkSelectionMode(false);
+    setBulkSelectedSourceIds(new Set());
+  };
+
+  const selectByCollection = async (collectionId: string) => {
+    try {
+      const res = await fetch(
+        `/api/rag/collections/${encodeURIComponent(collectionId)}`,
+      );
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error ?? "Could not load collection");
+      }
+      const memberIds: string[] = Array.isArray(data.data?.source_ids)
+        ? data.data.source_ids
+        : [];
+      const addable = memberIds.filter((id) => manageableSourceIds.has(id));
+      setBulkSelectedSourceIds((prev) => new Set([...prev, ...addable]));
+      if (addable.length === 0) {
+        toast(
+          "No datasources you manage are in that collection.",
+          "info",
+        );
+      } else {
+        toast(
+          `Added ${addable.length} datasource${addable.length === 1 ? "" : "s"} from the collection.`,
+          "success",
+        );
+      }
+    } catch (error) {
+      toast(getErrorMessage(error, "Could not select by collection"), "error");
+    }
+  };
+
+  useEffect(() => {
+    if (!bulkSelectionMode || bulkCollectionOptions.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/rag/collections");
+        const data = await res.json();
+        if (!cancelled && res.ok && data?.success) {
+          setBulkCollectionOptions(data.data?.collections ?? []);
+        }
+      } catch {
+        // Collection quick-select is a convenience; failing silently still
+        // leaves manual card-by-card selection available.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bulkSelectionMode, bulkCollectionOptions.length]);
 
   const handleTerminateJob = async (datasourceId: string, jobId: string) => {
     try {
@@ -2506,6 +2597,21 @@ export default function IngestView() {
               {/* Source actions - Right Aligned */}
               <div className="flex items-center gap-2">
                 <Button
+                  variant={bulkSelectionMode ? "secondary" : "ghost"}
+                  size="sm"
+                  className="gap-2"
+                  onClick={() =>
+                    bulkSelectionMode
+                      ? exitBulkSelectionMode()
+                      : setBulkSelectionMode(true)
+                  }
+                  disabled={manageableSourceIds.size === 0}
+                  data-testid="bulk-edit-toggle"
+                >
+                  <ListChecks className="h-4 w-4" />
+                  {bulkSelectionMode ? "Cancel bulk edit" : "Bulk edit"}
+                </Button>
+                <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => void Promise.all([
@@ -2615,6 +2721,49 @@ export default function IngestView() {
               )}
             </div>
 
+            {bulkSelectionMode && (
+              <div className="flex flex-wrap items-center gap-2 border-b border-border/50 bg-muted/20 px-5 py-3">
+                <span className="text-xs font-medium">
+                  {bulkSelectedSourceIds.size} selected
+                </span>
+                <SearchablePicker
+                  id="bulk-edit-select-by-collection"
+                  options={bulkCollectionOptions}
+                  selected={undefined}
+                  onSelect={(collection) => void selectByCollection(collection._id)}
+                  getOptionKey={(collection) => collection._id}
+                  getOptionLabel={(collection) => collection.name}
+                  getSearchText={(collection) => [collection._id, collection.name]}
+                  placeholder="Select by collection..."
+                  searchPlaceholder="Search collections..."
+                  emptyLabel="No collections available"
+                  ariaLabel="Select by collection"
+                  triggerClassName="h-8 w-56 text-xs"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  disabled={bulkSelectedSourceIds.size === 0}
+                  onClick={() => setBulkSelectedSourceIds(new Set())}
+                >
+                  Clear selection
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs"
+                  disabled={bulkSelectedSourceIds.size === 0}
+                  onClick={() => setBulkEditModalOpen(true)}
+                  data-testid="bulk-edit-open-modal"
+                >
+                  <ListChecks className="h-3.5 w-3.5" />
+                  Bulk edit selected
+                </Button>
+              </div>
+            )}
+
             {/* Pending sources — config rows with no DataSourceInfo yet */}
             {filteredPendingSourceConfigs.length > 0 && (
               <div className="px-5 py-4 border-b border-border/50 space-y-2">
@@ -2632,6 +2781,9 @@ export default function IngestView() {
                     onDelete={handleDeleteSourceConfig}
                     onRetry={handleRetrySourceConfig}
                     pendingPublicationRequest={pendingPublicationRequests.get(source.source_id)}
+                    selectionMode={bulkSelectionMode}
+                    selected={bulkSelectedSourceIds.has(source.source_id)}
+                    onToggleSelect={toggleBulkSelected}
                   />
                 ))}
               </div>
@@ -2753,8 +2905,8 @@ export default function IngestView() {
                       const supportsFileReupload = supportsReupload(
                         ds.source_type,
                       );
-                      // Helm-seeded config rows (`config_driven: true`) are immutable via
-                      // the source-management API until they are adopted.
+                      // Application-config rows (`config_driven: true`) are
+                      // immutable via the source-management API until adopted.
                       const isConfigDriven = Boolean(
                         sourceConfig?.config_driven,
                       );
@@ -2801,6 +2953,30 @@ export default function IngestView() {
                             className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
                             onClick={() => toggleRow(ds.datasource_id)}
                           >
+                            {bulkSelectionMode && (
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 shrink-0"
+                                checked={bulkSelectedSourceIds.has(ds.datasource_id)}
+                                disabled={
+                                  !sourceConfig ||
+                                  !canManageSourceConfig ||
+                                  isConfigDriven
+                                }
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={() =>
+                                  sourceConfig && toggleBulkSelected(sourceConfig)
+                                }
+                                aria-label={`Select ${displayName}`}
+                                title={
+                                  !sourceConfig || !canManageSourceConfig
+                                    ? "You do not manage this source"
+                                    : isConfigDriven
+                                      ? "Loaded from app-config.yaml — view only"
+                                      : undefined
+                                }
+                              />
+                            )}
                             <motion.div
                               animate={{ rotate: isExpanded ? 90 : 0 }}
                               transition={{ duration: 0.2 }}
@@ -2879,7 +3055,7 @@ export default function IngestView() {
                                           ? `${ds.datasource_id.substring(0, 60)}\u2026`
                                           : ds.datasource_id)}
                                     </span>
-                                    {canManageDatasource && (
+                                    {canManageDatasource && !isConfigDriven && (
                                       <Button
                                         size="sm"
                                         variant="ghost"
@@ -2900,8 +3076,8 @@ export default function IngestView() {
                                     variant="ghost"
                                     size="sm"
                                     className="h-5 w-5 p-0 text-muted-foreground hover:text-foreground shrink-0"
-                                    title="Manage Datasource"
-                                    aria-label="Manage Datasource"
+                                    title={isConfigDriven ? "View Datasource" : "Manage Datasource"}
+                                    aria-label={isConfigDriven ? "View Datasource" : "Manage Datasource"}
                                     disabled={
                                       openingSourceConfigId === ds.datasource_id
                                     }
@@ -2944,7 +3120,6 @@ export default function IngestView() {
                                       sourceConfig?.search_user_display_names ??
                                       ds.search_user_display_names
                                     }
-                                    ragCollections={ragCollections}
                                     pendingPublicationRequest={pendingPublicationRequests.get(
                                       ds.datasource_id,
                                     )}
@@ -3019,7 +3194,7 @@ export default function IngestView() {
                                 </>
                               )}
 
-                              {(canRunLifecycle || canManageDatasource) && (
+                              {!isConfigDriven && (canRunLifecycle || canManageDatasource) && (
                                 <div
                                   className="flex gap-1"
                                   onClick={(e) => e.stopPropagation()}
@@ -4631,11 +4806,27 @@ export default function IngestView() {
         }}
         onSave={handleSaveSourceConfig}
         initial={editingSourceConfig}
+        readOnly={editingSourceConfig?.config_driven === true}
         pendingPublicationRequest={editingSourceConfig
           ? pendingPublicationRequests.get(editingSourceConfig.source_id)
           : null}
         onPublicationRequestWithdrawn={async () => {
           await fetchPendingPublicationRequests();
+        }}
+      />
+
+      <BulkEditSourcesModal
+        open={bulkEditModalOpen}
+        sourceIds={Array.from(bulkSelectedSourceIds)}
+        onClose={() => setBulkEditModalOpen(false)}
+        onApplied={async () => {
+          setBulkEditModalOpen(false);
+          exitBulkSelectionMode();
+          await Promise.all([
+            fetchIngestionSourceConfigs(),
+            fetchDataSources(),
+            fetchPendingPublicationRequests(),
+          ]);
         }}
       />
 

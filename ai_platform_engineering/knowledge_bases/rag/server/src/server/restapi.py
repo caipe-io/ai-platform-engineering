@@ -779,6 +779,10 @@ async def authorize_source_ingestion(
   ongoing Owner access.
   Existing datasources continue through the normal connector/config gate.
   """
+  # The platform service starts declaratively seeded sources only after the UI
+  # has preprovisioned their management and search policy.
+  if ownership_preprovisioned and is_trusted_ingestor_service(user):
+    return
   if existing_datasource is not None:
     await check_connector_configuration_access(user, datasource_id)
   elif ownership_preprovisioned:
@@ -2595,10 +2599,13 @@ async def preview_url_ingestion(
   user: UserContext = Depends(require_authenticated_user),
 ):
   """Crawl a bounded sample without creating a datasource, job, or documents."""
-  url_request.url = sanitize_url(
-    url_request.url,
-    url_request.settings.allow_non_public_urls,
-  )
+  try:
+    url_request.url = sanitize_url(
+      url_request.url,
+      url_request.settings.allow_non_public_urls,
+    )
+  except ValueError as e:
+    raise HTTPException(status_code=400, detail=str(e))
   datasource_id = utils.generate_datasource_id_from_url(url_request.url)
   existing_datasource = (
     await metadata_storage.get_datasource_info(datasource_id)
@@ -2749,7 +2756,10 @@ async def ingest_url(
   logger.info(f"Received URL ingestion request: {url_request.url}")
 
   # Sanitize URL
-  sanitized_url = sanitize_url(url_request.url, url_request.settings.allow_non_public_urls)
+  try:
+    sanitized_url = sanitize_url(url_request.url, url_request.settings.allow_non_public_urls)
+  except ValueError as e:
+    raise HTTPException(status_code=400, detail=str(e))
   url_request.url = sanitized_url
 
   # Generate datasource ID and create datasource

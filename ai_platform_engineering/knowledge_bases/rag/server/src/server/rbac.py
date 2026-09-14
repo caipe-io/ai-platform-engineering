@@ -478,8 +478,9 @@ def is_unsafe_rbac_bypass_enabled() -> bool:
 def is_trusted_ingestor_service(user_context: UserContext) -> bool:
   """Return True for the explicitly configured first-party ingestor client.
 
-  This is a narrow transport identity used only by heartbeat, job mutation,
-  and document-push endpoints. It never bypasses datasource search/read RBAC.
+  This transport identity handles heartbeats, job mutation, document pushes,
+  and startup of policy-preprovisioned declarative sources. It never bypasses
+  datasource search/read RBAC.
   """
   if user_context.subject_type != "service_account" or not user_context.client_id:
     return False

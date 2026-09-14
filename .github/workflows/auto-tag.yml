@@ -293,7 +293,7 @@ jobs:
           if [[ "$IS_CHART_ONLY" == "true" ]]; then
             echo "- ⏭️ Image builds **skipped** (chart-only change)" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "- 🔄 Image builds triggered (changed images rebuilt, unchanged retagged)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- 🔄 Image builds triggered (all components rebuilt fresh)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: 📊 Existing auto-tag summary

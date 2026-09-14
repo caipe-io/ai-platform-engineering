@@ -13,6 +13,26 @@ authorization.
 This integration is useful when a product should be discoverable from CAIPE
 without rebuilding it as a CAIPE agent or merging its source into the UI.
 
+## What users see
+
+After an administrator registers and enables an app, users can:
+
+1. Open **Apps** in CAIPE.
+2. Select an app they are allowed to use.
+3. Work in the app inside the CAIPE shell while the host supplies the signed-in
+   identity for approved requests.
+
+The app remains responsible for its own screens, data, and business rules.
+Users do not need a second CAIPE login, but they still need the roles and scopes
+required by that app.
+
+## When to use External Apps
+
+Choose External Apps for a complete web experience with its own UI and domain
+model. Choose Agent Builder when the experience is primarily a conversation;
+choose an MCP server when an agent needs a tool or service operation without a
+separate web interface.
+
 ## Request flow
 
 ```mermaid
@@ -111,6 +131,8 @@ agentic_apps:
           mountPath: /apps/example-app
           preserveMountPath: false
           chrome: iframe
+          # Optional per-app limit. The default is 10 MiB; the maximum is 64 MiB.
+          maxRequestBodyBytes: 67108864
         surfaces:
           showInHub: true
           navOrder: 50
@@ -242,6 +264,14 @@ not run active health probes or use health state as an admission decision.
 Runtime connection failures return `502 upstream_unavailable`. Health-based
 launch admission is a separate follow-up.
 
-The runtime currently buffers request bodies before forwarding them. Large
-upload/import contracts need an explicit ingress limit and bounded or streaming
-BFF handling before they are advertised as supported.
+The runtime currently buffers request bodies before forwarding them. Requests
+default to a 10 MiB per-app limit and receive `413 request_body_too_large` when
+they exceed it. Set `runtime.maxRequestBodyBytes` when an application needs a
+larger upload/import contract, up to the per-app ceiling of 64 MiB. The host
+keeps one additional MiB of transport headroom so an oversized request can be
+rejected cleanly rather than forwarded as a truncated body.
+
+Every reverse proxy or ingress in front of the UI must also admit the configured
+per-app limit plus that transport headroom. For example, an app configured for
+64 MiB requests needs an upstream allowance of at least 65 MiB; otherwise the
+upstream proxy will reject the request before the app-specific limit is applied.

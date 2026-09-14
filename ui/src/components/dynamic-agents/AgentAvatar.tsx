@@ -12,6 +12,7 @@
  * 2. agent.gradient_theme + agent.custom_theme_config (legacy, no ui wrapper)
  */
 
+import { getDeterministicAgentThemeId } from "@/lib/agent-theme";
 import { getAccentColor,getGradientStyle } from "@/lib/gradient-themes";
 import { cn } from "@/lib/utils";
 import type { CustomThemeConfig } from "@/types/dynamic-agent";
@@ -20,6 +21,8 @@ import React from "react";
 
 /** Minimal shape the avatar needs — accepts full agent or any subset */
 export interface AgentAvatarAgent {
+  _id?: string;
+  id?: string;
   ui?: {
     gradient_theme?: string;
     custom_theme_config?: CustomThemeConfig;
@@ -33,6 +36,8 @@ export interface AgentAvatarAgent {
 export interface AgentAvatarProps {
   /** Agent object — component extracts theme from agent.ui (or legacy agent.gradient_theme) */
   agent?: AgentAvatarAgent | null;
+  /** Stable identity used for an agent-specific fallback when no theme is configured. */
+  agentId?: string | null;
   /** Override gradient theme (used when agent is null, e.g. editor live preview) */
   gradientTheme?: string | null;
   /** Override custom theme config (used when agent is null, e.g. editor live preview) */
@@ -57,6 +62,7 @@ export interface AgentAvatarProps {
 
 export function AgentAvatar({
   agent,
+  agentId,
   gradientTheme: gradientThemeOverride,
   customThemeConfig: customThemeConfigOverride,
   useGlobalTheme = false,
@@ -82,8 +88,12 @@ export function AgentAvatar({
   }
 
   // Resolve theme: explicit overrides > agent.ui > legacy top-level fields > null
-  const resolvedGradientTheme = gradientThemeOverride ?? agent?.ui?.gradient_theme ?? agent?.gradient_theme ?? null;
+  const explicitGradientTheme = gradientThemeOverride ?? agent?.ui?.gradient_theme ?? agent?.gradient_theme ?? null;
   const resolvedCustomThemeConfig = customThemeConfigOverride ?? agent?.ui?.custom_theme_config ?? agent?.custom_theme_config ?? null;
+  const identity = agentId ?? agent?._id ?? agent?.id ?? null;
+  const resolvedGradientTheme = explicitGradientTheme || (
+    !useGlobalTheme && identity ? getDeterministicAgentThemeId(identity) : null
+  );
 
   const gradientStyle = !useGlobalTheme && resolvedGradientTheme
     ? getGradientStyle(resolvedGradientTheme, resolvedCustomThemeConfig)
@@ -123,6 +133,7 @@ export function AgentAvatar({
         className,
       )}
       style={gradientStyle || undefined}
+      data-agent-theme={resolvedGradientTheme || "neutral"}
     >
       {renderedIcon}
     </div>

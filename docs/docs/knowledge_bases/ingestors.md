@@ -24,6 +24,27 @@ Ingestors can produce two types of data:
 | **Documents** | Milvus (vectors) | Unstructured text like web pages, chat messages, wiki pages |
 | **Graph Entities** | Milvus + Neo4j | Structured data with relationships like infrastructure resources |
 
+## Datasource Configuration
+
+Web, Slack, Confluence, Jira, and Webex datasources use one persisted source
+model:
+
+- Create editable sources in the Web UI.
+- Seed deployment-managed, view-only sources through `rag_sources` in
+  `config/app-config.yaml` for Compose.
+- Use `caipe-ui.appConfig.rag_sources` for Helm.
+- Keep connector credentials in environment variables or deployment secrets.
+
+The ingestors reload only persisted sources. They do not read channel, space,
+project, or page selections from environment variables.
+
+Application-config sources are seeded into the database automatically and stay
+read-only while configuration remains the source of truth. An administrator can
+use **Admin → Settings → RAG → Adopt App-Config RAG Sources** to transfer selected
+sources to editable database management and add them to a collection. Adoption
+does not re-ingest indexed content; subsequent application-config changes no
+longer overwrite an adopted source.
+
 ## Available Ingestors
 
 ### Web Loader

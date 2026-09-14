@@ -5,7 +5,8 @@ sidebar_position: 1
 # Run with Docker Compose
 
 Use Docker Compose for a local CAIPE stack with the UI, Dynamic Agents, MCP
-servers, MongoDB, RBAC services, and optional RAG/tracing components.
+servers, a MongoDB-compatible database, RBAC services, and optional RAG/tracing
+components. MongoDB is the default; DocumentDB is opt-in.
 
 ## Prerequisites
 
@@ -46,6 +47,40 @@ ARGOCD_API_URL=https://argocd.example.com
 For full provider details see [Configure LLMs](configure-llms.md). For service
 credentials see [Configure Agent Secrets](configure-agent-secrets.md).
 
+### Seed application resources
+
+Compose mounts `config/app-config.yaml` into the UI. To keep local settings out
+of Git:
+
+```bash
+cp config/app-config.yaml config/app-config.local.yaml
+```
+
+Set the override in `.env`:
+
+```bash
+CAIPE_APP_CONFIG_FILE=./config/app-config.local.yaml
+```
+
+The file can seed models, MCP servers, agents, workflows, and RAG datasources.
+For example:
+
+```yaml
+rag_sources:
+  - source_type: web_url
+    url: https://docs.example.com
+    name: example-docs
+    search_with_teams: [primary]
+    settings:
+      crawl_mode: sitemap
+      max_pages: 500
+```
+
+Seeded datasources are visible but read-only in the UI. `search_with_teams`
+controls who can query their content independently from source management.
+Change the YAML and restart the UI to update or remove them. Connector
+credentials remain in `.env` or the deployment secret store.
+
 ## Start
 
 ```bash
@@ -67,6 +102,14 @@ To let the setup helper update `.env` and start Compose:
 ./setup-caipe.sh --docker-compose
 ```
 
+The setup script asks before using sudo. Use `--no-sudo` to forbid it or `--allow-sudo` to permit it without a consent prompt. See [sudo consent](../kind/setup.md#sudo-consent) for automation and fallback behavior.
+
+Choose the MIT-licensed DocumentDB provider instead:
+
+```bash
+./setup-caipe.sh --docker-compose --database=documentdb
+```
+
 ## Profiles
 
 | Profile | Description |
@@ -74,8 +117,9 @@ To let the setup helper update `.env` and start Compose:
 | `mcp-servers` | Packaged MCP server containers |
 | `caipe-ui-prod` | Production CAIPE UI image |
 | `caipe-mongodb` | MongoDB for UI state, Dynamic Agents, RBAC metadata, and checkpoints |
+| `caipe-documentdb` | Opt-in DocumentDB provider for the same MongoDB-compatible state |
 | `rbac` | Local Keycloak, OpenFGA, AgentGateway, and config bridge |
-| `dynamic-agents` | Dynamic Agents runtime used by chat, skills, and custom agents |
+| `dynamic-agents` | Dynamic Agents runtime used by chat, skills, and Agent Builder |
 | `rag` | Vector RAG services |
 | `web_ingestor` / `web-ingestor` | Web datasource ingestion worker |
 | `slack-bot` | Slack bot integration service |

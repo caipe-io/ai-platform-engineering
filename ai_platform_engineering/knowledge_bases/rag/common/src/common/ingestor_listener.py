@@ -18,11 +18,7 @@ from typing import Any, Optional, Type
 from pydantic import BaseModel
 from redis.asyncio import Redis
 
-from common.constants import (
-  DEFAULT_RELOAD_INTERVAL,
-  MIN_RELOAD_INTERVAL,
-  ingestor_request_queue,
-)
+from common.constants import MIN_RELOAD_INTERVAL, ingestor_request_queue
 from common.ingestor import Client
 from common.job_manager import JobManager, JobStatus, is_stale_pending_job
 from common.models.rag import DataSourceInfo
@@ -39,45 +35,18 @@ LabelHandler = Callable[[BaseModel], str]
 PreviewHandler = Callable[[Client, BaseModel], Awaitable[dict[str, Any]]]
 
 
-def configured_reload_interval(
-  config: dict[str, Any],
-  existing: Optional[DataSourceInfo] = None,
-) -> int:
-  """Resolve a legacy config source's persisted refresh interval.
-
-  Existing datasource cadence wins when an older config has no per-source
-  value. New legacy sources retain the historical 24-hour default.
-  """
-  raw_value = config.get("reload_interval")
-  if raw_value is None:
-    return existing.reload_interval if existing else DEFAULT_RELOAD_INTERVAL
-  if isinstance(raw_value, bool):
-    raise ValueError("reload_interval must be an integer number of seconds")
-  try:
-    interval = int(raw_value)
-  except (TypeError, ValueError) as error:
-    raise ValueError("reload_interval must be an integer number of seconds") from error
-  if interval < MIN_RELOAD_INTERVAL:
-    raise ValueError(
-      f"reload_interval must be at least {MIN_RELOAD_INTERVAL} seconds"
-    )
-  return interval
-
-
 async def reload_persisted_datasources(
   client: Client,
   reload_handler: ReloadHandler,
   *,
   due_only: bool = True,
-  config_managed_only: bool = False,
   job_manager: Optional[JobManager] = None,
 ) -> tuple[int, int]:
   """Reload datasource records assigned to this ingestor.
 
-  Database-managed sources are absent from the legacy connector env vars, so
-  every periodic connector path must enumerate the persisted RAG datasource
-  store. This shared implementation honors per-source refresh intervals and
-  avoids racing an on-demand job already using the datasource.
+  Every periodic connector path enumerates the persisted RAG datasource store.
+  This shared implementation honors per-source refresh intervals and avoids
+  racing an on-demand job already using the datasource.
 
   Returns ``(reloaded, skipped)``. A failure for one datasource is isolated so
   the remaining sources still receive a refresh attempt.
@@ -102,10 +71,6 @@ async def reload_persisted_datasources(
 
     for datasource in datasources:
       try:
-        if config_managed_only and not (datasource.metadata or {}).get("config_managed"):
-          skipped += 1
-          continue
-
         if datasource.reload_interval < MIN_RELOAD_INTERVAL:
           logger.warning(
             f"Datasource {datasource.datasource_id} has reload_interval "

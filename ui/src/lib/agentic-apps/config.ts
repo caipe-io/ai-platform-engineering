@@ -7,6 +7,7 @@ import type {
   AgenticAppPolicyAction,
   ConfiguredAgenticApp,
 } from "@/types/agentic-app";
+import { MAX_AGENTIC_APP_REQUEST_BODY_BYTES } from "@/types/agentic-app";
 
 const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const HTTP_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
@@ -178,6 +179,18 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
   }
 
   const runtimeRaw = asRecord(raw.runtime, `${path}.runtime`);
+  assertKnownKeys(
+    runtimeRaw,
+    [
+      "kind",
+      "origin",
+      "mountPath",
+      "preserveMountPath",
+      "chrome",
+      "maxRequestBodyBytes",
+    ],
+    `${path}.runtime`,
+  );
   if (runtimeRaw.kind !== "proxied-next-zone") {
     throw new Error(`${path}.runtime.kind must be "proxied-next-zone"`);
   }
@@ -252,6 +265,14 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
           }
         : {}),
       ...(runtimeRaw.chrome === "iframe" ? { chrome: "iframe" as const } : {}),
+      ...(runtimeRaw.maxRequestBodyBytes !== undefined
+        ? {
+            maxRequestBodyBytes: requiredRequestBodyLimit(
+              runtimeRaw.maxRequestBodyBytes,
+              `${path}.runtime.maxRequestBodyBytes`,
+            ),
+          }
+        : {}),
     },
     surfaces: {
       showInHub: optionalBoolean(
@@ -454,6 +475,19 @@ function requiredNumber(value: unknown, path: string): number {
     throw new Error(`${path} must be a finite number`);
   }
   return value;
+}
+
+function requiredRequestBodyLimit(value: unknown, path: string): number {
+  const result = requiredNumber(value, path);
+  if (!Number.isSafeInteger(result) || result < 1) {
+    throw new Error(`${path} must be a positive integer number of bytes`);
+  }
+  if (result > MAX_AGENTIC_APP_REQUEST_BODY_BYTES) {
+    throw new Error(
+      `${path} must not exceed ${MAX_AGENTIC_APP_REQUEST_BODY_BYTES} bytes`,
+    );
+  }
+  return result;
 }
 
 function requiredStringArray(

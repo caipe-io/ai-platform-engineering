@@ -144,12 +144,30 @@ function sanitizeVersionLinks(versionDir, tag, isVersionedRoute) {
           path.dirname(relWithinVersion).split(path.sep).join('/')
         );
         if (sanitizeFileLinks(abs, fileDirRepoRel, tag, isVersionedRoute)) count += 1;
+        if (sanitizeLegacyDocLinks(abs)) count += 1;
         if (sanitizeMdxBreakingPatterns(abs)) count += 1;
       }
     }
   };
   walk(versionDir);
   return count;
+}
+
+// Keep links in frozen snapshots usable when older docs point at anchors or
+// routes that no longer exist in the corresponding snapshot.
+function sanitizeLegacyDocLinks(absFile) {
+  let content = fs.readFileSync(absFile, 'utf8');
+  const original = content;
+
+  content = content
+    .replace(/(\]\(\.\/creating-an-agent)#(?:understanding-the-template|step-1-clone-the-template|step-4-implement-the-agent-logic)(\))/g, '$1$2')
+    .replace(/(\]\(\.\.\/getting-started\/user-interfaces\.md)#agent-chat-cli(\))/g, '$1$2')
+    .replace(/(\]\(\.\/architecture\.md)#key-environment-variables-2(\))/g, '$1#key-environment-variables$2')
+    .replace(/\]\(\/docs\/(?:[^/]+\/)?getting-started\/helm\/setup(?:#argocd|\.md)?\)/g, '](../helm/setup)');
+
+  if (content === original) return false;
+  fs.writeFileSync(absFile, content);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

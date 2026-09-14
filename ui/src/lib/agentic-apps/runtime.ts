@@ -31,7 +31,7 @@ export function buildAgenticAppTargetUrl(
     const mountPath = (
       app.installation.runtimeMountPath ?? app.manifest.runtime.mountPath
     ).replace(/\/+$/, "");
-    target.pathname = `${mountPath}${encodedPath ? suffix : ""}`;
+    target.pathname = `${mountPath}${suffix}`;
   } else {
     target.pathname = suffix;
   }

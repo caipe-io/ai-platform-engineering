@@ -103,6 +103,11 @@ export interface Config {
    */
   workflowsEnabled: boolean;
   /**
+   * Whether the Projects surface is shown in application navigation.
+   * Set PROJECTS_ENABLED=true to enable.
+   */
+  projectsEnabled: boolean;
+  /**
    * Whether Dynamic Agents should be considered enabled by platform health.
    * Set DYNAMIC_AGENTS_ENABLED=true to enable.
    */
@@ -260,6 +265,7 @@ const DEFAULT_CONFIG: Config = {
   sourceUrl: null,
   workflowRunnerEnabled: false,
   workflowsEnabled: false,
+  projectsEnabled: false,
   dynamicAgentsEnabled: false,
   feedbackEnabled: true,
   allowBuiltinSkillMutation: false,
@@ -371,6 +377,7 @@ export function getServerConfig(): Config {
   const unsafeRbacBypassEnabled = enabledEnv('CAIPE_UNSAFE_RBAC_BYPASS');
   const workflowRunnerEnabled = env('WORKFLOW_RUNNER_ENABLED') === 'true';
   const workflowsEnabled = env('WORKFLOWS_ENABLED') === 'true';
+  const projectsEnabled = env('PROJECTS_ENABLED') === 'true';
   const dynamicAgentsEnabled = env('DYNAMIC_AGENTS_ENABLED') === 'true';
   const feedbackEnabled = env('FEEDBACK_ENABLED') !== 'false';
   // Default `false` (locked). Must mirror the server-side check in
@@ -460,6 +467,7 @@ export function getServerConfig(): Config {
     sourceUrl: env('SOURCE_URL') || null,
     workflowRunnerEnabled,
     workflowsEnabled,
+    projectsEnabled,
     dynamicAgentsEnabled,
     feedbackEnabled,
     allowBuiltinSkillMutation,

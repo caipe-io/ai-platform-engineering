@@ -19,7 +19,11 @@ jest.mock("@/lib/agentic-apps/config", () => ({
   getConfiguredAgenticApp: (...args: unknown[]) => mockGetConfiguredAgenticApp(...args),
 }));
 
-import { GET } from "./route";
+import { GET, POST } from "./route";
+
+const MockApiError = jest.requireMock("@/lib/api-middleware").ApiError as new (
+  message?: string,
+) => Error & { statusCode: number };
 
 const configuredApp: ConfiguredAgenticApp = {
   manifest: {
@@ -112,6 +116,18 @@ describe("External App runtime route", () => {
     fetchMock.mockRestore();
   });
 
+  it("rejects unauthenticated runtime requests before resolving the app", async () => {
+    mockGetAuthenticatedUser.mockRejectedValueOnce(new MockApiError("not signed in"));
+
+    const response = await GET(
+      new NextRequest("https://host.example/api/agentic-apps/runtime/example-app"),
+      { params: Promise.resolve({ appId: "example-app", path: [] }) },
+    );
+
+    expect(response.status).toBe(401);
+    expect(mockGetConfiguredAgenticApp).not.toHaveBeenCalled();
+  });
+
   it("rewrites upstream runtime redirects to the canonical public app path", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(
       new Response(null, {
@@ -131,6 +147,47 @@ describe("External App runtime route", () => {
     expect(response.headers.get("location")).toBe(
       "/apps/example-app/login?next=%2F",
     );
+    fetchMock.mockRestore();
+  });
+
+  it.each([
+    { scenario: "its declared length", includeContentLength: true },
+    { scenario: "the buffered body", includeContentLength: false },
+  ])("rejects an app request that exceeds $scenario", async ({ includeContentLength }) => {
+    const fetchMock = jest.spyOn(global, "fetch");
+    mockGetConfiguredAgenticApp.mockReturnValue({
+      ...configuredApp,
+      manifest: {
+        ...configuredApp.manifest,
+        runtime: {
+          ...configuredApp.manifest.runtime,
+          maxRequestBodyBytes: 4,
+        },
+        access: {
+          ...configuredApp.manifest.access,
+          policyActions: [{ action: "proxy:POST", defaultEffect: "allow" }],
+        },
+      },
+    } satisfies ConfiguredAgenticApp);
+
+    const response = await POST(
+      new NextRequest("https://host.example/api/agentic-apps/runtime/example-app/import", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(includeContentLength ? { "content-length": "5" } : {}),
+        },
+        body: "12345",
+      }),
+      { params: Promise.resolve({ appId: "example-app", path: ["import"] }) },
+    );
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({
+      error: "request_body_too_large",
+      maxRequestBodyBytes: 4,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
     fetchMock.mockRestore();
   });
 });
