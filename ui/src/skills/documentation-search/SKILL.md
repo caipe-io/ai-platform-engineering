@@ -13,7 +13,7 @@ Search the internal knowledge base using RAG (Retrieval-Augmented Generation) to
 1. **Parse the user's intent**:
    - Are they looking for a specific document (e.g., "deployment runbook")?
    - Are they asking a question the docs can answer (e.g., "how do we handle rollbacks?")?
-   - Are they exploring a topic (e.g., "what do we know about A2A protocol?")?
+   - Are they exploring a topic (e.g., "what do we know about MCP tools?")?
 2. **Formulate search queries**:
    - Extract key terms from the user's question
    - Generate 2-3 variant queries to improve recall

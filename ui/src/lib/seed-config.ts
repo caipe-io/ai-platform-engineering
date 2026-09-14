@@ -24,6 +24,7 @@ import {
 import {
   writeOpenFgaTuples,
   isOpenFgaReconciliationEnabled,
+  mapWithConcurrency,
 } from "@/lib/rbac/openfga";
 import { reconcileAgentRelationships } from "@/lib/rbac/openfga-agent-tools";
 import {
@@ -51,7 +52,6 @@ import type {
   TransportType,
   VisibilityType,
 } from "@/types/dynamic-agent";
-import { PLATFORM_RAG_COLLECTION_ID } from "@/types/rag-collection";
 import type {
   IngestionSourceConfig,
   IngestionSourceVisibility,
@@ -189,13 +189,6 @@ export function loadSeedConfig(configPath: string): SeedConfig {
 
 type AgentAllowedTools = DynamicAgentConfig["allowed_tools"];
 
-function hasKnowledgeBaseTools(
-  allowedTools: AgentAllowedTools | undefined,
-): boolean {
-  const selection = allowedTools?.["knowledge-base"];
-  return selection === true || Array.isArray(selection);
-}
-
 function normalizeStringArray(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return raw.filter(
@@ -252,21 +245,6 @@ export async function seedAgents(
   // for every agent seeded in this call.
   const unlinkedServiceAccountSub = await resolveUnlinkedServiceAccountSub();
   let count = 0;
-  let platformRagExistsPromise: Promise<boolean> | undefined;
-  const platformRagExists = (): Promise<boolean> => {
-    platformRagExistsPromise ??= getCollection<{ _id: string }>(
-      "rag_collections",
-    )
-      .then((collections) =>
-        collections
-          .findOne({ _id: PLATFORM_RAG_COLLECTION_ID } as never, {
-            projection: { _id: 1 },
-          })
-          .then(Boolean),
-      )
-      .catch(() => false);
-    return platformRagExistsPromise;
-  };
 
   for (const agentData of agents) {
     const agentId = agentData.id as string | undefined;
@@ -309,33 +287,19 @@ export async function seedAgents(
     const hasConfiguredCollectionIds = Array.isArray(
       agentData.rag_collection_ids,
     );
-    const hasExistingDatasourceIds = Array.isArray(existing?.datasource_ids);
-    const hasExistingCollectionIds = Array.isArray(
-      existing?.rag_collection_ids,
-    );
-    let configuredDatasourceIds = hasConfiguredDatasourceIds
+    // A config-driven agent with neither field configured falls through to
+    // whatever it already had (undefined for a brand-new agent), which is
+    // left unrestricted: the RAG server always independently intersects
+    // results with the caller's own accessible datasources at query time, so
+    // "no configured scope" never means "unrestricted access" - it means "as
+    // much as the calling user can already see." Explicit empty arrays in
+    // Mongo or YAML remain a deliberate opt-out.
+    const configuredDatasourceIds = hasConfiguredDatasourceIds
       ? normalizeStringArray(agentData.datasource_ids)
       : existing?.datasource_ids;
-    let configuredCollectionIds = hasConfiguredCollectionIds
+    const configuredCollectionIds = hasConfiguredCollectionIds
       ? normalizeStringArray(agentData.rag_collection_ids)
       : existing?.rag_collection_ids;
-    if (
-      hasKnowledgeBaseTools(allowedTools) &&
-      !hasConfiguredDatasourceIds &&
-      !hasConfiguredCollectionIds &&
-      !hasExistingDatasourceIds &&
-      !hasExistingCollectionIds &&
-      (await platformRagExists())
-    ) {
-      // Match UI-created agents: after the explicit migration creates Platform
-      // RAG, every config-driven agent without a prior explicit selection is
-      // pinned to it instead of reviving the legacy unrestricted-corpus
-      // behavior. This also covers an existing non-RAG agent whose config is
-      // later changed to enable RAG. Empty arrays in Mongo or YAML remain an
-      // explicit opt-out.
-      configuredDatasourceIds = [];
-      configuredCollectionIds = [PLATFORM_RAG_COLLECTION_ID];
-    }
 
     const doc = {
       _id: agentId,
@@ -957,80 +921,138 @@ export async function adoptConfigImportedRagSources(
     ownerTeamSlug: string | null;
     ownerSubject?: string | null;
   },
+  /**
+   * Search Access to grant on adoption. A collection grants no access to
+   * its members, so the admin sets this directly on the source rather
+   * than picking a destination collection. Adoption never wrote
+   * knowledge_base/data_source grants before this, so the reconcile below
+   * treats "previous" as empty - additive only, never revokes a grant
+   * from another path (e.g. the source's own `visibility: "global"`).
+   */
+  search?: {
+    teamSlugs?: readonly string[];
+    userSubjects?: readonly string[];
+  },
 ): Promise<{ adopted: string[]; skipped: RagSourceAdoptSkip[] }> {
   const collection = await getCollection<IngestionSourceConfig>(
     "rag_ingestion_sources",
   );
   const ownerTeamSlug = ownership.ownerTeamSlug;
   const ownerSubject = ownerTeamSlug ? null : (ownership.ownerSubject ?? null);
+  const searchTeamSlugs = normalizeStringArray(search?.teamSlugs);
+  const searchUserSubjects = normalizeStringArray(search?.userSubjects);
+
+  // An admin can adopt up to MAX_ADOPTION_SOURCES (500) sources in one
+  // request - bounded concurrency instead of a fully serial loop, or a
+  // large batch risks a platform request timeout.
+  const ADOPTION_CONCURRENCY = 10;
+  const results = await mapWithConcurrency(
+    sourceIds,
+    ADOPTION_CONCURRENCY,
+    async (
+      sourceId,
+    ): Promise<
+      | { status: "skipped"; skip: RagSourceAdoptSkip }
+      | { status: "adopted"; sourceId: string }
+    > => {
+      const existing = await collection.findOne({ source_id: sourceId } as never);
+      if (!existing) {
+        return { status: "skipped", skip: { source_id: sourceId, reason: "not_found" } };
+      }
+      // Adoption flips config_driven to false, so an already-adopted record
+      // also fails the config_driven check below — check config_import_adopted
+      // first so its skip reason takes precedence.
+      if (existing.config_import_adopted === true) {
+        return {
+          status: "skipped",
+          skip: { source_id: sourceId, reason: "already_adopted" },
+        };
+      }
+      if (existing.config_driven !== true) {
+        return {
+          status: "skipped",
+          skip: { source_id: sourceId, reason: "not_config_driven" },
+        };
+      }
+
+      const nextVisibility: IngestionSourceVisibility = ownerTeamSlug || ownerSubject
+        ? "team"
+        : existing.visibility;
+      const now = new Date().toISOString();
+
+      // Adoption sets management ownership and, when the admin picked one, a
+      // Search Access grant - both applied directly to this source rather
+      // than inherited from a destination collection (see the `search` param
+      // doc comment above).
+      const previousOwnerTeamSlug = existing.owner_team_slug ?? null;
+      const previousOwnerSubject = existing.owner_subject ?? null;
+      const previousSharedTeamSlugs = normalizeStringArray(
+        existing.shared_with_teams,
+      );
+      await reconcileIngestionSourceRelationships({
+        sourceId,
+        ownerSubject,
+        previousOwnerSubject,
+        ownerTeamSlug,
+        previousOwnerTeamSlug,
+        nextSharedTeamSlugs: [],
+        previousSharedTeamSlugs,
+        globalUserAccess: nextVisibility === "global",
+        previousGlobalUserAccess: existing.visibility === "global",
+      });
+      if (searchTeamSlugs.length > 0 || searchUserSubjects.length > 0) {
+        await reconcileKnowledgeBaseRelationships({
+          knowledgeBaseId: sourceId,
+          ownerTeamSlug: null,
+          previousOwnerTeamSlug: null,
+          nextSharedTeamSlugs: searchTeamSlugs,
+          previousSharedTeamSlugs: [],
+          nextSharedUserSubjects: searchUserSubjects,
+          previousSharedUserSubjects: [],
+        });
+        await reconcileDataSourceRelationships({
+          dataSourceId: sourceId,
+          parentKnowledgeBaseId: sourceId,
+        });
+      }
+      await collection.updateOne(
+        { source_id: sourceId } as never,
+        {
+          $set: {
+            config_driven: false,
+            config_import_adopted: true,
+            visibility: nextVisibility,
+            ...(ownerTeamSlug ? { owner_team_slug: ownerTeamSlug } : {}),
+            ...(ownerSubject ? { owner_subject: ownerSubject } : {}),
+            shared_with_teams: [],
+            ...(searchTeamSlugs.length > 0
+              ? { search_with_teams: searchTeamSlugs }
+              : {}),
+            ...(searchUserSubjects.length > 0
+              ? { search_with_users: searchUserSubjects }
+              : {}),
+            updated_at: now,
+          },
+          $unset: ownerTeamSlug
+            ? { owner_subject: "" }
+            : ownerSubject
+              ? { owner_team_slug: "" }
+              : {},
+        } as never,
+      );
+
+      console.log(
+        `[seed-config] Adopted config-imported rag source: ${sourceId}`,
+      );
+      return { status: "adopted", sourceId };
+    },
+  );
+
   const adopted: string[] = [];
   const skipped: RagSourceAdoptSkip[] = [];
-
-  for (const sourceId of sourceIds) {
-    const existing = await collection.findOne({ source_id: sourceId } as never);
-    if (!existing) {
-      skipped.push({ source_id: sourceId, reason: "not_found" });
-      continue;
-    }
-    // Adoption flips config_driven to false, so an already-adopted record
-    // also fails the config_driven check below — check config_import_adopted
-    // first so its skip reason takes precedence.
-    if (existing.config_import_adopted === true) {
-      skipped.push({ source_id: sourceId, reason: "already_adopted" });
-      continue;
-    }
-    if (existing.config_driven !== true) {
-      skipped.push({ source_id: sourceId, reason: "not_config_driven" });
-      continue;
-    }
-
-    const nextVisibility: IngestionSourceVisibility = ownerTeamSlug || ownerSubject
-      ? "team"
-      : existing.visibility;
-    const now = new Date().toISOString();
-
-    // Adoption changes source-management policy only. Query ownership stays
-    // intact and remains editable through Search access.
-    const previousOwnerTeamSlug = existing.owner_team_slug ?? null;
-    const previousOwnerSubject = existing.owner_subject ?? null;
-    const previousSharedTeamSlugs = normalizeStringArray(
-      existing.shared_with_teams,
-    );
-    await reconcileIngestionSourceRelationships({
-      sourceId,
-      ownerSubject,
-      previousOwnerSubject,
-      ownerTeamSlug,
-      previousOwnerTeamSlug,
-      nextSharedTeamSlugs: [],
-      previousSharedTeamSlugs,
-      globalUserAccess: nextVisibility === "global",
-      previousGlobalUserAccess: existing.visibility === "global",
-    });
-    await collection.updateOne(
-      { source_id: sourceId } as never,
-      {
-        $set: {
-          config_driven: false,
-          config_import_adopted: true,
-          visibility: nextVisibility,
-          ...(ownerTeamSlug ? { owner_team_slug: ownerTeamSlug } : {}),
-          ...(ownerSubject ? { owner_subject: ownerSubject } : {}),
-          shared_with_teams: [],
-          updated_at: now,
-        },
-        $unset: ownerTeamSlug
-          ? { owner_subject: "" }
-          : ownerSubject
-            ? { owner_team_slug: "" }
-            : {},
-      } as never,
-    );
-
-    console.log(
-      `[seed-config] Adopted config-imported rag source: ${sourceId}`,
-    );
-    adopted.push(sourceId);
+  for (const result of results) {
+    if (result.status === "adopted") adopted.push(result.sourceId);
+    else skipped.push(result.skip);
   }
 
   return { adopted, skipped };
@@ -1716,17 +1738,6 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
  * Also cleans up config-driven entities that have been removed from config.
  */
 export async function applySeedConfig(): Promise<void> {
-  if (isMongoDBConfigured) {
-    try {
-      const { bootstrapPlatformRagCollection } = await import(
-        "@/lib/rag-collections.server"
-      );
-      await bootstrapPlatformRagCollection();
-    } catch (err) {
-      console.error("[seed-config] Platform RAG bootstrap threw:", err);
-    }
-  }
-
   const configPath = process.env.APP_CONFIG_PATH;
   if (!configPath) {
     console.log("[seed-config] APP_CONFIG_PATH not set, skipping seed");

@@ -19,7 +19,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
-import { manageableDatasourceIdsForCollectionPublishing } from "@/lib/rag-collections.server";
+import { searchableDatasourceIdsForCollectionPublishing } from "@/lib/rag-collections.server";
 import {
   getRagServerUrl,
   loadLatestSuccessfulIngestionStats,
@@ -144,9 +144,13 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       : [...grants.kbIds, ...callerReadableIds],
   );
   const candidates = [...ids].map((id) => ({ id }));
-  const manageableIds =
+  // Re-derives can_read via OpenFGA rather than trusting the RAG server's
+  // own can_read_content flag above: this is the same authoritative check
+  // the PATCH handler uses to gate the actual mutation, so the picker can
+  // never show a candidate as addable that the backend would then reject.
+  const searchableIds =
     purpose === "publish"
-      ? await manageableDatasourceIdsForCollectionPublishing(session, [...ids])
+      ? await searchableDatasourceIdsForCollectionPublishing(session, [...ids])
       : new Set<string>();
   const ingestionStats = await loadLatestSuccessfulIngestionStats(
     { accessToken: session.accessToken, org: session.org },
@@ -156,7 +160,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   return successResponse({
     datasources: candidates
       .map(({ id }) => {
-        const canManage = manageableIds.has(id);
+        const canAddToCollection = searchableIds.has(id);
         return {
           datasource_id: id,
           name: callerDatasources.get(id)?.name || id,
@@ -171,14 +175,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
             : {}),
           permission:
             purpose === "publish"
-              ? canManage
-                ? "Manage source"
-                : "Read source"
+              ? canAddToCollection
+                ? "Search access"
+                : "No search access"
               : grants.permissions[id] || "Your access",
-          ...(purpose === "publish" ? { can_manage: canManage } : {}),
-          ...(purpose === "publish"
-            ? { can_read: callerDatasources.get(id)?.canRead === true }
-            : {}),
+          ...(purpose === "publish" ? { can_search: canAddToCollection } : {}),
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name)),

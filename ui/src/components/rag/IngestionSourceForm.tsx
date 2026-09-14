@@ -54,10 +54,7 @@ import { Eye, Loader2 } from "lucide-react";
 import { useEffect,useState } from "react";
 import { DatasourceAccessFields } from "./DatasourceAccessFields";
 import { PendingPublicationRequestNotice } from "./PendingPublicationRequestNotice";
-import {
-  CollectionSearchAccessNotice,
-  collectionDerivedSearchAccess,
-} from "./CollectionSearchAccess";
+import { CollectionSearchAccessNotice } from "./CollectionSearchAccess";
 
 const DEFAULT_CHUNK_SIZE = 10000;
 const DEFAULT_CHUNK_OVERLAP = 2000;
@@ -871,18 +868,8 @@ export function IngestionSourceForm({
     ...values.search_team_slugs.map((id) => ({ kind: "team" as const, id })),
     ...values.search_user_subjects.map((id) => ({ kind: "user" as const, id })),
   ];
-  const collectionSearchAccess = collectionDerivedSearchAccess(
-    initial?.rag_collections ?? [],
-  );
-  const implicitSearchAccess = [
-    ...(ownerAccessRef?.kind === "user" ? [ownerAccessRef] : []),
-    ...collectionSearchAccess.selections,
-  ].filter(
-    (ref, index, refs) =>
-      refs.findIndex(
-        (candidate) => candidate.kind === ref.kind && candidate.id === ref.id,
-      ) === index,
-  );
+  const implicitSearchAccess =
+    ownerAccessRef?.kind === "user" ? [ownerAccessRef] : [];
 
   const handleOwnerTeamChange = (slug: string) => {
     setValues((current) => ({ ...current, owner_team_slug: slug, owner_subject: "" }));
@@ -1556,13 +1543,7 @@ export function IngestionSourceForm({
                 teams={searchTeamOptions}
                 knownUsers={knownAccessUsers}
                 implicitSelections={implicitSearchAccess}
-                implicitSelectionLabel={(ref) =>
-                  ownerAccessRef?.kind === "user" &&
-                  ref.kind === ownerAccessRef.kind &&
-                  ref.id === ownerAccessRef.id
-                    ? "Included through ownership"
-                    : collectionSearchAccess.labelFor(ref)
-                }
+                implicitSelectionLabel="Included through ownership"
                 selected={searchAccessRefs.filter((ref) =>
                   ownerAccessRef?.kind !== "user" ||
                   ref.kind !== ownerAccessRef.kind ||

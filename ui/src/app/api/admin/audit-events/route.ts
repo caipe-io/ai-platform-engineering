@@ -41,7 +41,7 @@ interface AuditEventDocument {
   ts: Date | string;
   type: string;
   tenant_id: string;
-  subject_hash: string;
+  subject_hash?: string;
   subject_ref?: string;
   user_email?: string;
   action?: string;
@@ -61,6 +61,7 @@ interface AuditEventDocument {
   decision_via?: string;
   pdp?: string;
   source?: string;
+  source_system?: string;
   trace_id?: string;
   span_id?: string;
   trace_url?: string;
@@ -69,6 +70,11 @@ interface AuditEventDocument {
   caller_ref?: string;
   grantee_ref?: string;
   operation?: "grant" | "revoke";
+  reconcile_scope?: string;
+  requested_writes?: number;
+  requested_deletes?: number;
+  writes?: number;
+  deletes?: number;
 }
 
 interface CurrentPrincipal {
@@ -103,8 +109,18 @@ function auditServiceBaseUrl(): string {
   return (process.env.AUDIT_SERVICE_URL ?? process.env.AUDIT_LOG_SERVICE_URL ?? "http://audit-service:8010").replace(/\/$/, "");
 }
 
-function normalizeAuditSource(source: string | undefined): UnifiedAuditEvent["source"] {
-  return (source === "bff" || !source ? "webui_backend" : source) as UnifiedAuditEvent["source"];
+function normalizeAuditSource(
+  source: string | undefined,
+  sourceSystem?: string,
+): UnifiedAuditEvent["source"] {
+  const value = sourceSystem || source;
+  return (value === "bff" || !value ? "webui_backend" : value) as UnifiedAuditEvent["source"];
+}
+
+function reconcileScope(doc: AuditEventDocument): string | undefined {
+  if (doc.reconcile_scope) return doc.reconcile_scope;
+  if (doc.type !== "cas_reconcile" || !doc.source_system) return undefined;
+  return doc.source && doc.source !== doc.source_system ? doc.source : undefined;
 }
 
 function hashSubject(id: string): string {
@@ -366,12 +382,17 @@ function documentToEvent(doc: AuditEventDocument): UnifiedAuditEvent {
     workflow_run_id: doc.workflow_run_id,
     decision_via: doc.decision_via,
     pdp: doc.pdp,
-    source: normalizeAuditSource(doc.source),
+    source: normalizeAuditSource(doc.source, doc.source_system),
     actor_hash: doc.actor_hash,
     actor_ref: doc.actor_ref,
     caller_ref: doc.caller_ref,
     grantee_ref: doc.grantee_ref,
     operation: doc.operation,
+    reconcile_scope: reconcileScope(doc),
+    requested_writes: doc.requested_writes,
+    requested_deletes: doc.requested_deletes,
+    writes: doc.writes,
+    deletes: doc.deletes,
     trace_id: doc.trace_id,
     span_id: doc.span_id,
   };

@@ -177,34 +177,6 @@ describe("publication approval policy", () => {
     expect(plan.approver_team_slugs).toEqual([]);
   });
 
-  it("reviews a material source change already published through a collection", () => {
-    const plan = planRagPublication({
-      settings: settings({
-        rag_reviewer_team_delegations: {
-          "search-team": ["knowledge-approvers"],
-        },
-      }),
-      requester: REQUESTER,
-      requesterTeamSlugs: ["owner-team"],
-      currentState: { search_team_slugs: [], search_user_subjects: [] },
-      requestedState: {
-        search_team_slugs: [],
-        search_user_subjects: [],
-        source_update: { settings: { max_pages: 500 } },
-      },
-      ownerTeamSlug: "owner-team",
-      materialChange: true,
-      externalAudienceTeamSlugs: ["search-team"],
-      externalBroadAudience: true,
-    });
-
-    expect(plan.requires_approval).toBe(true);
-    expect(plan.risk_facts.reasons).toContain(
-      "source is published through a collection",
-    );
-    expect(plan.approver_team_slugs).toEqual(["knowledge-approvers"]);
-  });
-
   it("holds new collection sources while preserving its existing publication", () => {
     const plan = planRagCollectionPublication({
       settings: settings(),

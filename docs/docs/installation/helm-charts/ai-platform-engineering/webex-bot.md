@@ -14,17 +14,17 @@ Webex bot integration for AI Platform Engineering using the CAIPE UI BFF
 
 | | |
 |---|---|
-| **Version** | `1.0.0` |
+| **Version** | `1.1.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install webex-bot oci://ghcr.io/caipe-io/charts/webex-bot --version 1.0.0
+helm install webex-bot oci://ghcr.io/caipe-io/charts/webex-bot --version 1.1.0
 
 # Upgrade an existing release
-helm upgrade webex-bot oci://ghcr.io/caipe-io/charts/webex-bot --version 1.0.0
+helm upgrade webex-bot oci://ghcr.io/caipe-io/charts/webex-bot --version 1.1.0
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install webex-bot oci://ghcr.io/caipe-io/charts/webex-bot --version 1.0.0 \
+helm install webex-bot oci://ghcr.io/caipe-io/charts/webex-bot --version 1.1.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install webex-bot oci://ghcr.io/caipe-io/charts/webex-bot --version 1.0.0 \
+helm install webex-bot oci://ghcr.io/caipe-io/charts/webex-bot --version 1.1.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/caipe-io/charts/webex-bot --version 1.0.0
+helm show values oci://ghcr.io/caipe-io/charts/webex-bot --version 1.1.0
 ```
 
 ## Reading the Values Table

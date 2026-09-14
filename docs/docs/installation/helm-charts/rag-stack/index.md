@@ -14,17 +14,17 @@ A complete RAG stack including server, agents, Redis, Neo4j and Milvus
 
 | | |
 |---|---|
-| **Version** | `1.0.0` |
+| **Version** | `1.1.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0
+helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.1.0
 
 # Upgrade an existing release
-helm upgrade rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0
+helm upgrade rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.1.0
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0 \
+helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.1.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0 \
+helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.1.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0
+helm show values oci://ghcr.io/caipe-io/charts/rag-stack --version 1.1.0
 ```
 
 ## Reading the Values Table
@@ -273,9 +273,9 @@ helm show values oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0
 
 | Name | Version | Condition / Tags |
 |------|---------|------------------|
-| rag-server | `1.0.1` | `rag-server.enabled` |
-| agent-ontology | `1.0.1` | `agent-ontology.enabled` |
-| rag-ingestors | `1.0.1` | `rag-ingestors.enabled` |
+| rag-server | `1.1.0` | `rag-server.enabled` |
+| agent-ontology | `1.1.0` | `agent-ontology.enabled` |
+| rag-ingestors | `1.1.0` | `rag-ingestors.enabled` |
 | neo4j | `2025.07.1` | `neo4j.enabled` |
-| rag-redis | `1.0.1` | `rag-redis.enabled` |
+| rag-redis | `1.1.0` | `rag-redis.enabled` |
 | milvus | `5.0.2` | `milvus.enabled` |

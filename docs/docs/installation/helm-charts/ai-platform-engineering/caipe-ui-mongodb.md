@@ -10,21 +10,21 @@ Regenerate with `make docs-helm-charts`.
 
 # caipe-ui-mongodb
 
-MongoDB database for CAIPE UI persistence
+MongoDB-compatible persistence for CAIPE using MongoDB or DocumentDB
 
 | | |
 |---|---|
-| **Version** | `1.0.0` |
+| **Version** | `1.1.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0
+helm install caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.1.0
 
 # Upgrade an existing release
-helm upgrade caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0
+helm upgrade caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.1.0
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0 \
+helm install caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.1.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0 \
+helm install caipe-ui-mongodb oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.1.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0
+helm show values oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.1.0
 ```
 
 ## Reading the Values Table
@@ -61,6 +61,15 @@ helm show values oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0
 | auth.database | string | `"caipe"` |  |
 | auth.rootPassword | string | `"changeme"` |  |
 | auth.rootUsername | string | `"admin"` |  |
+| documentdb.dataPath | string | `"/data"` |  |
+| documentdb.image.pullPolicy | string | `"IfNotPresent"` |  |
+| documentdb.image.repository | string | `"ghcr.io/documentdb/documentdb/documentdb-local"` |  |
+| documentdb.image.tag | string | `"pg17-0.113.0"` |  |
+| documentdb.logLevel | string | `"warn"` |  |
+| documentdb.port | int | `10260` |  |
+| documentdb.postgresPort | int | `9712` |  |
+| documentdb.telemetryEnabled | bool | `false` |  |
+| documentdb.tlsMode | string | `"allowTLS"` |  |
 | exports.database | string | `"caipe"` |  |
 | exports.host | string | `"mongodb"` |  |
 | exports.port | int | `27017` |  |
@@ -91,6 +100,7 @@ helm show values oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.0.0
 | podLabels | object | `{}` |  |
 | podSecurityContext.fsGroup | int | `999` |  |
 | podSecurityContext.runAsNonRoot | bool | `true` |  |
+| provider | string | `"mongodb"` | Database engine to run: mongodb (default) or documentdb. DocumentDB is the MIT-licensed, PostgreSQL-backed project from https://github.com/documentdb/documentdb. Both providers expose the MongoDB wire protocol, so CAIPE consumers continue to use MONGODB_URI. |
 | readinessProbe.exec.command[0] | string | `"mongosh"` |  |
 | readinessProbe.exec.command[1] | string | `"--eval"` |  |
 | readinessProbe.exec.command[2] | string | `"db.adminCommand('ping')"` |  |

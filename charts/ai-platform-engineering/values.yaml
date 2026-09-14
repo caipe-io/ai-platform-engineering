@@ -963,7 +963,9 @@ caipe-ui:
   #   oauth mode → IDENTITY_SYNC_OKTA_OAUTH_PRIVATE_KEY (PEM PKCS#8)
   existingSecret: ""
 
-  # MongoDB configuration for CAIPE UI persistence (in-cluster; disable for BYO)
+  # Enable switch for the in-cluster MongoDB-compatible persistence subchart.
+  # Provider/image/auth values are configured under the top-level `mongodb`
+  # alias below; this path remains here for backward-compatible enablement.
   mongodb:
     nameOverride: "mongodb"
     enabled: false  # Set to true to enable MongoDB
@@ -1006,6 +1008,39 @@ caipe-ui:
         #   remoteRef:
         #     key: dev/mongodb
         #     property: password
+
+# Values passed to the `mongodb` dependency alias. MongoDB remains the default;
+# set provider=documentdb together with caipe-ui.mongodb.enabled=true to use the
+# MIT-licensed PostgreSQL-backed implementation.
+mongodb:
+  provider: mongodb
+  nameOverride: mongodb
+  image:
+    repository: mongo
+    tag: "7.0"
+    pullPolicy: IfNotPresent
+  documentdb:
+    image:
+      repository: ghcr.io/documentdb/documentdb/documentdb-local
+      tag: "pg17-0.113.0"
+      pullPolicy: IfNotPresent
+    port: 10260
+    postgresPort: 9712
+    dataPath: /data
+    tlsMode: allowTLS
+    logLevel: warn
+    telemetryEnabled: false
+  service:
+    port: 27017
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 10Gi
+  auth:
+    rootUsername: admin
+    rootPassword: changeme
+    database: caipe
+  strictPasswords: false
 
 ######### LiteLLM MCP configuration #########
 # Standalone MCP server for LiteLLM FinOps reporting.

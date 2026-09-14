@@ -21,6 +21,10 @@ jest.mock("@/lib/agentic-apps/config", () => ({
 
 import { GET, POST } from "./route";
 
+const MockApiError = jest.requireMock("@/lib/api-middleware").ApiError as new (
+  message?: string,
+) => Error & { statusCode: number };
+
 const configuredApp: ConfiguredAgenticApp = {
   manifest: {
     id: "example-app",
@@ -110,6 +114,18 @@ describe("External App runtime route", () => {
     expect(response.headers.get("x-frame-options")).toBeNull();
 
     fetchMock.mockRestore();
+  });
+
+  it("rejects unauthenticated runtime requests before resolving the app", async () => {
+    mockGetAuthenticatedUser.mockRejectedValueOnce(new MockApiError("not signed in"));
+
+    const response = await GET(
+      new NextRequest("https://host.example/api/agentic-apps/runtime/example-app"),
+      { params: Promise.resolve({ appId: "example-app", path: [] }) },
+    );
+
+    expect(response.status).toBe(401);
+    expect(mockGetConfiguredAgenticApp).not.toHaveBeenCalled();
   });
 
   it("rewrites upstream runtime redirects to the canonical public app path", async () => {
