@@ -4,9 +4,9 @@ sidebar_position: 5
 
 # Persistence
 
-CAIPE stores platform state through the MongoDB wire protocol. MongoDB remains
-the default provider; the open-source, PostgreSQL-backed
-[DocumentDB](https://github.com/documentdb/documentdb) provider is opt-in.
+CAIPE stores platform state through the MongoDB wire protocol. DocumentDB is
+the default provider for new installs; MongoDB remains supported as an opt-in
+alternative.
 
 ## What Persists
 
@@ -23,11 +23,11 @@ configure it with the shared `MONGODB_URI` and `MONGODB_DATABASE` settings.
 
 ## Docker Compose
 
-The default Compose profile includes MongoDB. To use DocumentDB with the setup
+The default Compose profile includes DocumentDB. To use MongoDB with the setup
 helper:
 
 ```bash
-./setup-caipe.sh --docker-compose --database=documentdb
+./setup-caipe.sh --docker-compose --database=mongodb
 ```
 
 For a direct Compose invocation, select the DocumentDB profile and URI:
@@ -42,9 +42,11 @@ The `tlsAllowInvalidCertificates` setting is limited to the bundled local image,
 which generates a self-signed certificate. Use a trusted CA for external or
 production DocumentDB deployments.
 
-The MongoDB default remains:
+To explicitly use MongoDB instead:
 
 ```bash
+COMPOSE_PROFILES=mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor
+DATABASE_PROVIDER=mongodb
 MONGODB_URI=mongodb://admin:changeme@caipe-mongodb:27017/caipe?authSource=admin
 MONGODB_DATABASE=caipe
 ```
@@ -52,12 +54,12 @@ MONGODB_DATABASE=caipe
 For local development:
 
 ```bash
-COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-mongodb docker compose -f docker-compose.dev.yaml up
+COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-documentdb docker compose -f docker-compose.dev.yaml up
 ```
 
 ## Helm
 
-The umbrella chart can deploy either provider. MongoDB is the default:
+The umbrella chart can deploy either provider. DocumentDB is the default:
 
 ```yaml
 tags:
@@ -73,8 +75,8 @@ dynamic-agents:
     MONGODB_DATABASE: caipe
 ```
 
-To opt into DocumentDB, first create the shared connection Secret. Replace the
-release-name placeholder if your Helm release is not `caipe`:
+For a separate DocumentDB release, first create the shared connection Secret.
+Replace the release-name placeholder if your Helm release is not `caipe`:
 
 ```bash
 kubectl create secret generic caipe-documentdb-uri \
@@ -101,7 +103,10 @@ dynamic-agents:
 ```
 
 See `charts/ai-platform-engineering/values-documentdb.yaml.example` for the
-complete opt-in values shape.
+complete DocumentDB values shape.
+
+Existing deployments should set their provider explicitly before upgrading if
+they need to remain on MongoDB; changing providers does not migrate data.
 
 For an external MongoDB, provide the connection string through a Secret or
 ExternalSecret that is mounted into both `caipe-ui` and `dynamic-agents` as

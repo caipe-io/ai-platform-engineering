@@ -104,8 +104,9 @@ helm install ai-platform-engineering oci://ghcr.io/cnoe-io/charts/ai-platform-en
   --set-string tags.mcp-netutils=true
 ```
 
-MongoDB remains the default. For the opt-in DocumentDB values and required
-shared `MONGODB_URI` Secret, see [Persistence](../../installation/persistence.md).
+DocumentDB is the default for new installs. To opt into MongoDB, set
+`mongodb.provider: mongodb` and provide the shared `MONGODB_URI` Secret. See
+[Persistence](../../installation/persistence.md).
 
 With GitHub, ArgoCD, and RAG:
 

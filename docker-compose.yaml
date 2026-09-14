@@ -246,7 +246,8 @@ services:
   ####################################################################################################
   #                             CAIPE UI & document database                                        #
   ####################################################################################################
-  # MongoDB for CAIPE UI chat history and user settings
+  # MongoDB provider for CAIPE UI chat history and user settings (opt-in).
+  # Use the caipe-documentdb profile for the default DocumentDB provider.
   caipe-mongodb:
     image: mongo:7.0
     container_name: caipe-mongodb
@@ -268,9 +269,9 @@ services:
     profiles:
       - caipe-mongodb
 
-  # MIT-licensed, PostgreSQL-backed MongoDB-compatible alternative.
-  # Opt in with the caipe-documentdb profile and point MONGODB_URI at
-  # caipe-documentdb:10260. MongoDB remains the default provider.
+  # MongoDB-compatible DocumentDB provider (default).
+  # Use the caipe-mongodb profile and point MONGODB_URI at caipe-mongodb:27017
+  # to use MongoDB instead.
   caipe-documentdb:
     image: ghcr.io/documentdb/documentdb/documentdb-local:${DOCUMENTDB_IMAGE_TAG:-pg17-0.113.0}
     container_name: caipe-documentdb
@@ -356,7 +357,7 @@ services:
       - RAG_URL=${RAG_URL:-http://localhost:9446}
       # MongoDB configuration - Enable/disable MongoDB persistence
       - NEXT_PUBLIC_MONGODB_ENABLED=${NEXT_PUBLIC_MONGODB_ENABLED:-false}
-      - "MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}"
+      - "MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-documentdb:10260/${MONGODB_DATABASE:-caipe}?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true}"
       # NextAuth configuration (required for production)
       # Generate a secret with: openssl rand -base64 48
       # R4: NEXTAUTH_SECRET MUST be set in the environment (e.g. via .env)
@@ -569,8 +570,8 @@ services:
       - AWS_BEDROCK_STREAMING=${AWS_BEDROCK_STREAMING:-false}
       - AWS_BEDROCK_USE_CONVERSE_API=${AWS_BEDROCK_USE_CONVERSE_API:-true}
       - AWS_BEDROCK_BASE_MODEL_ID=${AWS_BEDROCK_BASE_MODEL_ID:-}
-      # MongoDB (same as CAIPE UI)
-      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      # MongoDB-compatible persistence (same as CAIPE UI)
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-documentdb:10260/${MONGODB_DATABASE:-caipe}?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       # Authentication (same OIDC config as CAIPE UI)
       - AUTH_ENABLED=${AUTH_ENABLED:-false}
@@ -642,9 +643,9 @@ services:
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
       # MongoDB persistence -- shared with the UI so the Autonomous tab's
       # task list and run history come from the same source of truth.
-      # Include exactly one database profile: caipe-mongodb (default) or
-      # caipe-documentdb. Both expose the MongoDB wire protocol.
-      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      # Include exactly one database profile: caipe-documentdb (default) or
+      # caipe-mongodb. Both expose the MongoDB wire protocol.
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-documentdb:10260/${MONGODB_DATABASE:-caipe}?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       # IMP-13: publish completed autonomous runs into the UI
       # conversations collection. OFF by default in production -- it
@@ -1155,7 +1156,7 @@ services:
   ####################################################################################################
   # Keycloak + OpenFGA + AgentGateway for Enterprise RBAC.
   # Usage (Slack + RAG RBAC — copy deploy/rbac/.env.rbac.example into .env and set embeddings keys):
-  #   COMPOSE_PROFILES=rbac,rag,slack-bot,caipe-ui,caipe-mongodb \
+  #   COMPOSE_PROFILES=rbac,rag,slack-bot,caipe-ui,caipe-documentdb \
   #     docker compose -f docker-compose.dev.yaml up -d
   #
   # RAG: http://localhost:9446  (requires Milvus stack + embedding provider env, e.g. AZURE_OPENAI_*)
