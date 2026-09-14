@@ -13,6 +13,18 @@ export interface AgenticAppPolicyAction {
   path?: string;
 }
 
+export interface AgenticAppAssistantConfig {
+  enabled?: boolean;
+  /** Exact dynamic agent used by this app's contextual chat surface. */
+  agentId?: string;
+  schemaVersions?: string[];
+  maxContextBytes?: number;
+  capability?: string;
+  suggestions?: boolean;
+  label?: string;
+  agentName?: string;
+}
+
 export interface AgenticAppManifest {
   id: string;
   displayName: string;
@@ -36,6 +48,7 @@ export interface AgenticAppManifest {
     tokenScopes: string[];
     policyActions: AgenticAppPolicyAction[];
   };
+  assistant?: AgenticAppAssistantConfig;
   health?: {
     endpoint: string;
     timeoutMs?: number;
@@ -75,4 +88,27 @@ export interface PublicAgenticApp {
   blockedReasons: string[];
   categories: string[];
   capabilities: string[];
+  assistantEnabled: boolean;
+  assistantAgentId?: string;
+  assistantLabel?: string;
+  assistantAgentName?: string;
+  assistantMaxContextBytes?: number;
+}
+
+export interface AgenticAppAssistantContextRecord {
+  contextId: string;
+  appId: string;
+  sessionId: string;
+  schemaVersion: string;
+  route: string;
+  payloadSizeBytes: number;
+  validationStatus: "accepted" | "ignored" | "rejected";
+  createdAt: string;
+  expiresAt: string;
+  title?: string;
+  summary?: string;
+  selection?: string;
+  resourceRefs?: Array<Record<string, string>>;
+  suggestedPrompts?: string[];
+  reasonCode?: string;
 }

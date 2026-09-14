@@ -11,7 +11,14 @@ interface ApiEnvelope<T> {
 export interface ResolvedChatAgent {
   id: string;
   name: string;
-  source: "user-default" | "platform-default" | "first-available";
+  source: "configured" | "user-default" | "platform-default" | "first-available";
+}
+
+export interface ResolveUsableChatAgentOptions {
+  /** Select this exact agent from the authorization-filtered available list. */
+  requestedAgentId?: string;
+  /** Do not trust a default when the available-agent lookup fails. */
+  requireAvailableAgent?: boolean;
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -56,7 +63,9 @@ async function fetchAvailableAgents(): Promise<DynamicAgentConfig[]> {
   return payload.data.filter((agent) => agent.enabled);
 }
 
-export async function resolveUsableChatAgent(): Promise<ResolvedChatAgent> {
+export async function resolveUsableChatAgent(
+  options: ResolveUsableChatAgentOptions = {},
+): Promise<ResolvedChatAgent> {
   const [defaultsResult, agentsResult] = await Promise.allSettled([
     fetchChatDefaultAgentIds(),
     fetchAvailableAgents(),
@@ -70,6 +79,21 @@ export async function resolveUsableChatAgent(): Promise<ResolvedChatAgent> {
   const defaultAgentId = defaults.platformDefaultAgentId;
   const availableAgents =
     agentsResult.status === "fulfilled" ? agentsResult.value : [];
+
+  const requestedAgentId = normalizedAgentId(options.requestedAgentId);
+  if (requestedAgentId) {
+    const configuredAgent = availableAgents.find((agent) => agent._id === requestedAgentId);
+    if (configuredAgent) {
+      return {
+        id: configuredAgent._id,
+        name: configuredAgent.name,
+        source: "configured",
+      };
+    }
+    throw new Error(
+      `Configured agent "${requestedAgentId}" is unavailable or not authorized for this user.`,
+    );
+  }
 
   // Highest priority: the user's own Web default, but only if they still have
   // access to it (it's in the available list). A stale/revoked choice falls
@@ -95,7 +119,7 @@ export async function resolveUsableChatAgent(): Promise<ResolvedChatAgent> {
       };
     }
 
-    if (agentsResult.status === "rejected") {
+    if (agentsResult.status === "rejected" && !options.requireAvailableAgent) {
       return {
         id: defaultAgentId,
         name: "Default agent",

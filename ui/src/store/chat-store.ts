@@ -89,8 +89,11 @@ interface ChatState {
   inputRequiredConversations: Set<string>;
 
   // Actions
-  createConversation: (agentId: string) => Promise<string>;
-  setActiveConversation: (id: string) => void;
+  createConversation: (
+    agentId: string,
+    options?: { title?: string; metadata?: Record<string, unknown> },
+  ) => Promise<string>;
+  setActiveConversation: (id: string | null) => void;
   addMessage: (conversationId: string, message: Omit<ChatMessage, "id" | "timestamp">, turnId?: string, messageId?: string) => string;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => void;
   appendToMessage: (conversationId: string, messageId: string, content: string) => void;
@@ -208,9 +211,13 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       unviewedConversations: new Set<string>(),
       inputRequiredConversations: new Set<string>(),
 
-      createConversation: async (agentId: string) => {
+      createConversation: async (
+        agentId: string,
+        options?: { title?: string; metadata?: Record<string, unknown> },
+      ) => {
         const storageMode = getStorageMode();
         const normalizedAgentId = agentId.trim();
+        const title = options?.title?.trim() || "New Conversation";
         if (!normalizedAgentId) {
           throw new Error("agentId is required to create a chat conversation");
         }
@@ -220,9 +227,10 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         if (storageMode === 'mongodb') {
           // MongoDB mode: server owns ID generation
           const result = await apiClient.createConversation({
-            title: 'New Conversation',
+            title,
             client_type: 'webui',
             agent_id: normalizedAgentId,
+            ...(options?.metadata ? { metadata: options.metadata } : {}),
           });
           id = result.conversation._id;
         } else {
@@ -232,12 +240,13 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
         const newConversation: Conversation = {
           id,
-          title: "New Conversation",
+          title,
           createdAt: new Date(),
           updatedAt: new Date(),
           messages: [],
           streamEvents: [],
           participants: buildParticipants(normalizedAgentId),
+          ...(options?.metadata ? { metadata: options.metadata } : {}),
         };
 
         // Update local state
@@ -250,12 +259,12 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         return id;
       },
 
-      setActiveConversation: (id: string) => {
+      setActiveConversation: (id: string | null) => {
         const prev = get();
         const newUnviewed = new Set(prev.unviewedConversations);
-        newUnviewed.delete(id);
+        if (id) newUnviewed.delete(id);
         const newInputRequired = new Set(prev.inputRequiredConversations);
-        newInputRequired.delete(id);
+        if (id) newInputRequired.delete(id);
         set({
           activeConversationId: id,
           unviewedConversations: newUnviewed,
