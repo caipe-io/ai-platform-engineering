@@ -553,7 +553,7 @@ test.describe("RBAC e2e — credential secrets management", () => {
     });
 
     await signIn(page, env);
-    await page.goto("/admin/security/migrations", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/security/access-operations?operationsTab=migrations", { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByRole("heading", { name: "Platform Data Updates" })).toBeVisible({

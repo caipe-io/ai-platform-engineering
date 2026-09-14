@@ -22,7 +22,6 @@ const mockEnforceRagIngestorLimits = jest.fn();
 const mockResolveUserIdentitiesBySubject = jest.fn();
 const mockRemoveDatasourceFromRagCollections = jest.fn();
 const mockRemoveDatasourceFromAgentPins = jest.fn();
-const mockDatasourceCollectionAudience = jest.fn();
 const mockGetPublicationApprovalSettings = jest.fn();
 const mockCreatePublicationRequest = jest.fn();
 const mockRecordAutoApprovedPublication = jest.fn();
@@ -133,8 +132,6 @@ jest.mock("@/lib/rag-ingestor-limits.server", () => ({
 }));
 
 jest.mock("@/lib/rag-collections.server", () => ({
-  datasourceCollectionAudience: (...args: unknown[]) =>
-    mockDatasourceCollectionAudience(...args),
   removeDatasourceFromRagCollections: (...args: unknown[]) =>
     mockRemoveDatasourceFromRagCollections(...args),
   removeDatasourceFromAgentPins: (...args: unknown[]) =>
@@ -270,12 +267,6 @@ beforeEach(() => {
     );
     mockInvalidatePublicationRequests.mockResolvedValue(0);
     mockInvalidatePublicationRequestsReferencingDatasource.mockResolvedValue(0);
-    mockDatasourceCollectionAudience.mockResolvedValue({
-      collectionIds: [],
-      readerTeamSlugs: [],
-      hasExternalPrincipal: false,
-      organizationWide: false,
-    });
     global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200 });
     sources = {
       findOne: jest.fn().mockResolvedValue({ ...baseSource }),

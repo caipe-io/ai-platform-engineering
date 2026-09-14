@@ -1,3 +1,69 @@
+## 1.1.0-rc.2 (2026-09-14)
+
+### Feat
+
+- **setup-caipe**: enable scheduler + autonomous agents by default (#2681)
+- **setup-caipe**: onboard extra LiteLLM models from a file + scan subcommand (#2682)
+
+### Fix
+
+- **setup-caipe**: configure rag-server ingestor OIDC even without UI SSO (#2684)
+- **setup-caipe**: extend the ingress hostAlias to rag-server + web-ingestor (#2675)
+- **setup-caipe**: ask before running sudo (#2668)
+
+## 1.1.0-dev.2 (2026-09-14)
+
+## 1.1.0-dev.1 (2026-09-14)
+
+## 1.1.0-rc.1 (2026-09-14)
+
+## 1.0.1-dev.12 (2026-09-14)
+
+### Feat
+
+- **persistence**: add opt-in DocumentDB support (#2418)
+- **rag**: move bulk permission editing to the Ingest page, self-service
+- **rag**: retire Platform RAG as a first-class collection
+
+### Fix
+
+- Update ADOPTERS.md
+- **ui**: remove unsafe AgentGateway repair action (#2696)
+- **agentic-apps**: preserve root mount trailing slash (#2656)
+- **ui**: include resource names in agent breadcrumbs (#2698)
+
+## 1.0.1-dev.10 (2026-09-10)
+
+### Feat
+
+- **rag**: allow adding any searchable datasource to a collection
+
+### Fix
+
+- **rag**: check data_source#can_read, not ingestion_source#can_read, for collection publishing
+- **rag**: stop treating collection membership as Search access in the UI
+- **ci**: remove retag-unchanged, always build fresh on tag push
+- **ci**: give paths-filter a real base ref on tag pushes
+- **ui**: fail closed on application routes (#2654)
+- **audit**: suppress no-op policy reconciliation events (#2720)
+
+### Refactor
+
+- **rag**: clean up leftover dead field and sequential await from the collections change
+- **ui**: consolidate security and account settings (#2721)
+
+## 1.0.1-dev.9 (2026-09-10)
+
+### Fix
+
+- **rag**: surface the login-wall hint for sitemap crawls and mixed failures
+- **rag**: explain why a webpage crawl found no content when it may be a login wall
+- **rag**: surface auth-walled page failures during webpage ingestion
+- **rag**: return 400 instead of 500 for non-public webpage URLs
+- **setup-caipe**: backfill dynamic-agents AUTHZ_SERVICE_URL for the 1.0.0 chart (#2679)
+
+## 1.0.1-dev.8 (2026-09-10)
+
 ## 1.0.1-rc.3 (2026-09-10)
 
 ### Fix

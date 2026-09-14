@@ -136,9 +136,6 @@ interface RagPublicationPlanInput {
   sourceDomain?: string | null;
   estimatedItems?: number;
   materialChange?: boolean;
-  externalAudienceTeamSlugs?: string[];
-  externalBroadAudience?: boolean;
-  externalOrganizationWide?: boolean;
 }
 
 interface ConnectorPublicationPlanInput {
@@ -323,18 +320,8 @@ export function planRagPublication(input: RagPublicationPlanInput): PublicationP
   );
   const pendingTeams = addedTeams.filter((slug) => !ownerScopedTeams.has(slug));
   const pendingUsers = addedUsers.filter((subject) => !ownerScopedUsers.has(subject));
-  const externalReaderTeamSlugs = normalizedStrings(
-    input.externalAudienceTeamSlugs ?? [],
-  );
-  const externalAudienceTeamSlugs = externalReaderTeamSlugs.filter(
-    (slug) =>
-      slug !== input.ownerTeamSlug || isOrganizationWideTeam(slug, input.settings),
-  );
   const organizationWide = removedOrganizationWideTeams.length > 0 ||
-    Boolean(input.externalOrganizationWide) ||
     requested.search_team_slugs.some((slug) =>
-      isOrganizationWideTeam(slug, input.settings),
-    ) || externalAudienceTeamSlugs.some((slug) =>
       isOrganizationWideTeam(slug, input.settings),
     );
   // Organization-wide Search always counts as broad publication, even when
@@ -345,9 +332,7 @@ export function planRagPublication(input: RagPublicationPlanInput): PublicationP
     isOrganizationWideTeam(slug, input.settings),
   );
   const hasBroadAudience = removedOrganizationWideTeams.length > 0 ||
-    Boolean(input.externalBroadAudience) ||
-    externalAudienceTeamSlugs.length > 0 ||
-    Boolean(input.externalOrganizationWide) || requested.search_team_slugs.some(
+    requested.search_team_slugs.some(
     (slug) =>
       slug !== input.ownerTeamSlug || isOrganizationWideTeam(slug, input.settings),
   ) || requested.search_user_subjects.some((subject) => subject !== input.ownerSubject);
@@ -376,9 +361,6 @@ export function planRagPublication(input: RagPublicationPlanInput): PublicationP
   if (pendingTeams.length > 0) reasons.push(`${pendingTeams.length} new team audience${pendingTeams.length === 1 ? "" : "s"}`);
   if (pendingUsers.length > 0) reasons.push(`${pendingUsers.length} new person audience${pendingUsers.length === 1 ? "" : "s"}`);
   if (materialBroadChange) reasons.push("material source change with a broad audience");
-  if (materialBroadChange && externalAudienceTeamSlugs.length > 0) {
-    reasons.push("source is published through a collection");
-  }
   if (trusted) reasons.push("trusted publisher");
 
   const retainedTeams = intersection(requested.search_team_slugs, currentTeams);
@@ -397,10 +379,6 @@ export function planRagPublication(input: RagPublicationPlanInput): PublicationP
   const targetTeamSlugs = Array.from(new Set([
     ...pendingTeams,
     ...removedOrganizationWideTeams,
-    ...(materialBroadChange ? externalAudienceTeamSlugs : []),
-    ...(materialBroadChange && input.externalOrganizationWide
-      ? input.settings.organization_wide_team_slugs
-      : []),
   ])).sort();
   const reviewers = reviewerAssignmentsForResource(
     "rag_datasource",

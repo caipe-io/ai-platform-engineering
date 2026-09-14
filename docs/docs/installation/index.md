@@ -27,7 +27,7 @@ A full CAIPE stack includes:
 
 - **caipe-ui** — web interface (React / Next.js)
 - **MongoDB** — chat and agent-config persistence  
-- **dynamic-agents** — runtime for user-built custom agents
+- **dynamic-agents** — runtime for agents created in Agent Builder
 - **MCP servers** — tool servers for ArgoCD, GitHub, Backstage, and other integrations
 - **RAG stack** *(optional)* — ingestors, vector store, graph RAG server
 - **Slack / Webex bots** *(optional)*
@@ -41,12 +41,14 @@ The minimal install (UI + Dynamic Agents + MongoDB) is enough to run chat with c
 bash <(curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh)
 ```
 
+The setup script asks before using sudo. Use `--no-sudo` to forbid it or `--allow-sudo` to permit it without a consent prompt. See [sudo consent](../getting-started/kind/setup.md#sudo-consent) for automation and fallback behavior.
+
 Or via Helm directly:
 
 ```bash
 helm upgrade --install ai-platform-engineering \
     oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \
-    --version 0.4.8 -f your-values.yaml
+    --version 1.0.0 -f your-values.yaml
 ```
 
 See [Getting Started → Quick Start](/docs/getting-started/quick-start) for a full walkthrough.

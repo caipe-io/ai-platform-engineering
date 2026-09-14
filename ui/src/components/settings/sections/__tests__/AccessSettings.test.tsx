@@ -14,11 +14,7 @@ import { AccessSettings } from "../AccessSettings";
 
 const BASE_POSTURE = {
   email: "person-1@example.com",
-  idp_source: "keycloak",
   name: "Person One",
-  per_agent_roles: [],
-  per_kb_roles: [],
-  realm_roles: ["user"],
   role: "user",
   slack_linked: false,
   teams: [],
@@ -63,6 +59,7 @@ describe("AccessSettings", () => {
     await screen.findByText("Identity and role");
     expect(screen.queryByText(/Webex account:/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Link Webex account|Relink/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Technical access details")).not.toBeInTheDocument();
   });
 
   it("shows a Link Webex account button when available and unlinked", async () => {

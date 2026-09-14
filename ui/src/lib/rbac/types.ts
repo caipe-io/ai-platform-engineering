@@ -128,7 +128,9 @@ export type AuditEventType =
   | "agent_delegation"
   | "openfga_rebac"
   | "cas_decision"
-  | "cas_grant";
+  | "cas_grant"
+  | "cas_reconcile"
+  | "credential_action";
 
 /** Unified audit event outcome — superset of AuditOutcome for tool/delegation */
 export type UnifiedAuditOutcome = "allow" | "deny" | "success" | "error";
@@ -149,7 +151,7 @@ export interface UnifiedAuditEvent {
   ts: string;
   type: AuditEventType;
   tenant_id: string;
-  subject_hash: string;
+  subject_hash?: string;
   /** Readable subject ref for display (for example user:<sub>). */
   subject_ref?: string;
   /** Canonical subject label for display (for example a user email). */
@@ -190,6 +192,16 @@ export interface UnifiedAuditEvent {
   grantee_display?: string;
   /** CAS grant/revoke: grant | revoke. */
   operation?: "grant" | "revoke";
+  /** CAS reconcile: logical operation that requested the tuple projection. */
+  reconcile_scope?: string;
+  /** CAS reconcile: requested tuple additions before OpenFGA no-op filtering. */
+  requested_writes?: number;
+  /** CAS reconcile: requested tuple removals before OpenFGA no-op filtering. */
+  requested_deletes?: number;
+  /** CAS reconcile: tuple additions actually applied by OpenFGA. */
+  writes?: number;
+  /** CAS reconcile: tuple removals actually applied by OpenFGA. */
+  deletes?: number;
 }
 
 /** Admin dashboard tab keys for RBAC-based visibility */

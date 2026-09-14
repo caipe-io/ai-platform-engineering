@@ -1,11 +1,8 @@
 import { render, screen } from "@testing-library/react";
 
-import {
-  CollectionSearchAccessNotice,
-  collectionDerivedSearchAccess,
-} from "../CollectionSearchAccess";
+import { CollectionSearchAccessNotice } from "../CollectionSearchAccess";
 
-describe("collection-derived Search access", () => {
+describe("CollectionSearchAccessNotice", () => {
   const collections = [
     {
       id: "platform-rag",
@@ -21,23 +18,18 @@ describe("collection-derived Search access", () => {
     },
   ];
 
-  it("groups inherited audiences and identifies their collections", () => {
-    const access = collectionDerivedSearchAccess(collections);
-
-    expect(access.selections).toEqual([
-      { kind: "team", id: "everyone" },
-      { kind: "team", id: "engineering" },
-    ]);
-    expect(access.labelFor({ kind: "team", id: "everyone" })).toBe(
-      "From Platform RAG, Engineering",
-    );
-  });
-
-  it("explains that collection access is managed on the collection", () => {
+  it("lists membership without implying Search access", () => {
     render(<CollectionSearchAccessNotice collections={collections} />);
 
-    expect(screen.getByText("Search from collections")).toBeInTheDocument();
-    expect(screen.getByText("Platform RAG · Everyone")).toBeInTheDocument();
-    expect(screen.getByText("Engineering · Everyone, engineering")).toBeInTheDocument();
+    expect(screen.getByText("Included in collections")).toBeInTheDocument();
+    expect(screen.getByText("Platform RAG")).toBeInTheDocument();
+    expect(screen.getByText("Engineering")).toBeInTheDocument();
+    expect(screen.queryByText(/Everyone/)).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when the datasource is not in any collection", () => {
+    render(<CollectionSearchAccessNotice collections={[]} />);
+
+    expect(screen.queryByText("Included in collections")).not.toBeInTheDocument();
   });
 });
