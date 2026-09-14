@@ -6,7 +6,7 @@ Welcome to the CAIPE development documentation! This section provides comprehens
 
 This development guide covers:
 
-- **[Spec-Driven Development](./spec-driven-development)** - How CAIPE uses spec-kit for agentic software development
+- **[Contribution workflow](../contributing/index.md)** - Choose a focused issue or discussion before opening a pull request
 - **[Development Environment Setup](./development-environment)** - Configure your local development environment
 - **[Creating an Agent](./creating-an-agent)** - Build a new AI agent from scratch
 - **[Creating an MCP Server](./creating-mcp-server)** - Develop a Model Context Protocol server
@@ -33,7 +33,7 @@ Before you begin, you should have:
 
 ## 🚀 Quick Start Path
 
-1. **[Understand spec-driven development](./spec-driven-development)** - How CAIPE uses spec-kit for feature development
+1. **[Choose a focused contribution](../contributing/index.md)** - Start from a GitHub Issue or Discussion
 2. **[Set up your development environment](./development-environment)** - Install dependencies and configure your workspace
 3. **[Explore Agent Builder](../features/agent-builder.md)** - Create a governed agent without writing application code
 4. **[Create a code-defined agent](./creating-an-agent.md)** - Build an agent when you need full application control

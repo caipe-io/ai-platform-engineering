@@ -536,7 +536,7 @@ sequenceDiagram
 ## Cross-references
 
 - [Architecture — Component 1 (Keycloak)](./architecture.md#component-1-keycloak--hr--the-front-desk) — full role/scope tables, env vars, IdP brokering.
-- [Architecture — Spec 104 `active_team` section](./architecture.md#spec-104--active_team-jwt-claim-team-scope-refactor) — what changed, components touched, failure modes.
-- [Spec 104 — team-scoped RBAC](../../specs/104-team-scoped-rbac/active-team-design.md) — original design doc.
+- [Architecture — retired `active_team` section](./architecture.md#retired-active-team-jwt-claim) — what changed, components touched, failure modes.
+- [RBAC workflows](./workflows.md) — current channel-to-team and team-scoped request flows.
 - [Workflows — OBO token-exchange](./workflows.md) — sequence diagrams for how scopes turn into JWT claims at runtime.
 - [File map](./file-map.md) — find the source file that owns any piece of the auth path.

@@ -552,7 +552,7 @@ export interface WebexUserMetrics {
 // Service Accounts Collection
 // ============================================================================
 //
-// Spec: docs/docs/specs/2026-06-05-service-accounts/data-model.md
+// Service-account persistence is documented in docs/docs/security/rbac/architecture.md.
 //
 // Three stores of record:
 //   - Keycloak  → owns the confidential client + secret (the credential / identity)

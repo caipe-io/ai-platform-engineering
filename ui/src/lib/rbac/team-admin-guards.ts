@@ -8,7 +8,7 @@ import { findUserRoleInTeam } from "@/lib/rbac/team-membership-store";
  *
  * Pre-2026-05-26 the gate read `team.members[]` directly. That dual-write
  * field is being removed; see
- * docs/docs/specs/2026-05-26-canonical-team-membership/.
+ * docs/docs/security/rbac/architecture.md.
  */
 interface TeamLike {
   slug?: string;

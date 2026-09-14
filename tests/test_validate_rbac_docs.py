@@ -1,4 +1,4 @@
-"""Unit tests for scripts/validate_rbac_docs.py (Spec 102 US8).
+"""Unit tests for scripts/validate_rbac_docs.py.
 
 We test the pure helpers (path classification) directly, and we exercise
 the full main() entry point against a temp git repo to verify the
@@ -64,7 +64,7 @@ def test_is_rbac_code_ignores_unrelated_paths(path: str) -> None:
         "ui/src/lib/__tests__/auth-error.test.ts",
         "BLOCKERS.md",
         "CHECKLIST.md",
-        "docs/docs/specs/098-enterprise-rbac-slack-ui/how-rbac-works.md",
+        "docs/docs/security/rbac/architecture.md",
     ],
 )
 def test_is_trivial_exempts_tests_and_markdown(path: str) -> None:
@@ -172,7 +172,7 @@ def test_e2e_rbac_change_without_doc_fails(tmp_path: Path) -> None:
     rc, out, err = _run_validator(repo)
     assert rc == 1
     # The validator now lists multiple canonical docs; assert one is mentioned.
-    assert "how-rbac-works.md" in err or "security/rbac" in err
+    assert "security/rbac" in err
     assert "ai_platform_engineering/utils/auth/audit.py" in err
 
 
@@ -219,7 +219,7 @@ def test_e2e_rbac_change_with_doc_passes(tmp_path: Path) -> None:
         "feat",
         {
             "ai_platform_engineering/utils/auth/audit.py": "x\n",
-            "docs/docs/specs/098-enterprise-rbac-slack-ui/how-rbac-works.md": "updated\n",
+            "docs/docs/security/rbac/architecture.md": "updated\n",
         },
     )
 

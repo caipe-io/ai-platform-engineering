@@ -258,7 +258,7 @@ async function createIndexes(db: Db) {
 
     // Service accounts (user-minted machine identities; BFF-owned display
     // metadata — credential lives in Keycloak, access in OpenFGA). See
-    // docs/docs/specs/2026-06-05-service-accounts/data-model.md.
+    // Service-account persistence is documented in docs/docs/security/rbac/architecture.md.
     // Name uniqueness (FR-002a) is enforced at the application layer (T007),
     // not via a partial unique index, to keep "freed on revoke" semantics simple.
     safeCreateIndex(db, 'service_accounts', { sa_sub: 1 }, { unique: true }),

@@ -1,11 +1,9 @@
 name: Validate RBAC Living Docs
 
-# Spec 102 — User Story 8.
-#
 # Fails the PR check if any RBAC-relevant code file (auth helpers,
 # middleware, BFF auth surface, agentgateway policy seed, Keycloak
 # bootstrap) changed without a matching update to
-# docs/docs/specs/098-enterprise-rbac-slack-ui/how-rbac-works.md.
+# docs/docs/security/rbac/.
 #
 # Trivial changes (tests, markdown, formatting) are auto-exempt — see
 # scripts/validate_rbac_docs.py for the full carve-out list.

@@ -1,7 +1,7 @@
-"""Loader for `realm-config-extras.json` (spec 102 T023, FR-002).
+"""Loader for `realm-config-extras.json`.
 
 The extras file declares per-resource PDP-unavailable fallback rules. Schema:
-`docs/docs/specs/102-comprehensive-rbac-tests-and-completion/contracts/realm-config-extras.schema.json`.
+`tests/rbac/contracts/realm-config-extras.schema.json`.
 
 Path resolution order:
     1. `RBAC_FALLBACK_CONFIG_PATH` env var, if set.

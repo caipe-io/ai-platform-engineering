@@ -6,11 +6,20 @@ We welcome contributions to CAIPE! To get started, please review our [Contributi
 
 ### Steps to Contribute
 
-1. **Fork the Repository** — Create a copy of the repository under your GitHub account.
-2. **Create a Branch** — Use a descriptive name (e.g., `feature/add-new-component`).
-3. **Make Changes** — Implement your changes and ensure they align with the project's coding standards.
-4. **Test Your Changes** — Verify that your changes work as expected and do not introduce regressions.
-5. **Submit a Pull Request** — Open a PR with a clear description of your changes.
+1. **Start from GitHub** — Open or reference an Issue for a focused fix or feature. Use a Discussion when the direction itself needs agreement.
+2. **Create a Branch** — Use a descriptive name; add the `prebuild/` prefix when you need testable container images.
+3. **Make a Focused Change** — Keep code, tests, and current documentation together in one reviewable PR.
+4. **Test Your Changes** — Run the checks for the components you changed.
+5. **Submit a Pull Request** — Explain the outcome, link the Issue or Discussion, and call out important tradeoffs.
+
+### When a Design Document Is Needed
+
+- Ordinary fixes and scoped features need an Issue and a focused PR, not a generated specification or task plan.
+- Cross-cutting architecture or product changes need discussion and a short ADR or current design document under `docs/`.
+- Keep the document decision-oriented: problem, decision, tradeoffs, affected components, and validation.
+- Update the canonical architecture or component guide when the implementation lands.
+
+Historical plans remain available through Git tags and repository history. They are not part of the current public documentation set.
 
 ### Code of Conduct
 

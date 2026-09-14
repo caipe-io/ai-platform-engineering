@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:caipe:rbac:realm-config-extras:v1",
+  "title": "Keycloak Realm Config Extras",
+  "description": "Sibling to deploy/keycloak/realm-config.json. Carries per-resource PDP-unavailable fallback rules used by the TypeScript and Python middleware. Resources not listed here implicitly deny all when the PDP is unreachable.",
+  "$comment": "Peers: rbac-matrix.schema.json, audit-event.schema.json, ai_platform_engineering/utils/auth/realm_extras.py, and scripts/validate-realm-config.py.",
+  "type": "object",
+  "required": ["version", "pdp_unavailable_fallback"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Schema version."
+    },
+    "pdp_unavailable_fallback": {
+      "type": "object",
+      "description": "Map of Keycloak resource name -> fallback rule. Keys MUST match a resource defined in realm-config.json (cross-validated by scripts/validate-realm-config.py).",
+      "patternProperties": {
+        "^[a-z0-9_]+$": { "$ref": "#/$defs/FallbackRule" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "FallbackRule": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["mode"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "const": "deny_all",
+              "description": "Reject all requests when the PDP is unreachable. The default for resources not listed in this file."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["mode", "role"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "const": "realm_role",
+              "description": "Allow the request if the bearer's realm_access.roles claim contains the named role; otherwise deny."
+            },
+            "role": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Realm role name. MUST exist in realm-config.json."
+            }
+          }
+        }
+      ]
+    }
+  },
+  "examples": [
+    {
+      "version": 1,
+      "pdp_unavailable_fallback": {
+        "admin_ui": {
+          "mode": "realm_role",
+          "role": "admin"
+        },
+        "rag": {
+          "mode": "deny_all"
+        },
+        "dynamic_agent": {
+          "mode": "deny_all"
+        }
+      }
+    }
+  ]
+}

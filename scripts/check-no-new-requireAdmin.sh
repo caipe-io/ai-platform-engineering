@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # scripts/check-no-new-requireAdmin.sh
 #
-# Spec 102 / T051 — guard against new uses of the deprecated `requireAdmin` /
-# `requireAdminView` helpers in `ui/src/app/api/**/route.ts`.
+# Guard against new uses of the deprecated `requireAdmin` / `requireAdminView`
+# helpers in `ui/src/app/api/**/route.ts`.
 #
-# Allow-list: any route whose matrix entry in `tests/rbac/rbac-matrix.yaml`
-# is tagged `migration_status: pending` is permitted to keep its existing
-# `requireAdmin` call until the migration task lands.
+# No production route currently uses these helpers. For compatibility with a
+# deliberately staged migration, a route whose matrix entry is explicitly
+# tagged `migration_status: pending` is temporarily allow-listed.
 #
 # Anything else — i.e. a NEW call site in a NEW route file, or a re-introduced
 # call in a previously-migrated route — fails the script with non-zero exit.
@@ -15,7 +15,7 @@
 #   scripts/check-no-new-requireAdmin.sh                 # check, exit non-zero on drift
 #   STRICT=1 scripts/check-no-new-requireAdmin.sh        # also fail if pending allowlist is empty
 #
-# Wired into `make test-rbac-lint` (T032).
+# Wired into `make test-rbac-lint`.
 
 set -euo pipefail
 
@@ -140,8 +140,8 @@ PYEOF
     echo "    ${v}    ${line}"
   done <"${VIOLATIONS_TMP}"
   echo ""
-  echo "Fix: migrate the route to requireRbacPermission (see Spec 102 §Phase 3)"
-  echo "     OR add a matrix entry with migration_status: pending if the migration is intentional"
+  echo "Fix: migrate the route to requireRbacPermission with an explicit resource and scope"
+  echo "     OR document an intentional staged migration with a temporary pending matrix entry"
   exit 1
 fi
 

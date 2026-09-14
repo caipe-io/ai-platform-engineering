@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Validate tests/rbac/rbac-matrix.yaml against authoritative call sites.
 
-Spec 102 (FR-010, SC-006). Hard-gate run in CI; non-zero exit on drift.
+Hard-gate run in CI; non-zero exit on drift.
 
 What it checks:
   1. The matrix file parses against the JSON schema in
-     ``docs/docs/specs/102-comprehensive-rbac-tests-and-completion/contracts/rbac-matrix.schema.json``.
+     ``tests/rbac/contracts/rbac-matrix.schema.json``.
   2. Every `requireRbacPermission(req, "<resource>", "<scope>")` call in
      `ui/src/app/api/**/route.ts` (TS surface) is represented by a route entry.
   3. Every `require_rbac_permission(token, "<resource>", "<scope>")` call in

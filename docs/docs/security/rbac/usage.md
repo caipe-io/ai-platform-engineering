@@ -117,7 +117,7 @@ never enable it in staging or production.
 but new UI auth paths should consume the dev auth provider rather than checking
 the env var directly.
 
-> **Heads-up: `caipe-ui` host port is hard-pinned to `3000`.** Keycloak's `caipe-ui` client only allow-lists `http://localhost:3000/*` as a redirect URI (see `deploy/keycloak/realm-config.json`). Remapping the UI breaks the OIDC redirect dance and login fails with `Invalid redirect_uri`. The spec-102 e2e lane (`make test-rbac-up`) honours this — it remaps Mongo (`28017`) to a `28xxx` band, but leaves `caipe-ui:3000` and Keycloak (`7080/7443`) untouched. See [spec 102 quickstart › E2E port band](../../specs/102-comprehensive-rbac-tests-and-completion/quickstart.md#e2e-port-band) for the full table and env-var contract.
+> **Heads-up: `caipe-ui` host port is hard-pinned to `3000`.** Keycloak's `caipe-ui` client only allow-lists `http://localhost:3000/*` as a redirect URI (see `deploy/keycloak/realm-config.json`). Remapping the UI breaks the OIDC redirect dance and login fails with `Invalid redirect_uri`. The RBAC e2e lane (`make test-rbac-up`) honours this: it remaps Mongo to `28017`, but leaves `caipe-ui:3000` and Keycloak (`7080/7443`) untouched. The Makefile's RBAC section is the current env-var contract.
 
 ---
 
@@ -1116,7 +1116,7 @@ and agent are intentionally safe for every newly observed group space. Use
 
 ## Running the Test Suite
 
-The comprehensive RBAC test matrix (helper unit tests + matrix-driver tests + Playwright e2e) lives under `tests/rbac/` and is owned by spec 102. Quick reference:
+The comprehensive RBAC test matrix (helper unit tests + matrix-driver tests + Playwright e2e) lives under `tests/rbac/`. Quick reference:
 
 ```bash
 # Lint everything (matrix YAML, jest, ruff)
@@ -1136,7 +1136,9 @@ RBAC_E2E=1 make test-rbac-e2e
 make test-rbac-down
 ```
 
-Full details — port band rationale, the `E2E_COMPOSE_ENV` contract, and how the rules-as-data matrix in `tests/rbac/rbac-matrix.yaml` flows into both pytest and Jest — are in [spec 102 quickstart](../../specs/102-comprehensive-rbac-tests-and-completion/quickstart.md).
+The Makefile's RBAC section owns the port band and `E2E_COMPOSE_ENV` contract;
+`tests/rbac/README.md` explains how the rules-as-data matrix flows into pytest
+and Jest.
 
 For `caipe-ui` unit coverage, run `npm test -- --coverage --runInBand` from
 `ui/`. The Jest coverage scope tracks the UI/BFF code that can be exercised

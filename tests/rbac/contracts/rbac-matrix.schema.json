@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:caipe:rbac:test-matrix:v1",
+  "title": "RBAC Test Matrix",
+  "description": "Single source of truth for every authorization gate exercised by automated tests. Lives at tests/rbac/rbac-matrix.yaml. Drives Jest, pytest, and Playwright test parameterisation. Verified by scripts/validate-rbac-matrix.py.",
+  "$comment": "Peers: audit-event.schema.json, realm-config-extras.schema.json, and the Python/TypeScript parity tests under tests/rbac/.",
+  "type": "object",
+  "required": ["version", "routes"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Schema version. Must be 1; bump-and-migrate if shape changes."
+    },
+    "routes": {
+      "type": "array",
+      "description": "Every protected gate exercised by tests. Each entry is exhaustively parameterised over all 6 personas.",
+      "items": { "$ref": "#/$defs/RouteEntry" }
+    }
+  },
+  "$defs": {
+    "RouteEntry": {
+      "type": "object",
+      "required": ["id", "surface", "method", "path", "resource", "scope", "expectations"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "description": "Stable identifier, unique across the file. Used as the test name in Jest and pytest."
+        },
+        "surface": {
+          "type": "string",
+          "enum": ["ui_bff", "mcp", "dynamic_agents", "rag", "slack_bot", "webex_bot"],
+          "description": "Which trust boundary the gate lives on. 'mcp' covers all <agent>_mcp servers; the specific server is identified via the 'resource' field."
+        },
+        "method": {
+          "type": "string",
+          "description": "HTTP method (GET, POST, PUT, DELETE, PATCH) or the literal 'rpc' for non-HTTP transports such as MCP tools/call."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "HTTP path or RPC method name. E.g. '/api/admin/users', 'tools/call argocd.list_apps'."
+        },
+        "resource": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+(:[A-Za-z0-9_-]+)?$",
+          "description": "Keycloak resource name; must exist in deploy/keycloak/realm-config.json. Cross-validated by scripts/validate-realm-config.py."
+        },
+        "scope": {
+          "type": "string",
+          "pattern": "^[a-z_]+$",
+          "description": "Keycloak scope name; must exist on the named resource."
+        },
+        "expectations": {
+          "type": "object",
+          "description": "Required: one entry per persona. Validator fails if any persona is missing.",
+          "required": [
+            "alice_admin",
+            "bob_chat_user",
+            "carol_kb_ingestor",
+            "dave_no_role",
+            "eve_dynamic_agent_user",
+            "frank_service_account"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "alice_admin":            { "$ref": "#/$defs/Expectation" },
+            "bob_chat_user":          { "$ref": "#/$defs/Expectation" },
+            "carol_kb_ingestor":      { "$ref": "#/$defs/Expectation" },
+            "dave_no_role":           { "$ref": "#/$defs/Expectation" },
+            "eve_dynamic_agent_user": { "$ref": "#/$defs/Expectation" },
+            "frank_service_account":  { "$ref": "#/$defs/Expectation" }
+          }
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form note for reviewers. Optional."
+        },
+        "migration_status": {
+          "type": "string",
+          "enum": ["migrated", "pending"],
+          "default": "migrated",
+          "description": "If 'pending', the call site has not yet been migrated to requireRbacPermission. The Jest matrix-driver and pytest matrix-driver skip these rows while surfacing the route id. The matrix linter still requires every gated route to appear; this flag controls only runtime test execution. The current matrix is expected to contain no pending rows."
+        }
+      }
+    },
+    "Expectation": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599,
+          "description": "Expected HTTP status code (or status-equivalent for RPCs)."
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "OK",
+            "OK_ROLE_FALLBACK",
+            "OK_BOOTSTRAP_ADMIN",
+            "DENY_NO_CAPABILITY",
+            "DENY_PDP_UNAVAILABLE",
+            "DENY_INVALID_TOKEN",
+            "DENY_RESOURCE_UNKNOWN"
+          ],
+          "description": "Required when status >= 400. Asserted against the audit log entry for this decision."
+        },
+        "skip_reason": {
+          "type": "string",
+          "description": "If present, the test for this persona is skipped (with this string surfaced). Use sparingly; should be the exception."
+        }
+      },
+      "allOf": [
+        {
+          "description": "If status indicates failure (>=400), reason is required.",
+          "if": { "properties": { "status": { "minimum": 400 } } },
+          "then": { "required": ["reason"] }
+        }
+      ]
+    }
+  },
+  "examples": [
+    {
+      "version": 1,
+      "routes": [
+        {
+          "id": "admin-users-list",
+          "surface": "ui_bff",
+          "method": "GET",
+          "path": "/api/admin/users",
+          "resource": "admin_ui",
+          "scope": "view",
+          "expectations": {
+            "alice_admin":            { "status": 200 },
+            "bob_chat_user":          { "status": 403, "reason": "DENY_NO_CAPABILITY" },
+            "carol_kb_ingestor":      { "status": 403, "reason": "DENY_NO_CAPABILITY" },
+            "dave_no_role":           { "status": 403, "reason": "DENY_NO_CAPABILITY" },
+            "eve_dynamic_agent_user": { "status": 403, "reason": "DENY_NO_CAPABILITY" },
+            "frank_service_account":  { "status": 403, "reason": "DENY_NO_CAPABILITY" }
+          }
+        },
+        {
+          "id": "argocd-mcp-delete-app",
+          "surface": "mcp",
+          "method": "rpc",
+          "path": "tools/call argocd.delete_app",
+          "resource": "argocd_mcp",
+          "scope": "write",
+          "expectations": {
+            "alice_admin":            { "status": 200 },
+            "bob_chat_user":          { "status": 403, "reason": "DENY_NO_CAPABILITY" },
+            "carol_kb_ingestor":      { "status": 403, "reason": "DENY_NO_CAPABILITY" },
+            "dave_no_role":           { "status": 401, "reason": "DENY_INVALID_TOKEN" },
+            "eve_dynamic_agent_user": { "status": 403, "reason": "DENY_NO_CAPABILITY" },
+            "frank_service_account":  { "status": 200, "skip_reason": "service-account is allow-listed for ArgoCD writes" }
+          },
+          "notes": "frank's service-account membership in 'argocd_admins' role is configured by init-idp.sh."
+        }
+      ]
+    }
+  ]
+}

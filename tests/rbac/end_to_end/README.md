@@ -1,6 +1,6 @@
 # RBAC End-to-End Smoke Scripts
 
-Spec: [`2026-05-24-derive-team-from-channel`](../../../docs/docs/specs/2026-05-24-derive-team-from-channel/spec.md)
+Architecture: [`docs/docs/security/rbac/workflows.md`](../../../docs/docs/security/rbac/workflows.md)
 
 These scripts validate the **Phase 2 personal-DM experience** against a
 running dev stack. They are intentionally NOT wired into `make test` /

@@ -118,7 +118,7 @@ The Teams dialog Knowledge Bases tab reads `team_kb_ownership` through `/api/adm
 
 **Slack admin-surface backfill (issue #1513).** The Slack Channels admin panel (`/api/admin/slack/channels`) uses `admin_surface:slack#can_manage` for onboarding and advanced controls. Slack is a baseline read surface, while the admin baseline additionally writes `user:<sub> manager admin_surface:slack`. To cover org admins bootstrapped before that manager seed who have not re-logged-in, the release migration `admin_surface_slack_admin_grant_v1` (schema area `admin_surfaces`, v2 → v3) walks OpenFGA for existing `user:<sub> admin organization:<key>` admins and writes the matching admin-surface manager tuple. Idempotent and depends on `admin_surface_rag_datasources_admin_grant_v1`.
 
-**Graph tab and datasource-scoped reads.** The Graph tab at `/knowledge-bases/graph` consults `useKbTabGates`; a direct link with no readable knowledge base renders `NoKbAccessEmpty` without mounting the graph client. Data-graph reads resolve the caller's readable `data_source` objects in the RAG server and constrain Neo4j by `_datasource_id`, including both endpoints of returned relations. The deployment-global ontology does not carry datasource provenance, so its REST and MCP read paths fail closed for bounded callers and remain available only to callers with unrestricted datasource access. Restricted callers see the source-scoped Data view; org admins may also open Ontology. Provenance-aware ontology filtering remains tracked by `docs/docs/specs/2026-05-27-per-kb-ontology-graph-filtering/spec.md`.
+**Graph tab and datasource-scoped reads.** The Graph tab at `/knowledge-bases/graph` consults `useKbTabGates`; a direct link with no readable knowledge base renders `NoKbAccessEmpty` without mounting the graph client. Data-graph reads resolve the caller's readable `data_source` objects in the RAG server and constrain Neo4j by `_datasource_id`, including both endpoints of returned relations. The deployment-global ontology does not carry datasource provenance, so its REST and MCP read paths fail closed for bounded callers and remain available only to callers with unrestricted datasource access. Restricted callers see the source-scoped Data view; org admins may also open Ontology. Keep this fail-closed boundary until ontology nodes carry datasource provenance and can be filtered safely.
 
 **Share/assign paths mirror `data_source` + `user:*` public datasources (2026-06-03).** Two correctness fixes to the RAG access model:
 
@@ -1710,9 +1710,7 @@ The grants are seeded for every bot service account by the keycloak chart's
 `init-token-exchange.sh` (`SA_GRANTS`). The BFF in turn uses its own
 `KEYCLOAK_ADMIN_*` credentials to reach Keycloak — so realm-management
 privilege lives only in the BFF, never in a bot. This removed the bot's former
-`KEYCLOAK_SLACK_BOT_ADMIN_*` direct-Admin path (spec
-[2026-06-09-slack-bot-remove-direct-keycloak-admin](../../specs/2026-06-09-slack-bot-remove-direct-keycloak-admin/plan.md);
-JIT create moved first in #1781).
+`KEYCLOAK_SLACK_BOT_ADMIN_*` direct-Admin path; JIT create moved first in #1781.
 
 The `resolve` endpoint whitelists the attribute names a bot may query
 (`slack_user_id`, `slack_preauth_prompted`, `slack_preauth_prompted_at`,
@@ -1742,7 +1740,7 @@ In Helm and GitOps installs, `charts/ai-platform-engineering/charts/slack-bot/te
 > dropping the unused vars. Ensure the bot has `CAIPE_UI_URL` / `CAIPE_API_URL`
 > pointed at the BFF (it already needs this for JIT provisioning since #1781).
 
-## Spec 104 — `active_team` JWT claim (REMOVED by Phase 3 of spec 2026-05-24-derive-team-from-channel) {#spec-104--active_team-jwt-claim-team-scope-refactor}
+## Retired `active_team` JWT claim {#retired-active-team-jwt-claim}
 
 > **Status: removed.** The `active_team` JWT claim mechanism described
 > here has been demolished. Team identity is now derived from the
@@ -1751,10 +1749,9 @@ In Helm and GitOps installs, `charts/ai-platform-engineering/charts/slack-bot/te
 > client no longer has any `team-*` default scope, and Keycloak no longer
 > participates in team-identity negotiation.
 >
-> See [spec 2026-05-24-derive-team-from-channel](../../specs/2026-05-24-derive-team-from-channel/spec.md)
-> for the full demolition rationale. The `active_team` mechanism never
+> The `active_team` mechanism never
 > shipped to production, so no realm has legacy `team-*` scopes to
-> clean up — Phase 3 is a pure code/Helm/UI deletion.
+> clean up.
 
 ### Components touched (post-demolition)
 

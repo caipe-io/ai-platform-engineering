@@ -4,7 +4,7 @@
 // scripts/migrate-canonical-team-membership.ts. We don't spin up a
 // real Mongo for this — the migration's main I/O glue
 // (`applyMigration`/`fetchExistingSources`) is exercised manually
-// per docs/docs/specs/2026-05-26-canonical-team-membership/mongodb-migration.md
+// See docs/docs/security/rbac/canonical-team-membership-migration.md.
 // because it's three lines of straight collection calls. The
 // non-trivial logic (dedupe against existing canonical rows, role
 // normalization, slug handling) lives in

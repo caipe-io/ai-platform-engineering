@@ -2,8 +2,8 @@
 //
 // First-party attribute-merge endpoint used by bots that hold only a
 // service-account token. Replaces the Slack bot's former direct Keycloak
-// Admin attribute write (`set_user_attribute`); see spec
-// docs/docs/specs/2026-06-09-slack-bot-remove-direct-keycloak-admin.
+// Admin attribute write (`set_user_attribute`). Slack provisioning uses this
+// BFF boundary so bots do not hold Keycloak Admin credentials.
 //
 // Body: `{ attributes: Record<string, string[]> }`. Merge semantics (existing
 // attributes preserved) are delegated to the lib `mergeUserAttributes`, which

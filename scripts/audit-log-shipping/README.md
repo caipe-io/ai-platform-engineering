@@ -42,7 +42,7 @@ logs.
 ## Schema
 
 Each line conforms to the same authorization-audit schema — see
-`docs/docs/specs/102-comprehensive-rbac-tests-and-completion/contracts/audit-event.schema.json`.
+`tests/rbac/contracts/audit-event.schema.json`.
 The TS writer (`ui/src/lib/rbac/audit.ts`) and the Python writer
 (`ai_platform_engineering/utils/auth/audit.py`) emit identical payloads;
 the only difference is the `source` field (`"py"` vs `"ts"`).

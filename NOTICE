@@ -9,5 +9,5 @@ optional security analysis of skill content. Skill Scanner is provided by **Cisc
 - Repository: https://github.com/cisco-ai-defense/skill-scanner
 - License: refer to the upstream project (Apache-2.0 per upstream repository).
 
-See `docs/docs/specs/097-skills-middleware-integration/contracts/skill-scanner-pipeline.md` for
-product usage, attribution, and operational notes.
+See `docs/docs/installation/helm-charts/ai-platform-engineering/skill-scanner.md` for
+product usage and operational notes.

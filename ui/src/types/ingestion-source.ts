@@ -4,7 +4,7 @@
  * `IngestionSourceConfig` is the pre-ingestion source of truth for
  * self-service RAG ingestion — distinct from the RAG server's
  * `DataSourceInfo`, which remains the post-ingestion record. See
- * docs/docs/specs/2026-07-21-rag-source-config-db/data-model.md for the
+ * docs/docs/api/rag-knowledge-bases.md for the
  * full field-mapping rationale.
  */
 

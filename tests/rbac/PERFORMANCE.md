@@ -1,19 +1,16 @@
 # RBAC test suite — performance baseline
 
-Spec [102 — Comprehensive RBAC tests & completion](../../docs/docs/specs/102-comprehensive-rbac-tests-and-completion/),
-task **T062**, success-criterion **SC-008**.
-
-> SC-008: a developer running `make test-rbac` on a current-gen laptop sees the
-> result inside **10 minutes** for the cheap lane, and inside **30 minutes** for
-> the full Docker stack. If we ever regress past these limits, file a Phase 11
-> task and add `--workers=4` (or higher) to the Playwright config.
+Performance invariant: a developer running `make test-rbac` on a current-gen
+laptop sees the result inside **10 minutes** for the cheap lane and inside
+**30 minutes** for the full Docker stack. If a run regresses past these limits,
+open a GitHub Issue and consider raising the Playwright worker count.
 
 ## Methodology
 
 - Hardware: M-series Mac (developer laptop)
-- Repo state: `prebuild/feat/comprehensive-rbac` after T060 wiring
-- Stack: Phase 4 — only Phase 3 (Admin UI) routes are migrated; everything else
-  is `migration_status: pending` so the matrix-driver `xit()`s those rows.
+- Repo state: initial comprehensive RBAC test-suite rollout
+- Stack: migrated routes run; `migration_status: pending` rows are skipped by
+  the matrix driver.
 - Command: `/usr/bin/time -p make test-rbac` (no Docker stack, `RBAC_E2E` unset)
 - The "cheap lane" runs the same three targets CI runs on every PR
   (`test-rbac-lint` → `test-rbac-pytest` → `test-rbac-jest`) and intentionally
@@ -82,9 +79,8 @@ follow-up will pick one):
 2. Update both the script and the fixture to use the email form
    (`alice@example.com`) as the canonical persona identifier.
 
-Tracking in spec 102 Phase 11 polish (T128–T130). The matrix-completeness contract
-(SC-006/FR-009) is fully validated by story-7 today, which is the structural gate
-the spec actually requires for Phase 4 ship.
+Track follow-up work in GitHub Issues. The matrix-completeness contract is
+validated by story-7, which is the structural gate for this test lane.
 
 Anticipated upper bound for the **full** Phase 5–9 e2e lane: **15–20 min** with
 the default 4 Playwright workers, based on per-route latency observations from

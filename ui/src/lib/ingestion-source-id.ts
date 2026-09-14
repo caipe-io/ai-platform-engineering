@@ -3,7 +3,7 @@
  * 2026-07-21-rag-source-config-db). Each formula is a TS port of the
  * matching Python ingestor's `datasource_id` derivation, so a source
  * created here lands on the same id the ingestor will compute in PR3 — see
- * docs/docs/specs/2026-07-21-rag-source-config-db/data-model.md for the
+ * docs/docs/api/rag-knowledge-bases.md for the
  * source-of-truth table.
  *
  * `jira_project` is a deliberate deviation: the real ingestor

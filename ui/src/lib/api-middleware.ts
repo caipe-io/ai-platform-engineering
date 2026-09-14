@@ -411,9 +411,9 @@ interface RouteRbacPolicy {
 // capability mappings here while older routes are migrated off the wrapper.
 // Unknown routes fail toward admin UI capabilities so audit rows stay explicit.
 //
-// See `docs/docs/specs/2026-05-27-fine-grained-rbac-for-withauth-routes/plan.md`
-// for the migration plan that replaces this resolver with a per-route
-// capability map and adds dedicated OpenFGA relations
+// Keep this compatibility mapping synchronized with the route inventory in
+// `docs/docs/security/rbac/pdp-coverage-audit.md`, which tracks replacing this
+// resolver with a per-route capability map and dedicated OpenFGA relations
 // (`self_profile#read`, `chat#invoke`, `feedback#submit`, etc.).
 // New routes should call the appropriate `require*Permission` helper
 // directly rather than relying on this legacy gate.
@@ -721,20 +721,12 @@ export async function withRbacAuth<T>(
 }
 
 /**
- * @deprecated Spec 102 / FR-001 — use {@link requireRbacPermission} instead.
+ * @deprecated Compatibility export only; production routes must use
+ * {@link requireRbacPermission} with an explicit resource and scope.
  *
- * `requireAdmin` is the legacy OIDC-group-based gate. Under the
- * 098-enterprise-rbac spec, every Web UI backend route is gated by Keycloak Authorization
- * Services (via `requireRbacPermission(session, '<resource>', '<scope>')`).
- *
- * Existing call sites are tracked in `tests/rbac/rbac-matrix.yaml` with
- * `migration_status: pending`. As each route migrates (Phase 3 — T040–T049
- * in `docs/docs/specs/102-comprehensive-rbac-tests-and-completion/tasks.md`)
- * the matrix entry flips to `migration_status: migrated` and the matrix-driver
- * test goes live.
- *
- * `scripts/check-no-new-requireAdmin.sh` runs in CI (T051) and fails the build
- * if a new call site is added in a route file that isn't already pending.
+ * No production route calls `requireAdmin`, and the RBAC matrix has no pending
+ * migrations. `scripts/check-no-new-requireAdmin.sh` runs in CI to prevent a
+ * production route from reintroducing this legacy gate.
  *
  * Throws 403 if user is not an OpenFGA organization admin.
  */

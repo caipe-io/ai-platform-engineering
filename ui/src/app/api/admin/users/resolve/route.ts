@@ -4,8 +4,8 @@
 // any future bot) that hold only a service-account token and must resolve a
 // Keycloak user without holding realm-management credentials of their own.
 // Replaces the Slack bot's former direct Keycloak Admin reads (`get_user_by_*`,
-// `get_user_attribute`); see spec
-// docs/docs/specs/2026-06-09-slack-bot-remove-direct-keycloak-admin.
+// `get_user_attribute`). Slack provisioning uses this BFF boundary so bots do
+// not hold Keycloak Admin credentials.
 //
 // Pick exactly ONE locator:
 //   ?attribute=<name>&value=<v>  → exact attribute match (whitelisted names)

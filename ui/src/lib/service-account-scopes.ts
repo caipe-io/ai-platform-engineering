@@ -9,7 +9,7 @@
  *    writer rejects materialized `can_*` relations — agent→`user`,
  *    tool→`caller`, datasource→`reader`)
  *
- * Spec: docs/docs/specs/2026-06-05-service-accounts/.
+ * Architecture: docs/docs/security/rbac/architecture.md.
  */
 
 import { readOpenFgaTuples, type OpenFgaTupleKey } from "@/lib/rbac/openfga";

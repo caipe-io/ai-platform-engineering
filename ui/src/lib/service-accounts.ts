@@ -6,7 +6,7 @@
  * OpenFGA owns access. This collection is a convenience/index layer only;
  * access decisions never read it.
  *
- * Spec: docs/docs/specs/2026-06-05-service-accounts/data-model.md
+ * Architecture: docs/docs/security/rbac/architecture.md
  */
 
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";

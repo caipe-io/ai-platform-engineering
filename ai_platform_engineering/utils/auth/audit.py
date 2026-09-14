@@ -1,7 +1,7 @@
-"""Append-only authorization decision audit log (spec 102 T024, FR-007).
+"""Append-only authorization decision audit log.
 
 Writes one document per decision to audit-service.
-Schema is defined by `docs/docs/specs/102-comprehensive-rbac-tests-and-completion/contracts/audit-event.schema.json`.
+Schema is defined by `tests/rbac/contracts/audit-event.schema.json`.
 This Python implementation MUST stay schema-equivalent to the TypeScript writer in
 `ui/src/lib/rbac/audit.ts`. The matrix-driver tests assert that both runtimes write
 documents that validate against the same schema (FR-007, SC-007).
@@ -10,7 +10,7 @@ Failure mode: writes are best-effort. A failure to write the audit document MUST
 NEVER block or mutate the authorization decision. Failures are logged at WARN with
 structured fields so operators can detect a degraded audit pipeline.
 
-Sinks (Spec 102 Phase 11.3 — audit log shipping):
+Sinks:
 
   - audit-service (default; URL from AUDIT_SERVICE_URL).
   - Stdout JSON line, one per decision, gated on AUDIT_STDOUT_ENABLED=true.

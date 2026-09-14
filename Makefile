@@ -21,7 +21,6 @@ DOCKER_COMPOSE_BUILD_ENV := DOCKER_BUILDKIT=1 COMPOSE_PARALLEL_LIMIT=$(COMPOSE_P
 .PHONY: \
 	setup-venv start-venv clean-pyc clean-venv clean-build-artifacts clean \
 	uv-prep \
-	generate-agent-commands \
 	lint lint-fix test \
 	test-rag-unit test-rag-coverage test-rag-memory test-rag-scale validate lock-all help \
 	caipe-ui caipe-ui-install caipe-ui-build caipe-ui-dev caipe-ui-tests caipe-ui-e2e-rbac \
@@ -215,22 +214,6 @@ docs-start: docs-dev ## Alias for docs-dev (start documentation development serv
 docs-serve: docs-build ## Serve documentation static site
 	@echo "Serving documentation static site..."
 	@cd docs && npm run serve
-
-## ========== Spec-Kit Agent Commands ==========
-
-SPECKIT_SRC := .specify/templates/commands
-CURSOR_DST  := .cursor/commands
-CLAUDE_DST  := .claude/commands
-
-generate-agent-commands: ## Generate .cursor and .claude command files from .specify/templates/commands
-	@echo "Generating agent command files from $(SPECKIT_SRC)..."
-	@mkdir -p $(CURSOR_DST) $(CLAUDE_DST)
-	@for src in $(SPECKIT_SRC)/*.md; do \
-		name=$$(basename "$$src" .md); \
-		cp "$$src" "$(CURSOR_DST)/speckit.$$name.md"; \
-		cp "$$src" "$(CLAUDE_DST)/speckit.$$name.md"; \
-	done
-	@echo "✓ Generated commands in $(CURSOR_DST)/ and $(CLAUDE_DST)/"
 
 ## ========== Lint ==========
 

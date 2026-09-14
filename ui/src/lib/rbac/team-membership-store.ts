@@ -12,7 +12,7 @@
  * and OpenFGA tuples). The OIDC reconciler updated only two of the three,
  * leading to a drift bug where auto-provisioned teams showed "0 members"
  * in the Admin UI even though authorization worked. Spec
- * `docs/docs/specs/2026-05-26-canonical-team-membership/` consolidates
+ * `docs/docs/security/rbac/architecture.md` documents how the canonical store consolidates
  * onto this module + OpenFGA.
  *
  * Identity dedupe rule: a user is identified by

@@ -1,8 +1,7 @@
 # Comprehensive RBAC Tests (`tests/rbac/`)
 
-Cross-cutting RBAC test suite for spec [102-comprehensive-rbac-tests-and-completion](../../docs/docs/specs/102-comprehensive-rbac-tests-and-completion/spec.md).
-
-See the developer-facing [`quickstart.md`](../../docs/docs/specs/102-comprehensive-rbac-tests-and-completion/quickstart.md) for end-to-end usage of `make test-rbac`.
+Cross-cutting RBAC test suite for the current architecture documented under
+[`docs/docs/security/rbac/`](../../docs/docs/security/rbac/index.md).
 
 ## Layout
 
@@ -26,4 +25,9 @@ make test-rbac-pytest   # backend unit only (~3 min)
 make test-rbac-e2e      # Playwright only (~4 min)
 ```
 
-The compose stack used by these tests is `docker-compose.dev.yaml` driven by `COMPOSE_PROFILES` — there is **no** separate e2e compose file. The e2e lane inlines a few `${VAR:-default}` substitutions (host port overrides for Mongo and test stubs, `RBAC_FALLBACK_*`, `E2E_RUN`) into the dev compose file, activated by env vars set in the Makefile (`E2E_COMPOSE_ENV`). See [spec.md Clarifications 2026-04-22](../../docs/docs/specs/102-comprehensive-rbac-tests-and-completion/spec.md#session-2026-04-22) and `Makefile` `test-rbac-up`.
+The compose stack used by these tests is `docker-compose.dev.yaml` driven by
+`COMPOSE_PROFILES`; there is no separate e2e compose file. `make test-rbac-up`
+sets `E2E_RUN`, remaps Mongo to host port `28017`, and mounts the
+`RBAC_FALLBACK_*` configuration. The UI remains on host port `3000` because the
+Keycloak client redirect URI is pinned there. See the Makefile's RBAC section
+for the complete environment contract.

@@ -97,7 +97,7 @@ export function ChatPanel({
    * (sign in / contact admin), not part of the conversation. Burying them
    * inside an `**Error:** ...` blob in the assistant turn taught users to
    * blame the agent and made the recovery path invisible. See
-   * docs/docs/specs/098-enterprise-rbac-slack-ui/how-rbac-works.md.
+   * docs/docs/security/rbac/workflows.md.
    */
   const showAuthErrorToast = useCallback(
     (err: AuthError) => {

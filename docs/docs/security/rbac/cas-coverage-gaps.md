@@ -186,6 +186,6 @@ injection points are not product-policy bypasses.
 
 ## Related documentation
 
-- [CAS implementation architecture](../../specs/2026-06-06-cas-implementation/architecture.md)
+- [RBAC architecture](./architecture.md)
 - [PDP coverage audit](./pdp-coverage-audit.md)
 - [OpenFGA permission evaluation](./openfga-permission-evaluation.md)

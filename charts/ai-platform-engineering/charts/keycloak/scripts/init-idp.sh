@@ -1308,8 +1308,8 @@ ENDJSON
 # FORCE would re-run mappers on every login and rebuild the user's
 # attributes from the IdP claims, wiping any sidecar attributes set by
 # other surfaces (Slack, future Teams/Webex bots, manual Admin patches).
-# Spec 103 R-12: see docs/docs/specs/103-slack-jit-user-creation/plan.md
-# for the full discussion of FORCE vs IMPORT vs selective-FORCE trade-offs.
+# Slack JIT provisioning must use the BFF; the bot holds no Keycloak Admin
+# credentials. Keep IMPORT so sidecar attributes survive later SSO logins.
 #
 # If you need live propagation of a specific IdP claim (e.g. group changes),
 # add a per-mapper syncMode=FORCE override on JUST that mapper — never

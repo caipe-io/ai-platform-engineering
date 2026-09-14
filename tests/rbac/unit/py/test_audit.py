@@ -5,7 +5,7 @@ Covers:
   - audit-service write failure              → does NOT raise (FR-007)
   - invalid `reason`                         → silently dropped (defensive)
   - decision document validates against the JSON schema in
-    `docs/docs/specs/102-comprehensive-rbac-tests-and-completion/contracts/audit-event.schema.json`
+    `tests/rbac/contracts/audit-event.schema.json`
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from ai_platform_engineering.utils.auth import audit
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SCHEMA_PATH = (
     _REPO_ROOT
-    / "docs/docs/specs/102-comprehensive-rbac-tests-and-completion/contracts/audit-event.schema.json"
+    / "tests/rbac/contracts/audit-event.schema.json"
 )
 
 

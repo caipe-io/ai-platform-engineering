@@ -1,6 +1,7 @@
 # Slack App Manifest — Personal DM commands
 
-Spec [`2026-05-24-derive-team-from-channel`](../specs/2026-05-24-derive-team-from-channel/spec.md)
+The current channel-to-team routing flow is documented in
+[`security/rbac/workflows.md`](../security/rbac/workflows.md).
 Phase 2 introduced three personal slash commands the bot needs registered on
 the Slack app:
 

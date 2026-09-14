@@ -7,7 +7,7 @@ explains how the chart wires it up and which Helm values override it.
 
 `live-skills.md` is the default markdown body of the `/skills` slash command
 that the Skills Gateway UI page renders for users to copy into their
-coding agent (Claude Code, Cursor, Spec Kit, etc.).
+coding agent (Claude Code, Cursor, Codex CLI, Gemini CLI, or opencode).
 
 The chart packages it into the `skills-live-skills` ConfigMap, which is mounted
 into the `caipe-ui` pod at `/app/data/skills-live-skills/live-skills.md` and read
@@ -20,12 +20,11 @@ by the `/api/skills/live-skills` endpoint.
 | `{{COMMAND_NAME}}`  | Slash command name from the UI form (default `skills`)         |
 | `{{DESCRIPTION}}`   | Description from the UI form                                   |
 | `{{BASE_URL}}`      | Gateway base URL (auto-detected from the request origin)       |
-| `{{ARG_REF}}`       | Per-agent argument syntax: `$ARGUMENTS` (Claude/Cursor/Spec Kit), `$1` (Codex/Gemini), or `{{input}}` (Continue) |
+| `{{ARG_REF}}`       | User-input reference used in the shared `SKILL.md` template (`$ARGUMENTS`) |
 
 The renderer (`ui/src/app/api/skills/live-skills/agents.ts`) parses this
-template once and re-wraps the body per agent surface (Markdown frontmatter,
-plain Markdown, Gemini TOML, or Continue JSON fragment). One canonical
-template serves all six agents.
+template once and emits the shared agentskills.io `SKILL.md` format. One
+canonical template serves all five agents.
 
 ## Override resolution order
 

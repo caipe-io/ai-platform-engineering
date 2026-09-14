@@ -12,7 +12,7 @@
  *
  * History: this handler used to negotiate a `commands`-vs-`skills` layout
  * and four per-agent file formats. After the skills-only overhaul (see
- * docs/docs/specs/2026-05-04-skills-only-overhaul/) every agent receives
+ * the shared agentskills.io layout, so every supported agent receives
  * the same canonical SKILL.md, and the `layout` query param is silently
  * ignored for backward compatibility with copy-pasted one-liners.
  */

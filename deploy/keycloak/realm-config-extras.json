@@ -1,5 +1,5 @@
 {
-  "$comment": "Spec 102 (data-model.md §E3, T013). Sibling to realm-config.json. Keycloak is identity-only for CAIPE authorization; PDP-unavailable fallback is deny_all except BOOTSTRAP_ADMIN_EMAILS break-glass in service middleware. Schema: docs/docs/specs/102-comprehensive-rbac-tests-and-completion/contracts/realm-config-extras.schema.json. Validator: scripts/validate-realm-config.py.",
+  "$comment": "Sibling to realm-config.json. Keycloak is identity-only for CAIPE authorization; PDP-unavailable fallback is deny_all except BOOTSTRAP_ADMIN_EMAILS break-glass in service middleware. Schema: tests/rbac/contracts/realm-config-extras.schema.json. Validator: scripts/validate-realm-config.py.",
   "version": 1,
   "pdp_unavailable_fallback": {}
 }

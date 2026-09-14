@@ -1,6 +1,6 @@
 # GitHub Actions workflow — RBAC tests
 #
-# Strategy (chosen 2026-04-22 in /speckit.implement Phase 4 dialogue):
+# Strategy: keep the cheap matrix/unit lane separate from the opt-in full stack.
 #   - PR (any branch → main / release/*): run the cheap lane only
 #       * make test-rbac-lint   (matrix linter + realm-config validator + requireAdmin guard)
 #       * make test-rbac-jest   (Jest matrix-driver)

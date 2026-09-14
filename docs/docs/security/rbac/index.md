@@ -17,6 +17,7 @@ This is the canonical reference for how authentication and authorization work in
 | Find the file that owns a specific piece of the auth path | [File map](./file-map.md) |
 | Understand the difference between Keycloak **roles** and **client scopes**, what a slug is, and what happens when you create a team | [Roles vs Scopes](./roles-scopes-comparison.md) |
 | Install or upgrade the RBAC/OpenFGA refactor with Helm, including optional Keycloak, AgentGateway, OpenFGA, and bridge runtime components | [Helm installation and upgrade guide](./helm-install-upgrade.md) |
+| Migrate legacy embedded team members into the canonical membership store | [Canonical team-membership migration](./canonical-team-membership-migration.md) |
 | **Install CAIPE on a real K8s cluster** — bootstrap admin, IdP, and slack-bot client secrets via dev defaults, manual K8s Secrets, or ESO (Vault / AWS-SM / GCP-SM) | [Secrets bootstrap](./secrets-bootstrap.md) |
 | Understand the audit log backend options (local vs S3), benchmark numbers, and the OpenFGA N+1 fix on `admin-tab-gates` | [Audit Log Performance](./audit-log-performance.md) |
 

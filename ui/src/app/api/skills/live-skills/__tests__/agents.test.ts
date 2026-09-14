@@ -65,7 +65,7 @@ describe('AGENTS registry', () => {
   });
 
   it('has dropped continue and specify (skills-only overhaul)', () => {
-    // Regression: continue (fragment-config) and specify (Spec Kit)
+    // Regression: retired command/config adapters stay out of the skill registry.
     // were removed when every supported agent standardized on the
     // agentskills.io SKILL.md format.
     expect((AGENTS as Record<string, unknown>).continue).toBeUndefined();

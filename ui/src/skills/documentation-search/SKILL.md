@@ -22,7 +22,7 @@ Search the internal knowledge base using RAG (Retrieval-Augmented Generation) to
 ### Phase 2: Knowledge Base Search (RAG Agent)
 1. **Search across document sources**:
    - Architecture Decision Records (ADRs) in `docs/docs/changes/`
-   - Spec Kit documents in `.specify/specs/`
+   - Current architecture and security documentation in `docs/docs/`
    - Runbooks and operational guides
    - README files and inline documentation
    - Confluence pages (if Confluence agent available)
@@ -58,7 +58,7 @@ Based on the internal documentation, database migrations follow this process:
 |----------|------|-----------|--------------|
 | RB-023: Database Migration Runbook | Runbook | High | 2026-01-15 |
 | ADR-008: Database Schema Changes | ADR | Medium | 2025-11-20 |
-| .specify/specs/db-migration-v2.md | Spec | Medium | 2026-02-01 |
+| docs/docs/security/rbac/canonical-team-membership-migration.md | Runbook | Medium | 2026-02-01 |
 
 ### Key Excerpts
 > From **RB-023**: "Always run `alembic upgrade head --sql` first to preview
@@ -70,7 +70,7 @@ Based on the internal documentation, database migrations follow this process:
 ### Related Topics
 - Rollback procedures (see RB-024)
 - Schema versioning strategy (see ADR-008)
-- Testing database changes (see .specify/specs/db-testing.md)
+- Testing database changes (see the owning component's tests and runbook)
 ```
 
 ## Examples

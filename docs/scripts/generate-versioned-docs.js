@@ -153,6 +153,41 @@ function sanitizeVersionLinks(versionDir, tag, isVersionedRoute) {
   return count;
 }
 
+const RETIRED_DOC_IDS = new Set(['development/spec-driven-development']);
+
+function pruneSidebarItems(items) {
+  if (!Array.isArray(items)) return items;
+  return items
+    .filter((item) => {
+      if (typeof item === 'string') {
+        return !item.startsWith('specs/') && !RETIRED_DOC_IDS.has(item);
+      }
+      if (!item || typeof item !== 'object') return true;
+      if (item.label === 'Specifications') return false;
+      if (typeof item.id === 'string') {
+        return !item.id.startsWith('specs/') && !RETIRED_DOC_IDS.has(item.id);
+      }
+      return item.dirName !== 'specs';
+    })
+    .map((item) => {
+      if (!item || typeof item !== 'object' || !Array.isArray(item.items)) return item;
+      return { ...item, items: pruneSidebarItems(item.items) };
+    });
+}
+
+function pruneRetiredVersionDocs(versionDir, sidebarFile) {
+  fs.rmSync(path.join(versionDir, 'specs'), { recursive: true, force: true });
+  fs.rmSync(path.join(versionDir, 'development', 'spec-driven-development.md'), { force: true });
+  fs.rmSync(path.join(versionDir, 'development', 'spec-driven-development.mdx'), { force: true });
+
+  if (!fs.existsSync(sidebarFile)) return;
+  const sidebars = JSON.parse(fs.readFileSync(sidebarFile, 'utf8'));
+  for (const key of Object.keys(sidebars)) {
+    sidebars[key] = pruneSidebarItems(sidebars[key]);
+  }
+  fs.writeFileSync(sidebarFile, JSON.stringify(sidebars, null, 2) + '\n');
+}
+
 // Keep links in frozen snapshots usable when older docs point at anchors or
 // routes that no longer exist in the corresponding snapshot.
 function sanitizeLegacyDocLinks(absFile) {
@@ -321,9 +356,11 @@ try {
 
       const destVersionDir = path.join(VERSIONED_DOCS_DIR, `version-${tag}`);
       fs.cpSync(wtVersionedDir, destVersionDir, { recursive: true });
+      const destSidebarFile = path.join(VERSIONED_SIDEBARS_DIR, `version-${tag}-sidebars.json`);
       if (fs.existsSync(wtSidebarFile)) {
-        fs.cpSync(wtSidebarFile, path.join(VERSIONED_SIDEBARS_DIR, `version-${tag}-sidebars.json`));
+        fs.cpSync(wtSidebarFile, destSidebarFile);
       }
+      pruneRetiredVersionDocs(destVersionDir, destSidebarFile);
       const fixed = sanitizeVersionLinks(destVersionDir, tag, tag !== latestPublishedVersion);
       console.log(`    captured version-${tag}${fixed ? ` (rewrote source links in ${fixed} file(s))` : ''}`);
     } finally {

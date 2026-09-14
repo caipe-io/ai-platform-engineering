@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""CI validator: RBAC code changes must update how-rbac-works.md.
-
-Spec 102 — User Story 8 (Living Documentation).
+"""CI validator: RBAC code changes must update the canonical RBAC docs.
 
 This script is intended to run on a pull request. It looks at the diff
 between the PR branch and its merge base, classifies each changed file,
 and fails if RBAC-relevant code changed without a matching update to
 the canonical reference doc:
 
-    docs/docs/specs/098-enterprise-rbac-slack-ui/how-rbac-works.md
+    docs/docs/security/rbac/
 
 A change is considered RBAC-relevant if it touches one of the
 ``RBAC_PATHS`` entries below (Python or TypeScript). The matcher uses
@@ -25,7 +23,7 @@ don't need a doc update):
   - The `BLOCKERS.md` and `CHECKLIST.md` files (operator notes, not docs).
 
 If any non-trivial RBAC code file changed, the validator requires
-``how-rbac-works.md`` to also appear in the diff. Otherwise it exits
+one of the canonical RBAC docs to also appear in the diff. Otherwise it exits
 with code 1 and prints a clear message naming the offending files.
 
 Usage:
@@ -75,20 +73,15 @@ RBAC_PATHS: tuple[str, ...] = (
     "ai_platform_engineering/knowledge_bases/rag/server/src/server/doc_acl.py",
 )
 
-# Canonical doc(s) — accept any of these. The original single-file
-# `how-rbac-works.md` was split into a stub + four sibling files
-# under `docs/docs/security/rbac/` (see commit
-# `docs(security): split how-rbac-works.md`). Touching any of them
-# satisfies the gate.
+# Canonical docs. Touching any focused RBAC reference satisfies the gate.
 CANONICAL_DOCS: tuple[str, ...] = (
-    "docs/docs/specs/098-enterprise-rbac-slack-ui/how-rbac-works.md",
     "docs/docs/security/rbac/index.md",
     "docs/docs/security/rbac/architecture.md",
     "docs/docs/security/rbac/workflows.md",
     "docs/docs/security/rbac/usage.md",
     "docs/docs/security/rbac/file-map.md",
 )
-# Backwards-compat alias used in user-facing log lines.
+# Short alias used in user-facing log lines.
 CANONICAL_DOC = CANONICAL_DOCS[0]
 
 
@@ -220,7 +213,7 @@ def _has_substantive_change(base: str, head: str, path: str) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Fail if RBAC code changed but how-rbac-works.md didn't."
+        description="Fail if RBAC code changed but the canonical RBAC docs didn't."
     )
     parser.add_argument(
         "--base",
@@ -286,10 +279,9 @@ def main() -> int:
     for f in rbac_changes:
         sys.stderr.write(f"  - {f}\n")
     sys.stderr.write(
-        "\nPlease update how-rbac-works.md to reflect the change "
-        "(see CLAUDE.md > 'RBAC Living Documentation Rule'). If the "
-        "change is genuinely doc-irrelevant, justify it in the PR "
-        "description and add the path to RBAC_PATHS' carve-out list.\n"
+        "\nPlease update the relevant canonical RBAC document to reflect "
+        "the change. If the change is genuinely doc-irrelevant, justify it "
+        "in the PR description and narrow the validator rule explicitly.\n"
     )
     return 1
 

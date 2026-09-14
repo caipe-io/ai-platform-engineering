@@ -35,13 +35,9 @@
  *
  * Adding a new agent = one entry in AGENTS.
  *
- * History: this module previously supported a `commands`-vs-`skills`
- * layout toggle and four per-agent file formats (markdown-frontmatter,
- * markdown-plain, gemini-toml, continue-json-fragment). All five target
- * agents have since standardized on the agentskills.io `SKILL.md` format,
- * so the toggle and the per-format renderers were removed. See
- * docs/docs/specs/2026-05-04-skills-only-overhaul/spec.md for the
- * design rationale.
+ * All five target agents consume the agentskills.io `SKILL.md` format. Keep
+ * this registry limited to actively tested targets and the shared install
+ * paths above.
  */
 
 /**

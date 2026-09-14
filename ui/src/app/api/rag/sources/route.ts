@@ -4,7 +4,7 @@
  *
  * `IngestionSourceConfig` is the pre-ingestion source of truth this series
  * introduces — distinct from the RAG server's `DataSourceInfo`. See
- * docs/docs/specs/2026-07-21-rag-source-config-db/data-model.md.
+ * docs/docs/api/rag-knowledge-bases.md.
  *
  * POST creates a UI/API-native record (`config_driven: false`,
  * `visibility: "team"`) — config-driven records are seeded exclusively via

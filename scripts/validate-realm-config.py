@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate that the tracked Keycloak realm seed matches the runtime catalog.
 
-Spec 102 (FR-006). Hard-gate run in CI; non-zero exit on drift.
+This is a hard CI gate and exits non-zero on drift.
 
 Checks:
   1. ``ui/src/lib/rbac/resource-catalog.generated.ts`` (produced by
@@ -9,7 +9,7 @@ Checks:
      pair the runtime references is declared in
      ``deploy/keycloak/realm-config.example.json`` ``authorizationSettings.resources[].scopes``.
   2. ``deploy/keycloak/realm-config-extras.json`` validates against
-     ``contracts/realm-config-extras.schema.json``:
+     ``tests/rbac/contracts/realm-config-extras.schema.json``:
        - `version: 1`
        - keys under `pdp_unavailable_fallback` MUST match a resource in realm-config.json
        - if `mode == "realm_role"`, the named role MUST exist in realm-config.json `roles.realm[]`
@@ -176,7 +176,7 @@ def main() -> int:
             extras_violations.extend(validate_extras(extras, set(realm_resources.keys()), realm_roles))
     else:
         print(
-            f"[validate-realm-config] WARN — {EXTRAS_PATH.relative_to(REPO_ROOT)} does not exist (T013 not run yet?)",
+            f"[validate-realm-config] WARN — {EXTRAS_PATH.relative_to(REPO_ROOT)} does not exist; no fallback overrides will be validated",
             file=sys.stderr,
         )
 

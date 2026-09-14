@@ -1,8 +1,4 @@
 <!-- Browse and install skills from the Grid catalog -->
-<!-- AUTO-GENERATED — DO NOT EDIT -->
-<!-- Source: .specify/templates/commands/skills.md -->
-<!-- Regenerate: make generate-agent-files -->
-
 ---
 description: Browse and install skills from the Grid catalog
 scripts:
@@ -43,15 +39,9 @@ Browse the [Outshift Grid](https://grid.outshift.io) skill catalog and optionall
 4. **If user wants to install a skill**:
    a. Ask which skill by number (from the table above)
    b. Fetch the skill content from the Grid API skill detail endpoint
-   c. Save to `.specify/templates/commands/<skill-name>.md`
-   d. Also save to `.claude/skills/<skill-name>/SKILL.md` and `.agents/skills/<skill-name>/SKILL.md` for immediate use
-   e. Add to `docs/plans/SKILLS.md` inventory table:
-
-      ```markdown
-      | <skill-name> | [Outshift Grid](https://grid.outshift.io) | <version> | <today> | <description> |
-      ```
-
-   f. Confirm: "Skill `<name>` installed to `.specify/templates/commands/`, `.claude/skills/`, and `.agents/skills/`."
+   c. Save to `.agents/skills/<skill-name>/SKILL.md`
+   d. Also save to `.claude/skills/<skill-name>/SKILL.md` when Claude Code discovery is needed
+   e. Confirm the vendor-neutral `.agents/skills/` path and any native copy created
 
 5. **Report**: Total skills found, page info, and next steps.
 

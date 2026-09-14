@@ -67,7 +67,7 @@ interface TeamDoc {
  * Pre-2026-05-26 this iterated every team in Mongo and read
  * `team.members[]` to find the user. That code path was the second-to-
  * last reader of the embedded array (see
- * docs/docs/specs/2026-05-26-canonical-team-membership/).
+ * docs/docs/security/rbac/architecture.md).
  *
  * Now: query the canonical `team_membership_sources` collection by
  * the user's email/subject to get the candidate team slugs in one

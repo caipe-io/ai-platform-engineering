@@ -298,7 +298,7 @@ export function buildTeamGrantTuples(
 
 /**
  * Canonical input for any person/team-owned, shareable resource. See
- * `docs/docs/specs/2026-06-03-unified-shareable-resource-rbac/contracts/reconciler-and-route.md`
+ * `docs/docs/security/rbac/architecture.md`
  * (R1).
  */
 export interface ShareableResourceInput {

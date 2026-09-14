@@ -247,4 +247,4 @@ The PDP replaces only Keycloak's **AuthZ Services** (the UMA-based PDP), which C
 - [OPA — Envoy ext_authz integration](https://www.openpolicyagent.org/docs/latest/envoy-introduction/)
 - [Cedar — Language reference](https://docs.cedarpolicy.com/)
 - [keycloak-openfga-event-publisher SPI](https://github.com/embesozzi/keycloak-openfga-event-publisher) — sync Keycloak roles to OpenFGA tuples via event listener
-- [Spec 093 research doc](../../specs/093-agent-enterprise-identity/research-agentgateway-keycloak-slack-external-authz.md) — original architecture exploration that identified ext_authz as a future direction
+- [RBAC architecture](./architecture.md) — current AgentGateway and OpenFGA design

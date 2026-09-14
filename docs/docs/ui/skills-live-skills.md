@@ -177,7 +177,6 @@ agent registry currently ships with six entries:
 | ----------- | ------------------------------ | ----------------------------------------------- | ------------------------- | --------------- |
 | `claude`    | Claude Code                    | `.claude/commands/{name}.md`                    | Markdown + frontmatter    | `$ARGUMENTS`    |
 | `cursor`    | Cursor                         | `.cursor/commands/{name}.md`                    | Markdown + frontmatter    | `$ARGUMENTS`    |
-| `specify`   | Spec Kit                       | `.specify/templates/commands/{name}.md`         | Markdown + frontmatter    | `$ARGUMENTS`    |
 | `codex`     | Codex CLI (OpenAI)             | `~/.codex/prompts/{name}.md`                    | Plain Markdown            | `$1`            |
 | `gemini`    | Gemini CLI                     | `~/.gemini/commands/{name}.toml`                | TOML (`description`, `prompt`) | `$1`       |
 | `continue`  | Continue (VS Code / JetBrains) | `~/.continue/config.json` (fragment to merge)   | JSON fragment             | `{{input}}`     |
@@ -204,10 +203,6 @@ basic Markdown (bold, inline code, links, fenced code blocks).
 - **Cursor** &mdash; install from [cursor.com](https://cursor.com), open the
   repo, then `Cmd/Ctrl + L` → `/skills`. Reload the window if a new command
   doesn't appear in the picker.
-- **Spec Kit** &mdash;
-  `uvx --from git+https://github.com/github/spec-kit.git specify init`. Spec
-  Kit re-syncs commands into the agent-specific directory the next time you
-  run `/specify`, `/plan`, `/tasks`, or `/implement`.
 - **Codex CLI** &mdash; `npm install -g @openai/codex` → `codex` →
   `/skills`. Prompts live in `~/.codex/prompts/` (user-global). Use
   `$1`-style positional args when invoking the prompt.

@@ -9,7 +9,8 @@ Public API:
     - `require_rbac_permission_dep(resource, scope)` — FastAPI dependency factory
     - `current_bearer_token: ContextVar[str | None]` — bound by `JwtUserContextMiddleware`
 
-Contract: see `docs/docs/specs/102-comprehensive-rbac-tests-and-completion/contracts/python-rbac-helper.md`.
+The current authorization contract is documented in
+`docs/docs/security/rbac/architecture.md` and enforced by this module's tests.
 """
 
 from __future__ import annotations

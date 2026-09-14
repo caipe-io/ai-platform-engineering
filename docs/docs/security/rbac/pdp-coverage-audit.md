@@ -11,7 +11,7 @@
 3. Three patterns coexist today, in decreasing order of how cleanly they map to user intent:
    - **Resource-scoped PDP** (`requireResourcePermission(..., { type, id, action })`) — best.
    - **Capability-scoped PDP** (`requireRbacPermission(..., resource, scope)` or `requireAdminSurfaceManage`/etc.) — good.
-   - **Compatibility `withAuth(...)`** that resolves route prefixes to explicit capabilities via `ui/src/lib/api-middleware.ts`. Tracked for continued cleanup by [`2026-05-27-fine-grained-rbac-for-withauth-routes`](../../specs/2026-05-27-fine-grained-rbac-for-withauth-routes/plan.md).
+   - **Compatibility `withAuth(...)`** that resolves route prefixes to explicit capabilities via `ui/src/lib/api-middleware.ts`. The route inventory below is the current cleanup record.
 4. A handful of routes still have an `if (user.role === 'admin') { skip PDP }` short-circuit. These are **not** Mongo-based — `session.role === 'admin'` comes from the JWT (`BOOTSTRAP_ADMIN_EMAILS` or `OIDC_REQUIRED_ADMIN_GROUP`) — but they are a parallel decision path with no OpenFGA audit trail. Listed in [Category 1](#category-1--legacy-admin-bypass-no-pdp-on-the-bypass-branch).
 
 If you are here because something denied unexpectedly, jump straight to [How to read an `audit_event_id` row](#how-to-read-an-audit_event_id-row).
@@ -148,7 +148,7 @@ These routes call a fine-grained `require*Permission` helper directly. The PDP d
 | `/api/admin/openfga/baseline-profile` | `ui/src/app/api/admin/openfga/baseline-profile/route.ts` | `withOpenFgaViewAuth` / `withOpenFgaAdminAuth` |
 | `/api/admin/credentials/secrets/*`, `/api/admin/credentials/oauth-connectors/*` | `ui/src/app/api/admin/credentials/...` | Resource-scoped via the credential services |
 | `/api/admin/platform-config` | `ui/src/app/api/admin/platform-config/route.ts` | `requireResourcePermission(session, { type: "system_config", id: "platform_settings", action: "read" })` on `GET`; `admin_ui#admin` + `system_config#admin` on `PATCH` |
-| `/api/admin/teams/[id]/kb-assignments` (non-global branch) | `ui/src/app/api/admin/teams/[id]/kb-assignments/route.ts` | `requireRbacPermission(session, "admin_ui", "admin")` OR canonical team-admin via `findUserRoleInTeam` (per [`2026-05-26-canonical-team-membership`](../../specs/2026-05-26-canonical-team-membership/plan.md)) |
+| `/api/admin/teams/[id]/kb-assignments` (non-global branch) | `ui/src/app/api/admin/teams/[id]/kb-assignments/route.ts` | `requireRbacPermission(session, "admin_ui", "admin")` OR canonical team-admin via `findUserRoleInTeam` |
 | `/api/rag/[...path]` | `ui/src/app/api/rag/[...path]/route.ts` | `requireRbacPermission` for the parent capability + `requireResourcePermission` per datasource. Per-resource calls pass `bypassForOrgAdmin: true` (PR 1, 2026-05-27 fine-grained KB ReBAC plan) so org admins (`user:<sub> can_manage organization:<key>`) are always allowed on KB / Search / Data Sources / Graph / MCP Tools; set `RAG_ADMIN_BYPASS_DISABLED=true` to revert to pure per-resource checks. |
 | `/api/rag/kb/[...path]` | `ui/src/app/api/rag/kb/[...path]/route.ts` | Same as `/api/rag/[...path]` — uses `bypassForOrgAdmin: true` for the per-KB gate (PR 1, 2026-05-27 fine-grained KB ReBAC plan). |
 | `/api/rbac/kb-tab-gates` | `ui/src/app/api/rbac/kb-tab-gates/route.ts` | PR 2 of the 2026-05-27 fine-grained KB ReBAC plan. Returns `{search, data_sources, graph, mcp_tools, has_any_kb, kb_count}` so the Knowledge sidebar can render disabled-with-tooltip tabs. Org admins short-circuit to every tab `true` with `kb_count=-1`; non-admins get a count from the `/v1/datasources` list filtered by `knowledge_base:<id>#can_read`. |
@@ -164,7 +164,7 @@ This is the shape every route should reach over time.
 
 ### Category 4 — Hybrid Mongo + PDP (intentional)
 
-A few admin routes still consult the `teams` collection or canonical `team_membership_sources` reader inline. These are **not** legacy holdouts; they're intentional, scoped to team-membership questions that the [`2026-05-26-canonical-team-membership`](../../specs/2026-05-26-canonical-team-membership/plan.md) refactor moved to a canonical Mongo store. The reader is `findUserRoleInTeam` in `ui/src/lib/rbac/team-membership-store.ts`, and it's used alongside a fall-through to organization-level PDP:
+A few admin routes still consult the `teams` collection or canonical `team_membership_sources` reader inline. These are **not** legacy holdouts; they're intentional and scoped to team-membership questions owned by the canonical Mongo store. The reader is `findUserRoleInTeam` in `ui/src/lib/rbac/team-membership-store.ts`, and it's used alongside a fall-through to organization-level PDP:
 
 ```ts
 const canAdmin = await requireRbacPermission(session, "admin_ui", "admin").then(() => true, () => false);
@@ -241,5 +241,5 @@ When you add a new `/api/*` route:
 - [OpenFGA Permission Evaluation](./openfga-permission-evaluation.md) — what actually happens inside an OpenFGA `check`.
 - [Roles vs Scopes](./roles-scopes-comparison.md) — the model the resolver maps URLs into.
 - [Feasibility — Remote PDP options](./feasibility-pdp-options.md) — why we picked OpenFGA for the data plane in the first place.
-- [`2026-05-27-fine-grained-rbac-for-withauth-routes` plan](../../specs/2026-05-27-fine-grained-rbac-for-withauth-routes/plan.md) — migration path for Category 2.
-- [`2026-05-26-canonical-team-membership` plan](../../specs/2026-05-26-canonical-team-membership/plan.md) — context for the Category 4 hybrid pattern.
+- [File map](./file-map.md) — current ownership for the compatibility route map and canonical team-membership store.
+- [Canonical team-membership migration](./canonical-team-membership-migration.md) — operator runbook for removing the legacy embedded member array.
