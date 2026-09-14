@@ -363,7 +363,11 @@ export async function getAuthenticatedUser(
     );
   }
 
-  if (getConfig('ssoEnabled') && session.isAuthorized === false) {
+  // Bootstrap admins are an explicit break-glass allowlist. Honor it at
+  // request time as well as during JWT creation so an older session cannot
+  // lose access when a refreshed ID token omits the email claim.
+  const bootstrapAdmin = isBootstrapAdminEmail(session.user.email);
+  if (getConfig('ssoEnabled') && session.isAuthorized === false && !bootstrapAdmin) {
     throw new ApiError(
       'Your account is not authorized to access this application. Contact an administrator if you need access.',
       403,
