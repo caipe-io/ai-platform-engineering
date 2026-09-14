@@ -33,4 +33,14 @@ describe("SettingsWorkspace",() => {
     expect(findSettingsRouteBySegment("system-health")).toBeUndefined();
   });
 
+  it("combines developer tools with account access and removes the developer route",() => {
+    render(<SettingsWorkspace activeRouteId="access" />);
+
+    expect(screen.getByText("Access content")).toBeInTheDocument();
+    expect(screen.getByRole("heading",{ level: 2,name: "Developer (Dangerous)" })).toBeInTheDocument();
+    expect(screen.getByText("Developer content")).toBeInTheDocument();
+    expect(findSettingsRouteBySegment("developer")).toBeUndefined();
+    expect(PERSONAL_SETTINGS_ROUTES.some((route) => route.id === "developer")).toBe(false);
+  });
+
 });

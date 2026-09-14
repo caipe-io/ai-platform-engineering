@@ -21,9 +21,8 @@ description: "Create an rc/hotfix tag on a release/* branch and trigger a coordi
 #   5. Explicitly dispatches ci-helm.yml with force_build=true so the Helm
 #      chart is published even when no chart files changed in this commit.
 #
-# To force-rebuild every container image fresh (bypass retag for unchanged
-# components), run each ci-*.yml individually via workflow_dispatch with
-# force_build=true after this workflow has created the tag.
+# The push-tag event already rebuilds every container image fresh (tag
+# pushes are never skipped or retagged from a prior version).
 
 on:
   workflow_dispatch:
@@ -266,10 +265,6 @@ jobs:
           - \`ci-mcp-sub-agent\`
           - \`ci-rag\`
           - \`ci-helm\` (also dispatched explicitly with \`force_build=true\`)
-
-          > To force-rebuild every image fresh (bypass retag for unchanged components),
-          > run each \`ci-*.yml\` manually via **workflow_dispatch** with
-          > \`force_build=true\` and \`tag_version=${RC_TAG}\` after this workflow completes.
           EOF
 
   dispatch-helm:

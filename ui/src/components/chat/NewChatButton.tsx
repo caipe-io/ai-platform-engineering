@@ -273,7 +273,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
             {/* No dynamic agents (and no search active) */}
             {!loading && !error && !searchQuery && agents.length === 0 && (
               <div className="px-3 py-2 text-sm text-muted-foreground">
-                No custom agents configured
+                No agents configured
               </div>
             )}
           </div>

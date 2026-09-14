@@ -17,7 +17,7 @@ This development guide covers:
 These guides are designed for:
 
 - **Contributors** wanting to add new features or fix bugs
-- **Developers** building custom agents for their organization
+- **Developers** building code-defined agents for their organization
 - **Platform Engineers** extending the platform with new capabilities
 - **Students** learning about AI agents and MCP
 
@@ -35,8 +35,8 @@ Before you begin, you should have:
 
 1. **[Understand spec-driven development](./spec-driven-development)** - How CAIPE uses spec-kit for feature development
 2. **[Set up your development environment](./development-environment)** - Install dependencies and configure your workspace
-3. **[Explore the template agent](./creating-an-agent#understanding-the-template)** - Understand the project structure
-4. **[Build your first agent](./creating-an-agent#step-1-clone-the-template)** - Follow the step-by-step guide
+3. **[Explore Agent Builder](../features/agent-builder.md)** - Create a governed agent without writing application code
+4. **[Create a code-defined agent](./creating-an-agent.md)** - Build an agent when you need full application control
 5. **[Add an MCP server](./creating-mcp-server)** - Connect your agent to external APIs
 
 ## 📖 Additional Resources

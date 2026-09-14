@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockRequireResourcePermission = jest.fn();
 const mockListTeamKbGrants = jest.fn();
-const mockManageableDatasourceIdsForCollectionPublishing = jest.fn();
+const mockSearchableDatasourceIdsForCollectionPublishing = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => ({
   getAuthFromBearerOrSession: (...args: unknown[]) =>
@@ -29,8 +29,8 @@ jest.mock("@/lib/rbac/team-resource-listing", () => ({
 }));
 
 jest.mock("@/lib/rag-collections.server", () => ({
-  manageableDatasourceIdsForCollectionPublishing: (...args: unknown[]) =>
-    mockManageableDatasourceIdsForCollectionPublishing(...args),
+  searchableDatasourceIdsForCollectionPublishing: (...args: unknown[]) =>
+    mockSearchableDatasourceIdsForCollectionPublishing(...args),
 }));
 
 const session = { sub: "alice-sub", accessToken: "token-123" };
@@ -41,7 +41,7 @@ describe("GET /api/dynamic-agents/datasources", () => {
     jest.clearAllMocks();
     mockGetAuthFromBearerOrSession.mockResolvedValue({ user, session });
     mockRequireResourcePermission.mockResolvedValue(undefined);
-    mockManageableDatasourceIdsForCollectionPublishing.mockImplementation(
+    mockSearchableDatasourceIdsForCollectionPublishing.mockImplementation(
       async (_session, ids: string[]) => new Set(ids),
     );
     global.fetch = jest.fn().mockResolvedValue({
@@ -251,7 +251,7 @@ describe("GET /api/dynamic-agents/datasources", () => {
     expect(body.data.datasources).toEqual([]);
   });
 
-  it("offers management-only sources for collection publishing", async () => {
+  it("offers a manage-granted source for collection publishing when the authoritative check allows it", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -277,15 +277,14 @@ describe("GET /api/dynamic-agents/datasources", () => {
       {
         datasource_id: "managed-only",
         name: "Managed only",
-        permission: "Manage source",
-        can_manage: true,
-        can_read: false,
+        permission: "Search access",
+        can_search: true,
       },
     ]);
   });
 
-  it("keeps human-readable metadata for readable collection sources the caller cannot manage", async () => {
-    mockManageableDatasourceIdsForCollectionPublishing.mockResolvedValue(
+  it("flags a source as non-searchable when the authoritative check denies it", async () => {
+    mockSearchableDatasourceIdsForCollectionPublishing.mockResolvedValue(
       new Set(),
     );
     (global.fetch as jest.Mock).mockResolvedValue({
@@ -318,9 +317,8 @@ describe("GET /api/dynamic-agents/datasources", () => {
         datasource_id: "slack-channel-C00000000",
         name: "Slack: #primary",
         source_type: "slack",
-        permission: "Read source",
-        can_manage: false,
-        can_read: true,
+        permission: "No search access",
+        can_search: false,
       },
     ]);
   });

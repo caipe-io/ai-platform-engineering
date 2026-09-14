@@ -71,9 +71,6 @@ interface PrepareRagPublicationInput {
     owner_subject: string | null;
   };
   materialChange?: boolean;
-  externalAudienceTeamSlugs?: string[];
-  externalBroadAudience?: boolean;
-  externalOrganizationWide?: boolean;
 }
 
 interface RagPublicationOwnershipSnapshot {
@@ -294,9 +291,6 @@ export async function prepareRagPublication(
       ingestionStats.get(input.source.source_id)?.documentCount ??
       estimatedSourceItemsForPublication(input.source),
     materialChange: input.materialChange,
-    externalAudienceTeamSlugs: input.externalAudienceTeamSlugs,
-    externalBroadAudience: input.externalBroadAudience,
-    externalOrganizationWide: input.externalOrganizationWide,
   });
   return {
     actor,

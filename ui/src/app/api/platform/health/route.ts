@@ -345,7 +345,7 @@ async function probeOpenFgaBootstrap(openfgaUrl: string): Promise<DiagnosticProb
   const storeName = envValue("OPENFGA_STORE_NAME") || "caipe-openfga";
   const remediation = {
     label: "OpenFGA",
-    href: "/admin/security/access-explorer",
+    href: "/admin/security/access-operations?operationsTab=access-explorer",
     description: "Inspect OpenFGA connectivity and seeded authorization model.",
   };
 
@@ -434,7 +434,7 @@ async function probeOpenFgaBootstrap(openfgaUrl: string): Promise<DiagnosticProb
 async function probeKeycloakBootstrap(): Promise<DiagnosticProbeResult> {
   const remediation = {
     label: "Keycloak Health",
-    href: "/admin/security/keycloak",
+    href: "/admin/security/access-operations?operationsTab=keycloak",
     description: "Inspect Keycloak realm, credentials, and reconciliation status.",
   };
   try {
@@ -494,7 +494,7 @@ async function probeKeycloakBootstrap(): Promise<DiagnosticProbeResult> {
 async function probeRebacMigrations(): Promise<DiagnosticProbeResult> {
   const remediation = {
     label: "Migration Assistant",
-    href: "/admin/security/migrations",
+    href: "/admin/security/access-operations?operationsTab=migrations",
     description: "Open the migration assistant to review and apply required schema migrations.",
   };
   try {
@@ -594,7 +594,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
       target: `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/certs`,
       remediation: {
         label: "Keycloak Health",
-        href: "/admin/security/keycloak",
+        href: "/admin/security/access-operations?operationsTab=keycloak",
         description: "Inspect Keycloak realm, credentials, and reconciliation status.",
       },
     }),
@@ -605,7 +605,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
       target: `${openfgaUrl}/healthz`,
       remediation: {
         label: "OpenFGA",
-        href: "/admin/security/access-explorer",
+        href: "/admin/security/access-operations?operationsTab=access-explorer",
         description: "Inspect OpenFGA connectivity and seeded authorization model.",
       },
     }),

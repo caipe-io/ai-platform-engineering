@@ -126,7 +126,6 @@ describe("RagCollectionsView", () => {
                   _id: "primary-collection",
                   name: "Primary collection",
                   description: "Shared operational knowledge",
-                  is_platform: false,
                   source_ids: ["slack-channel-C00000000"],
                   owner_subject: "owner-subject",
                   maintainer_team_slugs: [],
@@ -146,7 +145,6 @@ describe("RagCollectionsView", () => {
                   _id: "platform-rag",
                   name: "Platform RAG",
                   description: "Shared organization knowledge",
-                  is_platform: true,
                   source_ids: [],
                   maintainer_team_slugs: ["super-admins"],
                   reader_team_slugs: ["everyone"],
@@ -167,7 +165,6 @@ describe("RagCollectionsView", () => {
                         _id: "new-collection",
                         name: "New collection",
                         description: "New description",
-                        is_platform: false,
                         source_ids: ["web-docs"],
                         owner_subject: "owner-subject",
                         maintainer_team_slugs: [],
@@ -200,8 +197,7 @@ describe("RagCollectionsView", () => {
                   source_type: "slack",
                   document_count: 3,
                   chunk_count: 8,
-                  can_manage: false,
-                  can_read: true,
+                  can_search: true,
                 },
                 {
                   datasource_id: "web-docs",
@@ -209,15 +205,13 @@ describe("RagCollectionsView", () => {
                   source_type: "web",
                   document_count: 4,
                   chunk_count: 12,
-                  can_manage: true,
-                  can_read: true,
+                  can_search: true,
                 },
                 {
-                  datasource_id: "managed-only",
-                  name: "Managed only",
+                  datasource_id: "unsearchable",
+                  name: "Unsearchable",
                   source_type: "jira",
-                  can_manage: true,
-                  can_read: false,
+                  can_search: false,
                 },
               ],
             },
@@ -229,16 +223,6 @@ describe("RagCollectionsView", () => {
         throw new Error(`Unexpected fetch: ${href}`);
       },
     );
-  });
-
-  it("marks Platform RAG as a built-in collection", async () => {
-    render(<RagCollectionsView />);
-
-    expect(
-      await screen.findByLabelText(
-        "Built-in collection for shared organization knowledge.",
-      ),
-    ).toBeInTheDocument();
   });
 
   it("keeps the detail pane closed until a collection is selected", async () => {
@@ -437,12 +421,9 @@ describe("RagCollectionsView", () => {
     ).not.toHaveAttribute("data-rarity");
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
-    const managedOnly = screen.getByRole("button", { name: /Managed only/i });
-    expect(managedOnly).toBeDisabled();
-    expect(managedOnly).toHaveAttribute(
-      "title",
-      "A personal collection can only include datasources you can already search",
-    );
+    expect(
+      screen.queryByRole("button", { name: /Unsearchable/i }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Web docs/i }));
     expect(

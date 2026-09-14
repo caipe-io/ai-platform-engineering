@@ -14,17 +14,17 @@ A Helm chart for CAIPE UI - chat interface for AI Platform Engineering
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install caipe-ui oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68
+helm install caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade caipe-ui oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68
+helm upgrade caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install caipe-ui oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68 \
+helm install caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install caipe-ui oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68 \
+helm install caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -85,6 +85,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/caipe-ui --version 0.5.68
 | config.CREDENTIAL_STORE_BACKEND | string | `"mongodb-envelope"` |  |
 | config.DESCRIPTION | string | `"Where Humans and AI agents collaborate to deliver high quality outcomes."` |  |
 | config.DYNAMIC_AGENTS_URL | string | `""` |  |
+| config.ENABLE_AUTONOMOUS_AGENTS | string | `"false"` |  |
 | config.ENABLE_SUBAGENT_CARDS | string | `"true"` |  |
 | config.ENABLE_USER_INFO_TOOL | string | `"false"` |  |
 | config.ENV_BADGE | string | `""` |  |

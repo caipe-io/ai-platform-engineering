@@ -88,7 +88,7 @@ different version; they do not select a different package tree.
 | `auto-tag.yml` | Creates development, release-candidate, hotfix, and chart-only tags |
 | `prebuild-*.yml` | Builds temporary PR images in canonical packages |
 | `prebuild-helm.yml` | Publishes temporary chart versions in canonical chart packages |
-| `ci-*.yml` | Builds or retags versioned images after a Git tag |
+| `ci-*.yml` | Builds versioned images after a Git tag |
 | `ci-helm.yml` | Publishes versioned charts after a Git tag |
 | `release-manual.yml` | Creates the final release tag and draft GitHub Release |
 | `release-finalize.yml` | Publishes the release after required artifact workflows complete |
