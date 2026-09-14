@@ -84,7 +84,7 @@ test.describe("RBAC e2e — MCP credential editor", () => {
       },
     });
 
-    await expect(page.getByText("Jira", { exact: true })).toBeVisible();
+    await expect(page.getByRole("group", { name: "MCP server Jira" })).toBeVisible();
     await openMcpServerEditor(page, "Jira");
     await expect(page.getByLabel(/^Provider$/i)).toHaveCount(0);
     await expect(page.getByLabel(/^Secret$/)).toHaveCount(0);
