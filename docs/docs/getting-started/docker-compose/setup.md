@@ -5,7 +5,8 @@ sidebar_position: 1
 # Run with Docker Compose
 
 Use Docker Compose for a local CAIPE stack with the UI, Dynamic Agents, MCP
-servers, MongoDB, RBAC services, and optional RAG/tracing components.
+servers, a MongoDB-compatible database, RBAC services, and optional RAG/tracing
+components. MongoDB is the default; DocumentDB is opt-in.
 
 ## Prerequisites
 
@@ -103,6 +104,12 @@ To let the setup helper update `.env` and start Compose:
 
 The setup script asks before using sudo. Use `--no-sudo` to forbid it or `--allow-sudo` to permit it without a consent prompt. See [sudo consent](../kind/setup.md#sudo-consent) for automation and fallback behavior.
 
+Choose the MIT-licensed DocumentDB provider instead:
+
+```bash
+./setup-caipe.sh --docker-compose --database=documentdb
+```
+
 ## Profiles
 
 | Profile | Description |
@@ -110,8 +117,9 @@ The setup script asks before using sudo. Use `--no-sudo` to forbid it or `--allo
 | `mcp-servers` | Packaged MCP server containers |
 | `caipe-ui-prod` | Production CAIPE UI image |
 | `caipe-mongodb` | MongoDB for UI state, Dynamic Agents, RBAC metadata, and checkpoints |
+| `caipe-documentdb` | Opt-in DocumentDB provider for the same MongoDB-compatible state |
 | `rbac` | Local Keycloak, OpenFGA, AgentGateway, and config bridge |
-| `dynamic-agents` | Dynamic Agents runtime used by chat, skills, and custom agents |
+| `dynamic-agents` | Dynamic Agents runtime used by chat, skills, and Agent Builder |
 | `rag` | Vector RAG services |
 | `web_ingestor` / `web-ingestor` | Web datasource ingestion worker |
 | `slack-bot` | Slack bot integration service |

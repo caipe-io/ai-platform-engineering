@@ -430,8 +430,8 @@ function AgentInfoContent({
           iconSize="h-5 w-5"
         />
         <div className="min-w-0">
-          <h3 className="font-semibold truncate">{agent?.name || "Custom Agent"}</h3>
-          <p className="text-xs text-muted-foreground">Custom Agent</p>
+          <h3 className="font-semibold truncate">{agent?.name || "Agent Builder"}</h3>
+          <p className="text-xs text-muted-foreground">Agent Builder</p>
         </div>
       </div>
 

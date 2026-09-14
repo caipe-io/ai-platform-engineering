@@ -8,17 +8,17 @@ A Helm chart for caipe-scheduler - cron schedule registry + k8s CronJob orchestr
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install scheduler oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
+helm install scheduler oci://ghcr.io/caipe-io/charts/scheduler --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade scheduler oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
+helm upgrade scheduler oci://ghcr.io/caipe-io/charts/scheduler --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install scheduler oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68 \
+helm install scheduler oci://ghcr.io/caipe-io/charts/scheduler --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install scheduler oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68 \
+helm install scheduler oci://ghcr.io/caipe-io/charts/scheduler --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/scheduler --version 1.0.0
 ```
 
 ## Reading the Values Table

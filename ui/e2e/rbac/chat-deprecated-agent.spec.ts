@@ -436,6 +436,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.getByRole("button", { name: /Resume with default agent/i }).click();
 
     await expect(page.getByText("Agent No Longer Available")).not.toBeVisible({ timeout: 8_000 });
+    await expect.poll(() => capturedBody, { timeout: 20_000 }).not.toBeNull();
     expect(capturedBody).toMatchObject({
       participants: expect.arrayContaining([
         expect.objectContaining({ type: "agent", id: DEFAULT_AGENT_ID }),

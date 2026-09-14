@@ -244,7 +244,7 @@ services:
       - mcp-servers
 
   ####################################################################################################
-  #                                      CAIPE UI & MongoDB                                          #
+  #                             CAIPE UI & document database                                        #
   ####################################################################################################
   # MongoDB for CAIPE UI chat history and user settings
   caipe-mongodb:
@@ -267,7 +267,42 @@ services:
       start_period: 40s
     profiles:
       - caipe-mongodb
-      - autonomous-agents
+
+  # MIT-licensed, PostgreSQL-backed MongoDB-compatible alternative.
+  # Opt in with the caipe-documentdb profile and point MONGODB_URI at
+  # caipe-documentdb:10260. MongoDB remains the default provider.
+  caipe-documentdb:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:${DOCUMENTDB_IMAGE_TAG:-pg17-0.113.0}
+    container_name: caipe-documentdb
+    command:
+      - --username
+      - ${MONGODB_ROOT_USERNAME:-admin}
+      - --password
+      - ${MONGODB_ROOT_PASSWORD:-changeme}
+      - --data-path
+      - /data
+      - --documentdb-port
+      - "10260"
+      - --pg-port
+      - "9712"
+      - --tlsMode
+      - allowTLS
+      - --log-level
+      - warn
+      - --enable-telemetry
+      - "false"
+    ports:
+      - "10260:10260"
+    volumes:
+      - documentdb_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -p 9712 -U documentdb -d postgres && pgrep -f documentdb-gateway >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    profiles:
+      - caipe-documentdb
 
   # MongoDB Admin UI (optional)
   caipe-ui-mongo-express:
@@ -607,9 +642,8 @@ services:
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
       # MongoDB persistence -- shared with the UI so the Autonomous tab's
       # task list and run history come from the same source of truth.
-      # The caipe-mongodb service is auto-included via the
-      # autonomous-agents profile (added to its profiles list below),
-      # so a "--profile autonomous-agents" up brings Mongo along.
+      # Include exactly one database profile: caipe-mongodb (default) or
+      # caipe-documentdb. Both expose the MongoDB wire protocol.
       - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       # IMP-13: publish completed autonomous runs into the UI
@@ -631,6 +665,9 @@ services:
       # idiomatic way to express "if this service was started by the
       # active profile selection, wait for it; otherwise don't error".
       caipe-mongodb:
+        condition: service_healthy
+        required: false
+      caipe-documentdb:
         condition: service_healthy
         required: false
       dynamic-agents:
@@ -1583,6 +1620,8 @@ volumes:
   mongodb_data:
     driver: local
   mongodb_config:
+    driver: local
+  documentdb_data:
     driver: local
   langfuse_postgres_data:
     driver: local
