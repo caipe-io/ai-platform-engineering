@@ -31,21 +31,21 @@ FROM cgr.dev/chainguard/wolfi-base
 # Public Wolfi OS repo (no auth). Matches the rest of the repo's images.
 RUN echo "https://packages.wolfi.dev/os" > /etc/apk/repositories
 
-# python-3.13 + shadow (for useradd/groupadd). `apk add` is occasionally
+# python-3.14 + shadow (for useradd/groupadd). `apk add` is occasionally
 # flaky on first network setup; retry with exponential backoff (5s, 10s).
-RUN for i in 1 2 3; do apk add --no-cache python-3.13 shadow && break; [ $i -lt 3 ] && sleep $((i * 5)); done && \
+RUN for i in 1 2 3; do apk add --no-cache python-3.14 shadow && break; [ $i -lt 3 ] && sleep $((i * 5)); done && \
     apk upgrade --no-cache
 
 # Use the official uv binary — Wolfi's apk-shipped uv bundles outdated
 # Rust crates with CVEs (see slack-bot / mcp Dockerfile comments).
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.6 /uv /usr/local/bin/uv
 
-# Wolfi puts Python at /usr/bin/python3.13; mirror the symlinks the
-# astral uv binary expects so `uv venv --python python3.13` resolves.
+# Wolfi puts Python at /usr/bin/python3.14; mirror the symlinks the
+# astral uv binary expects so `uv venv --python python3.14` resolves.
 RUN mkdir -p /usr/local/bin \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python3.13 \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python3 \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python3.14 \
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python3 \
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python
 
 # Non-root user. UID/GID 1001 matches the chart's runAsUser/runAsGroup so
 # `runAsNonRoot: true` on the pod doesn't require a chart override, and
@@ -60,7 +60,7 @@ WORKDIR /app
 # /root/.cache/uv inside the image keep things small.
 ARG SKILL_SCANNER_VERSION
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv venv --python python3.13 /app/.venv \
+    uv venv --python python3.14 /app/.venv \
     && UV_HTTP_TIMEOUT=900 uv pip install --python /app/.venv/bin/python \
         "cisco-ai-skill-scanner==${SKILL_SCANNER_VERSION}"
 

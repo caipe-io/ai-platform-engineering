@@ -8,8 +8,8 @@ image:
 # Init container image used by post-install Jobs (init-idp + init-token-exchange).
 #
 # Default points at our project image — `build/Dockerfile.keycloak-init` —
-# which is wolfi-base + python-3.13 + curl + sed + grep + awk. We need
-# python-3.13 because init-idp.sh does richer JSON munging on the realm user
+# which is wolfi-base + python-3.14 + curl + sed + grep + awk. Python supports
+# the richer JSON munging that init-idp.sh performs on the realm user
 # profile (`alpine/curl` lacks python3 and the script exits 127).
 #
 # Override with --set initImage.repository=… for air-gapped registries.

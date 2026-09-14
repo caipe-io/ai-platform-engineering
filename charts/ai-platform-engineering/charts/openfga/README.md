@@ -71,7 +71,7 @@ helm show values oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0
 | init.helmHookDeletePolicy | string | `"before-hook-creation"` |  |
 | init.image.pullPolicy | string | `"IfNotPresent"` |  |
 | init.image.repository | string | `"python"` |  |
-| init.image.tag | string | `"3.13-slim"` |  |
+| init.image.tag | string | `"3.14-slim"` |  |
 | init.platformClient.clientId | string | `"caipe-platform"` |  |
 | init.platformClient.clientSecretRef.key | string | `"OIDC_CLIENT_SECRET"` |  |
 | init.platformClient.clientSecretRef.name | string | `""` |  |

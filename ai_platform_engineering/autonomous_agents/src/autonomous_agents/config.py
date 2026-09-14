@@ -3,10 +3,10 @@
 import json
 from functools import lru_cache
 from math import isfinite
-from typing import Any, Self
+from typing import Annotated, Self
 
-from pydantic import AliasChoices, Field, PrivateAttr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 def _parse_cors_string(raw: str | None) -> list[str]:
@@ -137,49 +137,33 @@ class Settings(BaseSettings):
     # you still want when overriding.
     webhook_providers_file: str | None = None
 
-    # CORS — stored as a raw string so Docker ``CORS_ORIGINS=`` (empty) does
-    # not trip pydantic-settings' JSON decode for ``list[str]``. Expose the
-    # parsed list via the ``cors_origins`` property (same name as before).
-    cors_origins_raw: str = Field(
-        default="",
+    # NoDecode keeps empty and comma-separated environment values available to
+    # the validator instead of applying JSON decoding in the settings source.
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
         validation_alias=AliasChoices(
             "cors_origins_raw",
             "CORS_ORIGINS",
             "AUTONOMOUS_CORS_ORIGINS",
         ),
     )
-    _cors_origins: list[str] = PrivateAttr(default_factory=list)
-
-    @model_validator(mode="before")
+    @field_validator("cors_origins", mode="before")
     @classmethod
-    def _legacy_cors_constructor_kwarg(cls, data: Any) -> Any:
-        # Unit tests and callers use ``Settings(cors_origins=[...])`` /
-        # ``Settings(cors_origins="http://a,http://b")`` — translate to raw.
-        if not isinstance(data, dict) or "cors_origins" not in data:
-            return data
-        co = data.pop("cors_origins")
-        if isinstance(co, list):
-            data["cors_origins_raw"] = ",".join(str(x) for x in co if str(x)) if co else ""
-        elif isinstance(co, str):
-            data["cors_origins_raw"] = co
-        return data
+    def _parse_cors_origins(cls, value: str | list[str] | None) -> list[str]:
+        if isinstance(value, list):
+            return [str(origin).strip() for origin in value if str(origin).strip()]
+        return _parse_cors_string(value)
 
-    @model_validator(mode="after")
-    def _materialize_cors_origins(self) -> Self:
-        # IMP-05: reject ``*`` with allow_credentials=True (see main.py).
-        parsed = _parse_cors_string(self.cors_origins_raw)
-        if any(origin.strip() == "*" for origin in parsed):
+    @field_validator("cors_origins")
+    @classmethod
+    def _reject_wildcard_cors_origin(cls, value: list[str]) -> list[str]:
+        if any(origin.strip() == "*" for origin in value):
             raise ValueError(
                 "cors_origins=['*'] is unsafe with allow_credentials=True; "
                 "list each allowed origin explicitly (e.g. "
                 "['http://localhost:3000','https://app.example.com'])"
             )
-        self._cors_origins = parsed
-        return self
-
-    @property
-    def cors_origins(self) -> list[str]:
-        return self._cors_origins
+        return value
 
     # Connection for MongoDB
     mongodb_uri: str | None = None

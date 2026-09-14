@@ -305,6 +305,11 @@ async def periodic_cleanup_task():
       # Continue running despite errors
 
 
+def create_redis_client(url: str) -> redis.Redis:
+  """Create the Redis client used by ingestion preview and job operations."""
+  return redis.from_url(url, decode_responses=True, socket_timeout=None)
+
+
 # Application lifespan management - initalization and cleanup
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
@@ -322,7 +327,7 @@ async def app_lifespan(app: FastAPI):
   global vector_db_query_service
   global ingestor
 
-  redis_client = redis.from_url(redis_url, decode_responses=True)
+  redis_client = create_redis_client(redis_url)
   metadata_storage = MetadataStorage(redis_client=redis_client)
   jobmanager = JobManager(redis_client=redis_client)
 
@@ -405,6 +410,16 @@ async def app_lifespan(app: FastAPI):
     except asyncio.CancelledError:
       pass
     logger.info("Periodic cleanup task stopped")
+
+  try:
+    if data_graph_db is not None:
+      await data_graph_db.close()
+  finally:
+    try:
+      if ontology_graph_db is not None:
+        await ontology_graph_db.close()
+    finally:
+      await redis_client.aclose()
 
 
 if mcp_enabled:

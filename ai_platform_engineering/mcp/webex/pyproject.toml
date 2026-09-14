@@ -7,27 +7,28 @@ authors = [
 ]
 readme = "README.md"
 keywords = ["webex", "mcp", "llm", "automation"]
-requires-python = ">=3.13,<4.0"
+requires-python = ">=3.14,<3.15"
 dependencies = [
-    "click==8.3.1",
-    "mcp==1.28.1",
+    "click==8.5.0",
+    "mcp==1.29.1",
     "mcp-agent-auth", # gitleaks:allow - package name, not a credential
-    "pydantic==2.12.5",
+    "pydantic==2.13.4",
     "httpx==0.28.1",
     "python-dotenv==1.2.2",
-    "fastmcp==3.2.4",
-    "typing-extensions==4.15.0",
+    "fastmcp==3.4.7",
 ]
 
 [tool.uv]
 # Run from source (flat module layout: server.py, mcp_server.py at the project
 # root). uv installs only the dependencies, not this project as a package.
 package = false
-dev-dependencies = [
-    "pyright==1.1.408",
-    "ruff==0.15.1",
-    "pytest==9.0.3",
-    "pytest-asyncio==1.3.0",
+
+[dependency-groups]
+dev = [
+    "pyright==1.1.411",
+    "ruff==0.16.4",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
 ]
 
 [tool.uv.sources]
