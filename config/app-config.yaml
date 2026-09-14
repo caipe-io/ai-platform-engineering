@@ -1,14 +1,14 @@
 # CAIPE UI — application seed configuration (committed example template)
 # ------------------------------------------------------------------------
 # This file is the EXAMPLE/template for app-config. The docker-compose
-# stack mounts the file pointed to by `APP_CONFIG_FILE` (set in .env);
-# by default it falls back to this committed template, which seeds nothing.
+# stack mounts the file pointed to by `CAIPE_APP_CONFIG_FILE` (set in .env);
+# by default it falls back to this committed template.
 #
 # For local dev, copy this file to `config/app-config.local.yaml` and
 # uncomment / customize the sections you need:
 #
 #   cp config/app-config.yaml config/app-config.local.yaml
-#   # then in .env:  APP_CONFIG_FILE=./config/app-config.local.yaml
+#   # then in .env:  CAIPE_APP_CONFIG_FILE=./config/app-config.local.yaml
 #
 # `config/*.local.yaml` is gitignored.
 #
@@ -21,7 +21,7 @@
 # edited/deleted via the UI. Stale entries (removed from this file)
 # are automatically cleaned up.
 #
-# In docker-compose dev mode, ${VAR:-default} syntax is expanded at
+# In Docker Compose, ${VAR:-default} syntax is expanded at
 # load time. In Kubernetes, Helm resolves values before creating the
 # ConfigMap, so the mounted YAML contains literal values.
 
@@ -146,3 +146,61 @@ workflow_configs:
           and end, if anything seems suspicious, then raise an error using error
           file instructions
         on_error: abort
+
+# ── RAG Datasources ──────────────────────────────────────────────
+# Datasources declared here are seeded into the same store used by the UI.
+# They appear in the UI as view-only and remain managed by this file.
+# Connector credentials still come from each ingestor's environment or secret.
+rag_sources: []
+  # Slack channel
+  # - source_type: "slack_channel"
+  #   channel_id: "C1234567890"
+  #   name: "team-updates"
+  #   description: "Team updates channel"
+  #   lookback_days: 30
+  #   include_bots: false
+  #   owner_team: "primary"
+  #   search_with_teams: ["secondary"]
+  #   visibility: "global"
+  #   default_chunk_size: 10000
+  #   default_chunk_overlap: 2000
+  #   reload_interval: 86400
+
+  # Confluence page tree
+  # - source_type: "confluence_space"
+  #   space_key: "DOC"
+  #   start_page_url: "https://confluence.example.com/wiki/spaces/DOC/pages/123/Overview"
+  #   name: "documentation"
+  #   search_with_teams: ["primary"]
+  #   get_child_pages: true
+  #   allowed_title_patterns: ["Guide.*"]
+  #   denied_title_patterns: ["Archive.*"]
+
+  # Jira project query
+  # - source_type: "jira_project"
+  #   project_key: "EXAMPLE"
+  #   source_slug: "primary"
+  #   name: "example-project"
+  #   search_with_teams: ["primary"]
+  #   jql: "project = EXAMPLE ORDER BY updated DESC"
+  #   include_comments: true
+  #   include_links: true
+  #   custom_fields:
+  #     severity: "customfield_10001"
+
+  # Website
+  # - source_type: "web_url"
+  #   url: "https://docs.example.com"
+  #   name: "example-docs"
+  #   search_with_teams: ["primary"]
+  #   settings:
+  #     crawl_mode: "sitemap"
+  #     max_pages: 500
+  #     respect_robots_txt: true
+
+  # Webex space
+  # - source_type: "webex_space"
+  #   space_id: "example-space-id"
+  #   name: "team-space"
+  #   search_with_teams: ["primary"]
+  #   include_bots: false

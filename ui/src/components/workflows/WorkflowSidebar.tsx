@@ -16,6 +16,7 @@ PopoverContent,
 PopoverTrigger,
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
 import {
 Tooltip,
 TooltipContent,
@@ -629,20 +630,21 @@ export function WorkflowSidebar({
                           <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                             Workflow
                           </span>
-                          <select
-                            value={configFilter || ""}
-                            onChange={(e) =>
-                              setConfigFilter(e.target.value || null)
-                            }
-                            className="mt-1 w-full text-xs px-2 py-1 rounded-md border border-border bg-background text-foreground"
-                          >
-                            <option value="">All workflows</option>
-                            {runConfigIds.map((id) => (
-                              <option key={id} value={id}>
-                                {configNameMap[id] || id}
-                              </option>
-                            ))}
-                          </select>
+                          <SearchablePicker
+                            options={runConfigIds}
+                            selected={configFilter ?? undefined}
+                            onSelect={setConfigFilter}
+                            getOptionKey={(id) => id}
+                            getOptionLabel={(id) => configNameMap[id] || id}
+                            placeholder="All workflows"
+                            searchPlaceholder="Search workflows..."
+                            emptyLabel="No workflows match"
+                            ariaLabel="Workflow filter"
+                            onClear={() => setConfigFilter(null)}
+                            clearLabel="Clear workflow filter"
+                            triggerClassName="mt-1 h-8 px-2 py-1 text-xs"
+                            portalled={false}
+                          />
                         </div>
                       )}
 

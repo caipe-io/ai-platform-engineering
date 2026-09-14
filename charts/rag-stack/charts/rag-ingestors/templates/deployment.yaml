@@ -50,7 +50,7 @@ spec:
       {{- end }}
       containers:
         - name: ingestor
-          image: "{{ include "rag-ingestors.imageRepository" (dict "root" $ "repository" $.Values.image.repository) }}:{{ $.Values.image.tag | default (include "rag-ingestors.appVersion" $) }}"
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default (include "rag-ingestors.appVersion" $) }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           {{- with $.Values.securityContext }}
           securityContext:

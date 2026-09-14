@@ -9,14 +9,14 @@
 
 | Link | Role |
 |------|------|
-| [PR #1751](https://github.com/cnoe-io/ai-platform-engineering/pull/1751) | Workflow RBAC visibility, run access, unsaved UX, agent-access modal |
-| [PR #1751 review r3362688683](https://github.com/cnoe-io/ai-platform-engineering/pull/1751#discussion_r3362688683) | @subbaksh: workflows are UI/BFF concept; DA should not own workflow RBAC |
-| [Issue #1742](https://github.com/cnoe-io/ai-platform-engineering/issues/1742) | Epic: RBAC/Auth review remediation (PR #1444 follow-ups) |
-| [Issue #1755](https://github.com/cnoe-io/ai-platform-engineering/issues/1755) | Skills RBAC UI parity / shared-module hygiene (#1727 follow-up) |
-| [Issue #1455](https://github.com/cnoe-io/ai-platform-engineering/issues/1455) | Runtime BFF ReBAC endpoints for Slack/Webex bots |
-| [Issue #1454](https://github.com/cnoe-io/ai-platform-engineering/issues/1454) | Refactor DA runtime auth surface |
-| [Issue #1731](https://github.com/cnoe-io/ai-platform-engineering/issues/1731) | Duplicate OpenFGA `can_use` on DA chat path |
-| [Issue #1734–#1738](https://github.com/cnoe-io/ai-platform-engineering/issues/1742) | RAG thin PEP / Mongo in hot path |
+| [PR #1751](https://github.com/caipe-io/ai-platform-engineering/pull/1751) | Workflow RBAC visibility, run access, unsaved UX, agent-access modal |
+| [PR #1751 review r3362688683](https://github.com/caipe-io/ai-platform-engineering/pull/1751#discussion_r3362688683) | @subbaksh: workflows are UI/BFF concept; DA should not own workflow RBAC |
+| [Issue #1742](https://github.com/caipe-io/ai-platform-engineering/issues/1742) | Epic: RBAC/Auth review remediation (PR #1444 follow-ups) |
+| [Issue #1755](https://github.com/caipe-io/ai-platform-engineering/issues/1755) | Skills RBAC UI parity / shared-module hygiene (#1727 follow-up) |
+| [Issue #1455](https://github.com/caipe-io/ai-platform-engineering/issues/1455) | Runtime BFF ReBAC endpoints for Slack/Webex bots |
+| [Issue #1454](https://github.com/caipe-io/ai-platform-engineering/issues/1454) | Refactor DA runtime auth surface |
+| [Issue #1731](https://github.com/caipe-io/ai-platform-engineering/issues/1731) | Duplicate OpenFGA `can_use` on DA chat path |
+| [Issue #1734–#1738](https://github.com/caipe-io/ai-platform-engineering/issues/1742) | RAG thin PEP / Mongo in hot path |
 
 ---
 
@@ -56,16 +56,16 @@ This document captures the **problem statement**, **current state**, **stakehold
 
 #### A. PR #1751 — workflow RBAC + DA delegation
 
-PR [#1751](https://github.com/cnoe-io/ai-platform-engineering/pull/1751) adds:
+PR [#1751](https://github.com/caipe-io/ai-platform-engineering/pull/1751) adds:
 
 - BFF: workflow visibility, run access gates, team slug normalization, unsaved UX, agent-access modal on save.
 - DA: `workflow_execution_authz.py` — reads `workflow_configs` and `teams` from Mongo; allows `agent#can_use` bypass when `workflow_config_id` is passed on chat requests.
 
-**Reviewer feedback (@subbaksh, [r3362688683](https://github.com/cnoe-io/ai-platform-engineering/pull/1751#discussion_r3362688683)):**
+**Reviewer feedback (@subbaksh, [r3362688683](https://github.com/caipe-io/ai-platform-engineering/pull/1751#discussion_r3362688683)):**
 
 > Workflows are purely a UI server concept. The UI invokes agents one step at a time. DA usually has no clue whether it's a workflow or a user chatting. For invocation — the DA server just has a tool (with `workflow_id` param) that it calls to invoke a workflow. The RBAC for invocation should be in UI server no?
 
-**Assessment:** The reviewer is aligned with epic [#1742](https://github.com/cnoe-io/ai-platform-engineering/issues/1742). Workflow lifecycle auth already exists on the BFF (`/api/workflow-runs`, `workflow-config-rebac.ts`). DA Mongo reads are an anti-pattern; the bypass exists only because the workflow engine forwards the **user JWT** to DA and DA enforces `agent#can_use` independently.
+**Assessment:** The reviewer is aligned with epic [#1742](https://github.com/caipe-io/ai-platform-engineering/issues/1742). Workflow lifecycle auth already exists on the BFF (`/api/workflow-runs`, `workflow-config-rebac.ts`). DA Mongo reads are an anti-pattern; the bypass exists only because the workflow engine forwards the **user JWT** to DA and DA enforces `agent#can_use` independently.
 
 #### B. Reusable modules — one path did not use them
 
@@ -74,7 +74,7 @@ Shared modules were introduced for **unified shareable resource RBAC** (spec `20
 - **Write path:** `ui/src/lib/rbac/shareable-resource.ts` → `openfga-owned-resources.ts` (`reconcileShareableResource`)
 - **Read path:** `ui/src/lib/rbac/resource-authz.ts` (`requireResourcePermission`, `filterResourcesByPermission`)
 
-Skills team sharing was fixed in [#1729](https://github.com/cnoe-io/ai-platform-engineering/pull/1729) to use `reconcileShareableResource`. Follow-up [#1755](https://github.com/cnoe-io/ai-platform-engineering/issues/1755) tracks optional UI DRY (`useShareableTeams` hook) and documents explicit non-goals (skills as owner-team resources).
+Skills team sharing was fixed in [#1729](https://github.com/caipe-io/ai-platform-engineering/pull/1729) to use `reconcileShareableResource`. Follow-up [#1755](https://github.com/caipe-io/ai-platform-engineering/issues/1755) tracks optional UI DRY (`useShareableTeams` hook) and documents explicit non-goals (skills as owner-team resources).
 
 **Gap:** Not every feature path uses the shared stack. PR #1751’s DA workflow auth is the latest example of **bypassing** BFF modules entirely.
 
@@ -84,7 +84,7 @@ Paraphrased Slack thread:
 
 | Speaker | Point |
 |---------|--------|
-| Sri | Created [#1755](https://github.com/cnoe-io/ai-platform-engineering/issues/1755) to track cleanup after reusable modules; one instance did not use them. |
+| Sri | Created [#1755](https://github.com/caipe-io/ai-platform-engineering/issues/1755) to track cleanup after reusable modules; one instance did not use them. |
 | Kevin | Push cleanup soon so we don’t keep creating anti-patterns; unsure how to **enforce** going forward. |
 | Sri | Added basic RBAC enforcement for new resources; need linters and hygiene. |
 | Kevin | Does that enforcement **use the modules**? Original problem: **RAG and agents used different RBAC setups** — want to avoid that. |
@@ -101,8 +101,8 @@ Paraphrased Slack thread:
 ### 2.4 Non-goals (for initial spec)
 
 - Replacing OpenFGA as the relationship store (unless a separate strategic decision).
-- Removing all OpenFGA checks from DA in v1 (tracked as [#1731](https://github.com/cnoe-io/ai-platform-engineering/issues/1731); depends on [#1458](https://github.com/cnoe-io/ai-platform-engineering/issues/1458) dual-gate documentation).
-- Migrating skills to owner-team model ([#1708](https://github.com/cnoe-io/ai-platform-engineering/pull/1708)) — separate from this problem.
+- Removing all OpenFGA checks from DA in v1 (tracked as [#1731](https://github.com/caipe-io/ai-platform-engineering/issues/1731); depends on [#1458](https://github.com/caipe-io/ai-platform-engineering/issues/1458) dual-gate documentation).
+- Migrating skills to owner-team model ([#1708](https://github.com/caipe-io/ai-platform-engineering/pull/1708)) — separate from this problem.
 
 ---
 
@@ -187,7 +187,7 @@ Spec draft exists: `docs/docs/specs/2026-05-11-identity-group-rebac/contracts/re
 |---------|------------------------|------------|
 | Read/use gate | `resource-authz.ts` → OpenFGA | `server/rbac.py` (mixed) |
 | Share/write | `shareable-resource.ts` | Partial (KB sharing route on BFF); ingestor paths differ |
-| Mongo in authz hot path | Mostly moved to BFF | Still present ([#1736](https://github.com/cnoe-io/ai-platform-engineering/issues/1736)) |
+| Mongo in authz hot path | Mostly moved to BFF | Still present ([#1736](https://github.com/caipe-io/ai-platform-engineering/issues/1736)) |
 | Target architecture | Unified shareable resource RBAC | [Thin PEP plan](../2026-05-19-rag-thin-pep-openfga/plan.md) |
 
 Kevin’s concern: **“RAG and agents used different RBAC setups”** — still true at the Python RAG layer.
@@ -226,8 +226,8 @@ Admin explain responses include FGA tuple strings. Audit events use `pdp: "openf
 1. **Workflows are a BFF concern** — config, visibility, run orchestration, delegation checks live in UI server + `workflow-engine.ts`.
 2. **DA invokes agents; DA workflow tools invoke workflows via BFF** — `WorkflowApiClient` is the model.
 3. **OpenFGA is the current PDP for relationships** — but **callers** should not depend on FGA tuple shape.
-4. **Defense-in-depth is optional and explicit** — duplicate DA OpenFGA ([#1731](https://github.com/cnoe-io/ai-platform-engineering/issues/1731)) must be a documented choice ([#1458](https://github.com/cnoe-io/ai-platform-engineering/issues/1458)), not accidental duplication.
-5. **Epic [#1742](https://github.com/cnoe-io/ai-platform-engineering/issues/1742) phases** — runtime BFF endpoints ([#1455](https://github.com/cnoe-io/ai-platform-engineering/issues/1455)) before bots/DA drop Mongo.
+4. **Defense-in-depth is optional and explicit** — duplicate DA OpenFGA ([#1731](https://github.com/caipe-io/ai-platform-engineering/issues/1731)) must be a documented choice ([#1458](https://github.com/caipe-io/ai-platform-engineering/issues/1458)), not accidental duplication.
+5. **Epic [#1742](https://github.com/caipe-io/ai-platform-engineering/issues/1742) phases** — runtime BFF endpoints ([#1455](https://github.com/caipe-io/ai-platform-engineering/issues/1455)) before bots/DA drop Mongo.
 
 ---
 
@@ -302,7 +302,7 @@ async function authorizeOrThrow(req: AuthorizeRequest): Promise<void>;
 
 ### Option 2 — Runtime HTTP authorize API (BFF routes)
 
-**Summary:** Expose authorization decisions as HTTP for **service callers** (Slack bot, Webex bot, Dynamic Agents). Implements [#1455](https://github.com/cnoe-io/ai-platform-engineering/issues/1455) and generalizes `access-check` routes.
+**Summary:** Expose authorization decisions as HTTP for **service callers** (Slack bot, Webex bot, Dynamic Agents). Implements [#1455](https://github.com/caipe-io/ai-platform-engineering/issues/1455) and generalizes `access-check` routes.
 
 #### Proposed endpoint
 
@@ -370,12 +370,12 @@ Instead of one generic endpoint, extend the **access-check pattern**:
 
 - DA/RAG/bots stop reading Mongo for policy.
 - Single HTTP contract for integrators.
-- Aligns with epic [#1742](https://github.com/cnoe-io/ai-platform-engineering/issues/1742) prerequisite [#1455](https://github.com/cnoe-io/ai-platform-engineering/issues/1455).
+- Aligns with epic [#1742](https://github.com/caipe-io/ai-platform-engineering/issues/1742) prerequisite [#1455](https://github.com/caipe-io/ai-platform-engineering/issues/1455).
 
 #### Cons
 
 - Latency and availability — every DA chat could add BFF round-trip unless cached or combined with Option 3.
-- Duplicates [#1731](https://github.com/cnoe-io/ai-platform-engineering/issues/1731) debate if DA **still** checks OpenFGA after BFF says allow.
+- Duplicates [#1731](https://github.com/caipe-io/ai-platform-engineering/issues/1731) debate if DA **still** checks OpenFGA after BFF says allow.
 
 #### Implementation notes
 
@@ -406,19 +406,19 @@ DA `require_agent_use_permission` becomes `require_authorization_claim` — no O
 
 #### Pros
 
-- Eliminates duplicate OpenFGA in DA ([#1731](https://github.com/cnoe-io/ai-platform-engineering/issues/1731)).
+- Eliminates duplicate OpenFGA in DA ([#1731](https://github.com/caipe-io/ai-platform-engineering/issues/1731)).
 - True PDP agnostic at service boundary.
 - Workflow delegation encoded in claim issuance on BFF (no `workflow_config_id` on DA).
 
 #### Cons
 
 - Largest engineering cost: key management, revocation, clock skew, claim replay.
-- Requires [#1458](https://github.com/cnoe-io/ai-platform-engineering/issues/1458) dual-gate retirement plan.
+- Requires [#1458](https://github.com/caipe-io/ai-platform-engineering/issues/1458) dual-gate retirement plan.
 - Workflow engine currently forwards **user JWT** — would need claim issuance at run start and per step.
 
 #### When to choose
 
-- Phase 3+ of [#1742](https://github.com/cnoe-io/ai-platform-engineering/issues/1742), after runtime BFF API proves correct.
+- Phase 3+ of [#1742](https://github.com/caipe-io/ai-platform-engineering/issues/1742), after runtime BFF API proves correct.
 
 ---
 
@@ -545,17 +545,17 @@ Defined in `workflow-config-rebac.ts`:
 | Phase | Scope | Options | Depends on |
 |-------|-------|---------|------------|
 | **0 — Immediate** | PR #1751 cleanup | Remove DA workflow Mongo; keep BFF-only RBAC | — |
-| **1 — Hygiene** | CI + docs | Option 4 + [#1755](https://github.com/cnoe-io/ai-platform-engineering/issues/1755) UI DRY | — |
+| **1 — Hygiene** | CI + docs | Option 4 + [#1755](https://github.com/caipe-io/ai-platform-engineering/issues/1755) UI DRY | — |
 | **2 — Facade** | BFF routes | Option 1 + Option 5 + error envelope §6 | Phase 1 |
-| **3 — Runtime API** | Bots, DA read paths | Option 2 ([#1455](https://github.com/cnoe-io/ai-platform-engineering/issues/1455)) | Phase 2 |
-| **4 — RAG convergence** | `rbac.py` thin PEP | Option 1 client in Python or Option 2 HTTP | [#1734](https://github.com/cnoe-io/ai-platform-engineering/issues/1734) |
-| **5 — Optional** | DA duplicate FGA removal | Option 3 | [#1458](https://github.com/cnoe-io/ai-platform-engineering/issues/1458), [#1731](https://github.com/cnoe-io/ai-platform-engineering/issues/1731) |
+| **3 — Runtime API** | Bots, DA read paths | Option 2 ([#1455](https://github.com/caipe-io/ai-platform-engineering/issues/1455)) | Phase 2 |
+| **4 — RAG convergence** | `rbac.py` thin PEP | Option 1 client in Python or Option 2 HTTP | [#1734](https://github.com/caipe-io/ai-platform-engineering/issues/1734) |
+| **5 — Optional** | DA duplicate FGA removal | Option 3 | [#1458](https://github.com/caipe-io/ai-platform-engineering/issues/1458), [#1731](https://github.com/caipe-io/ai-platform-engineering/issues/1731) |
 
 ---
 
 ## 9. Open questions for second opinion
 
-1. **DA execution gate:** Keep OpenFGA in DA for `agent#use` ([#1731](https://github.com/cnoe-io/ai-platform-engineering/issues/1731)) or move to BFF-only + signed claims (Option 3)?
+1. **DA execution gate:** Keep OpenFGA in DA for `agent#use` ([#1731](https://github.com/caipe-io/ai-platform-engineering/issues/1731)) or move to BFF-only + signed claims (Option 3)?
 2. **Workflow delegation without agent tuples:** Is pre-grant on save (modal) sufficient for team workflows, or must runtime delegation work without prior grants?
 3. **Generic vs domain HTTP APIs:** One `POST /api/runtime/authorize` vs family of `access-check` endpoints?
 4. **RAG:** HTTP client to BFF vs shared Python library duplicating facade logic?
@@ -575,7 +575,7 @@ Defined in `workflow-config-rebac.ts`:
 - [ ] `workflowDelegatesAgentUse` wired at run start (and documented for step execution).
 - [ ] RAG plan references same contract as BFF (no third parallel RBAC vocabulary).
 - [ ] `fga-enforcement-manifest.ts` updated with new surfaces and `rebac_enforced` entries.
-- [ ] ADR or [#1458](https://github.com/cnoe-io/ai-platform-engineering/issues/1458) documents dual-gate retirement if DA OpenFGA is removed.
+- [ ] ADR or [#1458](https://github.com/caipe-io/ai-platform-engineering/issues/1458) documents dual-gate retirement if DA OpenFGA is removed.
 
 ---
 
@@ -616,4 +616,4 @@ Please evaluate:
 4. **Migration risk** for error code changes on existing UI/clients.
 5. Whether this should be one spec or split: (a) facade + enforcement, (b) runtime HTTP API, (c) RAG/DA convergence.
 
-Return: recommended option mix, ordered task list, and any contradictions with [#1742](https://github.com/cnoe-io/ai-platform-engineering/issues/1742) phasing.
+Return: recommended option mix, ordered task list, and any contradictions with [#1742](https://github.com/caipe-io/ai-platform-engineering/issues/1742) phasing.

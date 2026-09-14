@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/cnoe-io/openfga-authz-bridge
+  repository: ghcr.io/caipe-io/openfga-authz-bridge
   tag: ""
   pullPolicy: IfNotPresent
 

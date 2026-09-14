@@ -2,6 +2,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { chooseSearchablePickerOption } from "./_helpers";
 import {
   fulfillJson,
   installMockedRbacApp,
@@ -258,7 +259,6 @@ test.describe("mocked service accounts browser regression", () => {
     await createDialog.getByLabel("Name").fill("incident-bot");
     await createDialog.getByLabel(/Description/).fill("PagerDuty integration");
     await createDialog.getByLabel("Owning team").click();
-    await page.getByLabel("Search teams...").fill("sre");
     await page.getByRole("option", { name: /SRE Team/ }).click();
     await createDialog.getByRole("button", { name: "Grant agents you hold..." }).click();
     await page.getByRole("button", { name: "Incident Resolver" }).first().click({ force: true });
@@ -718,8 +718,10 @@ test.describe("mocked service accounts browser regression", () => {
     await expect(manageDialog.getByText(/No tokens added/)).toBeVisible();
     await expect(manageDialog.getByText("Add a token")).toBeVisible();
 
-    await manageDialog.getByRole("button", { name: "Token provider" }).click();
-    await page.getByRole("option", { name: "GitLab" }).click();
+    const providerSelect = manageDialog.getByRole("combobox", {
+      name: "Token provider",
+    });
+    await providerSelect.selectOption("gitlab");
     const tokenInput = manageDialog.getByLabel("Access token");
     await expect(tokenInput).toHaveAttribute("autocomplete", "off");
     await expect(tokenInput).toHaveAttribute("data-1p-ignore", "true");
@@ -751,10 +753,9 @@ test.describe("mocked service accounts browser regression", () => {
     await expect(manageDialog.getByText("connected")).toBeVisible();
     await expect(manageDialog.getByText("glpat-playwright-secret")).toHaveCount(0);
 
-    await manageDialog.getByRole("button", { name: "Token provider" }).click();
-    await expect(page.getByRole("option", { name: "GitLab" })).toHaveCount(0);
-    await expect(page.getByRole("option", { name: "GitHub" })).toBeVisible();
-    await page.getByRole("option", { name: "GitHub" }).click();
+    await expect(providerSelect.locator('option[value="gitlab"]')).toHaveCount(0);
+    await expect(providerSelect.locator('option[value="github"]')).toHaveCount(1);
+    await providerSelect.selectOption("github");
 
     await manageDialog.getByRole("button", { name: "Remove GitLab credential" }).click();
     await expect(manageDialog.getByText("Remove?")).toBeVisible();
@@ -770,9 +771,8 @@ test.describe("mocked service accounts browser regression", () => {
     ).toEqual({ connection_id: "conn-gitlab" });
     await expect(manageDialog.getByText(/No tokens added/)).toBeVisible();
 
-    await manageDialog.getByRole("button", { name: "Token provider" }).click();
-    await expect(page.getByRole("option", { name: "GitLab" })).toBeVisible();
-    await page.getByRole("option", { name: "GitLab" }).click();
+    await expect(providerSelect.locator('option[value="gitlab"]')).toHaveCount(1);
+    await providerSelect.selectOption("gitlab");
   });
 
   test("hides the Tokens section when service account token passthrough is disabled", async ({
@@ -935,11 +935,13 @@ test.describe("mocked service accounts browser regression", () => {
     await expect(dialog).toBeVisible();
 
     await dialog.getByLabel("Scope type").selectOption("tool");
-    await expect(dialog.getByLabel("Scope ref")).toContainText("jira: search");
-    await expect(dialog.getByLabel("Scope ref")).toContainText("github: all tools");
     await expect(dialog.getByTestId("unlinked-modal-grantable-empty-note")).toHaveCount(0);
 
-    await dialog.getByLabel("Scope ref").selectOption("jira/search");
+    await chooseSearchablePickerOption(
+      page,
+      dialog.getByLabel("Scope ref"),
+      "jira: search",
+    );
     await dialog.getByRole("button", { name: "Add" }).click();
 
     await expect

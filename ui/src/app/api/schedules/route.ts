@@ -98,6 +98,50 @@ const COMPLETED_ONE_OFF_STATUSES: OneOffRunStatus[] = [
   "cancelled",
 ];
 const RECENT_COMPLETED_ONE_OFFS_PER_SCHEDULE = 5;
+const DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS = 30 * 60;
+
+function schedulerBaseUrl(): string {
+  return (
+    process.env.SCHEDULER_URL ||
+    process.env.CAIPE_SCHEDULER_URL ||
+    "http://caipe-scheduler:8080"
+  ).replace(/\/+$/, "");
+}
+
+function schedulerToken(): string {
+  return (
+    process.env.SCHEDULER_SERVICE_TOKEN ||
+    process.env.CAIPE_SCHEDULER_SERVICE_TOKEN ||
+    ""
+  );
+}
+
+async function getMinimumScheduleIntervalSeconds(): Promise<number> {
+  try {
+    const token = schedulerToken();
+    const response = await fetch(`${schedulerBaseUrl()}/v1/settings`, {
+      headers: token ? { "X-Scheduler-Token": token } : {},
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`scheduler returned ${response.status}`);
+    }
+    const body = (await response.json()) as {
+      minimum_schedule_interval_seconds?: unknown;
+    };
+    const minimum = body.minimum_schedule_interval_seconds;
+    if (typeof minimum !== "number" || !Number.isInteger(minimum) || minimum < 1) {
+      throw new Error("scheduler returned an invalid minimum interval");
+    }
+    return minimum;
+  } catch (error) {
+    console.warn(
+      "Could not load scheduler runtime settings; using the default minimum interval.",
+      error,
+    );
+    return DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS;
+  }
+}
 
 function iso(value: Date | string | undefined | null): string | null {
   if (!value) return null;
@@ -148,6 +192,8 @@ function oneOffSortRank(status?: OneOffRunStatus): number {
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   return withAuth(request, async (_req, user) => {
+    const minimumScheduleIntervalSecondsPromise =
+      getMinimumScheduleIntervalSeconds();
     const schedules = await getCollection<RawSchedule>("schedules");
     const agents = await getCollection<{ _id: string; name?: string }>("dynamic_agents");
     const oneOffRuns = await getCollection<RawOneOffRun>("schedule_one_off_runs");
@@ -239,6 +285,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       }
     }
 
+    const minimumScheduleIntervalSeconds =
+      await minimumScheduleIntervalSecondsPromise;
+
     return successResponse({
       items: docs.map((doc) => ({
         schedule_id: doc.schedule_id,
@@ -288,6 +337,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       })),
       total: docs.length,
       server_now: new Date().toISOString(),
+      minimum_schedule_interval_seconds: minimumScheduleIntervalSeconds,
     });
   });
 });

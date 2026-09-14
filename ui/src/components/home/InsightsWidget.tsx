@@ -7,18 +7,37 @@ MessageSquare,
 TrendingUp,
 } from "lucide-react";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
+import { apiClient } from "@/lib/api-client";
+import type { UserStats } from "@/types/mongodb";
+import { useSession } from "next-auth/react";
+import { useEffect,useState } from "react";
 
-interface InsightsWidgetProps {
-  stats: {
-    total_conversations: number;
-    conversations_this_week: number;
-    messages_this_week: number;
-    favorite_agents: Array<{ name: string; count: number }>;
-  } | null;
-  loading: boolean;
-}
+export function InsightsWidget() {
+  const { status } = useSession();
+  const isAuthenticated = status === "authenticated";
+  const [stats, setStats] = useState<UserStats | null>(null);
+  const [loading, setLoading] = useState(true);
 
-export function InsightsWidget({ stats, loading }: InsightsWidgetProps) {
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        setStats(await apiClient.getUserStats());
+      } catch (err) {
+        console.error("[InsightsWidget] Failed to load user stats:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+  }, [isAuthenticated]);
+
   return (
     <div data-testid="insights-widget">
       <div className="flex items-center justify-between mb-3">

@@ -5,25 +5,29 @@ import { getRbacCollection } from "./mongo-collections";
 const OPENFGA_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const USER_ID_PATTERN = /^[A-Za-z0-9._%+@-]+$/;
 
-/** Per-surface default agents. A null value means "use platform default". */
+/**
+ * Per-surface default agents. A null value means "use platform default".
+ *
+ * Webex has no field here: its default agent is bot-scoped (a user can be
+ * DMing more than one Webex bot) and lives in `webexDirectUserRoutes`
+ * instead, which the admin "1:1 Messages" tab also reads/writes so both
+ * surfaces stay in sync on the same value.
+ */
 export type UserAgentPreferenceField =
   | "web_default_agent_id"
-  | "slack_default_agent_id"
-  | "webex_default_agent_id";
+  | "slack_default_agent_id";
 
 export interface UserPreferenceDocument extends Document {
   tenant_id: string;
   user_id: string;
   web_default_agent_id?: string | null;
   slack_default_agent_id?: string | null;
-  webex_default_agent_id?: string | null;
   updated_at: string;
 }
 
 export interface UserPreference {
   web_default_agent_id: string | null;
   slack_default_agent_id: string | null;
-  webex_default_agent_id: string | null;
 }
 
 export interface UserPreferenceScope {
@@ -65,13 +69,11 @@ export async function getUserPreference(
     return {
       web_default_agent_id: null,
       slack_default_agent_id: null,
-      webex_default_agent_id: null,
     };
   }
   return {
     web_default_agent_id: doc.web_default_agent_id ?? null,
     slack_default_agent_id: doc.slack_default_agent_id ?? null,
-    webex_default_agent_id: doc.webex_default_agent_id ?? null,
   };
 }
 

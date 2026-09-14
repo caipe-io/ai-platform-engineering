@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Phase 2 — DM authorization client (spec 2026-05-24-derive-team-from-channel).
 

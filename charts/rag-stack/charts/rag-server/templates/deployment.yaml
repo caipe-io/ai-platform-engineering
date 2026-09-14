@@ -43,7 +43,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ include "rag-server.imageRepository" (dict "root" . "repository" .Values.image.repository) }}:{{ .Values.image.tag | default (include "rag-server.appVersion" .) }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "rag-server.appVersion" .) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

@@ -32,6 +32,7 @@ type ParallelSearch,
 } from "@/lib/rag-api";
 import { cn } from "@/lib/utils";
 import { AnimatePresence,motion } from "framer-motion";
+import { MetadataFilterKeyPicker } from "./MetadataFilterKeyPicker";
 import {
 AlertCircle,
 ChevronDown,
@@ -311,17 +312,12 @@ function ExtraFiltersEditor({ value, onChange, validFilterKeys, filterKeyTypes }
       {/* Add filter row */}
       <div className="flex flex-wrap items-center gap-2">
         {!showCustomInput ? (
-          <select
+          <MetadataFilterKeyPicker
+            keys={validFilterKeys}
             value={selectedKey}
-            onChange={(e) => handleKeyChange(e.target.value)}
-            className="h-7 rounded border border-border bg-background px-2 text-xs focus:border-primary focus:outline-none text-foreground min-w-[140px]"
-          >
-            <option value="">Add filter...</option>
-            {validFilterKeys.map((key) => (
-              <option key={key} value={key}>{key}</option>
-            ))}
-            <option value="__custom__">Custom key (metadata.*)</option>
-          </select>
+            onChange={handleKeyChange}
+            triggerClassName="h-7 min-w-[140px] px-2 text-xs"
+          />
         ) : (
           <div className="flex items-center gap-1">
             <input

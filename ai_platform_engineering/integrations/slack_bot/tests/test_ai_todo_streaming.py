@@ -11,9 +11,9 @@ When the agent uses write_todos, the Slack bot should:
 import json
 from unittest.mock import Mock
 
-from ai_platform_engineering.integrations.slack_bot.utils.ai import (
-  stream_response,
-  _parse_write_todos_args,
+from ai_platform_engineering.integrations.slack_bot.utils.ai import stream_response
+from ai_platform_engineering.integrations.slack_bot.utils.agui_events import (
+  parse_write_todos_args as _parse_write_todos_args,
 )
 from ai_platform_engineering.integrations.slack_bot.sse_client import SSEEvent, SSEEventType
 

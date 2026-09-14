@@ -38,7 +38,7 @@ import { NextRequest } from "next/server";
  * Resolve a model the dynamic-agents service can actually serve. Tries the
  * caller-provided override first, then any `AI_ASSIST_MODEL_*` env defaults,
  * then falls back to the first model present in the `llm_models` MongoDB
- * collection (the same source the agent-builder picker uses). The final
+ * collection (the same source the custom-agent model picker uses). The final
  * fallback is the registry's static default.
  *
  * Returning a model that DA can't authenticate against produces an opaque

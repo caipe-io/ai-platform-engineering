@@ -11,6 +11,14 @@ const AGENTS = [
   { id: "kb",name: "Knowledge Base Agent",description: "Answers from knowledge bases" },
 ];
 
+interface WebexBotSetting {
+  agent_id?: string | null;
+  bot_id: string;
+  bot_name: string;
+  denied?: boolean;
+  editable?: boolean;
+}
+
 interface MockOptions {
   failWrites?: boolean;
   integrations?: { slack: boolean;webex: boolean };
@@ -18,15 +26,24 @@ interface MockOptions {
   preferences?: {
     slack_default_agent_id?: string | null;
     web_default_agent_id?: string | null;
-    webex_default_agent_id?: string | null;
   };
+  webexBots?: WebexBotSetting[];
 }
+
+const DEFAULT_WEBEX_BOT: WebexBotSetting = {
+  bot_id: "primary",
+  bot_name: "Primary",
+  agent_id: null,
+  editable: true,
+  denied: false,
+};
 
 function installFetchMock({
   failWrites = false,
   integrations = { slack: true,webex: true },
   platformDefault = "sre",
   preferences = {},
+  webexBots = [DEFAULT_WEBEX_BOT],
 }: MockOptions = {}): jest.Mock {
   const mock = jest.fn(async (input: RequestInfo | URL,init?: RequestInit) => {
     const path = String(input);
@@ -59,8 +76,8 @@ function installFetchMock({
             platform_default_agent_id: platformDefault,
             web_default_agent_id: null,
             slack_default_agent_id: null,
-            webex_default_agent_id: null,
             integrations,
+            webex_bots: integrations.webex ? webexBots : [],
             ...preferences,
           },
         }),
@@ -81,13 +98,13 @@ describe("UserDefaultAgentsPanel",() => {
   it("shows the resolved platform fallback on every connected surface",async () => {
     render(<UserDefaultAgentsPanel />);
 
-    expect(await screen.findByRole("button",{ name: "Web default agent" })).toHaveTextContent(
+    expect(await screen.findByRole("combobox",{ name: "Web default agent" })).toHaveTextContent(
       "Use platform default (Basic SRE)",
     );
-    expect(screen.getByRole("button",{ name: "Slack default agent" })).toHaveTextContent(
+    expect(screen.getByRole("combobox",{ name: "Slack default agent" })).toHaveTextContent(
       "Use platform default (Basic SRE)",
     );
-    expect(screen.getByRole("button",{ name: "Webex default agent" })).toHaveTextContent(
+    expect(screen.getByRole("combobox",{ name: "Webex default agent" })).toHaveTextContent(
       "Use platform default (Basic SRE)",
     );
     expect(screen.queryByRole("button",{ name: /save personal default agents/i })).not.toBeInTheDocument();
@@ -97,7 +114,7 @@ describe("UserDefaultAgentsPanel",() => {
     const fetchMock = installFetchMock();
     render(<UserDefaultAgentsPanel />);
 
-    fireEvent.click(await screen.findByRole("button",{ name: "Slack default agent" }));
+    fireEvent.click(await screen.findByRole("combobox",{ name: "Slack default agent" }));
     fireEvent.click(await screen.findByRole("option",{ name: "Knowledge Base Agent" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -109,17 +126,58 @@ describe("UserDefaultAgentsPanel",() => {
       );
     });
 
-    fireEvent.click(screen.getByRole("button",{ name: "Webex default agent" }));
+    fireEvent.click(screen.getByRole("combobox",{ name: "Webex default agent" }));
     fireEvent.click(await screen.findByRole("option",{ name: "Knowledge Base Agent" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/user/preferences",
         expect.objectContaining({
           method: "PUT",
-          body: JSON.stringify({ webex_default_agent_id: "kb" }),
+          body: JSON.stringify({ webex_default_agent_id: { bot_id: "primary",agent_id: "kb" } }),
         }),
       );
     });
+  });
+
+  it("shows one row per Webex bot when the user is reachable via more than one",async () => {
+    installFetchMock({
+      webexBots: [
+        DEFAULT_WEBEX_BOT,
+        { bot_id: "secondary",bot_name: "Secondary",agent_id: null,editable: true,denied: false },
+      ],
+    });
+    render(<UserDefaultAgentsPanel />);
+
+    expect(await screen.findByRole("combobox",{ name: "Webex default agent — Primary" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox",{ name: "Webex default agent — Secondary" })).toBeInTheDocument();
+  });
+
+  it("renders an admin-managed Webex bot read-only instead of as a picker",async () => {
+    installFetchMock({
+      webexBots: [
+        { bot_id: "primary",bot_name: "Primary",agent_id: "sre",editable: false,denied: false },
+      ],
+    });
+    render(<UserDefaultAgentsPanel />);
+
+    expect(await screen.findByText("Basic SRE")).toBeInTheDocument();
+    expect(
+      screen.getByText("An admin manages your default agent for Primary in the 1:1 Messages settings."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("combobox",{ name: "Webex default agent" })).not.toBeInTheDocument();
+  });
+
+  it("renders a denied Webex bot read-only with a denial caption",async () => {
+    installFetchMock({
+      webexBots: [
+        { bot_id: "primary",bot_name: "Primary",agent_id: "sre",editable: false,denied: true },
+      ],
+    });
+    render(<UserDefaultAgentsPanel />);
+
+    expect(
+      await screen.findByText("An admin has disabled direct messages for you on Primary."),
+    ).toBeInTheDocument();
   });
 
   it("clears one override back to the platform default immediately",async () => {
@@ -129,7 +187,7 @@ describe("UserDefaultAgentsPanel",() => {
     });
     render(<UserDefaultAgentsPanel />);
 
-    const slack = await screen.findByRole("button",{ name: "Slack default agent" });
+    const slack = await screen.findByRole("combobox",{ name: "Slack default agent" });
     fireEvent.click(slack);
     fireEvent.click(await screen.findByRole("option",{ name: /Use platform default/ }));
 
@@ -149,7 +207,7 @@ describe("UserDefaultAgentsPanel",() => {
     installFetchMock({ failWrites: true,integrations: { slack: false,webex: false } });
     render(<UserDefaultAgentsPanel />);
 
-    const web = await screen.findByRole("button",{ name: "Web default agent" });
+    const web = await screen.findByRole("combobox",{ name: "Web default agent" });
     fireEvent.click(web);
     fireEvent.click(await screen.findByRole("option",{ name: "Knowledge Base Agent" }));
 
@@ -164,7 +222,7 @@ describe("UserDefaultAgentsPanel",() => {
     const fetchMock = installFetchMock();
     render(<UserDefaultAgentsPanel disabled />);
 
-    expect(await screen.findByRole("button",{ name: "Web default agent" })).toBeDisabled();
+    expect(await screen.findByRole("combobox",{ name: "Web default agent" })).toBeDisabled();
     expect(fetchMock).not.toHaveBeenCalledWith(
       "/api/user/preferences",
       expect.objectContaining({ method: "PUT" }),

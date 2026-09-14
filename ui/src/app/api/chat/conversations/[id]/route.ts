@@ -6,7 +6,7 @@ import {
 ApiError,
 requireConversationAccess,
 successResponse,
-validateUUID,
+validateConversationId,
 withAuth,
 withErrorHandler,
 } from '@/lib/api-middleware';
@@ -37,7 +37,7 @@ export const GET = withErrorHandler(async (
     const params = await context.params;
     const conversationId = params.id;
 
-    if (!validateUUID(conversationId)) {
+    if (!validateConversationId(conversationId)) {
       throw new ApiError('Invalid conversation ID format', 400);
     }
 
@@ -75,7 +75,7 @@ export const PUT = withErrorHandler(async (
     const conversationId = params.id;
     const body: UpdateConversationRequest = await request.json();
 
-    if (!validateUUID(conversationId)) {
+    if (!validateConversationId(conversationId)) {
       throw new ApiError('Invalid conversation ID format', 400);
     }
 
@@ -137,7 +137,7 @@ export const DELETE = withErrorHandler(async (
     const url = new URL(request.url);
     const permanent = url.searchParams.get('permanent') === 'true';
 
-    if (!validateUUID(conversationId)) {
+    if (!validateConversationId(conversationId)) {
       throw new ApiError('Invalid conversation ID format', 400);
     }
 

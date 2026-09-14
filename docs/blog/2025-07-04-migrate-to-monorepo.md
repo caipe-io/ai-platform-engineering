@@ -17,7 +17,7 @@ export AGENT_NAME=foo
 
 ```
 cd /tmp
-git clone git@github.com:cnoe-io/ai-platform-engineering.git
+git clone git@github.com:caipe-io/ai-platform-engineering.git
 ```
 
 2. Clone agent-\$AGENT\_NAME to a temp location:

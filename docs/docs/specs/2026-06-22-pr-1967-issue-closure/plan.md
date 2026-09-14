@@ -1,19 +1,19 @@
 # PR #1967 — Issue closure and follow-up plan
 
-**PR**: https://github.com/cnoe-io/ai-platform-engineering/pull/1967  
+**PR**: https://github.com/caipe-io/ai-platform-engineering/pull/1967  
 **Branch**: `prebuild/feat/credentials-mcp-agentgateway-integration`
 
 ## Issues linked on merge
 
 | Issue | Link type | Rationale |
 |-------|-----------|-----------|
-| [#1930](https://github.com/cnoe-io/ai-platform-engineering/issues/1930) | `Fixes` | AgentGateway MCP credential + lifecycle editing (supersedes closed #1960) |
-| [#1929](https://github.com/cnoe-io/ai-platform-engineering/issues/1929) | `Fixes` | CAIPE JWT consumed at gateway `jwtAuth`; provider cred on `X-CAIPE-Provider-Token` |
-| [#1942](https://github.com/cnoe-io/ai-platform-engineering/issues/1942) | `Fixes` | Duplicate report of #1929 (Jira MCP wrong `Authorization` header) |
-| [#1920](https://github.com/cnoe-io/ai-platform-engineering/issues/1920) | `Fixes` | `build_agent_context_headers()` + shared HMAC for per-agent `tools/call` |
-| [#1928](https://github.com/cnoe-io/ai-platform-engineering/issues/1928) | `Fixes` | Same root cause as #1920 (403 on `tools/call` after successful credential resolution) |
-| [#1911](https://github.com/cnoe-io/ai-platform-engineering/issues/1911) | `Fixes` | Independent `credentials` vs `service_accounts` admin tab gates + server-side credential feature flag |
-| [#1931](https://github.com/cnoe-io/ai-platform-engineering/issues/1931) | `Relates to` | Partial fix in PR; needs live bot-path validation before `Fixes` — **G5 (P3)** |
+| [#1930](https://github.com/caipe-io/ai-platform-engineering/issues/1930) | `Fixes` | AgentGateway MCP credential + lifecycle editing (supersedes closed #1960) |
+| [#1929](https://github.com/caipe-io/ai-platform-engineering/issues/1929) | `Fixes` | CAIPE JWT consumed at gateway `jwtAuth`; provider cred on `X-CAIPE-Provider-Token` |
+| [#1942](https://github.com/caipe-io/ai-platform-engineering/issues/1942) | `Fixes` | Duplicate report of #1929 (Jira MCP wrong `Authorization` header) |
+| [#1920](https://github.com/caipe-io/ai-platform-engineering/issues/1920) | `Fixes` | `build_agent_context_headers()` + shared HMAC for per-agent `tools/call` |
+| [#1928](https://github.com/caipe-io/ai-platform-engineering/issues/1928) | `Fixes` | Same root cause as #1920 (403 on `tools/call` after successful credential resolution) |
+| [#1911](https://github.com/caipe-io/ai-platform-engineering/issues/1911) | `Fixes` | Independent `credentials` vs `service_accounts` admin tab gates + server-side credential feature flag |
+| [#1931](https://github.com/caipe-io/ai-platform-engineering/issues/1931) | `Relates to` | Partial fix in PR; needs live bot-path validation before `Fixes` — **G5 (P3)** |
 
 ## Follow-up gaps (post-merge)
 
@@ -121,7 +121,7 @@
 3. If live test flakes on OBO, add integration test in `webex_bot` that mocks SSE + asserts `Authorization: Bearer <obo>` reaches dynamic-agents.
 4. After green live run, change PR/issue link from `Relates to` → `Fixes #1931`.
 
-### G6 — Workflow output visibility (UX) — **P4** — [#1968](https://github.com/cnoe-io/ai-platform-engineering/issues/1968)
+### G6 — Workflow output visibility (UX) — **P4** — [#1968](https://github.com/caipe-io/ai-platform-engineering/issues/1968)
 
 **Gap**: Webex/Slack/chat now surface step outputs in PR branch, but **production** needs a rebuilt `caipe-dynamic-agents` image for `wait_for_completion` + response prompts to take effect.
 

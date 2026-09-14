@@ -31,6 +31,8 @@ CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ModelPicker } from "@/components/ui/model-picker";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
@@ -540,45 +542,20 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
         <CardContent>
           <div className="space-y-1.5 max-w-md">
             <Label htmlFor={`rc-model-${target}`}>LLM Model</Label>
-            <select
+            <ModelPicker
               id={`rc-model-${target}`}
-              value={
-                state.model_id && state.model_provider
-                  ? `${state.model_id}::${state.model_provider}`
-                  : ""
-              }
-              onChange={(e) => {
-                const v = e.target.value;
-                const lastDelimiter = v.lastIndexOf("::");
-                if (lastDelimiter > 0) {
-                  setState((s) => ({
-                    ...s,
-                    model_id: v.slice(0, lastDelimiter),
-                    model_provider: v.slice(lastDelimiter + 2),
-                  }));
-                }
+              options={availableModels}
+              modelId={state.model_id}
+              modelProvider={state.model_provider}
+              onChange={(modelId, modelProvider) => {
+                setState((s) => ({
+                  ...s,
+                  model_id: modelId,
+                  model_provider: modelProvider,
+                }));
               }}
-              disabled={modelsLoading || availableModels.length === 0}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {modelsLoading ? (
-                <option value="">Loading models…</option>
-              ) : availableModels.length === 0 ? (
-                <option value="">No models available</option>
-              ) : (
-                availableModels.map((m) => (
-                  <option
-                    key={`${m.model_id}::${m.provider}`}
-                    value={`${m.model_id}::${m.provider}`}
-                  >
-                    {m.name}
-                    {m.provider && m.provider !== "default"
-                      ? ` (${m.provider})`
-                      : ""}
-                  </option>
-                ))
-              )}
-            </select>
+              loading={modelsLoading}
+            />
           </div>
         </CardContent>
       </Card>
@@ -645,7 +622,7 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
                   </div>
                   <div className="md:col-span-2 space-y-1">
                     <Label className="text-[11px]">Severity</Label>
-                    <select
+                    <Select
                       value={c.severity}
                       onChange={(e) =>
                         updateCriterion(idx, {
@@ -657,7 +634,7 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
                       <option value="error">error</option>
                       <option value="warning">warning</option>
                       <option value="info">info</option>
-                    </select>
+                    </Select>
                   </div>
                   <div className="md:col-span-2 space-y-1">
                     <Label className="text-[11px]">Weight</Label>

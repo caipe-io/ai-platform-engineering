@@ -6,12 +6,16 @@ import { useWorkflowConfigStore } from "@/store/workflow-config-store";
 import { useWorkflowExecStore } from "@/store/workflow-exec-store";
 import type { WorkflowStep } from "@/types/workflow-config";
 import { Bot,GitBranch,Play,Plus,Workflow } from "lucide-react";
+import { useRouter,useSearchParams } from "next/navigation";
 import { useEffect,useMemo,useState } from "react";
 
 export default function WorkflowsPage() {
   const { configs, editMode, selectedConfigId, closeEditor, loadConfigs, openEditor } =
     useWorkflowConfigStore();
   const { runs, loadRuns } = useWorkflowExecStore();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const workflowId = searchParams.get("workflow");
 
   // Fetch agents count
   const [agentCount, setAgentCount] = useState<number | null>(null);
@@ -27,6 +31,11 @@ export default function WorkflowsPage() {
     loadRuns();
   }, [loadConfigs, loadRuns]);
 
+  useEffect(() => {
+    if (!workflowId || !configs.some((config) => config._id === workflowId)) return;
+    openEditor("edit", workflowId);
+  }, [configs, openEditor, workflowId]);
+
   const selectedConfig = useMemo(
     () => (selectedConfigId ? configs.find((c) => c._id === selectedConfigId) : undefined),
     [configs, selectedConfigId]
@@ -35,6 +44,7 @@ export default function WorkflowsPage() {
   const handleBack = () => {
     closeEditor();
     loadConfigs();
+    if (workflowId) router.replace("/workflows");
   };
 
   // Clone: pre-populate from the selected config

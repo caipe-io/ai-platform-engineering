@@ -49,12 +49,12 @@ uvx git+https://github.com/cnoe-io/openapi-mcp-codegen.git
 # Generate MCP server from OpenAPI spec
 openapi-mcp-codegen generate \
   --spec https://api.example.com/openapi.json \
-  --output ai_platform_engineering/agents/example/mcp \
+  --output ai_platform_engineering/mcp/example \
   --server-name mcp-example \
   --package-name mcp_example
 
 # Navigate to generated server
-cd ai_platform_engineering/agents/example/mcp
+cd ai_platform_engineering/mcp/example
 
 # Install dependencies
 uv sync
@@ -104,8 +104,8 @@ For APIs without OpenAPI specs or custom integrations, build manually using Fast
 
 ```bash
 # Create MCP server directory
-mkdir -p ai_platform_engineering/agents/example/mcp
-cd ai_platform_engineering/agents/example/mcp
+mkdir -p ai_platform_engineering/mcp/example
+cd ai_platform_engineering/mcp/example
 
 # Create package structure
 mkdir -p mcp_example/{api,models,tools}
@@ -551,7 +551,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./ai_platform_engineering/agents/example/mcp:/app/mcp
+      - ./ai_platform_engineering/mcp/example:/app/mcp
     networks:
       - ai-platform-network
     healthcheck:
@@ -883,8 +883,8 @@ WORKDIR /app
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-COPY ai_platform_engineering/agents/example/mcp/pyproject.toml ./
-COPY ai_platform_engineering/agents/example/mcp/mcp_example/ ./mcp_example/
+COPY ai_platform_engineering/mcp/example/pyproject.toml ./
+COPY ai_platform_engineering/mcp/example/mcp_example/ ./mcp_example/
 
 RUN uv sync --frozen --no-dev
 
@@ -954,7 +954,7 @@ spec:
 
 ## Next Steps
 
-- **[Connect Agent to MCP](./creating-an-agent#step-4-implement-the-agent-logic)** - Use your MCP server in an agent
+- **[Connect an agent to MCP](./creating-an-agent.md)** - Use your MCP server in an agent
 - **[Add Evaluations](../evaluations/index.md)** - Test MCP server quality
 - **[Deploy to Production](../installation/index.md)** - Deploy with Kubernetes
 
@@ -970,4 +970,3 @@ spec:
 **You've created your first MCP server!** 🎉
 
 Your MCP server is now ready to be used by agents across the platform.
-

@@ -137,6 +137,22 @@ async function installHomePageMocks(
   const searchItems = options.searchItems ?? [];
   const trashItems = options.trashItems ?? [];
 
+  // These RBAC regressions exercise widgets that are intentionally optional
+  // on the customizable home page. Enable them explicitly so the tests do not
+  // depend on a user's saved layout or the minimal default layout.
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "caipe-home-widgets",
+      JSON.stringify([
+        "heroComposer",
+        "quickStart",
+        "recentChats",
+        "sharedConversations",
+      ]),
+    );
+    localStorage.setItem("caipe-home-widgets-version", "2");
+  });
+
   // Force MongoDB storage mode so the SharedConversations section renders.
   // The server injects __APP_CONFIG__ via an inline <script> in <head> based
   // on process.env.MONGODB_URI; test servers lack that env var, so we
@@ -160,10 +176,12 @@ async function installHomePageMocks(
       await route.fulfill({ response });
       return;
     }
-    const body = (await response.text()).replace(
-      /"storageMode"\s*:\s*"localStorage"/g,
-      '"storageMode":"mongodb"',
-    );
+    const body = (await response.text())
+      .replace(/"storageMode"\s*:\s*"localStorage"/g, '"storageMode":"mongodb"')
+      .replace(
+        /\\"storageMode\\"\s*:\s*\\"localStorage\\"/g,
+        '\\"storageMode\\":\\"mongodb\\"',
+      );
     await route.fulfill({ response, body });
   });
 
@@ -171,6 +189,24 @@ async function installHomePageMocks(
     session: { email: CALLER_EMAIL, name: "Caller User" },
     handlers: [
       async ({ route, path, method }) => {
+        if (path === "/api/settings" && method === "GET") {
+          await fulfillJson(route, {
+            success: true,
+            data: {
+              preferences: {
+                home_widgets: [
+                  "heroComposer",
+                  "quickStart",
+                  "recentChats",
+                  "sharedConversations",
+                ],
+                home_widgets_version: 2,
+                home_experience: "new",
+              },
+            },
+          });
+          return true;
+        }
         if (path === "/api/chat/shared" && method === "GET") {
           options.onRequest?.(new URL(route.request().url()));
           await fulfillJson(route, paginatedResponse(sharedItems));

@@ -107,6 +107,13 @@ const SCHEDULED_RELOAD_SOURCE_TYPES = new Set([
 export const supportsScheduledReload = (sourceType: string): boolean =>
   SCHEDULED_RELOAD_SOURCE_TYPES.has(sourceType.toLowerCase());
 
+// File datasources have no external source to periodically refresh from, but
+// they do support replacing their content in place via a manual re-upload.
+const REUPLOAD_SOURCE_TYPES = new Set(["local_file"]);
+
+export const supportsReupload = (sourceType: string): boolean =>
+  REUPLOAD_SOURCE_TYPES.has(sourceType.toLowerCase());
+
 // Helper function to check if an ingest type is available based on ingestors
 export const isIngestTypeAvailable = (
   ingestType: string,

@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field
 
 from dynamic_agents.auth.auth import get_user_context
 from dynamic_agents.auth.authz import (
-    require_agent_schedule_permission,
     require_agent_use_permission,
+    require_autonomous_permission,
 )
 from dynamic_agents.config import get_settings
 from dynamic_agents.log_config import conversation_id_var
@@ -29,11 +29,14 @@ logger = logging.getLogger(__name__)
 
 
 async def _enforce_chat_authz(*, agent_id: str, user_sub: str | None, autonomous: bool) -> None:
-    """Authorize a chat call. Interactive calls need can_use autonomous
-    calls also need can_schedule"""
+    """Authorize a chat call.
+
+    Every caller needs access to the selected agent. Autonomous calls also
+    require the user to belong to at least one autonomous-enabled team.
+    """
     await require_agent_use_permission(agent_id, delegated_user_sub=user_sub)
     if autonomous:
-        await require_agent_schedule_permission(agent_id, delegated_user_sub=user_sub)
+        await require_autonomous_permission(delegated_user_sub=user_sub)
 
 
 # Fields that CANNOT be overridden via config_override

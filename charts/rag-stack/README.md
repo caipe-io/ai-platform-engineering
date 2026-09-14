@@ -8,17 +8,17 @@ A complete RAG stack including server, agents, Redis, Neo4j and Milvus
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install rag-stack oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
+helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade rag-stack oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
+helm upgrade rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install rag-stack oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68 \
+helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install rag-stack oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68 \
+helm install rag-stack oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/rag-stack --version 1.0.0
 ```
 
 ## Reading the Values Table
@@ -57,7 +57,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 | agent-ontology.enabled | bool | `true` |  |
 | agent-ontology.fullnameOverride | string | `"agent-ontology"` |  |
 | agent-ontology.image.pullPolicy | string | `"Always"` |  |
-| agent-ontology.image.repository | string | `"ghcr.io/cnoe-io/caipe-rag-agent-ontology"` |  |
+| agent-ontology.image.repository | string | `"ghcr.io/caipe-io/caipe-rag-agent-ontology"` |  |
 | agent-ontology.image.tag | string | `""` |  |
 | agent-ontology.livenessProbe.failureThreshold | int | `3` |  |
 | agent-ontology.livenessProbe.httpGet.path | string | `"/v1/graph/ontology/agent/status"` |  |
@@ -91,8 +91,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 | agent-ontology.startupProbe.timeoutSeconds | int | `5` |  |
 | agent-ontology.syncInterval | int | `0` |  |
 | agentExports.data.enabled | bool | `true` |  |
-| global.image | object | `{"channel":"","tag":""}` | Global image tag override. When set, overrides appVersion-based image tags for all rag-stack subcharts. Individual subchart image.tag values still take highest precedence. |
-| global.image.channel | string | `""` | Image repository channel for maintained CAIPE images. Empty means auto: rc/hotfix/dev chart appVersions use `pre-release/`, final release appVersions use the root published image repositories. Set to `pre-release` or `release` to force either repository channel. |
+| global.image | object | `{"tag":""}` | Global image tag override. When set, overrides appVersion-based image tags for all rag-stack subcharts. Individual subchart image.tag values still take highest precedence. |
 | global.llmSecrets.create | bool | `true` |  |
 | global.llmSecrets.data | object | `{}` |  |
 | global.llmSecrets.externalSecrets.data | list | `[]` |  |
@@ -206,7 +205,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 | rag-server.envFrom | list | `[]` |  |
 | rag-server.fullnameOverride | string | `"rag-server"` |  |
 | rag-server.image.pullPolicy | string | `"Always"` |  |
-| rag-server.image.repository | string | `"ghcr.io/cnoe-io/caipe-rag-server"` |  |
+| rag-server.image.repository | string | `"ghcr.io/caipe-io/caipe-rag-server"` |  |
 | rag-server.image.tag | string | `""` |  |
 | rag-server.podAnnotations | object | `{}` |  |
 | rag-server.resources.limits.cpu | string | `"500m"` |  |
@@ -223,9 +222,9 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.5.68
 
 | Name | Version | Condition / Tags |
 |------|---------|------------------|
-| rag-server | `0.5.68` | `rag-server.enabled` |
-| agent-ontology | `0.5.68` | `agent-ontology.enabled` |
-| rag-ingestors | `0.5.68` | `rag-ingestors.enabled` |
+| rag-server | `1.0.0` | `rag-server.enabled` |
+| agent-ontology | `1.0.0` | `agent-ontology.enabled` |
+| rag-ingestors | `1.0.0` | `rag-ingestors.enabled` |
 | neo4j | `2025.07.1` | `neo4j.enabled` |
-| rag-redis | `0.5.68` | `rag-redis.enabled` |
+| rag-redis | `1.0.0` | `rag-redis.enabled` |
 | milvus | `5.0.2` | `milvus.enabled` |

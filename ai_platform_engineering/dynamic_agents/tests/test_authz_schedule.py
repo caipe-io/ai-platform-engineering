@@ -1,8 +1,4 @@
-"""Unit tests for Dynamic Agents agent-SCHEDULE authorization (spec 2026-07-01).
-
-Mirrors test_authz.py: patches httpx and asserts the CAS decision body carries
-action="schedule", and that a DENY raises 403 with code agent#schedule.
-"""
+"""Unit tests for the user-level Autonomous entitlement check."""
 
 from __future__ import annotations
 
@@ -49,7 +45,7 @@ def _client(captured: list, response: _Resp):
 
 
 @pytest.mark.asyncio
-async def test_schedule_allowed_sends_schedule_action(monkeypatch):
+async def test_autonomous_allowed_checks_organization_capability(monkeypatch):
     from dynamic_agents.auth import authz
 
     monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://cas")
@@ -58,7 +54,7 @@ async def test_schedule_allowed_sends_schedule_action(monkeypatch):
 
     token_ref = current_user_token.set(_fake_jwt({"sub": "alice-sub"}))
     try:
-        await authz.require_agent_schedule_permission("agent-1")  # no raise
+        await authz.require_autonomous_permission()  # no raise
     finally:
         current_user_token.reset(token_ref)
 
@@ -66,13 +62,13 @@ async def test_schedule_allowed_sends_schedule_action(monkeypatch):
     _url, _headers, body = posts[-1]
     assert body == {
         "subject": {"type": "user", "id": "alice-sub"},
-        "resource": {"type": "agent", "id": "agent-1"},
-        "action": "schedule",
+        "resource": {"type": "organization", "id": "caipe"},
+        "action": "automate",
     }
 
 
 @pytest.mark.asyncio
-async def test_schedule_denied_raises_403_agent_schedule(monkeypatch):
+async def test_autonomous_denied_raises_403_organization_automate(monkeypatch):
     from dynamic_agents.auth import authz
 
     monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://cas")
@@ -82,15 +78,15 @@ async def test_schedule_denied_raises_403_agent_schedule(monkeypatch):
     token_ref = current_user_token.set(_fake_jwt({"sub": "alice-sub"}))
     try:
         with pytest.raises(HTTPException) as exc:
-            await authz.require_agent_schedule_permission("agent-1")
+            await authz.require_autonomous_permission()
     finally:
         current_user_token.reset(token_ref)
     assert exc.value.status_code == 403
-    assert exc.value.detail["code"] == "agent#schedule"
+    assert exc.value.detail["code"] == "organization#automate"
 
 
 @pytest.mark.asyncio
-async def test_schedule_delegates_to_owner_subject_for_service_account(monkeypatch):
+async def test_autonomous_delegates_to_owner_subject_for_service_account(monkeypatch):
     from dynamic_agents.auth import authz
 
     monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://cas")
@@ -100,11 +96,12 @@ async def test_schedule_delegates_to_owner_subject_for_service_account(monkeypat
     token = _fake_jwt({"sub": "sa-sub", "preferred_username": "service-account-caipe-platform"})
     token_ref = current_user_token.set(token)
     try:
-        await authz.require_agent_schedule_permission("agent-1", delegated_user_sub="owner-uuid")
+        await authz.require_autonomous_permission(delegated_user_sub="owner-uuid")
     finally:
         current_user_token.reset(token_ref)
 
     assert posts
     _url, _headers, body = posts[-1]
     assert body["subject"] == {"type": "user", "id": "owner-uuid"}
-    assert body["action"] == "schedule"
+    assert body["resource"] == {"type": "organization", "id": "caipe"}
+    assert body["action"] == "automate"

@@ -4,7 +4,7 @@ version = "0.4.0"
 description = "CAIPE Slack Bot"
 license = "Apache-2.0"
 authors = [
-  { name = "CNOE Contributors" }
+  { name = "CAIPE Contributors" }
 ]
 requires-python = ">=3.13,<4.0"
 dependencies = [

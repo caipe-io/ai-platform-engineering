@@ -159,14 +159,14 @@ describe("POST /api/skill-hubs/crawl — guard does NOT over-fire", () => {
     const res = await POST(
       makeRequest({
         type: "github",
-        location: "https://github.com/cnoe-io/ai-platform-engineering",
+        location: "https://github.com/caipe-io/ai-platform-engineering",
       }),
     );
     expect(res.status).toBe(200);
     expect(crawlGitHubMock).toHaveBeenCalledTimes(1);
     // Args are owner, repo — confirm normalization happened.
     expect(crawlGitHubMock).toHaveBeenCalledWith(
-      "cnoe-io",
+      "caipe-io",
       "ai-platform-engineering",
       undefined,
     );

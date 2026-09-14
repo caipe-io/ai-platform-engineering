@@ -37,7 +37,7 @@ def test_no_datasource_ids_leaves_tools_untouched():
     assert result == [tool]
 
 
-def test_explicit_empty_datasource_ids_remove_only_rag_tools():
+async def test_explicit_empty_datasource_ids_keep_rag_tools_with_empty_scope():
     rag_tool = _search_tool()
     other_tool = _search_tool(name="jira_search")
 
@@ -45,7 +45,10 @@ def test_explicit_empty_datasource_ids_remove_only_rag_tools():
         [other_tool, rag_tool], [], agent_name="test-agent"
     )
 
-    assert result == [other_tool]
+    assert result[0] is other_tool
+    assert result[1].name == rag_tool.name
+    output = await result[1].coroutine(query="deploy process")
+    assert output["filters"]["datasource_id"] == []
 
 
 def test_non_rag_tool_without_filters_arg_is_untouched():

@@ -30,6 +30,11 @@ from autonomous_agents.services.chat_history import (
     MessageKind,
     conversation_id_for_task,
 )
+from autonomous_agents.services.secret_encryption import (
+    WebhookSecretEncryptionError,
+    WebhookSecretProtector,
+    build_webhook_secret_protector,
+)
 
 logger = logging.getLogger("autonomous_agents")
 
@@ -141,8 +146,17 @@ class MongoService:
     path.
     """
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        secret_protector: WebhookSecretProtector | None = None,
+    ) -> None:
         self.settings = settings or get_settings()
+        self._secret_protector = secret_protector or build_webhook_secret_protector(
+            cmk_id=self.settings.credential_kms_cmk_id,
+            region=self.settings.credential_kms_region,
+        )
         self._client: Any | None = None
         self._primary_db: Any | None = None
         self._chat_db: Any | None = None
@@ -384,7 +398,7 @@ class MongoService:
 
     async def list_tasks(self) -> list[TaskDefinition]:
         cursor = self._tasks().find({}, sort=[("_id", 1)])
-        return [self._doc_to_task(doc) async for doc in cursor]
+        return [await self._doc_to_task(doc) async for doc in cursor]
 
     async def list_tasks_by_owner(self, owner_id: str) -> list[TaskDefinition]:
         """Return tasks owned by ``owner_id`` only.
@@ -394,11 +408,11 @@ class MongoService:
         ``list_tasks()`` (admin path).
         """
         cursor = self._tasks().find({"owner_id": owner_id}, sort=[("_id", 1)])
-        return [self._doc_to_task(doc) async for doc in cursor]
+        return [await self._doc_to_task(doc) async for doc in cursor]
 
     async def get_task(self, task_id: str) -> TaskDefinition | None:
         doc = await self._tasks().find_one({"_id": task_id})
-        return self._doc_to_task(doc) if doc else None
+        return await self._doc_to_task(doc) if doc else None
 
     async def create_task(self, task: TaskDefinition) -> TaskDefinition:
         """Insert ``task`` or raise :class:`TaskAlreadyExistsError`.
@@ -406,7 +420,7 @@ class MongoService:
         The typed exception lets the CRUD routes map
         duplicates to HTTP 409 without string-matching.
         """
-        doc = self._task_to_doc(task)
+        doc = await self._task_to_doc(task)
         try:
             await self._tasks().insert_one(doc)
         except Exception as exc:  # noqa: BLE001 -- translated below
@@ -426,7 +440,7 @@ class MongoService:
             raise ValueError(
                 f"path task_id '{task_id}' does not match body id '{task.id}'"
             )
-        doc = self._task_to_doc(task)
+        doc = await self._task_to_doc(task)
         result = await self._tasks().replace_one({"_id": task_id}, doc, upsert=False)
         if result.matched_count == 0:
             raise TaskNotFoundError(task_id)
@@ -773,6 +787,13 @@ class MongoService:
             if task
             else f"[Autonomous] {effective_task_id}"
         )
+        effective_task_name = (
+            task.name
+            if task is not None
+            else run.task_name
+            if run is not None
+            else effective_task_id
+        )
 
         # Resolve the conversation owner from the most-specific source available:
         #   1. run.owner_id — stamped at run creation from TaskDefinition.owner_id
@@ -813,6 +834,7 @@ class MongoService:
                     "metadata": {
                         "agent_version": "autonomous-agents",
                         "model_used": "autonomous",
+                        "task_name": effective_task_name,
                     },
                 },
                 "$setOnInsert": {
@@ -911,19 +933,50 @@ class MongoService:
     # Model <-> doc conversions
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _task_to_doc(task: TaskDefinition) -> dict[str, Any]:
+    def _require_secret_protector(self) -> WebhookSecretProtector:
+        if self._secret_protector is None:
+            raise WebhookSecretEncryptionError(
+                "Per-task webhook secrets require CREDENTIAL_KMS_CMK_ID "
+                "(and AWS KMS permissions)"
+            )
+        return self._secret_protector
+
+    async def _task_to_doc(self, task: TaskDefinition) -> dict[str, Any]:
         # mode="json" so enums (TriggerType.CRON, etc.) serialise as
         # strings -- Mongo can't store Python enums and a read-back
         # would raise on validation.
         doc = task.model_dump(mode="json")
         doc["_id"] = task.id
+        trigger = doc.get("trigger")
+        if isinstance(trigger, dict) and trigger.get("type") == "webhook":
+            secret = trigger.pop("secret", None)
+            if secret:
+                trigger["secret_envelope"] = await self._require_secret_protector().encrypt(
+                    task.id, secret
+                )
         return doc
 
-    @staticmethod
-    def _doc_to_task(doc: dict[str, Any]) -> TaskDefinition:
-        doc.pop("_id", None)
-        return TaskDefinition.model_validate(doc)
+    async def _doc_to_task(self, doc: dict[str, Any]) -> TaskDefinition:
+        task_id = str(doc.get("_id") or doc.get("id") or "")
+        task_doc = dict(doc)
+        task_doc.pop("_id", None)
+        trigger_value = task_doc.get("trigger")
+        if isinstance(trigger_value, dict) and trigger_value.get("type") == "webhook":
+            trigger = dict(trigger_value)
+            task_doc["trigger"] = trigger
+            has_envelope = "secret_envelope" in trigger
+            envelope = trigger.pop("secret_envelope", None)
+
+            if has_envelope and not isinstance(envelope, dict):
+                raise WebhookSecretEncryptionError(
+                    "Webhook secret envelope is malformed"
+                )
+            if isinstance(envelope, dict):
+                trigger["secret"] = await self._require_secret_protector().decrypt(
+                    task_id, envelope
+                )
+
+        return TaskDefinition.model_validate(task_doc)
 
     @staticmethod
     def _doc_to_run(doc: dict[str, Any]) -> TaskRun:

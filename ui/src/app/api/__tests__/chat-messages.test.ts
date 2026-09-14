@@ -13,7 +13,7 @@
  * - Client-generated message_id tracking
  * - Turn ID metadata for message grouping
  * - Conversation access control (owner + shared users)
- * - UUID validation
+ * - UUID and legacy conversation identifier validation
  * - Pagination
  */
 
@@ -139,15 +139,37 @@ describe('GET /api/chat/conversations/[id]/messages', () => {
     expect(res.status).toBe(401);
   });
 
-  it('returns 400 for invalid UUID format', async () => {
+  it('returns 400 for an unsafe conversation identifier', async () => {
     mockGetServerSession.mockResolvedValue(authenticatedSession());
     const usersCol = createMockCollection();
     usersCol.findOne.mockResolvedValue(null);
     mockCollections['users'] = usersCol;
 
-    const req = makeRequest('/api/chat/conversations/invalid-id/messages');
-    const res = await GET(req, { params: Promise.resolve({ id: 'invalid-id' }) });
+    const req = makeRequest('/api/chat/conversations/invalid/messages');
+    const res = await GET(req, { params: Promise.resolve({ id: '../invalid' }) });
     expect(res.status).toBe(400);
+  });
+
+  it('accepts a legacy conversation identifier', async () => {
+    mockGetServerSession.mockResolvedValue(authenticatedSession());
+    const legacyId = 'legacy-demo-conversation';
+
+    const usersCol = createMockCollection();
+    usersCol.findOne.mockResolvedValue(null);
+    mockCollections['users'] = usersCol;
+
+    const convCol = createMockCollection();
+    convCol.findOne.mockResolvedValue({
+      _id: legacyId,
+      owner_id: 'user@example.com',
+    });
+    mockCollections['conversations'] = convCol;
+    mockCollections['messages'] = createMockCollection();
+
+    const req = makeRequest(`/api/chat/conversations/${legacyId}/messages`);
+    const res = await GET(req, { params: Promise.resolve({ id: legacyId }) });
+
+    expect(res.status).toBe(200);
   });
 
   it('returns paginated messages for authorized user', async () => {

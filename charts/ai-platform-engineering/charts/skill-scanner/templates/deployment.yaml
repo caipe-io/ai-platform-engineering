@@ -37,7 +37,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ include "skill-scanner.imageRepository" (dict "root" . "repository" .Values.image.repository) }}:{{ include "skill-scanner.appVersion" . }}"
+          image: "{{ .Values.image.repository }}:{{ include "skill-scanner.appVersion" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

@@ -1,4 +1,4 @@
-// Copyright CNOE Contributors (https://cnoe.io)
+// Copyright CAIPE Contributors (https://caipe.io)
 // SPDX-License-Identifier: Apache-2.0
 
 /**
@@ -28,8 +28,6 @@ function task(overrides: Partial<AutonomousTask>): AutonomousTask {
     llm_provider: null,
     trigger: { type: "cron", schedule: "0 9 * * *" },
     enabled: true,
-    timeout_seconds: null,
-    max_retries: null,
     ...overrides,
   };
 }

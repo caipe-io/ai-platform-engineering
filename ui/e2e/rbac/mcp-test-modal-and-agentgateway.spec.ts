@@ -52,16 +52,14 @@ test.describe("RBAC e2e — MCP AgentGateway picker and test modal", () => {
       expect(agBox!.y).toBeLessThan(endpointBox!.y);
     });
 
-    test("searches targets and fills the endpoint when a Jira target is selected", async ({ page }) => {
+    test("fills the endpoint when a Jira target is selected", async ({ page }) => {
       const mocks = await installMcpBrowserMocks(page, { servers: [] });
 
       await gotoMcpServersTab(page);
       await openAddMcpServerEditor(page);
       await expect.poll(() => mocks.discoverRequests).toBeGreaterThanOrEqual(1);
 
-      await page.getByRole("combobox", { name: /agentgateway target/i }).click();
-      await page.getByRole("textbox", { name: /search targets/i }).fill("jira");
-      await page.getByRole("option", { name: /Jira/i }).click();
+      await selectAgentGatewayTarget(page, /Jira/i);
 
       await expect(page.getByLabel(/Endpoint URL/i)).toHaveValue(
         "http://mcp-jira:8000/mcp",

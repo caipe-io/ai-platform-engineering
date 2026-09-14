@@ -11,7 +11,7 @@ import {
 ApiError,
 getAuthFromBearerOrSession,
 successResponse,
-validateUUID,
+validateConversationId,
 withErrorHandler,
 } from '@/lib/api-middleware';
 import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
@@ -35,7 +35,7 @@ export const PATCH = withErrorHandler(async (
   const params = await context.params;
   const conversationId = params.id;
 
-  if (!validateUUID(conversationId)) {
+  if (!validateConversationId(conversationId)) {
     throw new ApiError('Invalid conversation ID format', 400);
   }
 

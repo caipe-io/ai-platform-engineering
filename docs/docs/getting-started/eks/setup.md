@@ -17,7 +17,7 @@ This guide walks you through creating an **Amazon EKS** (Elastic Kubernetes Serv
 You need the repo to use the EKS cluster configuration example and to follow the same paths as this guide.
 
 ```bash
-git clone https://github.com/cnoe-io/ai-platform-engineering.git
+git clone https://github.com/caipe-io/ai-platform-engineering.git
 cd ai-platform-engineering
 ```
 
@@ -116,7 +116,7 @@ Install the CAIPE Helm chart directly on the cluster. Configure secrets and LLM 
 
 ```bash
 helm install ai-platform-engineering oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \
-  --version 0.2.8 \
+  --version 1.0.0 \
   --namespace ai-platform-engineering \
   --create-namespace \
   --set-string tags.basic=true
@@ -146,7 +146,7 @@ kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/st
 kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
 
-Open http://localhost:8080. Then deploy CAIPE via the Helm chart (as in Option A) or by defining an ArgoCD Application that points at the same chart (see [Helm setup – ArgoCD](/docs/getting-started/helm/setup#argocd)).
+Open http://localhost:8080. Then deploy CAIPE via the Helm chart (as in Option A) or by defining an ArgoCD Application that points at the same chart. See the [Helm deployment guide](../helm/setup.md) for the chart values and verification steps.
 
 ---
 

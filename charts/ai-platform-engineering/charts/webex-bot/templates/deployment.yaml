@@ -30,7 +30,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ .Chart.Name }}
-          image: "{{ include "webex-bot.imageRepository" (dict "root" . "repository" .Values.image.repository) }}:{{ .Values.image.tag | default (include "webex-bot.appVersion" .) }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "webex-bot.appVersion" .) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:

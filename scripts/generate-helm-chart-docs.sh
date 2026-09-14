@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_NAME="scripts/generate-helm-chart-docs.sh"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-OCI_REGISTRY="oci://ghcr.io/cnoe-io/charts/ai-platform-engineering"
+OCI_REGISTRY="oci://ghcr.io/caipe-io/charts/ai-platform-engineering"
 PARENT_CHARTS=("ai-platform-engineering" "rag-stack")
 CHARTS_ROOT="${REPO_ROOT}/charts"
 DOCS_HELM_ROOT="${REPO_ROOT}/docs/docs/installation/helm-charts"
@@ -225,7 +225,14 @@ HEADER
     fi
 
     local clean_version
-    clean_version="$(strip_prerelease_version "$dep_version")"
+    if [[ "$dep_version" == *-* ]]; then
+      # Dependencies in a published umbrella chart are released together.
+      # Use the resolved OCI version so local development suffixes do not leak
+      # into public documentation as a newer, nonexistent stable release.
+      clean_version="$PUBLISHED_VERSION"
+    else
+      clean_version="$(strip_prerelease_version "$dep_version")"
+    fi
 
     local cond_display=""
     if [[ -n "$dep_condition" && "$dep_condition" != "null" ]]; then
@@ -300,9 +307,9 @@ generate_source_readme() {
   local parent_group
   parent_group=$(parent_group_of "$chart_dir")
 
-  local oci_url="oci://ghcr.io/cnoe-io/charts/${name}"
+  local oci_url="oci://ghcr.io/caipe-io/charts/${name}"
   if is_parent_chart "$chart_dir"; then
-    oci_url="oci://ghcr.io/cnoe-io/charts/${name}"
+    oci_url="oci://ghcr.io/caipe-io/charts/${name}"
   fi
 
   cat > "${chart_dir}/README.md" <<EOF
@@ -398,7 +405,7 @@ generate_docusaurus_page() {
     deps_section=$(generate_dependencies_section "$chart_dir")
   fi
 
-  local oci_url="oci://ghcr.io/cnoe-io/charts/${name}"
+  local oci_url="oci://ghcr.io/caipe-io/charts/${name}"
 
   {
     cat <<EOF

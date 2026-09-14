@@ -27,6 +27,14 @@ jest.mock('@/lib/config', () => ({
   getServerConfig: jest.fn().mockReturnValue({ autonomousAgentsEnabled: true }),
 }));
 
+const mockCheckOpenFgaTuple = jest.fn();
+jest.mock('@/lib/rbac/openfga', () => ({
+  checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
+}));
+jest.mock('@/lib/rbac/organization', () => ({
+  organizationObjectId: () => 'organization:caipe',
+}));
+
 // Default Mongo mock: getCollection resolves to a collection whose findOne
 // returns null. Individual tests can override this via
 // `(getCollection as jest.Mock).mockResolvedValueOnce(...)` to simulate a
@@ -81,9 +89,11 @@ describe('Autonomous proxy header injection', () => {
     mockUsersFindOne.mockResolvedValue(null);
     mockGetServerSession.mockResolvedValue({
       user: { email: 'alice@example.com', name: 'Alice' },
+      sub: 'alice-sub',
       role: 'admin',
       canViewAdmin: true,
     });
+    mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify([]), {
         status: 200,
@@ -113,6 +123,7 @@ describe('Autonomous proxy header injection', () => {
   it('injects X-Authenticated-User-Is-Admin=false for non-admin sessions', async () => {
     mockGetServerSession.mockResolvedValue({
       user: { email: 'bob@example.com', name: 'Bob' },
+      sub: 'bob-sub',
       role: 'user',
       canViewAdmin: true,
     });
@@ -142,7 +153,7 @@ describe('Autonomous proxy header injection', () => {
     expect(fetchInit.headers['X-Authenticated-User-Sub']).toBe('alice-uuid');
   });
 
-  it('omits X-Authenticated-User-Sub when the session has no resolvable sub', async () => {
+  it('rejects the request when the session has no resolvable sub', async () => {
     mockGetServerSession.mockResolvedValue({
       user: { email: 'bob@example.com', name: 'Bob' },
       role: 'user',
@@ -150,11 +161,10 @@ describe('Autonomous proxy header injection', () => {
     });
 
     const req = makeRequest('POST', 'tasks', { id: 'x', name: 'X' });
-    await POST(req, paramsFor('tasks'));
+    const response = await POST(req, paramsFor('tasks'));
 
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [, fetchInit] = mockFetch.mock.calls[0];
-    expect(fetchInit.headers['X-Authenticated-User-Sub']).toBeUndefined();
+    expect(response.status).toBe(403);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   describe.each([
@@ -166,6 +176,7 @@ describe('Autonomous proxy header injection', () => {
     it(`injects X-Authenticated-User-* on ${name} (non-admin)`, async () => {
       mockGetServerSession.mockResolvedValue({
         user: { email: 'carol@example.com', name: 'Carol' },
+        sub: 'carol-sub',
         role: 'user',
         canViewAdmin: false,
       });
@@ -200,6 +211,7 @@ describe('Autonomous proxy header injection', () => {
   it('forwards X-Authenticated-User-Is-Admin=true for Mongo-promoted admin (canViewAdmin=false)', async () => {
     mockGetServerSession.mockResolvedValue({
       user: { email: 'mongo-admin@example.com', name: 'Mongo Admin' },
+      sub: 'mongo-admin-sub',
       role: 'admin',
       canViewAdmin: false,
     });

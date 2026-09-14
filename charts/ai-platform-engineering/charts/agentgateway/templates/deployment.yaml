@@ -37,7 +37,7 @@ spec:
       */ -}}
       {{- $cbEnabled := and $agwGlobal.enabled (eq ($agwGlobal.routingMode | default "static") "static") $cb.enabled }}
       {{- $cbImage := $cb.image | default dict }}
-      {{- $cbImageRepo := $cbImage.repository | default "ghcr.io/cnoe-io/agentgateway-config-bridge" }}
+      {{- $cbImageRepo := $cbImage.repository | default "ghcr.io/caipe-io/agentgateway-config-bridge" }}
       {{- $cbImageTag := $cbImage.tag | default .Chart.AppVersion }}
       {{- $cbImagePull := $cbImage.pullPolicy | default "IfNotPresent" }}
       serviceAccountName: {{ include "agentgateway.serviceAccountName" . }}

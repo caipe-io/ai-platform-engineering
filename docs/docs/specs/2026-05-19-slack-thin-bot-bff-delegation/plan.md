@@ -76,4 +76,4 @@ Response:
 - [ ] OBO token exchange either stays in the bot or is explicitly moved into the identity/team BFF response.
 - [ ] Helm values, secrets examples, and RBAC docs reflect the reduced bot credential surface.
 
-Tracked by [#1456](https://github.com/cnoe-io/ai-platform-engineering/issues/1456).
+Tracked by [#1456](https://github.com/caipe-io/ai-platform-engineering/issues/1456).

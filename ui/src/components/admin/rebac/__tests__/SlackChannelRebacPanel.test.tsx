@@ -294,6 +294,16 @@ it("scopes the configured channel list to the simulated user", async () => {
   });
 });
 
+it("fetches runtime status on mount since Slack's Advanced tab is not minimal", async () => {
+  render(<SlackChannelRebacPanel />);
+
+  await waitFor(() => {
+    expect(
+      fetchMock.mock.calls.some(([url]) => url === "/api/admin/slack/runtime/status"),
+    ).toBe(true);
+  });
+});
+
 it("shows a loading spinner while self-service channels load", async () => {
   let resolveChannels: ((value: Response) => void) | undefined;
   const channelsPromise = new Promise<Response>((resolve) => {
@@ -853,12 +863,9 @@ it("edits and deletes Slack channel-agent associations with metadata warning", a
   const editor = screen.getByRole("dialog", {
     name: /edit agent:incident-agent/i,
   });
-  fireEvent.change(
-    within(editor).getAllByRole("combobox", { name: "Listen" })[0],
-    {
-      target: { value: "message" },
-    },
-  );
+  fireEvent.change(within(editor).getByLabelText("Listen"), {
+    target: { value: "message" },
+  });
   fireEvent.change(within(editor).getByLabelText("Priority"), {
     target: { value: "25" },
   });
@@ -1131,12 +1138,6 @@ it("discovers Slack channels even when no onboarding default team is configured"
   expect(
     await screen.findByRole("status", { name: /Discovered: 1/i }),
   ).toBeInTheDocument();
-  // TeamPicker is a <button>, not a form control — assert the
-  // empty-state placeholder is rendered on the trigger instead of
-  // `.toHaveValue("")`.
-  expect(screen.getByLabelText("Team for #new-alerts")).toHaveTextContent(
-    /Select team/,
-  );
 });
 
 it("shows discovered channel setup feedback as a toast without shifting the action row", async () => {

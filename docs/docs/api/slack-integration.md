@@ -10,13 +10,13 @@ This page describes the **Slack integration** surface area: Next.js UI Backend A
 
 ## Slack User Bootstrapping Dashboard API (admin)
 
-Admin-only JSON APIs used by the CAIPE admin UI to inspect Slack-linked identities, metrics, and to trigger re-link or revoke. The primary UI for Slack identity state is now the Admin **Users** tab and user detail modal; this listing route is kept as an API surface for operational views.
+Admin-only JSON APIs used by the CAIPE admin UI to inspect Slack-linked identities, metrics, and to revoke a link. The primary UI for Slack identity state is now the Admin **Users** tab and user detail modal; this listing route is kept as an API surface for operational views. There is no admin re-link endpoint — re-linking happens automatically the next time the user messages the bot (auto-bootstrap / JIT), never via an admin-minted link.
 
 ### GET `/api/admin/slack/users`
 
 **Auth:** Session (NextAuth) — admin role required | **Service:** UI Backend API
 
-Returns a **paginated** list of Slack users merged from Keycloak (`slack_user_id` attribute), pending nonces in MongoDB (`slack_link_nonces`), and optional orphans from `slack_user_metrics`.
+Returns a **paginated** list of Slack users merged from Keycloak (`slack_user_id` attribute) and optional orphans from `slack_user_metrics`.
 
 **Query parameters**
 
@@ -24,7 +24,7 @@ Returns a **paginated** list of Slack users merged from Keycloak (`slack_user_id
 |------|------|---------|-------------|
 | `page` | integer | `1` | Page number (≥ 1). |
 | `page_size` | integer | `20` | Page size (1–100). |
-| `status` | string | `all` | Filter: `all`, `linked`, `pending`, `unlinked`. |
+| `status` | string | `all` | Filter: `all`, `linked`, `unlinked`. |
 
 **Response `200`:**
 
@@ -76,41 +76,6 @@ Returns a **paginated** list of Slack users merged from Keycloak (`slack_user_id
 
 ---
 
-### POST `/api/admin/slack/users/[id]`
-
-**Auth:** Session (admin) | **Service:** UI Backend API
-
-Creates a **new single-use linking nonce** for the Keycloak user identified by `[id]` (URL-encoded Keycloak user UUID). Requires the user to already have a `slack_user_id` attribute (re-link scenario).
-
-**Path parameters**
-
-| Name | Description |
-|------|-------------|
-| `id` | Keycloak user ID (encode reserved characters in the path). |
-
-**Response `200`:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "relink_url": "https://caipe.example.com/api/auth/slack-link?nonce=single-use-nonce&slack_user_id=U012ABCDEF",
-    "slack_user_id": "U012ABCDEF",
-    "expires_at": "2026-03-25T15:10:00.000Z",
-    "message": "Share this URL with the Slack user; they must open it while signed into CAIPE with their own account."
-  }
-}
-```
-
-**Errors**
-
-| Status | Condition |
-|--------|-----------|
-| `400` | User has no `slack_user_id` in Keycloak — `{ "success": false, "error": "User has no Slack ID to re-link" }` |
-| `401` / `403` | Same as other admin routes |
-
----
-
 ### DELETE `/api/admin/slack/users/[id]`
 
 **Auth:** Session (admin) | **Service:** UI Backend API
@@ -142,42 +107,6 @@ Removes the `slack_user_id` Keycloak user attribute for the given Keycloak user 
 ## Channel-to-Team and Channel-to-Resource Mapping
 
 The legacy `/api/admin/slack/channel-mappings` CRUD API has been retired. Use the team management Slack Channels tab for channel→team ownership and the OpenFGA ReBAC Slack Channels panel for channel→agent/tool/KB grants. Runtime authorization is based on `channel_team_mappings` plus `slack_channel_grants`.
-
----
-
-## Slack Identity Linking (OAuth callback flow)
-
-### GET `/api/auth/slack-link`
-
-**Auth:** Unauthenticated for the first hit; after redirect, **session** via Keycloak OIDC (NextAuth) | **Service:** UI Backend API
-
-Browser entry point for linking a Slack user to the signed-in Keycloak user. Validates a nonce from MongoDB `slack_link_nonces`, then writes `slack_user_id` on the Keycloak user via Admin API.
-
-**Query parameters**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `nonce` | Yes | Single-use token from bot or admin re-link API. |
-| `slack_user_id` | Yes | Slack user ID; must match the nonce document. |
-
-**Behavior**
-
-1. If `nonce` or `slack_user_id` is missing → **`400`** JSON: `{ "error": "missing nonce" }` or `{ "error": "missing slack_user_id" }`.
-2. If nonce invalid, consumed, expired, or `slack_user_id` mismatch → **`400`** plain text: `This link is invalid or has expired.`
-3. If no NextAuth session → **`302`** redirect to `/api/auth/signin/oidc?callbackUrl=<encoded return URL>`.
-4. On success: merge Keycloak attribute `slack_user_id`, mark nonce consumed, call Slack `chat.postMessage` as a DM (if `SLACK_BOT_TOKEN` is set), return **`200`** HTML success page.
-
-**Response `200` (HTML)**
-
-`Content-Type: text/html` — styled “Account Linked!” page (not JSON).
-
-**Response `500`:**
-
-```json
-{
-  "error": "Server error"
-}
-```
 
 ---
 
@@ -222,7 +151,7 @@ Slack Bolt registrations in `app.py`. These are **not** HTTP routes; payloads fo
 |------|----------|
 | Identity | Reads Slack user id from `body.event.user`, `body.user.id`, or `body.user_id`. |
 | Resolve | Async: `resolve_slack_user` → Keycloak user by `slack_user_id` attribute; resolves the channel's effective CAIPE team before downstream OpenFGA-backed checks. |
-| Unlinked | Generates URL via `generate_linking_url(slack_user_id)` (Mongo nonce + UI Backend API URL); `chat_postEphemeral` with link when `channel` is present; then **`next()`** — downstream handlers still run. |
+| Unlinked | Attempts `auto_bootstrap_slack_user` (email-match, or JIT-provision if `SLACK_JIT_CREATE_USER=true`); if that also fails, the user is treated as unlinked — minimum-access fallback with `chat_postEphemeral`/`chat_postMessage` "contact your admin" messaging when `channel` is present; then **`next()`** — downstream handlers still run. |
 | Deny | Team/role mismatch → ephemeral denial; **`return` without `next()`** — handler chain stops. |
 | OK | Sets `context["keycloak_user_id"]`, `context["platform_team_id"]`, optional `context["slack_channel_id"]`; calls `next()`. |
 
@@ -264,54 +193,10 @@ Slack Bolt registrations in `app.py`. These are **not** HTTP routes; payloads fo
 
 | Function | Description |
 |----------|-------------|
-| `generate_linking_url(slack_user_id)` | Inserts nonce into `slack_link_nonces` (CSPRNG `secrets.token_urlsafe(32)`); TTL from `SLACK_LINK_TTL_SECONDS` (default **600**); Mongo TTL index on `created_at`. URL: `{SLACK_LINK_BASE_URL or CAIPE_URL}/api/auth/slack-link?nonce=…&slack_user_id=…`. |
-| `validate_nonce` / `complete_linking` | Validate-and-consume nonce; set Keycloak attribute via Admin API (used when linking is finalized from the bot stack). |
+| `auto_bootstrap_slack_user(slack_user_id)` | Fetches the Slack profile email; if a Keycloak user with that email exists, merges the `slack_user_id` attribute; else, if `SLACK_JIT_CREATE_USER=true` and the domain passes `SLACK_JIT_ALLOWED_EMAIL_DOMAINS`, JIT-provisions a federated-only Keycloak shell user; else returns `None`. |
 | `resolve_slack_user` | Lookup Keycloak user by `slack_user_id` attribute; returns `None` if disabled or missing. |
 
----
-
-## Identity Linking Flow
-
-End-to-end behavior (conceptual UX **“/caipe link”**): product teams may expose linking as a slash command; the **current** `app.py` triggers the same nonce + URL flow when `SLACK_RBAC_ENABLED=true` and the user is **unlinked** (ephemeral message with link), or via **admin** `POST /api/admin/slack/users/[id]` for re-link.
-
-```mermaid
-sequenceDiagram
-  participant U as Slack User
-  participant B as Slack Bot
-  participant M as MongoDB (slack_link_nonces)
-  participant Browser as User Browser
-  participant UI Backend API as Next.js UI Backend API
-  participant KC as Keycloak
-  participant Slack as Slack Web API
-
-  U->>B: Request link (e.g. slash command or first RBAC-gated action)
-  B->>M: insert nonce, slack_user_id, TTL ~10m
-  B->>U: DM or ephemeral with URL /api/auth/slack-link?nonce=&slack_user_id=
-  U->>Browser: Open URL
-  Browser->>UI Backend API: GET /api/auth/slack-link?...
-  alt No session
-    UI Backend API->>Browser: 302 → /api/auth/signin/oidc?callbackUrl=...
-    Browser->>KC: OIDC login
-    KC->>Browser: Return to UI Backend API with session
-  end
-  Browser->>UI Backend API: GET /api/auth/slack-link (with session)
-  UI Backend API->>M: find nonce, check not consumed / not expired / slack_user_id match
-  UI Backend API->>KC: mergeUserAttributes(slack_user_id)
-  UI Backend API->>M: mark nonce consumed
-  UI Backend API->>Slack: chat.postMessage (DM confirmation)
-  UI Backend API->>Browser: 200 HTML success page
-```
-
-**Step-by-step**
-
-1. User requests linking in Slack (e.g. **`/caipe link`** if configured, or interaction while unlinked under RBAC).
-2. Bot generates a cryptographically random nonce and stores a document in **`slack_link_nonces`** with **~10 minute** validity (TTL via `SLACK_LINK_TTL_SECONDS` / `expires_at` from admin flow).
-3. Bot sends a **DM or ephemeral** message containing `https://<NEXTAUTH_URL>/api/auth/slack-link?nonce=…&slack_user_id=…`.
-4. User opens the link; if not signed in, UI Backend API redirects to **Keycloak OIDC** (`/api/auth/signin/oidc`) with `callbackUrl` back to the same slack-link URL.
-5. After login, UI Backend API validates the nonce (exists, not consumed, not expired, `slack_user_id` matches), then sets Keycloak user attribute **`slack_user_id`** for the session subject.
-6. UI Backend API marks the nonce **consumed** (single-use).
-7. UI Backend API sends a **confirmation DM** via `https://slack.com/api/chat.postMessage` using **`SLACK_BOT_TOKEN`** (optional; skipped if unset).
-8. UI Backend API returns a **success HTML** page to the browser.
+There is no interactive/bearer-link onboarding path: a signed link is redeemable by whoever holds it, not provably by the intended Slack user, so it is not offered as a fallback. If neither email-match nor JIT resolves a Keycloak user, the request proceeds under a minimum-access unlinked identity with "contact your admin" messaging (rate-limited by `SLACK_LINKING_PROMPT_COOLDOWN`).
 
 ---
 
@@ -319,10 +204,8 @@ sequenceDiagram
 
 | Variable | Used by |
 |----------|---------|
-| `NEXTAUTH_URL` | UI Backend API absolute URLs for slack-link and sign-in callback |
-| `SLACK_BOT_TOKEN` | UI Backend API confirmation DM after link |
-| `MONGODB_URI` / DB name | Nonces, metrics, channel mappings |
 | `SLACK_RBAC_ENABLED` | Bot global RBAC middleware |
-| `SLACK_LINK_BASE_URL` / `CAIPE_URL` | Bot-generated linking URL base |
-| `SLACK_LINK_TTL_SECONDS` | Bot nonce TTL (default 600) |
+| `SLACK_JIT_CREATE_USER` | Enables JIT shell-user provisioning for unmatched emails (default `true`) |
+| `SLACK_JIT_ALLOWED_EMAIL_DOMAINS` | Optional comma-separated allowlist restricting which email domains may be JIT-provisioned |
+| `SLACK_LINKING_PROMPT_COOLDOWN` | Rate limit (seconds) between unlinked-access nudges to the same user |
 | `KEYCLOAK_*` | Admin API + AuthZ + OBO (`keycloak_authz.py`, `obo_exchange.py`) |

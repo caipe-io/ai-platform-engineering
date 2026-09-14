@@ -9,11 +9,11 @@
  * — the `team.resources` array and `team_kb_ownership` collection are both gone),
  * so these tests seed grants by mocking `listOpenFgaObjects` keyed on
  * (`team:<slug>#member`|`#admin`, relation, type) for team grants — including KB
- * grants on type `knowledge_base` — and (`user:<sub>`, owner, type) for
- * owner-direct grants.
+ * grants on `knowledge_base` and `ingestion_source` — and
+ * (`user:<sub>`, owner, type) for owner-direct grants.
  *
  * Covers:
- *  - aggregates agents/tools/skills/workflows/KBs from the user's active teams;
+ *  - aggregates agents/tools/skills/workflows/RAG access from active teams;
  *  - admin role unlocks agent manage (`#admin manager`) and members do not;
  *  - the same resource granted by two teams merges into one item with two
  *    `via` entries;
@@ -30,6 +30,7 @@ const mockGetRealmUserById = jest.fn();
 const mockMembershipFind = jest.fn();
 const mockTeamsFind = jest.fn();
 const mockAgentsFind = jest.fn();
+const mockSourcesFind = jest.fn();
 const mockListOpenFgaObjects = jest.fn();
 
 let mongoConfigured = true;
@@ -65,6 +66,11 @@ jest.mock("@/lib/mongodb", () => ({
     if (name === "dynamic_agents") {
       return {
         find: (...a: unknown[]) => ({ toArray: () => mockAgentsFind(...a) }),
+      };
+    }
+    if (name === "rag_ingestion_sources") {
+      return {
+        find: (...a: unknown[]) => ({ toArray: () => mockSourcesFind(...a) }),
       };
     }
     throw new Error(`unexpected getCollection(${name})`);
@@ -120,6 +126,11 @@ beforeEach(() => {
     { _id: "agent-github", name: "GitHub agent" },
     { _id: "agent-jira", name: "Jira agent" },
   ]);
+  mockSourcesFind.mockResolvedValue([
+    { source_id: "kb-runbooks", name: "Runbooks" },
+    { source_id: "kb-owned", name: "Owned source" },
+    { source_id: "kb-secrets", name: "Restricted source" },
+  ]);
   mockListOpenFgaObjects.mockImplementation(
     async ({ user, relation, type }: { user: string; relation: string; type: string }) => ({
       objects: grantTable[grantKey(user, relation, type)] ?? [],
@@ -164,7 +175,7 @@ describe("GET /api/admin/users/[id]/access", () => {
       [grantKey("team:platform#admin", "manager", "agent")]: ["agent:agent-jira"],
       [grantKey("team:platform#member", "caller", "tool")]: ["tool:jira/*"],
       [grantKey("team:platform#member", "user", "skill")]: ["skill:skill-summarize"],
-      [grantKey("team:platform#member", "reader", "knowledge_base")]: ["knowledge_base:kb-runbooks"],
+      [grantKey("team:platform#member", "can_read", "knowledge_base")]: ["knowledge_base:kb-runbooks"],
     };
 
     const { GET } = await import("../route");
@@ -180,7 +191,11 @@ describe("GET /api/admin/users/[id]/access", () => {
       expect.objectContaining({ id: "agent-jira", name: "Jira agent", capability: "manage" }),
     ]);
     expect(access.tools[0]).toMatchObject({ id: "jira/*", capability: "call" });
-    expect(access.knowledge_bases[0]).toMatchObject({ id: "kb-runbooks", capability: "read" });
+    expect(access.knowledge_bases[0]).toMatchObject({
+      id: "kb-runbooks",
+      name: "Runbooks",
+      capability: "search",
+    });
     expect(access.skills[0]).toMatchObject({ id: "skill-summarize", capability: "use" });
     // The "why" is the granting team.
     expect(access.agents[0].via).toEqual([
@@ -188,19 +203,21 @@ describe("GET /api/admin/users/[id]/access", () => {
     ]);
   });
 
-  it("reads KB access from OpenFGA grants with per-KB permissions", async () => {
+  it("shows independent RAG Search and Owner access", async () => {
     mockMembershipFind.mockResolvedValue([
       { team_slug: "platform", relationship: "admin" },
     ]);
     mockTeamsFind.mockResolvedValue([
       { _id: "t1", slug: "platform", name: "Platform" },
     ]);
-    // kb-runbooks via `member ingestor` (→ ingest), kb-secrets via `admin
-    // manager` (→ admin). The strongest-permission merge in listTeamKbGrants
-    // surfaces each at its granted level.
     grantTable = {
-      [grantKey("team:platform#member", "ingestor", "knowledge_base")]: ["knowledge_base:kb-runbooks"],
-      [grantKey("team:platform#admin", "manager", "knowledge_base")]: ["knowledge_base:kb-secrets"],
+      [grantKey("team:platform#member", "can_read", "knowledge_base")]: [
+        "knowledge_base:kb-runbooks",
+        "knowledge_base:kb-owned",
+      ],
+      [grantKey("team:platform#admin", "can_manage", "ingestion_source")]: [
+        "ingestion_source:kb-owned",
+      ],
     };
 
     const { GET } = await import("../route");
@@ -211,25 +228,21 @@ describe("GET /api/admin/users/[id]/access", () => {
     const kbs = body.data.access.knowledge_bases.map(
       (k: { id: string; capability: string }) => `${k.id}:${k.capability}`
     );
-    expect(kbs).toContain("kb-runbooks:ingest");
-    // Admin sees the admin-level KB grant too.
-    expect(kbs).toContain("kb-secrets:admin");
+    expect(kbs).toContain("kb-runbooks:search");
+    expect(kbs).toContain("kb-owned:search");
+    expect(kbs).toContain("kb-owned:owner");
   });
 
-  it("hides admin-level KB grants from a plain member", async () => {
+  it("does not give datasource Owner access to a plain team member", async () => {
     mockMembershipFind.mockResolvedValue([
       { team_slug: "platform", relationship: "member" },
     ]);
     mockTeamsFind.mockResolvedValue([
       { _id: "t1", slug: "platform", name: "Platform" },
     ]);
-    // The team holds both a member reader grant and an admin manager grant.
-    // listTeamKbGrants surfaces both objects; the route's role gate must drop
-    // the admin-level grant for a plain member (roleSatisfies), so kb-secrets
-    // never reaches the response even though the tuple exists.
     grantTable = {
-      [grantKey("team:platform#member", "reader", "knowledge_base")]: ["knowledge_base:kb-runbooks"],
-      [grantKey("team:platform#admin", "manager", "knowledge_base")]: ["knowledge_base:kb-secrets"],
+      [grantKey("team:platform#member", "can_read", "knowledge_base")]: ["knowledge_base:kb-runbooks"],
+      [grantKey("team:platform#admin", "can_manage", "ingestion_source")]: ["ingestion_source:kb-secrets"],
     };
 
     const { GET } = await import("../route");
@@ -240,8 +253,8 @@ describe("GET /api/admin/users/[id]/access", () => {
     const kbs = body.data.access.knowledge_bases.map(
       (k: { id: string; capability: string }) => `${k.id}:${k.capability}`
     );
-    expect(kbs).toContain("kb-runbooks:read");
-    expect(kbs).not.toContain("kb-secrets:admin");
+    expect(kbs).toContain("kb-runbooks:search");
+    expect(kbs).not.toContain("kb-secrets:owner");
   });
 
   it("does not grant agent manage to a plain member", async () => {
@@ -300,6 +313,9 @@ describe("GET /api/admin/users/[id]/access", () => {
       [grantKey("user:user-1", "owner", "agent")]: ["agent:agent-github"],
       [grantKey("user:user-1", "owner", "skill")]: ["skill:my-skill"],
       [grantKey("user:user-1", "owner", "task")]: ["task:my-workflow"],
+      [grantKey("user:user-1", "owner", "ingestion_source")]: ["ingestion_source:kb-owned"],
+      [grantKey("user:user-1", "can_manage", "ingestion_source")]: ["ingestion_source:kb-owned"],
+      [grantKey("user:user-1", "can_read", "knowledge_base")]: ["knowledge_base:kb-owned"],
     };
 
     const { GET } = await import("../route");
@@ -316,6 +332,12 @@ describe("GET /api/admin/users/[id]/access", () => {
     expect(access.skills[0]).toMatchObject({ id: "my-skill", capability: "use" });
     expect(access.workflows[0]).toMatchObject({ id: "my-workflow", capability: "use" });
     expect(access.workflows[0].via[0].kind).toBe("owned");
+    expect(access.knowledge_bases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "kb-owned", capability: "owner" }),
+        expect.objectContaining({ id: "kb-owned", capability: "search" }),
+      ]),
+    );
   });
 
   it("surfaces the tool:* wildcard sentinel as an all-tools item", async () => {

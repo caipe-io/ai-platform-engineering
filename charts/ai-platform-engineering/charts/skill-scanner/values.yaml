@@ -13,7 +13,7 @@ revisionHistoryLimit: 3
 image:
   # -- Container image repository. Build via build/Dockerfile.skill-scanner
   # and push to your registry; override in the parent values.yaml.
-  repository: ghcr.io/cnoe-io/skill-scanner
+  repository: ghcr.io/caipe-io/skill-scanner
   # -- Image tag. Defaults to the parent chart's appVersion.
   tag: ""
   # -- Image pull policy

@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # dynamic agent's own model config governs execution).
     llm_provider: str = "anthropic-claude"
 
+    # Cron and interval tasks may not fire more frequently than this. Webhook
+    # tasks are event-driven and deliberately exempt.
+    minimum_schedule_interval_seconds: int = Field(default=1800, ge=1)
+
     # Dynamic-agents runtime — the single execution backend for autonomous
     # tasks. Every task targets a dynamic_agent_id and runs through this
     # service (its tools / system prompt / model / middleware).
@@ -85,6 +89,14 @@ class Settings(BaseSettings):
     # Per-task secrets always win when both are configured.
     webhook_secret: str | None = None
 
+    # Per-task webhook secrets use the same envelope-encryption scheme as the
+    # UI credential store (including UI-managed Webex OAuth secrets): a fresh
+    # AES-256-GCM data key per write, wrapped by this AWS KMS CMK. When the CMK
+    # is unset, tasks without per-task secrets still work, but persisting or
+    # reading a per-task secret fails closed instead of writing plaintext.
+    credential_kms_cmk_id: str | None = None
+    credential_kms_region: str | None = None
+
     # IMP-07 — webhook replay protection.
     #
     # When > 0, signed webhooks must additionally carry an
@@ -99,6 +111,20 @@ class Settings(BaseSettings):
     # ``300`` (5 min) once their senders are updated to include the
     # timestamp header. See README.md for the signing contract.
     webhook_replay_window_seconds: int = Field(default=0, ge=0)
+
+    # Application-level webhook overload protection. Each webhook task is a
+    # FIFO with exactly one active run. Queue item/byte ceilings bound memory;
+    # separate owner/global execution limits allow safe parallelism across
+    # different webhooks. Edge/WAF limiting remains the first DDoS boundary.
+    webhook_max_payload_bytes: int = Field(default=1_048_576, ge=1)
+    webhook_max_pending_per_task: int = Field(default=100, ge=1)
+    webhook_max_pending_per_owner: int = Field(default=500, ge=1)
+    webhook_max_pending_global: int = Field(default=5_000, ge=1)
+    webhook_max_pending_payload_bytes_global: int = Field(
+        default=67_108_864, ge=1
+    )
+    webhook_max_concurrent_per_owner: int = Field(default=20, ge=1)
+    webhook_max_concurrent_global: int = Field(default=100, ge=1)
 
     # Path to the YAML file describing webhook provider adapters
     # (signature header, scheme, algorithm, payload template, etc.).

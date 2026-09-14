@@ -43,14 +43,21 @@ export interface UserPublicInfo {
 // Conversation Collection
 // ============================================================================
 
-/** Valid client types for conversation creation. */
-export type ClientType = "webui" | "slack" | "webex";
+/**
+ * Valid client types for conversation creation.
+ * 'api' is never caller-declared in practice: the server forces it onto any
+ * Bearer-authenticated request that doesn't self-declare 'slack' or 'webex'
+ * (see the POST handler in chat/conversations/route.ts), overriding a false
+ * 'webui' claim from a non-first-party caller.
+ */
+export type ClientType = "webui" | "slack" | "webex" | "api";
 
 /** All valid client_type values — used for runtime validation. */
 export const VALID_CLIENT_TYPES: readonly ClientType[] = [
   "webui",
   "slack",
   "webex",
+  "api",
 ] as const;
 
 /**
@@ -114,13 +121,21 @@ export interface Conversation {
   is_pinned: boolean;
   deleted_at?: Date | null; // Soft-delete timestamp; null = not deleted; auto-purged after 7 days
   // Origin marker. The chat sidebar's "All" view shows both human-typed
-  // and autonomous conversations; only `slack` is excluded from the
-  // default listing because Slack threads have their own dedicated UI.
-  // The autonomous_agents service writes conversations with
-  // `source: 'autonomous'` so operators can also pivot the sidebar to
+  // and autonomous conversations; `slack` and `api` are excluded from the
+  // default listing because Slack threads have their own dedicated UI and
+  // `api` conversations (e.g. scripts calling /api/chat/conversations +
+  // /api/v1/chat/invoke directly, like the ask-forge CLI) have no UI
+  // transcript to show. The autonomous_agents service writes conversations
+  // with `source: 'autonomous'` so operators can also pivot the sidebar to
   // "what did the autonomous agent do today?" via the Autonomous filter
-  // chip. Undefined = legacy human-typed conversation.
-  source?: 'web' | 'slack' | 'autonomous';
+  // chip. Undefined = legacy human-typed conversation. Stats/insights
+  // endpoints intentionally do not filter on `source`, so `api` conversations
+  // are hidden from chat history but still counted there. Webex threads are
+  // excluded from the default listing for the same "has its own dedicated
+  // UI" reason as Slack, but Webex is never tagged via `source` (no
+  // `'webex'` member here) — it is only ever tagged via `client_type`, so
+  // the default-listing query filters `client_type` too.
+  source?: 'web' | 'slack' | 'autonomous' | 'api';
   // Set when `source === 'autonomous'`: the upstream autonomous task
   // and the specific run that produced this conversation. Lets the
   // run-history UI deep-link from a run row into the chat thread.
@@ -228,7 +243,7 @@ export interface UserSettings {
   _id?: ObjectId;
   user_id: string; // User email
   preferences: {
-    theme: 'light' | 'dark' | 'system' | 'midnight' | 'nord' | 'tokyo' | 'cyberpunk' | 'tron' | 'matrix';
+    theme: 'light' | 'legacy-light' | 'dark' | 'system' | 'midnight' | 'nord' | 'tokyo' | 'cyberpunk' | 'tron' | 'matrix';
     gradient_theme: 'default' | 'minimal' | 'professional' | 'ocean' | 'sunset' | 'cyberpunk' | 'tron' | 'matrix';
     font_family: 'inter' | 'source-sans' | 'ibm-plex' | 'system';
     font_size: 'small' | 'medium' | 'large' | 'x-large';
@@ -248,12 +263,25 @@ export interface UserSettings {
     releaseNotesNotificationsEnabled?: boolean;
     releaseNotesDismissedVersions?: string[];
     releaseNotesDismissedAnnouncementIds?: string[];
+    /** Ids of Home page widgets the user has enabled, in display order. */
+    home_widgets?: string[];
+    /** Schema version used to migrate widget defaults without undoing explicit removals. */
+    home_widgets_version?: number;
+    /** Which Home page layout the user sees — the new default, or the previous fixed layout. */
+    home_experience?: "new" | "classic";
   };
   notifications: {
     email_enabled: boolean;
     in_app_enabled: boolean;
     conversation_shared: boolean;
     weekly_summary: boolean;
+    /** Show an OS-level alert when an agent turn completes in the background. */
+    agent_completion_browser_enabled: boolean;
+    /** Play the optional completion chime with a background completion alert. */
+    agent_completion_chime_enabled: boolean;
+    // Per-user visibility for globally owned platform health events. Turning
+    // this off never changes or resolves the underlying platform incident.
+    platform_health: boolean;
   };
   defaults: {
     default_model: string;
@@ -289,6 +317,9 @@ export const DEFAULT_USER_SETTINGS: Omit<
     in_app_enabled: true,
     conversation_shared: true,
     weekly_summary: false,
+    agent_completion_browser_enabled: false,
+    agent_completion_chime_enabled: false,
+    platform_health: true,
   },
   defaults: {
     default_model: "gpt-4o",
@@ -338,6 +369,12 @@ export interface CreateConversationRequest {
   idempotency_key?: string; // Maps integration-specific identity (e.g. Slack thread_ts) to conversation_id used by UI/checkpoints
   metadata?: Record<string, unknown>; // Optional: arbitrary key/values from client
   tags?: string[];
+  // Optional: caller-declared origin. Only 'api' is honored here — it marks a
+  // conversation created by a direct API caller (script/CLI) rather than the
+  // web UI, so the sidebar can hide it while insights/stats keep counting it.
+  // Other values are ignored; 'web'/'slack'/'autonomous' are still assigned
+  // by their respective server-side paths, not the client.
+  source?: 'api';
 }
 
 /** Response from POST /api/chat/conversations */
@@ -500,14 +537,6 @@ export interface AuditLogFilters {
 // ============================================================================
 // Webex Bot Collections
 // ============================================================================
-
-/** Single-use nonce for Webex user ↔ Keycloak linking (expires after 10 minutes). */
-export interface WebexLinkNonce {
-  nonce: string;
-  webex_user_id: string;
-  created_at: Date;
-  consumed?: boolean;
-}
 
 /** Operational metrics for Webex bot usage (space-level aggregates). */
 export interface WebexUserMetrics {

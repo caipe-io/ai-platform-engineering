@@ -37,8 +37,8 @@ jest.mock("@/lib/api-middleware", () => {
     requireOwnership: (...args: unknown[]) => mockRequireOwnership(...args),
     successResponse: (data: unknown, status = 200) => Response.json({ success: true, data }, { status }),
     validateEmail: () => true,
+    validateConversationId: () => true,
     validateRequired: jest.fn(),
-    validateUUID: () => true,
     withAuth: async (_request: NextRequest, handler: (...args: unknown[]) => Promise<Response>) =>
       handler(_request, user, session),
     withErrorHandler:

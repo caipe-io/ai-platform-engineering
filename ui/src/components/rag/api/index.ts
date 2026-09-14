@@ -272,6 +272,25 @@ export const ingestLocalFile = async (params: {
   return apiPostForm("/v1/ingest/local-file", form);
 };
 
+export const reuploadLocalFile = async (
+  datasourceId: string,
+  files: File[],
+  chunkSize?: number,
+  chunkOverlap?: number,
+): Promise<{
+  datasource_id: string;
+  job_id: string;
+  message: string;
+}> => {
+  const form = new FormData();
+  form.append("datasource_id", datasourceId);
+  files.forEach((file) => form.append("file", file));
+  if (chunkSize !== undefined) form.append("chunk_size", String(chunkSize));
+  if (chunkOverlap !== undefined)
+    form.append("chunk_overlap", String(chunkOverlap));
+  return apiPostForm("/v1/ingest/local-file/reupload", form);
+};
+
 export const reloadDataSource = async (
   datasourceId: string,
 ): Promise<{ datasource_id: string; message: string }> => {

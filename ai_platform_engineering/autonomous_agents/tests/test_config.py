@@ -6,6 +6,50 @@ import pytest
 from autonomous_agents.config import Settings
 
 
+def test_minimum_schedule_interval_defaults_to_thirty_minutes() -> None:
+    assert Settings().minimum_schedule_interval_seconds == 1800
+
+
+def test_minimum_schedule_interval_is_configurable_and_positive() -> None:
+    assert Settings(minimum_schedule_interval_seconds=600).minimum_schedule_interval_seconds == 600
+    with pytest.raises(pydantic.ValidationError):
+        Settings(minimum_schedule_interval_seconds=0)
+
+
+def test_webhook_overload_limits_are_configurable_and_positive() -> None:
+    settings = Settings(
+        webhook_max_payload_bytes=2048,
+        webhook_max_pending_per_task=30,
+        webhook_max_pending_per_owner=120,
+        webhook_max_pending_global=600,
+        webhook_max_pending_payload_bytes_global=4096,
+        webhook_max_concurrent_per_owner=12,
+        webhook_max_concurrent_global=60,
+    )
+    assert settings.webhook_max_payload_bytes == 2048
+    assert settings.webhook_max_pending_per_task == 30
+    assert settings.webhook_max_pending_per_owner == 120
+    assert settings.webhook_max_pending_global == 600
+    assert settings.webhook_max_pending_payload_bytes_global == 4096
+    assert settings.webhook_max_concurrent_per_owner == 12
+    assert settings.webhook_max_concurrent_global == 60
+
+    with pytest.raises(pydantic.ValidationError):
+        Settings(webhook_max_payload_bytes=0)
+    with pytest.raises(pydantic.ValidationError):
+        Settings(webhook_max_pending_per_task=0)
+    with pytest.raises(pydantic.ValidationError):
+        Settings(webhook_max_pending_per_owner=0)
+    with pytest.raises(pydantic.ValidationError):
+        Settings(webhook_max_pending_global=0)
+    with pytest.raises(pydantic.ValidationError):
+        Settings(webhook_max_pending_payload_bytes_global=0)
+    with pytest.raises(pydantic.ValidationError):
+        Settings(webhook_max_concurrent_per_owner=0)
+    with pytest.raises(pydantic.ValidationError):
+        Settings(webhook_max_concurrent_global=0)
+
+
 class TestDynamicAgentsTimeoutSettings:
     """Defaults and bounds for the dynamic-agents timeout fields."""
 

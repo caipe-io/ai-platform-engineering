@@ -18,7 +18,7 @@ function assertAllowedAdminPath(path: string): string {
 }
 
 function webexBotAdminBaseUrl(): string {
-  return (process.env.WEBEX_BOT_ADMIN_URL || "http://ai-platform-engineering-webex-bot:3002").replace(
+  return (process.env.WEBEX_BOT_ADMIN_URL || "http://webex-bot:3002").replace(
     /\/$/,
     ""
   );

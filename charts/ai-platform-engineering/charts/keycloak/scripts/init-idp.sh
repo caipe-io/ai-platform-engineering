@@ -673,7 +673,7 @@ caipe-platform|caipe-platform-dev-secret"
 
   if [ "${violations}" -gt 0 ]; then
     echo "[init-idp] Strict mode FAILED: ${violations} client(s) still accept dev placeholder secrets." >&2
-    echo "[init-idp] See https://github.com/cnoe-io/ai-platform-engineering/blob/main/docs/docs/security/rbac/secrets-bootstrap.md#production-hardening" >&2
+    echo "[init-idp] See https://github.com/caipe-io/ai-platform-engineering/blob/main/docs/docs/security/rbac/secrets-bootstrap.md#production-hardening" >&2
     return 1
   fi
 

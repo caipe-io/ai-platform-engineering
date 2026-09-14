@@ -65,7 +65,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ include "audit-service.imageRepository" (dict "root" . "repository" .Values.image.repository) }}:{{ include "audit-service.appVersion" . }}"
+          image: "{{ .Values.image.repository }}:{{ include "audit-service.appVersion" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

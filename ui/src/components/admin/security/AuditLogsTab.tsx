@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import type { AuditConversation } from "@/types/mongodb";
 import {
 Check,
@@ -371,7 +372,7 @@ export function AuditLogsTab({ onUserClick }: AuditLogsTabProps) {
             </div>
             <div className="flex items-center gap-3">
               <div>
-                <select
+                <Select
                   value={status}
                   onChange={(e) => setStatus(e.target.value)}
                   className="h-8 text-sm rounded-md border border-input bg-background px-3 py-1 text-foreground"
@@ -381,7 +382,7 @@ export function AuditLogsTab({ onUserClick }: AuditLogsTabProps) {
                       {opt.label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
               <label className="flex items-center gap-1.5 text-sm cursor-pointer">
                 <input

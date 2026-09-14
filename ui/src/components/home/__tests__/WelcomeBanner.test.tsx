@@ -2,14 +2,14 @@
  * Unit tests for WelcomeBanner component
  *
  * Tests:
- * - Renders personalized greeting with user's first name
- * - Renders generic greeting when no name provided
- * - Renders generic greeting when name is null
+ * - Renders personalized greeting with user's first name (from useSession)
+ * - Renders a natural time-of-day greeting when no session/name
  * - Uses "Good morning" before noon
  * - Uses "Good afternoon" between noon and 5pm
  * - Uses "Good evening" after 5pm
  * - Renders the data-testid for the banner
- * - Renders the tagline text
+ * - Keeps the greeting and welcome text in one compact row
+ * - Omits the previous question prompt
  */
 
 import React from 'react'
@@ -20,73 +20,119 @@ import { render, screen } from '@testing-library/react'
 // ============================================================================
 
 jest.mock('lucide-react', () => ({
-  Sparkles: (props: unknown) => <svg data-testid="icon-sparkles" {...props} />,
+  MoonStar: (props: unknown) => <svg data-testid="icon-moon-star" {...props} />,
   Settings: (props: unknown) => <svg data-testid="icon-settings" {...props} />,
+  Sun: (props: unknown) => <svg data-testid="icon-sun" {...props} />,
+  Sunrise: (props: unknown) => <svg data-testid="icon-sunrise" {...props} />,
+  Sunset: (props: unknown) => <svg data-testid="icon-sunset" {...props} />,
 }))
 
 jest.mock('@/lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }))
 
+let mockSession: { data: { user?: { name?: string | null } } | null } = { data: null }
+jest.mock('next-auth/react', () => ({
+  useSession: () => mockSession,
+}))
+
 // ============================================================================
 // Imports — after mocks
 // ============================================================================
 
-import { WelcomeBanner, getGreeting } from '../WelcomeBanner'
+import { WelcomeBanner, getGreeting, getSunPhase } from '../WelcomeBanner'
 
 // ============================================================================
 // Tests
 // ============================================================================
 
 describe('WelcomeBanner', () => {
+  beforeEach(() => {
+    mockSession = { data: null }
+  })
+
   it('renders personalized greeting with first name', () => {
-    render(<WelcomeBanner userName="Alice Johnson" />)
-    expect(screen.getByText('Welcome back, Alice')).toBeInTheDocument()
+    mockSession = { data: { user: { name: 'Alice Johnson' } } }
+    render(<WelcomeBanner />)
+    expect(screen.getByRole('heading')).toHaveTextContent(
+      /^(Good morning|Good afternoon|Good evening), Alice\.$/
+    )
   })
 
   it('renders personalized greeting for single name', () => {
-    render(<WelcomeBanner userName="Bob" />)
-    expect(screen.getByText('Welcome back, Bob')).toBeInTheDocument()
+    mockSession = { data: { user: { name: 'Bob' } } }
+    render(<WelcomeBanner />)
+    expect(screen.getByRole('heading')).toHaveTextContent(
+      /^(Good morning|Good afternoon|Good evening), Bob\.$/
+    )
   })
 
-  it('renders generic greeting when no name provided', () => {
+  it('renders generic greeting when no session', () => {
     render(<WelcomeBanner />)
-    expect(screen.getByText('Welcome to CAIPE')).toBeInTheDocument()
+    expect(screen.getByRole('heading')).toHaveTextContent(
+      /^(Good morning|Good afternoon|Good evening)\.$/
+    )
   })
 
   it('renders generic greeting when name is null', () => {
-    render(<WelcomeBanner userName={null} />)
-    expect(screen.getByText('Welcome to CAIPE')).toBeInTheDocument()
+    mockSession = { data: { user: { name: null } } }
+    render(<WelcomeBanner />)
+    expect(screen.getByRole('heading')).toHaveTextContent(
+      /^(Good morning|Good afternoon|Good evening)\.$/
+    )
   })
 
   it('renders the data-testid', () => {
-    render(<WelcomeBanner userName="Test" />)
+    mockSession = { data: { user: { name: 'Test' } } }
+    render(<WelcomeBanner />)
     expect(screen.getByTestId('welcome-banner')).toBeInTheDocument()
   })
 
-  it('uses the breathing gradient without pointer-position overrides', () => {
-    render(<WelcomeBanner userName="Test" />)
+  it('exposes the local sun phase without pointer-position overrides', () => {
+    mockSession = { data: { user: { name: 'Test' } } }
+    render(<WelcomeBanner />)
     const banner = screen.getByTestId('welcome-banner')
     expect(banner).toHaveClass('welcome-banner')
+    expect(banner).toHaveAttribute('data-sun-phase')
     expect(banner.style.getPropertyValue('--welcome-pointer-x')).toBe('')
     expect(banner.style.getPropertyValue('--welcome-pointer-y')).toBe('')
   })
 
-  it('renders the sparkles icon', () => {
+  it('renders the icon for the current sun phase', () => {
     render(<WelcomeBanner />)
-    expect(screen.getByTestId('icon-sparkles')).toBeInTheDocument()
+    const phase = screen.getByTestId('welcome-banner').getAttribute('data-sun-phase')
+    const expectedIcon = {
+      dawn: 'icon-sunrise',
+      day: 'icon-sun',
+      sunset: 'icon-sunset',
+      night: 'icon-moon-star',
+    }[phase || 'night']
+    expect(screen.getByTestId(expectedIcon)).toBeInTheDocument()
   })
 
-  it('renders the tagline', () => {
+  it('keeps the personalized greeting in one compact row', () => {
+    mockSession = { data: { user: { name: 'Test User' } } }
     render(<WelcomeBanner />)
-    expect(
-      screen.getByText('What do you want to get done today?'),
-    ).toBeInTheDocument()
+    const copy = screen.getByTestId('welcome-banner-copy')
+    expect(copy).toContainElement(screen.getByRole('heading'))
+    expect(screen.getByRole('heading')).toHaveTextContent(
+      /^(Good morning|Good afternoon|Good evening), Test\.$/
+    )
+    expect(copy.querySelector('svg')).toBeInTheDocument()
+    expect(copy).toHaveClass('flex', 'items-center')
+    expect(screen.queryByText(/Welcome back/)).not.toBeInTheDocument()
+  })
+
+  it('uses a taller banner without restoring the previous question prompt', () => {
+    render(<WelcomeBanner />)
+    expect(screen.getByTestId('welcome-banner')).toHaveClass('px-4', 'py-3')
+    expect(screen.queryByText('What do you want to get done today?')).not.toBeInTheDocument()
   })
 
   it('renders preferences shortcut when callback provided', () => {
     const handler = jest.fn()
-    render(<WelcomeBanner userName="Test" onOpenPreferences={handler} />)
+    mockSession = { data: { user: { name: 'Test' } } }
+    render(<WelcomeBanner onOpenPreferences={handler} />)
     const btn = screen.getByTestId('preferences-shortcut')
     expect(btn).toBeInTheDocument()
     btn.click()
@@ -94,7 +140,8 @@ describe('WelcomeBanner', () => {
   })
 
   it('does not render preferences shortcut when no callback', () => {
-    render(<WelcomeBanner userName="Test" />)
+    mockSession = { data: { user: { name: 'Test' } } }
+    render(<WelcomeBanner />)
     expect(screen.queryByTestId('preferences-shortcut')).not.toBeInTheDocument()
   })
 
@@ -138,11 +185,11 @@ describe('getGreeting', () => {
     expect(getGreeting()).toBe('Good evening')
   })
 
-  it('returns "Good morning" at hour 0 (midnight)', () => {
+  it('returns "Good evening" at hour 0 (midnight)', () => {
     jest.spyOn(global, 'Date').mockImplementation(
       () => ({ getHours: () => 0 }) as unknown
     )
-    expect(getGreeting()).toBe('Good morning')
+    expect(getGreeting()).toBe('Good evening')
   })
 
   it('returns "Good morning" at hour 11', () => {
@@ -178,5 +225,29 @@ describe('getGreeting', () => {
       () => ({ getHours: () => 23 }) as unknown
     )
     expect(getGreeting()).toBe('Good evening')
+  })
+})
+
+describe('getSunPhase', () => {
+  const originalDate = global.Date
+
+  afterEach(() => {
+    global.Date = originalDate
+  })
+
+  it.each([
+    [5, 'dawn'],
+    [8, 'dawn'],
+    [9, 'day'],
+    [16, 'day'],
+    [17, 'sunset'],
+    [19, 'sunset'],
+    [20, 'night'],
+    [0, 'night'],
+  ])('maps hour %i to the %s palette', (hour, expected) => {
+    jest.spyOn(global, 'Date').mockImplementation(
+      () => ({ getHours: () => hour }) as unknown
+    )
+    expect(getSunPhase()).toBe(expected)
   })
 })

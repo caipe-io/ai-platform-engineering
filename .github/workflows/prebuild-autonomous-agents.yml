@@ -3,7 +3,7 @@ description: "Build and push Autonomous Agents Docker image for prebuild branche
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened]
     paths:
       - 'ai_platform_engineering/autonomous_agents/**'
       - 'build/Dockerfile.autonomous-agents'
@@ -32,7 +32,7 @@ on:
         default: ''
 
 env:
-  IMAGE_NAME: ${{ github.repository_owner }}/prebuild/caipe-autonomous-agents
+  IMAGE_NAME: ${{ github.repository_owner }}/caipe-autonomous-agents
 
 permissions:
   contents: write
@@ -58,7 +58,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -149,10 +149,12 @@ jobs:
           images: ghcr.io/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ env.PREBUILD_TAG }}
+          labels: |
+            io.cnoe.prebuild.branch=${{ env.BRANCH_BARE }}
 
       - name: Set up QEMU
         if: steps.eligibility.outputs.should_build == 'true'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
 
       - name: Build and Push Autonomous Agents Docker image
         if: steps.eligibility.outputs.should_build == 'true'
@@ -185,51 +187,3 @@ jobs:
           ref: ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.compute_tag.outputs.prebuild_tag }}
           status: ${{ steps.build.outcome == 'success' && 'published' || 'failed' }}
           artifact_suffix: final
-
-  cleanup-images:
-    runs-on: ubuntu-latest
-    if: github.event.action == 'closed' && startsWith(github.event.pull_request.head.ref, 'prebuild/')
-    permissions:
-      contents: read
-      packages: write
-    env:
-      OWNER: ${{ github.repository_owner }}
-      PACKAGE_NAME: prebuild/caipe-autonomous-agents
-    steps:
-      - name: Delete prebuild images for branch
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        with:
-          script: |
-            const owner = process.env.OWNER;
-            const rawBranch = process.env.HEAD_REF || '';
-            const branchNoPrefix = rawBranch.startsWith('prebuild/') ? rawBranch.substring('prebuild/'.length) : rawBranch;
-            const sanitized = branchNoPrefix.replace(/\//g, '-');
-            const prefix = `${sanitized}-`;
-            const packageName = process.env.PACKAGE_NAME;
-            const packageType = 'container';
-            try {
-              const versions = await github.paginate(github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg, {
-                org: owner,
-                package_type: packageType,
-                package_name: packageName,
-                per_page: 100,
-              });
-              const toDelete = versions.filter(v => (v.metadata?.container?.tags || []).some(t => t.startsWith(prefix)));
-              for (const v of toDelete) {
-                await github.rest.packages.deletePackageVersionForOrg({
-                  org: owner,
-                  package_type: packageType,
-                  package_name: packageName,
-                  package_version_id: v.id,
-                });
-              }
-              core.info(`Deleted ${toDelete.length} versions for ${packageName} with tag prefix ${prefix}`);
-            } catch (e) {
-              if (e.status === 404) {
-                core.info(`Package ${packageName} not found in org ${owner}, skipping.`);
-              } else {
-                throw e;
-              }
-            }

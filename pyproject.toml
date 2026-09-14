@@ -1,9 +1,9 @@
 [project]
 name = "ai-platform-engineering"
-version = "0.6.0"
+version = "1.1.0-dev.4"
 description = "Multi-Agent Collaboration & Workflow Automation - AI agents collaborating across tools and teams to deliver high quality results"
 authors = [
-  {name = "CNOE Contributors"}
+  {name = "CAIPE Contributors"}
 ]
 license = {text = "Apache-2.0"}
 readme = "README.md"

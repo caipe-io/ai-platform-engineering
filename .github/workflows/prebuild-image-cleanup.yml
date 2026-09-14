@@ -1,8 +1,9 @@
-name: "[Prebuild] Docker Image Cleanup"
+name: "[Prebuild] Artifact Cleanup"
+description: "Delete temporary Docker images and Helm charts when prebuild testing ends"
 
 on:
   pull_request:
-    types: [closed]
+    types: [closed, unlabeled]
 
 permissions:
   contents: read
@@ -14,7 +15,7 @@ concurrency:
 jobs:
   load-packages:
     runs-on: ubuntu-latest
-    if: startsWith(github.event.pull_request.head.ref, 'prebuild/')
+    if: github.event.action == 'closed' && startsWith(github.event.pull_request.head.ref, 'prebuild/')
     outputs:
       packages: ${{ steps.packages.outputs.packages }}
     steps:
@@ -41,19 +42,20 @@ jobs:
           packages=$(jq -sc '
             (
               [
-                "prebuild/caipe-audit-service",
-                "prebuild/caipe-ui",
-                "prebuild/caipe-dynamic-agents",
-                "prebuild/openfga-authz-bridge",
-                "prebuild/caipe-rag-agent-ontology",
-                "prebuild/caipe-rag-ingestors",
-                "prebuild/caipe-rag-server",
-                "prebuild/caipe-scheduler",
-                "prebuild/caipe-cron-runner",
-                "prebuild/skill-scanner",
-                "prebuild/caipe-slack-bot",
-                "prebuild/caipe-webex-bot"
-              ] + ([.[].mcp_agents[]] | unique | map("prebuild/mcp-\(.)"))
+                "caipe-audit-service",
+                "caipe-autonomous-agents",
+                "caipe-ui",
+                "caipe-dynamic-agents",
+                "openfga-authz-bridge",
+                "caipe-rag-agent-ontology",
+                "caipe-rag-ingestors",
+                "caipe-rag-server",
+                "caipe-scheduler",
+                "caipe-cron-runner",
+                "skill-scanner",
+                "caipe-slack-bot",
+                "caipe-webex-bot"
+              ] + ([.[].mcp_agents[]] | unique | map("mcp-\(.)"))
               | unique
             )
           ' head/.github/agents.json base/.github/agents.json)
@@ -84,3 +86,108 @@ jobs:
           head_ref: ${{ github.event.pull_request.head.ref }}
           registry_username: ${{ github.actor }}
           registry_token: ${{ github.token }}
+
+  cleanup-charts:
+    name: Cleanup Prebuild Charts
+    runs-on: ubuntu-latest
+    if: |
+      (
+        github.event.action == 'closed' &&
+        (
+          startsWith(github.event.pull_request.head.ref, 'prebuild/') ||
+          contains(github.event.pull_request.labels.*.name, 'helm-prerelease')
+        )
+      ) ||
+      (
+        github.event.action == 'unlabeled' &&
+        github.event.label.name == 'helm-prerelease'
+      )
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.CI_BUILD_APP_ID }}
+          private-key: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY }}
+          permission-packages: write
+
+      - name: Delete prebuild chart versions
+        env:
+          BRANCH_NAME: ${{ github.event.pull_request.head.ref }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type }}
+        run: |
+          CLEAN_BRANCH=$(echo "${BRANCH_NAME#prebuild/}" | tr '/' '-' | tr '_' '-' | tr '[:upper:]' '[:lower:]')
+
+          if [ "$OWNER_TYPE" = "User" ]; then
+            PACKAGE_OWNER_PATH="users/${OWNER}"
+          else
+            PACKAGE_OWNER_PATH="orgs/${OWNER}"
+          fi
+
+          cleanup_chart() {
+            local CHART_NAME=$1
+            local PACKAGE_NAME="charts/${CHART_NAME}"
+            local ENCODED_PACKAGE_NAME
+            local ALL_VERSIONS_FILE="${CHART_NAME}_all_versions.json"
+            local VERSIONS_FILE="${CHART_NAME}_versions.json"
+            local ERROR_FILE="${CHART_NAME}_versions.err"
+
+            ENCODED_PACKAGE_NAME="${PACKAGE_NAME//\//%2F}"
+
+            if ! gh api \
+              "/${PACKAGE_OWNER_PATH}/packages/container/${ENCODED_PACKAGE_NAME}/versions" \
+              > "${ALL_VERSIONS_FILE}" 2> "${ERROR_FILE}"; then
+              if grep -q "HTTP 404" "${ERROR_FILE}"; then
+                echo "Package ${PACKAGE_NAME} not found, skipping"
+                rm -f "${ALL_VERSIONS_FILE}" "${VERSIONS_FILE}" "${ERROR_FILE}"
+                return 0
+              fi
+
+              echo "Failed to list package versions for ${PACKAGE_NAME}"
+              cat "${ERROR_FILE}"
+              rm -f "${ALL_VERSIONS_FILE}" "${VERSIONS_FILE}" "${ERROR_FILE}"
+              return 1
+            fi
+
+            jq --arg needle "-${CLEAN_BRANCH}-" \
+              '.[]
+              | .metadata.container.tags as $tags
+              | select($tags[]? | contains($needle))
+              | {
+                  id: .id,
+                  tags: $tags,
+                  safe: ([$tags[]? | contains($needle)] | all)
+                }' \
+              "${ALL_VERSIONS_FILE}" > "${VERSIONS_FILE}"
+            rm -f "${ALL_VERSIONS_FILE}" "${ERROR_FILE}"
+
+            if [ -s "${VERSIONS_FILE}" ]; then
+              if jq -e 'select(.safe == false)' "${VERSIONS_FILE}" >/dev/null; then
+                echo "Refusing to delete ${CHART_NAME} version carrying a non-prebuild tag"
+                cat "${VERSIONS_FILE}"
+                rm -f "${VERSIONS_FILE}"
+                return 1
+              fi
+
+              jq -c '.' "${VERSIONS_FILE}" | while IFS= read -r version; do
+                VERSION_ID=$(echo "$version" | jq -r '.id')
+                TAGS=$(echo "$version" | jq -r '.tags | join(", ")')
+                echo "Deleting ${CHART_NAME} version $VERSION_ID with tags: $TAGS"
+                gh api \
+                  --method DELETE \
+                  "/${PACKAGE_OWNER_PATH}/packages/container/${ENCODED_PACKAGE_NAME}/versions/${VERSION_ID}"
+              done
+            else
+              echo "No ${CHART_NAME} prebuild versions found for branch: $CLEAN_BRANCH"
+            fi
+
+            rm -f "${VERSIONS_FILE}"
+          }
+
+          cleanup_chart "rag-stack"
+          cleanup_chart "ai-platform-engineering"

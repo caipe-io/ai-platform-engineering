@@ -11,7 +11,8 @@ const RELEASES_DIR = "docs/releases";
 const CONTENTS_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${RELEASES_DIR}?ref=${GITHUB_REF}`;
 const RAW_BASE_URL = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_REF}/${RELEASES_DIR}`;
 
-// Curated release blog posts are named `YYYY-MM-DD-release-X-Y-Z.md`.
+// One curated post per minor series, named `YYYY-MM-DD-release-X-Y-0.md`. Retired
+// per-patch posts share the shape, so only the major and minor are used.
 const RELEASE_FILE_PATTERN = /release-(\d+)-(\d+)-(\d+)\.mdx?$/i;
 
 const LISTING_TTL_MS = 10 * 60 * 1000;
@@ -59,7 +60,7 @@ function buildReleaseFile(name: string, rawUrl: string, localPath?: string): Rel
   if (!match) return null;
   return {
     name,
-    version: [match[1], match[2], match[3]].map(Number).join("."),
+    version: `${Number(match[1])}.${Number(match[2])}.0`,
     rawUrl,
     localPath,
   };
@@ -125,9 +126,21 @@ async function getReleaseFiles(): Promise<ReleaseFile[]> {
   return files;
 }
 
+/** The `x.y.0` post that covers a version's whole minor series. */
+function seriesVersion(value: string): string {
+  const [major = "0", minor = "0"] = value.split(".");
+  return `${Number(major)}.${Number(minor)}.0`;
+}
+
+/**
+ * Release posts are published once per minor series, so patches and prereleases
+ * resolve to their series post. A version whose series has no post yet stays
+ * unmatched rather than borrowing notes from an earlier series.
+ */
 function selectRelease(files: ReleaseFile[], requestedBase: string): ReleaseFile | null {
   if (files.length === 0) return null;
-  return files.find((file) => file.version === requestedBase) ?? null;
+  const series = seriesVersion(requestedBase);
+  return files.find((file) => file.version === series) ?? null;
 }
 
 async function readReleaseContent(file: ReleaseFile): Promise<{ body: string; source: "github" | "local" } | null> {

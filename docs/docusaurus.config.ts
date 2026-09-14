@@ -18,6 +18,45 @@ const versionsConfigPath = path.join(__dirname, 'versions-config.json');
 const versionsConfig: VersionsConfig | null = fs.existsSync(versionsConfigPath)
   ? (JSON.parse(fs.readFileSync(versionsConfigPath, 'utf8')) as VersionsConfig)
   : null;
+const currentDocsPrefix = versionsConfig?.versions.current.path
+  ? `/docs/${versionsConfig.versions.current.path}`
+  : '/docs';
+
+// Release notes are published once per minor series, under the series' `x.y.0` slug, and
+// cover everything since the previous minor. Every retired per-patch post and standalone
+// migration guide had a live public URL, so each redirects to the post that now covers it.
+const patchSlugs = (minor: string, first: number, last: number) =>
+  Array.from({length: last - first + 1}, (_, i) => `release-${minor}.${first + i}`);
+
+// Pre-0.5 upgrade guides shipped as their own pages. The 0.4.0 post carries the only guide
+// still worth reading (0.3.x → 0.4.0), so they all land there.
+const legacyMigrationSlugs = [
+  'migration-0.2.41-to-0.3.2',
+  'migration-0.3.x-to-0.4.0',
+  ...Array.from({length: 8}, (_, i) => `migration-0.4.${i}-to-0.4.${i + 1}`),
+];
+
+const currentReleaseSlugs = ['release-0.4.0', 'release-0.5.0', 'release-0.6.0', 'release-1.0.0'];
+
+// Keyed by the surviving post; the values are slugs that no longer resolve to a page. A
+// current slug must never appear in its own list, or it would redirect to itself.
+const retiredReleaseSlugs: Record<string, string[]> = {
+  'release-0.4.0': ['release-0.3.2', ...patchSlugs('0.4', 1, 18), ...legacyMigrationSlugs],
+  'release-0.5.0': [...patchSlugs('0.5', 1, 69), 'release-0.5.52-upgrade-guide'],
+};
+
+const releaseRedirects = [
+  ...Object.entries(retiredReleaseSlugs).map(([current, retired]) => ({
+    to: `/releases/${current}`,
+    from: retired.flatMap((slug) => [`/releases/${slug}`, `/blog/releases/${slug}`]),
+  })),
+  // Surviving posts kept their slug but moved out of `/blog`.
+  ...currentReleaseSlugs.map((slug) => ({
+    to: `/releases/${slug}`,
+    from: [`/blog/releases/${slug}`],
+  })),
+  {from: '/blog/releases', to: '/releases'},
+];
 
 const config: Config = {
   title: 'CAIPE',
@@ -32,6 +71,9 @@ const config: Config = {
   // GitHub Pages serves the project from the custom domain root.
   url: 'https://caipe.io',
   baseUrl: '/',
+  customFields: {
+    currentDocsPrefix,
+  },
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
@@ -72,31 +114,10 @@ const config: Config = {
           // historically published docs links also omitted the /docs route.
           {from: '/getting-started/quick-start', to: '/docs/getting-started/quick-start'},
           {from: '/knowledge_bases/graph_rag', to: '/docs/knowledge_bases/'},
+          {from: '/docs/features/custom-agents', to: `${currentDocsPrefix}/features/agent-builder`},
           // /docs/index has no real page; redirect to Quick Start
           {from: '/docs/index', to: '/docs/getting-started/quick-start'},
-          // Old docs-based release notes → new blog posts
-          {from: '/releases/release-0.4.9', to: '/blog/releases/release-0.4.9'},
-          {from: '/releases/release-0.4.8', to: '/blog/releases/release-0.4.8'},
-          {from: '/releases/release-0.4.7', to: '/blog/releases/release-0.4.7'},
-          {from: '/releases/release-0.4.6', to: '/blog/releases/release-0.4.6'},
-          {from: '/releases/release-0.4.5', to: '/blog/releases/release-0.4.5'},
-          {from: '/releases/release-0.4.4', to: '/blog/releases/release-0.4.4'},
-          {from: '/releases/release-0.4.3', to: '/blog/releases/release-0.4.3'},
-          {from: '/releases/release-0.4.2', to: '/blog/releases/release-0.4.2'},
-          {from: '/releases/release-0.4.1', to: '/blog/releases/release-0.4.1'},
-          {from: '/releases/release-0.4.0', to: '/blog/releases/release-0.4.0'},
-          // Old migration guide docs → embedded in release blog posts
-          {from: '/releases/migration-0.4.7-to-0.4.8', to: '/blog/releases/release-0.4.8'},
-          {from: '/releases/migration-0.4.6-to-0.4.7', to: '/blog/releases/release-0.4.7'},
-          {from: '/releases/migration-0.4.5-to-0.4.6', to: '/blog/releases/release-0.4.6'},
-          {from: '/releases/migration-0.4.4-to-0.4.5', to: '/blog/releases/release-0.4.5'},
-          {from: '/releases/migration-0.4.3-to-0.4.4', to: '/blog/releases/release-0.4.4'},
-          {from: '/releases/migration-0.4.2-to-0.4.3', to: '/blog/releases/release-0.4.3'},
-          {from: '/releases/migration-0.4.1-to-0.4.2', to: '/blog/releases/release-0.4.2'},
-          {from: '/releases/migration-0.4.0-to-0.4.1', to: '/blog/releases/release-0.4.1'},
-          {from: '/releases/migration-0.3.x-to-0.4.0', to: '/blog/releases/release-0.4.0'},
-          {from: '/releases/migration-0.2.41-to-0.3.2', to: '/blog/releases/release-0.3.2'},
-          {from: '/releases', to: '/blog/releases'},
+          ...releaseRedirects,
         ],
       },
     ],
@@ -105,7 +126,7 @@ const config: Config = {
       {
         id: 'releases',
         path: 'releases',
-        routeBasePath: 'blog/releases',
+        routeBasePath: 'releases',
         blogTitle: 'Releases',
         blogDescription: 'CAIPE release notes and upgrade guides',
         showReadingTime: false,
@@ -126,7 +147,7 @@ const config: Config = {
           routeBasePath: '/docs',
           sidebarPath: './sidebars.ts',
           editUrl:
-            'https://github.com/cnoe-io/ai-platform-engineering/tree/main/docs',
+            'https://github.com/caipe-io/ai-platform-engineering/tree/main/docs',
           ...(versionsConfig
             ? {
                 lastVersion: versionsConfig.lastVersion,
@@ -143,7 +164,7 @@ const config: Config = {
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/cnoe-io/ai-platform-engineering/tree/main/docs',
+            'https://github.com/caipe-io/ai-platform-engineering/tree/main/docs',
           // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
@@ -176,24 +197,24 @@ const config: Config = {
           position: 'left',
           label: 'Docs',
         },
-        ...(versionsConfig ? [{
-          type: 'docsVersionDropdown' as const,
-          position: 'left' as const,
-          dropdownActiveClassDisabled: true,
-        }] : []),
         {to: '/features', label: 'Features', position: 'left'},
         {to: '/roadmap', label: 'Roadmap', position: 'left'},
         {to: '/community', label: 'Community', position: 'left'},
-        {to: '/blog/releases', label: 'Releases', position: 'left'},
+        {to: '/releases', label: 'Releases', position: 'left'},
         {to: '/blog', label: 'Blog', position: 'left'},
+        ...(versionsConfig ? [{
+          type: 'docsVersionDropdown' as const,
+          position: 'right' as const,
+          dropdownActiveClassDisabled: true,
+        }] : []),
         {
-          href: 'https://github.com/cnoe-io/ai-platform-engineering',
+          href: 'https://github.com/caipe-io/ai-platform-engineering',
           label: '⭐ Star Repo',
           position: 'right',
           className: 'navbar-star-btn',
         },
         {
-          href: 'https://github.com/cnoe-io/ai-platform-engineering',
+          href: 'https://github.com/caipe-io/ai-platform-engineering',
           position: 'right',
           className: 'header-github-link',
           'aria-label': 'GitHub repository',
@@ -224,7 +245,7 @@ const config: Config = {
             },
             {
               label: 'Releases',
-              to: '/blog/releases',
+              to: '/releases',
             },
           ],
         },
@@ -233,7 +254,7 @@ const config: Config = {
           items: [
             {
               label: 'GitHub Repository',
-              href: 'https://github.com/cnoe-io/ai-platform-engineering',
+              href: 'https://github.com/caipe-io/ai-platform-engineering',
             },
             {
               label: 'Project Roadmap',
@@ -241,11 +262,11 @@ const config: Config = {
             },
             {
               label: 'Github Issue Tracker',
-              href: 'https://github.com/cnoe-io/ai-platform-engineering/issues',
+              href: 'https://github.com/caipe-io/ai-platform-engineering/issues',
             },
             {
               label: 'Community Meeting',
-              href: 'https://github.com/cnoe-io/ai-platform-engineering#agentic-ai-sig-community',
+              href: 'https://caipe.io/community',
             },
             {
               label: 'Slack Channel',
@@ -253,11 +274,11 @@ const config: Config = {
             },
             {
               label: 'Meeting Recordings',
-              href: 'https://www.youtube.com/@cnoe-community',
+              href: 'https://www.youtube.com/@caipe-io',
             },
             {
-              label: 'CNOE Agentic AI SIG Governance',
-              href: 'https://github.com/cnoe-io/governance/tree/main/sigs/agentic-ai',
+              label: 'Governance',
+              href: 'https://github.com/caipe-io/governance',
             }
           ],
         },
@@ -273,8 +294,8 @@ const config: Config = {
               href: 'https://github.com/cnoe-io/cnoe-agent-utils',
             },
             {
-              label: 'CNOE.io',
-              href: 'https://cnoe.io',
+              label: 'CAIPE.io',
+              href: 'https://caipe.io',
             },
           ],
         },

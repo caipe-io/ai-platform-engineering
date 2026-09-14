@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Threaded Webex responses for denials and Dynamic Agent streaming."""
 
@@ -21,6 +21,7 @@ from .a2a_client import (
 )
 from .app import WebexMessageResult
 from .utils.chat_envelope import augment_webex_client_context
+from .utils.thread_ownership import ThreadOwnerCache, get_default_thread_owner_cache
 from .utils.user_messages import FRIENDLY_REASON_MESSAGES, GENERIC_REQUEST_DENIED_MESSAGE
 from .utils.webex_runtime_policy import should_post_denial_notice
 
@@ -28,9 +29,8 @@ logger = logging.getLogger("caipe.webex_bot.webex_responder")
 
 WEBEX_API_BASE_URL = "https://webexapis.com/v1"
 # Avoid spamming duplicate 1:1 linking cards when the user retries before completing SSO.
-# Webex link HMACs expire after 10 minutes in the UI BFF. Keep the resend
+# The OAuth state cookie set by the UI BFF expires after 10 minutes. Keep the resend
 # guard shorter so we never point users at an expired card.
-# assisted-by Codex Codex-sonnet-4-6
 _LINKING_CARD_COOLDOWN_SECONDS = 9 * 60
 _recent_linking_cards_sent: dict[str, float] = {}
 
@@ -173,8 +173,35 @@ class WebexResponder:
         if not room_id or not parent_id:
             logger.warning("Cannot send Webex reply without room_id and parent_id")
             return
-        if result.reason_code == "WEBEX_USER_NOT_LINKED" and result.linking_url:
-            await self._reply_with_private_linking_card(event, room_id=room_id, parent_id=parent_id, result=result)
+        if result.reason_code == "WEBEX_USER_NOT_LINKED":
+            if result.linking_url:
+                await self._reply_with_private_linking_card(
+                    event, room_id=room_id, parent_id=parent_id, result=result
+                )
+                return
+            # Linking URL minting failed (e.g. misconfigured base URL in
+            # production, which must be HTTPS) — no DM to send. Fall back to
+            # a threaded text reply so explicit invocations are never met
+            # with silence, mirroring Slack's unlinked_fallback admin-contact
+            # copy.
+            if not should_post_denial_notice(
+                silence_env=False,
+                explicit_invocation=result.explicit_invocation,
+            ):
+                logger.info(
+                    "Suppressing Webex denial reply reason=%s explicit_invocation=%s",
+                    result.reason_code,
+                    result.explicit_invocation,
+                )
+                return
+            await self._reply_to_thread(
+                room_id=room_id,
+                parent_id=parent_id,
+                markdown=(
+                    "Your Webex account could not be linked because the bot is "
+                    "not configured to mint linking URLs. Please contact your admin."
+                ),
+            )
             return
 
         if not should_post_denial_notice(
@@ -306,12 +333,14 @@ class WebexThreadedStreamDispatcher:
         webex_api: WebexApiProtocol | None = None,
         sse_client: WebexSSEClient | None = None,
         update_every_chars: int = 240,
+        thread_owner_cache: ThreadOwnerCache | None = None,
     ) -> None:
         self._webex_api = webex_api or WebexRestApi()
         self._sse_client = sse_client or WebexSSEClient(
             os.environ.get("CAIPE_API_URL", "http://caipe-ui:3000")
         )
         self._update_every_chars = max(1, update_every_chars)
+        self._thread_owner_cache = thread_owner_cache or get_default_thread_owner_cache()
 
     async def __call__(self, payload: dict[str, Any]) -> None:
         await asyncio.to_thread(self._dispatch_sync, payload)
@@ -325,14 +354,12 @@ class WebexThreadedStreamDispatcher:
         agent_id = str(payload.get("agent_id") or "")
         text = str(payload.get("text") or "")
         obo_token = str(payload.get("obo_token") or "")
+        is_direct = bool(payload.get("is_direct") or False)
         if not all((room_id, message_id, parent_id, space_id, agent_id, text, obo_token)):
             raise ValueError("Webex threaded stream dispatch payload is missing required fields")
 
-        reply_id = self._webex_api.create_message(
-            room_id=room_id,
-            parent_id=parent_id,
-            markdown=_agent_reply_markdown(agent_id, "Working on it..."),
-        )
+        t0 = time.monotonic()
+        reply_id: str | None = None
         accumulated = ""
         last_sent_len = 0
 
@@ -353,6 +380,7 @@ class WebexThreadedStreamDispatcher:
                     "webex_space_id": space_id,
                     "webex_message_id": parent_id,
                     "webex_room_id": room_id,
+                    "webex_is_direct": is_direct,
                 },
                 bearer_token=obo_token,
             )
@@ -360,6 +388,49 @@ class WebexThreadedStreamDispatcher:
                 conversation.get("conversation_id")
                 or space_message_to_conversation_id(space_id, parent_id)
             )
+
+            # Thread ownership: once an agent has responded in this thread,
+            # keep routing follow-ups to it even if the space's agent route
+            # changes later — mirrors Slack's thread-owner pinning. Only
+            # replies (never the root message) look up an existing owner;
+            # thread_parent_id is populated exclusively on true replies.
+            # Resolved before the placeholder message is created so the
+            # first thing users see already shows the pinned/owner agent,
+            # instead of flashing the reconfigured route and self-correcting.
+            conv_metadata = conversation.get("metadata") or {}
+            thread_key = f"{space_id}:{parent_id}"
+            if thread_parent_id:
+                owner_id = self._thread_owner_cache.get(thread_key) or conv_metadata.get(
+                    "thread_owner_agent_id"
+                )
+                if owner_id and owner_id != agent_id:
+                    logger.info(
+                        "Webex thread space=%s parent=%s owned by agent=%s, "
+                        "overriding requested agent=%s",
+                        space_id,
+                        parent_id,
+                        owner_id,
+                        agent_id,
+                    )
+                    agent_id = owner_id
+
+            reply_id = self._webex_api.create_message(
+                room_id=room_id,
+                parent_id=parent_id,
+                markdown=_agent_reply_markdown(agent_id, "Working on it..."),
+            )
+
+            self._thread_owner_cache.set(thread_key, agent_id)
+            if not conv_metadata.get("thread_owner_agent_id"):
+                try:
+                    self._sse_client.update_conversation_metadata(
+                        conversation_id,
+                        {"thread_owner_agent_id": agent_id},
+                        bearer_token=obo_token,
+                    )
+                except Exception:  # noqa: BLE001 - metadata persistence is best-effort
+                    logger.warning("Failed to persist Webex thread owner metadata")
+
             client_context = {
                 "source": "webex",
                 "surface": "webex",
@@ -409,9 +480,10 @@ class WebexThreadedStreamDispatcher:
                 space_id,
                 exc.agent_id,
             )
-            self._webex_api.update_message(
-                message_id=reply_id,
+            self._post_or_update_reply(
+                reply_id=reply_id,
                 room_id=room_id,
+                parent_id=parent_id,
                 markdown=_agent_reply_markdown(
                     agent_id,
                     (
@@ -423,9 +495,10 @@ class WebexThreadedStreamDispatcher:
             return
         except Exception as exc:
             logger.warning("Webex threaded stream dispatch failed (type=%s)", type(exc).__name__)
-            self._webex_api.update_message(
-                message_id=reply_id,
+            self._post_or_update_reply(
+                reply_id=reply_id,
                 room_id=room_id,
+                parent_id=parent_id,
                 markdown=_agent_reply_markdown(
                     agent_id,
                     "I could not complete the request. Please try again.",
@@ -439,6 +512,90 @@ class WebexThreadedStreamDispatcher:
             room_id=room_id,
             markdown=_agent_reply_markdown(agent_id, final_markdown),
         )
+
+        # Persist per-turn message rows for stats/linking — only reached on a
+        # genuine successful response (denied/error dispatches return above).
+        self._record_message_turns(
+            conversation_id=conversation_id,
+            space_id=space_id,
+            room_id=room_id,
+            parent_id=parent_id,
+            message_id=message_id,
+            agent_id=agent_id,
+            is_direct=is_direct,
+            response_time_ms=int((time.monotonic() - t0) * 1000),
+            bearer_token=obo_token,
+        )
+
+    def _post_or_update_reply(
+        self, *, reply_id: str | None, room_id: str, parent_id: str, markdown: str
+    ) -> None:
+        """Surface an error, editing the placeholder if it exists or posting fresh otherwise.
+
+        ``reply_id`` is ``None`` when the failure happened while resolving
+        thread ownership/conversation setup, before the placeholder message
+        was created.
+        """
+        if reply_id:
+            self._webex_api.update_message(message_id=reply_id, room_id=room_id, markdown=markdown)
+        else:
+            self._webex_api.create_message(room_id=room_id, parent_id=parent_id, markdown=markdown)
+
+    def _record_message_turns(
+        self,
+        *,
+        conversation_id: str,
+        space_id: str,
+        room_id: str,
+        parent_id: str,
+        message_id: str,
+        agent_id: str,
+        is_direct: bool = False,
+        response_time_ms: int | None = None,
+        bearer_token: str | None = None,
+    ) -> None:
+        """Persist per-turn message rows (metadata-only) for a Webex exchange.
+
+        Mirrors Slack's ``_record_message_turns``: Webex turn content lives in
+        Webex / the LangGraph checkpointer, so we do NOT duplicate it here. We
+        write two content-less ``messages`` rows — one ``user`` turn and one
+        ``assistant`` turn — carrying just the metadata admin stats need to
+        count Webex messages the same way as web and Slack (source, agent,
+        latency).
+        """
+        link_meta: dict[str, object] = {
+            "source": "webex",
+            "agent_id": agent_id,
+            "webex_space_id": space_id,
+            "webex_room_id": room_id,
+            "webex_thread_parent_id": parent_id,
+            "webex_message_id": message_id,
+            "webex_is_direct": is_direct,
+        }
+        base_id = f"webex-{conversation_id}-{message_id}"
+
+        try:
+            self._sse_client.add_message(
+                conversation_id=conversation_id,
+                message_id=f"{base_id}-user",
+                role="user",
+                metadata={**link_meta, "turn_id": f"{message_id}-user"},
+                bearer_token=bearer_token,
+            )
+            self._sse_client.add_message(
+                conversation_id=conversation_id,
+                message_id=f"{base_id}-assistant",
+                role="assistant",
+                metadata={
+                    **link_meta,
+                    "turn_id": f"{message_id}-assistant",
+                    "is_final": True,
+                    **({"latency_ms": response_time_ms} if response_time_ms is not None else {}),
+                },
+                bearer_token=bearer_token,
+            )
+        except Exception:  # noqa: BLE001 - best-effort telemetry; never break the Webex reply.
+            logger.warning("Failed to record Webex message turns for conversation=%s", conversation_id)
 
 
 def _thread_refs(event: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -552,13 +709,19 @@ def _app_name() -> str:
     return os.environ.get("APP_NAME", "CAIPE").strip() or "CAIPE"
 
 
+# Stable marker identifying bot-authored replies, independent of APP_NAME so
+# renaming the deployment does not orphan the recognition of older replies
+# already posted to a Webex thread.
+_BOT_REPLY_MARKER = "​<!-- caipe-agent-reply -->"
+
+
 def _agent_reply_markdown(agent_id: str, body: str) -> str:
     content = body.strip() or "Done."
+    app_name = _app_name()
     return (
-        f"**Agent:** `{agent_id}`\n\n"
         f"{content}\n\n"
-        "_Reply in this Webex thread to continue with this agent. If the route only "
-        "listens to mentions, mention the bot in your reply._"
+        f"_Agent: {agent_id}_ • **Mention @{app_name} to continue**"
+        f"{_BOT_REPLY_MARKER}"
     )
 
 
@@ -659,10 +822,12 @@ def _message_text(message: dict[str, Any]) -> str:
 
 def _is_webex_bot_reply(message: dict[str, Any]) -> bool:
     raw = str(message.get("markdown") or message.get("text") or "")
-    return (
-        "**Agent:**" in raw
-        or "Reply in this Webex thread to continue with this agent" in raw
-    )
+    if _BOT_REPLY_MARKER in raw:
+        return True
+    # Pre-upgrade replies lack the marker entirely — fall back to the old
+    # APP_NAME-dependent pattern so they're still recognized during the
+    # transition to marker-based detection.
+    return f"Mention @{_app_name()} to continue" in raw
 
 
 def _message_author(message: dict[str, Any]) -> str:

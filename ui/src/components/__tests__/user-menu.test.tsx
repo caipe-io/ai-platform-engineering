@@ -145,6 +145,10 @@ jest.mock("@/components/ticket/ReportProblemDialog", () => ({
     open ? <div data-testid="report-problem-dialog">ReportProblemDialog</div> : null,
 }));
 
+jest.mock("@/components/layout/ApplicationVersion", () => ({
+  ApplicationVersion: () => <div>Version: v0.6.0</div>,
+}));
+
 jest.mock("@/lib/utils", () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(" "),
 }));
@@ -227,6 +231,14 @@ describe("UserMenu", () => {
     expect(screen.queryByText("Settings")).not.toBeInTheDocument();
     expect(screen.getByText("About")).toBeInTheDocument();
     expect(screen.getByText("Sign Out")).toBeInTheDocument();
+  });
+
+  it("shows build information in About instead of the navigation footer", () => {
+    render(<UserMenu />);
+    fireEvent.click(screen.getByRole("button", { name: /user menu for John/i }));
+    fireEvent.click(screen.getByRole("button", { name: "About" }));
+
+    expect(screen.getByText("Version: v0.6.0")).toBeInTheDocument();
   });
 
   it("shows Admin badge and Personal Insights when role is admin and mongodb is enabled", () => {

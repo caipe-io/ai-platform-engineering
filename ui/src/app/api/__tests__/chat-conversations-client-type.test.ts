@@ -236,6 +236,65 @@ describe('GET /api/chat/conversations — client_type filtering', () => {
     ]));
   });
 
+  it('excludes api-origin conversations from the default listing', async () => {
+    mockGetServerSession.mockResolvedValue(userSession());
+
+    const conversationsCol = createMockCollection();
+    mockCollections['conversations'] = conversationsCol;
+
+    const req = makeRequest('/api/chat/conversations?page_size=100');
+    const res = await GET(req);
+
+    expect(res.status).toBe(200);
+    expect(conversationsCol.countDocuments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        $and: expect.arrayContaining([
+          expect.objectContaining({ source: { $nin: ['slack', 'api'] } }),
+        ]),
+      }),
+    );
+  });
+
+  it('excludes webex conversations from the default listing', async () => {
+    mockGetServerSession.mockResolvedValue(userSession());
+
+    const conversationsCol = createMockCollection();
+    mockCollections['conversations'] = conversationsCol;
+
+    const req = makeRequest('/api/chat/conversations?page_size=100');
+    const res = await GET(req);
+
+    expect(res.status).toBe(200);
+    expect(conversationsCol.countDocuments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        $and: expect.arrayContaining([
+          expect.objectContaining({ client_type: { $nin: ['slack', 'webex'] } }),
+        ]),
+      }),
+    );
+  });
+
+  it('does not exclude webex when explicitly filtering for client_type=webex', async () => {
+    mockGetServerSession.mockResolvedValue(userSession());
+
+    const conversationsCol = createMockCollection();
+    mockCollections['conversations'] = conversationsCol;
+
+    const req = makeRequest('/api/chat/conversations?client_type=webex&page_size=100');
+    const res = await GET(req);
+
+    expect(res.status).toBe(200);
+    const calledQuery = conversationsCol.countDocuments.mock.calls[0][0];
+    expect(calledQuery.$and).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ client_type: { $nin: ['slack', 'webex'] } }),
+      ]),
+    );
+    expect(calledQuery.$and).toEqual(
+      expect.arrayContaining([{ client_type: 'webex' }]),
+    );
+  });
+
   it('enriches conversation agent participants with display names', async () => {
     mockGetServerSession.mockResolvedValue(userSession());
 

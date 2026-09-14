@@ -38,7 +38,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: init-idp
-          image: "{{ include "keycloak.imageRepository" (dict "root" . "repository" .Values.initImage.repository) }}:{{ .Values.initImage.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.initImage.repository }}:{{ .Values.initImage.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.initImage.pullPolicy }}
           command: ["/bin/sh", "/scripts/init-idp.sh"]
           env:

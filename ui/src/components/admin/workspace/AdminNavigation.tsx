@@ -27,7 +27,11 @@ export function adminDestinationHref(
     params.delete("from");
     params.delete("to");
   }
-  if (destination.id !== "access-explorer") {
+  if (destination.id !== "audit") {
+    params.delete("auditTab");
+  }
+  if (destination.id !== "access-operations") {
+    params.delete("operationsTab");
     params.delete("subtab");
     params.delete("openfgaTab");
   }
@@ -81,7 +85,6 @@ export function AdminNavigation({
       }
       activeItemId={activeDestination?.id ?? ""}
       categories={navigationCategories}
-      key={activeCategory?.id ?? ""}
       navigationLabel="Admin sections"
     />
   );

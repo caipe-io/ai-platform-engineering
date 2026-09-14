@@ -54,7 +54,7 @@
   resolved "https://registry.npmjs.org/@tsconfig/node16/-/node16-1.0.4.tgz"
   integrity sha512-vxhUy4J8lyeyinH7Azl1pdd43GJhZH/tP2weN8TntQblOY+A0XbT8DJk1/oCPuOOyg/Ja757rG0CgHcWC8OfMA==
 
-"@types/node@*", "@types/node@25.7.0":
+"@types/node@25.7.0":
   version "25.7.0"
   resolved "https://registry.npmjs.org/@types/node/-/node-25.7.0.tgz"
   integrity sha512-z+pdZyxE+RTQE9AcboAZCb4otwcrvgHD+GlBpPgn0emDVt0ohrTMhAwlr2Wd9nZ+nihhYFxO2pThz3C5qSu2Eg==
@@ -132,10 +132,10 @@ mongodb@7.2.0:
     bson "^7.2.0"
     mongodb-connection-string-url "^7.0.0"
 
-pnpm@11.9.0:
-  version "11.9.0"
-  resolved "https://registry.npmjs.org/pnpm/-/pnpm-11.9.0.tgz"
-  integrity sha512-vWgtXQP+Ul73yf1ngMaITR51asTJyf4AxTh4KCQxDc+Q493E9Tg18G3669UIXkGFXgvLs7YN4qxburieUDbwOw==
+pnpm@11.11.0:
+  version "11.11.0"
+  resolved "https://registry.yarnpkg.com/pnpm/-/pnpm-11.11.0.tgz#ec10b65ce6478d7270b3210ea6d0378880051f65"
+  integrity sha512-RGP2X9gO2A1pvB1L8WPulPYFxzgPwxi7Wy6+FfjNEtScUaTVnpUbQB52TTtsp1HL9RvFDtcAGmvLSTXmhMNIgg==
 
 punycode@^2.3.1:
   version "2.3.1"
@@ -175,7 +175,7 @@ ts-node@10.9.2:
     v8-compile-cache-lib "^3.0.1"
     yn "3.1.1"
 
-typescript@>=2.7, typescript@6.0.3:
+typescript@6.0.3:
   version "6.0.3"
   resolved "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz"
   integrity sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==

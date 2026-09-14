@@ -196,7 +196,7 @@ jobs:
       contents: write
       packages: write
       pull-requests: write
-    uses: ./.github/workflows/prebuild-mcp-agent.yml
+    uses: ./.github/workflows/prebuild-mcp-servers.yml
     with:
       pr_number: ${{ fromJSON(needs.resolve-pr.outputs.pr_number) }}
       head_ref: ${{ needs.resolve-pr.outputs.head_ref }}

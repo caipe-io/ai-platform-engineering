@@ -57,6 +57,7 @@ export function Popover({
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape" && open) {
         setOpen(false);
+        triggerRef.current?.focus();
       }
     };
     document.addEventListener("keydown", handleEscape);
@@ -80,6 +81,7 @@ export function PopoverTrigger({ children, asChild }: PopoverTriggerProps) {
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (e.currentTarget.getAttribute("aria-disabled") === "true") return;
     setOpen(!open);
   };
 
@@ -100,7 +102,7 @@ export function PopoverTrigger({ children, asChild }: PopoverTriggerProps) {
     const childWithRef = children as React.ReactElement<ChildProps> & {
       ref?: React.Ref<HTMLElement>;
     };
-    const existingRef = childWithRef.ref;
+    const existingRef = childWithRef.props.ref;
     const mergedRef = (node: HTMLElement | null) => {
       setRef(node);
       if (typeof existingRef === "function") existingRef(node);
@@ -140,14 +142,10 @@ interface PopoverContentProps {
  * or into a `PortalContainerContext` element (e.g. a Radix Dialog) when one is
  * present.
  *
- * The previous implementation used `position: absolute` inside the trigger's
- * relative parent, which meant any ancestor with `overflow: hidden` (e.g. a
- * narrow resizable panel like the Skill workspace Files tree) clipped the
- * popover. Portalling + computing fixed-position coordinates from the
- * trigger's `getBoundingClientRect()` lets the popover escape those clipping
- * contexts and stay anchored under any layout. We also clamp the final
- * coordinates to the viewport so a narrow panel can never push the popover
- * off-screen — the bug that motivated this change.
+ * Fixed positioning and coordinates from the trigger's
+ * `getBoundingClientRect()` keep the popover anchored without being clipped by
+ * an ancestor's overflow. Viewport clamping also keeps the content on-screen
+ * when the trigger lives in a narrow panel.
  *
  * When portalled into a container that has a CSS transform (Radix Dialog uses
  * `translate-*-[-50%]` to center itself), that container — not the viewport —

@@ -8,14 +8,18 @@ changes take effect without a service restart.
 
 import asyncio
 import logging
+import secrets
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 
+from autonomous_agents.config import get_settings
 from autonomous_agents.models import (
     Acknowledgement,
+    FollowUpContext,
     TaskCreate,
     TaskDefinition,
     TaskRun,
+    TaskRunFollowUpCreate,
     WebhookTrigger,
 )
 from autonomous_agents.services.chat_history import conversation_id_for_task
@@ -38,7 +42,10 @@ from autonomous_agents.services.task_runner import (
     chat_history_publishing_enabled,
     execute_task,
     get_run_store,
+    task_chat_history_publishing_enabled,
 )
+from autonomous_agents.services.trigger_instances import DedupKey
+from autonomous_agents.services.webhook_runtime import dispatch_webhook_run
 
 logger = logging.getLogger("autonomous_agents")
 
@@ -132,6 +139,16 @@ def _hide_unpublished_chat_links(runs: list[TaskRun]) -> list[TaskRun]:
 # Maximum runs returned by /tasks/{id}/runs.
 _MAX_TASK_RUNS = 500
 
+# Slack and PagerDuty issue their own signing secrets. Every other provider
+# supported by the task API uses the receiver-generated secret returned once
+# from POST /tasks so the caller can configure it at the sender.
+_PROVIDER_ISSUED_SECRET_PROVIDERS = {"slack", "pagerduty"}
+
+
+def _generate_webhook_secret() -> str:
+    """Return a high-entropy, URL-safe webhook signing secret."""
+    return secrets.token_urlsafe(32)
+
 
 def _serialize_trigger(task: TaskDefinition) -> dict:
     """Render a trigger to wire JSON, redacting any HMAC secret."""
@@ -165,12 +182,11 @@ def _serialize_task(task: TaskDefinition, next_run_iso: str | None) -> dict:
         "llm_provider": task.llm_provider,
         "trigger": _serialize_trigger(task),
         "enabled": task.enabled,
-        "timeout_seconds": task.timeout_seconds,
         "next_run": next_run_iso,
         "last_ack": ack_dump,
         "chat_conversation_id": (
             conversation_id_for_task(task.id)
-            if chat_history_publishing_enabled()
+            if task_chat_history_publishing_enabled(task)
             else None
         ),
         "owner_id": task.owner_id,
@@ -179,6 +195,16 @@ def _serialize_task(task: TaskDefinition, next_run_iso: str | None) -> dict:
         # than mutable email. Still never trusted as *input* (create/update
         # scrub any client-supplied owner_sub).
         "owner_sub": task.owner_sub,
+    }
+
+
+@router.get("/settings", response_model=dict)
+async def get_public_settings() -> dict:
+    """Return non-sensitive runtime constraints needed by the task form."""
+    return {
+        "minimum_schedule_interval_seconds": (
+            get_settings().minimum_schedule_interval_seconds
+        )
     }
 
 
@@ -232,8 +258,24 @@ async def create_task(payload: TaskCreate, request: Request) -> dict:
         )
 
     # The server owns the id. Whatever the client sent is discarded
-    
+
     task = payload.model_copy(update={"id": generate_task_id(payload.name)})
+
+    # The service, never the create payload, owns initial webhook credentials.
+    # This guarantees every newly-created webhook is signed and prevents a
+    # caller from accidentally creating an unsigned endpoint. GitHub/Jira use
+    # this value directly; Slack/PagerDuty temporarily reject deliveries with
+    # it until the provider-issued secret is saved through PUT.
+    generated_webhook_secret: str | None = None
+    if isinstance(task.trigger, WebhookTrigger):
+        generated_webhook_secret = _generate_webhook_secret()
+        task = task.model_copy(
+            update={
+                "trigger": task.trigger.model_copy(
+                    update={"secret": generated_webhook_secret}
+                )
+            }
+        )
 
     # last_ack is server-managed
     if task.last_ack is not None:
@@ -327,7 +369,16 @@ async def create_task(payload: TaskCreate, request: Request) -> dict:
     schedule_preflight(created.id)
 
     logger.info(f"[{created.id}] Created via API")
-    return _serialize_task(created, next_run_iso_for(created.id))
+    response = _serialize_task(created, next_run_iso_for(created.id))
+    if generated_webhook_secret is not None and isinstance(
+        created.trigger, WebhookTrigger
+    ):
+        # One-time mutation response only. Provider-issued credentials are not
+        # exposed, but the empty setup object tells the UI to collect one.
+        response["webhook_setup"] = {}
+        if created.trigger.provider not in _PROVIDER_ISSUED_SECRET_PROVIDERS:
+            response["webhook_setup"]["secret"] = generated_webhook_secret
+    return response
 
 
 @router.put("/tasks/{task_id}", response_model=dict)
@@ -403,6 +454,22 @@ async def update_task(task_id: str, task: TaskDefinition, request: Request) -> d
         )
         task = task.model_copy(update={"trigger": preserved_trigger})
 
+    # A cron/interval -> webhook transition (or repair of an unsigned legacy
+    # webhook) needs the same safe initial credential as POST. The mutation
+    # response exposes receiver-generated credentials once so the UI can
+    # continue into setup; Slack/PagerDuty receive only the setup marker and
+    # replace this temporary, unguessable value with their provider-issued key.
+    generated_webhook_secret: str | None = None
+    if isinstance(task.trigger, WebhookTrigger) and task.trigger.secret is None:
+        generated_webhook_secret = _generate_webhook_secret()
+        task = task.model_copy(
+            update={
+                "trigger": task.trigger.model_copy(
+                    update={"secret": generated_webhook_secret}
+                )
+            }
+        )
+
     # When the update doesn't touch ack-relevant fields (prompt / agent /
     # llm_provider) preserve the existing ack so a simple "toggle enabled"
     # doesn't blank the badge while a fresh preflight is in flight.
@@ -438,7 +505,14 @@ async def update_task(task_id: str, task: TaskDefinition, request: Request) -> d
         schedule_preflight(updated.id)
 
     logger.info(f"[{updated.id}] Updated via API")
-    return _serialize_task(updated, next_run_iso_for(updated.id))
+    response = _serialize_task(updated, next_run_iso_for(updated.id))
+    if generated_webhook_secret is not None and isinstance(
+        updated.trigger, WebhookTrigger
+    ):
+        response["webhook_setup"] = {}
+        if updated.trigger.provider not in _PROVIDER_ISSUED_SECRET_PROVIDERS:
+            response["webhook_setup"]["secret"] = generated_webhook_secret
+    return response
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -503,6 +577,87 @@ async def get_task_runs(task_id: str, request: Request) -> list[TaskRun]:
     # Task exists and access was asserted above: every run for this task
     # belongs to its owner, so the whole history is the caller's to see.
     return _hide_unpublished_chat_links(history)
+
+
+@router.post(
+    "/tasks/{task_id}/runs/{run_id}/follow-up",
+    response_model=dict,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def follow_up_task_run(
+    task_id: str,
+    run_id: str,
+    payload: TaskRunFollowUpCreate,
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Continue one webhook run from the authenticated UI.
+
+    The task timeline is only a display grouping. This endpoint binds the new
+    message to the explicitly selected parent run, and ``execute_task`` reuses
+    that run's execution context while keeping unrelated webhook deliveries
+    isolated. Provider HMAC is intentionally not used here: the UI proxy has
+    already authenticated the caller and ownership is enforced below.
+    """
+    task = await get_task_store().get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+
+    caller_email, is_admin, _ = _get_caller(request)
+    _assert_task_access(task, caller_email, is_admin)
+    if not isinstance(task.trigger, WebhookTrigger):
+        raise HTTPException(
+            status_code=400,
+            detail="Only webhook task runs can be continued from this endpoint.",
+        )
+    if not task.enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="This webhook task is disabled. Enable it before continuing a run.",
+        )
+
+    recent = await get_run_store().list_by_task(task_id, limit=_MAX_TASK_RUNS)
+    if not any(candidate.run_id == run_id for candidate in recent):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Run '{run_id}' not found for task '{task_id}'",
+        )
+
+    user_text = payload.user_text.strip()
+    if not user_text:
+        raise HTTPException(status_code=400, detail="Follow-up message cannot be blank.")
+
+    follow_up = FollowUpContext(
+        parent_run_id=run_id,
+        user_text=user_text,
+        user_ref=caller_email,
+        transport="webui",
+    )
+    settings = get_settings()
+    outcome = await dispatch_webhook_run(
+        task=task,
+        dedup_key=DedupKey(key=None, strategy="none"),
+        body=follow_up.model_dump_json().encode("utf-8"),
+        context={},
+        follow_up=follow_up,
+        background_tasks=background_tasks,
+        max_pending_per_task=settings.webhook_max_pending_per_task,
+        max_pending_per_owner=settings.webhook_max_pending_per_owner,
+        max_pending_global=settings.webhook_max_pending_global,
+        max_pending_payload_bytes_global=(
+            settings.webhook_max_pending_payload_bytes_global
+        ),
+        max_concurrent_per_owner=settings.webhook_max_concurrent_per_owner,
+        max_concurrent_global=settings.webhook_max_concurrent_global,
+    )
+    response.status_code = outcome.status_code
+    return {
+        "status": "accepted",
+        "task_id": task_id,
+        "run_id": outcome.run_id,
+        "parent_run_id": run_id,
+    }
 
 
 @router.post("/tasks/{task_id}/run", response_model=dict)

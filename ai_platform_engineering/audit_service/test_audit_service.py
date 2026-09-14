@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ai_platform_engineering.audit_service.config import Settings
 from ai_platform_engineering.audit_service.main import create_app
 from ai_platform_engineering.audit_service.queue_service import PUBLIC_FLUSH_ERROR, AuditQueueService
-from ai_platform_engineering.audit_service.storage import AuditQuery, LocalAuditStore, S3AuditStore
+from ai_platform_engineering.audit_service.storage import (
+    AuditQuery,
+    LocalAuditStore,
+    S3AuditStore,
+    S3RetentionError,
+)
 from ai_platform_engineering.audit_service.verbosity import (
     allowed_types,
     filter_records,
@@ -324,6 +331,137 @@ def test_s3_store_writes_and_reads_parquet_objects(monkeypatch) -> None:
     assert result.records[0]["actor_ref"] == "user:alice"
 
 
+def test_s3_query_scopes_listing_and_fetch_to_date_range(monkeypatch) -> None:
+    class ScopedFakeS3Client:
+        def __init__(self) -> None:
+            self.objects: dict[str, bytes] = {}
+            self.list_prefixes: list[str] = []
+            self.get_keys: list[str] = []
+            self._lock = threading.Lock()
+
+        def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
+            pass
+
+        def put_object(self, *, Bucket: str, Key: str, Body: bytes, ContentType: str) -> None:  # noqa: N803
+            self.objects[Key] = Body
+
+        def list_objects_v2(
+            self,
+            *,
+            Bucket: str,
+            Prefix: str,
+            ContinuationToken: str | None = None,
+            Delimiter: str | None = None,
+        ) -> dict[str, object]:  # noqa: N803
+            with self._lock:
+                self.list_prefixes.append(Prefix)
+            return {
+                "Contents": [{"Key": key} for key in sorted(self.objects) if key.startswith(Prefix)],
+                "IsTruncated": False,
+            }
+
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:  # noqa: N803
+            with self._lock:
+                self.get_keys.append(Key)
+            return {"Body": BytesIO(self.objects[Key])}
+
+    fake_client = ScopedFakeS3Client()
+    monkeypatch.setattr(S3AuditStore, "_build_client", lambda self: fake_client)
+    store = S3AuditStore(bucket="audit-bucket", prefix="audit", region="us-east-1")
+
+    store.write_batch(
+        [{"ts": "2026-06-20T01:00:00Z", "type": "auth", "outcome": "allow", "correlation_id": "in-range"}]
+    )
+    store.write_batch(
+        [{"ts": "2026-07-15T01:00:00Z", "type": "auth", "outcome": "allow", "correlation_id": "out-of-range"}]
+    )
+
+    fake_client.list_prefixes.clear()
+    fake_client.get_keys.clear()
+
+    result = store.query(
+        AuditQuery(
+            since=datetime(2026, 6, 20, 0, 0, tzinfo=timezone.utc),
+            until=datetime(2026, 6, 20, 2, 0, tzinfo=timezone.utc),
+            limit=10,
+        )
+    )
+
+    assert result.total == 1
+    assert result.records[0]["correlation_id"] == "in-range"
+    assert all("2026/07" not in prefix for prefix in fake_client.list_prefixes)
+    assert all("2026/07" not in key for key in fake_client.get_keys)
+
+
+def test_s3_query_fetches_objects_concurrently_and_assembles_correctly(monkeypatch) -> None:
+    class ConcurrentFakeS3Client:
+        def __init__(self) -> None:
+            self.objects: dict[str, bytes] = {}
+            self._lock = threading.Lock()
+            self.get_object_threads: set[int] = set()
+
+        def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
+            pass
+
+        def put_object(self, *, Bucket: str, Key: str, Body: bytes, ContentType: str) -> None:  # noqa: N803
+            self.objects[Key] = Body
+
+        def list_objects_v2(
+            self,
+            *,
+            Bucket: str,
+            Prefix: str,
+            ContinuationToken: str | None = None,
+            Delimiter: str | None = None,
+        ) -> dict[str, object]:  # noqa: N803
+            return {
+                "Contents": [{"Key": key} for key in sorted(self.objects) if key.startswith(Prefix)],
+                "IsTruncated": False,
+            }
+
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:  # noqa: N803
+            with self._lock:
+                self.get_object_threads.add(threading.get_ident())
+            time.sleep(0.05)
+            return {"Body": BytesIO(self.objects[Key])}
+
+    fake_client = ConcurrentFakeS3Client()
+    monkeypatch.setattr(S3AuditStore, "_build_client", lambda self: fake_client)
+    store = S3AuditStore(bucket="audit-bucket", prefix="audit", region="us-east-1")
+
+    expected_ids = set()
+    for minute in range(8):
+        corr_id = f"corr-{minute}"
+        expected_ids.add(corr_id)
+        store.write_batch(
+            [
+                {
+                    "ts": f"2026-06-20T01:{minute:02d}:00Z",
+                    "type": "auth",
+                    "outcome": "allow",
+                    "correlation_id": corr_id,
+                }
+            ]
+        )
+
+    start = time.monotonic()
+    result = store.query(
+        AuditQuery(
+            since=datetime(2026, 6, 20, 1, 0, tzinfo=timezone.utc),
+            until=datetime(2026, 6, 20, 1, 10, tzinfo=timezone.utc),
+            limit=100,
+        )
+    )
+    elapsed = time.monotonic() - start
+
+    assert result.total == 8
+    assert {record["correlation_id"] for record in result.records} == expected_ids
+    # Fetches ran concurrently across multiple worker threads...
+    assert len(fake_client.get_object_threads) > 1
+    # ...so total time is well under the fully-serial 8 * 0.05s baseline.
+    assert elapsed < 0.3
+
+
 def test_verbosity_filters_ingest(tmp_path: Path) -> None:
     # assisted-by claude code claude-sonnet-4-6
     settings = _settings(tmp_path, verbosity="minimal")
@@ -380,7 +518,9 @@ def test_verbosity_allowed_types_minimal() -> None:
 
 def test_verbosity_allowed_types_standard() -> None:
     types = allowed_types("standard")
-    assert types == frozenset({"auth", "cas_grant", "cas_reconcile", "cas_decision", "credential_action"})
+    assert types == frozenset(
+        {"auth", "cas_grant", "cas_reconcile", "cas_decision", "credential_action", "openfga_rebac"}
+    )
 
 
 def test_verbosity_allowed_types_il2() -> None:
@@ -410,6 +550,11 @@ def test_is_event_allowed_passes_and_blocks() -> None:
     assert is_event_allowed("cas_grant", "minimal") is True
     assert is_event_allowed("tool_action", "minimal") is False
     assert is_event_allowed(None, "minimal") is False
+
+
+def test_is_event_allowed_openfga_rebac_standard_not_minimal() -> None:
+    assert is_event_allowed("openfga_rebac", "standard") is True
+    assert is_event_allowed("openfga_rebac", "minimal") is False
 
 
 def test_filter_records_removes_disallowed() -> None:
@@ -464,6 +609,7 @@ class LifecycleFakeS3Client:
         self.objects: dict[str, int] = {}  # key → size in bytes
         self._rules: list[dict] = []
         self.delete_lifecycle_called = False
+        self.put_lifecycle_error: Exception | None = None
 
     def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
         pass
@@ -479,6 +625,8 @@ class LifecycleFakeS3Client:
         return {"Rules": list(self._rules)}
 
     def put_bucket_lifecycle_configuration(self, *, Bucket: str, LifecycleConfiguration: dict) -> None:  # noqa: N803
+        if self.put_lifecycle_error is not None:
+            raise self.put_lifecycle_error
         self._rules = list(LifecycleConfiguration.get("Rules", []))
 
     def delete_bucket_lifecycle(self, *, Bucket: str) -> None:  # noqa: N803
@@ -550,6 +698,25 @@ def test_s3_set_retention_zero_calls_delete_when_no_rules_remain(monkeypatch) ->
     store = S3AuditStore(bucket="test-bucket", prefix="audit", region="us-east-1")
     store.set_s3_retention_days(0)
     assert fake.delete_lifecycle_called
+
+
+def test_s3_set_retention_raises_clean_error_on_access_denied(monkeypatch) -> None:
+    fake = LifecycleFakeS3Client()
+    access_denied = Exception(
+        "An error occurred (AccessDenied) when calling the PutBucketLifecycleConfiguration operation: "
+        "not authorized to perform: s3:PutLifecycleConfiguration"
+    )
+    access_denied.response = {  # type: ignore[attr-defined]
+        "Error": {
+            "Code": "AccessDenied",
+            "Message": "not authorized to perform: s3:PutLifecycleConfiguration",
+        }
+    }
+    fake.put_lifecycle_error = access_denied
+    monkeypatch.setattr(S3AuditStore, "_build_client", lambda self: fake)
+    store = S3AuditStore(bucket="test-bucket", prefix="audit", region="us-east-1")
+    with pytest.raises(S3RetentionError, match="s3:PutLifecycleConfiguration"):
+        store.set_s3_retention_days(30)
 
 
 def test_s3_storage_usage_empty(monkeypatch) -> None:
@@ -708,3 +875,26 @@ def test_put_retention_negative_days(tmp_path: Path, monkeypatch) -> None:
     with TestClient(app) as client:
         response = client.put("/v1/audit/retention", json={"days": -1})
     assert response.status_code == 400
+
+
+def test_put_retention_s3_access_denied_returns_clean_error(tmp_path: Path, monkeypatch) -> None:
+    fake = LifecycleFakeS3Client()
+    access_denied = Exception(
+        "An error occurred (AccessDenied) when calling the PutBucketLifecycleConfiguration operation: "
+        "not authorized to perform: s3:PutLifecycleConfiguration"
+    )
+    access_denied.response = {  # type: ignore[attr-defined]
+        "Error": {
+            "Code": "AccessDenied",
+            "Message": "not authorized to perform: s3:PutLifecycleConfiguration",
+        }
+    }
+    fake.put_lifecycle_error = access_denied
+    monkeypatch.setattr(S3AuditStore, "_build_client", lambda self: fake)
+    app = create_app(_settings(tmp_path, backend="s3", s3_bucket="test-bucket"))
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.put("/v1/audit/retention", json={"days": 30})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert "s3:PutLifecycleConfiguration" in detail
+    assert "not authorized" in detail

@@ -18,14 +18,12 @@ export function WorkflowsLayoutClient({
   return (
     <AuthGuard>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="shrink-0 px-4 pt-3 sm:px-6">
-          <WorkspaceBreadcrumbs
-            breadcrumbs={[
-              { label: "Home",href: "/" },
-              { label: "Workflows",href: "/workflows" },
-            ]}
-          />
-        </div>
+        <WorkspaceBreadcrumbs
+          breadcrumbs={[
+            { label: "Home",href: "/" },
+            { label: "Workflows",href: "/workflows" },
+          ]}
+        />
 
         <div className="flex min-h-0 flex-1">
           <WorkflowSidebar

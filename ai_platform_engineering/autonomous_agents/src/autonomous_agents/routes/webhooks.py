@@ -44,6 +44,7 @@ from autonomous_agents.services.webhook_adapters import (
     WebhookAdapter,
     get_adapter,
 )
+from autonomous_agents.services.webhook_limits import read_limited_webhook_body
 from autonomous_agents.services.webhook_runtime import (
     dispatch_webhook_run,
     get_webhook_task,
@@ -227,7 +228,10 @@ async def receive_webhook(
         raise HTTPException(status_code=404, detail=f"No webhook task found for id '{task_id}'")
     adapter = _resolve_adapter(task)
 
-    body = await request.body()
+    settings = get_settings()
+    body = await read_limited_webhook_body(
+        request, max_bytes=settings.webhook_max_payload_bytes
+    )
 
     # Track the *verified* signature so the dedup helper can use it as
     # a dedup key when no per-task header is configured. We only set
@@ -235,7 +239,6 @@ async def receive_webhook(
     # value matches; using an unverified signature would let an attacker
     # poison the dedup table.
     secret, _source = _resolve_secret(task)
-    settings = get_settings()
     result: VerificationResult = adapter.verify(
         secret=secret,
         body=body,
@@ -276,6 +279,14 @@ async def receive_webhook(
         context=payload_dict,
         follow_up=None,
         background_tasks=background_tasks,
+        max_pending_per_task=settings.webhook_max_pending_per_task,
+        max_pending_per_owner=settings.webhook_max_pending_per_owner,
+        max_pending_global=settings.webhook_max_pending_global,
+        max_pending_payload_bytes_global=(
+            settings.webhook_max_pending_payload_bytes_global
+        ),
+        max_concurrent_per_owner=settings.webhook_max_concurrent_per_owner,
+        max_concurrent_global=settings.webhook_max_concurrent_global,
     )
 
     response.status_code = outcome.status_code
@@ -350,7 +361,10 @@ async def receive_followup(
         )
     _resolve_adapter(task)  # 500 early on misconfigured provider id
 
-    body = await request.body()
+    settings = get_settings()
+    body = await read_limited_webhook_body(
+        request, max_bytes=settings.webhook_max_payload_bytes
+    )
     verified_signature, default_dedup_header = await _verify_followup_signature(
         task, body, request.headers
     )
@@ -424,6 +438,14 @@ async def receive_followup(
         context={},
         follow_up=follow_up,
         background_tasks=background_tasks,
+        max_pending_per_task=settings.webhook_max_pending_per_task,
+        max_pending_per_owner=settings.webhook_max_pending_per_owner,
+        max_pending_global=settings.webhook_max_pending_global,
+        max_pending_payload_bytes_global=(
+            settings.webhook_max_pending_payload_bytes_global
+        ),
+        max_concurrent_per_owner=settings.webhook_max_concurrent_per_owner,
+        max_concurrent_global=settings.webhook_max_concurrent_global,
     )
 
     response.status_code = outcome.status_code

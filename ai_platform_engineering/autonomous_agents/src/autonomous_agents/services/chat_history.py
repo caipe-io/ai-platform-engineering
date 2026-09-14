@@ -93,6 +93,17 @@ def conversation_id_for_task(task_id: str) -> str:
     return str(uuid.uuid5(_AUTONOMOUS_NS, f"task:{task_id}"))
 
 
+def conversation_id_for_webhook_run(task_id: str, root_run_id: str) -> str:
+    """Derive an isolated Dynamic Agents context for one webhook delivery.
+
+    The UI groups all deliveries for a webhook task into one task timeline, but
+    independent deliveries must not share model/checkpointer state. Follow-ups
+    to a delivery reuse the id derived from its root run; a new delivery gets a
+    different id even when it belongs to the same task.
+    """
+    return str(uuid.uuid5(_AUTONOMOUS_NS, f"webhook:{task_id}:{root_run_id}"))
+
+
 def _conversation_id_for_run(run_id: str) -> str:
     """Deprecated per-run conversation id; prefer :func:`conversation_id_for_task`.
 

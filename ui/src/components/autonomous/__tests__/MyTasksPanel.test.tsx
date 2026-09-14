@@ -4,8 +4,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const mockListTasks = jest.fn();
+const mockGetSettings = jest.fn();
 jest.mock("@/components/autonomous/api", () => ({
   autonomousApi: {
+    getSettings: (...a: unknown[]) => mockGetSettings(...a),
     listTasks: (...a: unknown[]) => mockListTasks(...a),
     createTask: jest.fn(),
     updateTask: jest.fn(),
@@ -46,6 +48,7 @@ function task(id: string, agentId: string, owner: string) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockListTasks.mockResolvedValue([]);
+  mockGetSettings.mockResolvedValue({ minimum_schedule_interval_seconds: 1800 });
 });
 
 it("renders a section for every schedulable agent, including empty ones", async () => {
@@ -147,4 +150,3 @@ describe("pending-ack polling", () => {
     expect(mockListTasks).toHaveBeenCalledTimes(1);
   });
 });
-

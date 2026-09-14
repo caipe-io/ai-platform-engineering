@@ -1,16 +1,13 @@
-####################################################
-#
-# List of approvers for the Jira Agent project
-#
-#####################################################
-#
-# Learn about CODEOWNERS file format:
-#  https://help.github.com/en/articles/about-code-owners
-#
+# Default owners for the repository. More specific rules below take precedence.
+* @caipe-io/caipe-maintainers
 
-# These owners will be the default owners for everything in
-# the repository. Unless a later match takes precedence,
-# the following users/teams will be requested for
-# review when someone opens a pull request.
-* @sriaradhyula
-ai_platform_engineering/integrations/slack_bot @kevkantes @ErikMLutz @dasein
+# Backend components
+/ai_platform_engineering/dynamic_agents/ @caipe-io/caipe-agents-maintainers
+/ai_platform_engineering/knowledge_bases/rag/ @caipe-io/caipe-kb-rag-maintainers
+
+# Deployment
+/charts/ @caipe-io/caipe-helm-maintainers
+
+# Chat integrations
+/ai_platform_engineering/integrations/slack_bot/ @caipe-io/caipe-slackbot-maintainers
+/ai_platform_engineering/integrations/webex_bot/ @caipe-io/caipe-webexbot-maintainers

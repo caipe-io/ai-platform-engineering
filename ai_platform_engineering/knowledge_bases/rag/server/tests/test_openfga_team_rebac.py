@@ -355,3 +355,52 @@ async def test_query_filter_rejects_unintersectable_datasource_shape(
     query = QueryRequest(query="deployments", filters={"datasource_id": True})
 
     assert await rbac.inject_kb_filter(query, _user()) is True
+
+
+# ---------------------------------------------------------------------------
+# get_datasource_ids_for_collection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_collection_datasource_ids_come_from_parent_collection_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    async def fake_read_related(object_type: str, relation: str, user: str) -> list[str]:
+        calls.append((object_type, relation, user))
+        return ["kb-alpha", "kb-beta"]
+
+    monkeypatch.setattr(rbac, "_openfga_read_related_objects", fake_read_related, raising=False)
+
+    result = await rbac.get_datasource_ids_for_collection("coll-1")
+
+    assert result == ["kb-alpha", "kb-beta"]
+    assert calls == [("knowledge_base", "parent_collection", "rag_collection:coll-1")]
+
+
+@pytest.mark.asyncio
+async def test_collection_datasource_ids_empty_for_blank_collection_id() -> None:
+    assert await rbac.get_datasource_ids_for_collection("") == []
+
+
+@pytest.mark.asyncio
+async def test_collection_datasource_ids_returns_empty_for_unknown_collection(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_read_related(object_type: str, relation: str, user: str) -> list[str]:
+        return []
+
+    monkeypatch.setattr(rbac, "_openfga_read_related_objects", fake_read_related, raising=False)
+
+    assert await rbac.get_datasource_ids_for_collection("coll-unknown") == []
+
+
+@pytest.mark.asyncio
+async def test_collection_datasource_ids_503_on_pdp_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_read_related(object_type: str, relation: str, user: str) -> list[str]:
+        raise RuntimeError("openfga down")
+
+    monkeypatch.setattr(rbac, "_openfga_read_related_objects", fake_read_related, raising=False)
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_datasource_ids_for_collection("coll-1")
+
+    assert exc.value.status_code == 503

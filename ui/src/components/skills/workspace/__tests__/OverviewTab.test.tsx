@@ -83,7 +83,6 @@ describe("OverviewTab sharing", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents/teams"),
     );
 
-    // The picker (not the old "use the gallery" hint) is present.
     expect(
       screen.getByLabelText("Share skill with teams"),
     ).toBeInTheDocument();

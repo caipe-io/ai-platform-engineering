@@ -29,14 +29,15 @@ workflowSubjectFromSession,
 type WorkflowAuthzSession,
 } from "@/lib/server/workflow-cas-authz";
 import {
-buildTeamRefToSlugMap,
+  buildTeamRefToSlugMap,
 filterWorkflowConfigsByRunAccess,
 mergeWorkflowConfigsById,
 requireWorkflowConfigRunAccess,
 requireWorkflowConfigRunViewAccess,
 resolveUserTeamSlugsForWorkflow,
-type WorkflowConfigRebacSnapshot,
+  type WorkflowConfigRebacSnapshot,
 } from "@/lib/rbac/workflow-config-rebac";
+import { assertWorkflowConfigRunnable } from "@/lib/server/workflow-step-agents";
 import type { WorkflowConfig } from "@/types/workflow-config";
 import { NextRequest,NextResponse } from "next/server";
 
@@ -161,6 +162,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     user.email,
     userTeamSlugs,
   );
+
+  await assertWorkflowConfigRunnable(config);
 
   // Build auth headers for DA server calls. Prefer the incoming Bearer; fall
   // back to the session's OIDC access token so browser (cookie) sessions still

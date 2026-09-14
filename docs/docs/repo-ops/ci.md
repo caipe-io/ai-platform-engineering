@@ -65,6 +65,6 @@ Or via CLI:
 
 ```bash
 gh workflow run release-finalize.yml \
-  --repo cnoe-io/ai-platform-engineering \
+  --repo caipe-io/ai-platform-engineering \
   -f version=0.4.9
 ```

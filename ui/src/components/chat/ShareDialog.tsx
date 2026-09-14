@@ -1,5 +1,6 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
 import { getErrorMessage } from "@/lib/error-utils";
 
 import { apiClient } from "@/lib/api-client";
@@ -7,7 +8,7 @@ import { useChatStore } from "@/store/chat-store";
 import type { UserPublicInfo } from "@/types/mongodb";
 import type { Team } from "@/types/teams";
 import { Check,Copy,Mail,Trash2,Users,X } from "lucide-react";
-import { useCallback,useEffect,useState } from "react";
+import { useCallback,useEffect,useRef,useState } from "react";
 import { createPortal } from "react-dom";
 
 type SharePermission = 'view' | 'comment';
@@ -76,6 +77,7 @@ export function ShareDialog({
   const [userPermissions, setUserPermissions] = useState<Record<string, SharePermission>>({});
   const [teamPermissions, setTeamPermissions] = useState<Record<string, SharePermission>>({});
   const [defaultPermission, setDefaultPermission] = useState<SharePermission>('comment');
+  const loadedShareKey = useRef<string | null>(null);
 
   const shareUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/chat/${conversationId}`;
   const sharedByLabel = sharedBy?.trim();
@@ -162,11 +164,27 @@ export function ShareDialog({
 
   // Load current sharing info
   useEffect(() => {
-    if (open) {
-      applySharingSnapshot(initialSharing);
-      void loadSharingInfo();
+    if (!open) {
+      loadedShareKey.current = null;
+      return;
     }
-  }, [open, canManageSharing, initialSharing, applySharingSnapshot, loadSharingInfo]);
+    const shareKey = `${conversationId}:${canManageSharing ? "owner" : "viewer"}`;
+    if (loadedShareKey.current === shareKey) return;
+    loadedShareKey.current = shareKey;
+    applySharingSnapshot(initialSharing);
+    void loadSharingInfo();
+    // `initialSharing` is assembled by the chat parent and may be a new
+    // object on every store update. Re-running this effect for that identity
+    // would refetch the sharing endpoint indefinitely while the dialog is
+    // open. The conversation id is the stable boundary for a new snapshot.
+  }, [
+    open,
+    conversationId,
+    canManageSharing,
+    initialSharing,
+    applySharingSnapshot,
+    loadSharingInfo,
+  ]);
 
   // Search users and teams as they type
   useEffect(() => {
@@ -495,7 +513,7 @@ export function ShareDialog({
               onChange={(e) => setSearchInput(e.target.value)}
               className="flex-1 px-3 py-2 text-sm border rounded-md"
             />
-            <select
+            <Select
               value={defaultPermission}
               onChange={(e) => setDefaultPermission(e.target.value as SharePermission)}
               className="text-xs border rounded-md px-2 py-2 bg-background text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50"
@@ -503,7 +521,7 @@ export function ShareDialog({
             >
               <option value="view">Can view</option>
               <option value="comment">Can edit</option>
-            </select>
+            </Select>
             
             {/* Search results dropdown */}
             {((userResults.length > 0 || teamResults.length > 0 || noResults) && searchInput.length >= 2) && (
@@ -616,14 +634,14 @@ export function ShareDialog({
                   </div>
                   {canManageSharing ? (
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <select
+                    <Select
                       value={userPermissions[email] || 'view'}
                       onChange={(e) => handlePermissionChange({ email }, e.target.value as SharePermission)}
                       className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50"
                     >
                       <option value="view">Can view</option>
                       <option value="comment">Can edit</option>
-                    </select>
+                    </Select>
                     <button
                       className="text-muted-foreground hover:text-destructive"
                       onClick={() => {
@@ -657,14 +675,14 @@ export function ShareDialog({
                   </div>
                   {canManageSharing ? (
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <select
+                    <Select
                       value={teamPermissions[teamId] || 'view'}
                       onChange={(e) => handlePermissionChange({ team_id: teamId }, e.target.value as SharePermission)}
                       className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50"
                     >
                       <option value="view">Can view</option>
                       <option value="comment">Can edit</option>
-                    </select>
+                    </Select>
                     <button
                       className="text-muted-foreground hover:text-destructive"
                       onClick={() => {

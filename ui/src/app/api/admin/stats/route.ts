@@ -12,7 +12,7 @@ simulationSubjectCanManageAdminSurface,
 } from '@/lib/rbac/admin-simulation-server';
 import { resolveInsightsUserFilter } from '@/lib/rbac/insights-user-filter';
 import { requireAdminSurfaceManage } from '@/lib/rbac/require-openfga';
-import { getAgentsByIds, getAllAgents, getOwnedAgentConversationIds, getOwnedAgents, getReadableSlackChannelNames, type OwnedAgent } from '@/lib/rbac/user-insights-scope';
+import { getAgentsByIds, getAllAgents, getOwnedAgentConversationIds, getOwnedAgents, getReadableSlackChannelNames, getReadableWebexSpaceIds, type OwnedAgent } from '@/lib/rbac/user-insights-scope';
 import {
 createJsonResponseCacheStore,
 envTtlMs,
@@ -61,6 +61,45 @@ interface ChannelStatsDocument extends Document {
   alerts_enabled?: number;
   qanda_enabled?: number;
   total?: number;
+}
+
+interface WebexStats {
+  configured_spaces?: number;
+  configured_spaces_daily?: Array<{
+    date: string;
+    total: number;
+  }>;
+  daily: Array<{
+    date: string;
+    interactions: number;
+    unique_users: number;
+  }>;
+  top_spaces: Array<{
+    space_name: string;
+    interactions: number;
+  }>;
+  total_interactions: number;
+  unique_users: number;
+}
+
+interface ApiStats {
+  daily: Array<{
+    date: string;
+    interactions: number;
+    unique_users: number;
+  }>;
+  total_interactions: number;
+  unique_users: number;
+  // Direct MCP Activity — sourced from the audit-service (agent_gateway
+  // OK_LOCAL_AGENT_CONTEXT events), not the conversations/messages
+  // collections above. Admin-only; see `isFullAdmin` gating below.
+  mcp_activity?: {
+    total_events: number;
+    unique_users: number;
+    daily: Array<{ date: string; events: number; unique_users: number }>;
+    unavailable?: boolean;
+    range_capped?: boolean;
+  };
 }
 
 type BucketUnit = 'minute' | 'hour' | 'day';
@@ -128,6 +167,91 @@ function generateBucketKeys(now: Date, count: number, unit: BucketUnit): string[
     keys.push(bucketDateKey(d, unit));
   }
   return keys;
+}
+
+// ── Direct MCP Activity (audit-service) ─────────────────────────────────────
+// Unlike every other card on this page, this one is not a Mongo aggregation —
+// it queries the audit-service's own HTTP API for agent_gateway
+// OK_LOCAL_AGENT_CONTEXT events (one per MCP tools/call from a local-agent-context
+// client such as Claude Code/Codex — NOT CAIPE's own Dynamic Agents, and NOT a
+// direct API caller, neither of which go through AgentGateway). Reuses the same
+// base-URL resolution as /api/admin/audit-events.
+function auditServiceBaseUrl(): string {
+  return (process.env.AUDIT_SERVICE_URL ?? process.env.AUDIT_LOG_SERVICE_URL ?? 'http://audit-service:8010').replace(/\/$/, '');
+}
+
+// The audit-service caps a query's since→until span (`read_max_days`, default
+// 31) and rejects a wider range with an HTTP 400. Mirror that cap here so a
+// dashboard range wider than 31 days (e.g. the 90d preset) still succeeds —
+// clamped to the most recent 31 days — rather than failing the whole section.
+const AUDIT_MCP_ACTIVITY_MAX_DAYS = 31;
+
+async function fetchMcpActivityStats(rangeStart: Date, rangeEnd: Date): Promise<ApiStats['mcp_activity']> {
+  const cappedSince = new Date(Math.max(rangeStart.getTime(), rangeEnd.getTime() - AUDIT_MCP_ACTIVITY_MAX_DAYS * DAY_MS));
+  const rangeCapped = cappedSince.getTime() > rangeStart.getTime();
+  const dayCount = Math.max(1, Math.ceil((rangeEnd.getTime() - cappedSince.getTime()) / DAY_MS));
+  const dayKeys = generateBucketKeys(rangeEnd, dayCount, 'day');
+  const zeroDaily = dayKeys.map((date) => ({ date, events: 0, unique_users: 0 }));
+
+  try {
+    const params = new URLSearchParams({
+      since: cappedSince.toISOString(),
+      until: rangeEnd.toISOString(),
+      reason_code: 'OK_LOCAL_AGENT_CONTEXT',
+      limit: '10000',
+    });
+    const response = await fetch(`${auditServiceBaseUrl()}/v1/audit/events?${params.toString()}`, {
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      console.warn(`Direct MCP Activity: audit-service returned HTTP ${response.status}`);
+      return { total_events: 0, unique_users: 0, daily: zeroDaily, unavailable: true, range_capped: rangeCapped };
+    }
+    const body = (await response.json()) as {
+      records?: Array<{ ts?: string; subject_ref?: string }>;
+      total?: number;
+    };
+    const records = body.records ?? [];
+
+    // A record with no `subject_ref` (predates the bridge's identity fix, or
+    // simply has none) contributes to the event count but never to the
+    // unique-user tally — degrade gracefully rather than erroring.
+    const uniqueSubjects = new Set<string>();
+    const dayCounts = new Map<string, number>();
+    const daySubjects = new Map<string, Set<string>>();
+    for (const record of records) {
+      if (!record.ts) continue;
+      const ts = new Date(record.ts);
+      if (Number.isNaN(ts.getTime())) continue;
+      const key = bucketDateKey(floorToBucket(ts, 'day'), 'day');
+      dayCounts.set(key, (dayCounts.get(key) ?? 0) + 1);
+      if (typeof record.subject_ref === 'string' && record.subject_ref) {
+        uniqueSubjects.add(record.subject_ref);
+        if (!daySubjects.has(key)) daySubjects.set(key, new Set());
+        daySubjects.get(key)!.add(record.subject_ref);
+      }
+    }
+
+    const daily = dayKeys.map((key) => ({
+      date: key,
+      events: dayCounts.get(key) ?? 0,
+      unique_users: daySubjects.get(key)?.size ?? 0,
+    }));
+
+    return {
+      // `total` is the audit-service's full matching count, unaffected by the
+      // `records` array being capped at `limit` — the event total stays
+      // accurate even when the per-day/unique-user breakdown (below) is
+      // necessarily derived from only the returned page.
+      total_events: typeof body.total === 'number' ? body.total : records.length,
+      unique_users: uniqueSubjects.size,
+      daily,
+      range_capped: rangeCapped,
+    };
+  } catch (err) {
+    console.warn('Direct MCP Activity: audit-service unavailable', err);
+    return { total_events: 0, unique_users: 0, daily: zeroDaily, unavailable: true, range_capped: rangeCapped };
+  }
 }
 
 /**
@@ -297,11 +421,12 @@ async function getAdminStats(request: NextRequest) {
     ? await simulationSubjectCanManageAdminSurface(simulationScope, 'stats')
     : await requireAdminSurfaceManage(session, 'stats').then(() => true, () => false);
 
-  // Non-admin: scope to their readable Slack channels, their own web
-  // conversations, AND the agents they own (directly or via a team). The
-  // owned-agent axis lets an agent owner see usage of their agent even in
-  // channels they can't read / web chats that aren't theirs.
-  let nonAdminScope: { channelNames: string[]; ownerEmail: string; ownedAgents: OwnedAgent[]; sub: string } | null = null;
+  // Non-admin: scope to their readable Slack channels, their readable Webex
+  // spaces, their own web conversations, AND the agents they own (directly or
+  // via a team). The owned-agent axis lets an agent owner see usage of their
+  // agent even in channels/spaces they can't read / web chats that aren't
+  // theirs.
+  let nonAdminScope: { channelNames: string[]; ownerEmail: string; ownedAgents: OwnedAgent[]; sub: string; webexSpaceIds: string[] } | null = null;
   if (!isFullAdmin) {
     const openfgaUser = simulationScope?.openfgaUser ?? (
       typeof session.sub === 'string' && session.sub.trim()
@@ -317,21 +442,22 @@ async function getAdminStats(request: NextRequest) {
         { status: 401 }
       );
     }
-    const [channelNames, ownedAgents] = await Promise.all([
+    const [channelNames, ownedAgents, webexSpaceIds] = await Promise.all([
       openfgaUser ? getReadableSlackChannelNames(openfgaUser) : Promise.resolve([]),
       openfgaUser ? getOwnedAgents(openfgaUser) : Promise.resolve([]),
+      openfgaUser ? getReadableWebexSpaceIds(openfgaUser) : Promise.resolve([]),
     ]);
     // workflow_runs are owner-keyed by JWT sub (owner_subject.id), not email —
     // openfgaUser is `user:<sub>`, so strip the prefix to recover the raw sub.
     const sub = openfgaUser.startsWith('user:') ? openfgaUser.slice('user:'.length) : '';
-    nonAdminScope = { channelNames, ownerEmail: email, ownedAgents, sub };
+    nonAdminScope = { channelNames, ownerEmail: email, ownedAgents, sub, webexSpaceIds };
   }
 
     const { rangeStart, rangeEnd, days, bucketUnit, bucketCount } = parseRange(searchParams);
     const rangeDateMatch = { $gte: rangeStart, $lte: rangeEnd };
 
     // Optional filters
-    const sourceFilter = searchParams.get('source'); // 'web' | 'slack' | null (all)
+    const sourceFilter = searchParams.get('source'); // 'web' | 'slack' | 'webex' | null (all)
     const userFilter = searchParams.get('user'); // comma-separated emails | null (all)
     const teamFilter = searchParams.get('team'); // comma-separated team slugs | null (all)
     const { active: hasUserFilter, emails: userEmails } = await resolveInsightsUserFilter(
@@ -360,6 +486,12 @@ async function getAdminStats(request: NextRequest) {
     // available for chat history/audit without inflating Insights metrics.
     // Support both legacy (source/slack_meta) and new (client_type/metadata) schemas.
     const SLACK_CONV_MATCH = { $or: [{ source: 'slack' }, { client_type: 'slack' }] };
+    // Webex is new-only — no legacy `source`/`*_meta` schema predates it.
+    const WEBEX_CONV_MATCH = { client_type: 'webex' };
+    // API is new-only too — forced onto a conversation by POST
+    // /api/chat/conversations whenever a Bearer-token caller doesn't
+    // self-declare slack/webex (see that route). No legacy schema predates it.
+    const API_CONV_MATCH = { client_type: 'api' };
     const AI_MESSAGE_MATCH: Document = { role: 'assistant' };
 
     // A non-admin view is always "filtered" — DAU/MAU and daily-user activity
@@ -373,8 +505,11 @@ async function getAdminStats(request: NextRequest) {
     const convSourceFilter: Document = {};
     const msgOwnerFilter: Document = {};
     if (sourceFilter === 'web') {
-      convSourceFilter.source = { $ne: 'slack' };
-      convSourceFilter.client_type = { $ne: 'slack' };
+      // Neither legacy Slack rows, Webex rows, nor API rows (client_type-only,
+      // no legacy `source`) are "web" — exclude all three so none inflate the
+      // Web-only view.
+      convSourceFilter.source = { $nin: ['slack', 'webex'] };
+      convSourceFilter.client_type = { $nin: ['slack', 'webex', 'api'] };
       msgOwnerFilter['metadata.source'] = 'web';
     } else if (sourceFilter === 'slack') {
       Object.assign(convSourceFilter, SLACK_CONV_MATCH);
@@ -393,6 +528,23 @@ async function getAdminStats(request: NextRequest) {
         // the hourly heatmap aligned with conversation-based cards.
         msgOwnerFilter['metadata.channel_name'] = names;
       }
+    } else if (sourceFilter === 'webex') {
+      Object.assign(convSourceFilter, WEBEX_CONV_MATCH);
+      msgOwnerFilter['metadata.source'] = 'webex';
+    } else if (sourceFilter === 'api') {
+      Object.assign(convSourceFilter, API_CONV_MATCH);
+      // Unlike Slack/Webex, a message inside an API conversation is NOT
+      // reliably tagged metadata.source:'api' — the message-write route
+      // (PUT .../messages/route.ts) defaults an unset caller-supplied
+      // metadata.source to 'web', and there's no bot integration for direct
+      // API callers that stamps it otherwise. A metadata.source match here
+      // would therefore silently match nothing (or worse, misleadingly match
+      // ordinary web messages). Scope message-level cards via a
+      // conversation_id join instead, the same join already used for
+      // owned-agent/feedback scoping elsewhere in this route.
+      const apiConversationIds = await (await getCollection('conversations'))
+        .distinct('_id', API_CONV_MATCH);
+      msgOwnerFilter.conversation_id = { $in: apiConversationIds.length > 0 ? apiConversationIds : [null] };
     }
     if (hasUserFilter) {
       const owners = userEmails.length === 1 ? userEmails[0] : { $in: userEmails };
@@ -403,14 +555,17 @@ async function getAdminStats(request: NextRequest) {
     // Non-admin scope, reused by every query below so the whole payload stays
     // within the caller's visibility:
     //   - `convSourceFilter` / `msgOwnerFilter` get an $or of the caller's
-    //     readable Slack channels, their own conversations, AND their owned
-    //     agents (using each collection's canonical fields).
-    //   - `nonAdminChannelNames` bounds Slack-channel-keyed queries (feedback,
-    //     the Slack block, available_channels).
+    //     readable Slack channels, their readable Webex spaces, their own
+    //     conversations, AND their owned agents (using each collection's
+    //     canonical fields).
+    //   - `nonAdminChannelNames` / `nonAdminWebexSpaceIds` bound
+    //     channel/space-keyed queries (feedback, the Slack/Webex blocks,
+    //     available_channels).
     const nonAdminChannelNames = nonAdminScope?.channelNames ?? [];
     const nonAdminOwnedAgents = nonAdminScope?.ownedAgents ?? [];
+    const nonAdminWebexSpaceIds = nonAdminScope?.webexSpaceIds ?? [];
     if (nonAdminScope) {
-      const { channelNames: scopeChannelNames, ownerEmail, ownedAgents } = nonAdminScope;
+      const { channelNames: scopeChannelNames, ownerEmail, ownedAgents, webexSpaceIds: scopeWebexSpaceIds } = nonAdminScope;
       const convScopeClauses: Record<string, unknown>[] = [];
       const msgScopeClauses: Record<string, unknown>[] = [];
       if (scopeChannelNames.length > 0) {
@@ -427,6 +582,17 @@ async function getAdminStats(request: NextRequest) {
         msgScopeClauses.push({
           'metadata.source': 'slack',
           'metadata.channel_name': names,
+        });
+      }
+      if (scopeWebexSpaceIds.length > 0) {
+        const spaceIds = scopeWebexSpaceIds.length === 1 ? scopeWebexSpaceIds[0] : { $in: scopeWebexSpaceIds };
+        convScopeClauses.push({
+          client_type: 'webex',
+          'metadata.webex_space_id': spaceIds,
+        });
+        msgScopeClauses.push({
+          'metadata.source': 'webex',
+          'metadata.webex_space_id': spaceIds,
         });
       }
       if (ownerEmail) {
@@ -655,13 +821,18 @@ async function getAdminStats(request: NextRequest) {
     }
 
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    // "Today" and active-user cards retain their calendar semantics, but a
-    // shorter selected window must still narrow them. For example, the 1h
-    // preset must not quietly show all activity since midnight.
-    const todayRangeStart = new Date(Math.max(today.getTime(), rangeStart.getTime()));
-    const monthRangeStart = new Date(Math.max(thisMonth.getTime(), rangeStart.getTime()));
+    // "Today"/DAU and "This Month"/MAU are rolling windows (last 24h / last
+    // 30d from now), not calendar-aligned ones — a calendar-aligned window
+    // (midnight-to-now, 1st-of-month-to-now) would contradict the rolling
+    // windows used elsewhere on the dashboard as the day/month progresses
+    // (e.g. MAU showing all of a prior calendar month on the 1st of a new
+    // one, next to a "This Month" card that's rolling).
+    const rollingToday = new Date(now.getTime() - DAY_MS);
+    const rollingMonth = new Date(now.getTime() - 30 * DAY_MS);
+    // A shorter selected window must still narrow them. For example, the 1h
+    // preset must not quietly show all activity from the last 24h.
+    const todayRangeStart = new Date(Math.max(rollingToday.getTime(), rangeStart.getTime()));
+    const monthRangeStart = new Date(Math.max(rollingMonth.getTime(), rangeStart.getTime()));
 
     // ═══════════════════════════════════════════════════════════════
     // OVERVIEW STATS (parallel queries for speed)
@@ -1462,6 +1633,295 @@ async function getAdminStats(request: NextRequest) {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // WEBEX STATS (from conversations with client_type:"webex") — mirrors
+    // the Slack block above, keyed by space id rather than channel name
+    // since Webex conversations/messages carry no space display name.
+    // ═══════════════════════════════════════════════════════════════
+    let webex: WebexStats | undefined;
+    const skipWebexBlock = !!nonAdminScope && nonAdminWebexSpaceIds.length === 0;
+
+    if (includesSection('webex') && sourceFilter !== 'web' && !skipWebexBlock) {
+      try {
+        // Start with the same conversation filter used by every other card, then
+        // constrain it to Webex. This carries source, user, agent, and
+        // non-admin scope into all Webex interaction cards without maintaining a
+        // second, subtly different filter implementation.
+        const webexFilter: Document = { ...WEBEX_CONV_MATCH, created_at: rangeDateMatch };
+        if (Object.keys(convSourceFilter).length > 0) {
+          andInto(webexFilter, convSourceFilter);
+        }
+        if (nonAdminScope) {
+          const readableSpaceIds = nonAdminWebexSpaceIds.length === 1
+            ? nonAdminWebexSpaceIds[0]
+            : { $in: nonAdminWebexSpaceIds };
+          andInto(webexFilter, { 'metadata.webex_space_id': readableSpaceIds });
+        }
+        const webexHasData = await conversations.countDocuments(WEBEX_CONV_MATCH, { limit: 1 });
+
+        if (webexHasData > 0) {
+          const spaceMappingColl = await getCollection<{
+            webex_space_id?: string;
+            space_name?: string;
+            space_title?: string;
+            created_at?: string | Date;
+            active?: boolean;
+          }>('webex_space_team_mappings');
+          const mappingFilter: Document = { webex_space_id: { $ne: null } };
+          if (nonAdminScope) {
+            // Configuration is space-scoped and cannot be attributed through
+            // the owned-agent/user axes without revealing unreadable spaces.
+            mappingFilter.webex_space_id = { $in: nonAdminWebexSpaceIds };
+          }
+
+          const selectedAgentIds = selectedAgents.map((agent) => agent.id);
+          const [
+            webexTotal,
+            webexUniqueUsers,
+            webexDailyAgg,
+            webexTopSpaces,
+            spaceMappings,
+            selectedAgentRoutes,
+          ] = await Promise.all([
+            conversations.countDocuments(webexFilter),
+            conversations.aggregate([
+              { $match: webexFilter },
+              { $group: { _id: '$owner_id' } },
+              { $match: { _id: { $nin: [null, ''] } } },
+              { $count: 'total' },
+            ]).toArray(),
+            conversations.aggregate([
+              { $match: webexFilter },
+              {
+                $group: {
+                  _id: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$created_at' } },
+                  interactions: { $sum: 1 },
+                  unique_users: { $addToSet: '$owner_id' },
+                },
+              },
+              { $sort: { _id: 1 } },
+            ]).toArray(),
+            conversations.aggregate([
+              {
+                $match: {
+                  ...webexFilter,
+                  'metadata.webex_space_id': { $ne: null },
+                  // 1:1 DMs are not spaces — keep them out of the Top Spaces
+                  // ranking (they're still counted in total_interactions/
+                  // unique_users above via webexFilter, which applies no
+                  // such exclusion).
+                  'metadata.webex_is_direct': { $ne: true },
+                },
+              },
+              {
+                $group: {
+                  _id: '$metadata.webex_space_id',
+                  interactions: { $sum: 1 },
+                },
+              },
+              { $sort: { interactions: -1 } },
+              { $limit: 10 },
+            ]).toArray(),
+            spaceMappingColl.find(
+              mappingFilter,
+              { projection: { webex_space_id: 1, space_name: 1, space_title: 1, created_at: 1, active: 1 } },
+            ).toArray(),
+            agentIds.length > 0
+              ? getCollection<{ space_id?: string }>('webex_space_agent_routes')
+                  .then((routes) => routes.find(
+                    {
+                      agent_id: { $in: selectedAgentIds },
+                      enabled: { $ne: false },
+                      status: 'active',
+                    },
+                    { projection: { space_id: 1 } },
+                  ).toArray())
+              : Promise.resolve([]),
+          ]);
+
+          // Normalize a space name: fall back to null when the "name" is
+          // really just the raw id (unnamed/never-renamed mapping).
+          const normalizeSpaceName = (name: unknown, id: string): string | null => {
+            if (typeof name !== 'string' || !name.trim() || name === id) return null;
+            return name.trim();
+          };
+          const spaceNameById = new Map<string, string>();
+          for (const mapping of spaceMappings) {
+            const clean = normalizeSpaceName(mapping.space_name ?? mapping.space_title, mapping.webex_space_id ?? '');
+            if (mapping.webex_space_id && clean) {
+              spaceNameById.set(mapping.webex_space_id, clean);
+            }
+          }
+
+          // Configured Spaces is configuration data, not user activity. It is
+          // omitted for a user filter; agent and date filters do apply.
+          const selectedAgentSpaceIds = new Set(
+            selectedAgentRoutes.flatMap((route) => route.space_id ? [route.space_id] : []),
+          );
+          const activeMappings = spaceMappings.filter((mapping) => {
+            if (mapping.active === false || !mapping.webex_space_id) return false;
+            if (agentIds.length > 0 && !selectedAgentSpaceIds.has(mapping.webex_space_id)) return false;
+            const created = mapping.created_at ? new Date(mapping.created_at) : null;
+            return !created || Number.isNaN(created.getTime()) || created <= rangeEnd;
+          });
+          const configuredSpacesTotal = new Set(
+            activeMappings.map((mapping) => mapping.webex_space_id),
+          ).size;
+
+          const configuredBeforeRange = new Set<string>();
+          const configuredByBucket = new Map<string, Set<string>>();
+          for (const mapping of activeMappings) {
+            const created = mapping.created_at ? new Date(mapping.created_at) : null;
+            if (!created || Number.isNaN(created.getTime()) || created < rangeStart) {
+              configuredBeforeRange.add(mapping.webex_space_id as string);
+              continue;
+            }
+            const key = bucketDateKey(floorToBucket(created, bucketUnit), bucketUnit);
+            if (!configuredByBucket.has(key)) configuredByBucket.set(key, new Set());
+            configuredByBucket.get(key)!.add(mapping.webex_space_id as string);
+          }
+          let runningConfiguredSpaces = configuredBeforeRange.size;
+          const configuredSpacesDaily = generateBucketKeys(rangeEnd, bucketCount, bucketUnit).map((dateKey) => {
+            runningConfiguredSpaces += configuredByBucket.get(dateKey)?.size ?? 0;
+            return { date: dateKey, total: runningConfiguredSpaces };
+          });
+
+          const webexDailyMap = new Map(
+            webexDailyAgg.map((day) => [day._id, {
+              interactions: day.interactions,
+              unique_users: day.unique_users?.length || 0,
+            }]),
+          );
+          const webexDaily = generateBucketKeys(rangeEnd, bucketCount, bucketUnit).map((dateKey) => {
+            const entry = webexDailyMap.get(dateKey);
+            return {
+              date: dateKey,
+              interactions: entry?.interactions || 0,
+              unique_users: entry?.unique_users || 0,
+            };
+          });
+
+          webex = {
+            ...(!hasUserFilter ? {
+              configured_spaces: configuredSpacesTotal,
+              configured_spaces_daily: configuredSpacesDaily,
+            } : {}),
+            total_interactions: webexTotal,
+            unique_users: webexUniqueUsers[0]?.total || 0,
+            daily: webexDaily,
+            top_spaces: webexTopSpaces.map((space) => {
+              const id: string = space._id;
+              return {
+                space_name: spaceNameById.get(id) || id,
+                interactions: space.interactions,
+              };
+            }),
+          };
+        }
+      } catch (err) {
+        // Webex data may not exist yet — silently skip
+        console.warn('Webex stats query failed:', err);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // API STATS (from conversations with client_type:"api") — mirrors the
+    // Slack/Webex blocks above but simpler: a generic API caller has no
+    // channel/space concept, so there's no "Configured X" or "Top X"
+    // breakdown, just total interactions/unique users/daily activity. Also
+    // carries the unrelated, audit-service-backed "Direct MCP Activity" data
+    // (mcp_activity below), which is admin-only regardless of whether any
+    // api-classified conversations exist.
+    // ═══════════════════════════════════════════════════════════════
+    let api: ApiStats | undefined;
+
+    if (includesSection('api') && sourceFilter !== 'web') {
+      let apiActivity: Pick<ApiStats, 'total_interactions' | 'unique_users' | 'daily'> | null = null;
+      try {
+        // Start with the same conversation filter used by every other card,
+        // then constrain it to API. Non-admins are already scoped by the
+        // generic owner_id clause folded into convSourceFilter above (there is
+        // no channel/space concept to further restrict by for a direct API
+        // caller — see the RBAC note on `mcp_activity` below for the axis that
+        // DOES need extra scoping).
+        const apiFilter: Document = { ...API_CONV_MATCH, created_at: rangeDateMatch };
+        if (Object.keys(convSourceFilter).length > 0) {
+          andInto(apiFilter, convSourceFilter);
+        }
+        const apiHasData = await conversations.countDocuments(API_CONV_MATCH, { limit: 1 });
+
+        if (apiHasData > 0) {
+          const [apiTotal, apiUniqueUsers, apiDailyAgg] = await Promise.all([
+            conversations.countDocuments(apiFilter),
+            conversations.aggregate([
+              { $match: apiFilter },
+              { $group: { _id: '$owner_id' } },
+              { $match: { _id: { $nin: [null, ''] } } },
+              { $count: 'total' },
+            ]).toArray(),
+            conversations.aggregate([
+              { $match: apiFilter },
+              {
+                $group: {
+                  _id: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$created_at' } },
+                  interactions: { $sum: 1 },
+                  unique_users: { $addToSet: '$owner_id' },
+                },
+              },
+              { $sort: { _id: 1 } },
+            ]).toArray(),
+          ]);
+
+          const apiDailyMap = new Map(
+            apiDailyAgg.map((day) => [day._id, {
+              interactions: day.interactions,
+              unique_users: day.unique_users?.length || 0,
+            }]),
+          );
+          const apiDaily = generateBucketKeys(rangeEnd, bucketCount, bucketUnit).map((dateKey) => {
+            const entry = apiDailyMap.get(dateKey);
+            return {
+              date: dateKey,
+              interactions: entry?.interactions || 0,
+              unique_users: entry?.unique_users || 0,
+            };
+          });
+
+          apiActivity = {
+            total_interactions: apiTotal,
+            unique_users: apiUniqueUsers[0]?.total || 0,
+            daily: apiDaily,
+          };
+        }
+      } catch (err) {
+        // API data may not exist yet — silently skip
+        console.warn('API stats query failed:', err);
+      }
+
+      // ── Direct MCP Activity ─────────────────────────────────────────
+      // RBAC: this surfaces real subject_ref identities platform-wide, with
+      // no channel/space/owner scoping axis the way Slack/Webex/API Activity
+      // above are implicitly scoped — a local-agent-context MCP call is not
+      // attributable to any team/channel a non-admin might otherwise be
+      // scoped to. Gate strictly on `isFullAdmin` so a non-admin (even one
+      // who legitimately sees their own API conversations above) never
+      // receives this key.
+      const mcpActivity = isFullAdmin ? await fetchMcpActivityStats(rangeStart, rangeEnd) : undefined;
+
+      if (apiActivity || mcpActivity) {
+        api = {
+          total_interactions: apiActivity?.total_interactions ?? 0,
+          unique_users: apiActivity?.unique_users ?? 0,
+          daily: apiActivity?.daily ?? generateBucketKeys(rangeEnd, bucketCount, bucketUnit).map((date) => ({
+            date,
+            interactions: 0,
+            unique_users: 0,
+          })),
+          ...(mcpActivity ? { mcp_activity: mcpActivity } : {}),
+        };
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // PLATFORM SUMMARY — respects source/user filters
     // ═══════════════════════════════════════════════════════════════
     const [oldChannels, newChannels] = availableChannelsResult;
@@ -1538,6 +1998,8 @@ async function getAdminStats(request: NextRequest) {
         },
       } : {}),
       ...(slack ? { slack } : {}),
+      ...(webex ? { webex } : {}),
+      ...(api ? { api } : {}),
       ...(includesSection('filters') ? {
         available_channels: availableChannels.sort(),
         available_agents: availableAgents,

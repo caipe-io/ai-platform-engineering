@@ -22,6 +22,8 @@ interface ChatViewProps {
   readOnlyReason?: "admin_audit" | "shared_readonly";
   /** Whether messages are still loading (show skeleton) */
   isLoadingMessages?: boolean;
+  /** Called after a deprecated conversation is linked to a usable agent. */
+  onAgentRelinked?: (agentId: string) => void;
 }
 
 /**
@@ -36,6 +38,7 @@ export function ChatView({
   readOnly,
   readOnlyReason,
   isLoadingMessages,
+  onAgentRelinked,
 }: ChatViewProps) {
   const [contextPanelCollapsed, setContextPanelCollapsed] = useState(true);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -71,6 +74,7 @@ export function ChatView({
             agentId={selectedAgentId}
             agent={agent}
             isLoadingMessages={isLoadingMessages}
+            onAgentRelinked={onAgentRelinked}
           />
         </div>
       </ResizablePanel>

@@ -11,7 +11,10 @@ DialogHeader,
 DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { AgentPicker, type AgentPickerOption } from "@/components/ui/agent-picker";
 import { useToast } from "@/components/ui/toast";
+import { loadAllDynamicAgents } from "@/lib/dynamic-agent-list";
 import type { AgentUIConfig } from "@/types/dynamic-agent";
 import {
 AlertCircle,
@@ -93,23 +96,22 @@ export function ConversationsTab() {
   React.useEffect(() => {
     async function fetchAgents() {
       try {
-        const response = await fetch("/api/dynamic-agents?page_size=100");
-        const data = await response.json();
-        if (data.success && data.data?.items) {
-          const items = data.data.items as AgentInfo[];
-          const agentMap = new Map<string, AgentInfo>();
-          for (const agent of items) {
-            agentMap.set(agent._id, agent);
-          }
-          setAgents(agentMap);
-          setAgentsList(items);
-        }
+        const items = await loadAllDynamicAgents<AgentInfo>();
+        const agentMap = new Map<string, AgentInfo>();
+        for (const agent of items) agentMap.set(agent._id, agent);
+        setAgents(agentMap);
+        setAgentsList(items);
       } catch {
         // Silently fail - we'll just show agent IDs
       }
     }
     fetchAgents();
   }, []);
+
+  const agentOptions = React.useMemo<AgentPickerOption[]>(
+    () => agentsList.map((agent) => ({ value: agent._id, label: agent.name })),
+    [agentsList],
+  );
 
   const fetchConversations = React.useCallback(async () => {
     setLoading(true);
@@ -238,22 +240,19 @@ export function ConversationsTab() {
                 className="pl-10"
               />
             </div>
-            <select
-              aria-label="Filter conversations by agent"
+            <AgentPicker
+              ariaLabel="Filter conversations by agent"
               value={agentFilter}
-              onChange={(e) => {
-                setAgentFilter(e.target.value);
+              onChange={(agentId) => {
+                setAgentFilter(agentId);
                 setPage(1);
               }}
-              className="h-9 text-sm rounded-md border border-input bg-background px-3 py-1 text-foreground"
-            >
-              <option value="">All Agents</option>
-              {agentsList.map((agent) => (
-                <option key={agent._id} value={agent._id}>
-                  {agent.name}
-                </option>
-              ))}
-            </select>
+              options={agentOptions}
+              placeholder="All agents"
+              searchPlaceholder="Search agents..."
+              emptyLabel="No agents match"
+              triggerClassName="h-9 min-w-56 py-1"
+            />
             <Button type="submit" variant="secondary" size="sm">
               Search
             </Button>
@@ -464,7 +463,7 @@ export function ConversationsTab() {
                 {/* Page size dropdown */}
                 <div className="flex items-center gap-2">
                   <label className="text-sm text-muted-foreground whitespace-nowrap" htmlFor="conversation-page-size">Rows</label>
-                  <select
+                  <Select
                     aria-label="Rows per page"
                     id="conversation-page-size"
                     value={pageSize}
@@ -477,7 +476,7 @@ export function ConversationsTab() {
                     {[10, 20, 50, 100].map((size) => (
                       <option key={size} value={size}>{size}</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
             )}

@@ -7,9 +7,9 @@ metadata:
 spec:
   {{- /*
     No HPA support on purpose: the scheduler has no leader election, so more
-    than one replica double-fires every cron/interval task. Recreate (not
-    RollingUpdate) for the same reason -- a rollout must not briefly run the
-    old and new scheduler side by side.
+    than one replica double-fires every cron/interval task; webhook FIFOs are
+    also process-local. Recreate (not RollingUpdate) for the same reason -- a
+    rollout must not briefly run the old and new scheduler side by side.
   */}}
   replicas: {{ .Values.replicaCount }}
   strategy:

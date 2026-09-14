@@ -21,6 +21,11 @@ jest.mock("lucide-react", () => ({
 }));
 
 const mockFetch = jest.fn();
+const mockResolveUsableChatAgent = jest.fn();
+
+jest.mock("@/lib/chat-agent-selection", () => ({
+  resolveUsableChatAgent: () => mockResolveUsableChatAgent(),
+}));
 
 import { NewChatButton } from "../NewChatButton";
 
@@ -29,54 +34,12 @@ beforeEach(() => {
   global.fetch = mockFetch;
 });
 
-/**
- * Route fetch by URL. `prefsAgentId` is the user's personal Web default
- * (null → none); `platformAgentId` is the resolved platform default returned
- * by the same preferences endpoint.
- * `agentNames` maps agent id → display name for the detail lookup.
- */
-function mockFetchByUrl(opts: {
-  prefsAgentId?: string | null;
-  platformAgentId?: string | null;
-  agentNames?: Record<string, string>;
-  prefsPromise?: Promise<Response>;
-}) {
-  const { prefsAgentId = null, platformAgentId = null, agentNames = {} } = opts;
-  mockFetch.mockImplementation((url: string) => {
-    if (url === "/api/user/preferences") {
-      if (opts.prefsPromise) return opts.prefsPromise;
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({
-          success: true,
-          data: {
-            web_default_agent_id: prefsAgentId,
-            platform_default_agent_id: platformAgentId,
-          },
-        }),
-      } as Response);
-    }
-    const match = url.match(/^\/api\/dynamic-agents\/agents\/(.+)$/);
-    if (match) {
-      const id = decodeURIComponent(match[1]);
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({ success: true, data: { _id: id, name: agentNames[id] ?? id } }),
-      } as Response);
-    }
-    return Promise.resolve({ ok: false, json: async () => ({ success: false }) } as Response);
-  });
-}
-
 describe("NewChatButton", () => {
   it("waits for default-agent resolution before creating a new chat", async () => {
-    let resolvePrefs: (value: Response) => void = () => {};
-    mockFetchByUrl({
-      platformAgentId: "agent-default",
-      prefsPromise: new Promise<Response>((resolve) => {
-        resolvePrefs = resolve;
-      }),
-    });
+    let resolveAgent: (value: { id: string; name: string; source: "platform-default" }) => void = () => {};
+    mockResolveUsableChatAgent.mockReturnValue(new Promise((resolve) => {
+      resolveAgent = resolve;
+    }));
     const onNewChat = jest.fn();
 
     render(<NewChatButton collapsed={false} onNewChat={onNewChat} />);
@@ -86,16 +49,7 @@ describe("NewChatButton", () => {
     fireEvent.click(mainButton);
     expect(onNewChat).not.toHaveBeenCalled();
 
-    resolvePrefs({
-      ok: true,
-      json: async () => ({
-        success: true,
-        data: {
-          web_default_agent_id: null,
-          platform_default_agent_id: "agent-default",
-        },
-      }),
-    } as Response);
+    resolveAgent({ id: "agent-default", name: "Platform Helper", source: "platform-default" });
 
     await waitFor(() => expect(mainButton).not.toBeDisabled());
     fireEvent.click(mainButton);
@@ -104,22 +58,22 @@ describe("NewChatButton", () => {
   });
 
   it("shows the configured default agent name once it can resolve the agent", async () => {
-    mockFetchByUrl({
-      platformAgentId: "agent-default",
-      agentNames: { "agent-default": "Platform Helper" },
+    mockResolveUsableChatAgent.mockResolvedValue({
+      id: "agent-default",
+      name: "Platform Helper",
+      source: "platform-default",
     });
 
     render(<NewChatButton collapsed={false} onNewChat={jest.fn()} />);
 
     expect(await screen.findByText("Platform Helper")).toBeInTheDocument();
-    expect(mockFetch).toHaveBeenCalledWith("/api/dynamic-agents/agents/agent-default");
   });
 
   it("prefers the user's web default over the platform default", async () => {
-    mockFetchByUrl({
-      prefsAgentId: "agent-user",
-      platformAgentId: "agent-default",
-      agentNames: { "agent-user": "My Agent", "agent-default": "Platform Helper" },
+    mockResolveUsableChatAgent.mockResolvedValue({
+      id: "agent-user",
+      name: "My Agent",
+      source: "user-default",
     });
     const onNewChat = jest.fn();
 
@@ -131,16 +85,20 @@ describe("NewChatButton", () => {
     expect(onNewChat).toHaveBeenCalledWith("agent-user");
   });
 
-  it("calls onNewChat with undefined when no default agent is configured", async () => {
-    mockFetchByUrl({ prefsAgentId: null, platformAgentId: null });
+  it("uses the first accessible agent when no personal or platform default is configured", async () => {
+    mockResolveUsableChatAgent.mockResolvedValue({
+      id: "agent-first",
+      name: "First Accessible Agent",
+      source: "first-available",
+    });
     const onNewChat = jest.fn();
 
     render(<NewChatButton collapsed={false} onNewChat={onNewChat} />);
 
-    const mainButton = screen.getByRole("button", { name: /new chat/i });
+    const mainButton = await screen.findByRole("button", { name: /first accessible agent/i });
     await waitFor(() => expect(mainButton).not.toBeDisabled());
     fireEvent.click(mainButton);
 
-    expect(onNewChat).toHaveBeenCalledWith(undefined);
+    expect(onNewChat).toHaveBeenCalledWith("agent-first");
   });
 });

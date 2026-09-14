@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Default skill loader — reads SKILL.md from SKILLS_DIR / chart data/skills.
 

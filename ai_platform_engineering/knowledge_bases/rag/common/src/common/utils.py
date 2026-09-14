@@ -178,15 +178,14 @@ def generate_confluence_datasource_id(
 ) -> str:
   """Generate a stable ID for a Confluence space or page-rooted source.
 
-  Legacy environment configuration models an entire space as one datasource
-  and therefore omits ``page_id``. UI-created sources are rooted at a page;
+  Imported whole-space records omit ``page_id``. New sources are rooted at a page;
   including that immutable page ID lets one space contain multiple independent
   datasources without changing scheduled reload or stale-chunk replacement.
   """
   domain = urlparse(confluence_url).netloc.replace(".", "_").replace("-", "_")
   datasource_id = f"src_confluence___{domain}__{space_key}"
   if not page_id:
-    # Keep whole-space IDs stable for legacy environment configuration. These
+    # Keep imported whole-space datasource IDs stable. These
     # sources are handled by the one-time import compatibility path.
     return datasource_id
 

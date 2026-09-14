@@ -4,12 +4,19 @@ import {
   ApplicationNavigationMenuButton,
   MobileApplicationBrand,
 } from "@/components/layout/ApplicationNavigation";
+import { ApplicationNavigationSearchTrigger } from "@/components/layout/ApplicationNavigationSearch";
 import { isOnHeaderDialogEditor } from "@/components/layout/GuardedNavigationLink";
 import { ReleaseUpgradeDialog } from "@/components/release/ReleaseUpgradeDialog";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { SettingsPanel } from "@/components/settings-panel";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
+import { ReportProblemDialog } from "@/components/ticket/ReportProblemDialog";
 import { Button } from "@/components/ui/button";
+import { useHeaderBreadcrumbSlot } from "@/components/layout/HeaderBreadcrumbSlot";
+import {
+WorkspaceBreadcrumbs,
+type WorkspaceBreadcrumbItem,
+} from "@/components/layout/WorkspacePageHeader";
 import { GithubIcon as Github } from "@/components/ui/icons";
 import {
 Popover,
@@ -29,14 +36,57 @@ import {
 AlertTriangle,
 BookOpen,
 ChevronRight,
+MessageSquareText,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { usePathname,useRouter } from "next/navigation";
 import React from "react";
 
+const APPLICATION_SECTION_LABELS: Record<string,string> = {
+  "agent-builder": "Agent Builder",
+  admin: "Admin",
+  autonomous: "Autonomous",
+  apps: "Apps",
+  chat: "Chat",
+  credentials: "Credentials",
+  "dynamic-agents": "Agents",
+  insights: "Insights",
+  "knowledge-bases": "Knowledge Bases",
+  schedules: "Schedules",
+  settings: "Settings",
+  skills: "Skills",
+  workflows: "Workflows",
+};
+
+function titleCaseRouteSegment(segment: string): string {
+  return segment
+    .split("-")
+    .filter(Boolean)
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join(" ");
+}
+
+/** Header fallback for routes that do not provide a more specific trail. */
+export function getApplicationBreadcrumbs(
+  pathname: string,
+): WorkspaceBreadcrumbItem[] {
+  const section = pathname.split("/").filter(Boolean)[0];
+  if (!section) return [];
+
+  return [
+    { label: "Home",href: "/" },
+    {
+      label: APPLICATION_SECTION_LABELS[section] ?? titleCaseRouteSegment(section),
+      href: `/${section}`,
+    },
+  ];
+}
+
 export function AppHeader() {
   const pathname = usePathname();
   const router = useRouter();
+  const breadcrumbSlot = useHeaderBreadcrumbSlot();
+  const fallbackBreadcrumbs = getApplicationBreadcrumbs(pathname);
   const { data: session } = useSession();
   const { isAdmin } = useAdminRole();
   const {
@@ -76,6 +126,7 @@ export function AppHeader() {
   // visibly does nothing in that race. Programmatic navigation + an
   // explicit close after navigation starts is deterministic.
   const [alertsPopoverOpen, setAlertsPopoverOpen] = React.useState(false);
+  const [feedbackDialogOpen, setFeedbackDialogOpen] = React.useState(false);
 
   // Debug logging for admin tab
   React.useEffect(() => {
@@ -139,7 +190,7 @@ export function AppHeader() {
                 : `Keycloak realm ${keycloakSummary.realm} unreachable`,
           count: 1,
           severity: "red" as const,
-          href: "/admin/security/keycloak",
+          href: "/admin/security/access-operations?operationsTab=keycloak",
         }
       : null;
   const adminOnlyAlerts: AdminAlertSource[] = isAdmin
@@ -151,7 +202,7 @@ export function AppHeader() {
               label: "Migrations required",
               count: migrationStatus.status.blocking_required_count ?? 0,
               severity: "red" as const,
-              href: "/admin/security/migrations",
+              href: "/admin/security/access-operations?operationsTab=migrations",
             }
           : null,
         keycloakHealth.summary?.invariants && keycloakHealth.summary.invariants.failing > 0
@@ -160,7 +211,7 @@ export function AppHeader() {
               label: `Keycloak invariant${keycloakHealth.summary.invariants.failing === 1 ? "" : "s"} failing`,
               count: keycloakHealth.summary.invariants.failing,
               severity: "amber" as const,
-              href: "/admin/security/keycloak",
+              href: "/admin/security/access-operations?operationsTab=keycloak",
             }
           : null,
         !migrationStatus.status?.is_blocking && migrationStatus.status?.needs_version_bootstrap
@@ -169,7 +220,7 @@ export function AppHeader() {
               label: "Version metadata needed",
               count: migrationStatus.status.version_bootstrap_required_count ?? 0,
               severity: "amber" as const,
-              href: "/admin/security/migrations",
+              href: "/admin/security/access-operations?operationsTab=migrations",
             }
           : null,
         !migrationStatus.status?.is_blocking && migrationStatus.status?.override_active
@@ -178,7 +229,7 @@ export function AppHeader() {
               label: "Migration override active",
               count: 1,
               severity: "amber" as const,
-              href: "/admin/security/migrations",
+              href: "/admin/security/access-operations?operationsTab=migrations",
             }
           : null,
       ].filter(Boolean) as AdminAlertSource[])
@@ -186,10 +237,26 @@ export function AppHeader() {
   const adminAlerts = adminOnlyAlerts;
   return (
     <>
-    <header className="relative z-50 flex h-14 shrink-0 items-center justify-between gap-2 bg-card/50 px-3 backdrop-blur-xl sm:px-4">
-      <div className="flex min-w-0 items-center gap-1">
+    <header className="relative z-50 flex h-14 shrink-0 items-center gap-2 bg-card/50 px-3 backdrop-blur-xl sm:px-4">
+      <div className="flex min-w-0 shrink-0 items-center gap-1">
         <ApplicationNavigationMenuButton />
         <MobileApplicationBrand />
+      </div>
+
+      {/* Breadcrumb slot — pages (e.g. chat) portal their WorkspaceBreadcrumbs
+          in here so the crumb trail lives inside the header bar instead of
+          floating in its own row underneath it. */}
+      <div
+        ref={breadcrumbSlot?.setTarget}
+        className="flex min-w-0 flex-1 items-center overflow-hidden"
+        data-testid="app-header-breadcrumb-slot"
+      >
+        {breadcrumbSlot && !breadcrumbSlot.hasPortalContent && fallbackBreadcrumbs.length > 0 ? (
+          <WorkspaceBreadcrumbs
+            breadcrumbs={fallbackBreadcrumbs}
+            portal={false}
+          />
+        ) : null}
       </div>
 
       {/* Status & Actions */}
@@ -353,6 +420,26 @@ export function AppHeader() {
             >
               {config.envBadge}
             </span>
+          ) : null}
+          <ApplicationNavigationSearchTrigger />
+          {config.provideFeedbackEnabled ? (
+            <>
+              <Button
+                aria-label="Provide Feedback"
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                data-testid="header-provide-feedback"
+                onClick={() => setFeedbackDialogOpen(true)}
+                size="icon"
+                title="Provide Feedback"
+                variant="ghost"
+              >
+                <MessageSquareText aria-hidden="true" className="h-4 w-4" />
+              </Button>
+              <ReportProblemDialog
+                open={feedbackDialogOpen}
+                onOpenChange={setFeedbackDialogOpen}
+              />
+            </>
           ) : null}
           <SettingsPanel />
           {config.docsUrl && (

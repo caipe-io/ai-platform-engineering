@@ -3,6 +3,8 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ModelPicker } from "@/components/ui/model-picker";
+import { Select } from "@/components/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -292,42 +294,31 @@ function MiddlewareEntryCard({
           {/* Model selection for middleware that need it */}
           {definition?.model_params && availableModels && (
             <div className="space-y-1">
-              <Label className="text-xs">Model</Label>
-              <select
-                value={`${entry.params.model_id ?? ""}::${entry.params.model_provider ?? ""}`}
-                onChange={(e) => {
-                  const lastDelim = e.target.value.lastIndexOf("::");
-                  if (lastDelim > 0) {
-                    const mid = e.target.value.slice(0, lastDelim);
-                    const mprov = e.target.value.slice(lastDelim + 2);
-                    onUpdate(index, {
-                      ...entry.params,
-                      model_id: mid,
-                      model_provider: mprov,
-                    });
-                  }
+              <Label className="text-xs" htmlFor={`middleware-model-${index}`}>
+                Model
+              </Label>
+              <ModelPicker
+                id={`middleware-model-${index}`}
+                options={availableModels}
+                modelId={String(entry.params.model_id ?? "")}
+                modelProvider={String(entry.params.model_provider ?? "")}
+                onChange={(modelId, modelProvider) => {
+                  onUpdate(index, {
+                    ...entry.params,
+                    model_id: modelId,
+                    model_provider: modelProvider,
+                  });
                 }}
                 disabled={disabled}
-                className={cn(
-                  "flex h-8 w-full rounded-md border bg-background px-2 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50",
+                ariaLabel="Middleware model"
+                ariaInvalid={!entry.params.model_id}
+                triggerClassName={cn(
+                  "h-8 px-2 py-1 text-xs",
                   !entry.params.model_id
                     ? "border-destructive"
                     : "border-input",
                 )}
-              >
-                <option value="::">Select a model...</option>
-                {availableModels.map((m) => (
-                  <option
-                    key={`${m.model_id}::${m.provider}`}
-                    value={`${m.model_id}::${m.provider}`}
-                  >
-                    {m.name}
-                    {m.provider && m.provider !== "default"
-                      ? ` (${m.provider})`
-                      : ""}
-                  </option>
-                ))}
-              </select>
+              />
               {!entry.params.model_id && (
                 <p className="text-xs text-destructive">
                   A model is required for this middleware to function.
@@ -350,7 +341,7 @@ function MiddlewareEntryCard({
               return (
                 <div key={key} className="space-y-1">
                   <Label className="text-xs">{paramLabel}</Label>
-                  <select
+                  <Select
                     value={String(val ?? "")}
                     onChange={(e) => handleParamChange(key, e.target.value)}
                     disabled={disabled}
@@ -361,7 +352,7 @@ function MiddlewareEntryCard({
                         {opt}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               );
             }

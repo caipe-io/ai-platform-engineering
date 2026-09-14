@@ -30,7 +30,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ .Chart.Name }}
-          image: "{{ include "slack-bot.imageRepository" (dict "root" . "repository" .Values.image.repository) }}:{{ .Values.image.tag | default (include "slack-bot.appVersion" .) }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "slack-bot.appVersion" .) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:

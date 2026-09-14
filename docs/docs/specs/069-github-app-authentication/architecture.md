@@ -64,7 +64,7 @@ The token provider generates a JWT from the App's private key, exchanges it for 
    | Field | Value |
    |-------|-------|
    | **GitHub App name** | `caipe-github-agent` (must be globally unique) |
-   | **Homepage URL** | `https://github.com/cnoe-io/ai-platform-engineering` |
+   | **Homepage URL** | `https://github.com/caipe-io/ai-platform-engineering` |
    | **Webhook** | Uncheck **Active** (not needed) |
 
 3. Set **Repository permissions**:

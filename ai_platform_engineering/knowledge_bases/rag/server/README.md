@@ -301,12 +301,12 @@ The server is available in two image variants:
 
 **Pull the default image:**
 ```bash
-docker pull ghcr.io/cnoe-io/caipe-rag-server:latest
+docker pull ghcr.io/caipe-io/caipe-rag-server:latest
 ```
 
 **Pull the HuggingFace variant (if using local embeddings):**
 ```bash
-docker pull ghcr.io/cnoe-io/caipe-rag-server:latest-hf
+docker pull ghcr.io/caipe-io/caipe-rag-server:latest-hf
 ```
 
 Build the server image locally:
@@ -456,4 +456,3 @@ uv run pytest
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - Detailed architecture documentation
 - [Common Models](../common/README.md) - Shared data models
 - [Ingestors](../ingestors/README.md) - Building custom ingestors
-

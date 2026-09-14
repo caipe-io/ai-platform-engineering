@@ -12,6 +12,7 @@
  * - Search disabled when no MCP tools available
  */
 
+import { SearchablePicker } from '@/components/ui/searchable-picker';
 import { getMCPTools } from '@/lib/rag-api';
 import { formatFreshUntil } from '@/lib/utils';
 import { AnimatePresence,motion } from 'framer-motion';
@@ -22,6 +23,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { MCPToolSchema } from './api';
 import { getDataSources,getHealthStatus,getMCPToolSchemas,invokeMCPTool } from './api';
+import { MetadataFilterKeyPicker } from './MetadataFilterKeyPicker';
 import {
     parseSearchViewState,
     serializeSearchViewState,
@@ -560,20 +562,20 @@ export default function SearchView({ onExploreEntity, onNavigateToDataSources }:
                     </div>
                 ) : (
                     <div>
-                        <div className="relative">
-                            <select
-                                value={selectedTool}
-                                onChange={(e) => setSelectedTool(e.target.value)}
-                                className="w-full appearance-none rounded-lg border border-border bg-background px-4 py-2.5 pr-10 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 text-foreground cursor-pointer hover:border-primary/50 transition-colors"
-                            >
-                                {availableTools.map(tool => (
-                                    <option key={tool.name} value={tool.name}>
-                                        {tool.name}{tool.name === 'search' ? ' (default)' : ''}
-                                    </option>
-                                ))}
-                            </select>
-                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                        </div>
+                        <SearchablePicker
+                            options={availableTools}
+                            selected={availableTools.find(tool => tool.name === selectedTool)}
+                            onSelect={(tool) => setSelectedTool(tool.name)}
+                            getOptionKey={(tool) => tool.name}
+                            getOptionLabel={(tool) => `${tool.name}${tool.name === 'search' ? ' (default)' : ''}`}
+                            getSearchText={(tool) => [tool.name]}
+                            placeholder="Select an MCP tool"
+                            searchPlaceholder="Search MCP tools..."
+                            emptyLabel="No MCP tools match"
+                            ariaLabel="MCP Tool"
+                            required
+                            triggerClassName="h-10 rounded-lg px-4 py-2.5 text-sm"
+                        />
                         {selectedToolSchema?.description && (
                             <div className="mt-2 px-1">
                                 <TruncatableDescription text={selectedToolSchema.description} />
@@ -611,17 +613,12 @@ export default function SearchView({ onExploreEntity, onNavigateToDataSources }:
                         {/* Filter key selector */}
                         <div className="flex items-center gap-2">
                             {!showCustomInput ? (
-                                <select
+                                <MetadataFilterKeyPicker
+                                    keys={validFilterKeys}
                                     value={selectedFilterKey}
-                                    onChange={(e) => handleFilterKeyChange(e.target.value)}
-                                    className="w-48 rounded border border-border bg-background px-2 py-1 text-xs focus:border-primary focus:outline-none text-foreground"
-                                >
-                                    <option value="">Add filter...</option>
-                                    {validFilterKeys.map(key => (
-                                        <option key={key} value={key}>{key}</option>
-                                    ))}
-                                    <option value="__custom__">Custom key (metadata.*)</option>
-                                </select>
+                                    onChange={handleFilterKeyChange}
+                                    triggerClassName="h-7 w-48 px-2 py-1 text-xs"
+                                />
                             ) : (
                                 <div className="flex items-center gap-1">
                                     <input

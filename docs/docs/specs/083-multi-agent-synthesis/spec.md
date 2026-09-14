@@ -13,7 +13,7 @@ Fix for the supervisor to properly synthesize results from all sub-agents in mul
 
 ## Motivation
 
-When users issue queries that invoke multiple agents (e.g., "get apps for CAIPE, search for CAIPE in RAG, look for info for cnoe-io/ai-platform-engineering"), the supervisor was only showing the last agent's response in the final answer. This was a critical usability issue as users lost visibility into the full workflow results.
+When users issue queries that invoke multiple agents (e.g., "get apps for CAIPE, search for CAIPE in RAG, look for info for caipe-io/ai-platform-engineering"), the supervisor was only showing the last agent's response in the final answer. This was a critical usability issue as users lost visibility into the full workflow results.
 
 **Root Cause**: The `sub_agent_complete` boolean flag blocked ALL streaming after the first sub-agent completed, preventing:
 - Subsequent agents' streaming chunks
@@ -90,7 +90,7 @@ After:  sub_agents_completed: int = 0     (counts completions)
 - Unit tests: N/A (logic is deeply integrated with streaming)
 - Integration tests: Test multi-agent query produces synthesized result
 - Manual verification:
-  - Query: "get apps for CAIPE, search for CAIPE in RAG, look for info for cnoe-io/ai-platform-engineering"
+  - Query: "get apps for CAIPE, search for CAIPE in RAG, look for info for caipe-io/ai-platform-engineering"
   - Verify: Final answer contains synthesis from all three agents
 
 ## Rollout Plan
@@ -102,5 +102,5 @@ After:  sub_agents_completed: int = 0     (counts completions)
 ## Related
 
 - ADR: [2026-01-22-multi-agent-synthesis-fix](../044-multi-agent-synthesis-fix/architecture.md)
-- Issues: [#667](https://github.com/cnoe-io/ai-platform-engineering/issues/667)
-- PRs: [#669](https://github.com/cnoe-io/ai-platform-engineering/pull/669)
+- Issues: [#667](https://github.com/caipe-io/ai-platform-engineering/issues/667)
+- PRs: [#669](https://github.com/caipe-io/ai-platform-engineering/pull/669)

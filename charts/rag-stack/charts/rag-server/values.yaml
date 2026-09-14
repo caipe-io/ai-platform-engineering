@@ -5,7 +5,7 @@ fullnameOverride: "rag-server"
 enableGraphRag: true
 
 image:
-  repository: "ghcr.io/cnoe-io/caipe-rag-server"
+  repository: "ghcr.io/caipe-io/caipe-rag-server"
   # tag defaults to .Chart.AppVersion when not specified
   tag: ""
   pullPolicy: IfNotPresent
@@ -91,7 +91,7 @@ affinity: {}
 # Init containers to run before the main containers (e.g. install Playwright browsers)
 initContainers: []
 # - name: playwright-install
-#   image: "ghcr.io/cnoe-io/caipe-rag-ingestors:0.4.4"
+#   image: "ghcr.io/caipe-io/caipe-rag-ingestors:0.4.4"
 #   command: ["sh", "-c", "playwright install chromium"]
 #   volumeMounts:
 #     - name: playwright-browsers

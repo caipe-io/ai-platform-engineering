@@ -12,6 +12,7 @@ RUN if [ -z "$AGENT_NAME" ]; then \
 # Install system dependencies and uv in one layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    tzdata \
     && pip install uv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -60,7 +61,7 @@ ARG INSTALL_AWS_CLI=false
 ARG INSTALL_KUBECTL=false
 
 RUN echo "https://packages.wolfi.dev/os" > /etc/apk/repositories && \
-    for i in 1 2 3; do apk add --no-cache python-3.13 shadow && break; [ $i -lt 3 ] && sleep $((i * 5)); done && \
+    for i in 1 2 3; do apk add --no-cache python-3.13 shadow tzdata && break; [ $i -lt 3 ] && sleep $((i * 5)); done && \
     if [ "$INSTALL_NETUTILS" = "true" ]; then \
         for i in 1 2 3; do \
             apk add --no-cache \

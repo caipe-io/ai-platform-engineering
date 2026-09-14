@@ -8,7 +8,9 @@ from __future__ import annotations
 # Empty frozenset means "allow all types" (no filter applied).
 PRESET_TYPES: dict[str, frozenset[str]] = {
     "minimal": frozenset({"cas_grant", "cas_reconcile"}),
-    "standard": frozenset({"auth", "cas_grant", "cas_reconcile", "cas_decision", "credential_action"}),
+    "standard": frozenset(
+        {"auth", "cas_grant", "cas_reconcile", "cas_decision", "credential_action", "openfga_rebac"}
+    ),
     "verbose": frozenset(),
     "il2": frozenset({"auth", "cas_grant", "cas_decision", "credential_action"}),
     "il5": frozenset(),

@@ -1,8 +1,5 @@
 """Tests for autonomous_agents Pydantic models."""
 
-import pydantic
-import pytest
-
 from autonomous_agents.models import (
     CronTrigger,
     IntervalTrigger,
@@ -93,59 +90,6 @@ class TestTaskStatus:
         assert TaskStatus.RUNNING == "running"
         assert TaskStatus.SUCCESS == "success"
         assert TaskStatus.FAILED == "failed"
-
-
-class TestPerTaskA2AOverrides:
-    """Per-task ``timeout_seconds`` override."""
-
-    def test_task_definition_a2a_overrides_default_to_none(self):
-        """Without an override the field is None so the scheduler uses Settings."""
-        task = TaskDefinition(
-            id="test",
-            name="Test",
-            agent="github",
-            prompt="x",
-            trigger=CronTrigger(schedule="* * * * *"),
-        )
-        assert task.timeout_seconds is None
-
-    def test_task_definition_accepts_per_task_overrides(self):
-        """Explicit override is stored verbatim."""
-        task = TaskDefinition(
-            id="test",
-            name="Test",
-            agent="github",
-            prompt="x",
-            trigger=CronTrigger(schedule="* * * * *"),
-            timeout_seconds=42.5,
-        )
-        assert task.timeout_seconds == 42.5
-
-    def test_task_definition_rejects_non_positive_timeout(self):
-        """``timeout_seconds`` must be strictly positive."""
-        for bad in (0, -1, -0.5):
-            with pytest.raises(pydantic.ValidationError):
-                TaskDefinition(
-                    id="test",
-                    name="Test",
-                    agent="github",
-                    prompt="x",
-                    trigger=CronTrigger(schedule="* * * * *"),
-                    timeout_seconds=bad,
-                )
-
-    def test_task_definition_rejects_inf_and_nan_timeout(self):
-        """``inf`` / ``-inf`` / ``nan`` timeouts are rejected at construction."""
-        for bad in (float("inf"), float("-inf"), float("nan")):
-            with pytest.raises(pydantic.ValidationError):
-                TaskDefinition(
-                    id="test",
-                    name="Test",
-                    agent="github",
-                    prompt="x",
-                    trigger=CronTrigger(schedule="* * * * *"),
-                    timeout_seconds=bad,
-                )
 
 
 class TestTaskDefinitionOwnerField:

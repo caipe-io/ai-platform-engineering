@@ -16,7 +16,7 @@ Pins the contract relied on by the built-in workflow tools in
   ``CREDENTIAL_API_URL`` already do, and like the ``slack-bot`` and
   ``webex-bot`` subcharts already do for this very key.
 
-Regression test for cnoe-io/ai-platform-engineering#1958.
+Regression test for caipe-io/ai-platform-engineering#1958.
 """
 
 from __future__ import annotations

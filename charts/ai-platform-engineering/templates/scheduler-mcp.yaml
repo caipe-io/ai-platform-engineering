@@ -61,7 +61,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: mcp
-          image: "{{ include "ai-platform-engineering.imageRepository" (dict "root" $ "repository" $image.repository) }}:{{ $image.tag | default (include "ai-platform-engineering.appVersion" .) }}"
+          image: "{{ $image.repository }}:{{ $image.tag | default (include "ai-platform-engineering.appVersion" .) }}"
           imagePullPolicy: {{ $image.pullPolicy | default "IfNotPresent" }}
           securityContext:
             allowPrivilegeEscalation: false

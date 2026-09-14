@@ -28,6 +28,7 @@ from autonomous_agents.models import (
     TaskDefinition,
     TaskRun,
     TaskStatus,
+    WebhookTrigger,
 )
 from autonomous_agents.routes import tasks as tasks_route
 from autonomous_agents.routes.tasks import (
@@ -175,13 +176,18 @@ def _interval_task(task_id: str = "t1", *, seconds: int = 30) -> dict:
     }
 
 
-def _webhook_task(task_id: str = "hook1", *, secret: str | None = None) -> dict:
+def _webhook_task(
+    task_id: str = "hook1",
+    *,
+    secret: str | None = None,
+    provider: str = "github",
+) -> dict:
     payload = {
         "id": task_id,
         "name": f"Webhook {task_id}",
         "dynamic_agent_id": "agent-x",
         "prompt": "respond",
-        "trigger": {"type": "webhook"},
+        "trigger": {"type": "webhook", "provider": provider},
         "enabled": True,
     }
     if secret is not None:
@@ -278,6 +284,12 @@ def client():
 class TestListAndGet:
     """``GET /tasks`` and ``GET /tasks/{id}``."""
 
+    def test_settings_exposes_schedule_frequency_floor(self, client: TestClient):
+        response = client.get("/api/v1/settings")
+
+        assert response.status_code == 200
+        assert response.json() == {"minimum_schedule_interval_seconds": 1800}
+
     def test_list_tasks_initially_empty(self, client: TestClient):
         """Empty store returns an empty list."""
         response = client.get("/api/v1/tasks")
@@ -303,8 +315,10 @@ class TestCreate:
         assert body["name"] == "Task cron-1"
         assert body["trigger"]["type"] == "cron"
         assert body["enabled"] is True
-        for required in ("agent", "prompt", "llm_provider", "timeout_seconds"):
+        for required in ("agent", "prompt", "llm_provider"):
             assert required in body
+        assert "timeout_seconds" not in body
+        assert "max_retries" not in body
 
     def test_registers_with_scheduler(self, client: TestClient):
         """A freshly-created cron task lands as an APScheduler job."""
@@ -410,6 +424,25 @@ class TestCreate:
         fixed = _cron_task("bad-cron")
         retry = client.post("/api/v1/tasks", json=fixed)
         assert retry.status_code == 201, "rollback must clear the way for retry"
+
+    @pytest.mark.parametrize(
+        "trigger",
+        [
+            {"type": "cron", "schedule": "*/5 * * * *"},
+            {"type": "interval", "minutes": 29},
+        ],
+    )
+    def test_rejects_schedules_faster_than_configured_minimum(
+        self, client: TestClient, trigger: dict
+    ):
+        payload = _cron_task("too-fast")
+        payload["trigger"] = trigger
+
+        response = client.post("/api/v1/tasks", json=payload)
+
+        assert response.status_code == 400
+        assert "configured minimum" in response.json()["detail"]
+        assert client.get("/api/v1/tasks").json() == []
 
 
 class TestUpdate:
@@ -517,8 +550,13 @@ class TestUpdate:
 class TestWebhookSecretRedaction:
     """The HMAC ``secret`` is redacted on every read path."""
 
-    def test_create_response_redacts_secret(self, client: TestClient):
-        """POST response replaces ``secret`` with ``has_secret``."""
+    def test_create_response_returns_server_generated_secret_once(
+        self, client: TestClient, monkeypatch
+    ):
+        """POST ignores client credentials and returns its generated key once."""
+        monkeypatch.setattr(
+            tasks_route, "_generate_webhook_secret", lambda: "server-generated-secret"
+        )
         response = client.post(
             "/api/v1/tasks", json=_webhook_task("hook1", secret="super-secret")
         )
@@ -526,31 +564,59 @@ class TestWebhookSecretRedaction:
         trigger = response.json()["trigger"]
         assert "secret" not in trigger
         assert trigger["has_secret"] is True
+        assert response.json()["webhook_setup"] == {
+            "secret": "server-generated-secret"
+        }
+
+        stored = task_lifecycle._task_store
+        assert stored is not None
+        task = asyncio.run(stored.get(response.json()["id"]))
+        assert task is not None
+        assert task.trigger.secret == "server-generated-secret"
 
     def test_list_and_get_never_echo_secret(self, client: TestClient):
         """List and get both redact the secret on every webhook task."""
         tid = _create_task(client, _webhook_task("hook1", secret="s"))
 
         listed = client.get("/api/v1/tasks").json()
+        assert "webhook_setup" not in listed[0]
         assert "secret" not in listed[0]["trigger"]
         assert listed[0]["trigger"]["has_secret"] is True
 
         fetched = client.get(f"/api/v1/tasks/{tid}").json()
+        assert "webhook_setup" not in fetched
         assert "secret" not in fetched["trigger"]
         assert fetched["trigger"]["has_secret"] is True
 
-    def test_without_secret_reports_has_secret_false(self, client: TestClient):
-        """Webhook task with no secret reports ``has_secret=False``."""
+    def test_create_without_secret_still_generates_one(self, client: TestClient):
+        """Webhook creation can never produce an unsigned task."""
         tid = _create_task(client, _webhook_task("hook1"))
         fetched = client.get(f"/api/v1/tasks/{tid}").json()
-        assert fetched["trigger"]["has_secret"] is False
+        assert fetched["trigger"]["has_secret"] is True
+
+    @pytest.mark.parametrize("provider", ["slack", "pagerduty"])
+    def test_provider_issued_secret_is_not_exposed(
+        self, client: TestClient, provider: str
+    ):
+        """Slack/PagerDuty get a temporary key, never a misleading copy value."""
+        response = client.post(
+            "/api/v1/tasks", json=_webhook_task("hook1", provider=provider)
+        )
+        assert response.status_code == 201
+        assert response.json()["trigger"]["has_secret"] is True
+        assert response.json()["webhook_setup"] == {}
 
 
 class TestWebhookSecretPreservationOnPut:
     """A PUT with no secret means ``keep what's there``, not ``wipe``."""
 
-    def test_preserves_existing_secret_when_omitted(self, client: TestClient):
+    def test_preserves_existing_secret_when_omitted(
+        self, client: TestClient, monkeypatch
+    ):
         """PUT with secret omitted preserves the stored secret."""
+        monkeypatch.setattr(
+            tasks_route, "_generate_webhook_secret", lambda: "original-secret"
+        )
         tid = _create_task(client, _webhook_task("hook1", secret="original-secret"))
 
         update = _webhook_task("hook1")
@@ -583,6 +649,37 @@ class TestWebhookSecretPreservationOnPut:
         assert task is not None
         assert task.trigger.secret == "new-secret"
 
+    def test_switch_to_webhook_generates_and_returns_secret_once(
+        self, client: TestClient, monkeypatch
+    ):
+        """A cron -> webhook edit cannot leave an unsigned endpoint."""
+        tid = _create_task(client, _cron_task("t1"))
+        monkeypatch.setattr(
+            tasks_route, "_generate_webhook_secret", lambda: "transition-secret"
+        )
+
+        response = client.put(f"/api/v1/tasks/{tid}", json=_webhook_task("t1"))
+
+        assert response.status_code == 200
+        assert response.json()["webhook_setup"] == {"secret": "transition-secret"}
+        fetched = client.get(f"/api/v1/tasks/{tid}").json()
+        assert fetched["trigger"]["has_secret"] is True
+        assert "webhook_setup" not in fetched
+
+    def test_switch_to_provider_issued_secret_returns_setup_marker(
+        self, client: TestClient
+    ):
+        """Slack/PagerDuty transition continues into provider-secret setup."""
+        tid = _create_task(client, _cron_task("t1"))
+
+        response = client.put(
+            f"/api/v1/tasks/{tid}",
+            json=_webhook_task("t1", provider="pagerduty"),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["webhook_setup"] == {}
+
 
 class TestDelete:
     """``DELETE /tasks/{id}`` removes the task from store and runtime registries."""
@@ -613,16 +710,16 @@ class TestDelete:
 
     def test_round_trip_create_get_update_delete(self, client: TestClient):
         """Sanity smoke covering the full UI flow in one shot."""
-        tid = _create_task(client, _interval_task("t1", seconds=15))
+        tid = _create_task(client, _interval_task("t1", seconds=1800))
 
         got = client.get(f"/api/v1/tasks/{tid}")
         assert got.status_code == 200
-        assert got.json()["trigger"]["seconds"] == 15
+        assert got.json()["trigger"]["seconds"] == 1800
 
-        updated_payload = _interval_task("t1", seconds=60)
+        updated_payload = _interval_task("t1", seconds=3600)
         updated = client.put(f"/api/v1/tasks/{tid}", json=updated_payload)
         assert updated.status_code == 200
-        assert updated.json()["trigger"]["seconds"] == 60
+        assert updated.json()["trigger"]["seconds"] == 3600
 
         deleted = client.delete(f"/api/v1/tasks/{tid}")
         assert deleted.status_code == 204
@@ -684,7 +781,7 @@ class TestRunHistory:
         await _seed_tasks([_make_task("t1")])
 
         with patch.object(
-            tasks_route, "chat_history_publishing_enabled", return_value=False
+            tasks_route, "task_chat_history_publishing_enabled", return_value=False
         ):
             runs = await get_task_runs("t1", _fake_request())
 
@@ -707,6 +804,83 @@ class TestRunHistory:
             runs = await get_task_runs("t1", _fake_request())
 
         assert runs[0].conversation_id == conversation_id
+
+
+class TestWebhookRunFollowUp:
+    """Authenticated UI continuation stays bound to an explicit webhook run."""
+
+    def test_queues_follow_up_for_selected_run(
+        self, client: TestClient, _swap_run_store, monkeypatch
+    ):
+        owner = "owner@example.com"
+        headers = _user_headers(owner)
+        task_id = _create_task(client, _webhook_task("hook1"), headers=headers)
+        _swap_run_store(
+            _RecordingStore(
+                [_make_run("run-parent", task_id=task_id, owner_id=owner)]
+            )
+        )
+        dispatch = AsyncMock(
+            return_value=webhook_runtime.DispatchOutcome(
+                status_code=202,
+                run_id="run-follow-up",
+                claimed=True,
+                trigger_instance_id=None,
+                dedup_strategy="none",
+            )
+        )
+        monkeypatch.setattr(tasks_route, "dispatch_webhook_run", dispatch)
+
+        response = client.post(
+            f"/api/v1/tasks/{task_id}/runs/run-parent/follow-up",
+            json={"user_text": "Please investigate the failed check."},
+            headers=headers,
+        )
+
+        assert response.status_code == 202
+        assert response.json() == {
+            "status": "accepted",
+            "task_id": task_id,
+            "run_id": "run-follow-up",
+            "parent_run_id": "run-parent",
+        }
+        follow_up = dispatch.await_args.kwargs["follow_up"]
+        assert follow_up.parent_run_id == "run-parent"
+        assert follow_up.user_text == "Please investigate the failed check."
+        assert follow_up.user_ref == owner
+        assert follow_up.transport == "webui"
+
+    def test_rejects_unknown_parent_run(
+        self, client: TestClient, _swap_run_store, monkeypatch
+    ):
+        task_id = _create_task(client, _webhook_task("hook1"))
+        _swap_run_store(_RecordingStore())
+        dispatch = AsyncMock()
+        monkeypatch.setattr(tasks_route, "dispatch_webhook_run", dispatch)
+
+        response = client.post(
+            f"/api/v1/tasks/{task_id}/runs/missing/follow-up",
+            json={"user_text": "Continue"},
+        )
+
+        assert response.status_code == 404
+        dispatch.assert_not_awaited()
+
+    def test_rejects_non_webhook_task(
+        self, client: TestClient, _swap_run_store, monkeypatch
+    ):
+        task_id = _create_task(client, _cron_task("scheduled"))
+        _swap_run_store(_RecordingStore([_make_run("run-parent", task_id=task_id)]))
+        dispatch = AsyncMock()
+        monkeypatch.setattr(tasks_route, "dispatch_webhook_run", dispatch)
+
+        response = client.post(
+            f"/api/v1/tasks/{task_id}/runs/run-parent/follow-up",
+            json={"user_text": "Continue"},
+        )
+
+        assert response.status_code == 400
+        dispatch.assert_not_awaited()
 
 
 class TestRunHistoryOwnership:
@@ -904,7 +1078,7 @@ class TestDynamicAgentRouting:
         )
 
         with patch.object(
-            tasks_route, "chat_history_publishing_enabled", return_value=False
+            tasks_route, "task_chat_history_publishing_enabled", return_value=False
         ):
             serialized = _serialize_task(task, next_run_iso=None)
 
@@ -921,11 +1095,45 @@ class TestDynamicAgentRouting:
         )
 
         with patch.object(
-            tasks_route, "chat_history_publishing_enabled", return_value=True
+            tasks_route, "task_chat_history_publishing_enabled", return_value=True
         ):
             serialized = _serialize_task(task, next_run_iso=None)
 
         assert serialized["chat_conversation_id"] == conversation_id_for_task(task.id)
+
+    def test_serialize_webhook_task_never_exposes_chat_link(self):
+        task = TaskDefinition(
+            id="webhook-task",
+            name="Webhook Task",
+            dynamic_agent_id="agent-x",
+            prompt="handle event",
+            trigger=WebhookTrigger(),
+        )
+
+        serialized = _serialize_task(task, next_run_iso=None)
+
+        assert serialized["chat_conversation_id"] is None
+
+    async def test_webhook_task_lifecycle_never_publishes_chat_messages(self):
+        task = TaskDefinition(
+            id="webhook-task",
+            name="Webhook Task",
+            dynamic_agent_id="agent-x",
+            prompt="handle event",
+            trigger=WebhookTrigger(),
+        )
+        publisher = AsyncMock()
+
+        with patch.object(
+            task_lifecycle,
+            "get_chat_history_publisher",
+            return_value=publisher,
+        ):
+            await task_lifecycle.publish_creation_intent_safely(task)
+            await task_lifecycle._safe_publish_preflight_ack(task, _ok_ack())
+
+        publisher.publish_creation_intent.assert_not_awaited()
+        publisher.publish_preflight_ack.assert_not_awaited()
 
 
 def test_task_route_uses_lifecycle_task_store() -> None:
@@ -1019,7 +1227,7 @@ class TestTaskOwnership:
         headers = {**_user_headers("alice@example.com"), "X-Authenticated-User-Sub": "alice-uuid"}
         resp = client.post("/api/v1/tasks", json=_cron_task("t1"), headers=headers)
         assert resp.status_code == 201
-        # owner_sub is exposed read-only on the wire (admin oversight join key).
+        # owner_sub is exposed read-only on the wire as the stable owner identity.
         assert resp.json()["owner_sub"] == "alice-uuid"
         tid = resp.json()["id"]
 

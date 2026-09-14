@@ -21,7 +21,7 @@ oci://ghcr.io/cnoe-io/charts/ai-platform-engineering
 ```
 
 Browse available versions (stable releases only, no RCs):
-👉 **[ghcr.io/cnoe-io/charts/ai-platform-engineering](https://github.com/cnoe-io/ai-platform-engineering/pkgs/container/charts%2Fai-platform-engineering)**
+👉 **[ghcr.io/cnoe-io/charts/ai-platform-engineering](https://github.com/caipe-io/ai-platform-engineering/pkgs/container/charts%2Fai-platform-engineering)**
 
 ## Chart structure
 
@@ -59,7 +59,7 @@ Pull the chart locally to access the bundled example values files:
 helm pull oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version <VERSION> --untar
 ```
 
-Replace `<VERSION>` with the latest stable version from the [registry page](https://github.com/cnoe-io/ai-platform-engineering/pkgs/container/charts%2Fai-platform-engineering).
+Replace `<VERSION>` with the latest stable version from the [registry page](https://github.com/caipe-io/ai-platform-engineering/pkgs/container/charts%2Fai-platform-engineering).
 
 ## Step 2 — Configure secrets
 

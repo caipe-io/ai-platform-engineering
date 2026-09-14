@@ -1,4 +1,5 @@
 import { authOptions } from "@/lib/auth-config";
+import { isWebexIdentityLinkingEnabled } from "@/lib/integration-config";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
 import { getRealmUserById } from "@/lib/rbac/keycloak-admin";
 import { getRbacCollection } from "@/lib/rbac/mongo-collections";
@@ -28,6 +29,8 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
  *   but new resource grants live in OpenFGA and are not surfaced from JWT roles
  * - idp_source: Identity provider (from JWT azp/iss)
  * - slack_linked: Whether the user has a linked Slack account
+ * - webex_linked: Whether the user has a linked Webex account
+ * - webex_link_available: Whether self-service Webex linking is configured
  */
 const RESOURCE_ROLE_PREFIXES = [
   "kb_reader:",
@@ -84,6 +87,7 @@ export async function GET() {
   // check misses the membership tuple (#48). `_id` is retained for display/back-compat.
   let teams: Array<{ _id: string; slug: string; name: string; role?: string }> = [];
   let slackLinked = false;
+  let webexLinked = false;
 
   if (isMongoDBConfigured) {
     try {
@@ -131,6 +135,7 @@ export async function GET() {
         const kcUser = await getRealmUserById(sub);
         const attrs = kcUser.attributes as Record<string, string[]> | undefined;
         slackLinked = !!(attrs?.slack_user_id?.[0]?.trim());
+        webexLinked = !!(attrs?.webex_user_id?.[0]?.trim());
       }
     } catch {
       // Keycloak may not be available
@@ -148,5 +153,7 @@ export async function GET() {
     teams,
     idp_source: idpSource,
     slack_linked: slackLinked,
+    webex_linked: webexLinked,
+    webex_link_available: isWebexIdentityLinkingEnabled(),
   });
 }

@@ -244,7 +244,7 @@ services:
       - mcp-servers
 
   ####################################################################################################
-  #                                      CAIPE UI & MongoDB                                          #
+  #                             CAIPE UI & document database                                        #
   ####################################################################################################
   # MongoDB for CAIPE UI chat history and user settings
   caipe-mongodb:
@@ -267,7 +267,42 @@ services:
       start_period: 40s
     profiles:
       - caipe-mongodb
-      - autonomous-agents
+
+  # MIT-licensed, PostgreSQL-backed MongoDB-compatible alternative.
+  # Opt in with the caipe-documentdb profile and point MONGODB_URI at
+  # caipe-documentdb:10260. MongoDB remains the default provider.
+  caipe-documentdb:
+    image: ghcr.io/documentdb/documentdb/documentdb-local:${DOCUMENTDB_IMAGE_TAG:-pg17-0.113.0}
+    container_name: caipe-documentdb
+    command:
+      - --username
+      - ${MONGODB_ROOT_USERNAME:-admin}
+      - --password
+      - ${MONGODB_ROOT_PASSWORD:-changeme}
+      - --data-path
+      - /data
+      - --documentdb-port
+      - "10260"
+      - --pg-port
+      - "9712"
+      - --tlsMode
+      - allowTLS
+      - --log-level
+      - warn
+      - --enable-telemetry
+      - "false"
+    ports:
+      - "10260:10260"
+    volumes:
+      - documentdb_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -p 9712 -U documentdb -d postgres && pgrep -f documentdb-gateway >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    profiles:
+      - caipe-documentdb
 
   # MongoDB Admin UI (optional)
   caipe-ui-mongo-express:
@@ -305,6 +340,9 @@ services:
       - .env
     environment:
       - NODE_ENV=production
+      # Safe release metadata shown by System Health. A specific
+      # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
+      - CAIPE_RELEASE_VERSION=${IMAGE_TAG:-0.5.66}
       # Pass the active Compose profile set through to the UI so product
       # health can show profile-enabled integrations as degraded/down even
       # when their container crashes before serving traffic.
@@ -353,6 +391,15 @@ services:
       - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-caipe-platform-dev-secret}
       # Workflow runner - set WORKFLOW_RUNNER_ENABLED=true to show Run Workflow button and Multi-Step Workflows
       - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
+      # Projects - set PROJECTS_ENABLED=true to show the Projects workspace
+      - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
+      # Top-level workflows and schedules are independent, opt-in navigation surfaces.
+      - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
+      - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-false}
+      # Compact header shortcut that reuses the existing feedback dialog.
+      - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
       # Connections & Secrets. Docker Compose reads provider bootstrap values
       # from .env; Kubernetes deployments use ESO to inject the same env names.
@@ -381,6 +428,9 @@ services:
       # Audit log storage is owned by the lightweight Python audit-service.
       - AUDIT_LOG_BACKEND=${AUDIT_LOG_BACKEND:-service}
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
+      - APP_CONFIG_PATH=/app/config/app-config.yaml
+    volumes:
+      - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s
@@ -532,6 +582,7 @@ services:
       # Centralized Authorization Service. Dynamic Agents delegates agent-use
       # decisions to the UI BFF and fails closed with 503 if this is unset.
       - AUTHZ_SERVICE_URL=${AUTHZ_SERVICE_URL:-http://caipe-ui:3000}
+      - CAIPE_ORG_KEY=${CAIPE_ORG_KEY:-caipe}
       # Tracing (Langfuse)
       - ENABLE_TRACING=${ENABLE_TRACING:-false}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
@@ -591,9 +642,8 @@ services:
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
       # MongoDB persistence -- shared with the UI so the Autonomous tab's
       # task list and run history come from the same source of truth.
-      # The caipe-mongodb service is auto-included via the
-      # autonomous-agents profile (added to its profiles list below),
-      # so a "--profile autonomous-agents" up brings Mongo along.
+      # Include exactly one database profile: caipe-mongodb (default) or
+      # caipe-documentdb. Both expose the MongoDB wire protocol.
       - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       # IMP-13: publish completed autonomous runs into the UI
@@ -615,6 +665,9 @@ services:
       # idiomatic way to express "if this service was started by the
       # active profile selection, wait for it; otherwise don't error".
       caipe-mongodb:
+        condition: service_healthy
+        required: false
+      caipe-documentdb:
         condition: service_healthy
         required: false
       dynamic-agents:
@@ -674,7 +727,6 @@ services:
       - JIRA_URL=${JIRA_URL}
       - JIRA_EMAIL=${JIRA_EMAIL}
       - ATLASSIAN_TOKEN=${ATLASSIAN_TOKEN}
-      - JIRA_PROJECTS=${JIRA_PROJECTS}
       - JIRA_PAGE_SIZE=${JIRA_PAGE_SIZE:-100}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
@@ -694,7 +746,6 @@ services:
       - CONFLUENCE_URL=${CONFLUENCE_URL}
       - CONFLUENCE_USERNAME=${CONFLUENCE_USERNAME}
       - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
-      - CONFLUENCE_SPACES=${CONFLUENCE_SPACES:-}
       - CONFLUENCE_SYNC_INTERVAL=${CONFLUENCE_SYNC_INTERVAL:-86400}
       - CONFLUENCE_SSL_VERIFY=${CONFLUENCE_SSL_VERIFY:-true}
       - CONFLUENCE_MAX_CONCURRENCY=${CONFLUENCE_MAX_CONCURRENCY:-5}
@@ -716,7 +767,6 @@ services:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_BOT_NAME=${SLACK_BOT_NAME}
       - SLACK_WORKSPACE_URL=${SLACK_WORKSPACE_URL:-https://slack.com}
-      - SLACK_CHANNELS=${SLACK_CHANNELS:-{}}
       - SLACK_MAX_INGESTION_TASKS=${SLACK_MAX_INGESTION_TASKS:-5}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
@@ -738,7 +788,6 @@ services:
       - INGESTOR_TYPE=webex
       - WEBEX_ACCESS_TOKEN=${WEBEX_ACCESS_TOKEN}
       - WEBEX_BOT_NAME=${WEBEX_BOT_NAME}
-      - WEBEX_SPACES=${WEBEX_SPACES:-{}}
       - WEBEX_MAX_INGESTION_TASKS=${WEBEX_MAX_INGESTION_TASKS:-5}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
@@ -1571,6 +1620,8 @@ volumes:
   mongodb_data:
     driver: local
   mongodb_config:
+    driver: local
+  documentdb_data:
     driver: local
   langfuse_postgres_data:
     driver: local

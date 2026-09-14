@@ -177,9 +177,14 @@ jobs:
           --set agent-github.enabled=false \
           --set tags.rag-stack=false
 
-    - name: Validate ai-platform-engineering image channels
+    - name: Validate stable image repository paths
       run: |
-        python3 scripts/validate-helm-image-channel.py
+        if grep -R --line-number 'pre-release/' charts \
+          --include='*.yaml' \
+          --include='*.tpl'; then
+          echo "ERROR: Helm templates must not rewrite image repository paths by release channel" >&2
+          exit 1
+        fi
 
     - name: Test rag-stack with different configurations
       run: |

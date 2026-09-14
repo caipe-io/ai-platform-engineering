@@ -8,17 +8,17 @@ A Helm chart for Kubernetes
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.0.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.5.68
+helm install rag-redis oci://ghcr.io/caipe-io/charts/rag-redis --version 1.0.0
 
 # Upgrade an existing release
-helm upgrade rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.5.68
+helm upgrade rag-redis oci://ghcr.io/caipe-io/charts/rag-redis --version 1.0.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.5.68 \
+helm install rag-redis oci://ghcr.io/caipe-io/charts/rag-redis --version 1.0.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install rag-redis oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.5.68 \
+helm install rag-redis oci://ghcr.io/caipe-io/charts/rag-redis --version 1.0.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/rag-redis --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/rag-redis --version 1.0.0
 ```
 
 ## Reading the Values Table
