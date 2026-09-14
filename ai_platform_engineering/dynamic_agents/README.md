@@ -52,7 +52,7 @@ Dynamic Agents provide a flexible way to create purpose-built AI assistants with
 
 ### Prerequisites
 
-- Python 3.13+
+- Python 3.14
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 - MongoDB (local or remote)
 - At least one LLM provider configured

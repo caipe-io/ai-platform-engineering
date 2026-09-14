@@ -7,23 +7,14 @@ readme = "README.md"
 authors = [
     {name = "CNOE Team", email = "info@cnoe.io"},
 ]
-requires-python = ">=3.13,<4.0"
+requires-python = ">=3.14,<3.15"
 dependencies = [
-    "cnoe-agent-utils==0.4.0",
     "httpx==0.28.1",
-    "langchain-core==1.4.8",
-    "langchain-mcp-adapters==0.2.1",
-    "langgraph==1.2.6",
-    "langgraph-checkpoint-mongodb==0.3.1",
-    "langmem==0.0.30",
-    "mcp==1.28.1",
-    "prometheus-client==0.23.1",
-    "pydantic==2.12.5",
+    "pydantic==2.13.4",
     "pyjwt==2.13.0",
-    "pymongo==4.15.5",
+    "pymongo==4.16.0",
     "python-dotenv==1.2.2",
-    "beautifulsoup4==4.14.3",
-    "requests==2.33.0",
+    "requests==2.34.2",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -48,5 +39,5 @@ select = [
 ignore = ["F403"]
 
 [tool.uv]
-override-dependencies = ["protobuf==5.29.6"]
-constraint-dependencies = ["pypdf==6.13.3"]
+override-dependencies = ["protobuf==6.33.5"]
+constraint-dependencies = ["pypdf==6.16.2"]

@@ -1,6 +1,5 @@
 # Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
-# assisted-by Codex Codex-sonnet-4-6
 """Tests for the unlinked-fallback gate in _rbac_enrich_context.
 
 Covers the four decisive rows from the decision table:
@@ -9,20 +8,12 @@ Covers the four decisive rows from the decision table:
   3. broker OFF + non-federated  → returns "ok",        calls impersonate_user (JIT-as-self)
   4. resolve None + no bootstrap → returns "unlinked"   (unchanged, no regression)
 
-TEST-1/2: Source-string tests replaced with behavior tests against the REAL
-extracted gate helper (no source-string inspection). The helper is defined
-below as a standalone coroutine that mirrors the gate logic from
-_rbac_enrich_context — it can be run without importing slack_bolt/slack_sdk.
-
-Structural wiring (TestAppPyGateWiring) kept as a single lightweight sanity
-check so we know the gate is still wired into app.py.
+The decision table exercises the extracted authorization module directly.
 """
 
 from __future__ import annotations
 
 import asyncio
-import pathlib
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -31,35 +22,11 @@ from ai_platform_engineering.integrations.slack_bot.utils.keycloak_admin import 
     _invalidate_broker_cache,
     _invalidate_user_federated_cache,
 )
-
-_APP_PY = pathlib.Path(__file__).resolve().parents[1] / "app.py"
-
-
-# ---------------------------------------------------------------------------
-# A. Structural wiring assertion (lightweight — no source-string gate tests)
-# ---------------------------------------------------------------------------
-
-
-class TestAppPyGateWiring:
-    """Single structural tether: confirm the broker+federation gate exists in app.py.
-
-    app.py can't be imported here (no slack_sdk/slack_bolt in the test env),
-    so this check confirms the gate is still wired in without testing its logic
-    via source strings (TEST-1/2 replacement — behavior tests are below).
-    """
-
-    def test_gate_condition_present_in_app_py(self) -> None:
-        src = _APP_PY.read_text(encoding="utf-8")
-        gate = (
-            "await realm_has_enabled_idp_broker() and not await user_is_federated(keycloak_user_id)"
-        )
-        assert gate in src, "the broker+federation gate must be wired into _rbac_enrich_context"
-        assert 'return "unlinked"' in src, "the gate must return the 'unlinked' status"
+from .handler_test_utils import load_handler_module
 
 
 # ---------------------------------------------------------------------------
-# B. Behavior tests — gate logic called with real keycloak_admin helpers
-#    (mocked at the httpx layer, no slack_bolt import needed)
+# A. Extracted authorization behavior
 # ---------------------------------------------------------------------------
 
 _KC_USER_ID = "kc-uuid-1234"
@@ -71,41 +38,8 @@ class _OboResult:
         self.access_token = token
 
 
-async def _gate_coroutine(
-    *,
-    keycloak_user_id: str | None,
-    broker_enabled: bool,
-    is_federated: bool,
-    impersonate_called: list[str],
-) -> str | tuple:
-    """Minimal reproduction of the _rbac_enrich_context gate logic (no Slack deps).
-
-    Mirrors the exact gate structure in app.py so that the decision-table
-    tests here stay in sync with the real implementation.
-
-    TEST-1/2: This standalone coroutine is tested via real async calls
-    rather than source-string inspection.
-    """
-    # Simulate resolve_slack_user + auto_bootstrap
-    if keycloak_user_id is None:
-        return "unlinked"
-
-    # The unlinked-fallback gate (anonymous-and-obo-routing):
-    if broker_enabled and not is_federated:
-        return "unlinked"
-
-    # Simulate impersonate_user
-    impersonate_called.append(keycloak_user_id)
-    return "ok"
-
-
 class TestGateDecisionTable:
-    """Decision table for the broker+federation gate logic.
-
-    These tests verify the SAME logic embedded in _rbac_enrich_context
-    without importing app.py (which requires slack_sdk/slack_bolt).
-    All rows are exercised via the real coroutine logic (not source strings).
-    """
+    """Decision table for the broker and federation gate."""
 
     def _run(
         self,
@@ -113,16 +47,40 @@ class TestGateDecisionTable:
         kc_id: str | None = _KC_USER_ID,
         broker_enabled: bool,
         is_federated: bool,
-    ) -> tuple[Any, list[str]]:
-        called: list[str] = []
-        status = asyncio.run(
-            _gate_coroutine(
-                keycloak_user_id=kc_id,
-                broker_enabled=broker_enabled,
-                is_federated=is_federated,
-                impersonate_called=called,
+    ) -> tuple[object, list[str]]:
+        authorization = load_handler_module("authorization", rbac_enabled=True)
+        impersonate = AsyncMock(return_value=_OboResult())
+        with (
+            patch.object(
+                authorization,
+                "resolve_slack_user",
+                AsyncMock(return_value=kc_id),
+            ),
+            patch.object(
+                authorization,
+                "auto_bootstrap_slack_user",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                authorization,
+                "realm_has_enabled_idp_broker",
+                AsyncMock(return_value=broker_enabled),
+            ),
+            patch.object(
+                authorization,
+                "user_is_federated",
+                AsyncMock(return_value=is_federated),
+            ),
+            patch.object(authorization, "impersonate_user", impersonate),
+        ):
+            status = asyncio.run(
+                authorization._rbac_enrich_context(
+                    {"event": {"channel": "D123", "team": "T123"}},
+                    "U123",
+                    {},
+                )
             )
-        )
+        called = [call.args[0] for call in impersonate.await_args_list]
         return status, called
 
     def test_broker_on_non_federated_returns_unlinked(self) -> None:
@@ -162,9 +120,7 @@ class TestGateDecisionTable:
 
 
 # ---------------------------------------------------------------------------
-# C. Real keycloak_admin helper behavior tests (TEST-1 complementary)
-#    These call the real realm_has_enabled_idp_broker / user_is_federated
-#    helpers from keycloak_admin.py with mocked httpx responses.
+# B. Keycloak helper behavior with mocked HTTP
 # ---------------------------------------------------------------------------
 
 

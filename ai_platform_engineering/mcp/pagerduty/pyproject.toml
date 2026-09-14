@@ -7,24 +7,22 @@ authors = [
     { name = "Rehan Agrawal", email = "rehagraw@cisco.com" }
 ]
 license = "Apache-2.0"
-requires-python = ">=3.13,<4.0"
+requires-python = ">=3.14,<3.15"
 dependencies = [
   "httpx==0.28.1",
   "python-dotenv==1.2.2",
-  "pydantic==2.12.5",
-  "mcp==1.28.1",
+  "pydantic==2.13.4",
   "mcp-agent-auth", # gitleaks:allow - package name, not a credential
-  "fastmcp==3.2.4",
-  "typing-extensions==4.15.0",
+  "fastmcp==3.4.7",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "black==26.3.1",
-  "isort==6.0.1",
-  "mypy==1.17.1",
-  "pytest==9.0.3",
-  "ruff==0.12.7",
+  "black==26.5.1",
+  "isort==8.0.1",
+  "mypy==2.3.1",
+  "pytest==9.1.1",
+  "ruff==0.16.4",
 ]
 
 [tool.uv]
@@ -39,7 +37,7 @@ mcp-agent-auth = { path = "../common/mcp-auth", editable = true }
 profile = "black"
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.14"
 warn_redundant_casts = true
 warn_return_any = true
 warn_unused_configs = true

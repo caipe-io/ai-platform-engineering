@@ -6,23 +6,25 @@ readme = "README.md"
 authors = [
     { email = "subbaksh@cisco.com" }
 ]
-requires-python = ">=3.13, <4.0"
+requires-python = ">=3.14,<3.15"
 dependencies = [
+    "aiohttp==3.14.3",
     "cymple==0.12.0",
-    "neo4j==5.28.2",
-    "pydantic==2.12.5",
-    "redis==6.4.0",
+    "neo4j==6.2.0",
+    "pydantic==2.13.4",
+    "python-dotenv==1.2.2",
+    "redis==8.1.0",
     # Embedding providers - lightweight API-based (always included)
-    "langchain-openai==1.2.1",
-    "langchain-aws==1.1.0",
-    "langchain-cohere==0.5.0",
-    "langchain-ollama==1.0.0",
+    "langchain-openai==1.2.2",
+    "langchain-aws==1.5.0",
+    "langchain-cohere==0.6.0",
+    "langchain-ollama==1.1.0",
 ]
 
 [project.optional-dependencies]
 # Heavy local embedding provider (~900MB due to PyTorch)
 huggingface = [
-    "langchain-huggingface==1.2.1",
+    "langchain-huggingface==1.2.2",
 ]
 
 [build-system]
@@ -39,5 +41,6 @@ ignore = ["F403"]
 
 [dependency-groups]
 dev = [
-    "pytest==9.1.0",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
 ]

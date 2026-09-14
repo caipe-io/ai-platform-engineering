@@ -32,7 +32,17 @@ from fastapi.responses import JSONResponse
 
 from dynamic_agents.config import get_settings
 from dynamic_agents.metrics import PrometheusHTTPMiddleware
-from dynamic_agents.routes import agents, assistant, builtin_tools, chat, conversations, files, health, mcp_servers, middleware
+from dynamic_agents.routes import (
+    agents,
+    assistant,
+    builtin_tools,
+    chat,
+    conversations,
+    files,
+    health,
+    mcp_servers,
+    middleware,
+)
 from dynamic_agents.services.mongo import get_mongo_service, reset_mongo_service
 from dynamic_agents.services.runtime_cache import RuntimeCapacityError, RuntimeInitError, get_runtime_cache
 

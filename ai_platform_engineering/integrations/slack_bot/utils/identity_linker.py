@@ -219,5 +219,3 @@ async def complete_linking(slack_user_id: str, keycloak_user_id: str) -> bool:
         keycloak_user_id,
     )
     return True
-
-
