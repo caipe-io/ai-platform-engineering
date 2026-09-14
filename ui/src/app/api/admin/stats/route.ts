@@ -877,21 +877,29 @@ async function getAdminStats(request: NextRequest) {
         // msgOwnerFilter also carries metadata.source when explicitly filtered;
         // without a source filter, assistant rows from every source are counted.
         messages.countDocuments({ created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }),
-        // DAU/MAU: derive from conversations when filters are applied, otherwise from users
-        hasFilters
-          ? conversations.aggregate([
-              { $match: { updated_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...convSourceFilter } },
-              { $group: { _id: '$owner_id' } },
-              { $count: 'total' },
-            ]).toArray().then((r) => r[0]?.total || 0)
-          : users.countDocuments({ last_login: { $gte: todayRangeStart, $lte: rangeEnd } }),
-        hasFilters
-          ? conversations.aggregate([
-              { $match: { updated_at: { $gte: monthRangeStart, $lte: rangeEnd }, ...convSourceFilter } },
-              { $group: { _id: '$owner_id' } },
-              { $count: 'total' },
-            ]).toArray().then((r) => r[0]?.total || 0)
-          : users.countDocuments({ last_login: { $gte: monthRangeStart, $lte: rangeEnd } }),
+        // DAU/MAU must represent interactive conversation activity. `last_login`
+        // is updated while initializing an authenticated session, so using it
+        // for the all-source cards counts users who opened the product without
+        // using chat. Keep the conversation definition identical for filtered
+        // and unfiltered views; only the source/scope filter changes.
+        conversations.aggregate([
+          { $match: {
+            updated_at: { $gte: todayRangeStart, $lte: rangeEnd },
+            owner_id: { $nin: [null, ''] },
+            ...convSourceFilter,
+          } },
+          { $group: { _id: '$owner_id' } },
+          { $count: 'total' },
+        ]).toArray().then((r) => r[0]?.total || 0),
+        conversations.aggregate([
+          { $match: {
+            updated_at: { $gte: monthRangeStart, $lte: rangeEnd },
+            owner_id: { $nin: [null, ''] },
+            ...convSourceFilter,
+          } },
+          { $group: { _id: '$owner_id' } },
+          { $count: 'total' },
+        ]).toArray().then((r) => r[0]?.total || 0),
         conversations.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...convSourceFilter }),
         messages.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }),
         // `andInto` rather than spreading a literal `$or` — the non-admin scope
@@ -994,18 +1002,15 @@ async function getAdminStats(request: NextRequest) {
       hourlyActivity,
       availableChannelsResult,
     ] = await Promise.all([
-      // Daily active users
+      // Daily active users use the same conversation-activity definition as
+      // the DAU/MAU cards. This keeps the chart and headline cards consistent
+      // and avoids treating login initialization as product usage.
       includesSection('activity')
-        ? hasFilters
-          ? conversations.aggregate([
-              { $match: { updated_at: rangeDateMatch, ...convSourceFilter } },
-              { $group: { _id: { date: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$updated_at' } }, user: '$owner_id' } } },
-              { $group: { _id: '$_id.date', active_users: { $sum: 1 } } },
-            ]).toArray()
-          : users.aggregate([
-              { $match: { last_login: rangeDateMatch } },
-              { $group: { _id: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$last_login' } }, active_users: { $sum: 1 } } },
-            ]).toArray()
+        ? conversations.aggregate([
+            { $match: { updated_at: rangeDateMatch, owner_id: { $nin: [null, ''] }, ...convSourceFilter } },
+            { $group: { _id: { date: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$updated_at' } }, user: '$owner_id' } } },
+            { $group: { _id: '$_id.date', active_users: { $sum: 1 } } },
+          ]).toArray()
         : Promise.resolve([]),
 
       // Daily conversations
