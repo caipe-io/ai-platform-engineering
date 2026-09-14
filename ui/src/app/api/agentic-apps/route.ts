@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 
 import {
   agenticAppUserContextFromSession,
   canLaunchAgenticApp,
 } from "@/lib/agentic-apps/access";
+import { evaluateAgenticAppCasCompatibility } from "@/lib/agentic-apps/cas-compat";
 import {
   isAgenticAppsEnabled,
   loadConfiguredAgenticApps,
@@ -29,7 +31,8 @@ export async function GET(request: NextRequest): Promise<Response> {
     }
     throw error;
   }
-  if (!deriveAgenticAppSubjectId(auth.session as Record<string, unknown>)) {
+  const subjectId = deriveAgenticAppSubjectId(auth.session as Record<string, unknown>);
+  if (!subjectId) {
     return Response.json(
       { error: "A stable user subject is required", code: "NO_SUBJECT" },
       { status: 401 },
@@ -40,15 +43,46 @@ export async function GET(request: NextRequest): Promise<Response> {
     auth.session as Record<string, unknown>,
     auth.user.role,
   );
-  const items = loadConfiguredAgenticApps()
+  const configuredApps = loadConfiguredAgenticApps()
     .filter(
       (app) =>
         app.installation.installed
         && app.installation.enabled
         && app.installation.visible
         && app.manifest.surfaces.showInHub,
+    );
+  const correlationId = request.headers.get("x-correlation-id") ?? randomUUID();
+  const items = (
+    await Promise.all(
+      configuredApps.map(async (app) => {
+        const localCanLaunch = canLaunchAgenticApp(app, userContext);
+        if (!app.manifest.authorization) {
+          return buildPublicAgenticApp(app, localCanLaunch);
+        }
+        const [readDecision, launchDecision] = await Promise.all([
+          evaluateAgenticAppCasCompatibility({
+            appId: app.installation.appId,
+            subjectId,
+            localEffect: "allow",
+            correlationId,
+            action: "read",
+          }),
+          evaluateAgenticAppCasCompatibility({
+            appId: app.installation.appId,
+            subjectId,
+            localEffect: localCanLaunch ? "allow" : "deny",
+            correlationId,
+            action: app.manifest.authorization.launchAction,
+          }),
+        ]);
+        if (readDecision.effectiveEffect !== "allow") return null;
+        return buildPublicAgenticApp(
+          app,
+          launchDecision.effectiveEffect === "allow",
+        );
+      }),
     )
-    .map((app) => buildPublicAgenticApp(app, canLaunchAgenticApp(app, userContext)));
+  ).filter((app): app is NonNullable<typeof app> => app !== null);
 
   return Response.json({ items }, { headers: { "cache-control": "no-store" } });
 }

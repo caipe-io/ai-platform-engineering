@@ -5,6 +5,7 @@ import {
   agenticAppUserContextFromSession,
   canLaunchAgenticApp,
 } from "@/lib/agentic-apps/access";
+import { evaluateAgenticAppCasCompatibility } from "@/lib/agentic-apps/cas-compat";
 import {
   getConfiguredAgenticApp,
   isAgenticAppsEnabled,
@@ -144,6 +145,32 @@ async function proxyAgenticAppRequest(
 
   const decisionId = randomUUID();
   const correlationId = request.headers.get("x-correlation-id") ?? randomUUID();
+  if (app.manifest.authorization) {
+    const cas = await evaluateAgenticAppCasCompatibility({
+      appId,
+      subjectId: subject,
+      localEffect: "allow",
+      correlationId,
+      action: policy.casAction ?? app.manifest.authorization.launchAction,
+    });
+    if (cas.effectiveEffect !== "allow") {
+      const unavailable = cas.casReason === "AUTHZ_UNAVAILABLE";
+      return Response.json(
+        {
+          error: unavailable ? "authorization_unavailable" : "app_unauthorized",
+          reasonCode: cas.casReason ?? "NO_CAPABILITY",
+        },
+        {
+          status: unavailable ? 503 : 403,
+          headers: {
+            "x-caipe-cas-mode": cas.mode,
+            "x-caipe-cas-decision": cas.casDecision,
+            "x-correlation-id": correlationId,
+          },
+        },
+      );
+    }
+  }
   const appToken = await mintAgenticAppToken({
     appId,
     subject,
