@@ -28,48 +28,64 @@ jest.mock("@/components/auth-guard", () => ({
 }));
 
 jest.mock("@/components/dynamic-agents/DynamicAgentsTab", () => ({
-  DynamicAgentsTab: ({
+  DynamicAgentsTab: function DynamicAgentsTabMock({
     selectedAgentId,
     initialStep,
     onSelectedAgentChange,
+    onSelectedAgentNameChange,
     onStepChange,
   }: {
     selectedAgentId?: string | null;
     initialStep?: string;
     onSelectedAgentChange?: (id: string | null) => void;
+    onSelectedAgentNameChange?: (name: string | null) => void;
     onStepChange?: (step: string) => void;
-  }) => (
-    <div
-      data-testid="dynamic-agents-tab"
-      data-selected-id={selectedAgentId ?? ""}
-      data-step={initialStep ?? ""}
-    >
-      DynamicAgentsTab
-      <button type="button" onClick={() => onStepChange?.("tools")}>
-        Open tools step
-      </button>
-      <button type="button" onClick={() => onSelectedAgentChange?.("agent-ops")}>
-        Open agent editor
-      </button>
-    </div>
-  ),
+  }) {
+    React.useEffect(() => {
+      onSelectedAgentNameChange?.(selectedAgentId ? "Example Agent" : null);
+    }, [onSelectedAgentNameChange, selectedAgentId]);
+
+    return (
+      <div
+        data-testid="dynamic-agents-tab"
+        data-selected-id={selectedAgentId ?? ""}
+        data-step={initialStep ?? ""}
+      >
+        DynamicAgentsTab
+        <button type="button" onClick={() => onStepChange?.("tools")}>
+          Open tools step
+        </button>
+        <button type="button" onClick={() => onSelectedAgentChange?.("agent-ops")}>
+          Open agent editor
+        </button>
+      </div>
+    );
+  },
 }));
 
 jest.mock("@/components/dynamic-agents/MCPServersTab", () => ({
-  MCPServersTab: ({
+  MCPServersTab: function MCPServersTabMock({
     selectedServerId,
     onSelectedServerChange,
+    onSelectedServerNameChange,
   }: {
     selectedServerId?: string | null;
     onSelectedServerChange?: (id: string | null) => void;
-  }) => (
-    <div data-testid="mcp-servers-tab" data-selected-id={selectedServerId ?? ""}>
-      MCPServersTab
-      <button type="button" onClick={() => onSelectedServerChange?.("mcp-jira")}>
-        Open server editor
-      </button>
-    </div>
-  ),
+    onSelectedServerNameChange?: (name: string | null) => void;
+  }) {
+    React.useEffect(() => {
+      onSelectedServerNameChange?.(selectedServerId ? "Example MCP Server" : null);
+    }, [onSelectedServerNameChange, selectedServerId]);
+
+    return (
+      <div data-testid="mcp-servers-tab" data-selected-id={selectedServerId ?? ""}>
+        MCPServersTab
+        <button type="button" onClick={() => onSelectedServerChange?.("mcp-jira")}>
+          Open server editor
+        </button>
+      </div>
+    );
+  },
 }));
 
 jest.mock("@/components/dynamic-agents/LLMProvidersTab", () => ({
@@ -236,6 +252,30 @@ describe("DynamicAgentsPage", () => {
 
     expect(screen.getByTestId("dynamic-agents-tab")).toHaveAttribute("data-selected-id", "agent-ops");
     expect(screen.getByTestId("dynamic-agents-tab")).toHaveAttribute("data-step", "instructions");
+  });
+
+  it("includes the selected agent name in the breadcrumb", () => {
+    mockSearchParams = new URLSearchParams("tab=agents&agent=agent-ops&step=basic");
+
+    render(<DynamicAgentsPage />);
+
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getByRole("link", { name: "Example Agent" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("includes the selected MCP server name in the breadcrumb", () => {
+    mockSearchParams = new URLSearchParams("tab=mcp-servers&server=mcp-example");
+
+    render(<DynamicAgentsPage />);
+
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getByRole("link", { name: "Example MCP Server" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("updates the current agent setup step in the URL", () => {

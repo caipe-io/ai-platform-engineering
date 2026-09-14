@@ -586,6 +586,29 @@ export async function installTestSession(
     },
   });
 
+  // Keep the client-side session check deterministic when the production
+  // app is running with a deliberately unreachable MongoDB URI. The SSR
+  // guard still exercises the signed cookie above; this route only replaces
+  // the browser's follow-up /api/auth/session request. Tests that need to
+  // exercise that endpoint register their own route afterward, which wins
+  // because Playwright evaluates routes in reverse registration order.
+  await page.route("**/api/auth/session", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        user: { name: input.email, email: input.email },
+        role: input.role ?? "admin",
+        isAuthorized: true,
+        canViewAdmin: true,
+        canAccessDynamicAgents: true,
+        accessToken: "rbac-e2e-local-access-token",
+        expiresAt: tokenExpiresAt,
+        expires: new Date((tokenExpiresAt + 60) * 1000).toISOString(),
+      }),
+    });
+  });
+
   await page.context().addCookies([
     {
       name: "next-auth.session-token",

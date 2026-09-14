@@ -100,9 +100,7 @@ The main image workflows are tag-driven:
 
 Each workflow resolves the tag through `.github/actions/determine-release-tag/action.yml`.
 
-For prerelease tags with `N > 1`, workflows build only changed images and retag unchanged images from the previous tag. If the source image for retagging does not exist, the workflow falls back to a fresh build.
-
-For first prerelease tags and final release tags, workflows build all relevant images.
+Every tag push builds all relevant images fresh, regardless of prerelease number or which paths changed.
 
 Development, release-candidate, hotfix, final, and prebuild tags all publish to the same image package. Deployments change only the tag, not the image repository.
 
@@ -217,8 +215,6 @@ When ready to publish the fixed version, run the final release flow with the int
 If a PR version bump fails with a branch update comment, merge the latest target branch into the PR branch and push again.
 
 If a prebuild does not publish immediately after the version bump workflow commits, wait for the next PR workflow run. Prebuild publishing intentionally skips when a new version-bump commit was just pushed.
-
-If an image workflow retags an older image unexpectedly, check whether the changed paths matched that image's path filters. For prerelease `N > 1`, unchanged image paths are retagged by design.
 
 If Docker builds do not run for a chart-only tag, that is expected. `-chart.M` tags publish Helm updates only.
 

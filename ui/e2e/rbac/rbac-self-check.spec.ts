@@ -325,7 +325,7 @@ test.describe("mocked RBAC Self Check browser regression", () => {
   test("surfaces OpenFGA drift and repairs safe missing tuples", async ({ page }) => {
     const requests = await installRbacSelfCheckMocks(page);
 
-    await page.goto("/admin/security/self-check", {
+    await page.goto("/admin/security/audit?auditTab=self-check", {
       waitUntil: "domcontentloaded",
     });
 
@@ -333,11 +333,12 @@ test.describe("mocked RBAC Self Check browser regression", () => {
     await expect(
       page
         .getByRole("navigation",{ name: "Admin sections" })
-        .getByRole("link", { name: "Self Check" }),
+        .getByRole("link", { name: "Audit" }),
     ).toHaveAttribute(
       "aria-current",
       "page",
     );
+    await expect(page.getByRole("tab", { name: "Self-check" })).toHaveAttribute("data-state","active");
     await expect(page.getByTestId("rbac-self-check-tab")).toBeVisible();
     await expect(page.getByText("Drift detected")).toBeVisible();
     await expect(page.getByText("Missing team membership tuple")).toBeVisible();
@@ -358,7 +359,7 @@ test.describe("mocked RBAC Self Check browser regression", () => {
   test("bulk revokes selected unowned OpenFGA tuples", async ({ page }) => {
     const requests = await installRbacSelfCheckMocks(page);
 
-    await page.goto("/admin/security/self-check", {
+    await page.goto("/admin/security/audit?auditTab=self-check", {
       waitUntil: "domcontentloaded",
     });
 
@@ -377,7 +378,7 @@ test.describe("mocked RBAC Self Check browser regression", () => {
   test("runs the RBAC API matrix from the UI", async ({ page }) => {
     const requests = await installRbacSelfCheckMocks(page);
 
-    await page.goto("/admin/security/self-check", {
+    await page.goto("/admin/security/audit?auditTab=self-check", {
       waitUntil: "domcontentloaded",
     });
 

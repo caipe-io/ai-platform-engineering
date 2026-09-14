@@ -232,6 +232,18 @@ function credentialSecretsHandler(
       return true;
     }
 
+    if (path === "/api/dynamic-agents/teams" && method === "GET") {
+      await fulfillJson(route, {
+        success: true,
+        data: DEFAULT_CREDENTIAL_TEAMS.map((team) => ({
+          _id: team._id,
+          slug: team.slug,
+          name: team.name,
+        })),
+      });
+      return true;
+    }
+
     if (path === "/api/admin/credentials/secrets" && method === "GET") {
       await fulfillJson(route, { success: true, data: state.secrets });
       return true;

@@ -9,10 +9,9 @@ const mockFilterResourcesByPermission = jest.fn();
 const mockHasOrganizationAdmin = jest.fn();
 const mockReconcileCollectionRelationships = jest.fn();
 const mockReplaceCollectionSources = jest.fn();
-const mockManageableDatasourceIdsForCollectionPublishing = jest.fn();
+const mockSearchableDatasourceIdsForCollectionPublishing = jest.fn();
 const mockReconcileTupleDiff = jest.fn();
 const mockRemoveRagCollectionFromAgentPins = jest.fn();
-const mockBatchCheckOpenFgaTuples = jest.fn();
 const mockRecordAutoApprovedPublication = jest.fn();
 const mockInvalidatePublicationRequests = jest.fn();
 const mockCreatePublicationRequest = jest.fn();
@@ -51,11 +50,6 @@ jest.mock("@/lib/mongodb", () => ({
 
 jest.mock("@/lib/authz", () => ({
   reconcileTupleDiff: (...args: unknown[]) => mockReconcileTupleDiff(...args),
-}));
-
-jest.mock("@/lib/rbac/openfga", () => ({
-  batchCheckOpenFgaTuples: (...args: unknown[]) =>
-    mockBatchCheckOpenFgaTuples(...args),
 }));
 
 jest.mock("@/lib/publication-approval.server", () => {
@@ -129,8 +123,8 @@ jest.mock("@/lib/rag-collections.server", () => ({
     mockReconcileCollectionRelationships(...args),
   replaceCollectionSources: (...args: unknown[]) =>
     mockReplaceCollectionSources(...args),
-  manageableDatasourceIdsForCollectionPublishing: (...args: unknown[]) =>
-    mockManageableDatasourceIdsForCollectionPublishing(...args),
+  searchableDatasourceIdsForCollectionPublishing: (...args: unknown[]) =>
+    mockSearchableDatasourceIdsForCollectionPublishing(...args),
   ensureRagCollectionReaderTeamsCanSearch: (
     readerTeamSlugs: string[],
     actorSubject: string,
@@ -165,7 +159,6 @@ const personalCollection = {
   _id: "primary",
   name: "Primary knowledge",
   description: "Example knowledge",
-  is_platform: false,
   source_ids: ["source-a"],
   owner_subject: "owner-sub",
   maintainer_team_slugs: [],
@@ -215,7 +208,7 @@ beforeEach(() => {
     ...personalCollection,
     source_ids: sourceIds,
   }));
-  mockManageableDatasourceIdsForCollectionPublishing.mockImplementation(
+  mockSearchableDatasourceIdsForCollectionPublishing.mockImplementation(
     async (_session, sourceIds: string[]) => new Set(sourceIds),
   );
   mockReconcileTupleDiff.mockResolvedValue(undefined);
@@ -230,9 +223,6 @@ beforeEach(() => {
     "source-a": "revision-a",
     "source-b": "revision-b",
   });
-  mockBatchCheckOpenFgaTuples.mockImplementation(async (tuples: unknown[]) =>
-    tuples.map(() => true),
-  );
 
   mockGetCollection.mockImplementation(async (name: string) => {
     if (name === "rag_collections") {
@@ -291,9 +281,9 @@ describe("PATCH /api/rag/collections/[id]", () => {
     expect(mockGetCollection).not.toHaveBeenCalled();
   });
 
-  it("rejects publishing a datasource the caller cannot manage", async () => {
+  it("rejects publishing a datasource the caller cannot search", async () => {
     mockFilterResourcesByPermission.mockResolvedValueOnce([{ id: "primary" }]);
-    mockManageableDatasourceIdsForCollectionPublishing.mockResolvedValueOnce(
+    mockSearchableDatasourceIdsForCollectionPublishing.mockResolvedValueOnce(
       new Set(),
     );
 
@@ -303,77 +293,6 @@ describe("PATCH /api/rag/collections/[id]", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(mockReplaceCollectionSources).not.toHaveBeenCalled();
-  });
-
-  it("does not let a personal collection owner turn source management into search access", async () => {
-    mockGetCollection.mockImplementation(async (name: string) => {
-      if (name === "rag_collections") {
-        return {
-          findOne: jest.fn().mockResolvedValue({
-            ...personalCollection,
-            owner_subject: "editor-sub",
-          }),
-          updateOne: jest.fn(),
-          replaceOne: jest.fn(),
-        };
-      }
-      if (name === "rag_ingestion_sources") {
-        return {
-          find: jest.fn().mockReturnValue({
-            project: jest.fn().mockReturnThis(),
-            toArray: jest
-              .fn()
-              .mockResolvedValue([
-                { source_id: "source-a" },
-                { source_id: "source-b" },
-              ]),
-          }),
-        };
-      }
-      throw new Error(`unexpected collection ${name}`);
-    });
-    mockFilterResourcesByPermission.mockResolvedValueOnce([{ id: "primary" }]);
-    mockBatchCheckOpenFgaTuples.mockResolvedValueOnce([false]);
-
-    const response = await PATCH(
-      request("PATCH", { source_ids: ["source-a", "source-b"] }),
-      context(),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(403);
-    expect(body.code).toBe("DATASOURCE_READ_REQUIRED");
-    expect(mockReplaceCollectionSources).not.toHaveBeenCalled();
-    expect(mockBatchCheckOpenFgaTuples).toHaveBeenCalledWith([
-      {
-        user: "user:editor-sub",
-        relation: "can_read",
-        object: "data_source:source-b",
-      },
-    ]);
-  });
-
-  it("does not let an administrator grant a personal owner access through collection membership", async () => {
-    mockHasOrganizationAdmin.mockResolvedValue(true);
-    mockFilterResourcesByPermission.mockResolvedValueOnce([{ id: "primary" }]);
-    mockBatchCheckOpenFgaTuples.mockResolvedValueOnce([false]);
-
-    const response = await PATCH(
-      request("PATCH", { source_ids: ["source-a", "source-b"] }),
-      context(),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(403);
-    expect(body.code).toBe("DATASOURCE_READ_REQUIRED");
-    expect(mockBatchCheckOpenFgaTuples).toHaveBeenCalledWith([
-      {
-        user: "user:owner-sub",
-        relation: "can_read",
-        object: "data_source:source-b",
-      },
-    ]);
     expect(mockReplaceCollectionSources).not.toHaveBeenCalled();
   });
 
@@ -575,21 +494,6 @@ describe("DELETE /api/rag/collections/[id]", () => {
 
     expect(response.status).toBe(403);
     expect(mockGetCollection).not.toHaveBeenCalled();
-  });
-
-  it("protects Platform RAG from deletion", async () => {
-    mockGetCollection.mockResolvedValue({
-      findOne: jest.fn().mockResolvedValue({
-        ...personalCollection,
-        _id: "platform-rag",
-        is_platform: true,
-      }),
-    });
-
-    const response = await DELETE(request("DELETE"), context("platform-rag"));
-
-    expect(response.status).toBe(409);
-    expect(mockReconcileTupleDiff).not.toHaveBeenCalled();
   });
 
   it("deletes only collection tuples and removes stale agent references", async () => {

@@ -64,3 +64,20 @@ Create the name of the service account to use
 {{- define "mongodb.appVersion" -}}
 {{- .Values.global.image.tag | default .Chart.AppVersion -}}
 {{- end -}}
+
+{{/* Validate and expose the selected MongoDB-compatible provider. */}}
+{{- define "mongodb.provider" -}}
+{{- $provider := .Values.provider | default "mongodb" -}}
+{{- if not (has $provider (list "mongodb" "documentdb")) -}}
+{{- fail (printf "caipe-ui-mongodb.provider must be mongodb or documentdb, got %q" $provider) -}}
+{{- end -}}
+{{- $provider -}}
+{{- end -}}
+
+{{- define "mongodb.port" -}}
+{{- if eq (include "mongodb.provider" .) "documentdb" -}}
+{{- .Values.documentdb.port -}}
+{{- else -}}
+{{- .Values.service.port -}}
+{{- end -}}
+{{- end -}}
