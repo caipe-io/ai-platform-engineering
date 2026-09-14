@@ -1,6 +1,6 @@
 """Shared RBAC models for the RAG system."""
 from typing import List, Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class Role:
@@ -33,8 +33,7 @@ class UserContext(BaseModel):
   role: str
   is_authenticated: bool
 
-  class Config:
-    frozen = True  # Immutable for security
+  model_config = ConfigDict(frozen=True)
 
 
 class UserInfoResponse(BaseModel):

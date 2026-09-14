@@ -46,7 +46,7 @@ init:
   enabled: true
   image:
     repository: python
-    tag: "3.13-slim"
+    tag: "3.14-slim"
     pullPolicy: IfNotPresent
   storeName: caipe-openfga
   seedSub: ""
