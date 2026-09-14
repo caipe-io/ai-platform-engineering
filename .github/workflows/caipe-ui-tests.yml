@@ -475,4 +475,4 @@ jobs:
 
       - name: Run ESLint
         working-directory: ui
-        run: npm run lint
+        run: npm run lint -- --max-warnings 0

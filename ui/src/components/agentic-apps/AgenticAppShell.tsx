@@ -2,7 +2,7 @@
 
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { buildAgenticAppPublicPath } from "@/lib/agentic-apps/runtime";
@@ -20,6 +20,7 @@ export function AgenticAppShell({
   appId: string;
   path: string[];
 }): React.ReactElement {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [state, setState] = useState<ShellState>({ status: "loading" });
 
@@ -28,7 +29,7 @@ export function AgenticAppShell({
     fetch("/api/agentic-apps", { cache: "no-store" })
       .then(async (response) => {
         if (response.status === 401) {
-          window.location.assign(
+          router.push(
             `/login?callbackUrl=${encodeURIComponent(window.location.pathname + window.location.search)}`,
           );
           return null;
@@ -59,7 +60,7 @@ export function AgenticAppShell({
     return () => {
       cancelled = true;
     };
-  }, [appId]);
+  }, [appId, router]);
 
   if (state.status === "loading") {
     return (
