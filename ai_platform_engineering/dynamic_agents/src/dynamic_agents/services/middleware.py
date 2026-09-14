@@ -409,6 +409,18 @@ MIDDLEWARE_REGISTRY: dict[str, MiddlewareSpec] = {
             "exit_behavior": "end|error|continue",
         },
     ),
+    "structured_response": MiddlewareSpec(
+        cls=object,
+        default_params={"allowed_schema_ids": "", "require_tool_submission": True},
+        enabled_by_default=False,
+        allow_multiple=False,
+        label="Structured Response",
+        description="Allows app clients to request validated structured JSON output",
+        param_schema={
+            "allowed_schema_ids": "string",
+            "require_tool_submission": "boolean",
+        },
+    ),
     "tool_call_limit": MiddlewareSpec(
         cls=ToolCallLimitMiddleware,
         default_params={"run_limit": 500, "exit_behavior": "continue"},
@@ -554,8 +566,18 @@ def _build_model_fallback(params: dict[str, Any]) -> ModelFallbackMiddleware | N
     return ModelFallbackMiddleware(fallback_model)
 
 
+def _build_structured_response(_params: dict[str, Any]) -> None:
+    """Structured response is handled by AgentRuntime tool injection.
+
+    The registry entry exists so the UI can configure the capability per
+    agent. It does not add a LangChain middleware object to the stack.
+    """
+    return None
+
+
 # Keys that need special construction instead of simple cls(**params)
 _SPECIAL_BUILDERS: dict[str, Callable[..., Any]] = {
+    "structured_response": _build_structured_response,
     "context_editing": _build_context_editing,
     "pii": _build_pii,
     "llm_tool_selector": _build_llm_tool_selector,
