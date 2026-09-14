@@ -1,6 +1,6 @@
 [project]
 name = "ai-platform-engineering"
-version = "1.1.0"
+version = "1.1.0-dev.8"
 description = "Multi-Agent Collaboration & Workflow Automation - AI agents collaborating across tools and teams to deliver high quality results"
 authors = [
   {name = "CAIPE Contributors"}
@@ -63,11 +63,6 @@ ignore = ["F403"]
 [tool.ruff.lint.per-file-ignores]
 "ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/webloader/loader/scrapy_worker.py" = ["E402"]
 "ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/webloader/loader/worker_pool.py" = ["E402"]
-# Seed script contains intentionally long message strings (prose/code for MongoDB test data).
-"scripts/seed-deprecated-agent-conversations.py" = ["E501"]
-
-
-
 
 [tool.commitizen]
 name = "cz_conventional_commits"
