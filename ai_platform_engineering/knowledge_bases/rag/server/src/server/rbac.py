@@ -42,7 +42,7 @@ DEFAULT_ORG_KEY = "caipe"
 RBAC_CLIENT_CREDENTIALS_ROLE = os.getenv("RBAC_CLIENT_CREDENTIALS_ROLE", Role.INGESTONLY)
 
 # Validate roles at startup
-VALID_ROLES = {Role.READONLY, Role.INGESTONLY, Role.ADMIN}
+VALID_ROLES = {Role.READONLY, Role.INGESTONLY, Role.EVALUATOR, Role.ADMIN}
 
 if RBAC_CLIENT_CREDENTIALS_ROLE not in VALID_ROLES:
   logger.error(f"Invalid RBAC_CLIENT_CREDENTIALS_ROLE: '{RBAC_CLIENT_CREDENTIALS_ROLE}'. Must be one of: {VALID_ROLES}")
@@ -57,6 +57,7 @@ logger.info(f"  RBAC_CLIENT_CREDENTIALS_ROLE: {RBAC_CLIENT_CREDENTIALS_ROLE}")
 def _unsafe_rbac_bypass_enabled() -> bool:
   return os.getenv("CAIPE_UNSAFE_RBAC_BYPASS", "").strip().lower() in ("1", "true", "yes", "on")
 
+
 # ============================================================================
 # Role Hierarchy and Permission Logic
 # ============================================================================
@@ -64,6 +65,7 @@ def _unsafe_rbac_bypass_enabled() -> bool:
 # Define role hierarchy (higher number = more permissions, inherits lower)
 _ROLE_HIERARCHY = {
   Role.READONLY: 1,
+  Role.EVALUATOR: 2,
   Role.INGESTONLY: 2,
   Role.ADMIN: 3,
 }
@@ -196,6 +198,8 @@ def is_client_credentials_token(claims: Dict[str, Any]) -> bool:
 
   logger.debug("Not detected as client credentials token")
   return False
+
+
 def extract_client_id_from_claims(claims: Dict[str, Any]) -> str:
   """
   Extract client ID from JWT claims for client credentials tokens.
@@ -731,11 +735,7 @@ async def _openfga_read_tuple_exists(user: str, relation: str, object_ref: str) 
     tuples = response.json().get("tuples", [])
     for entry in tuples:
       key = entry.get("key", {})
-      if (
-        key.get("user") == user
-        and key.get("relation") == relation
-        and key.get("object") == object_ref
-      ):
+      if key.get("user") == user and key.get("relation") == relation and key.get("object") == object_ref:
         return True
     return False
 
@@ -856,9 +856,7 @@ async def authorize_mcp_tool_create(user_context: UserContext, owner_team_slug: 
   try:
     if await _openfga_check_org_admin(user_context):
       return
-    if normalized_owner and await _openfga_check_object(
-      user_context, "can_use", "team", normalized_owner
-    ):
+    if normalized_owner and await _openfga_check_object(user_context, "can_use", "team", normalized_owner):
       return
   except Exception as exc:  # noqa: BLE001 — fail closed on PDP errors
     logger.warning("OpenFGA mcp_tool create authorization failed: %s", exc)
@@ -923,7 +921,7 @@ async def _openfga_list_objects(
 
 def _strip_openfga_object_prefix(value: str, object_type: str) -> str:
   prefix = f"{object_type}:"
-  return value[len(prefix):] if value.startswith(prefix) else value
+  return value[len(prefix) :] if value.startswith(prefix) else value
 
 
 async def _openfga_read_related_objects(

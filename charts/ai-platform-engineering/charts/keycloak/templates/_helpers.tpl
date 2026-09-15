@@ -224,3 +224,61 @@ keycloak.webexBotSecretName). Consumed by the keycloak init-token-exchange Job
 true
 {{- end -}}
 {{- end -}}
+
+{{- define "keycloak.evaluatorOboSecretName" -}}
+{{- if .Values.evaluatorTokenExchange.secretRef }}
+{{- .Values.evaluatorTokenExchange.secretRef }}
+{{- else }}
+{{- $base := include "keycloak.fullname" . | trunc 46 | trimSuffix "-" -}}
+{{- printf "%s-evaluator-obo" $base -}}
+{{- end }}
+{{- end }}
+
+{{- define "keycloak.evaluatorTokenExchangeEnabled" -}}
+{{- $featureEnabled := dig "evaluator" "enabled" true (.Values.global | default dict) -}}
+{{- if hasKey .Values.evaluatorTokenExchange "enabled" -}}
+{{- and $featureEnabled .Values.evaluatorTokenExchange.enabled -}}
+{{- else -}}
+{{- and $featureEnabled .Values.tokenExchange.enabled -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "keycloak.shouldCreateEvaluatorOboSecret" -}}
+{{- if and (eq (include "keycloak.evaluatorTokenExchangeEnabled" .) "true") (not .Values.evaluatorTokenExchange.secretRef) -}}
+true
+{{- end -}}
+{{- end -}}
+
+/*
+Resolve maintained CAIPE image repositories for release vs pre-release channels.
+
+Usage:
+  include "keycloak.imageRepository" (dict "root" . "repository" .Values.image.repository)
+
+The default channel is derived from .Chart.AppVersion: rc/hotfix/dev versions use
+`ghcr.io/cnoe-io/pre-release/*`, final versions use `ghcr.io/cnoe-io/*`.
+Operators may force either channel with global.image.channel=pre-release|release.
+Explicit non-CAIPE repositories are left unchanged.
+*/
+{{- define "keycloak.imageRepository" -}}
+{{- $root := index . "root" -}}
+{{- $repository := index . "repository" | default "" -}}
+{{- $global := $root.Values.global | default dict -}}
+{{- $image := $global.image | default dict -}}
+{{- $channel := $image.channel | default "" -}}
+{{- $appVersion := $root.Chart.AppVersion | default "" -}}
+{{- if or (eq $channel "") (eq $channel "auto") -}}
+{{- if or (contains "-rc." $appVersion) (contains "-hotfix." $appVersion) (contains "-dev." $appVersion) -}}
+{{- $channel = "pre-release" -}}
+{{- else -}}
+{{- $channel = "release" -}}
+{{- end -}}
+{{- end -}}
+{{- if and (eq $channel "pre-release") (hasPrefix "ghcr.io/cnoe-io/" $repository) (not (hasPrefix "ghcr.io/cnoe-io/pre-release/" $repository)) -}}
+{{- printf "ghcr.io/cnoe-io/pre-release/%s" (trimPrefix "ghcr.io/cnoe-io/" $repository) -}}
+{{- else if and (eq $channel "release") (hasPrefix "ghcr.io/cnoe-io/pre-release/" $repository) -}}
+{{- printf "ghcr.io/cnoe-io/%s" (trimPrefix "ghcr.io/cnoe-io/pre-release/" $repository) -}}
+{{- else -}}
+{{- $repository -}}
+{{- end -}}
+{{- end -}}

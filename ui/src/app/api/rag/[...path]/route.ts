@@ -54,6 +54,12 @@ import type {
 } from "@/types/ingestion-source";
 import type { PublicationRequestDocument } from "@/types/publication-approval";
 import { NextRequest, NextResponse } from "next/server";
+=======
+} from '@/lib/rbac/resource-authz';
+import { resolveShareableOwnershipWrite } from '@/lib/rbac/shareable-resource';
+import type { RbacScope } from '@/lib/rbac/types';
+import { NextRequest, NextResponse } from 'next/server';
+>>>>>>> 037045977 (feat(ui): support evaluator m2m auth query params and job scopes)
 
 /**
  * RAG API Proxy with JWT Bearer Token Authentication
@@ -108,6 +114,7 @@ function scopeForRagProxyMethod(
     return "query";
   }
 
+
   if (method === "GET") {
     // Datasource/source-management discovery must not require Search Access:
     // a management-only owner still needs to see configuration and jobs.
@@ -133,6 +140,9 @@ function scopeForRagProxyMethod(
       return "view";
     }
     if (path === "v1/mcp/custom-tools") return "view";
+  }
+  if (method === "PATCH" && (path === "v1/job" || path.startsWith("v1/job/"))) {
+    return "ingest";
   }
 
   if (
@@ -1732,7 +1742,12 @@ export async function POST(
     const { path } = await params;
     const ragServerUrl = getRagServerUrl();
     const targetPath = path.join("/");
-    const targetUrl = `${ragServerUrl}/${targetPath}`;
+    const targetUrl = new URL(`${ragServerUrl}/${targetPath}`);
+
+    const searchParams = request.nextUrl.searchParams;
+    searchParams.forEach((value, key) => {
+      targetUrl.searchParams.append(key, value);
+    });
     const contentType = request.headers.get("content-type") ?? "";
     const isMultipart = contentType
       .toLowerCase()
@@ -1838,7 +1853,7 @@ export async function POST(
 
     let response: Response;
     try {
-      response = await fetch(targetUrl, fetchOptions);
+      response = await fetch(targetUrl.toString(), fetchOptions);
     } catch (error) {
       if (localFilePublication) {
         await rollbackLocalFilePublication(localFilePublication);
@@ -1922,7 +1937,12 @@ export async function PUT(
     const { path } = await params;
     const ragServerUrl = getRagServerUrl();
     const targetPath = path.join("/");
-    const targetUrl = `${ragServerUrl}/${targetPath}`;
+    const targetUrl = new URL(`${ragServerUrl}/${targetPath}`);
+
+    const searchParams = request.nextUrl.searchParams;
+    searchParams.forEach((value, key) => {
+      targetUrl.searchParams.append(key, value);
+    });
 
     // Parse the JSON body when present. Mirror the POST handler: attempt a
     // parse whenever content-length is absent-but-nonempty OR positive, because
@@ -1968,12 +1988,11 @@ export async function PUT(
       method: "PUT",
       headers,
     };
-
     if (body !== undefined) {
       fetchOptions.body = JSON.stringify(body);
     }
 
-    const response = await fetch(targetUrl, fetchOptions);
+    const response = await fetch(targetUrl.toString(), fetchOptions);
 
     if (response.status === 204) {
       if (pendingMcpToolOwnership) {
@@ -2106,7 +2125,12 @@ export async function PATCH(
     const { path } = await params;
     const ragServerUrl = getRagServerUrl();
     const targetPath = path.join("/");
-    const targetUrl = `${ragServerUrl}/${targetPath}`;
+    const targetUrl = new URL(`${ragServerUrl}/${targetPath}`);
+
+    const searchParams = request.nextUrl.searchParams;
+    searchParams.forEach((value, key) => {
+      targetUrl.searchParams.append(key, value);
+    });
 
     let body: unknown = undefined;
     const contentLength = request.headers.get("content-length");
@@ -2127,7 +2151,7 @@ export async function PATCH(
     const fetchOptions: RequestInit = { method: "PATCH", headers };
     if (body !== undefined) fetchOptions.body = JSON.stringify(body);
 
-    const response = await fetch(targetUrl, fetchOptions);
+    const response = await fetch(targetUrl.toString(), fetchOptions);
     if (response.status === 204) return new NextResponse(null, { status: 204 });
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });

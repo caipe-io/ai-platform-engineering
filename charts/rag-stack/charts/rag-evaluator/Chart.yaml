@@ -1,0 +1,6 @@
+apiVersion: v2
+name: rag-evaluator
+description: RAG Evaluator REST API Server for CAIPE evaluation and benchmark pipelines
+type: application
+version: 0.5.68-dev.3
+appVersion: 0.5.68-dev.3
