@@ -39,12 +39,19 @@ securityContext:
   seccompProfile:
     type: RuntimeDefault
 
+# initImage is wolfi-base, whose `nonroot` account is UID/GID 65532. kubelet
+# refuses to start a container with runAsNonRoot when the image declares a named
+# user it cannot resolve to a UID, so the UID has to be numeric here.
 jobPodSecurityContext:
   runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
 
 jobSecurityContext:
   allowPrivilegeEscalation: false
   runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
   capabilities:
     drop:
       - ALL

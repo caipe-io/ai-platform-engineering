@@ -279,18 +279,16 @@ milvus:
     ragStackManaged: true
     annotations: {}
 
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    runAsGroup: 1000
-    fsGroup: 1000
-    fsGroupChangePolicy: OnRootMismatch
+  # milvusdb/milvus only runs as root: /milvus/bin/milvus is mode 0774 root:root,
+  # /milvus/lib and /milvus/configs are 0774 directories with no world search bit,
+  # and /var/lib/milvus/data is 0755 root:root. Any other UID cannot exec the
+  # binary, dlopen its libraries, read its config, or write local data.
+  # Empty so the subchart omits the pod-level block entirely.
+  securityContext: {}
 
+  # UID-independent hardening only; runAsNonRoot is not settable here (see above).
   containerSecurityContext:
     allowPrivilegeEscalation: false
-    runAsNonRoot: true
-    runAsUser: 1000
-    runAsGroup: 1000
     capabilities:
       drop:
         - ALL
