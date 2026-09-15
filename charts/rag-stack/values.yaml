@@ -280,17 +280,15 @@ milvus:
     annotations: {}
 
   securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    runAsGroup: 1000
+    # The stock Milvus image owns its executable and preload library as root:root
+    # with mode 0774, so forcing UID/GID 1000 prevents the process from starting.
+    # Keep the image's default identity while retaining the pod-level filesystem
+    # ownership settings and container hardening below.
     fsGroup: 1000
     fsGroupChangePolicy: OnRootMismatch
 
   containerSecurityContext:
     allowPrivilegeEscalation: false
-    runAsNonRoot: true
-    runAsUser: 1000
-    runAsGroup: 1000
     capabilities:
       drop:
         - ALL
