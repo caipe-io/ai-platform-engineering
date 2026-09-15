@@ -582,11 +582,11 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | mongodb.image.pullPolicy | string | `"IfNotPresent"` |  |
 | mongodb.image.repository | string | `"mongo"` |  |
 | mongodb.image.tag | string | `"7.0"` |  |
-| mongodb.nameOverride | string | `"mongodb"` |  |
+| mongodb.nameOverride | string | `"documentdb"` |  |
 | mongodb.persistence.enabled | bool | `true` |  |
 | mongodb.persistence.size | string | `"10Gi"` |  |
 | mongodb.persistence.storageClass | string | `""` |  |
-| mongodb.provider | string | `"mongodb"` |  |
+| mongodb.provider | string | `"documentdb"` |  |
 | mongodb.service.port | int | `27017` |  |
 | mongodb.strictPasswords | bool | `false` |  |
 | openfga-authz-bridge.agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
