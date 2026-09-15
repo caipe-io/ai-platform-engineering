@@ -8,9 +8,6 @@ on:
   pull_request:
     paths:
       - 'build/Dockerfile.keycloak-init'
-      # Whole chart rather than named templates: what the init Jobs run is also
-      # decided by values.yaml (security context, initImage), so a per-file glob
-      # lets changes that stop those Jobs starting through untested.
       - 'charts/ai-platform-engineering/charts/keycloak/**'
       - 'tests/integration/test_keycloak_platform_client_reconcile.sh'
       - 'tests/integration/test_keycloak_strict_client_secrets.sh'
