@@ -31,6 +31,31 @@ logger = logging.getLogger(__name__)
 
 
 CALLER_PROVIDER_NOT_CONNECTED = "caller_provider_not_connected"
+
+# Bedrock ConverseStream requires tool names to match [a-zA-Z0-9_-]+.
+# MCP server IDs used as prefixes may contain other characters (e.g. "$SLACK").
+_TOOL_NAME_INVALID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def sanitize_server_id_for_prefix(server_id: str) -> str:
+    """Return a Bedrock-safe version of server_id for use as a tool name prefix.
+
+    Bedrock's ConverseStream API requires tool names to match [a-zA-Z0-9_-]+.
+    When server_id is used as a prefix (e.g. "$SLACK_conversations_history"),
+    any character outside that set causes a ValidationException. Replace invalid
+    chars with underscores.
+    """
+    sanitized = _TOOL_NAME_INVALID_CHARS.sub("_", server_id)
+    if sanitized != server_id:
+        logger.warning(
+            "MCP server_id %r contains characters invalid in Bedrock tool names; "
+            "sanitized to %r for tool name prefix",
+            server_id,
+            sanitized,
+        )
+    return sanitized
+
+
 TOP_LEVEL_UNION_SCHEMA_KEYS = ("oneOf", "anyOf", "allOf")
 
 _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
@@ -353,7 +378,10 @@ def build_mcp_connections(
             agent_gateway_url
             and server.transport in (TransportType.HTTP, TransportType.SSE)
         )
-        connections[server_id] = build_mcp_connection_config(
+        # Use sanitized server_id as the connection key so MultiServerMCPClient
+        # produces tool names that are valid Bedrock ConverseStream names.
+        safe_id = sanitize_server_id_for_prefix(server_id)
+        connections[safe_id] = build_mcp_connection_config(
             server,
             agent_gateway_url=agent_gateway_url if use_gateway else None,
             auth_bearer=auth_bearer,
@@ -671,13 +699,15 @@ def filter_tools_by_allowed(
     allowed_names: set[str] = set()
 
     for server_id, value in allowed_tools.items():
+        # Sanitize server_id to match the prefix used in build_mcp_connections.
+        safe_id = sanitize_server_id_for_prefix(server_id)
         if value is False:
             # Explicitly disabled — skip entirely
             continue
         elif value is True:
             # All tools from this server
             for tool in all_tools:
-                if tool.name.startswith(f"{server_id}_"):
+                if tool.name.startswith(f"{safe_id}_"):
                     allowed_names.add(tool.name)
         elif isinstance(value, list):
             if not value:
@@ -688,12 +718,12 @@ def filter_tools_by_allowed(
                     server_id,
                 )
                 for tool in all_tools:
-                    if tool.name.startswith(f"{server_id}_"):
+                    if tool.name.startswith(f"{safe_id}_"):
                         allowed_names.add(tool.name)
             else:
                 # Specific tools only
                 for tool_name in value:
-                    namespaced = f"{server_id}_{tool_name}"
+                    namespaced = f"{safe_id}_{tool_name}"
                     allowed_names.add(namespaced)
 
     # Filter and validate tools
