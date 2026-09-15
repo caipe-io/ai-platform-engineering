@@ -1141,6 +1141,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
               isFinal,
               turnId: msg.metadata?.turn_id,
               taskId: msg.metadata?.task_id,
+              autonomousRunId: msg.metadata?.run_id,
+              autonomousMessageKind: msg.metadata?.kind,
+              autonomousExecutionContextId: msg.metadata?.execution_context_id,
               // Restore turnStatus from MongoDB (defaults to undefined for legacy messages)
               turnStatus: msg.metadata?.turn_status as TurnStatus | undefined,
               // Mark as interrupted only if explicitly flagged in MongoDB, or

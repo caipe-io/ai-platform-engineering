@@ -15,11 +15,16 @@ export type TaskStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped
 
 export interface AutonomousRuntimeSettings {
   minimum_schedule_interval_seconds: number;
+  enabled_webhook_providers: WebhookProvider[];
 }
+
+export type WebhookProvider = 'github' | 'jira' | 'slack' | 'pagerduty';
 
 export interface CronTrigger {
   type: 'cron';
   schedule: string;
+  /** IANA time zone; absent legacy tasks are interpreted as UTC. */
+  timezone?: string;
 }
 
 export interface IntervalTrigger {
@@ -27,6 +32,19 @@ export interface IntervalTrigger {
   seconds?: number | null;
   minutes?: number | null;
   hours?: number | null;
+}
+
+export interface WebhookFilterCondition {
+  source: 'payload' | 'header';
+  /** Dot path for payload fields, or an HTTP header name. */
+  field: string;
+  /** Exact accepted values; any one value satisfies this condition. */
+  values: string[];
+}
+
+export interface WebhookDeliveryFilter {
+  /** Every condition must match before a delivery is queued. */
+  conditions: WebhookFilterCondition[];
 }
 
 export interface WebhookTrigger {
@@ -55,6 +73,8 @@ export interface WebhookTrigger {
    * value.
    */
   has_secret?: boolean;
+  /** Optional provider-independent filter evaluated before a run is queued. */
+  filter?: WebhookDeliveryFilter | null;
 }
 
 export type Trigger = CronTrigger | IntervalTrigger | WebhookTrigger;
@@ -233,10 +253,18 @@ export interface TaskFormState {
   enabled: boolean;
   triggerType: TriggerType;
   cronSchedule: string;
+  cronTimezone: string;
   intervalSeconds: string;
   intervalMinutes: string;
   intervalHours: string;
   webhookProvider: string;
   /** Used only to rotate provider-issued Slack/PagerDuty secrets on edit. */
   webhookSecret: string;
+  webhookFilterEnabled: boolean;
+  webhookFilterConditions: Array<{
+    source: 'payload' | 'header';
+    field: string;
+    /** Comma-separated exact accepted values. */
+    values: string;
+  }>;
 }

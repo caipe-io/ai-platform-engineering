@@ -40,6 +40,7 @@ import { MessageAttachments } from "./MessageAttachments";
 import { getFilteredCommands,SlashCommandMenu,type SlashCommand } from "./SlashCommandMenu";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import { useSlashCommands } from "./useSlashCommands";
+import { autonomousApi } from "@/components/autonomous/api";
 
 type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'agent_disabled';
 
@@ -278,6 +279,75 @@ export function ChatPanel({
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
+  const [pendingAutonomousFollowUps, setPendingAutonomousFollowUps] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const continueAutonomousRun = useCallback(
+    async (runId: string, userText: string) => {
+      const taskId = conversation?.task_id;
+      if (!taskId) throw new Error("This autonomous conversation has no task identifier.");
+
+      const accepted = await autonomousApi.followUpRun(taskId, runId, userText);
+      setPendingAutonomousFollowUps((current) => {
+        const next = new Set(current);
+        next.add(accepted.run_id);
+        return next;
+      });
+      toast("Follow-up queued for the selected run.", "success");
+    },
+    [conversation?.task_id, toast],
+  );
+
+  // Autonomous follow-ups execute asynchronously. Poll their authoritative run
+  // records, then refresh the stable grouped chat once the result is published.
+  useEffect(() => {
+    const taskId = conversation?.task_id;
+    const visibleConversationId = conversation?.id;
+    if (!taskId || !visibleConversationId || pendingAutonomousFollowUps.size === 0) return;
+
+    let stopped = false;
+    const refreshCompletedFollowUps = async () => {
+      try {
+        const runs = await autonomousApi.listRuns(taskId);
+        if (stopped) return;
+        const completed = new Set(
+          runs
+            .filter(
+              (run) =>
+                pendingAutonomousFollowUps.has(run.run_id) &&
+                !["pending", "running"].includes(run.status),
+            )
+            .map((run) => run.run_id),
+        );
+        if (completed.size === 0) return;
+
+        await loadMessagesFromServer(visibleConversationId, { force: true });
+        if (stopped) return;
+        setPendingAutonomousFollowUps((current) => {
+          const next = new Set(current);
+          completed.forEach((runId) => next.delete(runId));
+          return next;
+        });
+      } catch {
+        // A transient polling failure must not discard the pending run. The
+        // next interval retries, while the initial submission error is still
+        // surfaced directly by the inline composer.
+      }
+    };
+
+    void refreshCompletedFollowUps();
+    const interval = window.setInterval(() => void refreshCompletedFollowUps(), 3000);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [
+    conversation?.id,
+    conversation?.task_id,
+    loadMessagesFromServer,
+    pendingAutonomousFollowUps,
+  ]);
 
   // Ref to track which conversations we've checked for HITL interrupt state
   const interruptCheckedRef = useRef<Set<string>>(new Set());
@@ -1002,8 +1072,14 @@ export function ChatPanel({
         ? Date.now() - state.startedAt
         : undefined;
 
+    const finalContent = state.accumulatedText || (
+      state.hasError && state.errorMessage
+        ? `**Error:** ${state.errorMessage}`
+        : ""
+    );
+
     updateMessage(conversationId, assistantMsgId, {
-      content: state.accumulatedText,
+      content: finalContent,
       rawStreamContent: state.rawStreamContent,
       isFinal,
       turnStatus,
@@ -1758,6 +1834,13 @@ export function ChatPanel({
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
           <div className="max-w-7xl mx-auto pl-1 pr-1 py-4 space-y-6">
+            {conversation?.source === "autonomous" && (
+              <div className="mx-3 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-foreground">
+                Runs are grouped here for history, but each run has separate context. Use
+                <span className="font-medium"> Continue this run</span> on a result to follow
+                up on that exact run. The composer below continues the most recent run.
+              </div>
+            )}
             {!conversation?.messages.length && (
               <div className="text-center py-20">
                 {isLoadingMessages ? (
@@ -1914,7 +1997,11 @@ export function ChatPanel({
                           isCopied={copiedId === msg.id}
                           isStreaming={isAssistantStreaming}
                           isLatestAnswer={isLastAssistantMessage}
-                          onRetry={getRetryContent() ? () => handleRetry(getRetryContent()!) : undefined}
+                          onRetry={
+                            getRetryContent() && !msg.autonomousRunId
+                              ? () => handleRetry(getRetryContent()!)
+                              : undefined
+                          }
                           feedback={msg.feedback}
                           onFeedbackChange={(feedback) => handleFeedbackChange(msg.id, feedback)}
                           isRecovering={recoveringMessageId === msg.id}
@@ -1938,6 +2025,18 @@ export function ChatPanel({
                           deletingFilePath={deletingFilePath}
                           getSubagentInfo={getSubagentInfo}
                           pendingHitl={!!(pendingUserInput || pendingToolApproval)}
+                          onContinueAutonomousRun={
+                            conversation?.source === "autonomous" &&
+                            !panelReadOnly &&
+                            msg.autonomousRunId &&
+                            msg.autonomousExecutionContextId &&
+                            ["run_response", "run_error"].includes(
+                              msg.autonomousMessageKind ?? "",
+                            )
+                              ? (userText) =>
+                                  continueAutonomousRun(msg.autonomousRunId!, userText)
+                              : undefined
+                          }
                         />
                       );
                     })}
@@ -2414,6 +2513,8 @@ interface ChatMessageProps {
   deletingFilePath?: string;
   getSubagentInfo?: (agentId: string) => SubagentLookupInfo | undefined;
   pendingHitl?: boolean;
+  /** Continue this exact autonomous run rather than the latest grouped run. */
+  onContinueAutonomousRun?: (userText: string) => Promise<void>;
 }
 
 const ChatMessage = React.memo(function ChatMessage({
@@ -2446,9 +2547,32 @@ const ChatMessage = React.memo(function ChatMessage({
   deletingFilePath,
   getSubagentInfo,
   pendingHitl = false,
+  onContinueAutonomousRun,
 }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [isHovered, setIsHovered] = useState(false);
+  const [showAutonomousFollowUp, setShowAutonomousFollowUp] = useState(false);
+  const [autonomousFollowUpText, setAutonomousFollowUpText] = useState("");
+  const [autonomousFollowUpError, setAutonomousFollowUpError] = useState<string | null>(null);
+  const [submittingAutonomousFollowUp, setSubmittingAutonomousFollowUp] = useState(false);
+
+  const submitAutonomousFollowUp = async () => {
+    const userText = autonomousFollowUpText.trim();
+    if (!userText || !onContinueAutonomousRun) return;
+    setSubmittingAutonomousFollowUp(true);
+    setAutonomousFollowUpError(null);
+    try {
+      await onContinueAutonomousRun(userText);
+      setAutonomousFollowUpText("");
+      setShowAutonomousFollowUp(false);
+    } catch (error) {
+      setAutonomousFollowUpError(
+        error instanceof Error ? error.message : "Failed to continue this run.",
+      );
+    } finally {
+      setSubmittingAutonomousFollowUp(false);
+    }
+  };
 
   const displayContent = message.content;
 
@@ -2680,8 +2804,8 @@ const ChatMessage = React.memo(function ChatMessage({
                 <MarkdownRenderer content={displayContent} />
               </div>
             ) : message.turnStatus === "interrupted" ? (
-              <div className="text-xs text-muted-foreground italic px-1">
-                This response failed to complete. No content was generated.
+              <div className="text-xs text-destructive px-1">
+                {message.error || "This response failed to complete. No content was generated."}
               </div>
             ) : null}
 
@@ -2743,6 +2867,66 @@ const ChatMessage = React.memo(function ChatMessage({
                   onFeedbackChange={onFeedbackChange}
                 />
               </motion.div>
+            )}
+
+            {onContinueAutonomousRun && (
+              <div className="mt-2">
+                {showAutonomousFollowUp ? (
+                  <div className="space-y-2 rounded-lg border border-border bg-card/50 p-3">
+                    <label
+                      htmlFor={`autonomous-follow-up-${message.id}`}
+                      className="text-xs font-medium text-foreground"
+                    >
+                      Continue this run
+                    </label>
+                    <textarea
+                      id={`autonomous-follow-up-${message.id}`}
+                      value={autonomousFollowUpText}
+                      onChange={(event) => setAutonomousFollowUpText(event.target.value)}
+                      rows={3}
+                      maxLength={10_000}
+                      disabled={submittingAutonomousFollowUp}
+                      className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      placeholder="Ask a follow-up using only this run's context…"
+                    />
+                    {autonomousFollowUpError && (
+                      <p className="text-xs text-destructive">{autonomousFollowUpError}</p>
+                    )}
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={submittingAutonomousFollowUp}
+                        onClick={() => {
+                          setShowAutonomousFollowUp(false);
+                          setAutonomousFollowUpText("");
+                          setAutonomousFollowUpError(null);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={submittingAutonomousFollowUp || !autonomousFollowUpText.trim()}
+                        onClick={() => void submitAutonomousFollowUp()}
+                      >
+                        {submittingAutonomousFollowUp ? "Queuing…" : "Send follow-up"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowAutonomousFollowUp(true)}
+                  >
+                    Continue this run
+                  </Button>
+                )}
+              </div>
             )}
 
           </>

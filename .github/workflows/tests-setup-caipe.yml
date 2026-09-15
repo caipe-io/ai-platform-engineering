@@ -47,4 +47,3 @@ jobs:
 
       - name: Run sudo consent regression tests
         run: /bin/bash tests/integration/test_setup_caipe_sudo_consent.sh
-

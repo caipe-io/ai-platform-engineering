@@ -24,8 +24,8 @@ interface RunHistoryProps {
    * for the polling interval.
    */
   refreshKey?: number;
-  /** Require an explicit run selection before showing the webhook composer. */
-  allowWebhookFollowUp?: boolean;
+  /** Allow an operator to continue the exact execution context of a selected run. */
+  allowFollowUp?: boolean;
 }
 
 const STATUS_BADGE_VARIANT: Record<TaskRun["status"], "default" | "secondary" | "destructive" | "outline"> = {
@@ -122,7 +122,7 @@ export function RunHistory({
   taskId,
   triggerType,
   refreshKey = 0,
-  allowWebhookFollowUp = false,
+  allowFollowUp = false,
 }: RunHistoryProps) {
   const [runs, setRuns] = useState<TaskRun[]>([]);
   const [loading, setLoading] = useState(true);
@@ -393,8 +393,8 @@ export function RunHistory({
                       No response captured.
                     </div>
                   )}
-                  {allowWebhookFollowUp &&
-                    triggerType === "webhook" &&
+                  {allowFollowUp &&
+                    run.execution_context_id &&
                     !["pending", "running"].includes(run.status) && (
                       <div className="border-t border-border pt-2">
                         {replyingTo === run.run_id ? (

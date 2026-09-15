@@ -33,9 +33,9 @@ from autonomous_agents.services.dynamic_agents_client import (
 def _reset_settings_cache():
     """Clear ``get_settings`` lru_cache so per-test env changes win."""
     get_settings.cache_clear()
-    da_client._service_token_cache = None
+    da_client._owner_token_cache.clear()
     yield
-    da_client._service_token_cache = None
+    da_client._owner_token_cache.clear()
     get_settings.cache_clear()
 
 
@@ -46,6 +46,7 @@ def configured(monkeypatch):
     monkeypatch.delenv("DYNAMIC_AGENTS_OAUTH2_TOKEN_URL", raising=False)
     monkeypatch.delenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_ID", raising=False)
     monkeypatch.delenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("DYNAMIC_AGENTS_OAUTH2_AUDIENCE", raising=False)
     monkeypatch.delenv("DYNAMIC_AGENTS_OAUTH2_SCOPE", raising=False)
     get_settings.cache_clear()
     yield
@@ -128,21 +129,21 @@ class TestInvokeDynamicAgent:
         assert body["message"] == "hi"
 
     @pytest.mark.asyncio
-    async def test_configured_service_token_is_sent_as_bearer(self, configured, monkeypatch):
-        """When OAuth2 service credentials are configured, the DA request carries Authorization."""
+    async def test_configured_owner_token_is_sent_as_bearer(self, configured, monkeypatch):
+        """When owner token exchange is configured, the DA request carries its result."""
         monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_TOKEN_URL", "http://keycloak/token")
-        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_ID", "caipe-platform")
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_ID", "caipe-scheduler-runner")
         monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET", "secret")
         get_settings.cache_clear()
 
-        token_mint = AsyncMock(return_value="svc-token")
+        token_mint = AsyncMock(return_value="owner-token")
         factory, client = _mock_async_client(
             _resp(200, {"success": True, "content": "ok"})
         )
 
         with (
             patch(
-                "autonomous_agents.services.dynamic_agents_client._mint_service_bearer_token",
+                "autonomous_agents.services.dynamic_agents_client._mint_owner_bearer_token",
                 token_mint,
             ),
             patch("autonomous_agents.services.dynamic_agents_client.httpx.AsyncClient", factory),
@@ -152,12 +153,91 @@ class TestInvokeDynamicAgent:
                 task_id="t1",
                 agent_id="agent-x",
                 owner_email="alice@example.com",
+                owner_sub="alice-uuid",
             )
 
         assert content == "ok"
-        token_mint.assert_awaited_once()
+        token_mint.assert_awaited_once_with("alice-uuid", 300.0)
         headers = client.post.await_args.kwargs["headers"]
-        assert headers["Authorization"] == "Bearer svc-token"
+        assert headers["Authorization"] == "Bearer owner-token"
+
+    @pytest.mark.asyncio
+    async def test_owner_bearer_uses_requested_subject_token_exchange(
+        self, configured, monkeypatch
+    ):
+        """The scheduler mints a user JWT, not a service-account JWT."""
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_TOKEN_URL", "http://keycloak/token")
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_ID", "caipe-scheduler-runner")
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET", "secret")
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_AUDIENCE", "caipe-platform")
+        get_settings.cache_clear()
+        factory, client = _mock_async_client(
+            _resp(200, {"access_token": "owner-token", "expires_in": 300})
+        )
+
+        with patch(
+            "autonomous_agents.services.dynamic_agents_client.httpx.AsyncClient",
+            factory,
+        ):
+            token = await da_client._mint_owner_bearer_token("alice-uuid", 300.0)
+
+        assert token == "owner-token"
+        form = client.post.await_args.kwargs["data"]
+        assert form == {
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "client_id": "caipe-scheduler-runner",
+            "client_secret": "secret",
+            "requested_subject": "alice-uuid",
+            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "audience": "caipe-platform",
+        }
+
+    @pytest.mark.asyncio
+    async def test_configured_owner_exchange_rejects_legacy_task_without_sub(
+        self, configured, monkeypatch
+    ):
+        """Never fall back to service-account MCP credentials for an owned task."""
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_TOKEN_URL", "http://keycloak/token")
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_ID", "caipe-scheduler-runner")
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET", "secret")
+        get_settings.cache_clear()
+
+        with pytest.raises(DynamicAgentsClientError, match="no owner subject"):
+            await da_client._mint_owner_bearer_token(None, 300.0)
+
+    @pytest.mark.asyncio
+    async def test_owner_bearer_cache_is_isolated_by_subject(
+        self, configured, monkeypatch
+    ):
+        """A cached bearer is never reused for a different task owner."""
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_TOKEN_URL", "http://keycloak/token")
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_ID", "caipe-scheduler-runner")
+        monkeypatch.setenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET", "secret")
+        get_settings.cache_clear()
+        factory, client = _mock_async_client(
+            _resp(200, {"access_token": "user-one-token", "expires_in": 300})
+        )
+        client.post.side_effect = [
+            _resp(200, {"access_token": "user-one-token", "expires_in": 300}),
+            _resp(200, {"access_token": "user-two-token", "expires_in": 300}),
+        ]
+
+        with patch(
+            "autonomous_agents.services.dynamic_agents_client.httpx.AsyncClient",
+            factory,
+        ):
+            first = await da_client._mint_owner_bearer_token("user-one-sub", 300.0)
+            again = await da_client._mint_owner_bearer_token("user-one-sub", 300.0)
+            second = await da_client._mint_owner_bearer_token("user-two-sub", 300.0)
+
+        assert (first, again, second) == (
+            "user-one-token",
+            "user-one-token",
+            "user-two-token",
+        )
+        assert client.post.await_count == 2
+        subjects = [call.kwargs["data"]["requested_subject"] for call in client.post.await_args_list]
+        assert subjects == ["user-one-sub", "user-two-sub"]
 
     @pytest.mark.asyncio
     async def test_appends_context_to_message(self, configured):

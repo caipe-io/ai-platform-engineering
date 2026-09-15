@@ -48,9 +48,11 @@ jest.mock('@/components/shared/timeline/MarkdownRenderer', () => ({
 // The component fetches via `autonomousApi.listRuns`; we stub the
 // whole module so each test can hand-tailor the returned runs.
 const mockListRuns = jest.fn();
+const mockFollowUpRun = jest.fn();
 jest.mock('../api', () => ({
   autonomousApi: {
     listRuns: (...args: unknown[]) => mockListRuns(...args),
+    followUpRun: (...args: unknown[]) => mockFollowUpRun(...args),
   },
   AutonomousApiError: class extends Error {
     status = 0;
@@ -72,12 +74,14 @@ function makeRun(overrides: Partial<TaskRun> = {}): TaskRun {
     response_preview: 'all good',
     error: null,
     conversation_id: '11111111-1111-1111-1111-111111111111',
+    execution_context_id: 'isolated-run-context',
     ...overrides,
   };
 }
 
 beforeEach(() => {
   mockListRuns.mockReset();
+  mockFollowUpRun.mockReset();
 });
 
 afterEach(() => {
@@ -201,5 +205,49 @@ describe('RunHistory webhook results', () => {
     expect(screen.getByText('Response preview')).toBeInTheDocument();
     expect(screen.getByText('Compact preview')).toBeInTheDocument();
     expect(screen.queryByTestId('markdown-renderer')).not.toBeInTheDocument();
+  });
+});
+
+describe('RunHistory selected-run follow-up', () => {
+  it.each(['cron', 'interval', 'webhook'] as const)(
+    'continues the explicitly selected %s run',
+    async (triggerType) => {
+      const run = makeRun({ run_id: `${triggerType}-run` });
+      mockListRuns.mockResolvedValue([run]);
+      mockFollowUpRun.mockResolvedValue({
+        status: 'accepted',
+        task_id: 't-1',
+        run_id: 'follow-up-run',
+        parent_run_id: run.run_id,
+      });
+
+      render(
+        <RunHistory taskId="t-1" triggerType={triggerType} allowFollowUp />,
+      );
+      fireEvent.click(await screen.findByText(run.run_id));
+      fireEvent.click(screen.getByRole('button', { name: 'Continue this run' }));
+      fireEvent.change(screen.getByPlaceholderText(/using only this run's context/i), {
+        target: { value: 'Investigate this exact result' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Send follow-up' }));
+
+      await waitFor(() => {
+        expect(mockFollowUpRun).toHaveBeenCalledWith(
+          't-1',
+          run.run_id,
+          'Investigate this exact result',
+        );
+      });
+    },
+  );
+
+  it('does not offer exact continuation for legacy runs without a context id', async () => {
+    const run = makeRun({ execution_context_id: null });
+    mockListRuns.mockResolvedValue([run]);
+
+    render(<RunHistory taskId="t-1" triggerType="cron" allowFollowUp />);
+    fireEvent.click(await screen.findByText(run.run_id));
+
+    expect(screen.queryByRole('button', { name: 'Continue this run' })).toBeNull();
   });
 });

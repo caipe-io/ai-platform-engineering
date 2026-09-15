@@ -9,6 +9,7 @@ changes take effect without a service restart.
 import asyncio
 import logging
 import secrets
+import uuid
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 
@@ -50,6 +51,17 @@ from autonomous_agents.services.webhook_runtime import dispatch_webhook_run
 logger = logging.getLogger("autonomous_agents")
 
 router = APIRouter(tags=["tasks"])
+
+
+def _assert_webhook_provider_enabled(task: TaskDefinition) -> None:
+    if (
+        isinstance(task.trigger, WebhookTrigger)
+        and task.trigger.provider not in get_settings().enabled_webhook_providers
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Webhook provider '{task.trigger.provider}' is not enabled",
+        )
 
 
 def _get_caller(request: Request) -> tuple[str | None, bool, str | None]:
@@ -201,10 +213,12 @@ def _serialize_task(task: TaskDefinition, next_run_iso: str | None) -> dict:
 @router.get("/settings", response_model=dict)
 async def get_public_settings() -> dict:
     """Return non-sensitive runtime constraints needed by the task form."""
+    settings = get_settings()
     return {
         "minimum_schedule_interval_seconds": (
-            get_settings().minimum_schedule_interval_seconds
-        )
+            settings.minimum_schedule_interval_seconds
+        ),
+        "enabled_webhook_providers": settings.enabled_webhook_providers,
     }
 
 
@@ -256,6 +270,8 @@ async def create_task(payload: TaskCreate, request: Request) -> dict:
                 "target a dynamic agent. Select a custom agent for this task."
             ),
         )
+
+    _assert_webhook_provider_enabled(payload)
 
     # The server owns the id. Whatever the client sent is discarded
 
@@ -434,6 +450,8 @@ async def update_task(task_id: str, task: TaskDefinition, request: Request) -> d
             update={"owner_id": existing.owner_id, "owner_sub": existing.owner_sub}
         )
 
+    _assert_webhook_provider_enabled(task)
+
     # Webhook secret preservation: GET responses redact the secret to
     # ``has_secret: bool``, so when the UI submits an unchanged form
     # the incoming payload has ``secret=None``. Treat that as "keep
@@ -592,13 +610,13 @@ async def follow_up_task_run(
     response: Response,
     background_tasks: BackgroundTasks,
 ) -> dict:
-    """Continue one webhook run from the authenticated UI.
+    """Continue one autonomous run from the authenticated UI.
 
     The task timeline is only a display grouping. This endpoint binds the new
     message to the explicitly selected parent run, and ``execute_task`` reuses
-    that run's execution context while keeping unrelated webhook deliveries
-    isolated. Provider HMAC is intentionally not used here: the UI proxy has
-    already authenticated the caller and ownership is enforced below.
+    that run's execution context while keeping unrelated executions isolated.
+    Provider HMAC is intentionally not used here: the UI proxy has already
+    authenticated the caller and ownership is enforced below.
     """
     task = await get_task_store().get(task_id)
     if task is None:
@@ -606,22 +624,29 @@ async def follow_up_task_run(
 
     caller_email, is_admin, _ = _get_caller(request)
     _assert_task_access(task, caller_email, is_admin)
-    if not isinstance(task.trigger, WebhookTrigger):
-        raise HTTPException(
-            status_code=400,
-            detail="Only webhook task runs can be continued from this endpoint.",
-        )
     if not task.enabled:
         raise HTTPException(
             status_code=409,
-            detail="This webhook task is disabled. Enable it before continuing a run.",
+            detail="This autonomous task is disabled. Enable it before continuing a run.",
         )
 
     recent = await get_run_store().list_by_task(task_id, limit=_MAX_TASK_RUNS)
-    if not any(candidate.run_id == run_id for candidate in recent):
+    parent_run = next(
+        (candidate for candidate in recent if candidate.run_id == run_id),
+        None,
+    )
+    if parent_run is None:
         raise HTTPException(
             status_code=404,
             detail=f"Run '{run_id}' not found for task '{task_id}'",
+        )
+    if not parent_run.execution_context_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This run predates isolated execution contexts and cannot be "
+                "continued individually. Run the task again first."
+            ),
         )
 
     user_text = payload.user_text.strip()
@@ -634,28 +659,39 @@ async def follow_up_task_run(
         user_ref=caller_email,
         transport="webui",
     )
-    settings = get_settings()
-    outcome = await dispatch_webhook_run(
-        task=task,
-        dedup_key=DedupKey(key=None, strategy="none"),
-        body=follow_up.model_dump_json().encode("utf-8"),
-        context={},
-        follow_up=follow_up,
-        background_tasks=background_tasks,
-        max_pending_per_task=settings.webhook_max_pending_per_task,
-        max_pending_per_owner=settings.webhook_max_pending_per_owner,
-        max_pending_global=settings.webhook_max_pending_global,
-        max_pending_payload_bytes_global=(
-            settings.webhook_max_pending_payload_bytes_global
-        ),
-        max_concurrent_per_owner=settings.webhook_max_concurrent_per_owner,
-        max_concurrent_global=settings.webhook_max_concurrent_global,
-    )
-    response.status_code = outcome.status_code
+    if isinstance(task.trigger, WebhookTrigger):
+        settings = get_settings()
+        outcome = await dispatch_webhook_run(
+            task=task,
+            dedup_key=DedupKey(key=None, strategy="none"),
+            body=follow_up.model_dump_json().encode("utf-8"),
+            context={},
+            follow_up=follow_up,
+            background_tasks=background_tasks,
+            max_pending_per_task=settings.webhook_max_pending_per_task,
+            max_pending_per_owner=settings.webhook_max_pending_per_owner,
+            max_pending_global=settings.webhook_max_pending_global,
+            max_pending_payload_bytes_global=(
+                settings.webhook_max_pending_payload_bytes_global
+            ),
+            max_concurrent_per_owner=settings.webhook_max_concurrent_per_owner,
+            max_concurrent_global=settings.webhook_max_concurrent_global,
+        )
+        new_run_id = outcome.run_id
+        response.status_code = outcome.status_code
+    else:
+        new_run_id = str(uuid.uuid4())
+        background_tasks.add_task(
+            execute_task,
+            task,
+            follow_up=follow_up,
+            run_id=new_run_id,
+        )
+
     return {
         "status": "accepted",
         "task_id": task_id,
-        "run_id": outcome.run_id,
+        "run_id": new_run_id,
         "parent_run_id": run_id,
     }
 

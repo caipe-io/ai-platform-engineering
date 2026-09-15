@@ -10,7 +10,7 @@
  * the exact same cron / interval / webhook parsing + validation logic.
  */
 
-import type { AutonomousTask, TaskFormState } from "./types";
+import type { AutonomousTask, TaskFormState, WebhookFilterCondition } from "./types";
 
 export const DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS = 30 * 60;
 
@@ -35,11 +35,14 @@ export const EMPTY_FORM: TaskFormState = {
   enabled: true,
   triggerType: "cron",
   cronSchedule: "0 9 * * *",
+  cronTimezone: "UTC",
   intervalSeconds: "",
   intervalMinutes: "",
   intervalHours: "",
   webhookProvider: "github",
   webhookSecret: "",
+  webhookFilterEnabled: false,
+  webhookFilterConditions: [{ source: "payload", field: "", values: "" }],
 };
 
 /** Convert API model -> form state. */
@@ -65,6 +68,7 @@ export function toFormState(task: AutonomousTask | null | undefined): TaskFormSt
   };
   if (task.trigger.type === "cron") {
     base.cronSchedule = task.trigger.schedule;
+    base.cronTimezone = task.trigger.timezone ?? "UTC";
   } else if (task.trigger.type === "interval") {
     base.intervalSeconds = task.trigger.seconds == null ? "" : String(task.trigger.seconds);
     base.intervalMinutes = task.trigger.minutes == null ? "" : String(task.trigger.minutes);
@@ -75,6 +79,14 @@ export function toFormState(task: AutonomousTask | null | undefined): TaskFormSt
     // ``has_secret`` boolean comes back. Leave the form blank so the
     // operator must explicitly type a new value to *change* it.
     base.webhookSecret = "";
+    if (task.trigger.filter) {
+      base.webhookFilterEnabled = true;
+      base.webhookFilterConditions = task.trigger.filter.conditions.map((condition) => ({
+        source: condition.source,
+        field: condition.field,
+        values: condition.values.join(", "),
+      }));
+    }
   }
   return base;
 }
@@ -105,7 +117,11 @@ export function fromFormState(
   let trigger: AutonomousTask["trigger"];
   if (form.triggerType === "cron") {
     if (!form.cronSchedule.trim()) return { error: "Cron schedule is required." };
-    trigger = { type: "cron", schedule: form.cronSchedule.trim() };
+    trigger = {
+      type: "cron",
+      schedule: form.cronSchedule.trim(),
+      timezone: form.cronTimezone.trim() || "UTC",
+    };
   } else if (form.triggerType === "interval") {
     const parseField = (raw: string): number | null => {
       const v = raw.trim();
@@ -139,12 +155,51 @@ export function fromFormState(
     };
   } else {
     const provider = form.webhookProvider.trim() || "github";
+    let filter: NonNullable<Extract<AutonomousTask["trigger"], { type: "webhook" }>["filter"]> | undefined;
+    if (form.webhookFilterEnabled) {
+      if (form.webhookFilterConditions.length === 0) {
+        return { error: "Add at least one webhook filter condition." };
+      }
+      if (form.webhookFilterConditions.length > 16) {
+        return { error: "Webhook filters support at most 16 conditions." };
+      }
+      const conditions: WebhookFilterCondition[] = [];
+      for (const condition of form.webhookFilterConditions) {
+        const field = condition.field.trim();
+        if (!field) return { error: "Every webhook filter needs a field name." };
+        const validField = condition.source === "payload"
+          ? /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){0,7}$/.test(field)
+          : /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(field);
+        if (!validField) {
+          return {
+            error: condition.source === "payload"
+              ? "Payload fields must be dot paths with at most 8 segments."
+              : "Enter a valid HTTP header name.",
+          };
+        }
+        const values = Array.from(new Set(
+          condition.values.split(",").map((value) => value.trim()).filter(Boolean),
+        ));
+        if (values.length === 0) {
+          return { error: `Enter at least one accepted value for '${field}'.` };
+        }
+        if (values.length > 32) {
+          return { error: "Each webhook filter condition supports at most 32 values." };
+        }
+        if (values.some((value) => value.length > 200)) {
+          return { error: "Webhook filter values must be at most 200 characters." };
+        }
+        conditions.push({ source: condition.source, field, values });
+      }
+      filter = { conditions };
+    }
     trigger = {
       type: "webhook",
       provider,
       // POST generates the initial credential. On edit, a value is present
       // only when rotating a Slack/PagerDuty-issued secret; null preserves it.
       secret: form.webhookSecret.trim() ? form.webhookSecret.trim() : null,
+      ...(filter ? { filter } : {}),
     };
   }
 
@@ -175,7 +230,7 @@ export function fromFormState(
  */
 export function summarizeTrigger(trigger: AutonomousTask["trigger"]): string {
   if (trigger.type === "cron") {
-    return `Cron: ${trigger.schedule}`;
+    return `Cron: ${trigger.schedule} (${trigger.timezone ?? "UTC"})`;
   }
   if (trigger.type === "interval") {
     const parts: string[] = [];

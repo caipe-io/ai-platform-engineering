@@ -182,6 +182,106 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     );
   });
 
+  it.each([
+    [
+      "start",
+      startPost,
+      "/api/v1/chat/stream/start",
+      { message: "continue", conversation_id: "visible-task-chat", agent_id: "agent-1" },
+      mockProxySSEStream,
+    ],
+    [
+      "invoke",
+      invokePost,
+      "/api/v1/chat/invoke",
+      { message: "continue", conversation_id: "visible-task-chat", agent_id: "agent-1" },
+      mockProxyJSONRequest,
+    ],
+    [
+      "resume",
+      resumePost,
+      "/api/v1/chat/stream/resume",
+      { conversation_id: "visible-task-chat", agent_id: "agent-1", resume_data: "{}" },
+      mockProxySSEStream,
+    ],
+    [
+      "cancel",
+      cancelPost,
+      "/api/v1/chat/stream/cancel",
+      { conversation_id: "visible-task-chat", agent_id: "agent-1" },
+      mockProxyJSONRequest,
+    ],
+  ])("continues the latest autonomous execution context for %s", async (
+    _name,
+    handler,
+    path,
+    body,
+    proxy,
+  ) => {
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn(async () => ({
+        _id: "visible-task-chat",
+        owner_id: "alice@example.com",
+        owner_subject: "alice-sub",
+        source: "autonomous",
+        task_id: "task-1",
+        execution_context_id: "isolated-run-context",
+      })),
+    });
+
+    const response = await handler(jsonRequest(path, body));
+
+    expect(response.status).toBe(200);
+    const proxiedBody = JSON.parse(proxy.mock.calls[0][1] as string) as Record<string, unknown>;
+    expect(proxiedBody.conversation_id).toBe("isolated-run-context");
+    expect(mockRequireConversationResourcePermission).toHaveBeenCalledWith(
+      expect.anything(),
+      "alice@example.com",
+      expect.objectContaining({ _id: "visible-task-chat" }),
+      "write",
+    );
+  });
+
+  it("recovers and caches the latest run context for an existing autonomous chat", async () => {
+    const updateOne = jest.fn(async () => ({ acknowledged: true }));
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "autonomous_runs") {
+        return {
+          findOne: jest.fn(async () => ({
+            task_id: "task-1",
+            execution_context_id: "legacy-run-context",
+          })),
+        };
+      }
+      return {
+        findOne: jest.fn(async () => ({
+          _id: "visible-task-chat",
+          owner_id: "alice@example.com",
+          owner_subject: "alice-sub",
+          source: "autonomous",
+          task_id: "task-1",
+        })),
+        updateOne,
+      };
+    });
+
+    const response = await startPost(
+      jsonRequest("/api/v1/chat/stream/start", {
+        message: "continue",
+        conversation_id: "visible-task-chat",
+        agent_id: "agent-1",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const proxiedBody = JSON.parse(mockProxySSEStream.mock.calls[0][1] as string) as Record<string, unknown>;
+    expect(proxiedBody.conversation_id).toBe("legacy-run-context");
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: "visible-task-chat", source: "autonomous" },
+      { $set: { execution_context_id: "legacy-run-context" } },
+    );
+  });
+
   it("bypasses the conversation#write check for Slack conversations so any thread participant can invoke", async () => {
     // Slack threads are multi-participant. A non-owner (bob) must be able to
     // invoke the agent within the thread. agent#can_use is still enforced first;
