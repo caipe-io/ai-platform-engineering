@@ -124,12 +124,46 @@ def _add_argocd_link_to_app(app_data: Dict[str, Any]) -> Dict[str, Any]:
     return app_data
 
 
+def _parse_status_filter(value: str) -> set[str]:
+    """Normalize a comma-separated status filter for exact matching."""
+    return {status.strip().casefold() for status in value.split(",") if status.strip()}
+
+
+def _filter_applications_by_status(
+    applications: List[Dict[str, Any]],
+    sync_status: str,
+    health_status: str,
+) -> List[Dict[str, Any]]:
+    """Filter applications by sync and health status before pagination."""
+    requested_sync_statuses = _parse_status_filter(sync_status)
+    requested_health_statuses = _parse_status_filter(health_status)
+
+    if not requested_sync_statuses and not requested_health_statuses:
+        return applications
+
+    filtered_applications = []
+    for application in applications:
+        status = application.get("status", {})
+        actual_sync_status = status.get("sync", {}).get("status", "").casefold()
+        actual_health_status = status.get("health", {}).get("status", "").casefold()
+
+        if requested_sync_statuses and actual_sync_status not in requested_sync_statuses:
+            continue
+        if requested_health_statuses and actual_health_status not in requested_health_statuses:
+            continue
+        filtered_applications.append(application)
+
+    return filtered_applications
+
+
 async def list_applications(
     project: str = "",
     name: str = "",
     repo: str = "",
     namespace: str = "",
     refresh: str = "",
+    sync_status: str = "",
+    health_status: str = "",
     summary_only: bool = True,
     page: int = 1,
     page_size: int = 20,
@@ -143,6 +177,11 @@ async def list_applications(
         repo: Filter applications by repository URL
         namespace: Filter applications by namespace
         refresh: Forces application reconciliation if set to 'hard' or 'normal'
+        sync_status: Filter by exact sync status. Accepts comma-separated values,
+            such as ``OutOfSync,Unknown`` (case-insensitive).
+        health_status: Filter by exact health status. Accepts comma-separated values,
+            such as ``Degraded,Missing`` (case-insensitive). Use this filter instead
+            of scanning every page when looking for failed or unhealthy applications.
         summary_only: If True, return only summary information (default: True)
         page: Page number (1-indexed, default: 1)
         page_size: Number of items per page (default: 20, max: 100)
@@ -208,7 +247,11 @@ async def list_applications(
     page = max(1, page)  # Ensure page is at least 1
     page_size = min(100, max(1, page_size))  # Enforce max 100 items per page
 
-    all_items = data.get("items", [])
+    all_items = _filter_applications_by_status(
+        data.get("items", []),
+        sync_status=sync_status,
+        health_status=health_status,
+    )
     total_items = len(all_items)
     total_pages = (total_items + page_size - 1) // page_size  # Ceiling division
 
@@ -617,4 +660,3 @@ async def sync_application(
     else:
         logger.error(f"Failed to sync application '{name}': {response.get('error')}")
         return {"error": response.get("error", f"Failed to sync application '{name}'")}
-
