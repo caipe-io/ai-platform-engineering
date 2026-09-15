@@ -6,43 +6,41 @@ import styles from './roadmap.module.css';
 
 const ROADMAP = [
   {
-    title: 'Comprehensive Human and Non-human Identity and RBAC',
-    description: 'Role and team-based access control touching all features — OAuth 2.1, audit logs, and channel-to-agent assignment.',
+    title: 'Identity, Authorization, Credentials, and Audit',
+    description: 'CAIPE already provides human and non-human identity, fine-grained authorization, credential management, and audit capabilities across much of the platform. Work continues to extend their coverage and strengthen delegated access and policy enforcement.',
     status: 'in-progress',
     subItems: [
-      'OAuth 2.1 features: DCR, Token Exchange, three-legged auth for remote MCP servers',
-      'Manage RBAC user/teams/roles from UI',
-      'Assign Slack/Webex channels ↔ Custom agents',
-      'Detailed authorization audit logs (OBO agent actor logs)',
-      'Two-tier policy system for self-service workflow tool authorization',
+      'Extend OAuth 2.1 support for DCR, token exchange, and delegated access to remote MCP servers',
+      'Expand consistent policy enforcement across agents, tools, workflows, knowledge, and channels',
+      'Strengthen human and agent actor attribution in authorization audit records',
+      'Improve self-service administration for users, teams, roles, credentials, and resource relationships',
     ],
     issueRefs: ['#1742'],
   },
   {
-    title: 'Amazon Bedrock AgentCore Integration',
-    description: 'Integrate Amazon Bedrock AgentCore as a managed runtime backend for CAIPE Dynamic Agents — enabling AWS-native teams to run, scale, and observe agents using AgentCore\'s managed infrastructure, memory, and tool execution environment.',
-    status: 'planned',
+    title: 'Portable Agent Runtimes and Pluggable Harnesses',
+    description: 'Work is underway to let teams use different upstream agent frameworks and managed runtimes through common CAIPE lifecycle, tool, memory, streaming, policy, and observability contracts.',
+    status: 'in-progress',
     subItems: [
-      'AgentCore runtime adapter for the Dynamic Agents harness',
-      'Agent lifecycle mapping: create / invoke / delete AgentCore agents from CAIPE UI',
-      'Memory bridge: sync AgentCore session memory with CAIPE conversation context',
-      'Tool execution: route MCP tool calls through AgentCore\'s tool executor',
-      'IAM role-based auth for AgentCore API calls',
-      'Surface AgentCore traces and logs in CAIPE AgentOps',
+      'Amazon Bedrock AgentCore integration for managed execution',
+      'Anthropic Claude Agent SDK adapter',
+      'AWS Strands Agents SDK adapter',
+      'Per-agent harness and execution-provider selection',
+      'Shared compatibility tests, migration guidance, and adapter documentation',
     ],
-    issueRefs: ['#2109'],
+    issueRefs: ['#2079', '#2109'],
   },
   {
-    title: 'Multiple Agentic Harness SDK Integration',
-    description: 'Support multiple agentic harness SDKs — ADK, Strands, Claude SDK — so teams can bring their preferred agent framework without being locked into a single runtime.',
-    status: 'planned',
+    title: 'Autonomous and Scheduled Agents',
+    description: 'The first phase of scheduled and event-driven agent execution is implemented. The next phase focuses on safely governing autonomous actions and making runs easier to operate.',
+    status: 'in-progress',
     subItems: [
-      'Google ADK (Agent Development Kit) adapter',
-      'AWS Strands SDK adapter',
-      'Anthropic Claude SDK adapter',
-      'Pluggable harness adapter architecture — swap frameworks per agent',
+      'Policy guardrails that constrain actions agents may take without approval',
+      'Human-in-the-loop pause and escalation through Slack and Webex',
+      'Confidence thresholds and safe failure behavior',
+      'Expanded audit trails and operational controls for schedules and event subscriptions',
     ],
-    issueRefs: ['#2079'],
+    issueRefs: ['#2083'],
   },
   {
     title: 'LLM Budget & Quota Management',
@@ -57,13 +55,13 @@ const ROADMAP = [
   },
   {
     title: 'Automatic Agentic Evaluation',
-    description: 'Automated evaluation pipeline for agent response quality — deepeval-based RAG precision/recall, F1 scoring, and a self-improving feedback loop that tightens agent accuracy over time.',
+    description: 'Automated evaluation of retrieval and agent response quality, with measurable signals and regression gates for changes to agents, models, prompts, and knowledge sources.',
     status: 'planned',
     subItems: [
       'deepeval pipeline: RAG precision, recall, F1 scoring',
       'Agent response quality scoring (relevance, faithfulness, context recall)',
       'CI quality gate: fail on regression below threshold',
-      'Self-improving feedback loop',
+      'Feedback signals for human-governed improvement of agents and knowledge',
     ],
     issueRefs: ['#2081'],
   },
@@ -93,18 +91,6 @@ const ROADMAP = [
     issueRefs: ['#2085'],
   },
   {
-    title: 'Autonomous Agents',
-    description: 'Self-directed agents that proactively monitor, detect, and act on platform events without explicit user prompts.',
-    status: 'planned',
-    subItems: [
-      'Event-driven activation from alerts, webhooks, and scheduled checks',
-      'Policy guardrails scoping what actions agents may take without approval',
-      'Human-in-the-loop escalation to Slack/Webex when confidence is low',
-      'Full autonomous run audit trail',
-    ],
-    issueRefs: ['#2083'],
-  },
-  {
     title: 'Agentic SDLC Loops',
     description: 'AI agents integrated throughout the software development lifecycle — from planning and coding to review, testing, and deployment.',
     status: 'planned',
@@ -129,7 +115,7 @@ export default function RoadmapPage() {
   return (
     <Layout
       title="Roadmap · CAIPE"
-      description="CAIPE planned roadmap — upcoming features and improvements for the community AI platform engineering project."
+      description="Implemented foundations, active work, and planned initiatives on the CAIPE project roadmap."
     >
       <main>
         <section className={styles.hero}>
@@ -138,14 +124,14 @@ export default function RoadmapPage() {
               CAIPE Roadmap
             </Heading>
             <p className={styles.heroSubtitle}>
-              What we're working on next. The roadmap is driven by the community —
-              vote on issues, open feature requests, or join the weekly meeting to
-              influence priorities.
+              See what CAIPE has established, what is underway, and what is planned
+              next. Vote on issues, open feature requests, or join the weekly community
+              meeting to influence priorities.
             </p>
             <div className={styles.heroCtas}>
               <Link
                 className={styles.primaryBtn}
-                href="https://github.com/orgs/cnoe-io/projects/9"
+                href="https://github.com/orgs/caipe-io/projects/1/views/5"
               >
                 View on GitHub Projects ↗
               </Link>

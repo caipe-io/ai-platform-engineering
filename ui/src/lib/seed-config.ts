@@ -1230,7 +1230,7 @@ export async function cleanupStaleConfigDriven(
 export const HELLO_WORLD_AGENT_ID = "hello-world";
 
 /** Bump when bootstrap fields change so reconcile updates existing installs. */
-export const HELLO_WORLD_BOOTSTRAP_REVISION = 2;
+export const HELLO_WORLD_BOOTSTRAP_REVISION = 3;
 
 export function buildHelloWorldAgentDoc(now: string): DynamicAgentConfig {
   return {
@@ -1244,7 +1244,7 @@ When you need information from the user, always use the \`request_user_input\` t
 
 When a workflow step asks you to save data for later steps, use \`write_file\` on the workflow filesystem (for example \`choices.txt\` or \`movie_title.txt\` at the root). After collecting input via \`request_user_input\`, write the answers into the required files before finishing the step.
 
-Be concise and helpful.`,
+Be concise and helpful. Respond in plain natural language. Do not wrap normal responses in a JSON object or invent \`status\`/\`content\` fields unless the user explicitly asks for that format.`,
     allowed_tools: {},
     model: { id: "", provider: "" },
     visibility: "global",

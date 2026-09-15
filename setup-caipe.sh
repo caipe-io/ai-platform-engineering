@@ -173,7 +173,11 @@ LITELLM_ROUTE_EMBEDDINGS=false
 LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-sk-caipe-litellm}"
 VLLM_MODEL="${VLLM_MODEL:-openai/gpt-oss-20b}"
 VLLM_GPU_COUNT="${VLLM_GPU_COUNT:-1}"
-OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:0.6b}"
+# Preserve whether the caller explicitly selected an Ollama model before the
+# default is applied. Saved setup configuration should be able to restore the
+# previous selection on reruns, while an explicit environment override wins.
+_OLLAMA_MODEL_EXPLICIT="${OLLAMA_MODEL:+set}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:1.7b}"
 OLLAMA_PORT=11434
 # Base URL the RAG server uses for Ollama embeddings. The EmbeddingsFactory
 # default (http://localhost:11434) is the pod's own loopback and cannot reach
@@ -1766,7 +1770,7 @@ _collect_ollama_config() {
   if ! $NON_INTERACTIVE; then
     echo ""
     echo -e "  ${DIM}Tool-calling models (required for agents):${NC}"
-    echo -e "  ${DIM}  qwen3:0.6b (default) · qwen3:1.7b · qwen2.5:1.5b · lfm2.5 · arcee-ai/arcee-agent${NC}"
+    echo -e "  ${DIM}  qwen3:1.7b (default) · qwen3:0.6b · qwen2.5:1.5b · lfm2.5 · arcee-ai/arcee-agent${NC}"
     echo -e "  ${DIM}  qwen2.5:7b · qwen2.5:14b · mistral:7b · ministral3:3b · phi4-mini${NC}"
     echo -e "  ${DIM}  smollm2:1.7b · smollm2:360m · smollm2:135m  (ultra-compact, no tool support)${NC}"
     echo -e "  ${DIM}Other models (no tool support): gemma3, llama3.2${NC}"
@@ -3756,6 +3760,12 @@ create_namespace_and_secrets() {
       )
       ;;
   esac
+  fi
+
+  # LiteLLM uses OPENAI_MODEL_NAME=caipe-chat as an alias for agents. Ollama
+  # still needs the real model name for its init pull and readiness probe.
+  if $ENABLE_OLLAMA; then
+    secret_args+=(--from-literal=OLLAMA_MODEL="${OLLAMA_MODEL}")
   fi
 
   # When using non-OpenAI LLM with OpenAI embeddings for RAG, the RAG server
@@ -6543,7 +6553,7 @@ DAEOF
     elif $ENABLE_OLLAMA; then
       # Ollama uses the OpenAI-compatible API; seed the actual Ollama model name
       # (OPENAI_MODEL_NAME = OLLAMA_MODEL, e.g. lfm2.5) so dynamic agents can find it.
-      local _ollama_display="${OPENAI_MODEL_NAME:-qwen3:0.6b}"
+      local _ollama_display="${OPENAI_MODEL_NAME:-qwen3:1.7b}"
       cat >> "$_da_values_file" <<DAEOF
       - model_id: "${_ollama_display}"
         name: "${_ollama_display} (Ollama)"
@@ -8565,7 +8575,7 @@ chart_version: "${CAIPE_CHART_VERSION:-}"
 llm_provider: "${LLM_PROVIDER:-}"
 database_provider: "${DATABASE_PROVIDER:-mongodb}"
 enable_ollama: "${ENABLE_OLLAMA:-false}"
-ollama_model: "${OLLAMA_MODEL:-qwen3:0.6b}"
+ollama_model: "${OLLAMA_MODEL:-qwen3:1.7b}"
 embeddings_provider: "${EMBEDDINGS_PROVIDER:-}"
 embeddings_model: "${EMBEDDINGS_MODEL:-}"
 enable_rag: "${ENABLE_RAG:-false}"
@@ -8631,7 +8641,7 @@ _load_caipe_config() {
   [[ -n "$_llm"        && -z "${LLM_PROVIDER:-}"          ]] && LLM_PROVIDER="$_llm"
   [[ -n "$_database"   && -z "${DATABASE_PROVIDER:-}"     ]] && DATABASE_PROVIDER="$_database"
   [[ "$_ollama" == "true" ]] && ENABLE_OLLAMA=true
-  [[ -n "$_omodel"     && -z "${OLLAMA_MODEL:-}"          ]] && OLLAMA_MODEL="$_omodel"
+  [[ -n "$_omodel"     && -z "${_OLLAMA_MODEL_EXPLICIT:-}" ]] && OLLAMA_MODEL="$_omodel"
   [[ -n "$_eprov"      && -z "${EMBEDDINGS_PROVIDER:-}"   ]] && EMBEDDINGS_PROVIDER="$_eprov"
   # Use _EMBEDDINGS_MODEL_EXPLICIT (set at startup from env) rather than a
   # zero-check: EMBEDDINGS_MODEL defaults to text-embedding-3-large so -z

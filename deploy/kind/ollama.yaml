@@ -54,9 +54,9 @@ spec:
               until ollama list >/dev/null 2>&1; do
                 sleep 1
               done
-              echo "Ollama ready. Pulling ${OPENAI_MODEL_NAME} (skips if already cached)..."
-              ollama pull "${OPENAI_MODEL_NAME}"
-              if [ -n "${EMBEDDINGS_MODEL}" ] && [ "${EMBEDDINGS_MODEL}" != "${OPENAI_MODEL_NAME}" ]; then
+              echo "Ollama ready. Pulling ${OLLAMA_MODEL} (skips if already cached)..."
+              ollama pull "${OLLAMA_MODEL}"
+              if [ -n "${EMBEDDINGS_MODEL}" ] && [ "${EMBEDDINGS_MODEL}" != "${OLLAMA_MODEL}" ]; then
                 echo "Pulling embeddings model ${EMBEDDINGS_MODEL} (skips if already cached)..."
                 ollama pull "${EMBEDDINGS_MODEL}"
               fi
@@ -64,11 +64,11 @@ spec:
               kill $SERVE_PID
               wait $SERVE_PID 2>/dev/null || true
           env:
-            - name: OPENAI_MODEL_NAME
+            - name: OLLAMA_MODEL
               valueFrom:
                 secretKeyRef:
                   name: llm-secret
-                  key: OPENAI_MODEL_NAME
+                  key: OLLAMA_MODEL
             - name: EMBEDDINGS_MODEL
               valueFrom:
                 secretKeyRef:
@@ -102,11 +102,11 @@ spec:
             - containerPort: 11434
               name: http
           env:
-            - name: OPENAI_MODEL_NAME
+            - name: OLLAMA_MODEL
               valueFrom:
                 secretKeyRef:
                   name: llm-secret
-                  key: OPENAI_MODEL_NAME
+                  key: OLLAMA_MODEL
             - name: OLLAMA_MODELS
               value: /models
             # Bind to all interfaces inside the pod so the ClusterIP Service can route to it
@@ -140,7 +140,7 @@ spec:
               command:
                 - sh
                 - -c
-                - 'ollama show "${OPENAI_MODEL_NAME}"'
+                - 'ollama show "${OLLAMA_MODEL}"'
             initialDelaySeconds: 10
             periodSeconds: 30
             failureThreshold: 3     # 90 seconds — model already pulled by init container
