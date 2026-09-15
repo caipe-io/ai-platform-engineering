@@ -115,11 +115,13 @@ You have two main options:
 Install the CAIPE Helm chart directly on the cluster. Configure secrets and LLM settings as described in the Helm guide.
 
 ```bash
-helm install ai-platform-engineering oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \
-  --version 1.0.0 \
+helm upgrade --install ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering \
+  --version 1.1.0 \
   --namespace ai-platform-engineering \
   --create-namespace \
-  --set-string tags.basic=true
+  --set-string tags.caipe-ui=true \
+  --set-string tags.dynamic-agents=true \
+  --set-string tags.mcp-netutils=true
 ```
 
 Then:
