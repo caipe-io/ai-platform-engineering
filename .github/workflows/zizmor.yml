@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/actions/**"
       - ".github/workflows/**"
+      - ".github/dependabot.yml"
       - ".github/zizmor.yml"
       - ".zizmor.yml"
   push:
@@ -13,6 +14,7 @@ on:
     paths:
       - ".github/actions/**"
       - ".github/workflows/**"
+      - ".github/dependabot.yml"
       - ".github/zizmor.yml"
       - ".zizmor.yml"
 
@@ -21,92 +23,18 @@ permissions:
 
 jobs:
   zizmor:
-    name: Run zizmor
+    name: Run zizmor 🌈
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      security-events: write
+      security-events: write # Required for upload-sarif (used by zizmor-action) to upload SARIF files.
     steps:
-      - name: 📥 Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: 📦 Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Run zizmor 🌈
+        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
         with:
-          enable-cache: false
-
-      - name: 📋 Collect changed Actions files
-        id: changed-files
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
-          CURRENT_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            BASE_SHA="$PR_BASE_SHA"
-          elif [[ "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
-            BASE_SHA="${CURRENT_SHA}^"
-          else
-            BASE_SHA="$PUSH_BEFORE_SHA"
-          fi
-
-          git diff --name-only --diff-filter=ACMRT "$BASE_SHA" "$CURRENT_SHA" \
-            | grep -E '^\.github/(workflows/.*\.ya?ml|actions/.*/action\.ya?ml)$' \
-            | sort > changed-actions-files.txt || true
-
-          if [[ -s changed-actions-files.txt ]]; then
-            echo "has_files=true" >> "$GITHUB_OUTPUT"
-            echo "Changed files:"
-            sed 's/^/  - /' changed-actions-files.txt
-          else
-            echo "has_files=false" >> "$GITHUB_OUTPUT"
-            echo "No changed GitHub Actions workflow or composite action files."
-          fi
-
-      - name: 🔎 Run zizmor annotations
-        if: steps.changed-files.outputs.has_files == 'true'
-        env:
-          ZIZMOR_VERSION: "1.25.2"
-        run: |
-          set -euo pipefail
-
-          ZIZMOR_INPUTS=()
-          while IFS= read -r file; do
-            ZIZMOR_INPUTS+=("$file")
-          done < changed-actions-files.txt
-
-          uvx --from "zizmor==${ZIZMOR_VERSION}" zizmor \
-            --format github \
-            --min-severity high \
-            --min-confidence high \
-            "${ZIZMOR_INPUTS[@]}"
-
-      - name: 📄 Generate SARIF
-        if: always() && steps.changed-files.outputs.has_files == 'true'
-        env:
-          ZIZMOR_VERSION: "1.25.2"
-        run: |
-          set -euo pipefail
-
-          ZIZMOR_INPUTS=()
-          while IFS= read -r file; do
-            ZIZMOR_INPUTS+=("$file")
-          done < changed-actions-files.txt
-
-          uvx --from "zizmor==${ZIZMOR_VERSION}" zizmor \
-            --format sarif \
-            --min-severity high \
-            --min-confidence high \
-            "${ZIZMOR_INPUTS[@]}" > zizmor.sarif
-
-      - name: 📤 Upload SARIF
-        if: always() && steps.changed-files.outputs.has_files == 'true'
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
-        with:
-          sarif_file: zizmor.sarif
+          min-severity: high
+          min-confidence: high
