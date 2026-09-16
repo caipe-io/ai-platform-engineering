@@ -39,12 +39,12 @@ Detect by whether a `Bash`/shell tool is available.
 
 Ask the user for:
 
-| Input | Example | Required |
-|-------|---------|----------|
-| **To version** | `0.4.9` | Yes |
-| **From version** | `0.4.8` | Yes (defaults to previous tag) |
-| **User's `values.yaml`** | paste or path | No — enables personal impact analysis |
-| **Environment** | `dev` / `preview` / `prod` / `vm` | No — enables env-specific notes |
+| Input                    | Example                           | Required                              |
+| ------------------------ | --------------------------------- | ------------------------------------- |
+| **To version**           | `0.4.9`                           | Yes                                   |
+| **From version**         | `0.4.8`                           | Yes (defaults to previous tag)        |
+| **User's `values.yaml`** | paste or path                     | No — enables personal impact analysis |
+| **Environment**          | `dev` / `preview` / `prod` / `vm` | No — enables env-specific notes       |
 
 If from/to are not provided, detect from the repo:
 
@@ -64,11 +64,18 @@ Run all of the following in parallel where possible.
 git log <from>..<to> --oneline --no-merges
 ```
 
-Fetch full PR bodies for non-chore commits:
+Fetch full PR bodies and authors for every merged PR in the range:
 
 ```bash
 # for each PR number in the log, e.g. (#1324):
-gh pr view <number> --json title,body,labels
+gh pr view <number> --json title,body,author,labels,files,mergedAt
+```
+
+List the human commit authors as a cross-check. Merge commits and co-authored work can
+otherwise hide a contributor:
+
+```bash
+git log <from>..<to> --format='%aN <%aE>%x09%s'
 ```
 
 ### 2b — Helm values diff
@@ -98,23 +105,39 @@ sed -n '/^## <to>/,/^## <from>/p' CHANGELOG.md
 
 ### Classify git commits
 
-| Type | Criteria |
-|------|----------|
-| **Feature** | `feat(*)` commits |
-| **Fix** | `fix(*)` commits |
-| **Security** | commits touching Dockerfile, securityContext, PSS/PSA |
-| **Breaking** | commit body contains "BREAKING CHANGE" or PR label `breaking-change` |
-| **Chore / Internal** | `chore`, `refactor`, `ci`, `test` — omit from user-facing notes |
+| Type                 | Criteria                                                             |
+| -------------------- | -------------------------------------------------------------------- |
+| **Feature**          | `feat(*)` commits                                                    |
+| **Fix**              | `fix(*)` commits                                                     |
+| **Security**         | commits touching Dockerfile, securityContext, PSS/PSA                |
+| **Breaking**         | commit body contains "BREAKING CHANGE" or PR label `breaking-change` |
+| **Chore / Internal** | `chore`, `refactor`, `ci`, `test` — omit from user-facing notes      |
 
 ### Classify Helm values diff lines
 
-| Category | Criteria |
-|----------|----------|
-| **Breaking** | Key renamed, removed, or type changed |
-| **New required** | New key with no default |
-| **New optional** | New key with working default |
-| **Deprecated** | Key still works but will be removed |
-| **Default changed** | Same key, different default value |
+| Category            | Criteria                              |
+| ------------------- | ------------------------------------- |
+| **Breaking**        | Key renamed, removed, or type changed |
+| **New required**    | New key with no default               |
+| **New optional**    | New key with working default          |
+| **Deprecated**      | Key still works but will be removed   |
+| **Default changed** | Same key, different default value     |
+
+### Account for contributors
+
+Before drafting, make a scratch checklist of every merged PR and human contributor in
+the release range. For each PR, record one of two outcomes:
+
+- included in the release post, with its PR link and distinct user or operator impact;
+- omitted because it is release automation, internal cleanup, tests, or another change
+  with no user-visible or upgrade impact.
+
+Do not publish the scratch checklist. Use it to catch missing work, then add every human
+whose included work shipped in the release to the frontmatter `authors` list. Verify each
+author key exists in `docs/releases/authors.yml` and keep bots out of the byline.
+
+Related PRs can share a section, but do not compress separate outcomes so far that a
+meaningful contribution disappears.
 
 ---
 
@@ -122,29 +145,27 @@ sed -n '/^## <to>/,/^## <from>/p' CHANGELOG.md
 
 Use the date the tag was pushed (or today's date if cutting now).
 
-```markdown
+````markdown
 ---
 slug: release-<to>
-title: "Release <to> — <2-5 word subtitle capturing the biggest change>"
+title: "Release <to>: <short subtitle capturing the biggest change>"
 date: <YYYY-MM-DD>
-authors: [sriaradhyula]
+authors: [<verified human contributor keys>]
 tags: [release]
 ---
 
 ## Highlights
 
-<2-4 sentence narrative of the most significant changes in plain English.
+<1-3 sentence narrative of the most significant changes in plain English.
 Focus on operator/user impact, not internal implementation details.>
 
 <!-- truncate -->
 
 ## What's New
 
-### <Feature area 1>
-- **<Title>** — <one-line description linking to PR #NNNN>
+### <Feature area, when grouping helps>
 
-### <Feature area 2>
-- ...
+- **<Title>** — <one-line description linking to PR #NNNN>
 
 ## Bug Fixes
 
@@ -184,6 +205,7 @@ No Helm values changes between <from> and <to>. Drop-in upgrade.
 **Affected key**: `global.foo.bar`
 
 **Before (<from>)**:
+
 ```yaml
 global:
   foo:
@@ -191,6 +213,7 @@ global:
 ```
 
 **After (<to>)**:
+
 ```yaml
 global:
   foo:
@@ -201,15 +224,15 @@ global:
 
 #### New Optional Fields
 
-| Env Var / Key | Default | Description |
-|---------------|---------|-------------|
+| Env Var / Key     | Default        | Description                  |
+| ----------------- | -------------- | ---------------------------- |
 | `TOOL_CALL_LIMIT` | `0` (disabled) | Max tool invocations per run |
 
 #### Deprecated / Removed Keys
 
-| Key | Removed in | Replacement |
-|-----|-----------|-------------|
-| `tags.old-key` | <to> | `global.newKey` |
+| Key            | Removed in | Replacement     |
+| -------------- | ---------- | --------------- |
+| `tags.old-key` | <to>       | `global.newKey` |
 
 ### Upgrade Runbook
 
@@ -247,7 +270,7 @@ kubectl get pods -n <namespace>
 ```
 
 </details>
-```
+````
 
 ---
 
@@ -269,6 +292,7 @@ After writing the blog post, snapshot the current `docs/` tree as the new versio
 and prune old snapshots to stay within the retention policy.
 
 **Retention policy**:
+
 - Latest **5** releases from the current minor series (e.g. `0.4.7`–`0.4.11`)
 - Highest release from **each previous minor series** (e.g. `0.3.11`, `0.2.x`)
 
@@ -279,6 +303,7 @@ NEW_VERSION=<to> node docs/scripts/snapshot-and-prune-versions.js
 ```
 
 This script:
+
 1. Runs `docusaurus docs:version <to>` — snapshots `docs/` into `versioned_docs/version-<to>/`
 2. Prunes `versioned_docs/`, `versioned_sidebars/`, and `versions.json` to the retention policy
 3. Updates `docs/versions-config.json` — sets `lastVersion`, marks `<to>` as `(Latest)`, removes pruned entries
@@ -303,12 +328,22 @@ git commit -s -m "docs: release <to> — blog post, docs snapshot, version prune
 - **Describe bug fixes by the symptom users experienced**, not the root cause. "Users were randomly logged out in multi-replica deployments" is good. "Per-pod in-memory token Map replaced with MongoDB-backed L1+L2 store" is not.
 - **No internal identifiers in release notes** — no API route paths, env var names, function names, internal module names, Helm key paths, or code-level details. Those belong only in the Upgrade Guide if they are operator-actionable.
 - **Keep feature bullets short and outcome-focused.** One sentence: what you can do now that you couldn't before, or what problem went away.
+- **Treat corrected install and upgrade documentation as user-facing.** Include it when the old instructions would lead users to the wrong registry, values, credentials, or deployment result.
+
+### Natural writing
+
+- Write the smallest accurate release post. One meaningful change is enough; do not add weak bullets or extra sections to make the post look fuller.
+- Open with what changed and who it affects. Skip throat-clearing, broad claims about the industry, and a closing paragraph that repeats the highlights.
+- Use direct sentences with a clear actor. Prefer "The chart keeps custom resources stable across upgrades" over "Improved stability is provided for custom resources."
+- Prefer concrete verbs and plain connecting words. Avoid filler such as "leverage," "robust," "seamless," "holistic," "comprehensive," and "transformative" when a specific description is available.
+- Do not force groups of three, symmetrical paragraphs, a heading for every paragraph, or a redundant key-takeaways section.
+- Read the draft once as if explaining the release to a teammate. Remove any sentence that does not change an upgrade decision or explain a user-visible result.
 
 ### Structure and formatting
 
 - `<!-- truncate -->` goes immediately after the Highlights section so the blog list shows just the intro paragraph
 - Show concrete before/after YAML for every breaking change in the Upgrade Guide — never prose-only
-- For breaking changes, state the *consequence* of not updating
+- For breaking changes, state the _consequence_ of not updating
 - Keep the upgrade runbook linear — steps should be self-contained
 - If `helm show values` is unavailable, ask the user to paste output — never guess
 - Highlight environment-specific notes (VM kind clusters use `standard` storageClass; EKS uses `gp2`/`gp3`)
