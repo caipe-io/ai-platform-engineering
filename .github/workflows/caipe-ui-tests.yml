@@ -31,6 +31,15 @@ jobs:
       contents: read
       pull-requests: write
 
+    services:
+      mongodb:
+        image: mongo:8.0
+        ports:
+          - 27017/tcp
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+
     steps:
       - name: 🔒 Harden runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
@@ -56,6 +65,8 @@ jobs:
 
       - name: Run Jest tests
         id: jest
+        env:
+          ADMIN_STATS_TEST_MONGODB_URI: mongodb://127.0.0.1:${{ job.services.mongodb.ports[27017] }}
         working-directory: ui
         continue-on-error: true
         run: npm test -- --coverage --coverageReporters=text --coverageReporters=json-summary --forceExit

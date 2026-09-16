@@ -149,11 +149,12 @@ export const POST = withErrorHandler(async (
     }
   }
 
-  // Resolve sender identity for user messages.
-  // If the client provides sender fields, use them. Otherwise, fall back to
-  // the authenticated session user. This ensures shared conversations correctly
-  // attribute each message to the person who typed it.
-  const senderEmail = body.sender_email || (body.role === 'user' ? user.email : undefined);
+  // Human prompts use the authenticated actor. Only delegated integration
+  // writers may supply a sender; shared-chat owners are not the prompt author.
+  // The immutable fields below preserve attribution on idempotent updates.
+  const senderEmail = body.role === 'user' && !session.isServiceAccount
+    ? user.email
+    : body.sender_email || (body.role === 'user' ? user.email : undefined);
   const senderName = body.sender_name || (body.role === 'user' ? user.name : undefined);
   const senderImage = body.sender_image || undefined;
 

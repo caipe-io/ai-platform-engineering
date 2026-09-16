@@ -5,6 +5,7 @@ getAuthFromBearerOrSession,
 successResponse,
 withErrorHandler,
 } from '@/lib/api-middleware';
+import { buildChatActivityPipeline } from '@/lib/admin-stats-activity';
 import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
 import {
 resolveAuthorizedAdminSimulationScope,
@@ -148,12 +149,12 @@ function bucketDateKey(d: Date, unit: BucketUnit): string {
 function floorToBucket(d: Date, unit: BucketUnit): Date {
   const floored = new Date(d);
   if (unit === 'minute') {
-    floored.setSeconds(0, 0);
-    floored.setMinutes(Math.floor(floored.getMinutes() / MINUTE_BUCKET_STEP_MIN) * MINUTE_BUCKET_STEP_MIN);
+    floored.setUTCSeconds(0, 0);
+    floored.setUTCMinutes(Math.floor(floored.getUTCMinutes() / MINUTE_BUCKET_STEP_MIN) * MINUTE_BUCKET_STEP_MIN);
   } else if (unit === 'hour') {
-    floored.setMinutes(0, 0, 0);
+    floored.setUTCMinutes(0, 0, 0);
   } else {
-    floored.setHours(0, 0, 0, 0);
+    floored.setUTCHours(0, 0, 0, 0);
   }
   return floored;
 }
@@ -298,10 +299,8 @@ function parseRange(searchParams: URLSearchParams): {
 
   const days = Math.max(1, Math.round(ms / DAY_MS));
   const bucketUnit: BucketUnit = ms <= MINUTE_BUCKET_THRESHOLD_MS ? 'minute' : ms <= DAY_MS ? 'hour' : 'day';
-  const bucketCount =
-    bucketUnit === 'minute' ? Math.max(1, Math.round(ms / (MINUTE_BUCKET_STEP_MIN * MINUTE_MS))) :
-    bucketUnit === 'hour' ? Math.max(1, Math.round(ms / HOUR_MS)) :
-    days;
+  const bucketMs = bucketUnit === 'minute' ? MINUTE_BUCKET_STEP_MIN * MINUTE_MS : bucketUnit === 'hour' ? HOUR_MS : DAY_MS;
+  const bucketCount = Math.floor((floorToBucket(rangeEnd, bucketUnit).getTime() - floorToBucket(rangeStart, bucketUnit).getTime()) / bucketMs) + 1;
   return { rangeStart, rangeEnd, days, bucketUnit, bucketCount };
 }
 
@@ -494,14 +493,6 @@ async function getAdminStats(request: NextRequest) {
     const API_CONV_MATCH = { client_type: 'api' };
     const AI_MESSAGE_MATCH: Document = { role: 'assistant' };
 
-    // A non-admin view is always "filtered" — DAU/MAU and daily-user activity
-    // must derive from the scoped conversations, never from the platform-wide
-    // users collection (which would leak global active-user counts).
-    const hasFilters = !!sourceFilter
-      || hasUserFilter
-      || channelNames.length > 0
-      || agentIds.length > 0
-      || !!nonAdminScope;
     const convSourceFilter: Document = {};
     const msgOwnerFilter: Document = {};
     if (sourceFilter === 'web') {
@@ -546,6 +537,9 @@ async function getAdminStats(request: NextRequest) {
         .distinct('_id', API_CONV_MATCH);
       msgOwnerFilter.conversation_id = { $in: apiConversationIds.length > 0 ? apiConversationIds : [null] };
     }
+    // User selection applies to prompt senders for activity, and owners for
+    // the existing conversation/output metrics. RBAC still scopes the parent.
+    const activityConversationFilter: Document = { ...convSourceFilter };
     if (hasUserFilter) {
       const owners = userEmails.length === 1 ? userEmails[0] : { $in: userEmails };
       convSourceFilter.owner_id = owners;
@@ -682,6 +676,7 @@ async function getAdminStats(request: NextRequest) {
       const convFilter = convScopeClauses.length === 1 ? convScopeClauses[0] : { $or: convScopeClauses };
       const msgFilter = msgScopeClauses.length === 1 ? msgScopeClauses[0] : { $or: msgScopeClauses };
       andInto(convSourceFilter, convFilter);
+      andInto(activityConversationFilter, convFilter);
       andInto(msgOwnerFilter, msgFilter);
     }
 
@@ -703,7 +698,7 @@ async function getAdminStats(request: NextRequest) {
       const selNames = selectedAgents.map((a) => a.name);
       // A requested-but-unresolvable agent set must match nothing, not fall
       // through to the unfiltered payload.
-      andInto(convSourceFilter, {
+      const selectedAgentFilter = {
         $or: [
           // Slack routes are persisted on the conversation metadata.
           { 'metadata.thread_owner_agent_id': { $in: selIds } },
@@ -712,7 +707,9 @@ async function getAdminStats(request: NextRequest) {
           // Scheduled/API-created conversations may also carry a top-level id.
           { agent_id: { $in: selIds } },
         ],
-      });
+      };
+      andInto(convSourceFilter, selectedAgentFilter);
+      andInto(activityConversationFilter, selectedAgentFilter);
       andInto(msgOwnerFilter, {
         $or: [
           { 'metadata.agent_name': { $in: selNames } },
@@ -820,19 +817,21 @@ async function getAdminStats(request: NextRequest) {
       }
     }
 
-    const now = new Date();
-    // "Today"/DAU and "This Month"/MAU are rolling windows (last 24h / last
-    // 30d from now), not calendar-aligned ones — a calendar-aligned window
-    // (midnight-to-now, 1st-of-month-to-now) would contradict the rolling
-    // windows used elsewhere on the dashboard as the day/month progresses
-    // (e.g. MAU showing all of a prior calendar month on the 1st of a new
-    // one, next to a "This Month" card that's rolling).
-    const rollingToday = new Date(now.getTime() - DAY_MS);
-    const rollingMonth = new Date(now.getTime() - 30 * DAY_MS);
-    // A shorter selected window must still narrow them. For example, the 1h
-    // preset must not quietly show all activity from the last 24h.
-    const todayRangeStart = new Date(Math.max(rollingToday.getTime(), rangeStart.getTime()));
-    const monthRangeStart = new Date(Math.max(rollingMonth.getTime(), rangeStart.getTime()));
+    // Anchor rolling windows to the selected end, including historical ranges.
+    const todayRangeStart = new Date(Math.max(rangeEnd.getTime() - DAY_MS, rangeStart.getTime()));
+    const monthRangeStart = new Date(Math.max(rangeEnd.getTime() - 30 * DAY_MS, rangeStart.getTime()));
+    const activityBotIds = includesSection('overview') || includesSection('activity')
+      ? await getBotOwnerIds(conversations) : [];
+    const activityPipeline = (from: Date) => buildChatActivityPipeline({
+      from, to: rangeEnd, conversationFilter: activityConversationFilter,
+      source: sourceFilter, senders: hasUserFilter ? userEmails : undefined,
+      botOwnerIds: activityBotIds,
+    });
+    const countActiveUsers = (from: Date) => messages.aggregate([
+      ...activityPipeline(from),
+      { $group: { _id: '$_actor' } },
+      { $count: 'total' },
+    ]).toArray().then((rows) => rows[0]?.total || 0);
 
     // ═══════════════════════════════════════════════════════════════
     // OVERVIEW STATS (parallel queries for speed)
@@ -857,18 +856,8 @@ async function getAdminStats(request: NextRequest) {
         messagesToday,
         sharedConversations,
       ] = await Promise.all([
-        // Total users is range-aware like the conversation and message totals.
-        // Any dimension filter must derive it from matching conversations;
-        // otherwise agent/source/channel selections would leave this card at
-        // the platform-wide users count. Unfiltered admins retain the existing
-        // last-login activity source.
-        nonAdminScope || hasFilters
-          ? conversations.aggregate([
-              { $match: { updated_at: rangeDateMatch, ...convSourceFilter } },
-              { $group: { _id: '$owner_id' } },
-              { $count: 'total' },
-            ]).toArray().then((r) => r[0]?.total || 0)
-          : users.countDocuments({ last_login: rangeDateMatch }),
+        // All active-user metrics share the same recorded-prompt population.
+        countActiveUsers(rangeStart),
         // Scoped to the selected date range (rangeStart), matching daily_activity
         // and every other range-aware metric below — previously these were
         // always lifetime totals regardless of the selected range.
@@ -877,29 +866,8 @@ async function getAdminStats(request: NextRequest) {
         // msgOwnerFilter also carries metadata.source when explicitly filtered;
         // without a source filter, assistant rows from every source are counted.
         messages.countDocuments({ created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }),
-        // DAU/MAU must represent interactive conversation activity. `last_login`
-        // is updated while initializing an authenticated session, so using it
-        // for the all-source cards counts users who opened the product without
-        // using chat. Keep the conversation definition identical for filtered
-        // and unfiltered views; only the source/scope filter changes.
-        conversations.aggregate([
-          { $match: {
-            updated_at: { $gte: todayRangeStart, $lte: rangeEnd },
-            owner_id: { $nin: [null, ''] },
-            ...convSourceFilter,
-          } },
-          { $group: { _id: '$owner_id' } },
-          { $count: 'total' },
-        ]).toArray().then((r) => r[0]?.total || 0),
-        conversations.aggregate([
-          { $match: {
-            updated_at: { $gte: monthRangeStart, $lte: rangeEnd },
-            owner_id: { $nin: [null, ''] },
-            ...convSourceFilter,
-          } },
-          { $group: { _id: '$owner_id' } },
-          { $count: 'total' },
-        ]).toArray().then((r) => r[0]?.total || 0),
+        countActiveUsers(todayRangeStart),
+        countActiveUsers(monthRangeStart),
         conversations.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...convSourceFilter }),
         messages.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }),
         // `andInto` rather than spreading a literal `$or` — the non-admin scope
@@ -1002,13 +970,17 @@ async function getAdminStats(request: NextRequest) {
       hourlyActivity,
       availableChannelsResult,
     ] = await Promise.all([
-      // Daily active users use the same conversation-activity definition as
-      // the DAU/MAU cards. This keeps the chart and headline cards consistent
-      // and avoids treating login initialization as product usage.
+      // Immutable prompt times retain every day of activity in a reused chat.
       includesSection('activity')
-        ? conversations.aggregate([
-            { $match: { updated_at: rangeDateMatch, owner_id: { $nin: [null, ''] }, ...convSourceFilter } },
-            { $group: { _id: { date: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$updated_at' } }, user: '$owner_id' } } },
+        ? messages.aggregate([
+            ...activityPipeline(rangeStart),
+            { $group: { _id: {
+              date: { $dateToString: {
+                format: BUCKET_DATE_FORMAT[bucketUnit],
+                date: { $dateTrunc: { date: '$created_at', unit: bucketUnit, binSize: bucketUnit === 'minute' ? 5 : 1, timezone: 'UTC' } },
+              } },
+              user: '$_actor',
+            } } },
             { $group: { _id: '$_id.date', active_users: { $sum: 1 } } },
           ]).toArray()
         : Promise.resolve([]),

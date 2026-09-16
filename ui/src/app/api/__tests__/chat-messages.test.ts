@@ -917,7 +917,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 describe('Sender identity in shared conversations', () => {
   beforeEach(resetMocks);
 
-  it('stores sender_email and sender_name from request body on insert', async () => {
+  it('uses the authenticated sender even when a shared-chat writer supplies another email', async () => {
     mockGetServerSession.mockResolvedValue(authenticatedSession('alice@example.com'));
 
     const usersCol = createMockCollection();
@@ -967,7 +967,7 @@ describe('Sender identity in shared conversations', () => {
         message_id: 'shared-msg-1',
         role: 'user',
         content: 'Hello from Alice',
-        sender_email: 'alice@example.com',
+        sender_email: 'spoofed@example.com',
         sender_name: 'Alice Johnson',
         metadata: { turn_id: 'turn-1' },
       }),
@@ -1270,7 +1270,7 @@ describe('Sender identity in shared conversations', () => {
     expect(updateDoc.$set.sender_name).toBeUndefined();
     expect(updateDoc.$set.sender_image).toBeUndefined();
     // They ARE in $setOnInsert, but MongoDB ignores it on matched updates
-    expect(updateDoc.$setOnInsert.sender_email).toBe('attacker@example.com');
+    expect(updateDoc.$setOnInsert.sender_email).toBe('user@example.com');
     // The returned document should still have the original sender
     const body = await res.json();
     expect(body.data.sender_email).toBe('original@example.com');

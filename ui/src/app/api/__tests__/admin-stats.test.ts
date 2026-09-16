@@ -25,7 +25,7 @@
  */
 
 import { NextRequest } from 'next/server';
-import { ObjectId } from 'mongodb';
+import { MongoClient, ObjectId, type Db } from 'mongodb';
 
 // ============================================================================
 // Mocks
@@ -391,8 +391,7 @@ describe('GET /api/admin/stats — Overview', () => {
   it('returns overview with correct counts', async () => {
     const { usersCol, convCol, msgCol } = setupAdminWithCollections();
 
-    // Promise.all order (no filters): users: totalUsers only. DAU/MAU come
-    // from distinct conversation owners, not users.last_login.
+    // Profile logins are ignored by active-user metrics.
     // conversations: totalConversations, conversationsToday, sharedConversations
     // messages: totalMessages, messagesToday — assistant rows across every
     // metadata.source (not just 'web'/'slack').
@@ -416,7 +415,7 @@ describe('GET /api/admin/stats — Overview', () => {
     expect(body.success).toBe(true);
     expect(body.data.overview).toEqual(
       expect.objectContaining({
-        total_users: 15,
+        total_users: 0,
         total_conversations: 50,
         total_messages: 200,
         dau: 0,
@@ -426,9 +425,7 @@ describe('GET /api/admin/stats — Overview', () => {
         shared_conversations: 2,
       })
     );
-    expect(usersCol.countDocuments).toHaveBeenNthCalledWith(1, {
-      last_login: { $gte: expect.any(Date), $lte: expect.any(Date) },
-    });
+    expect(usersCol.countDocuments).not.toHaveBeenCalled();
   });
 
   it('excludes human messages from overview and activity metrics', async () => {
@@ -455,7 +452,7 @@ describe('GET /api/admin/stats — Overview', () => {
       pipeline.some((stage) => stage.$group?.messages)
     );
     const topUsersPipeline = pipelines.find((pipeline) =>
-      pipeline.some((stage) => stage.$lookup?.from === 'conversations')
+      pipeline[0].$match?.role === 'assistant' && pipeline.some((stage) => stage.$lookup?.from === 'conversations')
     );
 
     expect(dailyPipeline?.[0].$match).toEqual(
@@ -519,14 +516,14 @@ describe('GET /api/admin/stats — Rolling DAU/MAU windows', () => {
     jest.useFakeTimers();
     jest.setSystemTime(frozenNow);
 
-    const { convCol } = setupAdminWithCollections();
+    const { msgCol } = setupAdminWithCollections();
 
     const req = makeRequest('/api/admin/stats');
     await GET(req);
 
-    const activityStarts = convCol.aggregate.mock.calls
+    const activityStarts = msgCol.aggregate.mock.calls
       .flatMap((call: unknown[]) => call[0] as Array<Record<string, unknown>>)
-      .map((stage) => (stage.$match as { updated_at?: { $gte?: Date } } | undefined)?.updated_at?.$gte)
+      .map((stage) => (stage.$match as { created_at?: { $gte?: Date } } | undefined)?.created_at?.$gte)
       .filter((date): date is Date => date instanceof Date)
       .map((date) => date.getTime());
 
@@ -549,7 +546,7 @@ describe('GET /api/admin/stats — Daily Activity', () => {
     const res = await GET(req);
     const body = await res.json();
 
-    expect(body.data.daily_activity).toHaveLength(30);
+    expect(body.data.daily_activity).toHaveLength(31);
   });
 
   it('each day has correct structure', async () => {
@@ -593,7 +590,7 @@ describe('GET /api/admin/stats — Daily Activity', () => {
     const req = makeRequest('/api/admin/stats');
     await GET(req);
 
-    // Activity now uses the same conversation-owner aggregation as DAU/MAU;
+    // Activity now uses the same prompt-sender aggregation as DAU/MAU;
     // login timestamps are not an activity source.
     expect(usersCol.aggregate).not.toHaveBeenCalled();
     expect(convCol.aggregate).toHaveBeenCalled();
@@ -899,10 +896,10 @@ describe('GET /api/admin/stats — Top Users', () => {
     expect(excludesOwnerIds(msgCol.aggregate.mock.calls, ['U05LC2AV99N'])).toBe(true);
   });
 
-  it('does not query owner_is_bot when include_bots=true', async () => {
+  it('does not query owner_is_bot for top users when include_bots=true', async () => {
     const { convCol } = setupAdminWithCollections();
 
-    await GET(makeRequest('/api/admin/stats?include_bots=true'));
+    await GET(makeRequest('/api/admin/stats?section=top_users&include_bots=true'));
 
     const flaggedBotQuery = convCol.distinct.mock.calls.some(
       (c: unknown[]) => (c[1] as Record<string, unknown>)?.['metadata.owner_is_bot'] === true,
@@ -1318,8 +1315,8 @@ describe('GET /api/admin/stats — Custom Date Range (from/to)', () => {
     const res = await GET(req);
     const body = await res.json();
 
-    // daily_activity length should be 10 days
-    expect(body.data.daily_activity).toHaveLength(10);
+    // Inclusive endpoints cover 11 UTC date buckets, including both boundaries.
+    expect(body.data.daily_activity).toHaveLength(11);
     expect(body.data.days).toBe(10);
 
     const expectedEnd = new Date(to);
@@ -1344,7 +1341,7 @@ describe('GET /api/admin/stats — Custom Date Range (from/to)', () => {
     const body = await res.json();
 
     // 1h range buckets by 5-minute steps so the chart isn't a single point.
-    expect(body.data.daily_activity).toHaveLength(12);
+    expect(body.data.daily_activity).toHaveLength(13);
     expect(body.data.days).toBe(1);
 
     // Calendar cards (DAU/MAU and "Today") must also honor the shorter
@@ -2463,5 +2460,132 @@ describe('GET /api/admin/stats — Direct MCP Activity', () => {
     if (body.data.api) {
       expect(body.data.api).not.toHaveProperty('mcp_activity');
     }
+  });
+});
+
+// Opt-in integration coverage against a disposable LOCAL MongoDB, never deployment data.
+const activityMongoUri = process.env.ADMIN_STATS_TEST_MONGODB_URI;
+const describeMongo = activityMongoUri ? describe : describe.skip;
+describeMongo('GET /api/admin/stats — real Mongo prompt activity', () => {
+  let client: MongoClient;
+  let db: Db;
+  const from = '2026-05-01T12:00:00.000Z';
+  const to = '2026-05-03T12:00:00.000Z';
+  const prompt = (id: string, created_at: string, extra = {}) => ({
+    conversation_id: id, role: 'user', created_at: new Date(created_at),
+    sender_email: 'sender@example.com', metadata: { source: 'web' }, ...extra,
+  });
+  const conversation = (id: string, extra = {}) => ({
+    _id: id, owner_id: 'owner@example.com', client_type: 'webui',
+    created_at: new Date(from), updated_at: new Date(to), ...extra,
+  });
+  async function stats(section = 'overview', filter = '') {
+    const res = await GET(makeRequest(`/api/admin/stats?section=${section}&from=${from}&to=${to}${filter}`));
+    expect(res.status).toBe(200);
+    return (await res.json()).data;
+  }
+  beforeAll(async () => {
+    if (!/^mongodb:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(activityMongoUri!)) {
+      throw new Error('Activity tests require a disposable localhost MongoDB without a database in the URI');
+    }
+    client = new MongoClient(activityMongoUri!);
+    await client.connect();
+    db = client.db(`test_activity_${new ObjectId().toHexString()}`);
+  });
+  afterAll(async () => { if (db) await db.dropDatabase(); if (client) await client.close(); });
+  beforeEach(async () => {
+    resetMocks();
+    await db.dropDatabase();
+    mockGetServerSession.mockResolvedValue(adminSession());
+    mockGetCollection.mockImplementation(async (name: string) => db.collection(name));
+  });
+  afterEach(() => {
+    mockGetCollection.mockImplementation((name: string) => {
+      if (!mockCollections[name]) mockCollections[name] = createMockCollection();
+      return Promise.resolve(mockCollections[name]);
+    });
+  });
+  it('does not count profile visits or metadata-only conversation activity', async () => {
+    await db.collection('users').insertOne({ email: 'visitor@example.com', last_login: new Date(to) });
+    await db.collection('conversations').insertOne(conversation('empty') as never);
+    expect((await stats()).overview).toMatchObject({ total_users: 0, dau: 0, mau: 0 });
+  });
+  it('counts senders on every day in a reused chat and anchors historical windows to the selected end', async () => {
+    await db.collection('conversations').insertOne(conversation('shared') as never);
+    await db.collection('messages').insertMany([
+      prompt('shared', '2026-05-01T13:00:00Z', { sender_email: 'earlier@example.com' }),
+      prompt('shared', '2026-05-02T13:00:00Z'),
+      prompt('shared', '2026-05-02T14:00:00Z'),
+      prompt('shared', '2026-05-03T11:00:00Z'),
+    ]);
+    expect((await stats()).overview).toMatchObject({ total_users: 2, dau: 1, mau: 2 });
+    const daily = (await stats('activity')).daily_activity;
+    expect(daily.map((row: { active_users: number }) => row.active_users)).toEqual([1, 1, 1]);
+  });
+  it('excludes scheduled, autonomous, API, bot and unknown-origin prompts', async () => {
+    await db.collection('conversations').insertMany([
+      conversation('web'), conversation('auto', { source: 'autonomous' }),
+      conversation('api', { client_type: 'api' }), conversation('bot', { metadata: { owner_is_bot: true } }),
+    ] as never[]);
+    await db.collection('messages').insertMany([
+      prompt('web', to, { metadata: { source: 'scheduler' } }),
+      prompt('web', to, { metadata: { source: 'autonomous' } }),
+      prompt('web', to, { metadata: {} }), prompt('auto', to), prompt('api', to), prompt('bot', to),
+      prompt('web', to, { sender_email: 'service-account-worker' }),
+      prompt('web', to, { sender_email: 'B1234567' }),
+      prompt('web', to, { role: 'assistant' }),
+    ]);
+    expect((await stats()).overview).toMatchObject({ total_users: 0, dau: 0, mau: 0 });
+  });
+  it('uses prompt sender for user filters, with a legacy conversation-owner fallback', async () => {
+    await db.collection('conversations').insertOne(conversation('shared') as never);
+    await db.collection('messages').insertMany([
+      prompt('shared', to), prompt('shared', to, { sender_email: null }),
+    ]);
+    expect((await stats('overview', '&user=sender@example.com')).overview.dau).toBe(1);
+    expect((await stats('overview', '&user=owner@example.com')).overview.dau).toBe(1);
+    expect((await stats()).overview.dau).toBe(2);
+    expect((await stats('overview', '&user=absent@example.com')).overview.dau).toBe(0);
+  });
+  it('keeps source views additive over the same event population', async () => {
+    await db.collection('conversations').insertMany([
+      conversation('web'), conversation('slack', { client_type: 'slack' }),
+    ] as never[]);
+    await db.collection('messages').insertMany([
+      prompt('web', to),
+      prompt('slack', to, { sender_email: 'channel-user@example.com', metadata: { source: 'slack' } }),
+    ]);
+    expect((await stats()).overview.dau).toBe(2);
+    expect((await stats('overview', '&source=web')).overview.dau).toBe(1);
+    expect((await stats('overview', '&source=slack')).overview.dau).toBe(1);
+    expect((await stats('overview', '&source=api')).overview.dau).toBe(0);
+  });
+  it('does not widen non-admin visibility when matching prompt senders', async () => {
+    const session = adminSession();
+    mockGetServerSession.mockResolvedValue({ ...session, role: 'user' });
+    mockCheckOpenFgaTuple.mockResolvedValue(false);
+    await db.collection('conversations').insertMany([
+      conversation('own', { owner_id: session.user.email }), conversation('private'),
+    ] as never[]);
+    await db.collection('messages').insertMany([
+      prompt('own', to), prompt('private', to, { sender_email: 'other@example.com' }),
+    ]);
+    expect((await stats()).overview.dau).toBe(1);
+    expect((await stats('overview', '&user=other@example.com')).overview.dau).toBe(0);
+  });
+  it('preserves agent and channel filters', async () => {
+    mockGetAgentsByIds.mockResolvedValue([{ id: 'selected', name: 'Selected' }]);
+    await db.collection('conversations').insertMany([
+      conversation('agent', { participants: [{ type: 'agent', id: 'selected' }] }),
+      conversation('other'),
+      conversation('channel', { client_type: 'slack', metadata: { channel_name: 'example-channel' } }),
+    ] as never[]);
+    await db.collection('messages').insertMany([
+      prompt('agent', to), prompt('other', to, { sender_email: 'other@example.com' }),
+      prompt('channel', to, { sender_email: 'channel@example.com', metadata: { source: 'slack' } }),
+    ]);
+    expect((await stats('overview', '&agent=selected')).overview.dau).toBe(1);
+    expect((await stats('overview', '&source=slack&channel=example-channel')).overview.dau).toBe(1);
+    expect((await stats('overview', '&source=slack&channel=missing')).overview.dau).toBe(0);
   });
 });

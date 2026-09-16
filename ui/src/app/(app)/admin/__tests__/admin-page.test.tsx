@@ -1702,7 +1702,7 @@ describe('Admin Dashboard Page', () => {
         'aria-current',
         'page',
       );
-      expect(screen.getByText('Total Users')).toBeInTheDocument();
+      expect(screen.getByText('Active Chat Users')).toBeInTheDocument();
       expect(screen.getByText('Conversations')).toBeInTheDocument();
       expect(screen.getByText('Messages')).toBeInTheDocument();
       expect(screen.getByText('Daily Active Users (DAU)')).toBeInTheDocument();
@@ -2097,7 +2097,7 @@ describe('Admin Dashboard Page', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Primary Agent' }));
 
       await waitFor(() => {
-        const usersCard = screen.getByText('Total Users').closest('.rounded-lg');
+        const usersCard = screen.getByText('Active Chat Users').closest('.rounded-lg');
         expect(within(usersCard as HTMLElement).getByText('7')).toBeInTheDocument();
       });
 
@@ -2247,7 +2247,7 @@ describe('Admin Dashboard Page', () => {
       fireEvent.click(screen.getByRole('button', { name: '1h' }));
 
       await waitFor(() => {
-        const usersCard = screen.getByText('Total Users').closest('.rounded-lg');
+        const usersCard = screen.getByText('Active Chat Users').closest('.rounded-lg');
         const conversationsCard = screen.getByText('Conversations').closest('.rounded-lg');
         const messagesCard = screen.getByText('Messages').closest('.rounded-lg');
         expect(within(usersCard as HTMLElement).getByText('2')).toBeInTheDocument();

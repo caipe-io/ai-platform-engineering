@@ -373,13 +373,13 @@ function OverviewStatsCards({
       <AsyncStatsCard error={error} loading={loading} testId="stats-card-overview-users">
         {overview ? <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Users</CardTitle>
+            <CardTitle className="text-sm font-medium">Active Chat Users</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{overview.total_users}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              DAU: {overview.dau} | MAU: {overview.mau}
+              Up to 24h: {overview.dau} | Up to 30d: {overview.mau}
             </p>
           </CardContent>
         </Card> : undefined}
@@ -2395,7 +2395,7 @@ function AdminPage() {
                         {stats.daily_activity && stats.overview ? <Card>
                         <CardHeader>
                           <CardTitle>Daily Active Users (DAU)</CardTitle>
-                          <CardDescription>Active users per day ({rangeLabel})</CardDescription>
+                          <CardDescription>Recorded prompt senders ({rangeLabel}); excludes automated and API traffic. Older messages use the conversation owner when sender data is missing.</CardDescription>
                         </CardHeader>
                         <CardContent>
                           <SimpleLineChart
@@ -2406,20 +2406,21 @@ function AdminPage() {
                             height={250}
                             color="rgb(59, 130, 246)"
                           />
+                          <p className="mt-2 text-xs text-muted-foreground">Windows end at the selected range end and are limited to that range. Counts cover recorded messages only.</p>
                           <div className="mt-4 grid grid-cols-3 gap-4 text-center">
                             <div>
                               <p className="text-2xl font-bold text-blue-500">{stats.overview.dau}</p>
-                              <p className="text-xs text-muted-foreground">Today</p>
+                              <p className="text-xs text-muted-foreground">Up to 24h</p>
                             </div>
                             <div>
                               <p className="text-2xl font-bold">{stats.overview.mau}</p>
-                              <p className="text-xs text-muted-foreground">This Month</p>
+                              <p className="text-xs text-muted-foreground">Up to 30d</p>
                             </div>
                             <div>
                               <p className="text-2xl font-bold text-green-500">
                                 {Math.round(stats.daily_activity.reduce((sum, d) => sum + d.active_users, 0) / Math.max(stats.daily_activity.length, 1))}
                               </p>
-                              <p className="text-xs text-muted-foreground">Avg/Day</p>
+                              <p className="text-xs text-muted-foreground">Avg/bucket</p>
                             </div>
                           </div>
                         </CardContent>
