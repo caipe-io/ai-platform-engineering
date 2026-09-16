@@ -2547,17 +2547,18 @@ describeMongo('GET /api/admin/stats — real Mongo prompt activity', () => {
     expect((await stats()).overview.dau).toBe(2);
     expect((await stats('overview', '&user=absent@example.com')).overview.dau).toBe(0);
   });
-  it('keeps source views additive over the same event population', async () => {
+  it('deduplicates senders across sources and keeps source filters consistent', async () => {
     await db.collection('conversations').insertMany([
       conversation('web'), conversation('slack', { client_type: 'slack' }),
     ] as never[]);
     await db.collection('messages').insertMany([
       prompt('web', to),
+      prompt('slack', to, { metadata: { source: 'slack' } }),
       prompt('slack', to, { sender_email: 'channel-user@example.com', metadata: { source: 'slack' } }),
     ]);
     expect((await stats()).overview.dau).toBe(2);
     expect((await stats('overview', '&source=web')).overview.dau).toBe(1);
-    expect((await stats('overview', '&source=slack')).overview.dau).toBe(1);
+    expect((await stats('overview', '&source=slack')).overview.dau).toBe(2);
     expect((await stats('overview', '&source=api')).overview.dau).toBe(0);
   });
   it('does not widen non-admin visibility when matching prompt senders', async () => {
@@ -2572,6 +2573,25 @@ describeMongo('GET /api/admin/stats — real Mongo prompt activity', () => {
     ]);
     expect((await stats()).overview.dau).toBe(1);
     expect((await stats('overview', '&user=other@example.com')).overview.dau).toBe(0);
+  });
+  it('keeps an empty selected team fail-closed', async () => {
+    await db.collection('conversations').insertOne(conversation('web') as never);
+    await db.collection('messages').insertOne(prompt('web', to));
+    expect((await stats('overview', '&team=empty-team')).overview.dau).toBe(0);
+  });
+  it('groups short ranges into UTC five-minute buckets including partial boundaries', async () => {
+    await db.collection('conversations').insertOne(conversation('web') as never);
+    await db.collection('messages').insertMany([
+      prompt('web', '2026-05-03T11:02:00Z'),
+      prompt('web', '2026-05-03T11:04:00Z'),
+      prompt('web', '2026-05-03T11:07:00Z'),
+    ]);
+    const res = await GET(makeRequest('/api/admin/stats?section=activity&from=2026-05-03T11:01:00Z&to=2026-05-03T11:08:00Z'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.daily_activity).toEqual([
+      expect.objectContaining({ date: '2026-05-03T11:00', active_users: 1 }),
+      expect.objectContaining({ date: '2026-05-03T11:05', active_users: 1 }),
+    ]);
   });
   it('preserves agent and channel filters', async () => {
     mockGetAgentsByIds.mockResolvedValue([{ id: 'selected', name: 'Selected' }]);
