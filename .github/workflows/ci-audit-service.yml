@@ -28,6 +28,20 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v6.7.1
+      - name: Test audit query memory and behavior
+        run: >-
+          uv run --python 3.14 --no-project
+          --with pytest==9.1.1 --with fastapi==0.141.1 --with httpx==0.28.1
+          --with pyarrow==25.0.1 --with boto3==1.43.80
+          pytest ai_platform_engineering/audit_service -q
+
   determine-changes:
     runs-on: ubuntu-latest
     if: |

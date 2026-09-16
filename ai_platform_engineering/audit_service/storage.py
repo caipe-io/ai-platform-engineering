@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import heapq
 import io
 import json
 import os
@@ -191,6 +192,36 @@ class QueryResult:
     truncated: bool
 
 
+class _QueryMatches:
+    """Count every match while retaining only the newest requested records."""
+
+    def __init__(self, query: AuditQuery) -> None:
+        self.query = query
+        self.total = 0
+        self._newest: list[tuple[datetime, int, dict[str, Any]]] = []
+
+    def add(self, record: dict[str, Any]) -> None:
+        if not _record_matches(record, self.query):
+            return
+        self.total += 1
+        if self.query.limit <= 0:
+            return
+        # The sequence number preserves stable ordering for equal timestamps
+        # and prevents heap comparisons from reaching the record dictionaries.
+        entry = (_record_sort_key(record), -self.total, record)
+        if len(self._newest) < self.query.limit:
+            heapq.heappush(self._newest, entry)
+        elif entry[:2] > self._newest[0][:2]:
+            heapq.heapreplace(self._newest, entry)
+
+    def result(self) -> QueryResult:
+        return QueryResult(
+            records=[entry[2] for entry in sorted(self._newest, reverse=True)],
+            total=self.total,
+            truncated=self.total > self.query.limit,
+        )
+
+
 class LocalAuditStore:
     """Date-partitioned local NDJSON store with optional gzip compression."""
 
@@ -279,16 +310,11 @@ class LocalAuditStore:
         return deleted
 
     def query(self, query: AuditQuery) -> QueryResult:
-        matches: list[dict[str, Any]] = []
+        matches = _QueryMatches(query)
         for file_path in self._files_for_range(query.since, query.until):
             for record in self._read_file(file_path):
-                if not _record_matches(record, query):
-                    continue
-                matches.append(record)
-
-        matches.sort(key=_record_sort_key, reverse=True)
-        total = len(matches)
-        return QueryResult(records=matches[: query.limit], total=total, truncated=total > query.limit)
+                matches.add(record)
+        return matches.result()
 
     def _files_for_range(self, since: datetime, until: datetime) -> list[Path]:
         files: list[Path] = []
@@ -520,18 +546,18 @@ class S3AuditStore:
             if self._key_may_overlap(key, query)
         ]
 
-        matches: list[dict[str, Any]] = []
+        matches = _QueryMatches(query)
         if keys:
             workers = max(1, min(_S3_IO_MAX_WORKERS, len(keys)))
             with ThreadPoolExecutor(max_workers=workers) as executor:
-                for records in executor.map(self._read_object, keys):
-                    for record in records:
-                        if _record_matches(record, query):
-                            matches.append(record)
-
-        matches.sort(key=_record_sort_key, reverse=True)
-        total = len(matches)
-        return QueryResult(records=matches[: query.limit], total=total, truncated=total > query.limit)
+                # executor.map eagerly submits its entire input. A slow early
+                # object otherwise leaves every later decoded result in memory.
+                # Bound both submission and retained results to one worker window.
+                for offset in range(0, len(keys), workers):
+                    for records in executor.map(self._read_object, keys[offset:offset + workers]):
+                        for record in records:
+                            matches.add(record)
+        return matches.result()
 
     def _keys_for_range(self, since: datetime, until: datetime, time_resolution: str = "auto") -> list[str]:
         resolution = self._resolve_time_resolution(since, until, time_resolution)
@@ -626,7 +652,10 @@ class S3AuditStore:
     def _read_object(self, key: str) -> list[dict[str, Any]]:
         try:
             response = self._client.get_object(Bucket=self.bucket, Key=key)
-            body = response["Body"].read()
+            try:
+                body = response["Body"].read()
+            finally:
+                response["Body"].close()
             return list(self._from_parquet_bytes(body))
         except Exception:
             return []
@@ -652,21 +681,22 @@ class S3AuditStore:
     def _from_parquet_bytes(self, body: bytes) -> Iterable[dict[str, Any]]:
         import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
-        table = pq.read_table(io.BytesIO(body))
-        for row in table.to_pylist():
-            raw_record = row.get("record_json")
-            if isinstance(raw_record, str):
-                try:
-                    record = json.loads(raw_record)
-                except json.JSONDecodeError:
-                    record = None
-                if isinstance(record, dict):
+        parquet = pq.ParquetFile(io.BytesIO(body))
+        for batch in parquet.iter_batches(batch_size=512):
+            for row in batch.to_pylist():
+                raw_record = row.get("record_json")
+                if isinstance(raw_record, str):
+                    try:
+                        record = json.loads(raw_record)
+                    except json.JSONDecodeError:
+                        record = None
+                    if isinstance(record, dict):
+                        yield record
+                        continue
+                record = {
+                    key: value
+                    for key, value in row.items()
+                    if key != "record_json" and value is not None
+                }
+                if record:
                     yield record
-                    continue
-            record = {
-                key: value
-                for key, value in row.items()
-                if key != "record_json" and value is not None
-            }
-            if record:
-                yield record
