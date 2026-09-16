@@ -13,7 +13,7 @@ CHANGELOG="$ROOT_DIR/CHANGELOG.md"
 grep -Fq 'Skipping changelog generation for prerelease' "$PREPARE_RELEASE"
 grep -Fq 'cz changelog --unreleased-version "$VERSION"' "$PREPARE_RELEASE"
 grep -Fq 'RELEASE_FLAGS+=(--prerelease)' "$RELEASE_MANUAL"
-grep -Fq 'does not update CHANGELOG.md or create a GitHub Release' "$RELEASE_PRERELEASE"
+grep -Fq 'Does not update CHANGELOG.md or create a GitHub Release' "$RELEASE_PRERELEASE"
 grep -Fq 'Release posts are only generated for stable versions' "$DOCS_RELEASE"
 
 if grep -Eq '^## [0-9]+\.[0-9]+\.[0-9]+-(dev|rc)\.[0-9]+' "$CHANGELOG"; then
