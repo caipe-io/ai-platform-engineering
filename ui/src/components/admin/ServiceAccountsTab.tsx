@@ -55,6 +55,11 @@ import { getProviderDisplayName } from "@/lib/credentials/provider-display-names
 
 // Matches the BFF default (`page_size` defaults to 24 server-side too).
 const PAGE_SIZE = 24;
+// Mirrors MAX_SCOPES in /api/admin/service-accounts/route.ts: the create
+// endpoint only accepts this many scopes per request body.
+const CREATE_SCOPES_BATCH = 500;
+// Mirrors MAX_BULK_SCOPES in /api/admin/service-accounts/[id]/scopes/bulk/route.ts.
+const SCOPES_BULK_BATCH = 1000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types (mirror the BFF contract; never include secret material on list/detail)
@@ -155,6 +160,9 @@ export function ServiceAccountsTab({
   const [createOpen, setCreateOpen] = useState(false);
   const [credential, setCredential] = useState<CreatedCredential | null>(null);
   const [createdName, setCreatedName] = useState<string>("");
+  const [credentialWarning, setCredentialWarning] = useState<string | null>(
+    null,
+  );
   const [manageId, setManageId] = useState<string | null>(null);
 
   const [searchDraft, setSearchDraft] = useState("");
@@ -218,10 +226,11 @@ export function ServiceAccountsTab({
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const handleCreated = useCallback(
-    (cred: CreatedCredential, name: string) => {
+    (cred: CreatedCredential, name: string, warning?: string) => {
       setCreateOpen(false);
       setCredential(cred);
       setCreatedName(name);
+      setCredentialWarning(warning ?? null);
       void loadList(true);
     },
     [loadList],
@@ -401,7 +410,11 @@ export function ServiceAccountsTab({
             key={credential?.client_id ?? "no-credential"}
             credential={credential}
             name={createdName}
-            onClose={() => setCredential(null)}
+            warning={credentialWarning}
+            onClose={() => {
+              setCredential(null);
+              setCredentialWarning(null);
+            }}
           />
         </>
       )}
@@ -508,6 +521,99 @@ function StatusBadge({ status }: { status: "active" | "revoked" }) {
 // Create dialog
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface CreateServiceAccountBatchedResult {
+  success: boolean;
+  credential?: CreatedCredential;
+  name?: string;
+  /** Set when some scopes beyond the first batch failed to attach. */
+  warning?: string;
+  error?: string;
+  /** Set on a 403 with rejected_scopes — refs the caller doesn't hold. */
+  rejectedScopeRefs?: string[];
+}
+
+/**
+ * Create a service account whose selected scopes may exceed what the create
+ * endpoint accepts in one request (CREATE_SCOPES_BATCH, mirrored server-side
+ * as MAX_SCOPES). The first batch is sent in the create body; anything beyond
+ * that is attached afterward via the bulk `/scopes/bulk` endpoint (the same
+ * one the edit/unlinked-SA "add scopes" flow uses) in chunks of
+ * SCOPES_BULK_BATCH — a handful of requests instead of one per scope, per the
+ * same "avoid hundreds of round trips" rationale that endpoint exists for.
+ *
+ * Extracted from CreateServiceAccountDialog.submit so this orchestration can
+ * be unit-tested without driving the MultiSelect pickers through the DOM.
+ */
+export async function createServiceAccountBatched({
+  name,
+  description,
+  owningTeamId,
+  scopes,
+  createBatchSize = CREATE_SCOPES_BATCH,
+  bulkBatchSize = SCOPES_BULK_BATCH,
+}: {
+  name: string;
+  description?: string;
+  owningTeamId: string;
+  scopes: ScopeRef[];
+  createBatchSize?: number;
+  bulkBatchSize?: number;
+}): Promise<CreateServiceAccountBatchedResult> {
+  const firstBatch = scopes.slice(0, createBatchSize);
+  const remaining = scopes.slice(createBatchSize);
+
+  const res = await fetch("/api/admin/service-accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      description,
+      owning_team_id: owningTeamId,
+      scopes: firstBatch,
+    }),
+  });
+  const body = await res.json();
+  if (!res.ok || !body.success) {
+    return {
+      success: false,
+      error: body.error || "Failed to create service account.",
+      rejectedScopeRefs:
+        res.status === 403 && body.data?.rejected_scopes?.length
+          ? body.data.rejected_scopes.map((s: { ref: string }) => s.ref)
+          : undefined,
+    };
+  }
+
+  let warning: string | undefined;
+  if (remaining.length > 0) {
+    const saId = body.data.id as string;
+    let failedCount = 0;
+    for (let i = 0; i < remaining.length; i += bulkBatchSize) {
+      const chunk = remaining.slice(i, i + bulkBatchSize);
+      const bulkRes = await fetch(
+        `/api/admin/service-accounts/${encodeURIComponent(saId)}/scopes/bulk`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scopes: chunk }),
+        },
+      );
+      const bulkBody = await bulkRes.json().catch(() => ({}));
+      if (!bulkRes.ok || !bulkBody.success) failedCount += chunk.length;
+    }
+    if (failedCount > 0) {
+      warning = `${failedCount} of ${remaining.length} additional scope(s) beyond the first ${createBatchSize} could not be attached. Add them from Manage → Scopes.`;
+    }
+  }
+
+  return {
+    success: true,
+    credential: body.data.credential as CreatedCredential,
+    name: body.data.name as string,
+    warning,
+  };
+}
+
 function CreateServiceAccountDialog({
   open,
   onOpenChange,
@@ -515,7 +621,7 @@ function CreateServiceAccountDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (cred: CreatedCredential, name: string) => void;
+  onCreated: (cred: CreatedCredential, name: string, warning?: string) => void;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -672,31 +778,26 @@ function CreateServiceAccountDialog({
           ref,
         })),
       ];
-      const res = await fetch("/api/admin/service-accounts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim() || undefined,
-          owning_team_id: owningTeam,
-          scopes,
-        }),
+      const result = await createServiceAccountBatched({
+        name: name.trim(),
+        description: description.trim() || undefined,
+        owningTeamId: owningTeam,
+        scopes,
       });
-      const body = await res.json();
-      if (!res.ok || !body.success) {
-        if (res.status === 403 && body.data?.rejected_scopes?.length) {
-          const refs = body.data.rejected_scopes
-            .map((s: { ref: string }) => s.ref)
-            .join(", ");
-          setFormError(`You cannot grant scopes you do not hold: ${refs}`);
+      if (!result.success) {
+        if (result.rejectedScopeRefs?.length) {
+          setFormError(
+            `You cannot grant scopes you do not hold: ${result.rejectedScopeRefs.join(", ")}`,
+          );
         } else {
-          setFormError(body.error || "Failed to create service account.");
+          setFormError(result.error || "Failed to create service account.");
         }
         return;
       }
       onCreated(
-        body.data.credential as CreatedCredential,
-        body.data.name as string,
+        result.credential as CreatedCredential,
+        result.name as string,
+        result.warning,
       );
     } catch (err) {
       setFormError(
@@ -2067,10 +2168,12 @@ function ManageServiceAccountDialog({
 function CredentialRevealDialog({
   credential,
   name,
+  warning,
   onClose,
 }: {
   credential: CreatedCredential | null;
   name: string;
+  warning?: string | null;
   onClose: () => void;
 }) {
   // This component is remounted per credential (via `key` on the parent), so
@@ -2114,6 +2217,12 @@ function CredentialRevealDialog({
         </div>
 
         <EnvBlock credential={credential} />
+
+        {warning && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm">
+            {warning}
+          </div>
+        )}
 
         <label className="flex items-center gap-2 pt-2 text-sm">
           <input

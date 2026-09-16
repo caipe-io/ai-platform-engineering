@@ -37,7 +37,7 @@ const NAME_MAX = 64;
 const NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 ._-]*[A-Za-z0-9])?$/;
 const DESCRIPTION_MAX = 256;
 const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const MAX_SCOPES = 100;
+const MAX_SCOPES = 500;
 
 interface CreateBody {
   name: string;

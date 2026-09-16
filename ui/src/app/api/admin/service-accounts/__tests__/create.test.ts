@@ -426,6 +426,49 @@ describe("POST /api/admin/service-accounts", () => {
     expect(mockCreateServiceAccountClient).not.toHaveBeenCalled();
   });
 
+  it("scopes array over the 500-entry cap → 400, nothing created (constitution VII)", async () => {
+    allowMembershipAndScopes(new Set());
+
+    const tooMany = Array.from({ length: 501 }, (_, i) => ({
+      type: "tool" as const,
+      ref: `server_${i}`,
+    }));
+    const res = await POST(
+      postRequest({
+        name: "ok-name",
+        owning_team_id: "team-sre",
+        scopes: tooMany,
+      }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe("scopes may not exceed 500 entries");
+    expect(mockCreateServiceAccountClient).not.toHaveBeenCalled();
+  });
+
+  it("exactly 500 scopes is accepted (at the cap, not over it)", async () => {
+    const heldScopes = Array.from(
+      { length: 500 },
+      (_, i) => `can_call tool:server_${i}`,
+    );
+    allowMembershipAndScopes(new Set(heldScopes));
+
+    const scopes = Array.from({ length: 500 }, (_, i) => ({
+      type: "tool" as const,
+      ref: `server_${i}`,
+    }));
+    const res = await POST(
+      postRequest({
+        name: "ok-name",
+        owning_team_id: "team-sre",
+        scopes,
+      }),
+    );
+
+    expect(res.status).toBe(201);
+  });
+
   it("401 when unauthenticated", async () => {
     mockGetServerSession.mockResolvedValue(null);
     const res = await POST(
