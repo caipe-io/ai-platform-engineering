@@ -4,6 +4,7 @@
 import { NextRequest } from "next/server";
 
 const RAW_BASE = "https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/docs/releases";
+const githubUrls: string[] = [];
 
 const LISTING = [
   { name: "README.md", type: "file", download_url: `${RAW_BASE}/README.md` },
@@ -46,8 +47,10 @@ Newest available notes.
 `;
 
 function mockGithub() {
+  githubUrls.length = 0;
   global.fetch = jest.fn(async (url: string | URL) => {
     const u = String(url);
+    githubUrls.push(u);
     let hostname = "";
     try {
       hostname = new URL(u).hostname;
@@ -89,6 +92,13 @@ describe("/api/release-notes", () => {
     // Real markdown content is preserved.
     expect(data.body).toContain("## What's New");
     expect(data.body).toContain("Run the migration runbook");
+  });
+
+  it("lists release posts from the canonical GitHub repository", async () => {
+    await callGet("0.5.0");
+    expect(githubUrls).toContain(
+      "https://api.github.com/repos/caipe-io/ai-platform-engineering/contents/docs/releases?ref=main",
+    );
   });
 
   it("resolves a patch version to its minor series post", async () => {
