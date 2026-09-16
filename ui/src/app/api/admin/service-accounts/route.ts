@@ -4,7 +4,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth-config";
 import { ApiError } from "@/lib/api-error";
 import { reconcileTupleDiff } from "@/lib/authz";
-import { checkOpenFgaTuple, listOpenFgaObjects } from "@/lib/rbac/openfga";
+import {
+  batchCheckOpenFgaTuples,
+  checkOpenFgaTuple,
+  listOpenFgaObjects,
+} from "@/lib/rbac/openfga";
 import type { OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import {
   createServiceAccountClient,
@@ -396,15 +400,19 @@ export async function POST(request: NextRequest) {
     // tuple on every resource.
     const platformAdmin =
       scopes.length > 0 ? await hasOrganizationAdmin(session) : false;
-    const scopeChecks = platformAdmin
-      ? scopes.map((scope) => ({ scope, allowed: true }))
-      : await Promise.all(
-          scopes.map(async (scope) => ({
-            scope,
-            allowed: (await checkOpenFgaTuple(scopeCheckTuple(scope, caller)))
-              .allowed,
-          })),
-        );
+    // Batched, not one checkOpenFgaTuple call per scope (matches the bulk
+    // add-scopes route's approach): raising MAX_SCOPES means a single create
+    // could otherwise fan out to hundreds of individual OpenFGA HTTP calls.
+    const scopeChecks =
+      scopes.length === 0
+        ? []
+        : platformAdmin
+          ? scopes.map((scope) => ({ scope, allowed: true }))
+          : (
+              await batchCheckOpenFgaTuples(
+                scopes.map((scope) => scopeCheckTuple(scope, caller)),
+              )
+            ).map((allowed, i) => ({ scope: scopes[i], allowed }));
     const rejected = scopeChecks.filter((r) => !r.allowed).map((r) => r.scope);
     if (rejected.length > 0) {
       return NextResponse.json(

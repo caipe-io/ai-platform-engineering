@@ -22,6 +22,7 @@ jest.mock("next-auth", () => ({
 jest.mock("@/lib/auth-config", () => ({ authOptions: {} }));
 
 const mockCheckOpenFgaTuple = jest.fn();
+const mockBatchCheckOpenFgaTuples = jest.fn();
 const mockWriteOpenFgaTuples = jest.fn();
 const mockDeleteExactOpenFgaTuples = jest.fn();
 const mockListOpenFgaObjects = jest.fn();
@@ -33,6 +34,8 @@ jest.mock("@/lib/authz", () => ({
 }));
 jest.mock("@/lib/rbac/openfga", () => ({
   checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
+  batchCheckOpenFgaTuples: (...args: unknown[]) =>
+    mockBatchCheckOpenFgaTuples(...args),
   listOpenFgaObjects: (...args: unknown[]) => mockListOpenFgaObjects(...args),
 }));
 
@@ -98,6 +101,13 @@ function allowMembershipAndScopes(held: Set<string>) {
       if (t.relation === "member") return { allowed: true };
       return { allowed: held.has(`${t.relation} ${t.object}`) };
     },
+  );
+  // The create route batches the per-scope "does the caller hold this"
+  // check via batchCheckOpenFgaTuples — mirror the same held-set logic so
+  // existing tests don't need to know which primitive the route uses.
+  mockBatchCheckOpenFgaTuples.mockImplementation(
+    async (tuples: { relation: string; object: string }[]) =>
+      tuples.map((t) => held.has(`${t.relation} ${t.object}`)),
   );
 }
 
@@ -467,6 +477,15 @@ describe("POST /api/admin/service-accounts", () => {
     );
 
     expect(res.status).toBe(201);
+    const body = await res.json();
+    // Guards against a silent truncation regression that still returns 201
+    // (e.g. a validation-order bug that only checked the first N scopes).
+    expect(body.data.granted_scopes).toHaveLength(500);
+    const writeArg = mockWriteOpenFgaTuples.mock.calls[0][0];
+    const toolWrites = writeArg.writes.filter(
+      (t: { object: string }) => t.object.startsWith("tool:"),
+    );
+    expect(toolWrites).toHaveLength(500);
   });
 
   it("401 when unauthenticated", async () => {
