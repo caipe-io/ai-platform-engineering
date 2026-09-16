@@ -5,16 +5,12 @@ on:
     paths:
       - 'setup-caipe.sh'
       - 'tests/integration/test_setup_caipe_sudo_consent.sh'
-      - 'tests/integration/test_setup_caipe_installer_regressions.sh'
-      - 'tests/integration/test_release_workflow_policy.sh'
       - '.github/workflows/tests-setup-caipe.yml'
   push:
     branches: [main]
     paths:
       - 'setup-caipe.sh'
       - 'tests/integration/test_setup_caipe_sudo_consent.sh'
-      - 'tests/integration/test_setup_caipe_installer_regressions.sh'
-      - 'tests/integration/test_release_workflow_policy.sh'
       - '.github/workflows/tests-setup-caipe.yml'
   workflow_dispatch:
 
@@ -48,7 +44,6 @@ jobs:
         run: |
           /bin/bash -n setup-caipe.sh
           /bin/bash -n tests/integration/test_setup_caipe_sudo_consent.sh
-          /bin/bash -n tests/integration/test_release_workflow_policy.sh
 
       - name: Run sudo consent regression tests
         run: /bin/bash tests/integration/test_setup_caipe_sudo_consent.sh

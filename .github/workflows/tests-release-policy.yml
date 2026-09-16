@@ -1,0 +1,46 @@
+name: "[Tests] Release policy"
+
+on:
+  pull_request:
+    paths:
+      - '.github/actions/prepare-release/action.yml'
+      - '.github/workflows/docs-release.yml'
+      - '.github/workflows/release-manual.yml'
+      - '.github/workflows/release-prerelease.yml'
+      - '.github/workflows/tests-release-policy.yml'
+      - 'CHANGELOG.md'
+      - 'tests/integration/test_release_workflow_policy.sh'
+  push:
+    branches: [main]
+    paths:
+      - '.github/actions/prepare-release/action.yml'
+      - '.github/workflows/docs-release.yml'
+      - '.github/workflows/release-manual.yml'
+      - '.github/workflows/release-prerelease.yml'
+      - '.github/workflows/tests-release-policy.yml'
+      - 'CHANGELOG.md'
+      - 'tests/integration/test_release_workflow_policy.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-policy:
+    name: Release policy checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check shell syntax
+        run: bash -n tests/integration/test_release_workflow_policy.sh
+
+      - name: Run release policy checks
+        run: bash tests/integration/test_release_workflow_policy.sh
