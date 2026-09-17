@@ -1,3 +1,21 @@
+## 1.1.1-dev.1 (2026-09-16)
+
+## 1.2.0-dev.7 (2026-09-16)
+
+### Fix
+
+- **service-accounts**: raise create scopes cap and batch large selections (#2751)
+
+## 1.2.0-dev.6 (2026-09-15)
+
+### Fix
+
+- **helm**: correct non-root defaults breaking milvus and keycloak init jobs (#2749)
+
+## 1.2.0-dev.5 (2026-09-15)
+
+## 1.2.0-rc.2 (2026-09-15)
+
 ## 1.2.0-dev.4 (2026-09-15)
 
 ### Fix

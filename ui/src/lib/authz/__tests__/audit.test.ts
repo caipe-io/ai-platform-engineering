@@ -15,14 +15,22 @@ import {
   emitDecisionAudit,
   emitGrantAudit,
   emitReconcileAudit,
+  flushAllowRollups,
 } from "../audit";
 
 const subject = { type: "user" as const, id: "alice" };
 const resource = { type: "agent" as const, id: "platform-engineer" };
 
+const ALLOW = { decision: "ALLOW" as const, reason: "OK" as const, retriable: false };
+const DENY = { decision: "DENY" as const, reason: "NO_CAPABILITY" as const, retriable: false };
+
 beforeEach(() => {
+  // Allow rollups accumulate in module state; drain them so a prior test's
+  // pending counts never leak into the next assertion.
+  flushAllowRollups();
   jest.clearAllMocks();
   mockGetAuditBackend.mockReturnValue({ write: mockWrite });
+  delete process.env.AUDIT_FULL_FIDELITY_ALLOWS;
 });
 
 describe("buildDecisionEvent — UnifiedAuditEvent conformance", () => {
@@ -81,10 +89,11 @@ describe("buildDecisionEvent — UnifiedAuditEvent conformance", () => {
 });
 
 describe("emitDecisionAudit", () => {
-  it("writes the event through the audit backend", () => {
-    emitDecisionAudit(subject, resource, "use", { decision: "ALLOW", reason: "OK", retriable: false });
+  it("writes a deny straight through, without aggregating it", () => {
+    emitDecisionAudit(subject, resource, "use", DENY);
     expect(mockWrite).toHaveBeenCalledTimes(1);
-    expect(mockWrite.mock.calls[0][0]).toMatchObject({ type: "cas_decision", outcome: "allow" });
+    expect(mockWrite.mock.calls[0][0]).toMatchObject({ type: "cas_decision", outcome: "deny" });
+    expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("count");
   });
 
   it("swallows backend lookup failures (never throws into the decision path)", () => {
@@ -92,9 +101,64 @@ describe("emitDecisionAudit", () => {
       throw new Error("audit-service down");
     });
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-    expect(() => emitDecisionAudit(subject, resource, "use", { decision: "DENY", reason: "NO_CAPABILITY", retriable: false })).not.toThrow();
+    expect(() => emitDecisionAudit(subject, resource, "use", DENY)).not.toThrow();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("emitDecisionAudit — allow aggregation", () => {
+  it("does not write an allow until the rollup is flushed", () => {
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("collapses repeated identical allows into one row carrying count", () => {
+    for (let i = 0; i < 4; i++) {
+      emitDecisionAudit(subject, resource, "use", ALLOW);
+    }
+    expect(mockWrite).not.toHaveBeenCalled();
+
+    flushAllowRollups();
+
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+    const row = mockWrite.mock.calls[0][0];
+    expect(row).toMatchObject({ type: "cas_decision", outcome: "allow", count: 4 });
+    // A rollup summarizes many requests, so it must not claim one request's id.
+    expect(row.correlation_id).toMatch(/^rollup:/);
+    expect(row.window_start).toBeDefined();
+    expect(row.window_end).toBeDefined();
+  });
+
+  it("keeps distinct subjects and resources in separate rows", () => {
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    emitDecisionAudit({ type: "user", id: "bob" }, resource, "use", ALLOW);
+    emitDecisionAudit(subject, { type: "agent", id: "other-agent" }, "use", ALLOW);
+
+    flushAllowRollups();
+
+    expect(mockWrite).toHaveBeenCalledTimes(3);
+    expect(mockWrite.mock.calls.every(([row]) => row.count === 1)).toBe(true);
+  });
+
+  it("clears pending counts so a second flush does not double-report", () => {
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    flushAllowRollups();
+    flushAllowRollups();
+
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes one row per allow when full-fidelity mode is enabled", () => {
+    process.env.AUDIT_FULL_FIDELITY_ALLOWS = "true";
+
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+
+    expect(mockWrite).toHaveBeenCalledTimes(2);
+    expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("count");
+    flushAllowRollups();
+    expect(mockWrite).toHaveBeenCalledTimes(2);
   });
 });
 

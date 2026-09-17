@@ -100,6 +100,35 @@ def test_ingests_batches_and_reads_filtered_events(tmp_path: Path) -> None:
         assert body["records"][0]["correlation_id"] == "corr-1"
 
 
+def test_readyz_fails_fast_once_shutdown_begins(tmp_path: Path) -> None:
+    app = create_app(_settings(tmp_path, flush_batch_size=10, flush_interval_seconds=10))
+    with TestClient(app) as client:
+        assert client.get("/readyz").status_code == 200
+
+        service: AuditQueueService = app.state.audit_queue
+        # stop() flips this before it awaits the drain — /readyz must reflect
+        # that immediately so Kubernetes pulls the pod out of Service
+        # endpoints while the drain is still in progress, not only once it
+        # finishes (status()["running"] only goes False at the very end).
+        service._stopping = True
+
+        response = client.get("/readyz")
+        assert response.status_code == 503
+        assert "shutting down" in response.json()["detail"]
+
+
+def test_rejects_new_events_once_shutdown_begins(tmp_path: Path) -> None:
+    app = create_app(_settings(tmp_path, flush_batch_size=10, flush_interval_seconds=10))
+    with TestClient(app) as client:
+        service: AuditQueueService = app.state.audit_queue
+        service._stopping = True
+
+        response = client.post("/v1/audit/events", json={"events": [{"type": "auth"}]})
+
+        assert response.status_code == 503
+        assert client.get("/v1/audit/status").json()["rejected_events"] == 1
+
+
 def test_rejects_when_queue_is_full(tmp_path: Path) -> None:
     app = create_app(_settings(tmp_path, queue_max_size=1, flush_batch_size=10, flush_interval_seconds=10))
     with TestClient(app) as client:

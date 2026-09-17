@@ -122,6 +122,11 @@ jobs:
           OWNER_TYPE: ${{ github.event.repository.owner.type }}
         run: |
           CLEAN_BRANCH=$(echo "${BRANCH_NAME#prebuild/}" | tr '/' '-' | tr '_' '-' | tr '[:upper:]' '[:lower:]')
+          # Anchored so a branch tag can't collide with a longer sibling branch
+          # name that happens to contain it (e.g. "foo" vs "foo-bar") now that
+          # the tag is <base-semver>-<branch>-<count>, not just <branch>-<count>.
+          ESCAPED_BRANCH=$(printf '%s' "$CLEAN_BRANCH" | sed -e 's/[.[\*^$()+?{|]/\\&/g')
+          BRANCH_TAG_PATTERN="^[0-9]+\\.[0-9]+\\.[0-9]+-${ESCAPED_BRANCH}-[0-9]+\$"
 
           if [ "$OWNER_TYPE" = "User" ]; then
             PACKAGE_OWNER_PATH="users/${OWNER}"
@@ -154,14 +159,14 @@ jobs:
               return 1
             fi
 
-            jq --arg needle "-${CLEAN_BRANCH}-" \
+            jq --arg pattern "${BRANCH_TAG_PATTERN}" \
               '.[]
               | .metadata.container.tags as $tags
-              | select($tags[]? | contains($needle))
+              | select($tags[]? | test($pattern))
               | {
                   id: .id,
                   tags: $tags,
-                  safe: ([$tags[]? | contains($needle)] | all)
+                  safe: ([$tags[]? | test($pattern)] | all)
                 }' \
               "${ALL_VERSIONS_FILE}" > "${VERSIONS_FILE}"
             rm -f "${ALL_VERSIONS_FILE}" "${ERROR_FILE}"

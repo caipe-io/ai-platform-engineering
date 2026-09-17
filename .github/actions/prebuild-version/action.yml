@@ -1,0 +1,73 @@
+name: 'Prebuild Version'
+description: >
+  Computes the shared prebuild tag: <latest-stable-tag>-<branch>-<commit-count>.
+  Requires a checkout with fetch-depth: 0.
+
+inputs:
+  head_ref:
+    description: 'PR head branch ref, e.g. prebuild/fix/foo'
+    required: true
+  base_ref:
+    description: 'PR base branch ref, e.g. main'
+    required: true
+  base_sha:
+    description: 'PR base commit SHA to diff against, if known'
+    required: false
+    default: ''
+
+outputs:
+  prebuild_tag:
+    description: 'Full prebuild tag, e.g. 1.1.0-fix-foo-4'
+    value: ${{ steps.compute.outputs.prebuild_tag }}
+  branch:
+    description: 'Sanitized branch component, e.g. fix-foo'
+    value: ${{ steps.compute.outputs.branch }}
+  commit_count:
+    description: 'Commit count since base'
+    value: ${{ steps.compute.outputs.commit_count }}
+  base_version:
+    description: 'Latest stable x.y.z tag used as the base'
+    value: ${{ steps.compute.outputs.base_version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🏷️ Compute prebuild tag
+      id: compute
+      shell: bash
+      env:
+        HEAD_REF: ${{ inputs.head_ref }}
+        BASE_REF: ${{ inputs.base_ref }}
+        BASE_SHA: ${{ inputs.base_sha }}
+      run: |
+        set -euo pipefail
+
+        git fetch --tags --force --quiet || true
+
+        BASE_VERSION=$(git tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+        if [[ -z "$BASE_VERSION" ]]; then
+          echo "❌ No stable x.y.z tag found to base the prebuild version on"
+          exit 1
+        fi
+
+        BRANCH_NO_PREFIX="${HEAD_REF#prebuild/}"
+        BRANCH=$(echo "$BRANCH_NO_PREFIX" | tr '/' '-' | tr '_' '-' | tr '[:upper:]' '[:lower:]')
+
+        git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+
+        if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+          BASE_COMMIT="$BASE_SHA"
+        else
+          BASE_COMMIT="origin/${BASE_REF}"
+        fi
+
+        COMMIT_COUNT=$(git rev-list --count "${BASE_COMMIT}..HEAD")
+        PREBUILD_TAG="${BASE_VERSION}-${BRANCH}-${COMMIT_COUNT}"
+
+        echo "📦 base_version=${BASE_VERSION} branch=${BRANCH} commit_count=${COMMIT_COUNT}"
+        echo "🏷️ prebuild_tag=${PREBUILD_TAG}"
+
+        echo "base_version=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
+        echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+        echo "commit_count=${COMMIT_COUNT}" >> "$GITHUB_OUTPUT"
+        echo "prebuild_tag=${PREBUILD_TAG}" >> "$GITHUB_OUTPUT"

@@ -66,6 +66,7 @@ from common.models.rag import (
 from common.models.graph import Relation
 from common.models.rbac import Role, UserContext, UserInfoResponse
 from contextvars import ContextVar
+from server import audit
 from server.rbac import (
   require_authenticated_user,
   require_role,
@@ -397,10 +398,14 @@ async def app_lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(periodic_cleanup_task())
     logger.info("Periodic cleanup task started")
 
+  audit.start_allow_rollup_flusher()
+
   yield
 
   # Shutdown
   logging.info("Shutting down the app...")
+
+  await audit.stop_allow_rollup_flusher()
 
   # Cancel the cleanup task
   if cleanup_task:

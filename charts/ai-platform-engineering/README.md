@@ -8,17 +8,17 @@ Parent chart to deploy CAIPE — dynamic agents, per-agent MCP servers, RBAC, an
 
 | | |
 |---|---|
-| **Version** | `1.1.0` |
+| **Version** | `1.1.1` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.1.0
+helm install ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.1.1
 
 # Upgrade an existing release
-helm upgrade ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.1.0
+helm upgrade ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.1.1
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.1.0 \
+helm install ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.1.1 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.1.0 \
+helm install ai-platform-engineering oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.1.1 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.1.0
+helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version 1.1.1
 ```
 
 ## Reading the Values Table
@@ -591,7 +591,9 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | mongodb.strictPasswords | bool | `false` |  |
 | openfga-authz-bridge.agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
 | openfga-authz-bridge.agentContext.existingSecret.name | string | `""` |  |
+| openfga-authz-bridge.audit.allowRollupFlushSeconds | int | `60` |  |
 | openfga-authz-bridge.audit.enabled | bool | `true` |  |
+| openfga-authz-bridge.audit.fullFidelityAllows | bool | `false` |  |
 | openfga-authz-bridge.audit.serviceUrl | string | `""` |  |
 | openfga-authz-bridge.audit.subjectSalt | string | `"caipe-098-audit"` |  |
 | openfga-authz-bridge.audit.tenantId | string | `"default"` |  |
@@ -756,32 +758,32 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 
 | Name | Version | Condition / Tags |
 |------|---------|------------------|
-| mcp-argocd (mcp-server) | `1.1.0` | tags: mcp-argocd, basic, complete |
-| mcp-aws (mcp-server) | `1.1.0` | tags: mcp-aws, complete |
-| mcp-backstage (mcp-server) | `1.1.0` | tags: mcp-backstage, basic, complete |
-| mcp-confluence (mcp-server) | `1.1.0` | tags: mcp-confluence, complete |
-| mcp-github (mcp-server) | `1.1.0` | tags: mcp-github, basic, complete |
-| mcp-gitlab (mcp-server) | `1.1.0` | tags: mcp-gitlab, complete |
-| mcp-jira (mcp-server) | `1.1.0` | tags: mcp-jira, complete |
-| mcp-komodor (mcp-server) | `1.1.0` | tags: mcp-komodor, complete |
-| mcp-pagerduty (mcp-server) | `1.1.0` | tags: mcp-pagerduty, complete |
-| mcp-slack (mcp-server) | `1.1.0` | tags: mcp-slack, complete |
-| mcp-splunk (mcp-server) | `1.1.0` | tags: mcp-splunk, complete |
-| mcp-victorops (mcp-server) | `1.1.0` | tags: mcp-victorops |
-| mcp-webex (mcp-server) | `1.1.0` | tags: mcp-webex, complete |
-| mcp-webex-meetings (mcp-server) | `1.1.0` | tags: mcp-webex-meetings, complete |
-| mcp-netutils (mcp-server) | `1.1.0` | tags: mcp-netutils, complete |
-| rag-stack | `1.1.0` | tags: rag-stack, complete |
-| caipe-ui | `1.1.0` | tags: caipe-ui |
-| audit-service | `1.1.0` |  |
-| dynamic-agents | `1.1.0` | tags: dynamic-agents |
-| autonomous-agents | `1.1.0` | tags: autonomous-agents |
-| scheduler | `1.1.0` | `global.scheduler.enabled` |
-| mongodb (caipe-ui-mongodb) | `1.1.0` | `caipe-ui.mongodb.enabled` |
-| skill-scanner | `1.1.0` | `global.skillScanner.enabled` |
-| slack-bot | `1.1.0` | tags: slack-bot |
-| webex-bot | `1.1.0` | tags: webex-bot |
-| keycloak | `1.1.0` | tags: keycloak |
-| openfga | `1.1.0` | `openfga.enabled` |
-| openfga-authz-bridge | `1.1.0` | `openfgaAuthzBridge.enabled` |
-| agentgateway | `1.1.0` | `agentgateway.enabled` |
+| mcp-argocd (mcp-server) | `1.1.1` | tags: mcp-argocd, basic, complete |
+| mcp-aws (mcp-server) | `1.1.1` | tags: mcp-aws, complete |
+| mcp-backstage (mcp-server) | `1.1.1` | tags: mcp-backstage, basic, complete |
+| mcp-confluence (mcp-server) | `1.1.1` | tags: mcp-confluence, complete |
+| mcp-github (mcp-server) | `1.1.1` | tags: mcp-github, basic, complete |
+| mcp-gitlab (mcp-server) | `1.1.1` | tags: mcp-gitlab, complete |
+| mcp-jira (mcp-server) | `1.1.1` | tags: mcp-jira, complete |
+| mcp-komodor (mcp-server) | `1.1.1` | tags: mcp-komodor, complete |
+| mcp-pagerduty (mcp-server) | `1.1.1` | tags: mcp-pagerduty, complete |
+| mcp-slack (mcp-server) | `1.1.1` | tags: mcp-slack, complete |
+| mcp-splunk (mcp-server) | `1.1.1` | tags: mcp-splunk, complete |
+| mcp-victorops (mcp-server) | `1.1.1` | tags: mcp-victorops |
+| mcp-webex (mcp-server) | `1.1.1` | tags: mcp-webex, complete |
+| mcp-webex-meetings (mcp-server) | `1.1.1` | tags: mcp-webex-meetings, complete |
+| mcp-netutils (mcp-server) | `1.1.1` | tags: mcp-netutils, complete |
+| rag-stack | `1.1.1` | tags: rag-stack, complete |
+| caipe-ui | `1.1.1` | tags: caipe-ui |
+| audit-service | `1.1.1` |  |
+| dynamic-agents | `1.1.1` | tags: dynamic-agents |
+| autonomous-agents | `1.1.1` | tags: autonomous-agents |
+| scheduler | `1.1.1` | `global.scheduler.enabled` |
+| mongodb (caipe-ui-mongodb) | `1.1.1` | `caipe-ui.mongodb.enabled` |
+| skill-scanner | `1.1.1` | `global.skillScanner.enabled` |
+| slack-bot | `1.1.1` | tags: slack-bot |
+| webex-bot | `1.1.1` | tags: webex-bot |
+| keycloak | `1.1.1` | tags: keycloak |
+| openfga | `1.1.1` | `openfga.enabled` |
+| openfga-authz-bridge | `1.1.1` | `openfgaAuthzBridge.enabled` |
+| agentgateway | `1.1.1` | `agentgateway.enabled` |

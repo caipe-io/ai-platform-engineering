@@ -23,6 +23,7 @@ import httpx
 from common.models.rbac import Role, UserContext
 from common.models.server import QueryRequest
 from common import utils
+from server import audit
 from server.auth import get_auth_manager, AuthManager
 
 logger = utils.get_logger(__name__)
@@ -538,13 +539,13 @@ async def _get_openfga_store_id(client: httpx.AsyncClient, base_url: str) -> str
   raise RuntimeError(f"OpenFGA store {store_name} was not found")
 
 
-async def _openfga_check_object(
+async def _openfga_raw_check(
   user_context: UserContext,
   relation: str,
   object_type: str,
   object_id: str,
 ) -> bool:
-  """Check a user's derived relation on an OpenFGA object."""
+  """Perform the OpenFGA HTTP check itself, with no audit side effect."""
   base_url = _openfga_http_url()
   user = _openfga_user(user_context)
   if not base_url or not user:
@@ -565,6 +566,90 @@ async def _openfga_check_object(
     )
     response.raise_for_status()
     return bool(response.json().get("allowed"))
+
+
+def _audit_check_safely(
+  *,
+  subject: str,
+  subject_ref: str | None,
+  relation: str,
+  object_type: str,
+  object_id: str,
+  outcome: str,
+  reason_code: str,
+) -> None:
+  """Audit is a side channel — a broken writer must never affect a decision.
+
+  Allows are buffered and reported as a rollup (server/audit.py) so the
+  several checks one user question can fan out into — search, then a
+  handful of get_full_doc calls, etc. — land as one event listing every
+  resource touched, rather than scattering across separate rows. Denials and
+  PDP-unavailable errors are rare and are the signal reviewers act on, so
+  they are always written immediately, one row per decision.
+  """
+  try:
+    if outcome == "allow" and not audit.FULL_FIDELITY_ALLOWS:
+      audit.record_allow(
+        subject=subject,
+        subject_ref=subject_ref,
+        relation=relation,
+        object_type=object_type,
+        object_id=object_id,
+      )
+    else:
+      audit.log_openfga_decision(
+        subject=subject,
+        subject_ref=subject_ref,
+        relation=relation,
+        object_type=object_type,
+        object_id=object_id,
+        outcome=outcome,
+        reason_code=reason_code,
+      )
+  except Exception as exc:  # noqa: BLE001
+    logger.warning("Failed to audit OpenFGA decision: %s", exc)
+
+
+async def _openfga_check_object(
+  user_context: UserContext,
+  relation: str,
+  object_type: str,
+  object_id: str,
+) -> bool:
+  """Check a user's derived relation on an OpenFGA object.
+
+  Every check is audited (server/audit.py) — allow, deny, and PDP-unavailable
+  alike — so data_source#can_read, mcp_tool#can_call,
+  organization#can_search/#can_manage, and policy#can_approve decisions get a
+  durable trail. Auditing never changes this function's return value or the
+  exception it raises; callers keep their existing fail-open/fail-closed
+  behavior exactly as before.
+  """
+  subject = user_context.subject or "anonymous"
+  subject_ref = _openfga_user(user_context)
+  try:
+    allowed = await _openfga_raw_check(user_context, relation, object_type, object_id)
+  except Exception:
+    _audit_check_safely(
+      subject=subject,
+      subject_ref=subject_ref,
+      relation=relation,
+      object_type=object_type,
+      object_id=object_id,
+      outcome="deny",
+      reason_code="DENY_PDP_UNAVAILABLE",
+    )
+    raise
+  _audit_check_safely(
+    subject=subject,
+    subject_ref=subject_ref,
+    relation=relation,
+    object_type=object_type,
+    object_id=object_id,
+    outcome="allow" if allowed else "deny",
+    reason_code="OK" if allowed else "DENY_NO_CAPABILITY",
+  )
+  return allowed
 
 
 async def _openfga_check_data_source(

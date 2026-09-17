@@ -202,6 +202,16 @@ export interface UnifiedAuditEvent {
   writes?: number;
   /** CAS reconcile: tuple removals actually applied by OpenFGA. */
   deletes?: number;
+  /**
+   * Decisions summarized by this row. Present only on aggregated allow rollups
+   * (routine allows are counted rather than stored per-decision); absent means
+   * one decision. Denials are never aggregated.
+   */
+  count?: number;
+  /** Aggregated allow rollup: start of the summarized window. */
+  window_start?: string;
+  /** Aggregated allow rollup: end of the summarized window. */
+  window_end?: string;
 }
 
 /** Admin dashboard tab keys for RBAC-based visibility */

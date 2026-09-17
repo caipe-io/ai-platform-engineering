@@ -543,6 +543,9 @@ function reasonPhrase(evt: UnifiedAuditEvent): string {
     const decision = evt.outcome === "allow" ? "allowed" : "denied";
     const pdp = evt.pdp === "openfga" ? "OpenFGA" : evt.pdp ? sentenceCase(evt.pdp) : "the policy engine";
     const via = evt.decision_via ? ` via ${decisionPathLabel(evt)}` : "";
+    if (typeof evt.count === "number" && evt.count > 1) {
+      return `${service} ${decision} ${evt.count.toLocaleString()} matching requests because ${pdp} returned ${reason}${via}.`;
+    }
     return `${service} ${decision} this request because ${pdp} returned ${reason}${via}.`;
   }
   if (evt.type === "cas_grant") {
@@ -560,6 +563,9 @@ function reasonPhrase(evt: UnifiedAuditEvent): string {
     return changes === "no policy changes"
       ? `CAS checked ${scope}; OpenFGA required no relationship changes.`
       : `CAS applied ${changes ?? "the requested relationship changes"} through OpenFGA.`;
+  }
+  if (typeof evt.count === "number" && evt.count > 1) {
+    return `${sentenceCase(displaySource(evt.source))} recorded ${evt.count.toLocaleString()} ${evt.outcome} decisions with reason ${reason}.`;
   }
   return `${sentenceCase(displaySource(evt.source))} recorded ${evt.outcome} with reason ${reason}.`;
 }
