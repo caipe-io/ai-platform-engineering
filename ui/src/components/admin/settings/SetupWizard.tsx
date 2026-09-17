@@ -14,6 +14,7 @@ import {
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
 import { getConfig } from "@/lib/config";
 import { useAdminRole } from "@/hooks/use-admin-role";
+import { requestProductTour } from "@/lib/product-tour";
 import type {
   SetupWizardPayload,
   SetupWizardSelection,
@@ -351,6 +352,7 @@ export function SetupWizardDialog({
       });
       onOpenChange(false);
       onStateChange?.(null);
+      requestProductTour();
     } catch (finishError) {
       setError(finishError instanceof Error ? finishError.message : "Could not finish setup");
     } finally {
@@ -442,6 +444,7 @@ export function SetupWizardDialog({
   const closeCompleted = () => {
     onOpenChange(false);
     onStateChange?.(null);
+    requestProductTour();
   };
 
   return (

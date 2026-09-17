@@ -1,6 +1,7 @@
 // MongoDB collection type definitions
 
 import type { StreamEvent } from "@/lib/streaming/types";
+import type { ProductTourState } from "@/lib/product-tour";
 import type { TimelineSegment } from "@/types/dynamic-agent-timeline";
 import { ObjectId } from "mongodb";
 
@@ -280,6 +281,8 @@ export interface UserSettings {
     home_experience?: "new" | "classic";
     /** Favorite app IDs shown in the Apps catalog. */
     favorite_agentic_apps?: string[];
+    /** Server-backed progress for the post-install end-user product tour. */
+    product_tour?: ProductTourState;
   };
   notifications: {
     email_enabled: boolean;
