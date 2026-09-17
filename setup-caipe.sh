@@ -99,6 +99,12 @@ ENABLE_RBAC_RUNTIME="${ENABLE_RBAC_RUNTIME:-true}"
 # / ENABLE_AUTONOMOUS_AGENTS=false on a memory-constrained host.
 ENABLE_SCHEDULER="${ENABLE_SCHEDULER:-true}"
 ENABLE_AUTONOMOUS_AGENTS="${ENABLE_AUTONOMOUS_AGENTS:-true}"
+# First-install setup wizard: default ON. Operators that fully seed their
+# platform declaratively can set ENABLE_SETUP_WIZARD=false or pass
+# --no-setup-wizard to suppress the first-admin prompt.
+_ENABLE_SETUP_WIZARD_EXPLICIT=false
+[[ -n "${ENABLE_SETUP_WIZARD+x}" ]] && _ENABLE_SETUP_WIZARD_EXPLICIT=true
+ENABLE_SETUP_WIZARD="${ENABLE_SETUP_WIZARD:-true}"
 # Keycloak bootstrap admin password (master realm). The keycloak subchart
 # requires an explicit value — generated admin passwords are disabled because
 # Keycloak persists the bootstrap admin in its database. Resolved/persisted by
@@ -6674,6 +6680,7 @@ deploy_caipe() {
   else
     helm_args+=(--set "caipe-ui.config.SSO_ENABLED=false")
   fi
+  helm_args+=(--set "caipe-ui.config.SETUP_WIZARD_ENABLED=${ENABLE_SETUP_WIZARD}")
 
   # Default (no --ui-env-file) in-chart Keycloak SSO. The dev/Cisco env file
   # normally supplies OIDC_ISSUER/NEXTAUTH_URL, so without it the chart defaults
@@ -8892,6 +8899,7 @@ enable_graph_rag: "${ENABLE_GRAPH_RAG:-false}"
 enable_tracing: "${ENABLE_TRACING:-false}"
 enable_scheduler: "${ENABLE_SCHEDULER:-true}"
 enable_autonomous_agents: "${ENABLE_AUTONOMOUS_AGENTS:-true}"
+enable_setup_wizard: "${ENABLE_SETUP_WIZARD:-true}"
 enable_metallb: "${ENABLE_METALLB:-false}"
 enable_ingress: "${ENABLE_INGRESS:-false}"
 domain: "${CAIPE_DOMAIN:-}"
@@ -8908,7 +8916,7 @@ _load_caipe_config() {
   echo -e "  ${DIM}Saved configuration found: ${CAIPE_CONFIG_FILE}${NC}"
   echo ""
 
-  local _ctx _chart _llm _database _ollama _omodel _eprov _emodel _rag _grag _tracing _metallb _ingress _domain _agents
+  local _ctx _chart _llm _database _ollama _omodel _eprov _emodel _rag _grag _tracing _setup_wizard _metallb _ingress _domain _agents
   _ctx=$(_cfg_get cluster_context)
   _chart=$(_cfg_get chart_version)
   _llm=$(_cfg_get llm_provider)
@@ -8920,6 +8928,7 @@ _load_caipe_config() {
   _rag=$(_cfg_get enable_rag)
   _grag=$(_cfg_get enable_graph_rag)
   _tracing=$(_cfg_get enable_tracing)
+  _setup_wizard=$(_cfg_get enable_setup_wizard)
   _metallb=$(_cfg_get enable_metallb)
   _ingress=$(_cfg_get enable_ingress)
   _domain=$(_cfg_get domain)
@@ -8936,6 +8945,7 @@ _load_caipe_config() {
   [[ -n "$_database" ]]   && echo -e "    ${DIM}database:        ${NC}${_database}"
   [[ -n "$_rag" ]]        && echo -e "    ${DIM}RAG:             ${NC}${_rag}  graph-RAG: ${_grag:-false}"
   [[ -n "$_tracing" ]]    && echo -e "    ${DIM}tracing:         ${NC}${_tracing}"
+  [[ -n "$_setup_wizard" ]] && echo -e "    ${DIM}setup wizard:    ${NC}${_setup_wizard}"
   [[ -n "$_metallb" ]]    && echo -e "    ${DIM}metallb:         ${NC}${_metallb}  ingress: ${_ingress:-false}"
   [[ -n "$_domain" ]]     && echo -e "    ${DIM}domain:          ${NC}${_domain}"
   [[ -n "$_agents" ]]     && echo -e "    ${DIM}agents:          ${NC}${_agents}"
@@ -8959,6 +8969,10 @@ _load_caipe_config() {
   [[ "$_rag"      == "true" ]] && ENABLE_RAG=true
   [[ "$_grag"     == "true" ]] && ENABLE_GRAPH_RAG=true && ENABLE_RAG=true
   [[ "$_tracing"  == "true"  ]] && ENABLE_TRACING=true
+  if ! $_ENABLE_SETUP_WIZARD_EXPLICIT; then
+    [[ "$_setup_wizard" == "true"  ]] && ENABLE_SETUP_WIZARD=true
+    [[ "$_setup_wizard" == "false" ]] && ENABLE_SETUP_WIZARD=false
+  fi
   [[ "$_metallb"  == "true"  ]] && ENABLE_METALLB=true
   [[ "$_metallb"  == "false" ]] && ENABLE_METALLB=false
   # MetalLB is a prerequisite for ingress; restore ingress flag from config,
@@ -9471,9 +9485,9 @@ Options:
   --litellm-db          Like --litellm, plus persist LiteLLM virtual keys/spend in the shared Postgres
   --litellm-models=FILE Onboard extra models: seeds the litellm-extra-models ConfigMap (never regenerated;
                         kubectl-editable) whose entries are appended to the proxy config each deploy. See
-                        deploy/kind/litellm-models.example.yaml; scan with `setup-caipe.sh models`.
+                        deploy/kind/litellm-models.example.yaml; scan with 'setup-caipe.sh models'.
   --litellm-upstream-env=FILE  KEY=VALUE .env -> litellm-extra-upstream Secret (optional envFrom) so
-                        `api_key: "os.environ/<KEY>"` refs in --litellm-models resolve.
+                        'api_key: "os.environ/<KEY>"' refs in --litellm-models resolve.
   --persistence      Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --no-persistence   Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --database=NAME    MongoDB-compatible database: mongodb (default) or documentdb
@@ -9488,6 +9502,9 @@ Options:
   --ingress          Install nginx-ingress + MetalLB and expose UI via domain — default ON
                      If --domain is omitted, falls back to ${CAIPE_DOMAIN_DEFAULT} (resolves to 127.0.0.1 via *.localtest.me)
   --no-ingress       Skip nginx-ingress
+  --setup-wizard     Automatically show the guided wizard to the first admin — default ON
+  --no-setup-wizard  Suppress the automatic prompt; the wizard remains available under
+                     Admin > Platform configuration > Setup Wizard
   --domain=HOST      Hostname for the UI ingress (e.g. my-caipe.example.com)
                      Default when ingress is enabled and --domain is omitted: ${CAIPE_DOMAIN_DEFAULT}
   --ui-url=URL       Browser-facing UI URL (default: https://<domain>). Use when CAIPE
@@ -9598,6 +9615,8 @@ Environment variables (all optional):
   ENABLE_AUTONOMOUS_AGENTS  Autonomous cron/interval/webhook agents
                           (default: true; ENABLE_AUTONOMOUS_AGENTS=false to skip).
                           Together these add ~4-5 pods.
+  ENABLE_SETUP_WIZARD    Automatically offer guided first-agent setup to the first admin
+                          (default: true; --no-setup-wizard suppresses the prompt)
   DATABASE_PROVIDER       Persistence provider: mongodb (default) or documentdb
   DOCUMENTDB_IMAGE_TAG    DocumentDB Local image tag (default: pg17-0.113.0)
   AGENTGATEWAY_VERSION    AgentGateway Helm chart version (default: v2.2.1)
@@ -9698,6 +9717,8 @@ for arg in "$@"; do
     --no-metallb)      ENABLE_METALLB=false; ENABLE_INGRESS=false ;;
     --ingress)         ENABLE_INGRESS=true; ENABLE_METALLB=true ;;
     --no-ingress)      ENABLE_INGRESS=false ;;
+    --setup-wizard)    ENABLE_SETUP_WIZARD=true; _ENABLE_SETUP_WIZARD_EXPLICIT=true ;;
+    --no-setup-wizard) ENABLE_SETUP_WIZARD=false; _ENABLE_SETUP_WIZARD_EXPLICIT=true ;;
     --domain=*)        CAIPE_DOMAIN="${arg#--domain=}" ;;
     --ui-url=*)        CAIPE_UI_URL="${arg#--ui-url=}" ;;
     --idp-url=*)       CAIPE_IDP_URL="${arg#--idp-url=}" ;;

@@ -71,6 +71,7 @@ describe('getServerConfig', () => {
         'LOGO_STYLE', 'SPINNER_COLOR', 'TAGLINE', 'DESCRIPTION',
         'APP_NAME', 'LOGO_URL', 'GRADIENT_FROM', 'GRADIENT_TO',
         'SUPPORT_EMAIL', 'FEEDBACK_ENABLED', 'AUDIT_LOGS_ENABLED',
+        'SETUP_WIZARD_ENABLED',
         'ACTION_AUDIT_ENABLED',
         'CAIPE_UNSAFE_RBAC_BYPASS',
         'DEFAULT_FONT_SIZE', 'DEFAULT_FONT_FAMILY',
@@ -149,7 +150,7 @@ describe('getServerConfig', () => {
         'gradientFrom', 'gradientTo', 'logoStyle', 'logoThemed', 'spinnerColor',
         'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
         'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
-        'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
+        'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'setupWizardEnabled', 'feedbackEnabled',
         'allowBuiltinSkillMutation',
         'auditLogsEnabled',
         'actionAuditEnabled',
@@ -486,6 +487,18 @@ describe('getServerConfig', () => {
     it('should be true for RAG_ENABLED=anything (only "false" disables)', () => {
       process.env.RAG_ENABLED = 'banana';
       expect(getServerConfig().ragEnabled).toBe(true);
+    });
+  });
+
+  // ---------- setupWizardEnabled ----------
+
+  describe('setupWizardEnabled', () => {
+    beforeEach(() => clearEnv('SETUP_WIZARD_ENABLED'));
+
+    it('defaults to enabled and supports an explicit opt-out', () => {
+      expect(getServerConfig().setupWizardEnabled).toBe(true);
+      process.env.SETUP_WIZARD_ENABLED = 'false';
+      expect(getServerConfig().setupWizardEnabled).toBe(false);
     });
   });
 
@@ -938,7 +951,7 @@ describe('getClientConfigScript (XSS safety)', () => {
       'gradientFrom', 'gradientTo', 'logoStyle', 'logoThemed', 'spinnerColor',
       'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
       'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
-      'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
+      'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'setupWizardEnabled', 'feedbackEnabled',
       'allowBuiltinSkillMutation',
       'auditLogsEnabled',
       'actionAuditEnabled',
