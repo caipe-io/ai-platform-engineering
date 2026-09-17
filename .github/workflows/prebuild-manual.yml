@@ -370,7 +370,6 @@ jobs:
     uses: ./.github/workflows/prebuild-helm.yml
     with:
       pr_number: ${{ fromJSON(needs.resolve-pr.outputs.pr_number) }}
-      new_commit: false
       head_ref: ${{ needs.resolve-pr.outputs.head_ref }}
       head_sha: ${{ needs.resolve-pr.outputs.head_sha }}
       base_ref: ${{ needs.resolve-pr.outputs.base_ref }}

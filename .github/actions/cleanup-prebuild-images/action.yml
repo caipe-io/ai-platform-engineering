@@ -47,10 +47,11 @@ runs:
             ? rawBranch.substring('prebuild/'.length)
             : rawBranch;
           const branchSanitized = branchNoPrefix.replace(/\//g, '-');
-          const prefix = `${branchSanitized}-`;
+          const branchPattern = branchSanitized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          // Tag shape: <base-semver>-<branch>-<commit-count>, e.g. 1.1.0-fix-foo-4.
+          const branchTagRe = new RegExp(`^\\d+\\.\\d+\\.\\d+-${branchPattern}-\\d+$`);
           const packageType = 'container';
-          const isBranchTag = tag =>
-            tag.startsWith(prefix) && /^\d+$/.test(tag.substring(prefix.length));
+          const isBranchTag = tag => branchTagRe.test(tag);
 
           const inspectChildren = async (tag) => {
             const imageRef = `ghcr.io/${owner}/${packageName}:${tag}`;
@@ -134,7 +135,7 @@ runs:
             );
             if (targetParents.length === 0) {
               core.info(
-                `No tagged versions found for ${packageName} with tag prefix ${prefix}; ` +
+                `No tagged versions found for ${packageName} matching branch ${branchSanitized}; ` +
                 'checking for architecture digests from failed or canceled builds.'
               );
             }
@@ -204,7 +205,7 @@ runs:
             }
             core.info(
               `Deleted ${targetParents.length} tagged and ${childVersions.length} ` +
-              `untagged version(s) for ${packageName} with tag prefix ${prefix}`
+              `untagged version(s) for ${packageName} matching branch ${branchSanitized}`
             );
           } catch (error) {
             if (error.status === 404) {

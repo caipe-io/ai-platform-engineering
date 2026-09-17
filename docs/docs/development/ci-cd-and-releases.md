@@ -4,37 +4,22 @@ sidebar_position: 6
 
 # CI/CD and Releases
 
-This page is the map for the repo's CI/CD flow: PR version bumps, prebuild artifacts, dev/RC/hotfix tags, and final releases.
+This page is the map for the repo's CI/CD flow: prebuild artifacts, the `canary` main tag, RC/hotfix tags, and final releases.
 
-## Branch Flow
+## The Release Ladder
 
-The diagrams below show the branch, tag, and artifact flow used by the release workflows.
+Every image and Helm chart carries the same tag, so you can tell how stable a build is just by looking at it. RCs and hotfixes both graduate into a final release using the same steps — see [Final Release Flow](#final-release-flow) below.
 
-![CI/CD branch flow, part 1](../images/discussion-945-branch-flow.svg)
+| Tag | Stage | Created from | Meaning |
+| --- | --- | --- | --- |
+| `canary` | Alpha | every merge to `main` | Always the newest main build. Gets replaced on every merge — don't rely on it staying the same. |
+| `x.y.z-rc.N` | Beta | every push to `release/x.y.z` | A release candidate. Fixed — never changes once created. |
+| `x.y.z-hotfix.N` | Beta (patch) | every push to `release/x.y.z-hotfix` | A candidate fix for a version that already shipped. Fixed — never changes once created. |
+| `x.y.z` | Stable | `release-manual.yml` | The production release. Also tagged `latest`. Fixed — never changes once created. |
 
-## Version Tags
-
-Below diagram shows the details of how the auto release and tags work based on the target branch `main`, `release/x.y.z` and `release/x.y.z-hotfix`.
-
-![CI/CD branch flow, part 2](../images/discussion-945-cicd-tag-version-details.svg)
-
-The CI/CD system uses self-describing tags. The suffix tells workflows where the change came from and where artifacts should be published.
-
-| Tag shape | Created from | Purpose |
-| --- | --- | --- |
-| `x.y.z-dev.N` | `main` | Development build after merge to main |
-| `x.y.z-dev.N-chart.M` | chart-only change on `main` | Development Helm chart update without image rebuild |
-| `x.y.z-rc.N` | `release/x.y.z` | Release candidate build |
-| `x.y.z-rc.N-chart.M` | chart-only change on `release/x.y.z` | Release candidate Helm chart update without image rebuild |
-| `x.y.z-hotfix.N` | `release/x.y.z-hotfix` | Hotfix candidate build |
-| `x.y.z-hotfix.N-chart.M` | chart-only change on hotfix branch | Hotfix Helm chart update without image rebuild |
-| `x.y.z` | final release flow | Production release |
-
-`N` increments when image-affecting source changes are detected. `M` increments when only chart files changed after the latest base tag.
+Chart version and image tag always match — there is no separate chart-only version. A chart-only fix ships with the next tag like any other change.
 
 ## Artifact Locations
-
-Artifact lifecycle is encoded in immutable tags, while registry paths remain stable.
 
 | Artifact type | Flow | Registry path |
 | --- | --- | --- |
@@ -43,179 +28,77 @@ Artifact lifecycle is encoded in immutable tags, while registry paths remain sta
 
 ## PR Flow
 
-`pr-version-bump.yml` runs on PRs targeting `main` or `release/**` when app, build, Python package, lockfile, or chart paths change.
+`pr-version-bump.yml` runs on every PR targeting `main` or `release/**`:
 
-It does four main things:
-
-1. Checks whether the PR branch contains the latest base branch and whether GitHub reports merge conflicts.
+1. Checks whether the PR branch contains the latest base branch and whether GitHub reports merge conflicts, posting an update comment and failing the check if not.
 2. Applies a PR flow label such as `dev`, `0.4.0`, `0.4.0-hotfix`, or `release/0.4.0`.
-3. Computes the version that the target branch would receive after merge.
-4. Commits version file updates back to the PR branch.
+3. For a `release/x.y.z -> main` PR specifically, uses `.github/actions/prepare-release/action.yml` to commit the final `x.y.z` version files and changelog onto that PR branch ahead of merge.
 
-If the PR branch is behind or has conflicts, the workflow posts an update comment with commands to merge the latest base branch. The workflow then fails so the PR cannot merge with stale version calculations.
+Ordinary PRs get no commit — prebuild and canary tags are worked out fresh at build time instead of being written into the repo.
 
-For normal PRs, version calculation is handled by `.github/actions/determine-version/action.yml`, and file updates are handled by `.github/actions/update-version-files/action.yml`.
+## Docker and Helm Image CI
 
-For `release/x.y.z -> main` PRs, the workflow uses `.github/actions/prepare-release/action.yml` to set the final `x.y.z` version and generate the changelog.
+Every image and chart workflow (`ci-*.yml`, `ci-helm.yml` — see the reference table below) triggers on two ref shapes:
 
-## Chart-Only Changes
+- **Push to `main`** — builds `canary`, but only for the component(s) whose own paths actually changed in that push. A docs-only or single-component merge does not rebuild everything.
+- **Push of a tag** (`x.y.z`, `x.y.z-rc.N`, `x.y.z-hotfix.N`) — builds every component fresh, regardless of which paths changed. This is what makes an RC or final release a complete, reproducible artifact set.
 
-Chart-only changes are treated specially so image builds are not wasted.
-
-The `determine-version` action diffs the current commit against the latest relevant tag or branch point. If changed files are limited to `charts/**`, the next tag keeps the same base tag and appends or increments `-chart.M` to chart version only.
-
-Examples:
-
-```text
-0.4.0-dev.3 -> 0.4.0-dev.3-chart.1
-0.4.0-dev.3-chart.1 -> 0.4.0-dev.3-chart.2
-0.4.0-rc.2 -> 0.4.0-rc.2-chart.1
-```
-
-where appVersion and image tags remain at `0.4.0-dev.3` or `0.4.0-rc.2`.
-
-In chart-only mode, `update-version-files`:
-
-- Updates only changed charts and parent charts that depend on them.
-- Updates local dependency version references for bumped charts.
-- Leaves `appVersion`, `pyproject.toml`, and `uv.lock` unchanged.
-- Outputs the chart-only tag as the final version.
-
-Docker CI workflows detect `-chart.M` and skip image builds entirely and publish only the chart.
-
-## Docker Image CI
-
-The main image workflows are tag-driven:
-
-- `ci-dynamic-agents.yml`
-- `ci-mcp-sub-agent.yml`
-- `ci-rag.yml`
-- `ci-caipe-ui.yml`
-- `ci-audit-service.yml`
-- `ci-skill-scanner.yml`
-- `ci-slack-bot.yml`
-- `ci-webex-bot.yml`
-- `ci-keycloak-init.yml`
-- `ci-openfga-authz-bridge.yml`
-
-Each workflow resolves the tag through `.github/actions/determine-release-tag/action.yml`.
-
-Every tag push builds all relevant images fresh, regardless of prerelease number or which paths changed.
-
-Development, release-candidate, hotfix, final, and prebuild tags all publish to the same image package. Deployments change only the tag, not the image repository.
+Each workflow figures out its own tag via `.github/actions/determine-release-tag/action.yml`: `canary` for a main push, the pushed tag for a tag push, or whatever you typed in if you triggered the build by hand.
 
 ## Prebuild Artifacts
 
-Prebuild artifacts are temporary test artifacts published from PRs before merge.
-
-Use prebuilds when you want to test Docker images or Helm charts without waiting for a branch merge and official tag.
+Prebuild artifacts let you test Docker images or Helm charts from a PR before it merges, without waiting for an official tag.
 
 1. Create a branch called `prebuild/*`, for example `prebuild/feat/add-feature-a`.
-2. Open a PR from the prebuild branch to the intended target branch (this can be any).
-3. The `pr-version-bump.yml` workflow detects the `prebuild/*` source branch and dispatches a prebuild workflow (as well as the normal version bump flow if the target branch is `main` or `release/**`).
-4. The prebuild workflow publishes changed images to their canonical packages and charts to `ghcr.io/caipe-io/charts` with branch- and commit-specific tags.
-5. Each new commit to the prebuild branch publishes a new temporary tag.
-6. Use the prebuild artifacts for testing.
-7. Upon PR merge or closure, all prebuild artifacts with the branch tag are automatically deleted.
+2. Open a PR from the prebuild branch to the intended target branch.
+3. Each `prebuild-*.yml` workflow triggers directly off that PR and publishes only the component(s) whose paths changed, tagged `<latest-stable-tag>-<branch>-<N>` — for example `1.1.0-feat-add-feature-a-3`, where `1.1.0` is the latest stable release and `3` is the commit count on the branch.
+4. Each new commit increments `N` and publishes a new tag.
+5. `prebuild-image-cleanup.yml` deletes every tag for that branch once the PR merges or closes.
 
-## Release Candidate Flow
+## Release Candidate & Hotfix Flow
 
-Use a `release/x.y.z` branch when preparing a new release.
+Use a `release/x.y.z` branch to prepare a new release, or `release/x.y.z-hotfix` to patch an already-released version — the flow is identical either way:
 
-1. Create or update the release branch.
-2. Open PRs targeting `release/x.y.z`.
-3. Let `pr-version-bump.yml` update the PR branch with version bumps.
-4. Merge PRs into `release/x.y.z`.
-5. `auto-tag.yml` creates tag `x.y.z-rc.N` or `x.y.z-rc.N-chart.M` (chart only change).
-6. Tag pushes trigger Docker and Helm CI.
-7. Test the published RC artifacts from GHCR.
+1. Create or update the branch.
+2. Open PRs targeting it and merge them.
+3. `auto-tag.yml` creates `x.y.z-rc.N` (or `x.y.z-hotfix.N`) on every push to the branch.
+4. The tag push triggers Docker and Helm CI for every component.
+5. Test the published artifacts from GHCR.
 
-RC Docker images are under `ghcr.io/caipe-io/<image>`.
-
-RC Helm charts are under `ghcr.io/caipe-io/charts`.
+When ready to publish, run the final release flow below with the intended final semver tag.
 
 ## Final Release Flow
 
-Final releases use plain `x.y.z` tags.
+Final releases use plain `x.y.z` tags and are always cut manually:
 
-The usual path is:
+1. Open a PR from `release/x.y.z` to `main`. `pr-version-bump.yml` detects the release merge and commits the final version files and changelog onto that PR branch.
+2. Merge the release PR to `main`. `auto-tag.yml` detects the merge and dispatches `release-manual.yml`.
+3. `release-manual.yml` validates the version — it must be a plain semver or an RC, and strictly greater than the latest existing stable tag — then creates the final tag, pushes it, and creates a draft GitHub Release.
+4. The tag triggers Docker and Helm CI for every component; each notifies `release-finalize.yml` on completion.
+5. `release-finalize.yml` publishes the draft once all required workflows pass, then dispatches post-release security scanning and sanity tests, and deletes RC tags older than the new release.
 
-1. Open a PR from `release/x.y.z` to `main`.
-2. `pr-version-bump.yml` detects the release merge PR.
-3. The workflow prepares the final version files and changelog.
-4. Merge the release PR to `main`.
-5. `auto-tag.yml` detects the release branch merge and dispatches `release-manual.yml`.
-6. `release-manual.yml` validates the version, creates the final tag, pushes it, and creates a draft GitHub Release.
-7. The final tag triggers Docker image and Helm chart CI.
-8. CI workflows notify `release-finalize.yml` as they complete.
-9. `release-finalize.yml` publishes the draft release after all required CI workflows pass.
-
-After publishing, `release-finalize.yml` also dispatches post-release security scanning and quick sanity integration tests. It cleans up old RC tags whose base version is older than the newly published release.
-
-If one or more required CI workflows fail, the GitHub Release remains in draft state and receives a failure note for investigation.
-
-## Hotfix Flow
-
-Use a `release/x.y.z-hotfix` branch when patching an already released version.
-
-:::info
-If your hotfix branch is off release 0.4.1 or below, you need to bring in the latest CI workflows in order to get the hotfix flow.
-
-Option 1: cherry pick the required commits from `main` to your hotfix branch:
-
-```bash
-git cherry-pick -m 1 99984b65fcc5f3cd50f15342bb750fcd4fb525f6
-git cherry-pick -m 1 a78bd633b42aa658fd83799d204ef67a6d15320b
-```
-
-If the first cherry pick conflicts on `.github/workflows/release-rc-tag.yml`, remove the file and continue:
-
-```bash
-git rm .github/workflows/release-rc-tag.yml
-git cherry-pick --continue
-```
-
-Option 2: copy the latest `.github` directory from `main` as a whole and commit it:
-
-```bash
-git fetch origin
-git restore --source origin/main --staged --worktree .github
-git commit -m "chore(ci): sync GitHub workflows from main"
-```
-:::
-
-The flow mirrors release candidates:
-
-1. Create `release/x.y.z-hotfix`.
-2. Open PRs targeting the hotfix branch.
-3. Merge approved fixes.
-4. `auto-tag.yml` creates `x.y.z-hotfix.N` or `x.y.z-hotfix.N-chart.M`.
-5. Tag-triggered CI publishes hotfix artifacts under the prerelease registry paths.
-
-When ready to publish the fixed version, run the final release flow with the intended final semver tag.
+If a required workflow fails, the release stays a draft with a failure note for investigation.
 
 ## Useful Workflow Reference
 
 | Workflow or action | Responsibility |
 | --- | --- |
-| `.github/workflows/pr-version-bump.yml` | PR labels, branch freshness checks, PR version commits, Helm prebuild dispatch |
-| `.github/workflows/auto-tag.yml` | Creates `-dev.N`, `-rc.N`, `-hotfix.N`, and `-chart.M` tags after merge |
-| `.github/workflows/release-manual.yml` | Creates final `x.y.z` tag and draft GitHub Release |
+| `.github/workflows/pr-version-bump.yml` | PR labels, branch freshness checks, release/*→main version preparation |
+| `.github/workflows/auto-tag.yml` | Detects release-branch merges to main; creates `-rc.N`/`-hotfix.N` tags on release branch pushes |
+| `.github/workflows/release-manual.yml` | Validates and creates the final `x.y.z` tag and draft GitHub Release |
+| `.github/workflows/release-prerelease.yml` | Manually cuts an `-rc.N`/`-hotfix.N` tag on demand |
 | `.github/workflows/release-finalize.yml` | Publishes draft release after required CI workflows pass |
-| `.github/workflows/ci-*.yml` | Publishes tagged Docker images |
-| `.github/workflows/ci-helm.yml` | Publishes tagged Helm charts |
+| `.github/workflows/ci-*.yml` | Publishes `canary` on main pushes, and every tag on tag pushes |
+| `.github/workflows/ci-helm.yml` | Publishes the Helm chart the same way |
 | `.github/workflows/prebuild-*.yml` | Publishes temporary prebuild images and charts for PR testing |
-| `.github/actions/determine-version/action.yml` | Computes the next branch-aware version tag |
-| `.github/actions/update-version-files/action.yml` | Updates pyproject, lockfile, and chart versions |
-| `.github/actions/determine-release-tag/action.yml` | Resolves the tag used by image CI workflows |
+| `.github/actions/prebuild-version/action.yml` | Computes `<latest-stable-tag>-<branch>-<N>` for prebuild builds |
+| `.github/actions/validate-release-tag/action.yml` | Enforces the semver/RC format and monotonicity rules on manual release tags |
+| `.github/actions/update-version-files/action.yml` | Sets version + appVersion + local dependency refs across pyproject, lockfile, and every chart |
+| `.github/actions/determine-release-tag/action.yml` | Resolves the tag used by image and chart CI workflows (`canary`, a pushed tag, or a manual input) |
 | `.github/actions/prepare-release/action.yml` | Updates final release files and generates changelog |
 
 ## Troubleshooting
 
-If a PR version bump fails with a branch update comment, merge the latest target branch into the PR branch and push again.
-
-If a prebuild does not publish immediately after the version bump workflow commits, wait for the next PR workflow run. Prebuild publishing intentionally skips when a new version-bump commit was just pushed.
-
-If Docker builds do not run for a chart-only tag, that is expected. `-chart.M` tags publish Helm updates only.
-
-If a final release stays as a draft, inspect the required CI workflows listed in `release-finalize.yml`. The release is published only after all required workflows pass or are skipped successfully.
+- **PR check fails with a branch update comment** — merge the latest target branch into the PR branch and push again.
+- **A `canary` build didn't pick up your change** — check whether your component's own paths actually changed in that push; a main push only rebuilds affected components, not everything.
+- **A final release stays as a draft** — inspect the required CI workflows listed in `release-finalize.yml`. It publishes only after all required workflows pass or are skipped successfully.
