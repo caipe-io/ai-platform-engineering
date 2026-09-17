@@ -104,6 +104,14 @@ ENABLE_RBAC_RUNTIME="${ENABLE_RBAC_RUNTIME:-true}"
 # / ENABLE_AUTONOMOUS_AGENTS=false on a memory-constrained host.
 ENABLE_SCHEDULER="${ENABLE_SCHEDULER:-true}"
 ENABLE_AUTONOMOUS_AGENTS="${ENABLE_AUTONOMOUS_AGENTS:-true}"
+# The runtime services are part of the default install, so expose their UI
+# capabilities by default as well. Operators on constrained hosts can still
+# opt out explicitly with DYNAMIC_AGENTS_ENABLED=false or
+# WORKFLOW_RUNNER_ENABLED=false.
+_DYNAMIC_AGENTS_ENABLED_EXPLICIT="${DYNAMIC_AGENTS_ENABLED:+set}"
+_WORKFLOW_RUNNER_ENABLED_EXPLICIT="${WORKFLOW_RUNNER_ENABLED:+set}"
+DYNAMIC_AGENTS_ENABLED="${DYNAMIC_AGENTS_ENABLED:-true}"
+WORKFLOW_RUNNER_ENABLED="${WORKFLOW_RUNNER_ENABLED:-true}"
 # First-install setup wizard: default ON. Operators that fully seed their
 # platform declaratively can set ENABLE_SETUP_WIZARD=false or pass
 # --no-setup-wizard to suppress the first-admin prompt.
@@ -6691,7 +6699,11 @@ deploy_caipe() {
   else
     helm_args+=(--set "caipe-ui.config.SSO_ENABLED=false")
   fi
-  helm_args+=(--set "caipe-ui.config.SETUP_WIZARD_ENABLED=${ENABLE_SETUP_WIZARD}")
+  helm_args+=(
+    --set "caipe-ui.config.SETUP_WIZARD_ENABLED=${ENABLE_SETUP_WIZARD}"
+    --set "caipe-ui.config.DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED}"
+    --set "caipe-ui.config.WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED}"
+  )
 
   # Default (no --ui-env-file) in-chart Keycloak SSO. The dev/Cisco env file
   # normally supplies OIDC_ISSUER/NEXTAUTH_URL, so without it the chart defaults
@@ -6992,7 +7004,8 @@ DAEOF
     helm_args+=(--set "caipe-ui.config.NEXTAUTH_URL=$(_ui_public_url)")
     local _config_keys=(
       OIDC_REQUIRED_GROUP OIDC_REQUIRED_ADMIN_GROUP OIDC_ENABLE_REFRESH_TOKEN
-      WORKFLOW_RUNNER_ENABLED AUDIT_LOGS_ENABLED FEEDBACK_ENABLED NPS_ENABLED
+      DYNAMIC_AGENTS_ENABLED WORKFLOW_RUNNER_ENABLED
+      AUDIT_LOGS_ENABLED FEEDBACK_ENABLED NPS_ENABLED
       JIRA_TICKET_ENABLED JIRA_TICKET_PROJECT
     )
     for key in "${_config_keys[@]}"; do
@@ -9209,6 +9222,19 @@ BANNER
           ;;
       esac
     done
+
+    # The UI feature flags default on for first installs. An env-file can
+    # explicitly turn either capability off, unless the shell environment
+    # already supplied that flag.
+    local _dynamic_agents_enabled _workflow_runner_enabled
+    _dynamic_agents_enabled=$(_env_get "$ENV_FILE" DYNAMIC_AGENTS_ENABLED)
+    _workflow_runner_enabled=$(_env_get "$ENV_FILE" WORKFLOW_RUNNER_ENABLED)
+    if [[ -n "$_dynamic_agents_enabled" && -z "${_DYNAMIC_AGENTS_ENABLED_EXPLICIT:-}" ]]; then
+      DYNAMIC_AGENTS_ENABLED="$_dynamic_agents_enabled"
+    fi
+    if [[ -n "$_workflow_runner_enabled" && -z "${_WORKFLOW_RUNNER_ENABLED_EXPLICIT:-}" ]]; then
+      WORKFLOW_RUNNER_ENABLED="$_workflow_runner_enabled"
+    fi
 
     # Honor feature toggles from --env-file so a single .env reproduces the same
     # stack as docker-compose.dev.yaml (rag, tracing, graph-rag, slack-bot,
