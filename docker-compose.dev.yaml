@@ -668,6 +668,11 @@ services:
       # The Autonomous tab in the UI is admin-gated; in local dev (SSO off) you also need
       # ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED=true (set below) so the dev-admin fallback is enabled.
       - AUTONOMOUS_AGENTS_URL=${AUTONOMOUS_AGENTS_URL:-http://autonomous-agents:8002}
+      # External Apps are available in local Compose with an empty
+      # deployment-owned catalog mounted below.
+      - AGENTIC_APPS_INSTALL_ENABLED=${AGENTIC_APPS_INSTALL_ENABLED:-true}
+      - AGENTIC_APPS_CONFIG_PATH=/app/config/agentic-apps.yaml
+      - AGENTIC_APP_TOKEN_SECRET=${AGENTIC_APP_TOKEN_SECRET:-local-agentic-app-token-secret-change-me}
       # Dev-admin fallback for local testing without SSO. NEVER enable this in production --
       # it grants admin to anonymous browser sessions. Required for the Autonomous tab to be
       # visible/usable in the dev compose stack since admin gating depends on either an OIDC
@@ -775,6 +780,7 @@ services:
       # APP_CONFIG_FILE remains accepted as an alias for CAIPE_APP_CONFIG_FILE.
       # If neither is set, mount the committed example template config/app-config.yaml.
       - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
+      - ${AGENTIC_APPS_CONFIG_FILE:-./config/agentic-apps.yaml}:/app/config/agentic-apps.yaml:ro
       - ./charts/ai-platform-engineering/data/skills:/charts/ai-platform-engineering/data/skills:ro
       # Hot-reload bind mounts. These are SAFE in prod because the
       # `runner` stage uses Next standalone output and never reads
@@ -860,6 +866,9 @@ services:
       - RAG_SERVER_URL=${RAG_SERVER_URL:-http://rag-server:9446}
       - RAG_URL=${RAG_URL:-http://localhost:9446}
       - AUTONOMOUS_AGENTS_URL=${AUTONOMOUS_AGENTS_URL:-http://autonomous-agents:8002}
+      - AGENTIC_APPS_INSTALL_ENABLED=${AGENTIC_APPS_INSTALL_ENABLED:-true}
+      - AGENTIC_APPS_CONFIG_PATH=/app/config/agentic-apps.yaml
+      - AGENTIC_APP_TOKEN_SECRET=${AGENTIC_APP_TOKEN_SECRET:-local-agentic-app-token-secret-change-me}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-caipe-dev-secret-change-in-production}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
       - SSO_ENABLED=${SSO_ENABLED:-false}
@@ -998,6 +1007,7 @@ services:
       # the prod runner's prebuilt assets (e.g. ui/public, which the
       # entrypoint writes env-config.js into).
       - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
+      - ${AGENTIC_APPS_CONFIG_FILE:-./config/agentic-apps.yaml}:/app/config/agentic-apps.yaml:ro
       - ./charts/ai-platform-engineering/data/skills:/charts/ai-platform-engineering/data/skills:ro
     command: ["/bin/sh", "/opt/harness/run-with-token.sh", "/app/entrypoint.sh"]
     depends_on:

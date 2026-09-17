@@ -66,6 +66,18 @@ grep -q 'EMBEDDINGS_PROVIDER=\${EMBEDDINGS_PROVIDER:-openai}' "$ROOT/docker-comp
   || fail "Compose does not pass the RAG embeddings provider"
 grep -q 'LITELLM_API_BASE=\${LITELLM_API_BASE:-' "$ROOT/docker-compose.yaml" \
   || fail "Compose does not pass LiteLLM embedding connectivity"
+grep -q 'AGENTIC_APPS_INSTALL_ENABLED=\${AGENTIC_APPS_INSTALL_ENABLED:-true}' "$ROOT/docker-compose.yaml" \
+  || fail "Compose does not enable the External Apps catalog"
+grep -q 'AGENTIC_APPS_CONFIG_PATH=/app/config/agentic-apps.yaml' "$ROOT/docker-compose.yaml" \
+  || fail "Compose does not configure the External Apps catalog path"
+grep -q 'AGENTIC_APP_TOKEN_SECRET=\${AGENTIC_APP_TOKEN_SECRET:-' "$ROOT/docker-compose.yaml" \
+  || fail "Compose does not provision the External Apps token secret"
+grep -q 'AGENTIC_APPS_CONFIG_FILE=./config/agentic-apps.yaml' "$ROOT/.env.example" \
+  || fail "Compose does not provide an External Apps catalog file"
+[[ -f "$ROOT/config/agentic-apps.yaml" ]] \
+  || fail "Compose External Apps catalog file is missing"
+grep -q '^  packages: \[\]$' "$ROOT/config/agentic-apps.yaml" \
+  || fail "Compose External Apps catalog is not a valid empty catalog"
 pass "Compose defaults are pinned, full-featured, and gateway-compatible"
 
 # The no-ingress/SSH path must configure a browser-reachable localhost issuer,

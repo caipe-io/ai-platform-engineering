@@ -470,6 +470,12 @@ services:
       # group, or set ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED=true ONLY for local dev.
       - ENABLE_AUTONOMOUS_AGENTS=${ENABLE_AUTONOMOUS_AGENTS:-false}
       - AUTONOMOUS_AGENTS_URL=${AUTONOMOUS_AGENTS_URL:-http://autonomous-agents:8002}
+      # External Apps are available in Compose through the deployment-owned
+      # catalog mounted below. The catalog is empty by default and can be
+      # populated without rebuilding the UI image.
+      - AGENTIC_APPS_INSTALL_ENABLED=${AGENTIC_APPS_INSTALL_ENABLED:-true}
+      - AGENTIC_APPS_CONFIG_PATH=/app/config/agentic-apps.yaml
+      - AGENTIC_APP_TOKEN_SECRET=${AGENTIC_APP_TOKEN_SECRET:-local-agentic-app-token-secret-change-me}
       # Audit log storage is owned by the lightweight Python audit-service.
       - AUDIT_LOG_BACKEND=${AUDIT_LOG_BACKEND:-service}
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
@@ -478,6 +484,7 @@ services:
       - harness_token:/run/harness-engine:ro
       - ./deploy/harness-engine/run-with-token.sh:/opt/harness/run-with-token.sh:ro
       - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
+      - ${AGENTIC_APPS_CONFIG_FILE:-./config/agentic-apps.yaml}:/app/config/agentic-apps.yaml:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s
