@@ -1,0 +1,40 @@
+name: "[Registry] Clean up untagged versions"
+description: "Deletes stale untagged container/chart versions left behind by floating tags like canary"
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    name: Clean up untagged versions
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: 🔑 Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.CI_BUILD_APP_ID }}
+          private-key: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-packages: write
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: 🧹 Delete stale untagged versions
+        uses: ./.github/actions/cleanup-untagged-versions
+        with:
+          owner: ${{ github.repository_owner }}
+          min_age_hours: '48'
+          registry_username: ${{ github.actor }}
+          registry_token: ${{ steps.app-token.outputs.token }}
