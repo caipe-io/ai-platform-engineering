@@ -340,6 +340,9 @@ describe('auth-config', () => {
         )
         expect(provider.issuer).toBe('http://localhost:7080/realms/caipe')
         expect(provider.wellKnown).toBeUndefined()
+        expect(provider.jwks_endpoint).toBe(
+          'http://caipe-keycloak:8080/realms/caipe/protocol/openid-connect/certs',
+        )
         expect(provider.token).toEqual({
           url: 'http://caipe-keycloak:8080/realms/caipe/protocol/openid-connect/token',
         })

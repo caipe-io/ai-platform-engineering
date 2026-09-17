@@ -387,6 +387,7 @@ export const authOptions: NextAuthOptions = {
       // Kubernetes service name in SSH port-forward mode.
       ...(serverOidcIssuer
         ? {
+            jwks_endpoint: `${serverOidcIssuer}/protocol/openid-connect/certs`,
             token: {
               url: `${serverOidcIssuer}/protocol/openid-connect/token`,
             },
