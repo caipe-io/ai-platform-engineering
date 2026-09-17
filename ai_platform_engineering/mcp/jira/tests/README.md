@@ -89,6 +89,9 @@ Unit tests for the Jira MCP server field discovery and related functionality.
    - ORDER BY Rank validation for board filters
    - Read-only protection
 
+11. **test_issue_model.py** - Jira issue model tests
+   - Reject malformed ADF descriptions before text conversion
+
 ## Running Tests
 
 ### Prerequisites

@@ -323,6 +323,33 @@ class TestAddComment:
         }
 
     @pytest.mark.asyncio
+    async def test_add_comment_rejects_unsupported_body_format(self, monkeypatch):
+        """Direct Python callers should receive a clear unsupported-format error."""
+        api_called = False
+
+        async def mock_request(path, method="GET", **kwargs):
+            nonlocal api_called
+            api_called = True
+            return True, {}
+
+        monkeypatch.setattr("tools.jira.comments.MCP_JIRA_READ_ONLY", False)
+        monkeypatch.setattr("tools.jira.comments.make_api_request", mock_request)
+
+        from tools.jira.comments import add_comment
+
+        result = await add_comment(
+            "PROJ-123",
+            "Comment body",
+            body_format="markdown",
+        )
+
+        assert api_called is False
+        assert json.loads(result) == {
+            "success": False,
+            "error": "body_format must be either 'text' or 'adf'.",
+        }
+
+    @pytest.mark.asyncio
     async def test_add_comment_read_only(self, monkeypatch):
         """Test that add_comment returns error JSON in read-only mode."""
         # Mock read-only mode
