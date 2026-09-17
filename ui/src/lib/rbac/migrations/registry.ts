@@ -1448,7 +1448,7 @@ export function deriveKnowledgeBaseSharedTeamGrantsPlan(
         object: `knowledge_base:${kbId}`,
       });
       tuples.push({
-        user: `team:${slug}#admin`,
+        user: `team:${slug}#member`,
         relation: "manager",
         object: `knowledge_base:${kbId}`,
       });
@@ -1730,7 +1730,7 @@ export function deriveMcpToolGrantsBackfillPlan(
       // `caller` → can_call: required so members can actually INVOKE the tool
       // (the `user` relation only grants can_use, not can_call).
       tuples.push({ user: `team:${slug}#member`, relation: "caller", object });
-      tuples.push({ user: `team:${slug}#admin`, relation: "manager", object });
+      tuples.push({ user: `team:${slug}#member`, relation: "manager", object });
       perRowResolved = true;
     }
     if (perRowResolved) {

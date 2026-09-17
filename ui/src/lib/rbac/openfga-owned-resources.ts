@@ -425,8 +425,15 @@ export function buildShareableResourceTupleDiff(
     ];
   }
   if (input.ownerTeamManagerViaMember && previousOwnerSlug && previousOwnerSlug !== ownerSlug) {
+    // `buildTeamGrantTuples` queues a delete for the previous owner's
+    // `#admin manager` grant, but that tuple was never written under this
+    // override (the write side always swaps it for `#member`) — drop the
+    // stale delete and emit the correct one instead.
+    const previousOwnerAdminManager = `team:${previousOwnerSlug}#admin`;
     teamDeletes = [
-      ...teamDeletes,
+      ...teamDeletes.filter(
+        (tuple) => !(tuple.relation === "manager" && tuple.user === previousOwnerAdminManager),
+      ),
       { user: `team:${previousOwnerSlug}#member`, relation: "manager", object },
     ];
   }

@@ -420,13 +420,13 @@ describe("knowledge_base shared-team grants migration", () => {
       expect.arrayContaining([
         { user: "team:platform#member", relation: "reader", object: "knowledge_base:kb-alpha" },
         { user: "team:platform#member", relation: "ingestor", object: "knowledge_base:kb-alpha" },
-        { user: "team:platform#admin", relation: "manager", object: "knowledge_base:kb-alpha" },
+        { user: "team:platform#member", relation: "manager", object: "knowledge_base:kb-alpha" },
         { user: "team:platform#member", relation: "reader", object: "knowledge_base:kb-beta" },
         { user: "team:platform#member", relation: "ingestor", object: "knowledge_base:kb-beta" },
-        { user: "team:platform#admin", relation: "manager", object: "knowledge_base:kb-beta" },
+        { user: "team:platform#member", relation: "manager", object: "knowledge_base:kb-beta" },
         { user: "team:data-eng#member", relation: "reader", object: "knowledge_base:kb-alpha" },
         { user: "team:data-eng#member", relation: "ingestor", object: "knowledge_base:kb-alpha" },
-        { user: "team:data-eng#admin", relation: "manager", object: "knowledge_base:kb-alpha" },
+        { user: "team:data-eng#member", relation: "manager", object: "knowledge_base:kb-alpha" },
       ]),
     );
   });
@@ -593,7 +593,7 @@ describe("mcp_tool grants backfill migration", () => {
         { user: "team:platform#member", relation: "reader", object: "mcp_tool:search" },
         { user: "team:platform#member", relation: "user", object: "mcp_tool:search" },
         { user: "team:platform#member", relation: "caller", object: "mcp_tool:search" },
-        { user: "team:platform#admin", relation: "manager", object: "mcp_tool:search" },
+        { user: "team:platform#member", relation: "manager", object: "mcp_tool:search" },
         { user: "team:platform#member", relation: "reader", object: "mcp_tool:infra-search" },
         { user: "team:data-eng#member", relation: "caller", object: "mcp_tool:custom-tool" },
       ]),
