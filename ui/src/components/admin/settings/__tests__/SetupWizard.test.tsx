@@ -134,6 +134,18 @@ describe("SetupWizardSettings", () => {
     expect(screen.getByText(/automatic setup is disabled/i)).toBeInTheDocument();
   });
 
+  it("keeps the add-model flow available when a model was discovered", async () => {
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+
+    expect(await screen.findByRole("heading", { name: "Test" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+
+    expect(await screen.findByRole("button", { name: /add another model/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add another model/i }));
+    expect(screen.getByLabelText("Model ID")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add model" })).toBeDisabled();
+  });
+
   it("creates a starter agent and completes an end-to-end smoke test", async () => {
     const freshPayload = {
       ...setupPayload,

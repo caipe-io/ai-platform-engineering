@@ -802,27 +802,48 @@ export function SetupWizardDialog({
                             </div>
                           ) : <div className="flex justify-center gap-2"><Button onClick={() => setShowAddModel(true)}><Sparkles className="mr-2 h-4 w-4" />Add a model</Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=llm-models">Advanced configuration<ExternalLink className="ml-2 h-4 w-4" /></Link></Button></div>}
                         </div>
-                      ) : models.map((model) => (
-                        <button
-                          key={model._id}
-                          type="button"
-                          onClick={() => setSelection((current) => ({
-                            ...current,
-                            model_id: model._id,
-                            model_provider: model.provider,
-                          }))}
-                          className={cn(
-                            "flex w-full items-center justify-between rounded-lg border p-4 text-left transition-colors",
-                            selection.model_id === model._id ? "border-primary bg-primary/5" : "hover:bg-muted/40",
+                      ) : (
+                        <>
+                          {models.map((model) => (
+                            <button
+                              key={model._id}
+                              type="button"
+                              onClick={() => setSelection((current) => ({
+                                ...current,
+                                model_id: model._id,
+                                model_provider: model.provider,
+                              }))}
+                              className={cn(
+                                "flex w-full items-center justify-between rounded-lg border p-4 text-left transition-colors",
+                                selection.model_id === model._id ? "border-primary bg-primary/5" : "hover:bg-muted/40",
+                              )}
+                            >
+                              <span>
+                                <span className="block font-medium">{model.name}</span>
+                                <span className="block text-xs text-muted-foreground">{model.provider} · {model._id}</span>
+                              </span>
+                              {selection.model_id === model._id ? <CheckCircle2 className="h-5 w-5 text-primary" /> : <Circle className="h-5 w-5 text-muted-foreground/50" />}
+                            </button>
+                          ))}
+                          {showAddModel ? (
+                            <div className="rounded-xl border border-dashed p-4">
+                              <div className="grid gap-3 md:grid-cols-3">
+                                <div><Label htmlFor="setup-model-id">Model ID</Label><Input id="setup-model-id" placeholder="claude-haiku-4-5" value={newModel.model_id} onChange={(e) => setNewModel({ ...newModel, model_id: e.target.value })} /></div>
+                                <div><Label htmlFor="setup-model-name">Display name</Label><Input id="setup-model-name" placeholder="Claude Haiku" value={newModel.name} onChange={(e) => setNewModel({ ...newModel, name: e.target.value })} /></div>
+                                <div><Label htmlFor="setup-model-provider">Provider</Label><Input id="setup-model-provider" placeholder="openai or anthropic" value={newModel.provider} onChange={(e) => setNewModel({ ...newModel, provider: e.target.value })} /></div>
+                              </div>
+                              <div className="mt-3 flex gap-2">
+                                <Button type="button" onClick={() => void addModel()} disabled={saving || !newModel.model_id || !newModel.name || !newModel.provider}>{saving ? "Adding..." : "Add model"}</Button>
+                                <Button type="button" variant="outline" onClick={() => setShowAddModel(false)}>Cancel</Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <Button type="button" variant="outline" className="w-full" onClick={() => setShowAddModel(true)}>
+                              <Sparkles className="mr-2 h-4 w-4" />Add another model
+                            </Button>
                           )}
-                        >
-                          <span>
-                            <span className="block font-medium">{model.name}</span>
-                            <span className="block text-xs text-muted-foreground">{model.provider} · {model._id}</span>
-                          </span>
-                          {selection.model_id === model._id ? <CheckCircle2 className="h-5 w-5 text-primary" /> : <Circle className="h-5 w-5 text-muted-foreground/50" />}
-                        </button>
-                      ))}
+                        </>
+                      )}
                     </div>
                   )}
 

@@ -359,7 +359,10 @@ config:
   # Accepted JWT audiences for Bearer token validation (comma-separated)
   # When the OIDC authorization server uses a fixed audience that differs
   # from OIDC_CLIENT_ID, list accepted values here.
-  # OIDC_ACCEPTED_AUDIENCES: "https://my-api.example.com"
+  # The bundled Keycloak realm mints user tokens for caipe-platform while
+  # the browser client is caipe-ui. Operators using another audience should
+  # override this value explicitly.
+  OIDC_ACCEPTED_AUDIENCES: "caipe-platform"
   # Support contact email
   SUPPORT_EMAIL: "support@example.com"
   # Header link URLs (leave empty/commented to hide)
