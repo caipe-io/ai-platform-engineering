@@ -2,11 +2,12 @@
 
 import json
 import logging
-from typing import Annotated, Optional, Dict, Any
+from typing import Annotated, Optional, Dict, Any, Literal, Union
 
 from pydantic import Field
 from api.client import make_api_request
 from config import MCP_JIRA_READ_ONLY
+from utils.adf import is_adf_format
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -84,11 +85,12 @@ async def get_comments(
 async def add_comment(
     issue_key: Annotated[str, Field(description="Jira issue key (e.g., 'PROJ-123')")],
     body: Annotated[
-        str,
+        Union[str, Dict[str, Any]],
         Field(
             description=(
-                "The comment text in plain text or markdown format. "
-                "The text will be automatically converted to Jira's ADF (Atlassian Document Format)."
+                "The comment body. Pass a string when body_format is 'text'. "
+                "For rich Jira Cloud comments, pass a complete Atlassian Document "
+                "Format (ADF) document object and set body_format to 'adf'."
             )
         ),
     ],
@@ -102,13 +104,24 @@ async def add_comment(
             ),
         ),
     ] = None,
+    body_format: Annotated[
+        Literal["text", "adf"],
+        Field(
+            description=(
+                "Format of body. Use 'text' (default) for backward-compatible plain "
+                "text conversion. Use 'adf' to preserve native Jira formatting such "
+                "as headings, marks, links, lists, code blocks, and tables."
+            ),
+        ),
+    ] = "text",
 ) -> str:
     """Add a comment to a Jira issue.
 
     Args:
         issue_key: Jira issue key.
-        body: Comment text (plain text or markdown).
+        body: Plain text or a complete ADF document object.
         visibility: Optional visibility restriction.
+        body_format: ``text`` for plain text or ``adf`` for native rich content.
 
     Returns:
         JSON string representing the created comment.
@@ -124,24 +137,57 @@ async def add_comment(
         }
         return json.dumps(error_result, indent=2, ensure_ascii=False)
 
-    logger.debug(f"add_comment called with issue_key={issue_key}, body length={len(body)}")
+    logger.debug(
+        "add_comment called with issue_key=%s, body_format=%s, body_type=%s",
+        issue_key,
+        body_format,
+        type(body).__name__,
+    )
 
-    # Convert plain text to ADF format
-    adf_body = {
-        "type": "doc",
-        "version": 1,
-        "content": [
+    if body_format == "text":
+        if not isinstance(body, str):
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "body must be a string when body_format is 'text'.",
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        # Preserve the existing plain-text payload exactly for compatibility.
+        adf_body = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": body}],
+                }
+            ],
+        }
+    elif body_format == "adf":
+        if not is_adf_format(body):
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": (
+                        "body must be a valid ADF document object when body_format "
+                        "is 'adf'. Expected type='doc', version=1, and a content list."
+                    ),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        adf_body = body
+    else:
+        return json.dumps(
             {
-                "type": "paragraph",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": body
-                    }
-                ]
-            }
-        ]
-    }
+                "success": False,
+                "error": "body_format must be either 'text' or 'adf'.",
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
 
     comment_data: Dict[str, Any] = {
         "body": adf_body,
@@ -448,4 +494,3 @@ async def get_comment(
         return json.dumps(error_result, indent=2, ensure_ascii=False)
 
     return json.dumps(response, indent=2, ensure_ascii=False)
-

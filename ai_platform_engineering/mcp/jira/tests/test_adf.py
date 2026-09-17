@@ -116,6 +116,11 @@ class TestIsADFFormat:
         invalid = {"type": "doc", "content": []}
         assert is_adf_format(invalid) is False
 
+    def test_content_must_be_a_list(self):
+        """Test rejecting an ADF root with malformed content."""
+        invalid = {"type": "doc", "version": 1, "content": "not-a-list"}
+        assert is_adf_format(invalid) is False
+
     def test_wrong_type(self):
         """Test rejecting wrong type."""
         assert is_adf_format("not a dict") is False
@@ -156,4 +161,3 @@ class TestCreateEmptyADF:
         assert result["version"] == 1
         assert result["type"] == "doc"
         assert result["content"] == []
-

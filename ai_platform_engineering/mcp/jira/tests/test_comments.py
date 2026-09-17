@@ -126,39 +126,201 @@ class TestAddComment:
     @pytest.mark.asyncio
     async def test_add_comment_success(self, monkeypatch):
         """Test adding a comment."""
-        def mock_check_read_only():
-            return None
-
-        from tools.jira import constants
-        monkeypatch.setattr(constants, "check_read_only", mock_check_read_only)
-
-        mock_response = {
-            "id": "10002",
-            "body": {
-                "type": "doc",
-                "version": 1,
-                "content": [
-                    {
-                        "type": "paragraph",
-                        "content": [{"type": "text", "text": "New comment"}]
-                    }
-                ]
-            },
-            "author": {"displayName": "Current User"},
-            "created": "2024-01-03T12:00:00.000Z"
-        }
+        captured_request = {}
 
         async def mock_request(path, method="GET", **kwargs):
-            return (True, mock_response)
+            captured_request["path"] = path
+            captured_request["method"] = method
+            captured_request["data"] = kwargs.get("data")
+            return True, {"id": "10002", "body": kwargs["data"]["body"]}
 
-        from api import client
-        monkeypatch.setattr(client, "make_api_request", mock_request)
+        monkeypatch.setattr("tools.jira.comments.MCP_JIRA_READ_ONLY", False)
+        monkeypatch.setattr("tools.jira.comments.make_api_request", mock_request)
 
         from tools.jira.comments import add_comment
 
         result = await add_comment("PROJ-123", "New comment")
+        result_dict = json.loads(result)
 
-        assert "10002" in result or "success" in result.lower() or "added" in result.lower()
+        assert result_dict["id"] == "10002"
+        assert captured_request == {
+            "path": "rest/api/3/issue/PROJ-123/comment",
+            "method": "POST",
+            "data": {
+                "body": {
+                    "type": "doc",
+                    "version": 1,
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [{"type": "text", "text": "New comment"}],
+                        }
+                    ],
+                }
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_add_comment_accepts_native_adf(self, monkeypatch):
+        """Native ADF should reach Jira unchanged, including rich content."""
+        captured_request = {}
+        adf_body = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "heading",
+                    "attrs": {"level": 2},
+                    "content": [{"type": "text", "text": "Triage analysis"}],
+                },
+                {
+                    "type": "paragraph",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Related issue",
+                            "marks": [
+                                {"type": "strong"},
+                                {
+                                    "type": "link",
+                                    "attrs": {"href": "https://example.test/browse/PROJ-100"},
+                                },
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "type": "table",
+                    "attrs": {"isNumberColumnEnabled": False, "layout": "default"},
+                    "content": [
+                        {
+                            "type": "tableRow",
+                            "content": [
+                                {
+                                    "type": "tableHeader",
+                                    "content": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": [{"type": "text", "text": "Key"}],
+                                        }
+                                    ],
+                                },
+                                {
+                                    "type": "tableCell",
+                                    "content": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": [{"type": "text", "text": "PROJ-100"}],
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        async def mock_request(path, method="GET", **kwargs):
+            captured_request["path"] = path
+            captured_request["method"] = method
+            captured_request["data"] = kwargs.get("data")
+            return True, {"id": "10003", "body": kwargs["data"]["body"]}
+
+        monkeypatch.setattr("tools.jira.comments.MCP_JIRA_READ_ONLY", False)
+        monkeypatch.setattr("tools.jira.comments.make_api_request", mock_request)
+
+        from tools.jira.comments import add_comment
+
+        result = await add_comment(
+            "PROJ-123",
+            adf_body,
+            visibility={"type": "role", "value": "Administrators"},
+            body_format="adf",
+        )
+
+        assert json.loads(result)["id"] == "10003"
+        assert captured_request["path"] == "rest/api/3/issue/PROJ-123/comment"
+        assert captured_request["method"] == "POST"
+        assert captured_request["data"] == {
+            "body": adf_body,
+            "visibility": {"type": "role", "value": "Administrators"},
+        }
+
+    @pytest.mark.asyncio
+    async def test_add_comment_preserves_legacy_multiline_text(self, monkeypatch):
+        """Default text mode should not split or trim existing comment input."""
+        captured_request = {}
+
+        async def mock_request(path, method="GET", **kwargs):
+            captured_request["data"] = kwargs.get("data")
+            return True, {"id": "10004"}
+
+        monkeypatch.setattr("tools.jira.comments.MCP_JIRA_READ_ONLY", False)
+        monkeypatch.setattr("tools.jira.comments.make_api_request", mock_request)
+
+        from tools.jira.comments import add_comment
+
+        body = " First line\n\nSecond line "
+        await add_comment("PROJ-123", body)
+
+        assert captured_request["data"]["body"] == {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": body}],
+                }
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_add_comment_rejects_invalid_adf_without_api_call(self, monkeypatch):
+        """Invalid ADF should fail locally instead of posting malformed content."""
+        api_called = False
+
+        async def mock_request(path, method="GET", **kwargs):
+            nonlocal api_called
+            api_called = True
+            return True, {}
+
+        monkeypatch.setattr("tools.jira.comments.MCP_JIRA_READ_ONLY", False)
+        monkeypatch.setattr("tools.jira.comments.make_api_request", mock_request)
+
+        from tools.jira.comments import add_comment
+
+        result = await add_comment(
+            "PROJ-123",
+            {"type": "doc", "version": 1, "content": "not-a-list"},
+            body_format="adf",
+        )
+
+        assert api_called is False
+        assert json.loads(result) == {
+            "success": False,
+            "error": (
+                "body must be a valid ADF document object when body_format is 'adf'. "
+                "Expected type='doc', version=1, and a content list."
+            ),
+        }
+
+    @pytest.mark.asyncio
+    async def test_add_comment_rejects_adf_body_in_text_mode(self, monkeypatch):
+        """The explicit format flag should guard against accidental rich payloads."""
+        monkeypatch.setattr("tools.jira.comments.MCP_JIRA_READ_ONLY", False)
+
+        from tools.jira.comments import add_comment
+
+        result = await add_comment(
+            "PROJ-123",
+            {"type": "doc", "version": 1, "content": []},
+        )
+
+        assert json.loads(result) == {
+            "success": False,
+            "error": "body must be a string when body_format is 'text'.",
+        }
 
     @pytest.mark.asyncio
     async def test_add_comment_read_only(self, monkeypatch):

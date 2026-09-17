@@ -233,7 +233,7 @@ def is_adf_format(value: Any) -> bool:
     return (
         value.get("type") == "doc" and
         value.get("version") == 1 and
-        "content" in value
+        isinstance(value.get("content"), list)
     )
 
 
@@ -266,4 +266,3 @@ def create_empty_adf() -> Dict[str, Any]:
         "type": "doc",
         "content": []
     }
-
