@@ -9626,8 +9626,9 @@ Re-run behavior:
 Environment variables (all optional):
   LLM_PROVIDER            LLM provider: anthropic-claude (default) | aws-bedrock | openai
   LLM_STREAMING           Set false for non-streaming model requests (default: true)
-  OPENAI_API_KEY          Pre-set OpenAI API key (skips prompt)
-  OPENAI_MODEL_NAME       OpenAI model (default: gpt-5.2; used by llm_wrapper)
+  OPENAI_API_KEY          Pre-set OpenAI or OpenAI-compatible gateway API key (skips prompt)
+  OPENAI_ENDPOINT         OpenAI-compatible endpoint (default: https://api.openai.com/v1)
+  OPENAI_MODEL_NAME       Model exposed by that endpoint (default: gpt-5.2; used by LLMFactory)
   ANTHROPIC_API_KEY       Pre-set Anthropic API key (skips prompt)
   ANTHROPIC_MODEL_NAME    Anthropic model (default: claude-haiku-4-5)
   AWS_ACCESS_KEY_ID       AWS access key for Bedrock
