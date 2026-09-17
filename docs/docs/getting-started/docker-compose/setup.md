@@ -81,6 +81,21 @@ controls who can query their content independently from source management.
 Change the YAML and restart the UI to update or remove them. Connector
 credentials remain in `.env` or the deployment secret store.
 
+External Apps are enabled by default with an empty deployment-owned catalog.
+Add packages and installations to `config/agentic-apps.yaml`, or point
+`AGENTIC_APPS_CONFIG_FILE` at another catalog file, then restart the UI.
+
+Schedules are not available in the Docker Compose path. The scheduler creates
+Kubernetes CronJobs, so use the local KinD/Kubernetes path when scheduled runs
+are required:
+
+```bash
+./setup-caipe.sh --create-cluster --no-ingress --port-forward-mode
+```
+
+The installer enables the scheduler and External Apps by default in that path;
+use `ENABLE_SCHEDULER=false` or `--no-apps` for an intentional opt-out.
+
 ## Start
 
 ```bash

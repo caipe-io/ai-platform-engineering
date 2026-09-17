@@ -80,6 +80,17 @@ grep -q '^  packages: \[\]$' "$ROOT/config/agentic-apps.yaml" \
   || fail "Compose External Apps catalog is not a valid empty catalog"
 pass "Compose defaults are pinned, full-featured, and gateway-compatible"
 
+# The full local Kind/Kubernetes path includes the scheduler and External Apps
+# by default. Schedules are intentionally not represented as a Compose-only
+# flag because their runner creates Kubernetes CronJobs.
+grep -q '^ENABLE_SCHEDULER="\${ENABLE_SCHEDULER:-true}"$' "$SOURCE" \
+  || fail "Kind local installs do not enable the scheduler by default"
+grep -q '^ENABLE_AGENTIC_APPS="\${ENABLE_AGENTIC_APPS:-true}"$' "$SOURCE" \
+  || fail "Kind local installs do not enable External Apps by default"
+grep -q 'global.scheduler.enabled=true' "$SOURCE" \
+  || fail "Kind local installs do not deploy the scheduler"
+pass "Kind local installs include scheduler and External Apps by default"
+
 # The no-ingress/SSH path must configure a browser-reachable localhost issuer,
 # while server-side discovery stays on the in-cluster Keycloak service.
 grep -q -- '--port-forward-mode' "$SOURCE" \
