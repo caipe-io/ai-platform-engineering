@@ -345,6 +345,7 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
 // caipe-keycloak:8080 inside the cluster.
 const browserOidcIssuer = process.env.OIDC_ISSUER?.replace(/\/+$/, "");
 const serverOidcIssuer = (process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER)?.replace(/\/+$/, "");
+const hasSplitOidcEndpoints = Boolean(browserOidcIssuer && serverOidcIssuer && browserOidcIssuer !== serverOidcIssuer);
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -352,16 +353,20 @@ export const authOptions: NextAuthOptions = {
       id: "oidc",
       name: "SSO",
       type: "oauth",
+      ...(browserOidcIssuer ? { issuer: browserOidcIssuer } : {}),
       // OIDC_DISCOVERY_URL lets server-side discovery use a Docker-internal URL
       // (e.g. http://keycloak:7080/realms/caipe) while OIDC_ISSUER stays as the
       // browser-facing URL (e.g. http://localhost:7080/realms/caipe) so the
       // "iss" claim in JWTs validates against what the browser was redirected to.
       // Falls back to OIDC_ISSUER when not set (single-URL deployments).
-      wellKnown: process.env.OIDC_DISCOVERY_URL
-        ? `${process.env.OIDC_DISCOVERY_URL}/.well-known/openid-configuration`
-        : process.env.OIDC_ISSUER
-          ? `${process.env.OIDC_ISSUER}/.well-known/openid-configuration`
-          : undefined,
+      // When the browser and server use different OIDC origins, do not feed
+      // NextAuth discovery metadata with the internal issuer. openid-client
+      // validates the metadata issuer and would reject it before redirecting
+      // the browser. The explicit endpoints below preserve the split while
+      // single-origin deployments continue to use discovery.
+      wellKnown: !hasSplitOidcEndpoints && (process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER)
+        ? `${process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER}/.well-known/openid-configuration`
+        : undefined,
       // Keycloak issues regular refresh tokens for confidential clients
       // without needing offline_access scope. Requesting offline_access
       // requires extra Keycloak config and causes login failures if not
