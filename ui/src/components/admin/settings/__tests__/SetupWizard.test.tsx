@@ -218,4 +218,76 @@ describe("SetupWizardSettings", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("explains degraded knowledge bases and offers guarded migration remediation", async () => {
+    const freshPayload = {
+      ...setupPayload,
+      data: {
+        ...setupPayload.data,
+        fresh_install: true,
+        state: {
+          ...setupPayload.data.state,
+          status: "not_started",
+          current_step: 1,
+          completed_steps: [],
+          skipped_steps: [],
+        },
+      },
+    };
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/setup-wizard" && init?.method === "PATCH") {
+        return response({
+          success: true,
+          data: { state: { ...freshPayload.data.state, status: "in_progress" } },
+        });
+      }
+      if (url === "/api/admin/setup-wizard") return response(freshPayload);
+      if (url.startsWith("/api/platform/health")) {
+        return response({
+          status: "degraded",
+          capabilities: [{
+            id: "knowledge-bases",
+            label: "Knowledge Bases",
+            status: "degraded",
+            detail: "Knowledge Bases health check is unreachable",
+            required: false,
+          }],
+          probes: [
+            { id: "rag-server", label: "RAG server", status: "down", detail: "RAG server is not reachable" },
+            { id: "rebac-migrations", label: "RBAC Migrations", status: "warning", detail: "23 blocking migrations pending", remediation: { href: "/admin/security", label: "Migration Assistant" } },
+          ],
+        });
+      }
+      if (url.startsWith("/api/llm-models")) {
+        return response({ success: true, data: { items: [{ _id: "model-primary", name: "Primary", provider: "openai" }] } });
+      }
+      if (url.startsWith("/api/mcp-servers")) {
+        return response({ success: true, data: { items: [] } });
+      }
+      if (url === "/api/admin/rebac/migrations/apply-all" && init?.method === "POST") {
+        return response({ success: true, data: { applied_count: 23, failed_count: 0, skipped_count: 0 } });
+      }
+      return response({ error: "Not found" }, 404);
+    }) as jest.Mock;
+
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+
+    expect(await screen.findByText(/How to fix:/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Knowledge Bases" })).toHaveAttribute("href", "/knowledge-bases");
+    fireEvent.click(screen.getByRole("button", { name: "Auto-remediate" }));
+    expect(screen.getByText(/changes live access data/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and apply" }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/admin/rebac/migrations/apply-all",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ confirmation: "APPLY ALL PENDING MIGRATIONS" }),
+        }),
+      );
+    });
+    expect(await screen.findByText("23 migrations applied")).toBeInTheDocument();
+  });
 });

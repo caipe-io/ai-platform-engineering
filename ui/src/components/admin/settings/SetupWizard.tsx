@@ -63,6 +63,12 @@ interface HealthCapability {
   required: boolean;
 }
 
+interface Remediation {
+  href: string;
+  label: string;
+  description: string;
+}
+
 interface HealthPayload {
   status: "healthy" | "degraded" | "down";
   capabilities: HealthCapability[];
@@ -118,6 +124,8 @@ const RECIPES = [
     description: "A minimal editable agent that you can shape after setup.",
   },
 ];
+
+const APPLY_ALL_MIGRATIONS_CONFIRMATION = "APPLY ALL PENDING MIGRATIONS";
 
 function messageFromPayload(payload: unknown, fallback: string): string {
   if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string") {
@@ -231,6 +239,9 @@ export function SetupWizardDialog({
   const [testConversationId, setTestConversationId] = useState<string | null>(null);
   const [showAddModel, setShowAddModel] = useState(false);
   const [newModel, setNewModel] = useState({ model_id: "", name: "", provider: "" });
+  const [confirmMigrationRemediation, setConfirmMigrationRemediation] = useState(false);
+  const [remediatingMigrations, setRemediatingMigrations] = useState(false);
+  const [migrationRemediationResult, setMigrationRemediationResult] = useState<string | null>(null);
 
   const patchState = useCallback(async (body: Record<string, unknown>) => {
     const result = await jsonRequest<ApiEnvelope<{ state: SetupWizardPayload["state"] }>>(
@@ -463,6 +474,35 @@ export function SetupWizardDialog({
     }
   };
 
+  const autoRemediateMigrations = async () => {
+    setError(null);
+    setMigrationRemediationResult(null);
+    setRemediatingMigrations(true);
+    try {
+      const result = await jsonRequest<ApiEnvelope<{
+        applied_count: number;
+        failed_count: number;
+        skipped_count: number;
+      }>>("/api/admin/rebac/migrations/apply-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: APPLY_ALL_MIGRATIONS_CONFIRMATION }),
+      });
+      const summary = result.data;
+      setMigrationRemediationResult(
+        `${summary.applied_count} migration${summary.applied_count === 1 ? "" : "s"} applied` +
+          (summary.failed_count > 0 ? `; ${summary.failed_count} failed` : "") +
+          (summary.skipped_count > 0 ? `; ${summary.skipped_count} skipped` : ""),
+      );
+      setConfirmMigrationRemediation(false);
+      setHealth(await healthRequest());
+    } catch (remediationError) {
+      setError(remediationError instanceof Error ? remediationError.message : "Could not apply RBAC migrations");
+    } finally {
+      setRemediatingMigrations(false);
+    }
+  };
+
   const canContinue = step !== 2 || Boolean(selectedModel);
 
   const closeCompleted = () => {
@@ -548,7 +588,13 @@ export function SetupWizardDialog({
                       <div className="space-y-2">
                         {(health?.capabilities ?? []).filter((capability) =>
                           ["chat-runtime", "dynamic-agents", "knowledge-bases", "authentication"].includes(capability.id)
-                        ).map((capability) => <CapabilityRow key={capability.id} capability={capability} />)}
+                        ).map((capability) => (
+                          <CapabilityRow
+                            key={capability.id}
+                            capability={capability}
+                            remediation={getCapabilityRemediation(capability, health?.probes)}
+                          />
+                        ))}
                         {health?.probes?.filter((probe) => probe.id === "rebac-migrations").map((probe) => (
                           <div key={probe.id} className="flex items-start justify-between gap-4 rounded-lg border p-3">
                             <div className="flex gap-3">
@@ -558,10 +604,47 @@ export function SetupWizardDialog({
                               <div>
                                 <p className="text-sm font-medium">{probe.label}</p>
                                 <p className="text-xs text-muted-foreground">{probe.detail}</p>
-                                {probe.remediation && probe.status !== "healthy" && (
-                                  <Link className="mt-1 inline-block text-xs text-primary hover:underline" href={probe.remediation.href}>
-                                    {probe.remediation.label}
-                                  </Link>
+                                {probe.status !== "healthy" && (
+                                  <div className="mt-2 space-y-2">
+                                    <p className="text-xs text-muted-foreground">
+                                      Review the pending changes before applying them. The operation is idempotent and runs in dependency order.
+                                    </p>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      {probe.remediation && (
+                                        <Link className="text-xs text-primary hover:underline" href={probe.remediation.href}>
+                                          {probe.remediation.label}
+                                        </Link>
+                                      )}
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => setConfirmMigrationRemediation(true)}
+                                        disabled={remediatingMigrations}
+                                      >
+                                        {remediatingMigrations && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                                        Auto-remediate
+                                      </Button>
+                                    </div>
+                                    {confirmMigrationRemediation && (
+                                      <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+                                        <p className="text-xs text-amber-700 dark:text-amber-300">
+                                          This applies all pending RBAC migrations and changes live access data. Continue only if this deployment is ready for the migration.
+                                        </p>
+                                        <div className="mt-2 flex gap-2">
+                                          <Button type="button" size="sm" variant="outline" onClick={() => setConfirmMigrationRemediation(false)} disabled={remediatingMigrations}>
+                                            Cancel
+                                          </Button>
+                                          <Button type="button" size="sm" onClick={() => void autoRemediateMigrations()} disabled={remediatingMigrations}>
+                                            Confirm and apply
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    )}
+                                    {migrationRemediationResult && (
+                                      <p className="text-xs text-emerald-700 dark:text-emerald-300">{migrationRemediationResult}</p>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -793,7 +876,22 @@ function InventoryTile({ label, value }: { label: string; value: number }) {
   );
 }
 
-function CapabilityRow({ capability }: { capability: HealthCapability }) {
+function getCapabilityRemediation(
+  capability: HealthCapability,
+  probes: HealthPayload["probes"],
+): Remediation | undefined {
+  if (capability.id === "knowledge-bases") {
+    const ragProbe = probes?.find((probe) => probe.id === "rag-server");
+    return {
+      href: ragProbe?.remediation?.href ?? "/knowledge-bases",
+      label: ragProbe?.remediation?.label ?? "Open Knowledge Bases",
+      description: ragProbe?.detail ?? "Check the RAG server dependencies and enable the RAG service/profile if it is not running.",
+    };
+  }
+  return undefined;
+}
+
+function CapabilityRow({ capability, remediation }: { capability: HealthCapability; remediation?: Remediation }) {
   const healthy = capability.status === "healthy";
   const disabled = capability.status === "disabled";
   return (
@@ -803,6 +901,12 @@ function CapabilityRow({ capability }: { capability: HealthCapability }) {
         <div>
           <p className="text-sm font-medium">{capability.label}</p>
           <p className="text-xs text-muted-foreground">{capability.detail}</p>
+          {remediation && !healthy && (
+            <div className="mt-2 space-y-1">
+              <p className="text-xs text-muted-foreground"><span className="font-medium">How to fix:</span> {remediation.description}</p>
+              <Link className="text-xs text-primary hover:underline" href={remediation.href}>{remediation.label}</Link>
+            </div>
+          )}
         </div>
       </div>
       <Badge variant="outline">{capability.status}</Badge>
@@ -815,31 +919,6 @@ function SummaryItem({ label, value }: { label: string; value: string }) {
     <div>
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="font-medium">{value}</dd>
-    </div>
-  );
-}
-
-function EmptyState({
-  description,
-  href,
-  icon: Icon,
-  linkLabel,
-  title,
-}: {
-  description: string;
-  href: string;
-  icon: typeof Sparkles;
-  linkLabel: string;
-  title: string;
-}) {
-  return (
-    <div className="rounded-xl border border-dashed p-8 text-center">
-      <Icon className="mx-auto h-8 w-8 text-muted-foreground" />
-      <p className="mt-3 font-semibold">{title}</p>
-      <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">{description}</p>
-      <Button asChild variant="outline" className="mt-4">
-        <Link href={href}>{linkLabel}<ExternalLink className="ml-2 h-4 w-4" /></Link>
-      </Button>
     </div>
   );
 }
