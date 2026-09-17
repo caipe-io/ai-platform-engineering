@@ -341,6 +341,17 @@ export interface ShareableResourceInput {
    */
   sharedWithOrg?: boolean;
   previousSharedWithOrg?: boolean;
+  /**
+   * When `true`, the owner team's `manager` grant (full can_manage) is written
+   * to `team:<slug>#member` instead of `team:<slug>#admin`, so any member of
+   * the owning team — not just its admins — can manage the resource. Mirrors
+   * the override `buildAgentRelationshipTupleDiff` applies manually for
+   * `agent` (see `openfga-agent-tools.ts`). Shared (non-owner) teams are
+   * unaffected and keep whatever `sharedTeamAdminsManage` already dictates.
+   * Defaults to `false` so existing consumers (e.g. `ingestion_source`) keep
+   * today's admin-only owner-team manage behavior unless they opt in.
+   */
+  ownerTeamManagerViaMember?: boolean;
 }
 
 /**
@@ -391,8 +402,36 @@ export function buildShareableResourceTupleDiff(
     sharedTeamAdminsManage: input.sharedTeamAdminsManage,
     previousSharedTeamAdminsManage: input.previousSharedTeamAdminsManage,
   });
-  writes.push(...teamGrants.writes);
-  deletes.push(...teamGrants.deletes);
+  let teamWrites = teamGrants.writes;
+  let teamDeletes = teamGrants.deletes;
+
+  // Owner-team-manages-via-member override (opt-in). `buildTeamGrantTuples`
+  // always grants the owner team's `manager` to `#admin`; swap that for
+  // `#member` here so ordinary owner-team members get full can_manage too.
+  // Shared (non-owner) teams are untouched.
+  const ownerSlug =
+    input.ownerTeamSlug && isValidOpenFgaId(input.ownerTeamSlug) ? input.ownerTeamSlug : null;
+  const previousOwnerSlug =
+    input.previousOwnerTeamSlug && isValidOpenFgaId(input.previousOwnerTeamSlug)
+      ? input.previousOwnerTeamSlug
+      : null;
+  if (input.ownerTeamManagerViaMember && ownerSlug) {
+    const ownerAdminManager = `team:${ownerSlug}#admin`;
+    teamWrites = [
+      ...teamWrites.filter(
+        (tuple) => !(tuple.relation === "manager" && tuple.user === ownerAdminManager),
+      ),
+      { user: `team:${ownerSlug}#member`, relation: "manager", object },
+    ];
+  }
+  if (input.ownerTeamManagerViaMember && previousOwnerSlug && previousOwnerSlug !== ownerSlug) {
+    teamDeletes = [
+      ...teamDeletes,
+      { user: `team:${previousOwnerSlug}#member`, relation: "manager", object },
+    ];
+  }
+  writes.push(...teamWrites);
+  deletes.push(...teamDeletes);
 
   // 4. optional direct-user grants. Personal ownership is already sufficient
   // for the owner, so do not duplicate reader/ingestor tuples for that user.
@@ -574,6 +613,7 @@ export function buildKnowledgeBaseRelationshipTupleDiff(
     previousSharedUserSubjects: input.previousSharedUserSubjects,
     sharedTeamAdminsManage: false,
     previousSharedTeamAdminsManage: input.previousSharedTeamAdminsManage,
+    ownerTeamManagerViaMember: true,
   });
 
   // During development this branch briefly projected Search as
@@ -635,13 +675,14 @@ export function buildDataSourceRelationshipTupleDiff(
     previousSharedTeamSlugs: input.previousSharedTeamSlugs,
     previousOwnerTeamSlug: input.previousOwnerTeamSlug,
     parentKnowledgeBaseId: input.parentKnowledgeBaseId,
+    ownerTeamManagerViaMember: true,
   });
 }
 
 /**
  * Build an mcp_tool tuple diff.
- * `user` + `caller` on the tool, and team admins get `manager` (so they
- * can update or delete it via `PUT/DELETE /v1/mcp/custom-tools/<tool_id>`).
+ * `user` + `caller` on the tool, and owner-team members get `manager` (so
+ * they can update or delete it via `PUT/DELETE /v1/mcp/custom-tools/<tool_id>`).
  * Mirrors the relation set on the `mcp_tool` type in
  * [deploy/openfga/model.fga].
  *
@@ -677,6 +718,7 @@ export function buildMcpToolRelationshipTupleDiff(
     // the tool (the invoke path checks `can_call`). Org-wide grants reuse the
     // same relation set.
     extraMemberRelations: ["user", "caller"],
+    ownerTeamManagerViaMember: true,
   });
 }
 

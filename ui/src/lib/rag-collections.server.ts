@@ -73,7 +73,7 @@ export function collectionRelationshipTuples(
   for (const slug of unique(collection.maintainer_team_slugs)) {
     tuples.push(
       { user: `team:${slug}#member`, relation: "publisher", object },
-      { user: `team:${slug}#admin`, relation: "manager", object },
+      { user: `team:${slug}#member`, relation: "manager", object },
     );
   }
   for (const slug of unique(collection.reader_team_slugs)) {

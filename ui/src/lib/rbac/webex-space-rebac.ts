@@ -54,7 +54,7 @@ export function webexSpaceTeamVisibilityRelationships(
   };
   return [
     {
-      subject: { type: "team", id: teamSlug, relation: "admin" },
+      subject: { type: "team", id: teamSlug, relation: "member" },
       action: "manage",
       resource: spaceResource,
     },
