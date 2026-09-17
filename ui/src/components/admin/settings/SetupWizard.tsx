@@ -12,6 +12,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { getConfig } from "@/lib/config";
 import { useAdminRole } from "@/hooks/use-admin-role";
 import { requestProductTour } from "@/lib/product-tour";
@@ -227,6 +229,8 @@ export function SetupWizardDialog({
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testConversationId, setTestConversationId] = useState<string | null>(null);
+  const [showAddModel, setShowAddModel] = useState(false);
+  const [newModel, setNewModel] = useState({ model_id: "", name: "", provider: "" });
 
   const patchState = useCallback(async (body: Record<string, unknown>) => {
     const result = await jsonRequest<ApiEnvelope<{ state: SetupWizardPayload["state"] }>>(
@@ -294,6 +298,26 @@ export function SetupWizardDialog({
   useEffect(() => {
     if (open) void load();
   }, [load, open]);
+
+  const addModel = useCallback(async () => {
+    setError(null);
+    setSaving(true);
+    try {
+      const result = await jsonRequest<ApiEnvelope<ModelOption>>("/api/llm-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newModel),
+      });
+      setModels((current) => [...current, result.data]);
+      setSelection((current) => ({ ...current, model_id: result.data._id, model_provider: result.data.provider }));
+      setNewModel({ model_id: "", name: "", provider: "" });
+      setShowAddModel(false);
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : "Could not add model");
+    } finally {
+      setSaving(false);
+    }
+  }, [newModel]);
 
   const selectedModel = useMemo(
     () => models.find((model) => model._id === selection.model_id),
@@ -561,13 +585,21 @@ export function SetupWizardDialog({
                   {step === 2 && (
                     <div className="space-y-3">
                       {models.length === 0 ? (
-                        <EmptyState
-                          icon={Sparkles}
-                          title="No models are configured"
-                          description="Add a model in Agent configuration or seed one through setup-caipe.sh, then return here."
-                          href="/dynamic-agents?tab=llm-models"
-                          linkLabel="Open agent configuration"
-                        />
+                        <div className="space-y-4 rounded-xl border border-dashed p-6">
+                          <div className="text-center">
+                            <Sparkles className="mx-auto h-8 w-8 text-muted-foreground" />
+                            <p className="mt-3 font-semibold">No models are configured</p>
+                            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">Add a model here to continue setting up your first working agent.</p>
+                          </div>
+                          {showAddModel ? (
+                            <div className="mx-auto max-w-md space-y-3">
+                              <div><Label htmlFor="setup-model-id">Model ID</Label><Input id="setup-model-id" placeholder="claude-haiku-4-5" value={newModel.model_id} onChange={(e) => setNewModel({ ...newModel, model_id: e.target.value })} /></div>
+                              <div><Label htmlFor="setup-model-name">Display name</Label><Input id="setup-model-name" placeholder="Claude Haiku" value={newModel.name} onChange={(e) => setNewModel({ ...newModel, name: e.target.value })} /></div>
+                              <div><Label htmlFor="setup-model-provider">Provider</Label><Input id="setup-model-provider" placeholder="openai or anthropic" value={newModel.provider} onChange={(e) => setNewModel({ ...newModel, provider: e.target.value })} /></div>
+                              <div className="flex gap-2"><Button onClick={() => void addModel()} disabled={saving || !newModel.model_id || !newModel.name || !newModel.provider}>{saving ? "Adding..." : "Add model"}</Button><Button variant="outline" onClick={() => setShowAddModel(false)}>Cancel</Button></div>
+                            </div>
+                          ) : <div className="flex justify-center gap-2"><Button onClick={() => setShowAddModel(true)}><Sparkles className="mr-2 h-4 w-4" />Add a model</Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=llm-models">Advanced configuration<ExternalLink className="ml-2 h-4 w-4" /></Link></Button></div>}
+                        </div>
                       ) : models.map((model) => (
                         <button
                           key={model._id}
