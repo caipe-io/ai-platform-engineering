@@ -31,7 +31,7 @@ NC='\033[0m'
 
 # ─── State ───────────────────────────────────────────────────────────────────
 CLUSTER_NAME=""
-ENABLE_RAG=false
+ENABLE_RAG="${ENABLE_RAG:-true}"
 ENABLE_TRACING=false
 # Dynamic-agent runtime persistence uses a MongoDB-compatible database.
 # The persistence flags are accepted below for CLI compatibility.
@@ -302,6 +302,7 @@ ENABLE_WEBEX_BOT="${ENABLE_WEBEX_BOT:-false}"
 # explicit CLI choice wins over the env-file auto-enable. Empty = no CLI flag given.
 _SLACK_BOT_FORCED=""
 _WEBEX_BOT_FORCED=""
+_RAG_FORCED=""
 # Agents selected interactively or via CAIPE_SELECTED_AGENTS; empty means all
 # defaults are used (non-interactive path).
 SELECTED_AGENTS=()
@@ -2487,6 +2488,28 @@ _choose_agents() {
   log "Selected agents: ${SELECTED_AGENTS[*]}"
 }
 
+_discover_gateway_embedding_model() {
+  # A custom OpenAI-compatible gateway may expose a different embedding model
+  # namespace than OpenAI's public API. Discover an allowed embedding model so
+  # a LiteLLM-backed chat configuration does not fail RAG startup with a 403.
+  [[ "${EMBEDDINGS_PROVIDER:-openai}" == "openai" ]] || return 0
+  [[ -z "${_EMBEDDINGS_MODEL_EXPLICIT:-}" ]] || return 0
+  [[ -n "${OPENAI_API_KEY:-}" ]] || return 0
+  [[ -n "${OPENAI_ENDPOINT:-}" && "${OPENAI_ENDPOINT%/}" != "https://api.openai.com/v1" ]] || return 0
+
+  local _models_json _gateway_embedding_model
+  _models_json=$(curl -fsS --max-time 10 \
+    -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+    "${OPENAI_ENDPOINT%/}/models" 2>/dev/null || true)
+  [[ -n "$_models_json" ]] || return 0
+  _gateway_embedding_model=$(echo "$_models_json" | jq -r \
+    '[.data[]?.id | select(test("embedding"; "i"))] | first // empty' 2>/dev/null || true)
+  if [[ -n "$_gateway_embedding_model" ]]; then
+    EMBEDDINGS_MODEL="$_gateway_embedding_model"
+    log "Detected gateway embeddings model: ${EMBEDDINGS_MODEL}"
+  fi
+}
+
 choose_features() {
   step "Feature selection"
 
@@ -2658,10 +2681,18 @@ choose_features() {
     fi
   fi
 
-  if ! $ENABLE_RAG; then
-    if ask_yn "Enable RAG (knowledge base retrieval)?" "n"; then
+  if [[ -z "$_RAG_FORCED" ]]; then
+    if ask_yn "Enable RAG (knowledge base retrieval)?" "y"; then
       ENABLE_RAG=true
       log "RAG enabled"
+    else
+      ENABLE_RAG=false
+      log "RAG skipped"
+    fi
+  fi
+
+  if $ENABLE_RAG; then
+    _discover_gateway_embedding_model
 
       # Anthropic-aware note: Anthropic does not ship a native embeddings
       # model. Their official recommendation is Voyage AI. We surface that
@@ -2963,9 +2994,6 @@ choose_features() {
       else
         log "Graph RAG disabled (vector-only RAG)"
       fi
-    else
-      log "RAG skipped"
-    fi
   fi
 
   # ── Agent selection ───────────────────────────────────────────────────
@@ -7135,6 +7163,9 @@ DAEOF
       --set 'rag-stack.milvus.etcd.replicaCount=1'
       --set 'rag-stack.milvus.minio.mode=standalone'
       --set 'rag-stack.milvus.minio.replicas=1'
+      # Docker Hub can rate-limit or remove older MinIO tags. The same pinned
+      # tag is available from Quay, which keeps first-install RAG reliable.
+      --set 'rag-stack.milvus.minio.image.repository=quay.io/minio/minio'
       --set 'rag-stack.milvus.minio.persistence.size=10Gi'
       --set 'rag-stack.milvus.minio.resources.requests.memory=256Mi'
       --set 'rag-stack.rag-server.env.SKIP_INIT_TESTS=true'
@@ -9052,7 +9083,7 @@ enable_ollama: "${ENABLE_OLLAMA:-false}"
 ollama_model: "${OLLAMA_MODEL:-qwen3:0.6b}"
 embeddings_provider: "${EMBEDDINGS_PROVIDER:-}"
 embeddings_model: "${EMBEDDINGS_MODEL:-}"
-enable_rag: "${ENABLE_RAG:-false}"
+enable_rag: "${ENABLE_RAG:-true}"
 enable_graph_rag: "${ENABLE_GRAPH_RAG:-false}"
 enable_tracing: "${ENABLE_TRACING:-false}"
 enable_scheduler: "${ENABLE_SCHEDULER:-true}"
@@ -9646,7 +9677,7 @@ Commands:
 
 Options:
   --non-interactive  Skip all prompts (use current context, latest chart,
-                     defaults for endpoint/model, no RAG/tracing unless flagged)
+                     defaults for endpoint/model, RAG enabled unless --no-rag)
   --no-sudo          Never run sudo; steps needing it are skipped or fail with
                      manual instructions (also CAIPE_ALLOW_SUDO=0 or false)
                      Either denial overrides --allow-sudo and --yes, regardless
@@ -9662,7 +9693,8 @@ Options:
                      ~/.config/caipe/config.yaml (shows summary, asks confirmation)
   --create-cluster   Create a Kind cluster if no kubectl context exists
                      (default name: caipe, override with KIND_CLUSTER_NAME)
-  --rag              Enable RAG stack (vector-only by default)
+  --rag              Enable RAG stack (vector-only by default; default ON)
+  --no-rag           Skip the RAG stack (knowledge bases)
   --graph-rag        Enable Graph RAG (Neo4j + ontology agent; implies --rag)
   --corporate-ca     Apply corporate TLS proxy CA patch to pods (for networks
                      with TLS inspection, e.g. Cisco Secure Access, Zscaler)
@@ -9901,7 +9933,8 @@ for arg in "$@"; do
     --docker-compose)  USE_DOCKER_COMPOSE=true ;;
     --non-interactive) NON_INTERACTIVE=true ;;
     --create-cluster)  CREATE_CLUSTER=true ;;
-    --rag)             ENABLE_RAG=true ;;
+    --rag)             ENABLE_RAG=true; _RAG_FORCED=on ;;
+    --no-rag)          ENABLE_RAG=false; _RAG_FORCED=off ;;
     --graph-rag)       ENABLE_GRAPH_RAG=true ;;
     --corporate-ca)    INJECT_CORPORATE_CA=true ;;
     --tracing)         ENABLE_TRACING=true ;;

@@ -27,6 +27,25 @@ grep -q '_OPENAI_MODEL_NAME_EXPLICIT' "$SOURCE" \
   || fail "--env-file loader cannot distinguish defaults from explicit model values"
 pass "LLM endpoint and model overrides are preserved"
 
+# RAG is part of the out-of-box install. Operators can still make a deliberate
+# resource-saving choice with --no-rag.
+grep -q '^ENABLE_RAG="\${ENABLE_RAG:-true}"$' "$SOURCE" \
+  || fail "RAG is not enabled by default"
+grep -q -- '--no-rag' "$SOURCE" \
+  || fail "installer does not expose an explicit RAG opt-out"
+grep -q -- '--no-rag)          ENABLE_RAG=false' "$SOURCE" \
+  || fail "--no-rag does not disable RAG"
+pass "RAG is enabled by default with an explicit opt-out"
+
+# Milvus' MinIO dependency must use a registry that retains the pinned image;
+# a missing image prevents rag-server from starting at all.
+grep -q 'rag-stack.milvus.minio.image.repository=quay.io/minio/minio' "$SOURCE" \
+  || fail "RAG install does not use the reliable MinIO registry"
+pass "RAG MinIO image uses the reliable registry"
+grep -q '_discover_gateway_embedding_model' "$SOURCE" \
+  || fail "RAG does not discover embedding models from custom gateways"
+pass "RAG discovers embedding models from custom gateways"
+
 # The no-ingress/SSH path must configure a browser-reachable localhost issuer,
 # while server-side discovery stays on the in-cluster Keycloak service.
 grep -q -- '--port-forward-mode' "$SOURCE" \
