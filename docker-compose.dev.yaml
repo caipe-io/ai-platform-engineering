@@ -1752,7 +1752,7 @@ services:
       - deps
 
   milvus-minio:
-    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    image: quay.io/minio/minio:RELEASE.2024-05-28T17-19-04Z
     container_name: milvus-minio
     environment:
       - MINIO_ACCESS_KEY=minioadmin
@@ -1881,7 +1881,7 @@ services:
       - tracing
 
   langfuse-minio:
-    image: minio/minio
+    image: quay.io/minio/minio
     container_name: langfuse-minio
     restart: always
     entrypoint: sh
