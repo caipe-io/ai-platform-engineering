@@ -162,6 +162,15 @@ following hold (no flag required):
   `caipe.localtest.me`) so the OIDC issuer is browser-reachable, and
 - **no upstream IdP is brokered** (no `IDP_ISSUER` in a `--ui-env-file`/`--env-file`).
 
+For an SSH port-forward install, pass `--port-forward-mode` (which implies
+`--no-ingress`). The browser-facing OIDC issuer is then
+`http://localhost:7080/realms/caipe`, while server-side discovery and OBO token
+exchange use the in-cluster Keycloak service at
+`http://caipe-keycloak:8080/realms/caipe`. This split keeps the issuer reachable
+from the browser without advertising an HTTPS ingress that has no listener or
+certificate. The port-forward mode provisions `admin@caipe.local` and uses
+`http://localhost:3000` as the UI redirect origin.
+
 What it wires up automatically (all derived from `--domain`, no `.env` needed):
 
 | Setting | Value | Where |

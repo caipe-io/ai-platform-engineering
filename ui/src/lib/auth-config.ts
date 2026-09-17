@@ -535,6 +535,13 @@ async function refreshAccessToken(token: {
   }
 }
 
+// OIDC_DISCOVERY_URL is the server-side realm URL. OIDC_ISSUER is the URL the
+// browser and issued tokens use. They differ for the --no-ingress SSH path:
+// the browser reaches localhost:7080 through SSH, while the UI pod reaches
+// caipe-keycloak:8080 inside the cluster.
+const browserOidcIssuer = process.env.OIDC_ISSUER?.replace(/\/+$/, "");
+const serverOidcIssuer = (process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER)?.replace(/\/+$/, "");
+
 export const authOptions: NextAuthOptions = {
   providers: [
     {
@@ -556,11 +563,29 @@ export const authOptions: NextAuthOptions = {
       // requires extra Keycloak config and causes login failures if not
       // enabled on the client/realm. Regular refresh tokens are sufficient.
       authorization: {
+        ...(browserOidcIssuer
+          ? { url: `${browserOidcIssuer}/protocol/openid-connect/auth` }
+          : {}),
         params: {
           scope: "openid email profile groups",
           ...(process.env.OIDC_IDP_HINT ? { kc_idp_hint: process.env.OIDC_IDP_HINT } : {}),
         }
       },
+      // Keep the callback's token and profile calls on the in-cluster URL when
+      // discovery is served by an internal Keycloak service. Without explicit
+      // endpoints NextAuth follows the internal URLs from discovery, which is
+      // correct for the pod but makes the browser redirect to an unresolvable
+      // Kubernetes service name in SSH port-forward mode.
+      ...(serverOidcIssuer
+        ? {
+            token: {
+              url: `${serverOidcIssuer}/protocol/openid-connect/token`,
+            },
+            userinfo: {
+              url: `${serverOidcIssuer}/protocol/openid-connect/userinfo`,
+            },
+          }
+        : {}),
       idToken: true,
       checks: ["pkce", "state"],
       clientId: process.env.OIDC_CLIENT_ID,

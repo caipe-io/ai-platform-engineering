@@ -332,10 +332,10 @@ config:
   OIDC_ENABLE_REFRESH_TOKEN: "true"
   # Additional JWKS URIs for token validation (JSON array, non-sensitive)
   # OIDC_ADDITIONAL_JWKS: '["https://other-idp/.well-known/jwks.json"]'
-  # Accepted JWT audiences for Bearer token validation (comma-separated)
-  # When the OIDC authorization server uses a fixed audience that differs
-  # from OIDC_CLIENT_ID, list accepted values here.
-  # OIDC_ACCEPTED_AUDIENCES: "https://my-api.example.com"
+  # Accepted JWT audiences for Bearer token validation (comma-separated).
+  # CAIPE's interactive access tokens target the shared platform resource
+  # server, while OIDC_CLIENT_ID identifies the browser client.
+  OIDC_ACCEPTED_AUDIENCES: "caipe-platform"
   # Support contact email
   SUPPORT_EMAIL: "support@example.com"
   # Header link URLs (leave empty/commented to hide)
