@@ -7,12 +7,20 @@ export type SetupWizardStatus =
   | "completed"
   | "dismissed";
 
+export interface SetupWizardFeatureFlags {
+  workflows?: boolean;
+  schedules?: boolean;
+  autonomous_agents?: boolean;
+  apps?: boolean;
+}
+
 export interface SetupWizardSelection {
   model_id?: string;
   model_provider?: string;
   recipe_id?: "sre" | "hello-world" | "blank";
   mcp_server_ids?: string[];
   enable_knowledge_base?: boolean;
+  enabled_features?: SetupWizardFeatureFlags;
 }
 
 export interface SetupWizardState {
@@ -127,6 +135,17 @@ export function normalizeSetupWizardState(value: unknown): SetupWizardState {
         : {}),
       ...(typeof selectionSource.enable_knowledge_base === "boolean"
         ? { enable_knowledge_base: selectionSource.enable_knowledge_base }
+        : {}),
+      ...(selectionSource.enabled_features && typeof selectionSource.enabled_features === "object" && !Array.isArray(selectionSource.enabled_features)
+        ? {
+            enabled_features: Object.fromEntries(
+              ["workflows", "schedules", "autonomous_agents", "apps"].flatMap((key) =>
+                typeof (selectionSource.enabled_features as Record<string, unknown>)[key] === "boolean"
+                  ? [[key, (selectionSource.enabled_features as Record<string, boolean>)[key]]]
+                  : [],
+              ),
+            ) as SetupWizardSelection["enabled_features"],
+          }
         : {}),
     },
     ...(typeof source.created_agent_id === "string" && source.created_agent_id.trim()

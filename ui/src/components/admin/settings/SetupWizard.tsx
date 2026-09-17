@@ -24,6 +24,7 @@ import type {
 import { cn } from "@/lib/utils";
 import {
   Bot,
+  CalendarClock,
   Check,
   CheckCircle2,
   ChevronLeft,
@@ -33,11 +34,13 @@ import {
   ExternalLink,
   Gauge,
   Loader2,
+  LayoutGrid,
   Play,
   RotateCcw,
   Sparkles,
   TriangleAlert,
   XCircle,
+  Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -126,6 +129,59 @@ const RECIPES = [
 ];
 
 const APPLY_ALL_MIGRATIONS_CONFIRMATION = "APPLY ALL PENDING MIGRATIONS";
+
+type SetupFeatureKey = "workflows" | "schedules" | "autonomous_agents" | "apps";
+
+const SETUP_FEATURES: Array<{
+  key: SetupFeatureKey;
+  label: string;
+  description: string;
+  deployment: string;
+  href: string;
+  icon: typeof Workflow;
+}> = [
+  {
+    key: "workflows",
+    label: "Workflows",
+    description: "Run multi-step agent workflows from the Workflows workspace.",
+    deployment: "Requires WORKFLOWS_ENABLED and WORKFLOW_RUNNER_ENABLED.",
+    href: "/workflows",
+    icon: Workflow,
+  },
+  {
+    key: "schedules",
+    label: "Schedules",
+    description: "Run an agent on a recurring schedule or trigger.",
+    deployment: "Requires the Scheduler deployment and SCHEDULER_ENABLED.",
+    href: "/schedules",
+    icon: CalendarClock,
+  },
+  {
+    key: "autonomous_agents",
+    label: "Autonomous Agents",
+    description: "Let agents run on cron, interval, and webhook triggers.",
+    deployment: "Requires the autonomous-agents service and ENABLE_AUTONOMOUS_AGENTS.",
+    href: "/autonomous",
+    icon: Sparkles,
+  },
+  {
+    key: "apps",
+    label: "Apps",
+    description: "Expose the deployment-owned External Apps catalog.",
+    deployment: "Requires AGENTIC_APPS_INSTALL_ENABLED and an app catalog.",
+    href: "/apps",
+    icon: LayoutGrid,
+  },
+];
+
+function deploymentFeatureDefaults(): Record<SetupFeatureKey, boolean> {
+  return {
+    workflows: Boolean(getConfig("workflowsEnabled") && getConfig("workflowRunnerEnabled")),
+    schedules: Boolean(getConfig("schedulerEnabled")),
+    autonomous_agents: Boolean(getConfig("autonomousAgentsEnabled")),
+    apps: Boolean(getConfig("agenticAppsEnabled")),
+  };
+}
 
 function messageFromPayload(payload: unknown, fallback: string): string {
   if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string") {
@@ -230,6 +286,7 @@ export function SetupWizardDialog({
     recipe_id: "sre",
     mcp_server_ids: [],
     enable_knowledge_base: false,
+    enabled_features: deploymentFeatureDefaults(),
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -280,6 +337,7 @@ export function SetupWizardDialog({
       const defaults = nextMcpServers
         .filter((server) => server._id === "netutils" || server._id === "knowledge-base")
         .map((server) => server._id);
+      const defaultFeatures = deploymentFeatureDefaults();
       setSelection({
         recipe_id: saved?.recipe_id ?? "sre",
         model_id: defaultModel?._id,
@@ -287,6 +345,10 @@ export function SetupWizardDialog({
         mcp_server_ids: saved?.mcp_server_ids ?? defaults,
         enable_knowledge_base: saved?.enable_knowledge_base
           ?? defaults.includes("knowledge-base"),
+        enabled_features: {
+          ...defaultFeatures,
+          ...(saved?.enabled_features ?? {}),
+        },
       });
       setStep(restart ? 1 : nextPayload.state.current_step);
       if (restart) {
@@ -353,6 +415,7 @@ export function SetupWizardDialog({
         skipped_steps: skipped,
         selection,
       });
+      window.dispatchEvent(new Event("caipe:platform-features-updated"));
       setStep(nextStep);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save setup progress");
@@ -656,6 +719,62 @@ export function SetupWizardDialog({
                             Health details are unavailable. You can continue and validate with the smoke test.
                           </p>
                         )}
+                      </div>
+                      <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
+                        <div>
+                          <p className="font-medium">Enable platform capabilities</p>
+                          <p className="text-sm text-muted-foreground">
+                            Choose which deployed surfaces should appear in the application navigation. Deployment flags remain the hard service gate.
+                          </p>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {SETUP_FEATURES.map((feature) => {
+                            const Icon = feature.icon;
+                            const deployed = deploymentFeatureDefaults()[feature.key];
+                            const enabled = selection.enabled_features?.[feature.key] ?? deployed;
+                            return (
+                              <label
+                                key={feature.key}
+                                className={cn(
+                                  "flex items-start gap-3 rounded-lg border p-3",
+                                  deployed ? "cursor-pointer hover:bg-muted/40" : "cursor-not-allowed opacity-70",
+                                )}
+                              >
+                                <Icon className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                                <span className="min-w-0 flex-1">
+                                  <span className="flex items-center justify-between gap-2">
+                                    <span className="text-sm font-medium">{feature.label}</span>
+                                    <input
+                                      type="checkbox"
+                                      checked={deployed && enabled}
+                                      disabled={!deployed || saving}
+                                      onChange={(event) => setSelection((current) => ({
+                                        ...current,
+                                        enabled_features: {
+                                          ...(current.enabled_features ?? deploymentFeatureDefaults()),
+                                          [feature.key]: event.target.checked,
+                                        },
+                                      }))}
+                                      className="h-4 w-4 accent-primary"
+                                    />
+                                  </span>
+                                  <span className="mt-1 block text-xs text-muted-foreground">{feature.description}</span>
+                                  <span className="mt-2 block text-[11px] text-muted-foreground">
+                                    {deployed ? "Available in this deployment." : feature.deployment}
+                                  </span>
+                                  {deployed && (
+                                    <Link className="mt-1 inline-block text-xs text-primary hover:underline" href={feature.href}>
+                                      Open {feature.label}
+                                    </Link>
+                                  )}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Workflows include a short guided explanation in the Workflows workspace. Apps require a deployment-owned catalog before they can be enabled.
+                        </p>
                       </div>
                       {requiredHealthFailure && (
                         <p className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">

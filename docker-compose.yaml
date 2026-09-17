@@ -429,14 +429,14 @@ services:
       - KEYCLOAK_ADMIN_CLIENT_ID=${KEYCLOAK_ADMIN_CLIENT_ID:-caipe-platform}
       - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-caipe-platform-dev-secret}
       # Workflow runner - set WORKFLOW_RUNNER_ENABLED=true to show Run Workflow button and Multi-Step Workflows
-      - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
+      - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-true}
       # Projects - set PROJECTS_ENABLED=true to show the Projects workspace
       - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       # Top-level workflows and schedules are independent, opt-in navigation surfaces.
-      - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
+      - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-true}
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
       - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
-      - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-false}
+      - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-true}
       - SETUP_WIZARD_ENABLED=${SETUP_WIZARD_ENABLED:-true}
       # Compact header shortcut that reuses the existing feedback dialog.
       - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}

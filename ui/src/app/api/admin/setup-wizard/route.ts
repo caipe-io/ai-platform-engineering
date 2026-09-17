@@ -82,6 +82,17 @@ function normalizeSelection(value: unknown): SetupWizardSelection | undefined {
     ...(typeof source.enable_knowledge_base === "boolean"
       ? { enable_knowledge_base: source.enable_knowledge_base }
       : {}),
+    ...(source.enabled_features && typeof source.enabled_features === "object" && !Array.isArray(source.enabled_features)
+      ? {
+          enabled_features: Object.fromEntries(
+            ["workflows", "schedules", "autonomous_agents", "apps"].flatMap((key) =>
+              typeof (source.enabled_features as Record<string, unknown>)[key] === "boolean"
+                ? [[key, (source.enabled_features as Record<string, boolean>)[key]]]
+                : [],
+            ),
+          ) as SetupWizardSelection["enabled_features"],
+        }
+      : {}),
   };
 }
 
