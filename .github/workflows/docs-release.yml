@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. 0.4.12)'
+        description: 'Stable release version (e.g. 0.4.12)'
         required: true
         type: string
 
@@ -45,6 +45,11 @@ jobs:
           NEW_VERSION: ${{ github.event.inputs.version }}
         run: |
           NEW_VERSION="${NEW_VERSION#v}"
+
+          if ! [[ "$NEW_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "❌ Release posts are only generated for stable versions (x.y.z); received $NEW_VERSION"
+            exit 1
+          fi
 
           PREV_VERSION=$(git tag --sort=-version:refname \
             | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \

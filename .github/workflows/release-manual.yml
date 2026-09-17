@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'New version to release (e.g., 1.0.0 or 1.0.0-rc.1)'
+        description: 'Stable release or RC build to create (e.g., 1.0.0 or 1.0.0-rc.1)'
         required: true
         type: string
 
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  # Commit version bump (pyproject.toml + Chart.yaml), changelog, and tag
+  # Commit version bump (pyproject.toml + Chart.yaml), stable changelog, and tag
   commit-release:
     name: Commit Release
     runs-on: ubuntu-latest
@@ -52,7 +52,7 @@ jobs:
           echo "📦 Requested version: $VERSION"
 
           if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]]; then
-            echo "❌ ERROR: Version must be a final or RC semver (e.g., 1.0.0 or 1.0.0-rc.1)"
+            echo "❌ ERROR: Version must be a stable or RC semver (e.g., 1.0.0 or 1.0.0-rc.1)"
             echo "   Received: '$VERSION'"
             exit 1
           fi
@@ -240,15 +240,25 @@ jobs:
             "<!-- release-initiator:$RELEASE_INITIATOR -->" \
             "📖 Release notes: [${SERIES_MAJOR_MINOR}.0 release notes]($SERIES_URL)")
 
+          RELEASE_FLAGS=(--draft)
+          if [[ "$NEW_VERSION" == *-rc.* ]]; then
+            RELEASE_FLAGS+=(--prerelease)
+            echo "🧪 Marking $NEW_VERSION as a GitHub prerelease"
+          fi
+
           gh release create "$NEW_VERSION" \
             --repo "${{ github.repository }}" \
             --title "Release $NEW_VERSION" \
             --generate-notes \
             --notes "$NOTES" \
-            --draft
+            "${RELEASE_FLAGS[@]}"
 
           echo "✅ Draft release created"
-          echo "📋 Tag push triggers CI builds; release will be published automatically when required CI builds pass"
+          if [[ "$NEW_VERSION" == *-rc.* ]]; then
+            echo "📋 Tag push triggers CI builds; this RC remains a draft prerelease"
+          else
+            echo "📋 Tag push triggers CI builds; the stable release will be published automatically when required CI builds pass"
+          fi
           echo "🔗 https://github.com/${{ github.repository }}/releases/tag/$NEW_VERSION"
 
       - name: 📊 Summary
@@ -272,7 +282,11 @@ jobs:
           echo "### Files Modified" >> $GITHUB_STEP_SUMMARY
           echo "- \`charts/**/Chart.yaml\` - versions synced" >> $GITHUB_STEP_SUMMARY
           echo "- \`pyproject.toml\` - version updated" >> $GITHUB_STEP_SUMMARY
-          echo "- \`CHANGELOG.md\` - changelog generated (commitizen)" >> $GITHUB_STEP_SUMMARY
+          if [[ "$NEW_VERSION" == *-rc.* ]]; then
+            echo "- \`CHANGELOG.md\` - unchanged for prerelease" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- \`CHANGELOG.md\` - stable changelog generated (commitizen)" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- \`uv.lock\` - lock file regenerated" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### CI (triggered by tag push) ⏳" >> $GITHUB_STEP_SUMMARY
@@ -288,5 +302,9 @@ jobs:
           echo "### GitHub Release (Draft) 📝" >> $GITHUB_STEP_SUMMARY
           echo "🔗 [Release $NEW_VERSION](https://github.com/${{ github.repository }}/releases/tag/$NEW_VERSION)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "⚠️ **Release is in DRAFT state** — it will be published automatically when all CI builds pass." >> $GITHUB_STEP_SUMMARY
+          if [[ "$NEW_VERSION" == *-rc.* ]]; then
+            echo "⚠️ **RC remains a draft prerelease** — it is never auto-published as a stable release." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Release is in DRAFT state** — it will be published automatically when all CI builds pass." >> $GITHUB_STEP_SUMMARY
+          fi
           echo "If any CI fails, the release will remain as a draft for investigation." >> $GITHUB_STEP_SUMMARY

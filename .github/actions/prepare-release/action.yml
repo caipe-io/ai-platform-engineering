@@ -1,6 +1,6 @@
 name: 'Prepare Release'
 description: >
-  Updates all version files and generates changelog for a release version.
+  Updates all version files and generates changelog only for a stable release.
   Wraps update-version-files (already modifies all files with version + uv.lock) + commitizen changelog generation.
   Used by release-manual.yml and pr-version-bump.yml (for release/* → main PRs or commits).
 
@@ -31,9 +31,14 @@ runs:
       run: |
         set -euo pipefail
 
-        echo "🔄 Generating changelog for $VERSION using commitizen..."
-        cz changelog --unreleased-version "$VERSION"
-        echo "✅ Generated changelog entry for $VERSION"
+        if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "🔄 Generating changelog for $VERSION using commitizen..."
+          cz changelog --unreleased-version "$VERSION"
+          echo "✅ Generated changelog entry for $VERSION"
+        else
+          echo "⏭️ Skipping changelog generation for prerelease $VERSION"
+          echo "   Prerelease tags are build inputs, not stable changelog entries."
+        fi
         echo ""
         echo "📋 New changelog entry preview:"
         head -30 CHANGELOG.md

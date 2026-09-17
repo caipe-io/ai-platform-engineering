@@ -1,5 +1,5 @@
 name: "[Release] Pre-release Build"
-description: "Create an rc/hotfix tag on a release/* branch and trigger a coordinated build of all containers and the Helm chart."
+description: "Create build-only rc/hotfix tags on a release/* branch and trigger a coordinated build of all containers and the Helm chart."
 
 # Usage:
 #   GitHub UI → Actions → "[Release] Pre-release Build" → Run workflow
@@ -20,6 +20,8 @@ description: "Create an rc/hotfix tag on a release/* branch and trigger a coordi
 #   4. The push-tag event triggers required container CI workflows automatically.
 #   5. Explicitly dispatches ci-helm.yml with force_build=true so the Helm
 #      chart is published even when no chart files changed in this commit.
+#   6. Does not update CHANGELOG.md or create a GitHub Release; prerelease tags
+#      are build artifacts until a stable release is cut.
 #
 # The push-tag event already rebuilds every container image fresh (tag
 # pushes are never skipped or retagged from a prior version).
