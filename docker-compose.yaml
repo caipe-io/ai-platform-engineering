@@ -581,7 +581,16 @@ services:
       - ONTOLOGY_AGENT_RESTAPI_ADDR=http://agent_ontology:8098
       - ENABLE_GRAPH_RAG=${ENABLE_GRAPH_RAG:-true}
       - CLEANUP_INTERVAL=86400
+      - EMBEDDINGS_PROVIDER=${EMBEDDINGS_PROVIDER:-openai}
       - EMBEDDINGS_MODEL=${EMBEDDINGS_MODEL:-text-embedding-3-large}
+      # Keep credentials supplied through the invoking environment so a
+      # first-install .env never needs to contain a secret placeholder.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-${OPENAI_ENDPOINT:-https://api.openai.com/v1}}
+      - OPENAI_ENDPOINT=${OPENAI_ENDPOINT:-https://api.openai.com/v1}
+      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o}
+      - LITELLM_API_BASE=${LITELLM_API_BASE:-${OPENAI_ENDPOINT:-https://api.openai.com/v1}}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-${OPENAI_API_KEY:-}}
       - OPENFGA_HTTP=${OPENFGA_HTTP:-http://openfga:8080}
       - OPENFGA_STORE_NAME=${OPENFGA_STORE_NAME:-caipe-openfga}
       - CAIPE_UNSAFE_RBAC_BYPASS=${CAIPE_UNSAFE_RBAC_BYPASS:-false}
@@ -677,6 +686,10 @@ services:
       - AWS_BEDROCK_STREAMING=${AWS_BEDROCK_STREAMING:-false}
       - AWS_BEDROCK_USE_CONVERSE_API=${AWS_BEDROCK_USE_CONVERSE_API:-true}
       - AWS_BEDROCK_BASE_MODEL_ID=${AWS_BEDROCK_BASE_MODEL_ID:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-${OPENAI_ENDPOINT:-https://api.openai.com/v1}}
+      - OPENAI_ENDPOINT=${OPENAI_ENDPOINT:-https://api.openai.com/v1}
+      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o}
       # MongoDB (same as CAIPE UI)
       - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}

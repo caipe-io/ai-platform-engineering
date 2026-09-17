@@ -288,7 +288,7 @@ TLS_SELF_SIGNED=false   # true when setup generates the cert (no --tls-cert)
 ENV_FILE=""
 UI_ENV_FILE=""
 COMPOSE_ENV_FILE=""
-COMPOSE_PROFILES_DEFAULT="mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor"
+COMPOSE_PROFILES_DEFAULT="mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor,autonomous-agents"
 USE_DOCKER_COMPOSE=false
 # Chat-bot surfaces (the slack-bot / webex-bot deployments — distinct from the
 # slack/webex MCP agents). Default OFF; enabled via --slack-bot / --webex-bot,
@@ -8718,7 +8718,6 @@ cmd_docker_compose() {
   local env_file
   env_file=$(_compose_env_file)
   _ensure_compose_env_file "$env_file"
-  _update_compose_image_tag "$env_file"
   _choose_database_provider "$env_file"
 
   if [[ "$(uname -s)" == "Darwin" && -x "/usr/local/bin/docker" && ! "$(command -v docker 2>/dev/null)" ]]; then
@@ -8764,7 +8763,7 @@ cmd_docker_compose() {
   log "Env file: ${env_file}"
   log "Profiles: ${COMPOSE_PROFILES}"
   log "Database: ${DATABASE_PROVIDER} ($(_database_service_name))"
-  docker compose --env-file "$env_file" -f docker-compose.yaml up -d
+  docker compose --env-file "$env_file" -f docker-compose.yaml up --build -d
 
   log "CAIPE UI: http://localhost:3000"
   log "Knowledge Bases ingest: http://localhost:3000/knowledge-bases/ingest"
@@ -9668,8 +9667,7 @@ Commands:
   nuke          Non-interactive cleanup (same as: cleanup --yes)
   status        Show pod status and Helm releases
   docker-compose
-                Prepare .env, update IMAGE_TAG to the latest GitHub release,
-                and start the OSS all-in-one Docker Compose stack from
+                Prepare .env and start the OSS all-in-one Docker Compose stack from
                 docker-compose.yaml
   update-compose-release
                 Update IMAGE_TAG in .env (or --env-file=FILE) to the latest
@@ -9902,7 +9900,7 @@ Examples:
   $(basename "$0")                                        # re-run: offers monitor/upgrade/full menu
   $(basename "$0") cleanup                                # interactive teardown
   $(basename "$0") nuke                                   # teardown (confirm once with 'yes')
-  $(basename "$0") docker-compose                         # update .env IMAGE_TAG + start Docker Compose
+  $(basename "$0") docker-compose                         # prepare .env + start Docker Compose
   $(basename "$0") update-compose-release                 # only update IMAGE_TAG in .env
   LLM_PROVIDER=openai $(basename "$0") --non-interactive  # OpenAI instead of Claude
   LLM_PROVIDER=aws-bedrock $(basename "$0") --non-interactive       # AWS Bedrock (uses profile)

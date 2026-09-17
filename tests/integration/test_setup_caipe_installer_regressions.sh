@@ -46,6 +46,28 @@ grep -q '_discover_gateway_embedding_model' "$SOURCE" \
   || fail "RAG does not discover embedding models from custom gateways"
 pass "RAG discovers embedding models from custom gateways"
 
+# Docker Compose uses a published all-in-one image set. Do not rewrite it to
+# the latest Helm release, because component images and chart releases can
+# publish on different cadences. Autonomous Agents also has its own image
+# repository/tag, while local helper images must be built from this checkout.
+grep -q '^IMAGE_TAG=0\.5\.66$' "$ROOT/.env.example" \
+  || fail "Compose defaults do not pin the published all-in-one image set"
+grep -q 'COMPOSE_PROFILES=.*autonomous-agents' "$ROOT/.env.example" \
+  || fail "Compose defaults omit the autonomous-agents profile"
+grep -q 'AUTONOMOUS_AGENTS_IMAGE_TAG=1\.1\.0' "$ROOT/.env.example" \
+  || fail "Compose does not pin the autonomous-agents image independently"
+grep -q 'ghcr.io/caipe-io/caipe-autonomous-agents:\${AUTONOMOUS_AGENTS_IMAGE_TAG:-1\.1\.0}' "$ROOT/docker-compose.yaml" \
+  || fail "Compose uses the wrong autonomous-agents image repository"
+grep -q 'image: quay.io/minio/minio:RELEASE\.2024-05-28T17-19-04Z' "$ROOT/docker-compose.yaml" \
+  || fail "Compose RAG MinIO image uses the unreliable registry"
+grep -q 'up --build -d' "$SOURCE" \
+  || fail "Compose setup does not build local helper images"
+grep -q 'EMBEDDINGS_PROVIDER=\${EMBEDDINGS_PROVIDER:-openai}' "$ROOT/docker-compose.yaml" \
+  || fail "Compose does not pass the RAG embeddings provider"
+grep -q 'LITELLM_API_BASE=\${LITELLM_API_BASE:-' "$ROOT/docker-compose.yaml" \
+  || fail "Compose does not pass LiteLLM embedding connectivity"
+pass "Compose defaults are pinned, full-featured, and gateway-compatible"
+
 # The no-ingress/SSH path must configure a browser-reachable localhost issuer,
 # while server-side discovery stays on the in-cluster Keycloak service.
 grep -q -- '--port-forward-mode' "$SOURCE" \
