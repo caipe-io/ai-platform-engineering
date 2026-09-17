@@ -104,6 +104,10 @@ ENABLE_RBAC_RUNTIME="${ENABLE_RBAC_RUNTIME:-true}"
 # / ENABLE_AUTONOMOUS_AGENTS=false on a memory-constrained host.
 ENABLE_SCHEDULER="${ENABLE_SCHEDULER:-true}"
 ENABLE_AUTONOMOUS_AGENTS="${ENABLE_AUTONOMOUS_AGENTS:-true}"
+# External Apps is enabled with an empty deployment-owned catalog. This makes
+# the Apps surface available for the setup wizard without inventing or
+# registering a vendor app; operators can add catalog entries later.
+ENABLE_AGENTIC_APPS="${ENABLE_AGENTIC_APPS:-true}"
 # The runtime services are part of the default install, so expose their UI
 # capabilities by default as well. Operators on constrained hosts can still
 # opt out explicitly with DYNAMIC_AGENTS_ENABLED=false,
@@ -3509,6 +3513,7 @@ provision_ui_secret() {
     MONGODB_URI MONGODB_DATABASE MONGODB_ROOT_USERNAME MONGODB_ROOT_PASSWORD
     RAG_SERVER_URL PROMETHEUS_URL
     LANGFUSE_SECRET_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_HOST
+    AGENTIC_APP_TOKEN_SECRET
     RBAC_CLIENT_CREDENTIALS_ROLE
   )
 
@@ -3981,6 +3986,23 @@ create_namespace_and_secrets() {
       --dry-run=client -o yaml | kubectl apply -f - &>/dev/null
     HELM_UI_SECRET_ARGS+=(--set "caipe-ui.existingSecret=caipe-ui-secret")
     log "caipe-ui-secret ready (NextAuth secret + caipe-ui client id/secret; default SSO)"
+  fi
+
+  # External Apps uses a dedicated HMAC signing key for short-lived runtime
+  # tokens. Keep it in the existing UI Secret, preserving a supplied value or
+  # a previously generated value across idempotent installer runs.
+  if $ENABLE_AGENTIC_APPS && $ENABLE_RBAC_RUNTIME; then
+    local _agentic_app_token
+    _agentic_app_token=$(kubectl get secret caipe-ui-secret -n caipe \
+      -o jsonpath='{.data.AGENTIC_APP_TOKEN_SECRET}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    if [[ -z "$_agentic_app_token" && -n "${UI_ENV_FILE:-}" && -f "$UI_ENV_FILE" ]]; then
+      _agentic_app_token=$(_env_get "$UI_ENV_FILE" AGENTIC_APP_TOKEN_SECRET)
+    fi
+    [[ -z "$_agentic_app_token" ]] && _agentic_app_token="$(openssl rand -hex 32)"
+    kubectl patch secret caipe-ui-secret -n caipe --type='merge' \
+      -p="{\"data\":{\"AGENTIC_APP_TOKEN_SECRET\":\"$(echo -n "$_agentic_app_token" | base64 -w0)\"}}" \
+      &>/dev/null
+    log "AGENTIC_APP_TOKEN_SECRET ready for the External Apps hub"
   fi
 
   # Inject AGENTGATEWAY_TARGETS_TOKEN into caipe-ui-secret so the config-bridge
@@ -6754,6 +6776,9 @@ deploy_caipe() {
     --set "caipe-ui.config.WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED}"
     --set "caipe-ui.config.WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED}"
   )
+  if $ENABLE_AGENTIC_APPS && $ENABLE_RBAC_RUNTIME; then
+    helm_args+=(--set "caipe-ui.config.AGENTIC_APPS_INSTALL_ENABLED=true")
+  fi
 
   # No-ingress installs are reached through the local kubectl/SSH port-forward
   # monitor. Give NextAuth a browser-reachable issuer while keeping discovery
@@ -9668,6 +9693,8 @@ Options:
   --webex-bot        Deploy the Webex bot surface (webex-bot subchart). Auto-enabled when
                      --env-file sets ENABLE_WEBEX_BOT/ENABLE_WEBEX; needs WEBEX_INTEGRATION_BOT_ACCESS_TOKEN
   --no-webex-bot     Skip the Webex bot surface (overrides the env-file value)
+  --apps             Enable the External Apps hub with an empty deployment-owned catalog — default ON
+  --no-apps          Skip the External Apps hub (set ENABLE_AGENTIC_APPS=true to re-enable)
   --metallb          Install MetalLB to give LoadBalancer services real IPs in kind clusters — default ON
   --no-metallb       Skip MetalLB (also disables --ingress, which depends on it)
   --ingress          Install nginx-ingress + MetalLB and expose UI via domain — default ON
@@ -9790,6 +9817,8 @@ Environment variables (all optional):
   ENABLE_AUTONOMOUS_AGENTS  Autonomous cron/interval/webhook agents
                           (default: true; ENABLE_AUTONOMOUS_AGENTS=false to skip).
                           Together these add ~4-5 pods.
+  ENABLE_AGENTIC_APPS    Enable the External Apps hub with an empty operator-owned catalog
+                          (default: true; ENABLE_AGENTIC_APPS=false to skip).
   WORKFLOWS_ENABLED       Show the Workflows workspace when the workflow runner
                           is enabled (default: true; set false to hide it).
   ENABLE_SETUP_WIZARD    Automatically offer guided first-agent setup to the first admin
@@ -9925,6 +9954,8 @@ for arg in "$@"; do
     --no-slack-bot)    ENABLE_SLACK_BOT=false; _SLACK_BOT_FORCED=off ;;
     --webex-bot)       ENABLE_WEBEX_BOT=true;  _WEBEX_BOT_FORCED=on ;;
     --no-webex-bot)    ENABLE_WEBEX_BOT=false; _WEBEX_BOT_FORCED=off ;;
+    --apps)            ENABLE_AGENTIC_APPS=true ;;
+    --no-apps)         ENABLE_AGENTIC_APPS=false ;;
     --upgrade)         FORCE_UPGRADE=true ;;
     --apply-migrations) APPLY_WORKSPACE_MIGRATIONS=true ;;
     --repair-pending-install) REPAIR_PENDING_INSTALL=true ;;

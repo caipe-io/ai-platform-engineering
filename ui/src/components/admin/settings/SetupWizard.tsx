@@ -168,7 +168,7 @@ const SETUP_FEATURES: Array<{
     key: "apps",
     label: "Apps",
     description: "Expose the deployment-owned External Apps catalog.",
-    deployment: "Requires AGENTIC_APPS_INSTALL_ENABLED and an app catalog.",
+    deployment: "The installer provides an empty catalog; operators can add apps through deployment config.",
     href: "/apps",
     icon: LayoutGrid,
   },

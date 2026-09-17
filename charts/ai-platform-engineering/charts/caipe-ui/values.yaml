@@ -195,6 +195,12 @@ config:
   # Feature flags
   ENABLE_SUBAGENT_CARDS: "true"
   SSO_ENABLED: "true"
+  # External Apps is disabled by default for standalone chart installs because
+  # the catalog and signing secret are deployment-owned. setup-caipe.sh enables
+  # the hub with a valid empty catalog and provisions its signing secret.
+  AGENTIC_APPS_INSTALL_ENABLED: "false"
+  AGENTIC_APPS_CONFIG_PATH: "/etc/caipe-ui-agentic-apps/agentic-apps.yaml"
+  AGENTIC_APP_TOKEN_ISSUER: "caipe-agentic-apps"
   # Built-in skill IDs to seed (comma-separated whitelist).
   # "none" (default) disables auto-seeding entirely — use "Import template skills"
   # in the Skills UI to load templates explicitly. Set to a comma-separated list
