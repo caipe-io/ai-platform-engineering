@@ -10,7 +10,9 @@ description: "Publish Helm charts from version tags"
 #
 # A push to main has no tag and no committed version bump — it publishes the
 # floating `canary` chart instead, writing that version into the working tree
-# uncommitted just before packaging.
+# uncommitted just before packaging. Helm requires Chart.yaml's `version` to be
+# strict SemVer, so `canary` (appVersion, image tag) is packaged under the
+# chart version `0.0.0-canary` instead — appVersion has no such constraint.
 
 on:
   push:
@@ -78,12 +80,22 @@ jobs:
             IS_FINAL_RELEASE=true
           fi
 
+          # Helm requires Chart.yaml's `version` to be strict SemVer. `canary`
+          # isn't, so the chart is packaged under this placeholder instead —
+          # appVersion (and every image tag) still reads `canary`.
+          CHART_VERSION="$TAG_VERSION"
+          if [[ "$TAG_VERSION" == "canary" ]]; then
+            CHART_VERSION="0.0.0-canary"
+          fi
+
           echo "is_final_release=$IS_FINAL_RELEASE" >> "$GITHUB_OUTPUT"
           echo "tag_version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "chart_version=$CHART_VERSION" >> "$GITHUB_OUTPUT"
           echo "checkout_ref=$CHECKOUT_REF" >> "$GITHUB_OUTPUT"
 
           echo "Publishing Helm charts for tag: $TAG_VERSION"
+          echo "Chart version: $CHART_VERSION"
           echo "App version: $APP_VERSION"
           echo "Registry path: charts"
 
@@ -245,25 +257,26 @@ jobs:
         if: steps.detect.outputs.rag-stack-changed == 'true'
         env:
           TAG_VERSION: ${{ steps.tag.outputs.tag_version }}
+          CHART_VERSION: ${{ steps.tag.outputs.chart_version }}
           APP_VERSION: ${{ steps.tag.outputs.app_version }}
         run: |
           if [[ "$TAG_VERSION" != "canary" ]]; then
             CHART_FILE="charts/rag-stack/Chart.yaml"
-            CHART_VERSION=$(awk '/^version:/ {print $2; exit}' "$CHART_FILE")
-            CHART_APP_VERSION=$(awk '/^appVersion:/ {print $2; exit}' "$CHART_FILE" | tr -d '"')
+            COMMITTED_VERSION=$(awk '/^version:/ {print $2; exit}' "$CHART_FILE")
+            COMMITTED_APP_VERSION=$(awk '/^appVersion:/ {print $2; exit}' "$CHART_FILE" | tr -d '"')
 
-            if [[ "$CHART_VERSION" != "$TAG_VERSION" ]]; then
-              echo "rag-stack chart version is $CHART_VERSION, expected $TAG_VERSION"
+            if [[ "$COMMITTED_VERSION" != "$CHART_VERSION" ]]; then
+              echo "rag-stack chart version is $COMMITTED_VERSION, expected $CHART_VERSION"
               exit 1
             fi
 
-            if [[ "$CHART_APP_VERSION" != "$APP_VERSION" ]]; then
-              echo "rag-stack appVersion is $CHART_APP_VERSION, expected $APP_VERSION"
+            if [[ "$COMMITTED_APP_VERSION" != "$APP_VERSION" ]]; then
+              echo "rag-stack appVersion is $COMMITTED_APP_VERSION, expected $APP_VERSION"
               exit 1
             fi
           fi
 
-          python3 /tmp/normalize-local-chart-tree-versions.py "charts/rag-stack" "$TAG_VERSION" "$APP_VERSION"
+          python3 /tmp/normalize-local-chart-tree-versions.py "charts/rag-stack" "$CHART_VERSION" "$APP_VERSION"
 
           mkdir -p ./packaged-charts
           helm dependency update charts/rag-stack/
@@ -273,26 +286,27 @@ jobs:
         if: steps.detect.outputs.ai-platform-changed == 'true'
         env:
           TAG_VERSION: ${{ steps.tag.outputs.tag_version }}
+          CHART_VERSION: ${{ steps.tag.outputs.chart_version }}
           APP_VERSION: ${{ steps.tag.outputs.app_version }}
         run: |
           if [[ "$TAG_VERSION" != "canary" ]]; then
             CHART_FILE="charts/ai-platform-engineering/Chart.yaml"
-            CHART_VERSION=$(awk '/^version:/ {print $2; exit}' "$CHART_FILE")
-            CHART_APP_VERSION=$(awk '/^appVersion:/ {print $2; exit}' "$CHART_FILE" | tr -d '"')
+            COMMITTED_VERSION=$(awk '/^version:/ {print $2; exit}' "$CHART_FILE")
+            COMMITTED_APP_VERSION=$(awk '/^appVersion:/ {print $2; exit}' "$CHART_FILE" | tr -d '"')
 
-            if [[ "$CHART_VERSION" != "$TAG_VERSION" ]]; then
-              echo "ai-platform-engineering chart version is $CHART_VERSION, expected $TAG_VERSION"
+            if [[ "$COMMITTED_VERSION" != "$CHART_VERSION" ]]; then
+              echo "ai-platform-engineering chart version is $COMMITTED_VERSION, expected $CHART_VERSION"
               exit 1
             fi
 
-            if [[ "$CHART_APP_VERSION" != "$APP_VERSION" ]]; then
-              echo "ai-platform-engineering appVersion is $CHART_APP_VERSION, expected $APP_VERSION"
+            if [[ "$COMMITTED_APP_VERSION" != "$APP_VERSION" ]]; then
+              echo "ai-platform-engineering appVersion is $COMMITTED_APP_VERSION, expected $APP_VERSION"
               exit 1
             fi
           fi
 
-          python3 /tmp/normalize-local-chart-tree-versions.py "charts/rag-stack" "$TAG_VERSION" "$APP_VERSION"
-          python3 /tmp/normalize-local-chart-tree-versions.py "charts/ai-platform-engineering" "$TAG_VERSION" "$APP_VERSION"
+          python3 /tmp/normalize-local-chart-tree-versions.py "charts/rag-stack" "$CHART_VERSION" "$APP_VERSION"
+          python3 /tmp/normalize-local-chart-tree-versions.py "charts/ai-platform-engineering" "$CHART_VERSION" "$APP_VERSION"
 
           mkdir -p ./packaged-charts
           helm dependency update charts/rag-stack/
@@ -306,6 +320,8 @@ jobs:
 
       - name: Push Helm charts to GHCR
         if: steps.detect.outputs.rag-stack-changed == 'true' || steps.detect.outputs.ai-platform-changed == 'true'
+        env:
+          TAG_VERSION: ${{ steps.tag.outputs.tag_version }}
         run: |
           REGISTRY="oci://ghcr.io/${{ github.repository_owner }}/charts"
           mkdir -p /tmp/release-helm-pull-checks
@@ -318,7 +334,9 @@ jobs:
 
             echo "Processing $CHART_NAME:$CHART_VERSION"
 
-            if helm pull "$REGISTRY/$CHART_NAME" --version "$CHART_VERSION" --destination /tmp/release-helm-pull-checks >/dev/null 2>&1; then
+            # canary is a floating placeholder version — always overwrite it.
+            # Every other version is immutable once published, so skip re-pushing it.
+            if [[ "$TAG_VERSION" != "canary" ]] && helm pull "$REGISTRY/$CHART_NAME" --version "$CHART_VERSION" --destination /tmp/release-helm-pull-checks >/dev/null 2>&1; then
               echo "$CHART_NAME:$CHART_VERSION already exists; skipping push"
               continue
             fi
@@ -331,6 +349,7 @@ jobs:
         if: always()
         env:
           TAG_VERSION: ${{ steps.tag.outputs.tag_version }}
+          CHART_VERSION: ${{ steps.tag.outputs.chart_version }}
           APP_VERSION: ${{ steps.tag.outputs.app_version }}
           RAG_STACK_CHANGED: ${{ steps.detect.outputs.rag-stack-changed }}
           AI_PLATFORM_CHANGED: ${{ steps.detect.outputs.ai-platform-changed }}
@@ -343,6 +362,7 @@ jobs:
           | Property | Value |
           |----------|-------|
           | Tag | \`${TAG_VERSION}\` |
+          | Chart version | \`${CHART_VERSION}\` |
           | appVersion | \`${APP_VERSION}\` |
           | Registry | \`${REGISTRY}\` |
           | rag-stack changed | \`${RAG_STACK_CHANGED}\` |
@@ -353,7 +373,7 @@ jobs:
           \`\`\`bash
           helm upgrade --install ai-platform \\
             oci://${REGISTRY}/ai-platform-engineering \\
-            --version ${TAG_VERSION}
+            --version ${CHART_VERSION}
           \`\`\`
           EOF
 

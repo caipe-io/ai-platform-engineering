@@ -50,10 +50,15 @@ ghcr.io/caipe-io/caipe-ui:canary
 ghcr.io/caipe-io/caipe-ui:0.6.0-rc.1
 ghcr.io/caipe-io/caipe-ui:0.6.0
 
-oci://ghcr.io/caipe-io/charts/ai-platform-engineering:canary
+oci://ghcr.io/caipe-io/charts/ai-platform-engineering:0.0.0-canary
 oci://ghcr.io/caipe-io/charts/ai-platform-engineering:0.6.0-rc.1
 oci://ghcr.io/caipe-io/charts/ai-platform-engineering:0.6.0
 ```
+
+The chart's canary selector is `0.0.0-canary`, not `canary` — Helm requires a
+chart's `version` field to be strict SemVer, and `canary` alone doesn't parse
+as one. Its `appVersion` still reads `canary`, so it still deploys the
+matching `canary` images by default.
 
 Do not create lifecycle-specific package paths such as:
 
