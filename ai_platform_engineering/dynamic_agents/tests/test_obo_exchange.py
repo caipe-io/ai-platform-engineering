@@ -110,6 +110,28 @@ async def test_successful_exchange_returns_new_token(monkeypatch, _kc_env):
 
 
 @pytest.mark.asyncio
+async def test_prefers_server_side_discovery_url_over_browser_issuer(monkeypatch, _kc_env):
+    monkeypatch.setenv(
+        "OIDC_DISCOVERY_URL", "http://caipe-keycloak:8080/realms/caipe"
+    )
+    calls: list[dict] = []
+    resp = _FakeResp(
+        200, {"access_token": "obo-internal", "expires_in": 300, "token_type": "Bearer"}
+    )
+    monkeypatch.setattr(
+        obo_exchange.httpx, "AsyncClient", lambda *_a, **_kw: _FakeClient(resp, calls)
+    )
+
+    out = await obo_exchange.impersonate_user(_fake_jwt("alice"), "agentgateway")
+
+    assert out == "obo-internal"
+    assert calls[0]["url"] == (
+        "http://caipe-keycloak:8080/realms/caipe/"
+        "protocol/openid-connect/token"
+    )
+
+
+@pytest.mark.asyncio
 async def test_cache_hit_skips_second_exchange(monkeypatch, _kc_env):
     calls: list[dict] = []
     resp = _FakeResp(200, {"access_token": "obo-1", "expires_in": 600})

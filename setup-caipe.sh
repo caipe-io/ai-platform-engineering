@@ -50,7 +50,7 @@ LITELLM_ENDPOINT="${LITELLM_ENDPOINT:-}"
 LITELLM_API_KEY="${LITELLM_API_KEY:-}"
 LITELLM_MODEL_NAME="${LITELLM_MODEL_NAME:-gpt-oss-20B}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
-ANTHROPIC_MODEL_NAME="claude-haiku-4-5-20251001"
+ANTHROPIC_MODEL_NAME="${ANTHROPIC_MODEL_NAME:-claude-haiku-4-5-20251001}"
 AWS_BEDROCK_MODEL_ID="${AWS_BEDROCK_MODEL_ID:-global.anthropic.claude-haiku-4-5-20251001-v1:0}"
 AWS_BEDROCK_PROVIDER="${AWS_BEDROCK_PROVIDER:-anthropic}"
 AWS_REGION="${AWS_REGION:-us-east-2}"
@@ -135,8 +135,9 @@ GITHUB_SOCIAL_CLIENT_SECRET="${GITHUB_SOCIAL_CLIENT_SECRET:-}"
 # Local Keycloak admin login (no upstream IdP / no Cisco SSO). The default
 # in-chart Keycloak install ships no human users, so without this nobody could
 # sign in unless an upstream IdP (Duo/Okta) was brokered. When the RBAC runtime
-# is on with a DNS domain and no upstream IdP is configured, we create a single
-# realm user with a password and grant it org-admin (BOOTSTRAP_ADMIN_EMAILS) so
+# is on with an ingress or local port-forward mode and no upstream IdP is
+# configured, we create a single realm user with a password and grant it
+# org-admin (BOOTSTRAP_ADMIN_EMAILS) so
 # RBAC/auth can be exercised end-to-end with zero external identity setup.
 # Disable with --no-local-admin. The password is generated and persisted in the
 # caipe-local-admin Secret (idempotent re-runs) unless LOCAL_ADMIN_PASSWORD is set.
@@ -271,6 +272,10 @@ CAIPE_IDP_URL="${CAIPE_IDP_URL:-}"
 CAIPE_EXPOSE="${CAIPE_EXPOSE:-port-forward}"
 UI_NODE_PORT="${UI_NODE_PORT:-30201}"
 IDP_NODE_PORT="${IDP_NODE_PORT:-30001}"
+# Local port-forward mode keeps the deployment HTTP-only and makes the browser-
+# facing OIDC issuer use the local forwarded ports. This is enabled by
+# --no-ingress and can be selected explicitly for installs reached through SSH.
+PORT_FORWARD_MODE="${CAIPE_PORT_FORWARD_MODE:-false}"
 TLS_CERT_FILE=""
 TLS_KEY_FILE=""
 TLS_SELF_SIGNED=false   # true when setup generates the cert (no --tls-cert)
@@ -3509,7 +3514,7 @@ provision_ui_secret() {
 
   # When a public domain is set, override localhost-defaulted secrets with
   # the correct values for a k8s deployment.
-  if [[ -n "$CAIPE_DOMAIN" ]]; then
+  if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" ]]; then
     local _patches=()
     _patches+=("{\"op\":\"add\",\"path\":\"/data/NEXTAUTH_URL\",\"value\":\"$(echo -n "$(_ui_public_url)" | base64 -w0)\"}")
     # RAG BFF: Next.js server-side calls use the in-cluster service, not localhost
@@ -3539,7 +3544,7 @@ provision_ui_secret() {
   HELM_UI_SECRET_ARGS+=(--set "caipe-ui.existingSecret=caipe-ui-secret")
 
   # Also pass SSO_ENABLED via Helm env so it takes effect at runtime
-  if [[ -n "$CAIPE_DOMAIN" ]]; then
+  if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" ]]; then
     HELM_UI_SECRET_ARGS+=(--set "caipe-ui.env.SSO_ENABLED=true")
   fi
 
@@ -4542,15 +4547,18 @@ post_deploy_patches() {
   # patches the ConfigMap with the real cluster URI.
   _ensure_dynamic_agents_mongodb
 
-  # ── 9. Domain-scoped Keycloak SSO setup ──
-  if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+  # ── 9. Browser-facing Keycloak SSO setup ──
+  # Ingress mode uses CAIPE_DOMAIN; no-ingress mode uses localhost through the
+  # port-forward monitor (and, on a remote host, an SSH tunnel to those ports).
+  if [[ -n "${CAIPE_DOMAIN:-}" ]] || ! $ENABLE_INGRESS; then
     # In-chart Keycloak SSO over a public DNS domain: NextAuth's server-side
     # callback (token exchange + JWKS) hits the PUBLIC Keycloak endpoints
     # (KC_HOSTNAME). The UI pod resolves the public host to the public IP and
     # usually cannot hairpin back to its own ingress (OAuthCallback failure).
     # Pin the public host to the in-cluster ingress ClusterIP via hostAliases so
     # server-side calls route internally (TLS SNI/cert still match the host).
-    if $ENABLE_RBAC_RUNTIME && [[ ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if $ENABLE_RBAC_RUNTIME && $ENABLE_INGRESS \
+        && [[ ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       local _ningx_ip
       _ningx_ip=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
         -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
@@ -4574,8 +4582,8 @@ post_deploy_patches() {
     configure_github_idp
 
     # Default local Keycloak logins (no upstream IdP): an org-admin and a
-    # non-admin user. Self-guards via _local_admin_active (RBAC + DNS domain +
-    # no brokered IdP).
+    # non-admin user. Self-guards via _local_admin_active (RBAC + ingress or
+    # explicit port-forward mode + no brokered IdP).
     provision_local_users
 
     # RAG web-ingestor service account: creates caipe-web-ingestor client in
@@ -4602,6 +4610,7 @@ post_deploy_patches() {
 # unconfigured, the deployment falls back to local Keycloak username/password.
 prompt_github_social() {
   $ENABLE_RBAC_RUNTIME || return 0
+  $ENABLE_INGRESS || return 0
   [[ -n "$CAIPE_DOMAIN" ]] || return 0
   [[ "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && return 0
   [[ "$ENABLE_GITHUB_SOCIAL" == "false" ]] && return 0
@@ -4846,7 +4855,7 @@ JSON
 # that cause "Invalid parameter: redirect_uri" on login.
 update_keycloak_client_urls() {
   $ENABLE_RBAC_RUNTIME || return 0
-  [[ -n "${CAIPE_DOMAIN:-}" ]] || return 0
+  [[ -n "${CAIPE_DOMAIN:-}" || ! $ENABLE_INGRESS ]] || return 0
 
   local kcadm_pw="${KEYCLOAK_ADMIN_PASSWORD:-}"
   if [[ -z "$kcadm_pw" ]]; then
@@ -4910,7 +4919,7 @@ update_keycloak_client_urls() {
 # BEARER_AUDIENCE_MISMATCH.
 provision_caipe_ui_audience_mapper() {
   $ENABLE_RBAC_RUNTIME || return 0
-  [[ -n "${CAIPE_DOMAIN:-}" ]] || return 0
+  [[ -n "${CAIPE_DOMAIN:-}" || ! $ENABLE_INGRESS ]] || return 0
 
   local kcadm_user kcadm_pw="${KEYCLOAK_ADMIN_PASSWORD:-}"
   kcadm_user=$(kubectl get secret caipe-keycloak-admin -n caipe \
@@ -4977,19 +4986,51 @@ provision_caipe_ui_audience_mapper() {
   fi
 }
 
-# True when we should self-provision a local Keycloak admin login. Requires the
-# RBAC runtime + a DNS domain (SSO needs a browser-reachable issuer) and is
-# skipped when an upstream IdP is brokered (IDP_ISSUER set in an env file) —
-# in that case identity comes from the broker, not a local password user.
+_upstream_idp_configured() {
+  if [[ -n "${UI_ENV_FILE:-}" && -f "${UI_ENV_FILE:-}" ]] \
+      && [[ -n "$(_env_get "$UI_ENV_FILE" IDP_ISSUER)" ]]; then
+    return 0
+  fi
+  if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE:-}" ]] \
+      && [[ -n "$(_env_get "$ENV_FILE" IDP_ISSUER)" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+_browser_ui_url() {
+  if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+    printf 'https://%s' "$CAIPE_DOMAIN"
+  else
+    printf 'http://localhost:%s' "$UI_PORT"
+  fi
+}
+
+_browser_oidc_issuer() {
+  if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+    printf 'https://%s/realms/caipe' "$CAIPE_DOMAIN"
+  else
+    printf 'http://localhost:%s/realms/caipe' "$KEYCLOAK_PORT"
+  fi
+}
+
+_internal_oidc_issuer() {
+  printf 'http://caipe-keycloak:8080/realms/caipe'
+}
+
+# True when we should self-provision a local Keycloak admin login. A DNS domain
+# is required for ingress mode; no-ingress installs use the explicit local
+# port-forward path and its browser-reachable localhost issuer instead. Local
+# users are skipped when an upstream IdP is brokered (IDP_ISSUER set in an env
+# file), because identity then comes from the broker.
 _local_admin_active() {
   $ENABLE_RBAC_RUNTIME || return 1
   [[ "$ENABLE_LOCAL_ADMIN" != "false" ]] || return 1
-  [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-  if [[ -n "${UI_ENV_FILE:-}" && -f "${UI_ENV_FILE:-}" ]]; then
-    [[ -z "$(_env_get "$UI_ENV_FILE" IDP_ISSUER)" ]] || return 1
-  fi
-  if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE:-}" ]]; then
-    [[ -z "$(_env_get "$ENV_FILE" IDP_ISSUER)" ]] || return 1
+  _upstream_idp_configured && return 1
+  if $ENABLE_INGRESS; then
+    [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  else
+    $PORT_FORWARD_MODE || return 1
   fi
   return 0
 }
@@ -6339,7 +6380,7 @@ _write_rbac_runtime_values() {
   fi
 
   local _kc_public_yaml=""
-  if [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     _kc_public_yaml=$(cat <<KCPUB
   env:
     KC_HOSTNAME: "$(_idp_public_url)"
@@ -6455,7 +6496,7 @@ caipe-ui:
 RBACEOF
 
   if [[ -n "$UI_ENV_FILE" ]]; then
-    local oidc_issuer
+    local oidc_issuer oidc_discovery_config=""
     oidc_issuer=$(_env_get "$UI_ENV_FILE" "OIDC_ISSUER")
     # With a public DNS domain the token `iss` is the public Keycloak URL
     # (KC_HOSTNAME above), so the authz-bridge must validate against that —
@@ -6463,9 +6504,15 @@ RBACEOF
     if [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       oidc_issuer="$(_idp_public_url)/realms/caipe"
     fi
+    if [[ -z "$oidc_issuer" ]] && ! $ENABLE_INGRESS && ! _upstream_idp_configured; then
+      oidc_issuer="$(_browser_oidc_issuer)"
+      oidc_discovery_config="    OIDC_DISCOVERY_URL: \"$(_internal_oidc_issuer)\""
+    fi
     if [[ -n "$oidc_issuer" ]]; then
       cat >> "$values_file" <<RBACEOF
     SSO_ENABLED: "true"
+    OIDC_ISSUER: "${oidc_issuer}"
+${oidc_discovery_config}
 
 openfga-authz-bridge:
   tokenValidation:
@@ -6694,7 +6741,7 @@ deploy_caipe() {
 
   # SSO: enable when a public domain is configured (NEXTAUTH_URL is already
   # patched in provision_ui_secret; here we flip the server-side flag too)
-  if [[ -n "$CAIPE_DOMAIN" ]]; then
+  if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" ]]; then
     helm_args+=(--set "caipe-ui.config.SSO_ENABLED=true")
   else
     helm_args+=(--set "caipe-ui.config.SSO_ENABLED=false")
@@ -6705,6 +6752,28 @@ deploy_caipe() {
     --set "caipe-ui.config.WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED}"
   )
 
+  # No-ingress installs are reached through the local kubectl/SSH port-forward
+  # monitor. Give NextAuth a browser-reachable issuer while keeping discovery
+  # and token/JWKS calls on the in-cluster Keycloak service. The auth provider
+  # supplies explicit browser/server endpoints for this split topology.
+  local _ui_env_oidc_issuer=""
+  if [[ -n "$UI_ENV_FILE" && -f "$UI_ENV_FILE" ]]; then
+    _ui_env_oidc_issuer=$(_env_get "$UI_ENV_FILE" "OIDC_ISSUER")
+  fi
+  if $ENABLE_RBAC_RUNTIME && ! $ENABLE_INGRESS \
+      && ! _upstream_idp_configured && [[ -z "$_ui_env_oidc_issuer" ]]; then
+    helm_args+=(
+      --set "caipe-ui.config.SSO_ENABLED=true"
+      --set "caipe-ui.config.NEXTAUTH_URL=$(_browser_ui_url)"
+      --set "caipe-ui.config.OIDC_ISSUER=$(_browser_oidc_issuer)"
+      --set "caipe-ui.config.OIDC_DISCOVERY_URL=$(_internal_oidc_issuer)"
+      --set "openfga-authz-bridge.tokenValidation.issuer=$(_browser_oidc_issuer)"
+    )
+    if _local_admin_active; then
+      helm_args+=(--set "caipe-ui.config.BOOTSTRAP_ADMIN_EMAILS=${LOCAL_ADMIN_EMAIL}")
+    fi
+  fi
+
   # Default (no --ui-env-file) in-chart Keycloak SSO. The dev/Cisco env file
   # normally supplies OIDC_ISSUER/NEXTAUTH_URL, so without it the chart defaults
   # leave OIDC_ISSUER empty (sign-in is impossible) and NEXTAUTH_URL pointing at
@@ -6714,7 +6783,7 @@ deploy_caipe() {
   # NEXTAUTH_SECRET + caipe-ui client secret are created in
   # create_namespace_and_secrets (caipe-ui-secret). Skipped for IP domains (no
   # browser-reachable issuer) and when a ui-env-file already provides OIDC.
-  if $ENABLE_RBAC_RUNTIME && [[ -z "$UI_ENV_FILE" \
+  if $ENABLE_RBAC_RUNTIME && $ENABLE_INGRESS && [[ -z "$UI_ENV_FILE" \
       && -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     helm_args+=(
       --set "caipe-ui.config.NEXTAUTH_URL=$(_ui_public_url)"
@@ -6782,6 +6851,9 @@ deploy_caipe() {
     if [[ -z "$da_oidc_issuer" && -n "${CAIPE_DOMAIN:-}" ]]; then
       da_oidc_issuer="$(_idp_public_url)/realms/caipe"
     fi
+    if [[ -z "$da_oidc_issuer" ]] && ! $ENABLE_INGRESS && ! _upstream_idp_configured; then
+      da_oidc_issuer="$(_browser_oidc_issuer)"
+    fi
     if [[ -z "$da_oidc_client_id" ]]; then
       da_oidc_client_id="caipe-platform"
     fi
@@ -6811,10 +6883,13 @@ dynamic-agents:
     # MongoDB-compatible URI baked in before post_deploy_patches.
     MONGODB_URI: "${_database_uri_value}"
 DAEOF
-    if [[ -n "$CAIPE_DOMAIN" && -n "$da_oidc_issuer" ]]; then
+    if [[ -n "$da_oidc_issuer" ]]; then
+      local _da_cors_origin
+      _da_cors_origin="$(_browser_ui_url)"
       cat >> "$_da_values_file" <<DAEOF
     AUTH_ENABLED: "true"
     OIDC_ISSUER: "${da_oidc_issuer}"
+    OIDC_DISCOVERY_URL: "$(_internal_oidc_issuer)"
     OIDC_CLIENT_ID: "${da_oidc_client_id}"
     CORS_ORIGINS: '["$(_ui_public_url)", "http://localhost:3000"]'
 DAEOF
@@ -7037,7 +7112,7 @@ DAEOF
       --set 'rag-stack.rag-server.env.SKIP_INIT_TESTS=true'
     )
     # Wire UI OIDC provider into rag-server so user tokens are validated.
-    if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+    if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
       helm_args+=(
         --set "rag-stack.rag-server.env.OIDC_ISSUER=$(_idp_public_url)/realms/caipe"
         --set 'rag-stack.rag-server.env.OIDC_CLIENT_ID=caipe-ui'
@@ -7242,6 +7317,17 @@ DAEOF
   log "CAIPE Helm release deployed"
 
   _restart_dynamic_agents_after_config_change "$previous_llm_streaming" "$llm_streaming" || return 1
+  # Helm only restarts pods when the Deployment spec changes, not on ConfigMap-only
+  # updates. When OIDC_ISSUER / AUTH_ENABLED are freshly set (domain run), the
+  # dynamic-agents pod must be cycled so it picks up the new issuer from the ConfigMap.
+  # Without this it keeps using the internal http://keycloak:8080 issuer URL and rejects
+  # every token with "Invalid issuer", blocking all chat in the Custom Agents UI.
+  if [[ -n "${CAIPE_DOMAIN:-}" ]] || ! $ENABLE_INGRESS; then
+    if kubectl rollout restart deploy/caipe-dynamic-agents -n caipe &>/dev/null 2>&1; then
+      kubectl rollout status deploy/caipe-dynamic-agents -n caipe --timeout=120s &>/dev/null 2>&1 || true
+      log "dynamic-agents: restarted to apply OIDC issuer config"
+    fi
+  fi
 
   # Non-fatal: a timeout here (e.g. credential-less agents that never become
   # ready) must NOT abort the script under `set -e` — post_deploy_patches still
@@ -8094,7 +8180,7 @@ monitor_port_forwards() {
   if _local_admin_active && [[ -n "${LOCAL_ADMIN_PASSWORD:-}" ]]; then
     echo ""
     header "Local logins (in-chart Keycloak, no upstream IdP)"
-    echo -e "    URL                ${CYAN}https://${CAIPE_DOMAIN}${NC}"
+    echo -e "    URL                ${CYAN}$(_browser_ui_url)${NC}"
     echo ""
     echo -e "    ${BOLD}Admin${NC} (org-admin / admin UI)"
     echo -e "      Email            ${BOLD}${LOCAL_ADMIN_EMAIL}${NC}"
@@ -9583,6 +9669,9 @@ Options:
   --setup-wizard     Automatically show the guided wizard to the first admin — default ON
   --no-setup-wizard  Suppress the automatic prompt; the wizard remains available under
                      Admin > Platform configuration > Setup Wizard
+  --port-forward-mode
+                     Use the browser-reachable localhost issuer and provision local
+                     Keycloak users for kubectl/SSH port-forward access (implies --no-ingress)
   --domain=HOST      Hostname for the UI ingress (e.g. my-caipe.example.com)
                      Default when ingress is enabled and --domain is omitted: ${CAIPE_DOMAIN_DEFAULT}
   --ui-url=URL       Browser-facing UI URL (default: https://<domain>). Use when CAIPE
@@ -9604,7 +9693,7 @@ Options:
   --github-social-id=ID         GitHub OAuth App client ID (login broker)
   --github-social-secret=SECRET GitHub OAuth App client secret (login broker)
   --local-admin[=EMAIL]         Create a local Keycloak admin login (default ON for
-                     in-chart Keycloak with a DNS domain and no upstream IdP) so RBAC/auth
+                     in-chart Keycloak with ingress or port-forward mode and no upstream IdP) so RBAC/auth
                      work with zero external SSO. EMAIL defaults to admin@caipe.local.
   --no-local-admin   Skip the local admin user (use only with an upstream IdP / GitHub social)
   --local-admin-password=PW     Set the local admin password (default: generated, persisted
@@ -9793,11 +9882,12 @@ for arg in "$@"; do
     --no-persistence)  ENABLE_PERSISTENCE=false ;;
     --database=*)      DATABASE_PROVIDER="${arg#--database=}" ;;
     --metallb)         ENABLE_METALLB=true ;;
-    --no-metallb)      ENABLE_METALLB=false; ENABLE_INGRESS=false ;;
+    --no-metallb)      ENABLE_METALLB=false; ENABLE_INGRESS=false; PORT_FORWARD_MODE=true ;;
     --ingress)         ENABLE_INGRESS=true; ENABLE_METALLB=true ;;
-    --no-ingress)      ENABLE_INGRESS=false ;;
+    --no-ingress)      ENABLE_INGRESS=false; PORT_FORWARD_MODE=true ;;
     --setup-wizard)    ENABLE_SETUP_WIZARD=true; _ENABLE_SETUP_WIZARD_EXPLICIT=true ;;
     --no-setup-wizard) ENABLE_SETUP_WIZARD=false; _ENABLE_SETUP_WIZARD_EXPLICIT=true ;;
+    --port-forward-mode) ENABLE_INGRESS=false; PORT_FORWARD_MODE=true ;;
     --domain=*)        CAIPE_DOMAIN="${arg#--domain=}" ;;
     --ui-url=*)        CAIPE_UI_URL="${arg#--ui-url=}" ;;
     --idp-url=*)       CAIPE_IDP_URL="${arg#--idp-url=}" ;;
@@ -9851,6 +9941,9 @@ esac
 $ENABLE_RBAC_RUNTIME && ENABLE_AGENTGATEWAY=true
 $ENABLE_GRAPH_RAG && ENABLE_RAG=true
 [[ ${#INGEST_URLS[@]} -gt 0 ]] && ENABLE_RAG=true
+if ! $ENABLE_INGRESS; then
+  PORT_FORWARD_MODE=true
+fi
 
 case "${args[0]:-setup}" in
   setup)        cmd_setup ;;
