@@ -1645,6 +1645,11 @@ openfga-authz-bridge:
     serviceUrl: ""
     tenantId: default
     subjectSalt: caipe-098-audit
+    # Routine allows are stored as periodic aggregate counts; denials and policy
+    # changes are always stored per-event. Enable only for a bounded
+    # investigation or compliance window.
+    fullFidelityAllows: false
+    allowRollupFlushSeconds: 60
 
 ######### RAG Stack configuration #########
 # RAG Stack - Complete stack including web, server, agent, Redis, and Milvus

@@ -223,3 +223,12 @@ Get Ontology Agent REST API address
 {{- define "rag-server.appVersion" -}}
 {{- .Values.global.image.tag | default .Chart.AppVersion -}}
 {{- end -}}
+
+{{- define "rag-server.auditServiceUrl" -}}
+{{- $explicit := index (.Values.env | default dict) "AUDIT_SERVICE_URL" | default "" | trim -}}
+{{- if $explicit -}}
+{{- $explicit -}}
+{{- else -}}
+{{- printf "http://%s-audit-service:8010" .Release.Name -}}
+{{- end -}}
+{{- end -}}

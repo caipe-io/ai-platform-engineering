@@ -8,17 +8,17 @@ Envoy ext_authz bridge that adapts AgentGateway authorization checks to OpenFGA
 
 | | |
 |---|---|
-| **Version** | `1.1.0` |
+| **Version** | `1.1.1` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.0
+helm install openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.1
 
 # Upgrade an existing release
-helm upgrade openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.0
+helm upgrade openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.1
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.0 \
+helm install openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.1 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.0 \
+helm install openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.1 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.0
+helm show values oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.1
 ```
 
 ## Reading the Values Table
@@ -54,7 +54,9 @@ helm show values oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.
 | affinity | object | `{}` |  |
 | agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
 | agentContext.existingSecret.name | string | `""` |  |
+| audit.allowRollupFlushSeconds | int | `60` |  |
 | audit.enabled | bool | `true` |  |
+| audit.fullFidelityAllows | bool | `false` |  |
 | audit.serviceUrl | string | `"http://{{ .Release.Name }}-audit-service:8010"` |  |
 | audit.subjectSalt | string | `"caipe-098-audit"` |  |
 | audit.tenantId | string | `"default"` |  |

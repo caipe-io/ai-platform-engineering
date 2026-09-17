@@ -2417,6 +2417,54 @@ describe('GET /api/admin/stats — Direct MCP Activity', () => {
     expect(body.data.api.mcp_activity.unique_users).toBe(1);
   });
 
+  it('sums aggregated rollup counts rather than counting rows', async () => {
+    setupAdminWithCollections();
+    // Timestamped now so the rows land inside the requested range's day buckets.
+    const now = new Date();
+    const todayKey = now.toISOString().split('T')[0];
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        // Row count (2) deliberately disagrees with the decisions represented
+        // (17) — the bridge aggregates routine allows into counted rows.
+        total: 2,
+        records: [
+          { ts: now.toISOString(), subject_ref: 'user:alice', count: 12 },
+          { ts: now.toISOString(), subject_ref: 'user:bob', count: 5 },
+        ],
+      }),
+    });
+
+    const res = await GET(makeRequest('/api/admin/stats?section=api'));
+    const body = await res.json();
+
+    expect(body.data.api.mcp_activity.total_events).toBe(17);
+    expect(body.data.api.mcp_activity.unique_users).toBe(2);
+    const day = body.data.api.mcp_activity.daily.find((d: { date: string }) => d.date === todayKey);
+    expect(day.events).toBe(17);
+    expect(day.unique_users).toBe(2);
+  });
+
+  it('treats a record with no count as a single event', async () => {
+    setupAdminWithCollections();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        total: 2,
+        records: [
+          { ts: '2026-08-01T10:00:00Z', subject_ref: 'user:alice', count: 3 },
+          { ts: '2026-08-01T11:00:00Z', subject_ref: 'user:alice' },
+        ],
+      }),
+    });
+
+    const res = await GET(makeRequest('/api/admin/stats?section=api'));
+    const body = await res.json();
+
+    expect(body.data.api.mcp_activity.total_events).toBe(4);
+    expect(body.data.api.mcp_activity.unique_users).toBe(1);
+  });
+
   it('marks mcp_activity unavailable when the audit-service call fails, without failing the request', async () => {
     setupAdminWithCollections();
     mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
