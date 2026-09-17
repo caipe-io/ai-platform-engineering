@@ -39,8 +39,13 @@ ENABLE_PERSISTENCE="${ENABLE_PERSISTENCE:-true}"
 DATABASE_PROVIDER="${DATABASE_PROVIDER:-}"
 DOCUMENTDB_IMAGE_TAG="${DOCUMENTDB_IMAGE_TAG:-pg17-0.113.0}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
-OPENAI_ENDPOINT="https://api.openai.com/v1"
-OPENAI_MODEL_NAME="gpt-5.2"
+# Keep the fallback values, but do not let them mask values recovered from an
+# existing llm-secret during an upgrade. An explicitly supplied environment or
+# CLI value must continue to win over the deployed secret.
+_OPENAI_ENDPOINT_EXPLICIT="${OPENAI_ENDPOINT:+set}"
+_OPENAI_MODEL_NAME_EXPLICIT="${OPENAI_MODEL_NAME:+set}"
+OPENAI_ENDPOINT="${OPENAI_ENDPOINT:-https://api.openai.com/v1}"
+OPENAI_MODEL_NAME="${OPENAI_MODEL_NAME:-gpt-5.2}"
 LITELLM_ENDPOINT="${LITELLM_ENDPOINT:-}"
 LITELLM_API_KEY="${LITELLM_API_KEY:-}"
 LITELLM_MODEL_NAME="${LITELLM_MODEL_NAME:-gpt-oss-20B}"
@@ -1323,8 +1328,14 @@ collect_credentials() {
           ;;
         *)
           [[ -z "${OPENAI_API_KEY:-}" ]]   && OPENAI_API_KEY=$(_sv OPENAI_API_KEY)
-          [[ -z "${OPENAI_ENDPOINT:-}" ]]  && OPENAI_ENDPOINT=$(_sv OPENAI_ENDPOINT)
-          [[ -z "${OPENAI_MODEL_NAME:-}" ]] && OPENAI_MODEL_NAME=$(_sv OPENAI_MODEL_NAME)
+          if [[ -z "${_OPENAI_ENDPOINT_EXPLICIT:-}" ]]; then
+            local _detected_endpoint; _detected_endpoint=$(_sv OPENAI_ENDPOINT)
+            [[ -n "$_detected_endpoint" ]] && OPENAI_ENDPOINT="$_detected_endpoint"
+          fi
+          if [[ -z "${_OPENAI_MODEL_NAME_EXPLICIT:-}" ]]; then
+            local _detected_model; _detected_model=$(_sv OPENAI_MODEL_NAME)
+            [[ -n "$_detected_model" ]] && OPENAI_MODEL_NAME="$_detected_model"
+          fi
           ;;
       esac
       [[ -n "${LLM_PROVIDER:-}" ]] && log "Loaded LLM config from existing cluster secret (provider: ${LLM_PROVIDER})"
@@ -6859,7 +6870,13 @@ DAEOF
 DAEOF
     elif [[ "$_provider" == "openai" ]]; then
       local _oai_model="${OPENAI_MODEL_NAME:-gpt-4o-mini}"
-      cat >> "$_da_values_file" <<DAEOF
+      # A custom OpenAI-compatible endpoint (including LiteLLM) does not
+      # necessarily provide OpenAI's catalog. Advertising gpt-4o-mini there
+      # made the model picker look healthy while selecting an unavailable
+      # model. Seed only the configured model for custom endpoints; retain the
+      # familiar companion model for the real OpenAI API.
+      if [[ "${OPENAI_ENDPOINT%/}" == "https://api.openai.com/v1" ]]; then
+        cat >> "$_da_values_file" <<DAEOF
       - model_id: "gpt-4o-mini"
         name: "GPT-4o Mini"
         provider: "openai"
@@ -6869,6 +6886,14 @@ DAEOF
         provider: "openai"
         description: "Primary model via OpenAI"
 DAEOF
+      else
+        cat >> "$_da_values_file" <<DAEOF
+      - model_id: "${_oai_model}"
+        name: "${_oai_model} (OpenAI-compatible gateway)"
+        provider: "openai"
+        description: "Configured model via an OpenAI-compatible gateway"
+DAEOF
+      fi
     else
       # anthropic-claude (default)
       local _anthropic_model="${ANTHROPIC_MODEL_NAME:-claude-haiku-4-5}"
@@ -8692,8 +8717,14 @@ detect_deployed_features() {
         ;;
       openai|*)
         [[ -z "${OPENAI_API_KEY:-}" ]]    && OPENAI_API_KEY=$(_secret_val OPENAI_API_KEY)
-        [[ -z "${OPENAI_ENDPOINT:-}" ]]   && OPENAI_ENDPOINT=$(_secret_val OPENAI_ENDPOINT)
-        [[ -z "${OPENAI_MODEL_NAME:-}" ]] && OPENAI_MODEL_NAME=$(_secret_val OPENAI_MODEL_NAME)
+        if [[ -z "${_OPENAI_ENDPOINT_EXPLICIT:-}" ]]; then
+          local _detected_endpoint; _detected_endpoint=$(_secret_val OPENAI_ENDPOINT)
+          [[ -n "$_detected_endpoint" ]] && OPENAI_ENDPOINT="$_detected_endpoint"
+        fi
+        if [[ -z "${_OPENAI_MODEL_NAME_EXPLICIT:-}" ]]; then
+          local _detected_model; _detected_model=$(_secret_val OPENAI_MODEL_NAME)
+          [[ -n "$_detected_model" ]] && OPENAI_MODEL_NAME="$_detected_model"
+        fi
         ;;
     esac
     log "Loaded LLM config from existing llm-secret (provider: ${LLM_PROVIDER:-unknown})"
@@ -9149,13 +9180,34 @@ BANNER
       BEDROCK_TEMPERATURE
       AZURE_OPENAI_API_KEY AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_VERSION
       AZURE_OPENAI_DEPLOYMENT OPENAI_API_KEY OPENAI_API_BASE
+      OPENAI_ENDPOINT OPENAI_MODEL_NAME
       EMBEDDINGS_PROVIDER EMBEDDINGS_MODEL EMBEDDINGS_DEVICE
       COHERE_API_KEY VOYAGE_API_KEY HUGGINGFACEHUB_API_TOKEN HF_TOKEN
       LITELLM_ENDPOINT LITELLM_API_KEY)
     for _v in "${_llm_vars[@]}"; do
       local _val
       _val=$(_env_get "$ENV_FILE" "$_v")
-      [[ -n "$_val" && -z "${!_v:-}" ]] && export "$_v=$_val"
+      [[ -n "$_val" ]] || continue
+      # The built-in endpoint/model are fallbacks. Values from an env-file
+      # should restore a configured gateway on upgrades unless the caller set
+      # the corresponding shell variable explicitly.
+      case "$_v" in
+        OPENAI_ENDPOINT)
+          if [[ -z "${_OPENAI_ENDPOINT_EXPLICIT:-}" ]]; then
+            export "$_v=$_val"
+            _OPENAI_ENDPOINT_EXPLICIT=set
+          fi
+          ;;
+        OPENAI_MODEL_NAME)
+          if [[ -z "${_OPENAI_MODEL_NAME_EXPLICIT:-}" ]]; then
+            export "$_v=$_val"
+            _OPENAI_MODEL_NAME_EXPLICIT=set
+          fi
+          ;;
+        *)
+          [[ -z "${!_v:-}" ]] && export "$_v=$_val"
+          ;;
+      esac
     done
 
     # Honor feature toggles from --env-file so a single .env reproduces the same
