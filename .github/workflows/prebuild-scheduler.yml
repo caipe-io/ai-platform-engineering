@@ -101,7 +101,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
-          ref: ${{ inputs.head_sha || github.ref }}
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Set up Docker Buildx
@@ -116,26 +116,20 @@ jobs:
 
       - name: Compute prebuild tag
         id: compute_tag
+        uses: ./.github/actions/prebuild-version
+        with:
+          head_ref: ${{ inputs.head_ref || github.head_ref }}
+          base_ref: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
+          base_sha: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+
+      - name: Export prebuild tag to env
         shell: bash
         env:
-          HEAD_REF: ${{ inputs.head_ref || github.head_ref }}
-          BASE_REF: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
-          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+          PREBUILD_TAG: ${{ steps.compute_tag.outputs.prebuild_tag }}
+          BRANCH_BARE: ${{ steps.compute_tag.outputs.branch }}
         run: |
-          BRANCH="$HEAD_REF"
-          BRANCH_NO_PREFIX="${BRANCH#prebuild/}"
-          BRANCH_SANITIZED="${BRANCH_NO_PREFIX//\//-}"
-          git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-          if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            BASE_COMMIT="$BASE_SHA"
-          else
-            BASE_COMMIT="origin/${BASE_REF}"
-          fi
-          COMMIT_COUNT=$(git rev-list --count "${BASE_COMMIT}..HEAD")
-          PREBUILD_TAG="${BRANCH_SANITIZED}-${COMMIT_COUNT}"
-          echo "BRANCH_BARE=${BRANCH_SANITIZED}" >> $GITHUB_ENV
+          echo "BRANCH_BARE=${BRANCH_BARE}" >> $GITHUB_ENV
           echo "PREBUILD_TAG=${PREBUILD_TAG}" >> $GITHUB_ENV
-          echo "prebuild_tag=${PREBUILD_TAG}" >> $GITHUB_OUTPUT
 
       - name: Upload building prebuild status
         if: matrix.arch == 'amd64'
@@ -223,27 +217,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
-          ref: ${{ inputs.head_sha || github.ref }}
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Compute prebuild tag
         id: compute_tag
-        shell: bash
-        env:
-          HEAD_REF: ${{ inputs.head_ref || github.head_ref }}
-          BASE_REF: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
-          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
-        run: |
-          BRANCH_NO_PREFIX="${HEAD_REF#prebuild/}"
-          BRANCH_SANITIZED="${BRANCH_NO_PREFIX//\//-}"
-          git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-          if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            BASE_COMMIT="$BASE_SHA"
-          else
-            BASE_COMMIT="origin/${BASE_REF}"
-          fi
-          COMMIT_COUNT=$(git rev-list --count "${BASE_COMMIT}..HEAD")
-          echo "prebuild_tag=${BRANCH_SANITIZED}-${COMMIT_COUNT}" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/prebuild-version
+        with:
+          head_ref: ${{ inputs.head_ref || github.head_ref }}
+          base_ref: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
+          base_sha: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
 
       - name: Publish multi-architecture image
         id: publish

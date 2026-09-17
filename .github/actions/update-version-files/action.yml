@@ -1,46 +1,22 @@
 name: 'Update Version Files'
 description: >
-  Updates version files to a given version string. Behaviour is inferred from
-  the version string:
-    - No -chart.M suffix → FULL UPDATE: set version+appVersion+deps in ALL
-      Chart.yaml, update pyproject.toml (x.y.z-hotfix.N becomes
-      x.y.z+hotfix.N because PEP 440/uv rejects -hotfix.N), and
-      regenerate uv.lock.
-    - Has -chart.M suffix → CHART-ONLY: detect which specific charts changed
-      (using diff_target), cascade to parent charts, and per-chart increment
-      the -chart.M suffix on version field in Chart.yaml files of changed charts.
-      appVersion, pyproject.toml and uv.lock are left untouched.
+  Sets version + appVersion + local dependency refs in every Chart.yaml to
+  the given version (lockstep — chart and app versions always match), updates
+  pyproject.toml (x.y.z-hotfix.N becomes x.y.z+hotfix.N because PEP 440/uv
+  rejects -hotfix.N), regenerates uv.lock, and updates docs site version
+  strings.
 
 inputs:
   version:
-    description: >
-      Version string from determine-version.  Examples:
-        0.3.0-dev.6        — full update
-        0.3.0-rc.2-chart.1 — chart-only update
+    description: 'Version string, e.g. 1.2.0, 1.2.0-rc.3, or a prebuild tag like 1.1.0-my-branch-4'
     required: true
-  diff_target:
-    description: >
-      Git ref to diff against for chart-only change detection.
-      Required when version contains -chart.M. Ignored for full updates.
-      Examples: 0.3.0-rc.2, 0.3.0-rc.2-chart.1, a commit SHA.
-    required: false
-    default: ''
-  bump_charts:
-    description: >
-      Whether to bump Chart.yaml versions in full-update mode.
-      Set to 'false' for PRs that only touch Python/UI code and do not
-      need a pre-built Helm chart — avoids the version-conflict noise
-      caused by every concurrent PR bumping chart versions independently.
-      Chart-only mode (version ending in -chart.M) also respects this flag.
-    required: false
-    default: 'true'
 
 outputs:
   final_version:
     description: 'The version used as the git tag (always equals the input version)'
     value: ${{ steps.write.outputs.final_version }}
   skip_commit:
-    description: 'true if the top-level parent chart already has the target version (no changes needed)'
+    description: 'true if all files already matched the target version (no changes needed)'
     value: ${{ steps.write.outputs.skip_commit }}
 
 runs:
@@ -65,21 +41,11 @@ runs:
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
-        DIFF_TARGET: ${{ inputs.diff_target }}
-        BUMP_CHARTS: ${{ inputs.bump_charts }}
       run: |
         set -euo pipefail
 
         echo "📦 Input version: $VERSION"
 
-        # ── Detect chart-only mode ──────────────────────────────────────
-        IS_CHART_ONLY=false
-        if [[ "$VERSION" =~ -chart\.[0-9]+$ ]]; then
-          IS_CHART_ONLY=true
-          echo "📋 Chart-only mode detected (version ends with -chart.M)"
-        fi
-
-        # ── Discover all Chart.yaml files inside charts/ folder ─────────
         CHART_FILES=$(find charts -name "Chart.yaml" -type f | sort)
         if [[ -z "$CHART_FILES" ]]; then
           echo "❌ No Chart.yaml files found under charts/"
@@ -89,259 +55,67 @@ runs:
         echo "📋 Found Chart.yaml files:"
         echo "$CHART_FILES" | sed 's/^/  - /'
 
-        if [[ "$IS_CHART_ONLY" == "true" ]]; then
-          # ─────────────────────────────────────────────────────────────
-          # CHART-ONLY: detect changed charts, cascade to parents,
-          # per-chart increment -chart.M, update dep refs for bumped
-          # charts only. Leave appVersion, pyproject.toml, uv.lock alone.
-          # ─────────────────────────────────────────────────────────────
-          echo ""
-          echo "🔄 Chart-only update mode"
+        LOCAL_CHART_NAMES=$(for f in $CHART_FILES; do yq '.name' "$f"; done | sort -u)
 
-          if [[ "$BUMP_CHARTS" != "true" ]]; then
-            echo "  ⏭️ Skipping Chart.yaml updates (helm-chart-bump label not present)"
-            echo "skip_commit=true" >> $GITHUB_OUTPUT
-            echo "final_version=$VERSION" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          if [[ -z "$DIFF_TARGET" ]]; then
-            echo "❌ diff_target is required for chart-only updates"
-            exit 1
-          fi
-
-          # ── Early exit: check if top-level parent already has target version ──
-          # The cascade always bubbles up to ai-platform-engineering (the root chart).
-          # If its version already matches $VERSION, the bump was already applied — skip.
-          ROOT_CHART="charts/ai-platform-engineering/Chart.yaml"
-          ROOT_VER=$(yq '.version' "$ROOT_CHART" | tr -d '"')
-          if [[ "$ROOT_VER" == "$VERSION" ]]; then
-            echo "✅ Root chart already at $VERSION — nothing to do"
-            echo "skip_commit=true" >> $GITHUB_OUTPUT
-            echo "final_version=$VERSION" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          echo "skip_commit=false" >> $GITHUB_OUTPUT
-
-          # ── 1. Detect changed chart directories ─────────────────────
-          echo "📋 Diffing against: $DIFF_TARGET"
-          CHANGED_FILES=$(git diff --name-only "$DIFF_TARGET"..HEAD | grep "^charts/" || true)
-
-          if [[ -z "$CHANGED_FILES" ]]; then
-            echo "⚠️ WARNING: version '$VERSION' has -chart.M suffix (implying chart changes were detected upstream), but no chart files differ between $DIFF_TARGET..HEAD."
-            echo "⚠️ This may indicate an incorrect diff_target or a rebase that already includes the changes."
-            echo "ℹ️ No chart files changed — nothing to bump"
-            echo "final_version=$VERSION" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          echo "📋 Changed chart files:"
-          echo "$CHANGED_FILES" | sed 's/^/  - /'
-
-          # Map changed files → chart directories (those containing Chart.yaml)
-          CHANGED_CHARTS=""
-          for FILE in $CHANGED_FILES; do
-            DIR=$(dirname "$FILE")
-            while [[ "$DIR" != "." && "$DIR" != "charts" ]]; do
-              if [[ -f "$DIR/Chart.yaml" ]]; then
-                if [[ ! " $CHANGED_CHARTS " =~ " $DIR " ]]; then
-                  CHANGED_CHARTS="$CHANGED_CHARTS $DIR"
-                fi
-                break
-              fi
-              DIR=$(dirname "$DIR")
-            done
-          done
-          CHANGED_CHARTS=$(echo "$CHANGED_CHARTS" | xargs)
-
-          echo ""
-          echo "📦 Directly changed charts:"
-          for CHART_DIR in $CHANGED_CHARTS; do
-            echo "  - $(yq '.name' "$CHART_DIR/Chart.yaml") ($CHART_DIR)"
-          done
-
-          # ── 2. Cascade up: find parent charts ───────────────────────
-          CHARTS_TO_CHECK="$CHANGED_CHARTS"
-          ALL_PARENT_CHARTS=""
-          ITERATION=1
-
-          echo ""
-          echo "🔍 Finding parent charts (cascading up)..."
-
-          while [[ -n "$CHARTS_TO_CHECK" ]]; do
-            # Names of charts to find parents for
-            CHART_NAMES_TO_CHECK=""
-            for CHART_DIR in $CHARTS_TO_CHECK; do
-              NAME=$(yq '.name' "$CHART_DIR/Chart.yaml")
-              CHART_NAMES_TO_CHECK="$CHART_NAMES_TO_CHECK $NAME"
-            done
-            CHART_NAMES_TO_CHECK=$(echo "$CHART_NAMES_TO_CHECK" | xargs)
-
-            NEW_PARENTS=""
-            for CHART_FILE in $CHART_FILES; do
-              CHART_DIR=$(dirname "$CHART_FILE")
-
-              # Skip if already in changed or parent set
-              if [[ " $CHANGED_CHARTS $ALL_PARENT_CHARTS " =~ " $CHART_DIR " ]]; then
-                continue
-              fi
-
-              # Check if this chart depends on any chart we're checking
-              if yq -e '.dependencies' "$CHART_FILE" > /dev/null 2>&1; then
-                for CHECK_NAME in $CHART_NAMES_TO_CHECK; do
-                  HAS_DEP=$(yq ".dependencies[] | select(.name == \"$CHECK_NAME\") | select(.repository == null or (.repository | test(\"^file://\")))" "$CHART_FILE" 2>/dev/null)
-                  if [[ -n "$HAS_DEP" ]]; then
-                    if [[ ! " $NEW_PARENTS " =~ " $CHART_DIR " ]]; then
-                      PARENT_NAME=$(yq '.name' "$CHART_FILE")
-                      NEW_PARENTS="$NEW_PARENTS $CHART_DIR"
-                      echo "  📦 $PARENT_NAME depends on $CHECK_NAME"
-                    fi
-                    break
-                  fi
-                done
-              fi
-            done
-
-            NEW_PARENTS=$(echo "$NEW_PARENTS" | xargs)
-            if [[ -z "$NEW_PARENTS" ]]; then break; fi
-
-            ALL_PARENT_CHARTS="$ALL_PARENT_CHARTS $NEW_PARENTS"
-            CHARTS_TO_CHECK="$NEW_PARENTS"
-            ITERATION=$((ITERATION + 1))
-            if [[ $ITERATION -gt 10 ]]; then
-              echo "  ⚠️ Reached iteration limit, stopping"
-              break
-            fi
-          done
-
-          ALL_PARENT_CHARTS=$(echo "$ALL_PARENT_CHARTS" | xargs)
-          ALL_CHARTS_TO_BUMP="$CHANGED_CHARTS $ALL_PARENT_CHARTS"
-          ALL_CHARTS_TO_BUMP=$(echo "$ALL_CHARTS_TO_BUMP" | xargs)
-
-          echo ""
-          echo "📦 All charts to bump: $ALL_CHARTS_TO_BUMP"
-
-          # ── 3. Per-chart: read current version, increment -chart.M ──
-          # Build a map of chart_dir → new_version
-          declare -A BUMPED_VERSIONS
-
-          for CHART_DIR in $ALL_CHARTS_TO_BUMP; do
-            CHART_FILE="$CHART_DIR/Chart.yaml"
-            CHART_NAME=$(yq '.name' "$CHART_FILE")
-            CURRENT_VERSION=$(yq '.version' "$CHART_FILE" | tr -d '"')
-
-            if [[ "$CURRENT_VERSION" =~ -chart\.([0-9]+)$ ]]; then
-              # Already has -chart.M → increment M
-              CURRENT_M="${BASH_REMATCH[1]}"
-              NEW_M=$((CURRENT_M + 1))
-              # Replace the trailing -chart.M
-              BASE_CHART_VER="${CURRENT_VERSION%-chart.*}"
-              NEW_VERSION="${BASE_CHART_VER}-chart.${NEW_M}"
-            else
-              # No -chart.M → append -chart.1
-              NEW_VERSION="${CURRENT_VERSION}-chart.1"
-            fi
-
-            echo "  📦 $CHART_NAME: $CURRENT_VERSION → $NEW_VERSION"
-            yq -i ".version = \"$NEW_VERSION\"" "$CHART_FILE"
-            BUMPED_VERSIONS["$CHART_NAME"]="$NEW_VERSION"
-          done
-
-          # ── 4. Update dependency version refs for bumped charts ─────
-          echo ""
-          echo "🔄 Updating dependency version references for bumped charts..."
-
-          for CHART_FILE in $CHART_FILES; do
-            if yq -e '.dependencies' "$CHART_FILE" > /dev/null 2>&1; then
-              for CHART_NAME in "${!BUMPED_VERSIONS[@]}"; do
-                NEW_DEP_VER="${BUMPED_VERSIONS[$CHART_NAME]}"
-                # Local deps: no repository field
-                yq -i "(.dependencies[] | select(.name == \"$CHART_NAME\" and .repository == null)).version = \"$NEW_DEP_VER\"" "$CHART_FILE" 2>/dev/null || true
-                # Local deps: file:// repository
-                yq -i "(.dependencies[] | select(.name == \"$CHART_NAME\" and .repository != null and (.repository | test(\"^file://\")))).version = \"$NEW_DEP_VER\"" "$CHART_FILE" 2>/dev/null || true
-              done
-            fi
-          done
-
-          echo "✅ Chart-only update complete (appVersion, pyproject.toml, uv.lock untouched)"
-
-        else
-          # ─────────────────────────────────────────────────────────────
-          # FULL UPDATE: pyproject.toml + uv.lock + ALL Chart.yaml
-          # Charts and tags keep $VERSION. For hotfix artifact tags, pyproject.toml uses x.y.z+hotfix.N because PEP 440/uv rejects
-          # x.y.z-hotfix.N as invalid Python package metadata. -rc and -dev keep the same $VERSION since they're valid PEP 440 versions.
-          # ─────────────────────────────────────────────────────────────
-          echo ""
-          echo "skip_commit=false" >> $GITHUB_OUTPUT
-          echo "🔄 Full update: setting version to '$VERSION' everywhere"
-
-          # Build list of local chart names
-          LOCAL_CHART_NAMES=$(for f in $CHART_FILES; do yq '.name' "$f"; done | sort -u)
-
-          PYPROJECT_VERSION="$VERSION"
-          if [[ "$VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-hotfix\.([0-9]+)$ ]]; then
-            PYPROJECT_VERSION="${BASH_REMATCH[1]}+hotfix.${BASH_REMATCH[2]}"
-            echo "  📦 Python metadata version: $VERSION → $PYPROJECT_VERSION"
-          fi
-
-          # Update pyproject.toml
-          sed -i "s/^version = \".*\"/version = \"$PYPROJECT_VERSION\"/" pyproject.toml
-          UPDATED=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-          if [[ "$UPDATED" != "$PYPROJECT_VERSION" ]]; then
-            echo "❌ Failed to update pyproject.toml (got '$UPDATED')"
-            exit 1
-          fi
-          echo "  ✅ pyproject.toml → $PYPROJECT_VERSION"
-
-          # Update docs site version strings
-          BARE_VERSION=$(echo "$VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
-          if [[ -f "docs/docusaurus.config.ts" ]]; then
-            sed -i "s/label: '[^']*([Ll]atest)'/label: '$BARE_VERSION (Latest)'/" docs/docusaurus.config.ts
-            echo "  ✅ docs/docusaurus.config.ts version label → $BARE_VERSION (Latest)"
-          fi
-          if [[ -f "docs/src/pages/index.tsx" ]]; then
-            # Update any v0.X.Y version in the hero badge / install snippet
-            sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$BARE_VERSION/g" docs/src/pages/index.tsx
-            sed -i "s/--version [0-9]\+\.[0-9]\+\.[0-9]\+/--version $BARE_VERSION/g" docs/src/pages/index.tsx
-            echo "  ✅ docs/src/pages/index.tsx version refs → $BARE_VERSION"
-          fi
-
-          # Regenerate uv.lock
-          echo "  🔒 Regenerating uv.lock..."
-          uv lock
-          echo "  ✅ uv.lock regenerated"
-
-          if [[ "$BUMP_CHARTS" == "true" ]]; then
-            # Update ALL Chart.yaml: version + appVersion
-            for CHART_FILE in $CHART_FILES; do
-              yq -i ".version = \"$VERSION\"" "$CHART_FILE"
-              yq -i ".appVersion = \"$VERSION\"" "$CHART_FILE"
-              echo "  ✅ Updated $CHART_FILE (version + appVersion)"
-            done
-
-            # Update ALL local dependency version references
-            echo ""
-            echo "🔄 Updating local dependency version references to '$VERSION'..."
-
-            for CHART_FILE in $CHART_FILES; do
-              if yq -e '.dependencies' "$CHART_FILE" > /dev/null 2>&1; then
-                for LOCAL_CHART in $LOCAL_CHART_NAMES; do
-                  yq -i "(.dependencies[] | select(.name == \"$LOCAL_CHART\" and .repository == null)).version = \"$VERSION\"" "$CHART_FILE" 2>/dev/null || true
-                  yq -i "(.dependencies[] | select(.name == \"$LOCAL_CHART\" and .repository != null and (.repository | test(\"^file://\")))).version = \"$VERSION\"" "$CHART_FILE" 2>/dev/null || true
-                done
-              fi
-            done
-          else
-            echo "  ⏭️ Skipping Chart.yaml updates (helm-chart-bump label not present)"
-          fi
-
-          echo "✅ Full update complete"
+        PYPROJECT_VERSION="$VERSION"
+        if [[ "$VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-hotfix\.([0-9]+)$ ]]; then
+          PYPROJECT_VERSION="${BASH_REMATCH[1]}+hotfix.${BASH_REMATCH[2]}"
+          echo "  📦 Python metadata version: $VERSION → $PYPROJECT_VERSION"
         fi
 
-        # Check git diff to see if any changes were made (if not, likely the version was already correct)
+        # Update pyproject.toml
+        sed -i "s/^version = \".*\"/version = \"$PYPROJECT_VERSION\"/" pyproject.toml
+        UPDATED=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+        if [[ "$UPDATED" != "$PYPROJECT_VERSION" ]]; then
+          echo "❌ Failed to update pyproject.toml (got '$UPDATED')"
+          exit 1
+        fi
+        echo "  ✅ pyproject.toml → $PYPROJECT_VERSION"
+
+        # Update docs site version strings
+        BARE_VERSION=$(echo "$VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+        if [[ -f "docs/docusaurus.config.ts" ]]; then
+          sed -i "s/label: '[^']*([Ll]atest)'/label: '$BARE_VERSION (Latest)'/" docs/docusaurus.config.ts
+          echo "  ✅ docs/docusaurus.config.ts version label → $BARE_VERSION (Latest)"
+        fi
+        if [[ -f "docs/src/pages/index.tsx" ]]; then
+          sed -i "s/v[0-9]\+\.[0-9]\+\.[0-9]\+/v$BARE_VERSION/g" docs/src/pages/index.tsx
+          sed -i "s/--version [0-9]\+\.[0-9]\+\.[0-9]\+/--version $BARE_VERSION/g" docs/src/pages/index.tsx
+          echo "  ✅ docs/src/pages/index.tsx version refs → $BARE_VERSION"
+        fi
+
+        # Regenerate uv.lock
+        echo "  🔒 Regenerating uv.lock..."
+        uv lock
+        echo "  ✅ uv.lock regenerated"
+
+        # Update ALL Chart.yaml: version + appVersion (lockstep)
+        for CHART_FILE in $CHART_FILES; do
+          yq -i ".version = \"$VERSION\"" "$CHART_FILE"
+          yq -i ".appVersion = \"$VERSION\"" "$CHART_FILE"
+          echo "  ✅ Updated $CHART_FILE (version + appVersion)"
+        done
+
+        # Update ALL local dependency version references
+        echo ""
+        echo "🔄 Updating local dependency version references to '$VERSION'..."
+
+        for CHART_FILE in $CHART_FILES; do
+          if yq -e '.dependencies' "$CHART_FILE" > /dev/null 2>&1; then
+            for LOCAL_CHART in $LOCAL_CHART_NAMES; do
+              yq -i "(.dependencies[] | select(.name == \"$LOCAL_CHART\" and .repository == null)).version = \"$VERSION\"" "$CHART_FILE" 2>/dev/null || true
+              yq -i "(.dependencies[] | select(.name == \"$LOCAL_CHART\" and .repository != null and (.repository | test(\"^file://\")))).version = \"$VERSION\"" "$CHART_FILE" 2>/dev/null || true
+            done
+          fi
+        done
+
+        echo "✅ Full update complete"
+
         if git diff --quiet && git diff --cached --quiet; then
           echo "ℹ️ No changes detected after update — versions already match"
           echo "skip_commit=true" >> $GITHUB_OUTPUT
+        else
+          echo "skip_commit=false" >> $GITHUB_OUTPUT
         fi
 
         echo ""
