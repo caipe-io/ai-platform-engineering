@@ -409,6 +409,41 @@ class TestAddInternalComment:
         ]
 
     @pytest.mark.asyncio
+    async def test_add_internal_comment_accepts_native_adf(
+        self,
+        monkeypatch,
+        sample_adf_doc,
+    ):
+        """Rich internal notes should retain ADF and the internal property."""
+        captured_request = {}
+
+        async def mock_request(path, method="GET", **kwargs):
+            captured_request["data"] = kwargs.get("data")
+            return True, {"id": "10004"}
+
+        monkeypatch.setattr("tools.jira.comments.MCP_JIRA_READ_ONLY", False)
+        monkeypatch.setattr("tools.jira.comments.make_api_request", mock_request)
+
+        from tools.jira.comments import add_internal_comment
+
+        result = await add_internal_comment(
+            "PROJ-123",
+            sample_adf_doc,
+            body_format="adf",
+        )
+
+        assert json.loads(result)["id"] == "10004"
+        assert captured_request["data"] == {
+            "body": sample_adf_doc,
+            "properties": [
+                {
+                    "key": "sd.public.comment",
+                    "value": {"internal": True},
+                }
+            ],
+        }
+
+    @pytest.mark.asyncio
     async def test_add_internal_comment_read_only(self, monkeypatch):
         """Test that add_internal_comment returns error JSON in read-only mode."""
         monkeypatch.setattr("tools.jira.comments.MCP_JIRA_READ_ONLY", True)
@@ -459,6 +494,44 @@ class TestUpdateComment:
         result = await update_comment("PROJ-123", "10000", "Updated comment")
 
         assert "10000" in result or "Updated" in result or "success" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_update_comment_accepts_native_adf(
+        self,
+        monkeypatch,
+        sample_adf_doc,
+    ):
+        """Updating a comment should pass native ADF to Jira unchanged."""
+        captured_request = {}
+
+        async def mock_request(path, method="GET", **kwargs):
+            captured_request["path"] = path
+            captured_request["method"] = method
+            captured_request["data"] = kwargs.get("data")
+            return True, {"id": "10000"}
+
+        monkeypatch.setattr("tools.jira.comments.MCP_JIRA_READ_ONLY", False)
+        monkeypatch.setattr("tools.jira.comments.make_api_request", mock_request)
+
+        from tools.jira.comments import update_comment
+
+        result = await update_comment(
+            "PROJ-123",
+            "10000",
+            sample_adf_doc,
+            visibility={"type": "role", "value": "Administrators"},
+            body_format="adf",
+        )
+
+        assert json.loads(result)["id"] == "10000"
+        assert captured_request == {
+            "path": "rest/api/3/issue/PROJ-123/comment/10000",
+            "method": "PUT",
+            "data": {
+                "body": sample_adf_doc,
+                "visibility": {"type": "role", "value": "Administrators"},
+            },
+        }
 
 
 class TestDeleteComment:

@@ -30,11 +30,12 @@ MCP_PORT=18000
 set -a; source .env; set +a && uv run python mcp_jira/server.py
 ```
 
-## Add Jira Comments
+## Jira Cloud Rich Text
 
-The `add_comment` tool supports both backward-compatible plain text and native
+The `add_comment`, `add_internal_comment`, and `update_comment` tools support
+both backward-compatible plain text and native
 [Atlassian Document Format (ADF)](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/)
-for Jira Cloud rich comments.
+for Jira Cloud rich comments and internal notes.
 
 - Use `body_format: "text"` (the default) with a string body. Existing callers
   continue to produce the same single-paragraph comment payload.
@@ -85,6 +86,37 @@ Example rich-comment tool arguments:
 
 The server validates the ADF document root before sending it to Jira REST API
 v3. Jira performs the authoritative validation of nested ADF nodes and marks.
+
+Issue descriptions support the same native format:
+
+- `create_issue` accepts a string with `description_format: "text"` (default),
+  or a complete ADF document with `description_format: "adf"`.
+- Each `batch_create_issues` item accepts the same `description` and
+  `description_format` fields. A valid ADF object is also auto-detected for
+  compatibility with existing batch payloads.
+- `update_issue` accepts either plain text or a valid ADF document in its
+  `description` field and preserves native ADF without stringifying it.
+
+Example rich-description arguments for `create_issue`:
+
+```json
+{
+  "project_key": "PROJ",
+  "summary": "Document the recovery procedure",
+  "description_format": "adf",
+  "description": {
+    "type": "doc",
+    "version": 1,
+    "content": [
+      {
+        "type": "heading",
+        "attrs": {"level": 2},
+        "content": [{"type": "text", "text": "Recovery procedure"}]
+      }
+    ]
+  }
+}
+```
 
 ## MCP Inspector Tool
 

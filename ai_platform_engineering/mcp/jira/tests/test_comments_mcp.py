@@ -85,3 +85,20 @@ async def test_add_comment_exposes_and_accepts_native_adf(monkeypatch):
             "visibility": {"type": "role", "value": "Administrators"},
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_related_comment_tools_expose_native_adf_format():
+    """Internal and update comment schemas should advertise the same ADF option."""
+    server = FastMCP("jira-related-comment-contract-test")
+    server.tool()(comments.add_internal_comment)
+    server.tool()(comments.update_comment)
+
+    async with Client(server) as client:
+        tools = await client.list_tools()
+
+    tools_by_name = {tool.name: tool for tool in tools}
+    for tool_name in ("add_internal_comment", "update_comment"):
+        body_format = tools_by_name[tool_name].inputSchema["properties"]["body_format"]
+        assert body_format["default"] == "text"
+        assert body_format["enum"] == ["text", "adf"]

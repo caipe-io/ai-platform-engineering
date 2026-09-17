@@ -1,11 +1,15 @@
 """Unit tests for ADF (Atlassian Document Format) converter."""
 
+import pytest
+
 from utils.adf import (
     text_to_adf,
     adf_to_text,
     is_adf_format,
     ensure_adf_format,
-    create_empty_adf
+    create_empty_adf,
+    literal_text_to_adf,
+    prepare_adf_input,
 )
 
 
@@ -149,6 +153,43 @@ class TestEnsureADFFormat:
         result = ensure_adf_format({"random": "data"})
         # Should create empty ADF for unknown format
         assert result["type"] == "doc"
+
+
+class TestPrepareADFInput:
+    """Tests for strict text-or-ADF input handling."""
+
+    def test_text_uses_selected_converter(self):
+        """Callers can preserve legacy single-paragraph comment behavior."""
+        value = " First line\n\nSecond line "
+
+        result = prepare_adf_input(
+            value,
+            "text",
+            field_name="body",
+            text_converter=literal_text_to_adf,
+        )
+
+        assert result["content"][0]["content"][0]["text"] == value
+
+    def test_adf_is_preserved(self, sample_adf_doc):
+        """Native ADF should pass through without transformation."""
+        assert (
+            prepare_adf_input(sample_adf_doc, "adf", field_name="description")
+            == sample_adf_doc
+        )
+
+    @pytest.mark.parametrize(
+        ("value", "value_format", "expected"),
+        [
+            ({"type": "doc", "version": 1, "content": []}, "text", "must be a string"),
+            ("plain text", "adf", "must be a valid ADF document"),
+            ("plain text", "markdown", "must be either 'text' or 'adf'"),
+        ],
+    )
+    def test_invalid_input_is_rejected(self, value, value_format, expected):
+        """Format mismatches should fail before reaching Jira."""
+        with pytest.raises(ValueError, match=expected):
+            prepare_adf_input(value, value_format, field_name="body")
 
 
 class TestCreateEmptyADF:

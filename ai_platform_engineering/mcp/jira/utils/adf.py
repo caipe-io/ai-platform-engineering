@@ -8,9 +8,13 @@ Reference: https://developer.atlassian.com/cloud/jira/platform/apis/document/str
 """
 
 import logging
-from typing import Any, Dict, Union
+from collections.abc import Callable
+from typing import Any, Dict, Literal, Union
 
 logger = logging.getLogger("mcp-jira")
+
+ADFInput = Union[str, Dict[str, Any]]
+ADFInputFormat = Literal["text", "adf"]
 
 
 def text_to_adf(text: str) -> Dict[str, Any]:
@@ -82,6 +86,20 @@ def text_to_adf(text: str) -> Dict[str, Any]:
         "version": 1,
         "type": "doc",
         "content": content
+    }
+
+
+def literal_text_to_adf(text: str) -> Dict[str, Any]:
+    """Wrap text in one ADF paragraph without trimming or splitting it."""
+    return {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": text}],
+            }
+        ],
     }
 
 
@@ -235,6 +253,33 @@ def is_adf_format(value: Any) -> bool:
         value.get("version") == 1 and
         isinstance(value.get("content"), list)
     )
+
+
+def prepare_adf_input(
+    value: ADFInput,
+    value_format: ADFInputFormat,
+    *,
+    field_name: str,
+    text_converter: Callable[[str], Dict[str, Any]] = text_to_adf,
+) -> Dict[str, Any]:
+    """Validate and convert an explicitly formatted rich-text input."""
+    if value_format == "text":
+        if not isinstance(value, str):
+            raise ValueError(
+                f"{field_name} must be a string when {field_name}_format is 'text'."
+            )
+        return text_converter(value)
+
+    if value_format == "adf":
+        if not is_adf_format(value):
+            raise ValueError(
+                f"{field_name} must be a valid ADF document object when "
+                f"{field_name}_format is 'adf'. Expected type='doc', version=1, "
+                "and a content list."
+            )
+        return value
+
+    raise ValueError(f"{field_name}_format must be either 'text' or 'adf'.")
 
 
 def ensure_adf_format(value: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
