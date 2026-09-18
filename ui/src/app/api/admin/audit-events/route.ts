@@ -75,6 +75,17 @@ interface AuditEventDocument {
   requested_deletes?: number;
   writes?: number;
   deletes?: number;
+  count?: number;
+  window_start?: Date | string;
+  window_end?: Date | string;
+  resources?: Array<{ action?: string; resource_ref?: string; count?: number }>;
+  batch?: boolean;
+  evaluated_count?: number;
+  allowed_count?: number;
+  denied_count?: number;
+  allowed_ids?: string[];
+  allowed_truncated?: boolean;
+  denied_reasons?: Record<string, number>;
 }
 
 interface CurrentPrincipal {
@@ -353,6 +364,12 @@ function parseTimeResolution(value: string | null, windowName: string): string {
   return resolution;
 }
 
+function toIsoOrUndefined(value: Date | string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
 function documentToEvent(doc: AuditEventDocument): UnifiedAuditEvent {
   const ts =
     doc.ts instanceof Date
@@ -395,6 +412,20 @@ function documentToEvent(doc: AuditEventDocument): UnifiedAuditEvent {
     deletes: doc.deletes,
     trace_id: doc.trace_id,
     span_id: doc.span_id,
+    // Aggregate-row fields. Omitting these silently flattened every rollup and
+    // batch row into what looked like a single decision, in the tab and in
+    // exports alike.
+    count: doc.count,
+    window_start: toIsoOrUndefined(doc.window_start),
+    window_end: toIsoOrUndefined(doc.window_end),
+    resources: doc.resources,
+    batch: doc.batch,
+    evaluated_count: doc.evaluated_count,
+    allowed_count: doc.allowed_count,
+    denied_count: doc.denied_count,
+    allowed_ids: doc.allowed_ids,
+    allowed_truncated: doc.allowed_truncated,
+    denied_reasons: doc.denied_reasons,
   };
 }
 

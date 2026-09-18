@@ -541,6 +541,16 @@ write path with `source=rag_server` and `component=rag_server`.
 `audit-service` is the audit owner; UI, Dynamic Agents, the bridge, and the RAG
 server are producers only.
 
+:::warning Adding a field to an audit event
+`audit-service` stores unknown fields (`extra="allow"`, plus the full record in
+the Parquet `record_json` column), but the read path does **not** pass them
+through automatically: `documentToEvent` in
+`ui/src/app/api/admin/audit-events/route.ts` is an explicit whitelist, and
+`UnifiedAuditEvent` in `ui/src/lib/rbac/types.ts` types it. A field missing from
+both is written and stored but silently absent from the Admin UI and from
+downloaded evidence. Add new fields to both.
+:::
+
 #### Allow aggregation
 
 Decision volume tracks request count, not policy activity: a single MCP
@@ -554,11 +564,45 @@ storage and query time without adding review signal.
 | Denials (`outcome=deny`), including `DENY_PDP_UNAVAILABLE` | Per decision | Rare, and the signal reviewers act on |
 | Policy/admin changes (`cas_grant`, `cas_reconcile`, ReBAC edits) | Per event | Compliance record of who changed what |
 | Routine allows | Periodic aggregate | Counted in memory, flushed as one row per distinct subject/action/resource/reason |
+| Bulk evaluation (`authorizeMany`) | One row per call | A list filter, not an access attempt — see below |
 
 Aggregate rows carry `count` (decisions summarized), `window_start`, and
 `window_end`, and a `correlation_id` prefixed `rollup:` — they summarize many
 requests, so no single request id applies. **Consumers must sum `count` rather
 than count rows**; a row without `count` is one decision.
+
+#### Bulk evaluation vs. access attempt
+
+`authorizeMany` answers "which of these N resources may the subject touch" —
+how every resource list in the UI is rendered. Auditing that per-resource made
+volume scale with catalog size, not with activity: one agents-list render
+evaluates `manage`+`write`+`discover` across the whole catalog, so N agents
+produced **3N** rows, and the denials in them only ever said "this user does
+not have that agent".
+
+It is audited as one row carrying `batch: true`:
+
+| Field | Meaning |
+|---|---|
+| `evaluated_count` | Resources the filter evaluated |
+| `allowed_count` / `denied_count` | How many resolved each way |
+| `allowed_ids` | The accessible ids (capped; `allowed_truncated` marks a capped list) |
+| `denied_reasons` | Denial reason → count, so `AUTHZ_UNAVAILABLE` stays visible |
+| `resource_ref` | The evaluated collection (`agent:*`) — no single resource applies |
+
+`outcome` describes the filter, not any one resource: `deny` only when nothing
+was accessible. **Consumers must read `allowed_count`/`denied_count` rather
+than attributing the row to `outcome`** — counting a filter over 500 resources
+as one decision undercounts, and the old per-id rows overcounted it as 498
+policy denials, which is what made the deny-rate metric meaningless.
+
+A single access decision is never folded into this: those go through
+`authorize`/`authorizeOrThrow` and keep their own row. That is the line the
+split rests on — bulk evaluation summarizes, a real attempt does not.
+
+Bulk-evaluation denials are deliberately excluded from `topDenied` in
+`/api/admin/authz/stats`: a filter's `resource_ref` is the collection, so they
+would crowd out the per-resource denials that indicate an actual access problem.
 
 Counts live in process memory, so a restart can drop an unflushed window. That
 undercounts an allow metric and never loses a denial or a policy change. The

@@ -543,6 +543,14 @@ function reasonPhrase(evt: UnifiedAuditEvent): string {
     const decision = evt.outcome === "allow" ? "allowed" : "denied";
     const pdp = evt.pdp === "openfga" ? "OpenFGA" : evt.pdp ? sentenceCase(evt.pdp) : "the policy engine";
     const via = evt.decision_via ? ` via ${decisionPathLabel(evt)}` : "";
+    // A bulk evaluation is a list filter, so report what it resolved to rather
+    // than implying one request was allowed or denied.
+    if (evt.batch) {
+      const evaluated = (evt.evaluated_count ?? 0).toLocaleString();
+      const allowed = (evt.allowed_count ?? 0).toLocaleString();
+      const kind = evt.resource_type ? humanizeToken(evt.resource_type) : "resources";
+      return `${service} evaluated ${evaluated} ${kind} for this subject; ${allowed} accessible.`;
+    }
     if (typeof evt.count === "number" && evt.count > 1) {
       return `${service} ${decision} ${evt.count.toLocaleString()} matching requests because ${pdp} returned ${reason}${via}.`;
     }
