@@ -648,8 +648,10 @@ services:
       - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       # Workflows tab - set WORKFLOWS_ENABLED=true to show the top-level Workflows UI
       - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
-      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
       - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
+      - SCHEDULER_URL=${SCHEDULER_URL:-http://caipe-scheduler:8080}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
       - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}
       # Dynamic Agents - set DYNAMIC_AGENTS_ENABLED=true and add dynamic-agents profile to enable Custom Agents tab
       - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-false}
@@ -923,8 +925,10 @@ services:
       - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
       - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
-      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
       - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
+      - SCHEDULER_URL=${SCHEDULER_URL:-http://caipe-scheduler:8080}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
       - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}
       - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-false}
       - SETUP_WIZARD_ENABLED=${SETUP_WIZARD_ENABLED:-true}
@@ -1277,6 +1281,41 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
+    profiles:
+      - dynamic-agents
+
+  ####################################################################################################
+  #                                     Scheduler Service                                           #
+  ####################################################################################################
+  caipe-scheduler:
+    image: ghcr.io/caipe-io/caipe-scheduler:${SCHEDULER_IMAGE_TAG:-1.1.1}
+    container_name: caipe-scheduler
+    env_file: [.env]
+    environment:
+      - SCHEDULER_BACKEND=${SCHEDULER_BACKEND:-local}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
+      - SCHEDULER_JWT_JWKS_URL=${SCHEDULER_JWT_JWKS_URL:-http://keycloak:7080/realms/caipe/protocol/openid-connect/certs}
+      - SCHEDULER_JWT_ISSUER=${SCHEDULER_JWT_ISSUER:-${OIDC_ISSUER:-http://localhost:7080/realms/caipe}}
+      - SCHEDULER_JWT_AUDIENCES=${SCHEDULER_JWT_AUDIENCES:-caipe-platform}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://admin:changeme@caipe-mongodb:27017/caipe?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
+      - CAIPE_API_URL=${SCHEDULER_CAIPE_API_URL:-http://caipe-ui:3000}
+      - CAIPE_CHAT_PATH=/api/v1/chat/invoke
+      - SCHEDULER_INTERNAL_URL=http://caipe-scheduler:8080
+    depends_on:
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      keycloak:
+        condition: service_started
+        required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
     profiles:
       - dynamic-agents

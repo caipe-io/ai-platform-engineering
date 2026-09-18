@@ -437,8 +437,10 @@ services:
       - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       # Top-level workflows and schedules are independent, opt-in navigation surfaces.
       - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-true}
-      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
       - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
+      - SCHEDULER_URL=${SCHEDULER_URL:-http://caipe-scheduler:8080}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
       - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-true}
       - SETUP_WIZARD_ENABLED=${SETUP_WIZARD_ENABLED:-true}
       # Compact header shortcut that reuses the existing feedback dialog.
@@ -730,6 +732,43 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+    profiles:
+      - dynamic-agents
+
+  ####################################################################################################
+  #                                     Scheduler Service                                           #
+  ####################################################################################################
+  # The Compose backend runs schedule dispatch in-process and does not require
+  # a Kubernetes API. Kubernetes installs use the chart's CronJob backend.
+  caipe-scheduler:
+    image: ghcr.io/caipe-io/caipe-scheduler:${SCHEDULER_IMAGE_TAG:-1.1.1}
+    container_name: caipe-scheduler
+    env_file: [.env]
+    environment:
+      - SCHEDULER_BACKEND=${SCHEDULER_BACKEND:-local}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
+      - SCHEDULER_JWT_JWKS_URL=${SCHEDULER_JWT_JWKS_URL:-http://keycloak:7080/realms/caipe/protocol/openid-connect/certs}
+      - SCHEDULER_JWT_ISSUER=${SCHEDULER_JWT_ISSUER:-${OIDC_ISSUER:-http://localhost:7080/realms/caipe}}
+      - SCHEDULER_JWT_AUDIENCES=${SCHEDULER_JWT_AUDIENCES:-caipe-platform}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
+      - CAIPE_API_URL=${SCHEDULER_CAIPE_API_URL:-http://caipe-ui:3000}
+      - CAIPE_CHAT_PATH=/api/v1/chat/invoke
+      - SCHEDULER_INTERNAL_URL=http://caipe-scheduler:8080
+    depends_on:
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      keycloak:
+        condition: service_started
+        required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
     profiles:
       - dynamic-agents

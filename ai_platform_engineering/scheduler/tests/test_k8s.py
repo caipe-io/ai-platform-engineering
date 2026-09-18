@@ -26,3 +26,12 @@ def test_cronjob_uses_configured_scheduler_token_secret():
     "name": "custom-scheduler-token",
     "key": "scheduler-token",
   }
+
+
+def test_local_backend_does_not_require_kubernetes():
+  ops = CronJobOps(Settings(scheduler_backend="local"))
+
+  assert ops.create(schedule_id="sched_local", cron="0 9 * * MON", tz="UTC") == "caipe-sched-sched-local"
+  ops.patch(cronjob_name="caipe-sched-sched-local", cron="0 10 * * MON", tz="UTC", suspend=True)
+  ops.delete("caipe-sched-sched-local")
+  assert ops.reconcile_runner_template(cronjob_name="ignored", dry_run=True)["changed"] is False
