@@ -1,6 +1,7 @@
 "use client";
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
+import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
 import { Button } from "@/components/ui/button";
@@ -83,8 +84,14 @@ export function ChatPanel({
   const agentSkills = agent?.skills;
   const { data: session } = useSession();
   const { toast } = useToast();
+  const initializeFeatureFlags = useFeatureFlagStore((s) => s.initialize);
   const autoScrollEnabled = useFeatureFlagStore((s) => s.flags.autoScroll ?? true);
   const showTimestamps = useFeatureFlagStore((s) => s.flags.showTimestamps ?? false);
+  const showContextUsage = useFeatureFlagStore((s) => s.flags.showContextUsage ?? true);
+
+  useEffect(() => {
+    initializeFeatureFlags();
+  }, [initializeFeatureFlags]);
 
   /**
    * Surface a structured auth-failure (from the Web UI backend or stream adapters) to
@@ -196,6 +203,8 @@ export function ChatPanel({
     updateMessage,
     appendToMessage,
     addStreamEvent,
+    contextUsageByConversation,
+    setContextUsage,
     clearStreamEvents,
     setConversationStreaming,
     isConversationStreaming,
@@ -278,6 +287,10 @@ export function ChatPanel({
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
+  const contextUsageId = conversationId ?? activeConversationId;
+  const contextUsage = contextUsageId
+    ? contextUsageByConversation[contextUsageId]
+    : undefined;
 
   // Ref to track which conversations we've checked for HITL interrupt state
   const interruptCheckedRef = useRef<Set<string>>(new Set());
@@ -955,6 +968,10 @@ export function ChatPanel({
       addStreamEvent(streamEvent, convId);
     },
 
+    onContextUsage(usage, namespace) {
+      if ((namespace?.length ?? 0) === 0) setContextUsage(convId,usage);
+    },
+
     onDone() {
       // Finalization handled after adapter.streamMessage resolves
     },
@@ -964,7 +981,7 @@ export function ChatPanel({
       loopState.hasError = true;
       loopState.errorMessage = message;
     },
-  }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks]);
+  }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks, setContextUsage]);
 
   /**
    * Finalize a stream loop — copies conversation-level streamEvents to the
@@ -2263,10 +2280,18 @@ export function ChatPanel({
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground text-center">
-            {getConfig('appName')} can make mistakes. Verify important info.
-            {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
-          </p>
+          <div className="relative flex min-h-6 items-center justify-center">
+            <p className="px-28 text-center text-xs text-muted-foreground max-sm:px-0 max-sm:pr-24">
+              {getConfig('appName')} can make mistakes. Verify important info.
+              {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
+            </p>
+            {showContextUsage && contextUsage && (
+              <ContextUsageIndicator
+                className="absolute right-0"
+                usage={contextUsage}
+              />
+            )}
+          </div>
         </div>
       </div>
       )}

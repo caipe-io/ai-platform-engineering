@@ -1859,7 +1859,7 @@ class AgentRuntime:
         async for chunk in self._graph.astream(
             state_input,
             config=config,
-            stream_mode=["messages", "updates", "tasks"],
+            stream_mode=["messages", "updates", "tasks", "custom"],
             subgraphs=True,
         ):
             if self._cancelled:
@@ -2192,7 +2192,7 @@ class AgentRuntime:
         async for chunk in self._graph.astream(
             Command(resume=resume_payload),
             config=config,
-            stream_mode=["messages", "updates", "tasks"],
+            stream_mode=["messages", "updates", "tasks", "custom"],
             subgraphs=True,
         ):
             if self._cancelled:
