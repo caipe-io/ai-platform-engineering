@@ -68,6 +68,14 @@ interface DiagnosticProbeResult {
   remediation?: DiagnosticProbeRemediation;
 }
 
+interface PlatformComponentResult {
+  id: string;
+  label: string;
+  status: CapabilityStatus;
+  detail: string;
+  version: string | null;
+}
+
 const HTTP_TIMEOUT_MS = 3000;
 const TCP_TIMEOUT_MS = 2000;
 const healthCache = createJsonResponseCacheStore();
@@ -741,6 +749,69 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
   return probes;
 }
 
+function diagnosticStatus(status: DiagnosticProbeStatus | undefined): CapabilityStatus {
+  if (status === "healthy") return "healthy";
+  if (status === "warning") return "degraded";
+  return status === "down" ? "down" : "disabled";
+}
+
+function buildPlatformComponents(
+  capabilities: CapabilityResult[],
+  probes: DiagnosticProbeResult[] | undefined,
+): PlatformComponentResult[] {
+  const capabilityById = new Map(capabilities.map((capability) => [capability.id, capability]));
+  const probeById = new Map(probes?.map((probe) => [probe.id, probe]) ?? []);
+  const fromProbe = (
+    id: string,
+    label: string,
+    probeId: string,
+    fallback?: CapabilityResult,
+  ): PlatformComponentResult => {
+    const probe = probeById.get(probeId);
+    return {
+      id,
+      label,
+      status: probe ? diagnosticStatus(probe.status) : fallback?.status ?? "disabled",
+      detail: probe?.detail ?? fallback?.detail ?? "Not detected in this deployment",
+      version: componentVersion(id),
+    };
+  };
+
+  const tracingEnabled = !envExplicitlyDisabled("ENABLE_TRACING") && Boolean(envValue("ENABLE_TRACING"));
+  const tracingEndpoint = envValue("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
+  const litellmEndpoint = envValue("LITELLM_API_BASE");
+
+  return [
+    {
+      id: "caipe-ui",
+      label: "CAIPE UI",
+      status: "healthy",
+      detail: "This setup experience is running",
+      version: componentVersion("caipe-ui"),
+    },
+    fromProbe("keycloak", "Keycloak", "keycloak", capabilityById.get("authentication")),
+    fromProbe("openfga", "OpenFGA", "openfga"),
+    fromProbe("caipe-agent-harness", "CAIPE Agent Harness", "dynamic-agents-runtime", capabilityById.get("dynamic-agents")),
+    fromProbe("agentgateway", "AgentGateway", "agentgateway"),
+    {
+      id: "otel-tracing",
+      label: "OTel Tracing",
+      status: tracingEnabled && tracingEndpoint ? "healthy" : tracingEnabled ? "degraded" : "disabled",
+      detail: tracingEnabled
+        ? tracingEndpoint ? "Tracing exporter configured" : "Enabled without an OTLP endpoint"
+        : "Tracing is disabled",
+      version: componentVersion("otel-tracing"),
+    },
+    {
+      id: "litellm",
+      label: "LiteLLM",
+      status: litellmEndpoint ? "healthy" : "disabled",
+      detail: litellmEndpoint ? "OpenAI-compatible endpoint configured" : "No LiteLLM endpoint configured",
+      version: componentVersion("litellm"),
+    },
+  ];
+}
+
 function numberField(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -1113,6 +1184,7 @@ async function getPlatformHealth(request: NextRequest): Promise<NextResponse> {
   );
   const status = requiredDown ? "down" : degraded > 0 ? "degraded" : "healthy";
   const probes = includeDiagnostics ? await buildDiagnosticProbes() : undefined;
+  const components = buildPlatformComponents(capabilities, probes);
   const probeDown = probes?.filter((probe) => probe.status === "down").length ?? 0;
   const probeWarning = probes?.filter((probe) => probe.status === "warning").length ?? 0;
   const probeSummary = probes
@@ -1136,6 +1208,7 @@ async function getPlatformHealth(request: NextRequest): Promise<NextResponse> {
         disabled,
       },
       capabilities,
+      components,
       ...(probes ? { probes, probe_summary: probeSummary } : {}),
     },
     { status: requiredDown ? 503 : 200 },

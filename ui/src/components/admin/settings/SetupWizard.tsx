@@ -38,11 +38,16 @@ import {
   Loader2,
   LayoutGrid,
   ListChecks,
+  Network,
   Play,
   Plug,
   RotateCcw,
+  Route,
   Sparkles,
+  ShieldCheck,
   TriangleAlert,
+  Activity,
+  Waypoints,
   XCircle,
   Workflow,
 } from "lucide-react";
@@ -95,6 +100,13 @@ interface Remediation {
 interface HealthPayload {
   status: "healthy" | "degraded" | "down";
   capabilities: HealthCapability[];
+  components?: Array<{
+    id: string;
+    label: string;
+    status: "healthy" | "degraded" | "down" | "disabled";
+    detail: string;
+    version: string | null;
+  }>;
   probes?: Array<{
     id: string;
     label: string;
@@ -703,6 +715,7 @@ export function SetupWizardDialog({
   const readinessChecks = readinessCapabilities.length + readinessProbes.length;
   const healthyReadinessChecks = readinessCapabilities.filter((capability) => capability.status === "healthy").length
     + readinessProbes.filter((probe) => probe.status === "healthy").length;
+  const platformComponents = health?.components ?? [];
 
   const closeCompleted = () => {
     onOpenChange(false);
@@ -813,6 +826,22 @@ export function SetupWizardDialog({
                         <InventoryTile label="Connected credentials" value={payload?.inventory.connected_credentials ?? 0} delay={140} />
                         <InventoryTile label="Knowledge sources" value={payload?.inventory.knowledge_sources ?? 0} delay={210} />
                       </div>
+                      {platformComponents.length > 0 && (
+                        <div className="space-y-2 rounded-xl border bg-muted/10 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold">Platform services</p>
+                              <p className="text-xs text-muted-foreground">Live status of the services that power your agent.</p>
+                            </div>
+                            <Badge variant="outline" className="text-[10px]">{platformComponents.filter((component) => component.status === "healthy").length}/{platformComponents.length} ready</Badge>
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            {platformComponents.map((component, index) => (
+                              <PlatformComponentCard key={component.id} component={component} delay={index * 45} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <div className="grid gap-2 sm:grid-cols-2">
                         {readinessCapabilities.map((capability, index) => (
                           <div key={capability.id} className="animate-slide-in" style={{ animationDelay: `${index * 70}ms` }}>
@@ -1337,6 +1366,44 @@ function InventoryTile({ label, value, delay = 0 }: { label: string; value: numb
   );
 }
 
+const PLATFORM_COMPONENT_MARKS: Record<string, { mark: string; icon: typeof Activity; className: string }> = {
+  "caipe-ui": { mark: "C", icon: Sparkles, className: "from-cyan-500/30 to-violet-500/30 text-cyan-300" },
+  keycloak: { mark: "K", icon: ShieldCheck, className: "from-blue-500/30 to-indigo-500/30 text-blue-300" },
+  openfga: { mark: "F", icon: Network, className: "from-amber-500/30 to-orange-500/30 text-amber-300" },
+  "caipe-agent-harness": { mark: "A", icon: Bot, className: "from-emerald-500/30 to-teal-500/30 text-emerald-300" },
+  agentgateway: { mark: "G", icon: Route, className: "from-fuchsia-500/30 to-pink-500/30 text-fuchsia-300" },
+  "otel-tracing": { mark: "OT", icon: Activity, className: "from-sky-500/30 to-cyan-500/30 text-sky-300" },
+  litellm: { mark: "LL", icon: Waypoints, className: "from-violet-500/30 to-purple-500/30 text-violet-300" },
+};
+
+function PlatformComponentCard({
+  component,
+  delay,
+}: {
+  component: NonNullable<HealthPayload["components"]>[number];
+  delay: number;
+}) {
+  const mark = PLATFORM_COMPONENT_MARKS[component.id] ?? { mark: "•", icon: Cloud, className: "from-slate-500/30 to-slate-700/30 text-slate-300" };
+  const Icon = mark.icon;
+  const healthy = component.status === "healthy";
+  const disabled = component.status === "disabled";
+  return (
+    <div className="animate-slide-in flex items-center gap-2.5 rounded-lg border bg-card/60 p-2.5 transition-transform duration-300 hover:-translate-y-0.5" style={{ animationDelay: `${delay}ms` }}>
+      <span className={cn("relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br", mark.className)} aria-hidden="true">
+        <Icon className="h-4 w-4" />
+        <span className="absolute -bottom-1 -right-1 rounded bg-background px-0.5 text-[8px] font-bold leading-3">{mark.mark}</span>
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center justify-between gap-2">
+          <span className="truncate text-xs font-medium">{component.label}</span>
+          <span className={cn("h-2 w-2 shrink-0 rounded-full", healthy ? "bg-emerald-500" : disabled ? "bg-muted-foreground/40" : "bg-amber-500")} />
+        </span>
+        <span className="block truncate text-[10px] text-muted-foreground" title={component.detail}>{component.detail}</span>
+      </span>
+    </div>
+  );
+}
+
 function getCapabilityRemediation(
   capability: HealthCapability,
   probes: HealthPayload["probes"],
@@ -1494,7 +1561,10 @@ export function SetupWizardGate(): React.ReactElement | null {
       .then((response) => {
         if (cancelled) return;
         setPayload(response.data);
-        setOpen(response.data.auto_start);
+        // First launch should introduce the checklist without blocking the app.
+        // The full wizard opens only when the administrator explicitly resumes it.
+        setOpen(false);
+        setChecklistOpen(response.data.auto_start);
       })
       .catch(() => {
         // Non-admins and deployments still starting up should not see a noisy
@@ -1604,7 +1674,7 @@ export function SetupWizardGate(): React.ReactElement | null {
             </ul>
             <div className="mt-4 grid gap-2">
               <Button size="sm" onClick={() => openWizard(false)}>
-                {payload.state.status === "dismissed" ? "Continue setup" : "Open setup"}<ChevronRight className="ml-1 h-3.5 w-3.5" />
+                {payload.state.status === "dismissed" ? "Continue setup" : "Resume setup"}<ChevronRight className="ml-1 h-3.5 w-3.5" />
               </Button>
               <div className="flex items-center justify-between gap-2">
                 <Button size="sm" variant="outline" onClick={() => void restartSetup()}>
