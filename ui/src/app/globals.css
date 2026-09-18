@@ -710,8 +710,8 @@ html[data-navigation-pending="true"] * {
 }
 
 @keyframes setupMinimize {
-  from { opacity: 1; scale: 1; }
-  to { opacity: 0; scale: 0.96; }
+  from { opacity: 1; scale: 1; translate: -50% -50%; }
+  to { opacity: 0; scale: 0.08; translate: calc(50vw - 7rem - 50%) calc(50dvh - 2rem - 50%); }
 }
 
 @keyframes setupBubbleIn {
@@ -720,8 +720,18 @@ html[data-navigation-pending="true"] * {
   100% { opacity: 1; scale: 1; translate: 0 0; }
 }
 
-.animate-setup-minimize {
-  animation: setupMinimize 0.3s ease-in forwards;
+.setup-dialog.setup-minimizing {
+  animation: setupMinimize 0.32s cubic-bezier(0.4, 0, 0.8, 0.4) forwards;
+  pointer-events: none;
+}
+
+.setup-step {
+  animation: setupStepIn 0.22s ease-out;
+}
+
+@keyframes setupStepIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .animate-setup-bubble-in {
@@ -729,8 +739,13 @@ html[data-navigation-pending="true"] * {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-setup-minimize,
-  .animate-setup-bubble-in {
+  .setup-dialog.setup-minimizing,
+  .setup-step,
+  .animate-setup-bubble-in,
+  .setup-dialog .animate-slide-in,
+  .setup-dialog .animate-pulse,
+  .setup-dialog .animate-pulse-glow,
+  .setup-dialog .animate-pulse-gentle {
     animation: none;
   }
 }

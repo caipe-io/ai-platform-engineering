@@ -1,5 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { SetupWizardDialog, SetupWizardSettings } from "../SetupWizard";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { SetupWizardDialog, SetupWizardGate, SetupWizardSettings } from "../SetupWizard";
+
+const mockPush = jest.fn();
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
+  usePathname: () => "/",
+}));
 
 jest.mock("@/hooks/use-admin-role", () => ({
   useAdminRole: () => ({ isAdmin: true, loading: false }),
@@ -52,6 +58,7 @@ function response(data: unknown, status = 200): Promise<Response> {
 
 describe("SetupWizardSettings", () => {
   beforeEach(() => {
+    mockPush.mockClear();
     global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/admin/setup-wizard" && init?.method === "PATCH") {
@@ -111,7 +118,7 @@ describe("SetupWizardSettings", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /run setup again/i }));
 
-    expect(await screen.findByRole("heading", { name: "Readiness" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome" })).toBeInTheDocument();
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
         "/api/admin/setup-wizard",
@@ -146,8 +153,8 @@ describe("SetupWizardSettings", () => {
   it("keeps the add-model flow available when a model was discovered", async () => {
     render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "Test" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    expect(await screen.findByRole("heading", { name: "Try your agent" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Choose a model" }));
 
     expect(await screen.findByRole("button", { name: /add another model/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /add another model/i }));
@@ -221,15 +228,15 @@ describe("SetupWizardSettings", () => {
 
     render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "Readiness" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    expect(await screen.findByRole("heading", { name: "Model" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    expect(await screen.findByRole("heading", { name: "Agent" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    expect(await screen.findByRole("heading", { name: "Knowledge & tools" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /get started/i }));
+    expect(await screen.findByRole("heading", { name: "Choose a model" })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Choose an agent" }).at(-1)!);
+    expect(await screen.findByRole("heading", { name: "Choose an agent" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add optional context/i }));
+    expect(await screen.findByRole("heading", { name: "Add context" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /skip this step/i }));
-    expect(await screen.findByRole("heading", { name: "Test" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Try your agent" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /create agent and run test/i }));
 
     expect(await screen.findByText("Your starter agent is working")).toBeInTheDocument();
@@ -243,8 +250,8 @@ describe("SetupWizardSettings", () => {
   it("guides first-time users through credentials and remote MCP onboarding", async () => {
     render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "Test" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Knowledge & tools" }));
+    expect(await screen.findByRole("heading", { name: "Try your agent" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add context" }));
 
     expect(await screen.findByText("Connect credentials")).toBeInTheDocument();
     expect(screen.getByText("Connected", { selector: "p" })).toBeInTheDocument();
@@ -252,11 +259,67 @@ describe("SetupWizardSettings", () => {
       "href",
       "/api/credentials/oauth/notion/connect",
     );
-    expect(screen.getAllByRole("link", { name: /Add from catalog/i })).toHaveLength(2);
     expect(screen.getByRole("link", { name: /Manage connected credentials/i })).toHaveAttribute(
       "href",
       "/credentials/connections",
     );
+    fireEvent.click(screen.getByRole("button", { name: "Tools", exact: true }));
+    expect(screen.getAllByRole("link", { name: /Add from catalog/i })).toHaveLength(2);
+  });
+
+  it("saves the selected step before minimizing and navigating to provider access", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/admin/setup-wizard" && !init?.method) {
+        return response({ ...setupPayload, data: { ...setupPayload.data, state: { ...setupPayload.data.state, status: "in_progress", current_step: 2 } } });
+      }
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    const onOpenChange = jest.fn();
+    render(<SetupWizardDialog open onOpenChange={onOpenChange} />);
+    await screen.findByRole("heading", { name: "Choose a model" });
+    fireEvent.click(screen.getAllByRole("link", { name: /Configure provider access/i })[0]);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/admin/setup-wizard", expect.objectContaining({
+      method: "PATCH",
+      body: expect.stringContaining('"current_step":2'),
+    })));
+    expect(mockPush).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveClass("setup-minimizing"));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/dynamic-agents?tab=model-providers"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps the draft open when saving a handoff fails", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/admin/setup-wizard") {
+        if (init?.method === "PATCH") return response({ error: "Could not save your place" }, 500);
+        return response({ ...setupPayload, data: { ...setupPayload.data, state: { ...setupPayload.data.state, status: "in_progress", current_step: 4 } } });
+      }
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    const onOpenChange = jest.fn();
+    render(<SetupWizardDialog open onOpenChange={onOpenChange} />);
+    await screen.findByRole("heading", { name: "Add context" });
+    fireEvent.click(screen.getByRole("link", { name: /Manage connected credentials/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save your place");
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("offers one-click resume after manually minimizing previously completed setup", async () => {
+    const originalFetch = global.fetch;
+    const saved = { ...setupPayload.data, state: { ...setupPayload.data.state, current_step: 2, checklist_hidden: true } };
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/admin/setup-wizard" && !init?.method) return response({ success: true, data: saved });
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<SetupWizardGate />);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Resume setup", exact: true })).not.toBeInTheDocument();
+    act(() => { window.dispatchEvent(new CustomEvent("caipe:setup-minimized", { detail: saved })); });
+    fireEvent.click(await screen.findByRole("button", { name: "Resume setup", exact: true }));
+    expect(await screen.findByRole("heading", { name: "Choose a model" })).toBeInTheDocument();
   });
 
   it("explains degraded knowledge bases and offers guarded migration remediation", async () => {

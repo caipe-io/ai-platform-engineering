@@ -38,6 +38,7 @@ import {
   Loader2,
   LayoutGrid,
   ListChecks,
+  Minimize2,
   Network,
   Play,
   Plug,
@@ -52,7 +53,7 @@ import {
   Workflow,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   siKeycloak,
@@ -141,11 +142,11 @@ interface SetupWizardDialogProps {
 }
 
 const STEPS = [
-  { id: 1, label: "Readiness", icon: Gauge },
-  { id: 2, label: "Model", icon: Sparkles },
-  { id: 3, label: "Agent", icon: Bot },
-  { id: 4, label: "Knowledge & tools", icon: Database },
-  { id: 5, label: "Test", icon: Play },
+  { id: 1, label: "Welcome", icon: Gauge },
+  { id: 2, label: "Choose a model", icon: Sparkles },
+  { id: 3, label: "Choose an agent", icon: Bot },
+  { id: 4, label: "Add context", icon: Database },
+  { id: 5, label: "Try your agent", icon: Play },
 ] as const;
 
 const RECIPES = [
@@ -175,6 +176,7 @@ const SETUP_FEATURES: Array<{
   label: string;
   description: string;
   deployment: string;
+  docs: string;
   href: string;
   icon: typeof Workflow;
 }> = [
@@ -183,6 +185,7 @@ const SETUP_FEATURES: Array<{
     label: "Workflows",
     description: "Run multi-step agent workflows from the Workflows workspace.",
     deployment: "Requires WORKFLOWS_ENABLED and WORKFLOW_RUNNER_ENABLED.",
+    docs: "https://caipe.io/docs/features/workflows/",
     href: "/workflows",
     icon: Workflow,
   },
@@ -191,6 +194,7 @@ const SETUP_FEATURES: Array<{
     label: "Schedules",
     description: "Run an agent on a recurring schedule or trigger.",
     deployment: "Requires the Scheduler deployment and SCHEDULER_ENABLED.",
+    docs: "https://caipe.io/docs/architecture/scheduler/#enable-the-scheduler",
     href: "/schedules",
     icon: CalendarClock,
   },
@@ -199,6 +203,7 @@ const SETUP_FEATURES: Array<{
     label: "Autonomous Agents",
     description: "Let agents run on cron, interval, and webhook triggers.",
     deployment: "Requires the autonomous-agents service and ENABLE_AUTONOMOUS_AGENTS.",
+    docs: "https://caipe.io/docs/architecture/autonomous-agents/",
     href: "/autonomous",
     icon: Sparkles,
   },
@@ -206,7 +211,8 @@ const SETUP_FEATURES: Array<{
     key: "apps",
     label: "Apps",
     description: "Expose the deployment-owned External Apps catalog.",
-    deployment: "The installer provides an empty catalog; operators can add apps through deployment config.",
+    deployment: "Enable AGENTIC_APPS_INSTALL_ENABLED and supply an app catalog with AGENTIC_APPS_CONFIG_PATH.",
+    docs: "https://caipe.io/docs/features/agentic-apps/",
     href: "/apps",
     icon: LayoutGrid,
   },
@@ -280,6 +286,7 @@ function messageFromPayload(payload: unknown, fallback: string): string {
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
   const payload = await response.json().catch(() => null);
+  if (response.status === 401) throw new Error("Your session has expired. Sign in again, then resume setup from Admin → Platform configuration → Setup Wizard.");
   if (!response.ok) throw new Error(messageFromPayload(payload, `Request failed (${response.status})`));
   return payload as T;
 }
@@ -374,6 +381,7 @@ export function SetupWizardDialog({
   open,
   restart = false,
 }: SetupWizardDialogProps): React.ReactElement {
+  const router = useRouter();
   const [payload, setPayload] = useState<SetupWizardPayload | null>(initialPayload ?? null);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [mcpServers, setMcpServers] = useState<MCPOption[]>([]);
@@ -398,6 +406,49 @@ export function SetupWizardDialog({
   const [confirmMigrationRemediation, setConfirmMigrationRemediation] = useState(false);
   const [remediatingMigrations, setRemediatingMigrations] = useState(false);
   const [migrationRemediationResult, setMigrationRemediationResult] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const [contextSection, setContextSection] = useState("accounts");
+
+  // Save the current draft before handing control to another workspace. Keeping
+  // this on the dialog also covers links inside shared guidance components.
+  const minimize = async (href?: string) => {
+    if (saving || runningTest || leaving) return;
+    if (loading || !payload) {
+      onOpenChange(false);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const state = await patchState({ action: payload?.state.status === "completed" ? "complete" : "progress", current_step: step, selection });
+      const savedPayload = payload ? { ...payload, state } : null;
+      if (savedPayload) onStateChange?.(savedPayload);
+      window.dispatchEvent(new Event("caipe:platform-features-updated"));
+      setLeaving(true);
+      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      window.setTimeout(() => {
+        onOpenChange(false);
+        window.dispatchEvent(new CustomEvent("caipe:setup-minimized", { detail: savedPayload }));
+        setLeaving(false);
+        if (href?.startsWith("/api/")) window.location.assign(href);
+        else if (href) router.push(href);
+      }, reducedMotion ? 0 : 320);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save your place. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTaskLink = (event: React.MouseEvent<HTMLDivElement>) => {
+    const anchor = (event.target as HTMLElement).closest<HTMLAnchorElement>("a[href]");
+    if (!anchor || anchor.target === "_blank" || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const url = new URL(anchor.href, window.location.origin);
+    if (url.origin !== window.location.origin) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void minimize(`${url.pathname}${url.search}${url.hash}`);
+  };
 
   const patchState = useCallback(async (body: Record<string, unknown>) => {
     const result = await jsonRequest<ApiEnvelope<{ state: SetupWizardPayload["state"] }>>(
@@ -550,10 +601,10 @@ export function SetupWizardDialog({
     setSaving(true);
     setError(null);
     try {
-      const completed = [...new Set([...(payload?.state.completed_steps ?? []), step])];
+      const completed = [...new Set([...(payload?.state.completed_steps ?? []).filter((id) => id !== skippedStep), ...(skippedStep ? [] : [step])])];
       const skipped = skippedStep
         ? [...new Set([...(payload?.state.skipped_steps ?? []), skippedStep])]
-        : payload?.state.skipped_steps ?? [];
+        : (payload?.state.skipped_steps ?? []).filter((id) => id !== step);
       await patchState({
         action: "progress",
         current_step: nextStep,
@@ -565,40 +616,6 @@ export function SetupWizardDialog({
       setStep(nextStep);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save setup progress");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const dismiss = async () => {
-    setSaving(true);
-    try {
-      await patchState({ action: "dismiss", current_step: step, selection });
-      onOpenChange(false);
-      onStateChange?.(null);
-    } catch (dismissError) {
-      setError(dismissError instanceof Error ? dismissError.message : "Could not dismiss setup");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const finishWithoutTest = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await patchState({
-        action: "complete",
-        current_step: 5,
-        completed_steps: payload?.state.completed_steps ?? [],
-        skipped_steps: [...new Set([...(payload?.state.skipped_steps ?? []), 5])],
-        selection,
-      });
-      onOpenChange(false);
-      onStateChange?.(null);
-      requestProductTour();
-    } catch (finishError) {
-      setError(finishError instanceof Error ? finishError.message : "Could not finish setup");
     } finally {
       setSaving(false);
     }
@@ -723,6 +740,8 @@ export function SetupWizardDialog({
     + readinessProbes.filter((probe) => probe.status === "healthy").length;
   const readinessHealthy = readinessChecks > 0 && healthyReadinessChecks === readinessChecks;
   const platformComponents = health?.components ?? [];
+  const completedSteps = (payload?.state.completed_steps ?? []).filter((id) => !(payload?.state.skipped_steps ?? []).includes(id));
+  const progress = Math.round(completedSteps.filter((id) => id !== 4).length / 4 * 100);
 
   const closeCompleted = () => {
     onOpenChange(false);
@@ -734,10 +753,14 @@ export function SetupWizardDialog({
     <Dialog open={open} onOpenChange={(nextOpen) => {
       if (!nextOpen && !saving && !runningTest) {
         if (payload?.state.status === "completed") closeCompleted();
-        else void dismiss();
+        else void minimize();
       }
     }}>
-      <DialogContent className="h-[min(860px,calc(100vh-2rem))] max-h-[calc(100vh-2rem)] max-w-6xl min-h-0 overflow-hidden p-0 data-[state=closed]:animate-setup-minimize">
+      <DialogContent
+        onClickCapture={handleTaskLink}
+        aria-busy={saving || leaving}
+        className={cn("setup-dialog h-[min(760px,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-5xl min-h-0 overflow-hidden rounded-2xl p-0", leaving && "setup-minimizing pointer-events-none")}
+      >
         <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[220px_1fr]">
           <aside className="border-b bg-muted/25 p-4 md:border-b-0 md:border-r">
             <div className="mb-5 flex items-center gap-2">
@@ -750,7 +773,7 @@ export function SetupWizardDialog({
             <ol className="grid grid-cols-5 gap-2 md:grid-cols-1">
               {STEPS.map((item) => {
                 const Icon = item.icon;
-                const complete = (payload?.state.completed_steps ?? []).includes(item.id) || item.id < step;
+                const complete = completedSteps.includes(item.id);
                 const active = item.id === step;
                 return (
                   <li key={item.id}>
@@ -761,6 +784,9 @@ export function SetupWizardDialog({
                         active ? "bg-primary/10 font-medium text-primary shadow-[0_0_24px_-14px_hsl(var(--primary))]" : "text-muted-foreground hover:bg-muted",
                       )}
                       onClick={() => setStep(item.id)}
+                      disabled={saving || runningTest || leaving}
+                      aria-label={item.label}
+                      aria-current={active ? "step" : undefined}
                     >
                       <span className={cn("grid h-6 w-6 shrink-0 place-items-center rounded-full border transition-all duration-300", complete && "border-primary bg-primary text-primary-foreground", active && !complete && "animate-pulse-gentle border-primary")}>
                         {complete ? <Check className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
@@ -773,38 +799,40 @@ export function SetupWizardDialog({
             </ol>
             <div className="mt-6 hidden md:block">
               <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>Setup progress</span>
-                <span>{Math.round((Math.max(step, payload?.state.completed_steps?.length ?? 0) / STEPS.length) * 100)}%</span>
+                <span>Basic setup progress</span>
+                <span>{progress}%</span>
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-primary via-cyan-400 to-violet-500 transition-[width] duration-500"
-                  style={{ width: `${Math.max(20, (Math.max(step, payload?.state.completed_steps?.length ?? 0) / STEPS.length) * 100)}%` }}
+                  style={{ width: `${progress}%` }}
                 />
               </div>
-              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">A few quick choices, then we’ll prove your first agent works.</p>
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Start with one model and one agent. Add tools and automation whenever you’re ready.</p>
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Your place is saved when you leave. Return with <strong>Resume setup</strong> or Admin → Platform configuration → Setup Wizard.</p>
             </div>
           </aside>
 
           <section className="flex min-h-0 flex-col">
-            <DialogHeader className="border-b px-6 py-4 text-left">
+            <DialogHeader className="relative border-b px-6 py-4 pr-24 text-left">
+              <Button type="button" size="icon" variant="ghost" className="absolute right-11 top-2" aria-label="Minimize setup" title="Save and minimize" onClick={() => void minimize()} disabled={saving || runningTest || leaving}><Minimize2 className="h-4 w-4" /></Button>
               <DialogTitle>{STEPS[step - 1].label}</DialogTitle>
               <DialogDescription>
-                {step === 1 && "Check the services needed for a working agent."}
-                {step === 2 && "Choose the model your starter agent will use."}
-                {step === 3 && "Start with a useful recipe or a minimal agent."}
-                {step === 4 && "Connect the accounts and tools that make your starter agent useful."}
-                {step === 5 && "Create the agent and verify an end-to-end response."}
+                {step === 1 && "A few small steps to your first working agent."}
+                {step === 2 && "Select a model, or connect your provider to get started."}
+                {step === 3 && "Choose what your agent will help you do. You can edit it later."}
+                {step === 4 && "Optional · Give your agent useful tools, knowledge, and connected accounts."}
+                {step === 5 && "Send a real message and see your agent respond."}
               </DialogDescription>
             </DialogHeader>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div key={step} className="setup-step min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5 [scrollbar-width:thin]">
               {loading ? (
                 <div className="grid min-h-72 place-items-center"><CAIPESpinner message="Inspecting this deployment..." /></div>
               ) : (
                 <>
                   {error && (
-                    <div className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                    <div role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                       <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>{error}</span>
                     </div>
@@ -812,12 +840,13 @@ export function SetupWizardDialog({
 
                   {step === 1 && (
                     <div className="space-y-3">
-                      <div className="animate-fade-in relative overflow-hidden rounded-xl border bg-gradient-to-br from-primary/10 via-background to-violet-500/10 p-3.5">
+                      <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/15 via-background to-violet-500/10 p-6">
                         <div className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-primary/15 blur-3xl animate-pulse-glow" />
                         <div className="relative flex flex-wrap items-center justify-between gap-3">
                           <div>
-                            <p className="text-sm font-semibold">Let’s get your first agent ready</p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">We’ll check the platform, connect what you need, and run a real test.</p>
+                            <p className="text-xs font-medium uppercase tracking-widest text-primary">Welcome to CAIPE</p>
+                            <p className="mt-2 text-2xl font-semibold tracking-tight">Your first agent starts here.</p>
+                            <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">Connect a model, give your agent a purpose, and try a conversation. Everything else can wait.</p>
                           </div>
                           {readinessChecks > 0 && (
                             <div className="flex items-center gap-1.5 rounded-full border bg-background/70 px-2.5 py-1 text-[11px] font-medium">
@@ -826,6 +855,11 @@ export function SetupWizardDialog({
                             </div>
                           )}
                         </div>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {[{ icon: Sparkles, title: "1. Connect a model", text: "Use your provider or a model already available." }, { icon: Bot, title: "2. Give it a purpose", text: "Start with a recipe you can make your own." }, { icon: Play, title: "3. See it work", text: "Run a short test before adding more features." }].map((item) => (
+                          <div key={item.title} className="rounded-xl border bg-card/60 p-4"><item.icon className="mb-3 h-5 w-5 text-primary" /><p className="text-sm font-medium">{item.title}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.text}</p></div>
+                        ))}
                       </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground">
                         <span><strong className="text-foreground">{payload?.inventory.models ?? 0}</strong> models</span>
@@ -937,7 +971,7 @@ export function SetupWizardDialog({
                         </summary>
                         <div className="mt-2 space-y-2.5">
                         <div>
-                          <p className="text-xs text-muted-foreground">Choose which deployed surfaces appear in navigation. Deployment flags remain the hard service gate.</p>
+                          <p className="text-xs text-muted-foreground">Choose what appears in your navigation. These are optional; you can return here after your first conversation.</p>
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2">
                           {SETUP_FEATURES.map((feature) => {
@@ -945,11 +979,11 @@ export function SetupWizardDialog({
                             const deployed = deploymentFeatureDefaults()[feature.key];
                             const enabled = selection.enabled_features?.[feature.key] ?? deployed;
                             return (
-                              <label
+                              <div
                                 key={feature.key}
                                 className={cn(
                                   "flex items-start gap-2.5 rounded-lg border p-2.5 transition-colors",
-                                  deployed ? "cursor-pointer hover:bg-muted/40" : "cursor-not-allowed opacity-70",
+                                  deployed ? "hover:bg-muted/40" : "bg-muted/20",
                                 )}
                               >
                                 <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -958,6 +992,7 @@ export function SetupWizardDialog({
                                     <span className="text-sm font-medium">{feature.label}</span>
                                     <input
                                       type="checkbox"
+                                      aria-label={`Show ${feature.label} in navigation`}
                                       checked={deployed && enabled}
                                       disabled={!deployed || saving}
                                       onChange={(event) => setSelection((current) => ({
@@ -972,15 +1007,22 @@ export function SetupWizardDialog({
                                   </span>
                                   <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{feature.description}</span>
                                   <span className="mt-1 block text-[10px] text-muted-foreground">
-                                    {deployed ? "Available in this deployment." : feature.deployment}
+                                    {deployed ? "Available · Show in navigation" : "Not enabled in this deployment"}
                                   </span>
                                   {deployed && (
                               <Link className="mt-0.5 inline-block text-[11px] text-primary hover:underline" href={feature.href} onClick={() => onOpenChange(false)}>
                                       Open {feature.label}
                                     </Link>
                                   )}
+                                  {!deployed && (
+                                    <details className="mt-2 text-xs">
+                                      <summary className="cursor-pointer text-primary">How to enable</summary>
+                                      <p className="mt-2 leading-relaxed text-muted-foreground">Ask your deployment administrator to enable this feature, then restart or redeploy CAIPE UI. {feature.deployment}</p>
+                                      <a className="mt-2 inline-flex items-center gap-1 text-primary hover:underline" href={feature.docs} target="_blank" rel="noreferrer">Read deployment guide<ExternalLink className="h-3 w-3" /><span className="sr-only"> (opens in a new tab)</span></a>
+                                    </details>
+                                  )}
                                 </span>
-                              </label>
+                              </div>
                             );
                           })}
                         </div>
@@ -999,6 +1041,10 @@ export function SetupWizardDialog({
 
                   {step === 2 && (
                     <div className="space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
+                        <div className="max-w-sm"><p className="text-sm font-semibold">Bring your own model provider</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Connect OpenAI, LiteLLM, Anthropic, or Bedrock. Setup will minimize while you configure access.</p></div>
+                        <Button asChild size="sm"><Link href="/dynamic-agents?tab=model-providers">Configure provider access<ChevronRight className="ml-1 h-4 w-4" /></Link></Button>
+                      </div>
                       <details className="group rounded-xl border bg-muted/10 p-3">
                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
                           <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Provider guidance</span>
@@ -1011,7 +1057,7 @@ export function SetupWizardDialog({
                           <div className="text-center">
                             <Sparkles className="mx-auto h-8 w-8 text-muted-foreground" />
                             <p className="mt-3 font-semibold">No models are configured</p>
-                            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">Add a model here to continue setting up your first working agent. Provider access is configured separately in Model providers.</p>
+                            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">Configure provider access above, then register a model below. Adding a model name alone does not connect its endpoint or credentials.</p>
                           </div>
                           {showAddModel ? (
                             <div className="mx-auto max-w-md space-y-3">
@@ -1033,12 +1079,13 @@ export function SetupWizardDialog({
                                 model_id: model._id,
                                 model_provider: model.provider,
                               }))}
+                              aria-pressed={selection.model_id === model._id}
                               className={cn(
-                                "flex w-full items-center justify-between rounded-lg border p-4 text-left transition-colors",
+                                "flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border p-3 text-left transition-colors",
                                 selection.model_id === model._id ? "border-primary bg-primary/5" : "hover:bg-muted/40",
                               )}
                             >
-                              <span>
+                              <span className="min-w-0 break-words">
                                 <span className="block font-medium">{model.name}</span>
                                 <span className="block text-xs text-muted-foreground">{model.provider} · {model._id}</span>
                               </span>
@@ -1086,6 +1133,7 @@ export function SetupWizardDialog({
                             key={recipe.id}
                             type="button"
                             onClick={() => setSelection((current) => ({ ...current, recipe_id: recipe.id }))}
+                            aria-pressed={selection.recipe_id === recipe.id}
                             className={cn(
                               "rounded-xl border p-5 text-left transition-colors",
                               selection.recipe_id === recipe.id ? "border-primary bg-primary/5" : "hover:bg-muted/40",
@@ -1100,11 +1148,20 @@ export function SetupWizardDialog({
                           </button>
                         ))}
                       </div>
+                      <p className="rounded-xl bg-primary/5 p-4 text-sm text-muted-foreground">{selection.recipe_id === "sre" ? "Your SRE starter can help reason through incidents. Connect operational tools later for live diagnostics." : selection.recipe_id === "hello-world" ? "A simple starting point: check that your model responds before adding tools or specialist instructions." : "Start with minimal instructions, then customize your agent in the agent workspace."} Nothing is created until you run the test.</p>
                     </div>
                   )}
 
                   {step === 4 && (
                     <div className="space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
+                        <div className="max-w-md"><p className="text-sm font-semibold">Start simple. Connect more later.</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Your agent can have its first conversation without extra accounts or documents. Add only what you need today.</p></div>
+                        <Button variant="outline" size="sm" onClick={() => void persistProgress(5, 4)} disabled={saving}>Try without extras<ChevronRight className="ml-1 h-4 w-4" /></Button>
+                      </div>
+                      <nav aria-label="Optional agent context" className="flex flex-wrap gap-2">
+                        {[{ id: "accounts", label: "Accounts", icon: KeyRound }, { id: "tools", label: "Tools", icon: Plug }, { id: "knowledge", label: "Knowledge", icon: Database }, { id: "team", label: "Team channels", icon: Network }].map((item) => <Button key={item.id} size="sm" variant={contextSection === item.id ? "default" : "outline"} aria-pressed={contextSection === item.id} onClick={() => setContextSection(item.id)}><item.icon className="mr-2 h-4 w-4" />{item.label}</Button>)}
+                      </nav>
+                      {contextSection === "accounts" && (
                       <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
                         <div className="flex items-start gap-3">
                           <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -1126,7 +1183,7 @@ export function SetupWizardDialog({
                           <div className="grid gap-2 sm:grid-cols-2">
                             {SETUP_CONNECTIONS.map((entry) => {
                               const connected = connectedProviders.has(entry.provider);
-                              const available = oauthConnectors.some((connector) => connector.provider === entry.provider);
+                              const available = oauthConnectors.some((connector) => connector.provider === entry.provider && connector.enabled);
                               return (
                                 <div key={entry.provider} className="flex items-start justify-between gap-3 rounded-lg border p-3">
                                   <div className="flex min-w-0 gap-2">
@@ -1144,6 +1201,7 @@ export function SetupWizardDialog({
                                       <Link href={`/api/credentials/oauth/${entry.provider}/connect`} onClick={() => onOpenChange(false)}>Connect</Link>
                                     </Button>
                                   )}
+                                  {!available && <Link className="shrink-0 text-xs text-primary hover:underline" href="/admin/platform/credentials?credentialsTab=oauth-providers">Enable connector</Link>}
                                 </div>
                               );
                             })}
@@ -1158,13 +1216,8 @@ export function SetupWizardDialog({
                           </span>
                         </div>
                       </div>
-
-                      <details className="group rounded-xl border bg-muted/10 p-3">
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
-                          <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Tools, knowledge, and team integrations</span>
-                          <span className="text-[11px] text-muted-foreground">Optional</span>
-                        </summary>
-                        <div className="mt-3 space-y-4">
+                      )}
+                      {contextSection === "tools" && (
                       <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
                         <div className="flex items-start gap-3">
                           <Plug className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -1196,7 +1249,8 @@ export function SetupWizardDialog({
                           OAuth-capable providers can be connected during MCP setup. Generic dynamic client registration (DCR) still requires provider support and is not assumed for arbitrary endpoints.
                         </p>
                       </div>
-
+                      )}
+                      {contextSection === "team" && (
                       <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
                         <div className="flex items-start gap-3">
                           <LayoutGrid className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -1222,7 +1276,9 @@ export function SetupWizardDialog({
                           ))}
                         </div>
                       </div>
-
+                      )}
+                      {contextSection === "knowledge" && <div className="space-y-3">
+                      <div className="rounded-xl border bg-muted/10 p-4"><p className="text-sm font-semibold">Give your agent something to learn from</p><p className="mt-1 text-sm text-muted-foreground">Add documents or a website to a knowledge base, then let your agent search it. You control which sources it can access.</p><Button asChild size="sm" variant="outline" className="mt-3"><Link href="/knowledge-bases">Open Knowledge Bases<ChevronRight className="ml-1 h-4 w-4" /></Link></Button></div>
                       <label className="flex cursor-pointer items-start justify-between gap-4 rounded-lg border p-4">
                         <span className="flex gap-3">
                           <Database className="mt-0.5 h-5 w-5 text-primary" />
@@ -1239,6 +1295,9 @@ export function SetupWizardDialog({
                           className="mt-1 h-4 w-4 accent-primary"
                         />
                       </label>
+                      {!mcpServers.some((server) => server._id === "knowledge-base") && <p className="rounded-lg bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">Knowledge search is not available yet. Ask your administrator to deploy RAG and register the knowledge-base MCP server. <a href="https://caipe.io/docs/" target="_blank" rel="noreferrer" className="text-primary hover:underline">Open CAIPE documentation</a>, or continue without knowledge search.</p>}
+                      </div>}
+                      {contextSection === "tools" && (
                       <div>
                         <p className="mb-2 text-sm font-medium">MCP servers</p>
                         {mcpServers.length === 0 && (
@@ -1271,15 +1330,15 @@ export function SetupWizardDialog({
                           })}
                         </div>
                       </div>
-                        </div>
-                      </details>
+                      )}
                     </div>
                   )}
 
                   {step === 5 && (
                     <div className="space-y-4">
                       <div className="rounded-xl border bg-muted/20 p-5">
-                        <p className="font-semibold">Ready to create your starter agent</p>
+                        <p className="font-semibold">{testResult ? "Your starter configuration" : "Ready for your first conversation?"}</p>
+                        {!testResult && <p className="mt-1 text-sm text-muted-foreground">We’ll create your agent and send a short message using the model below.</p>}
                         <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
                           <SummaryItem label="Recipe" value={RECIPES.find((recipe) => recipe.id === selection.recipe_id)?.title ?? "SRE starter"} />
                           <SummaryItem label="Model" value={selectedModel?.name ?? "Not selected"} />
@@ -1293,6 +1352,7 @@ export function SetupWizardDialog({
                             <CheckCircle2 className="h-5 w-5" /> Your starter agent is working
                           </p>
                           <p className="mt-2 text-sm text-muted-foreground">{testResult}</p>
+                          <p className="mt-3 text-sm text-muted-foreground">Basic setup is complete. Come back to Admin → Platform configuration → Setup Wizard to connect accounts, add knowledge, or explore automation.</p>
                           <div className="mt-4 flex flex-wrap gap-2">
                             {testConversationId && (
                               <Button asChild size="sm">
@@ -1309,22 +1369,25 @@ export function SetupWizardDialog({
                           </div>
                         </div>
                       ) : (
-                        <Button onClick={() => void createAndTest()} disabled={runningTest || !selectedModel} size="lg">
+                        <Button onClick={() => void createAndTest()} disabled={runningTest || !selectedModel || requiredHealthFailure} size="lg">
                           {runningTest ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
                           {runningTest ? "Running end-to-end test..." : "Create agent and run test"}
                         </Button>
                       )}
+                      {!testResult && !selectedModel && <Button variant="outline" onClick={() => setStep(2)}>Choose a model first</Button>}
+                      {requiredHealthFailure && <p role="status" className="text-sm text-amber-600">A required service needs attention. <button type="button" className="underline" onClick={() => setStep(1)}>Review platform checks</button> before testing.</p>}
+                      {!testResult && error && <div className="rounded-lg border p-3 text-sm"><p>You can retry after checking your provider access and platform health. Your selections are saved when you minimize.</p><Link className="mt-2 inline-block text-primary hover:underline" href="/dynamic-agents?tab=model-providers">Check provider access</Link></div>}
                     </div>
                   )}
                 </>
               )}
             </div>
 
-            <DialogFooter className="flex-row items-center justify-between border-t px-6 py-3 sm:justify-between">
-              <Button type="button" variant="ghost" onClick={() => void dismiss()} disabled={saving || runningTest}>
-                Skip for now
+            <DialogFooter className="flex-row flex-wrap items-center justify-between gap-2 border-t px-6 py-3 sm:justify-between">
+              <Button type="button" variant="ghost" onClick={() => void minimize()} disabled={saving || runningTest || leaving}>
+                <Minimize2 className="mr-2 h-4 w-4" />Save & minimize
               </Button>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {step > 1 && !testResult && (
                   <Button type="button" variant="outline" onClick={() => setStep((current) => current - 1)} disabled={saving || runningTest}>
                     <ChevronLeft className="mr-1 h-4 w-4" /> Back
@@ -1339,13 +1402,13 @@ export function SetupWizardDialog({
                     )}
                     <Button type="button" onClick={() => void persistProgress(step + 1)} disabled={saving || !canContinue}>
                       {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Continue <ChevronRight className="ml-1 h-4 w-4" />
+                      {step === 1 ? "Let’s get started" : step === 2 ? "Choose an agent" : step === 3 ? "Add optional context" : "Review & test"} <ChevronRight className="ml-1 h-4 w-4" />
                     </Button>
                   </>
                 )}
                 {step === 5 && !testResult && (
-                  <Button type="button" variant="outline" onClick={() => void finishWithoutTest()} disabled={saving || runningTest}>
-                    Finish without test
+                  <Button type="button" variant="outline" onClick={() => void minimize()} disabled={saving || runningTest}>
+                    Test later
                   </Button>
                 )}
                 {step === 5 && testResult && (
@@ -1367,7 +1430,7 @@ function ModelProviderGuide({ onNavigate }: { onNavigate?: () => void }) {
         <div>
           <p className="font-medium">Popular provider options</p>
           <p className="text-xs text-muted-foreground">
-            Models are safe metadata. Provider endpoints and secrets stay in deployment configuration.
+            Connect your provider first, then register a model from that provider. Keep credentials in provider configuration.
           </p>
         </div>
         <Button asChild type="button" size="sm" variant="outline">
@@ -1435,6 +1498,11 @@ function PlatformComponentCard({
   const healthy = component.status === "healthy";
   const disabled = component.status === "disabled";
   const usesCaipeLogo = ["caipe-ui", "caipe-agent-harness", "scheduler", "autonomous-agents"].includes(component.id);
+  const enableGuide = component.id === "scheduler"
+    ? SETUP_FEATURES.find((feature) => feature.key === "schedules")?.docs
+    : component.id === "autonomous-agents"
+      ? SETUP_FEATURES.find((feature) => feature.key === "autonomous_agents")?.docs
+      : "https://caipe.io/docs/";
   return (
     <div className={cn("animate-slide-in flex items-center gap-2.5 rounded-lg border bg-card/60 p-2.5 transition-transform duration-300 hover:-translate-y-0.5", disabled && "opacity-60 grayscale")} style={{ animationDelay: `${delay}ms` }}>
       <span className={cn("relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br", mark.className)} aria-hidden="true">
@@ -1456,10 +1524,11 @@ function PlatformComponentCard({
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center justify-between gap-2">
-          <span className="truncate text-xs font-medium">{component.label}</span>
+          <span className="break-words text-xs font-medium">{component.label}</span>
           <span className={cn("h-2 w-2 shrink-0 rounded-full", healthy ? "bg-emerald-500" : disabled ? "bg-slate-500" : "bg-amber-500")} title={disabled ? "Not installed" : component.status} />
         </span>
         <span className="block truncate text-[10px] text-muted-foreground" title={component.detail}>{component.detail}</span>
+        {disabled && <details className="mt-1 text-[11px]"><summary className="cursor-pointer">How to enable</summary><p className="mt-1 leading-relaxed">{component.detail}</p><a className="mt-1 inline-flex items-center gap-1 underline" href={enableGuide} target="_blank" rel="noreferrer">Deployment guide<ExternalLink className="h-3 w-3" /></a></details>}
       </span>
     </div>
   );
@@ -1616,6 +1685,23 @@ export function SetupWizardGate(): React.ReactElement | null {
   const [resumePulse, setResumePulse] = useState(0);
   const [checklistHidden, setChecklistHidden] = useState(false);
   const [hidingChecklist, setHidingChecklist] = useState(false);
+  const [resumeAvailable, setResumeAvailable] = useState(false);
+
+  useEffect(() => {
+    const minimized = (event: Event) => {
+      setOpen(false);
+      setChecklistOpen(false);
+      setResumeAvailable(true);
+      setChecklistHidden(false);
+      const saved = (event as CustomEvent<SetupWizardPayload | null>).detail;
+      if (saved) setPayload(saved);
+      setResumePulse((current) => current + 1);
+      refreshPayload();
+      window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>("[data-setup-resume]")?.focus());
+    };
+    window.addEventListener("caipe:setup-minimized", minimized);
+    return () => window.removeEventListener("caipe:setup-minimized", minimized);
+  }, []);
 
   useEffect(() => {
     // A setup handoff should never leave the full-screen dialog over the
@@ -1684,38 +1770,41 @@ export function SetupWizardGate(): React.ReactElement | null {
     }
   };
 
-  if (!payload || checklistHidden || payload.state.checklist_hidden || payload.state.status === "completed") return null;
+  if (!payload || checklistHidden || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed"))) return null;
 
   const checklistItems: Array<{
     label: string;
     detail: string;
     done: boolean;
+    optional?: boolean;
     href?: string;
   }> = [
-    { label: "Connect a model", detail: "Give your first agent a brain.", done: payload.inventory.models > 0, href: "/dynamic-agents?tab=model-providers" },
+    { label: "Select a model", detail: "Configure access, then choose your model.", done: Boolean(payload.state.selection?.model_id), href: "/dynamic-agents?tab=model-providers" },
     { label: "Choose an agent recipe", detail: "Start with SRE, Hello World, or a blank agent.", done: Boolean(payload.state.selection?.recipe_id) },
-    { label: "Add tools or knowledge", detail: "Make answers useful with MCP or RAG.", done: payload.inventory.mcp_servers > 0 || payload.inventory.knowledge_sources > 0, href: "/dynamic-agents?tab=mcp-servers" },
-    { label: "Connect credentials", detail: "Connect GitHub, Notion, Webex, or another account.", done: payload.inventory.connected_credentials > 0, href: "/credentials/connections" },
     { label: "Run the first test", detail: "Verify the whole path before inviting your team.", done: payload.state.last_smoke_test?.status === "passed" },
+    { label: "Add tools or knowledge", detail: "Optional · Connect tools or searchable documents.", optional: true, done: Boolean(payload.state.selection?.mcp_server_ids?.length || payload.state.selection?.enable_knowledge_base), href: "/dynamic-agents?tab=mcp-servers" },
+    { label: "Connect credentials", detail: "Optional · Connect the accounts your agent needs.", optional: true, done: payload.inventory.connected_credentials > 0, href: "/credentials/connections" },
   ];
-  const completedChecklistItems = checklistItems.filter((item) => item.done).length;
+  const basicItems = checklistItems.filter((item) => !item.optional);
+  const completedChecklistItems = basicItems.filter((item) => item.done).length;
 
   return (
     <>
-      <div className="fixed bottom-4 right-4 z-[60]">
+      <div className={cn("fixed bottom-4 right-4 z-[60] max-w-[calc(100vw-2rem)]", open && "invisible pointer-events-none")}>
+        {resumePulse > 0 && !checklistOpen && <p role="status" className="mb-2 max-w-64 rounded-xl border bg-card p-3 text-xs text-muted-foreground shadow-lg">Your place is saved. Resume setup here when you’re ready.</p>}
         {checklistOpen && (
           <div className="mb-2 max-h-[min(36rem,calc(100vh-6rem))] w-[min(22rem,calc(100vw-2rem))] animate-slide-in overflow-y-auto rounded-2xl border bg-card/95 p-4 shadow-2xl shadow-primary/10 backdrop-blur-xl [scrollbar-width:thin]">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="flex items-center gap-2 text-sm font-semibold"><ListChecks className="h-4 w-4 text-primary" /> Setup checklist</p>
-                <p className="mt-1 text-xs text-muted-foreground">A friendly path to your first working agent.</p>
+                <p className="mt-1 text-xs text-muted-foreground">One model, one agent, one successful conversation. Extras can wait.</p>
               </div>
               <button type="button" className="text-muted-foreground transition-colors hover:text-foreground" onClick={() => setChecklistOpen(false)} aria-label="Close setup checklist">×</button>
             </div>
             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full bg-gradient-to-r from-primary to-violet-500 transition-[width] duration-500" style={{ width: `${(completedChecklistItems / checklistItems.length) * 100}%` }} />
+              <div className="h-full rounded-full bg-gradient-to-r from-primary to-violet-500 transition-[width] duration-500" style={{ width: `${(completedChecklistItems / basicItems.length) * 100}%` }} />
             </div>
-            <p className="mt-2 text-[11px] text-muted-foreground">{completedChecklistItems} of {checklistItems.length} ready</p>
+            <p className="mt-2 text-[11px] text-muted-foreground">{completedChecklistItems} of {basicItems.length} basic tasks ready · Extras are optional</p>
             <ul className="mt-3 space-y-2">
               {checklistItems.map((item) => {
                 const content = (
@@ -1723,18 +1812,18 @@ export function SetupWizardGate(): React.ReactElement | null {
                     <span className={cn("mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border", item.done ? "border-emerald-500 bg-emerald-500 text-white" : "border-muted-foreground/40 text-transparent")}>
                       <Check className="h-3 w-3" />
                     </span>
-                    <span className="text-left"><span className={cn("font-medium", item.done && "text-muted-foreground line-through")}>{item.label}</span><span className="block text-[11px] text-muted-foreground">{item.detail}</span></span>
+                    <span className="min-w-0 text-left"><span className={cn("font-medium", item.done && "text-muted-foreground")}>{item.label}</span><span className="block text-[11px] text-muted-foreground">{item.detail}</span></span>
                     {!item.done && item.href && <ChevronRight className="ml-auto mt-1 h-3.5 w-3.5 shrink-0 text-primary" />}
                   </>
                 );
                 return (
                   <li key={item.label} className="text-xs">
-                    {item.href && !item.done ? (
+                    {item.href ? (
                       <Link className="flex items-start gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/50" href={item.href} onClick={() => { setChecklistOpen(false); setOpen(false); }}>
                         {content}
                       </Link>
                     ) : (
-                      <button type="button" className={cn("flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors", !item.done && "hover:bg-muted/50")} onClick={() => !item.done && openWizard(false)}>
+                      <button type="button" className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted/50" onClick={() => openWizard(false)}>
                         {content}
                       </button>
                     )}
@@ -1759,23 +1848,25 @@ export function SetupWizardGate(): React.ReactElement | null {
             </div>
           </div>
         )}
+        <div className="flex justify-end gap-2">
         <Button
           key={resumePulse}
           type="button"
           size="sm"
           variant="outline"
           className={cn(
-            "ml-auto flex items-center gap-2 rounded-full bg-card/90 shadow-lg backdrop-blur-xl",
-            resumePulse > 0 ? "animate-setup-bubble-in" : "animate-pulse-gentle",
+            "ml-auto flex max-w-full items-center gap-2 rounded-full bg-card/90 shadow-lg backdrop-blur-xl",
+            resumePulse > 0 && "animate-setup-bubble-in",
           )}
-          onClick={() => setChecklistOpen((current) => !current)}
-          aria-expanded={checklistOpen}
+          onClick={() => openWizard(false)}
+          data-setup-resume
           aria-label="Resume setup"
         >
           <ListChecks className="h-4 w-4 text-primary" />
-          {checklistOpen ? "Setup checklist" : "Resume setup"}
-          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">{completedChecklistItems}/{checklistItems.length}</span>
+          Resume setup
         </Button>
+        <Button size="sm" variant="outline" className="rounded-full bg-card/90 shadow-lg" aria-label="Open setup checklist" aria-expanded={checklistOpen} onClick={() => setChecklistOpen((current) => !current)}><ListChecks className="mr-1 h-4 w-4 text-primary" />{completedChecklistItems}/{basicItems.length}</Button>
+        </div>
       </div>
       <SetupWizardDialog
         open={open}
@@ -1786,7 +1877,10 @@ export function SetupWizardGate(): React.ReactElement | null {
           setOpen(nextOpen);
           if (!nextOpen) refreshPayload();
         }}
-        onStateChange={refreshPayload}
+        onStateChange={(nextPayload) => {
+          if (!nextPayload) setResumeAvailable(false);
+          refreshPayload();
+        }}
       />
     </>
   );

@@ -52,7 +52,7 @@ function normalizeFeatureSelection(value: SetupWizardFeatureFlags | undefined): 
 }
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
-  return withAuth(request, async (_req, _user, _session) => {
+  return withAuth(request, async () => {
     const platformConfig = await getCollection<PlatformFeatureDocument>("platform_config");
     const document = await platformConfig.findOne({ _id: SETUP_WIZARD_CONFIG_ID });
     const deployed = deploymentFeatures();
