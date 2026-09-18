@@ -94,6 +94,7 @@ interface ChatState {
   addMessage: (conversationId: string, message: Omit<ChatMessage, "id" | "timestamp">, turnId?: string, messageId?: string) => string;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => void;
   appendToMessage: (conversationId: string, messageId: string, content: string) => void;
+  truncateConversationFromMessage: (conversationId: string, messageId: string) => void;
   setStreaming: (streaming: boolean) => void;
   setConversationStreaming: (conversationId: string, state: StreamingState | null) => void;
   isConversationStreaming: (conversationId: string) => boolean;
@@ -344,6 +345,24 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 }
               : conv
           ),
+        }));
+      },
+
+      truncateConversationFromMessage: (conversationId: string, messageId: string) => {
+        set((state: ChatState) => ({
+          conversations: state.conversations.map((conversation: Conversation) => {
+            if (conversation.id !== conversationId) return conversation;
+            const messageIndex = conversation.messages.findIndex(
+              (message: ChatMessage) => message.id === messageId,
+            );
+            if (messageIndex < 0) return conversation;
+            return {
+              ...conversation,
+              messages: conversation.messages.slice(0, messageIndex),
+              streamEvents: [],
+              updatedAt: new Date(),
+            };
+          }),
         }));
       },
 

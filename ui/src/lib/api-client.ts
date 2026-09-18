@@ -280,6 +280,21 @@ class APIClient {
     });
   }
 
+  async rewindConversation(
+    conversationId: string,
+    data: { agent_id: string; message_id: string },
+  ): Promise<{
+    conversation_id: string;
+    turn_id: string;
+    removed_messages: number;
+    checkpoint_id: string | null;
+  }> {
+    return this.request(`/api/chat/conversations/${conversationId}/rewind`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async updateMessage(
     messageId: string,
     data: UpdateMessageRequest
