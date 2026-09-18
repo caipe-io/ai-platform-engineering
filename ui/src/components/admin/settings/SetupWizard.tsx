@@ -1434,10 +1434,11 @@ function PlatformComponentCard({
   const Icon = mark.icon;
   const healthy = component.status === "healthy";
   const disabled = component.status === "disabled";
+  const usesCaipeLogo = ["caipe-ui", "caipe-agent-harness", "scheduler", "autonomous-agents"].includes(component.id);
   return (
-    <div className="animate-slide-in flex items-center gap-2.5 rounded-lg border bg-card/60 p-2.5 transition-transform duration-300 hover:-translate-y-0.5" style={{ animationDelay: `${delay}ms` }}>
+    <div className={cn("animate-slide-in flex items-center gap-2.5 rounded-lg border bg-card/60 p-2.5 transition-transform duration-300 hover:-translate-y-0.5", disabled && "opacity-60 grayscale")} style={{ animationDelay: `${delay}ms` }}>
       <span className={cn("relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br", mark.className)} aria-hidden="true">
-        {component.id === "caipe-ui" || component.id === "caipe-agent-harness" ? (
+        {usesCaipeLogo ? (
           // The configured logo may be deployment-provided and is intentionally not optimized.
           // eslint-disable-next-line @next/next/no-img-element
           <img src={getConfig("logoUrl")} alt="" className="h-7 w-7 object-contain" />
@@ -1456,7 +1457,7 @@ function PlatformComponentCard({
       <span className="min-w-0 flex-1">
         <span className="flex items-center justify-between gap-2">
           <span className="truncate text-xs font-medium">{component.label}</span>
-          <span className={cn("h-2 w-2 shrink-0 rounded-full", healthy ? "bg-emerald-500" : disabled ? "bg-muted-foreground/40" : "bg-amber-500")} />
+          <span className={cn("h-2 w-2 shrink-0 rounded-full", healthy ? "bg-emerald-500" : disabled ? "bg-slate-500" : "bg-amber-500")} title={disabled ? "Not installed" : component.status} />
         </span>
         <span className="block truncate text-[10px] text-muted-foreground" title={component.detail}>{component.detail}</span>
       </span>

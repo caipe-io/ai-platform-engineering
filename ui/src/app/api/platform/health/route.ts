@@ -643,7 +643,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
     ...(config.schedulerEnabled
       ? [probeHttpDiagnostic({
           id: "scheduler",
-          label: "Scheduler",
+          label: "CAIPE Agent Scheduler",
           group: "runtime",
           target: `${schedulerUrl}/healthz`,
           remediation: {
@@ -656,7 +656,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
     ...(config.autonomousAgentsEnabled
       ? [probeHttpDiagnostic({
           id: "autonomous-agents",
-          label: "Autonomous Agents",
+          label: "CAIPE Autonomous Agents Scheduler",
           group: "runtime",
           target: `${autonomousAgentsUrl}/health`,
           remediation: {
@@ -841,13 +841,19 @@ function buildPlatformComponents(
     fromProbe("keycloak", "Keycloak", "keycloak", capabilityById.get("authentication")),
     fromProbe("openfga", "OpenFGA", "openfga"),
     fromProbe("caipe-agent-harness", "CAIPE Agent Harness", "dynamic-agents-runtime", capabilityById.get("dynamic-agents")),
-    optionalServiceFromProbe("scheduler", "Scheduler", "scheduler", config.schedulerEnabled, "Disabled by SCHEDULER_ENABLED"),
+    optionalServiceFromProbe(
+      "scheduler",
+      "CAIPE Agent Scheduler",
+      "scheduler",
+      config.schedulerEnabled,
+      "Not installed. Enable SCHEDULER_ENABLED and the scheduler service in deployment configuration.",
+    ),
     optionalServiceFromProbe(
       "autonomous-agents",
-      "Autonomous Agents",
+      "CAIPE Autonomous Agents Scheduler",
       "autonomous-agents",
       config.autonomousAgentsEnabled,
-      "Disabled by ENABLE_AUTONOMOUS_AGENTS",
+      "Not installed. Enable ENABLE_AUTONOMOUS_AGENTS and the autonomous-agents service in deployment configuration.",
     ),
     fromProbe("agentgateway", "AgentGateway", "agentgateway"),
     {
