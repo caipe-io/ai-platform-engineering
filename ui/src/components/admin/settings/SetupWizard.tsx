@@ -47,6 +47,7 @@ import {
   RotateCcw,
   Sparkles,
   TriangleAlert,
+  X,
   XCircle,
   Workflow,
 } from "lucide-react";
@@ -419,6 +420,23 @@ export function SetupWizardDialog({
       }, reducedMotion ? 0 : 320);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save your place. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const exitSetup = async () => {
+    if (saving || runningTest || leaving || loading || !payload) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const state = await patchState({ action: "dismiss", current_step: step, selection });
+      const savedPayload = { ...payload, state };
+      onStateChange?.(savedPayload);
+      window.dispatchEvent(new Event("caipe:platform-features-updated"));
+      onOpenChange(false);
+    } catch (exitError) {
+      setError(exitError instanceof Error ? exitError.message : "Could not exit setup. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -827,7 +845,7 @@ export function SetupWizardDialog({
                           <Link href="/admin/operations/health">Open Platform Health<ChevronRight className="ml-1 h-4 w-4" /></Link>
                         </Button>
                       </div>
-                      <details className="group animate-fade-in rounded-xl border bg-muted/10 p-3">
+                      <details open className="group animate-fade-in rounded-xl border bg-muted/10 p-3">
                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
                           <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Optional capabilities</span>
                           <span className="text-[11px] text-muted-foreground">Configure later</span>
@@ -1234,9 +1252,14 @@ export function SetupWizardDialog({
             </div>
 
             <DialogFooter className="flex-row flex-wrap items-center justify-between gap-2 border-t px-6 py-3 sm:justify-between">
-              <Button type="button" variant="ghost" onClick={() => void minimize()} disabled={saving || runningTest || leaving}>
-                <Minimize2 className="mr-2 h-4 w-4" />Save & minimize
-              </Button>
+              <div className="flex flex-wrap items-center gap-1">
+                <Button type="button" variant="ghost" onClick={() => void minimize()} disabled={saving || runningTest || leaving}>
+                  <Minimize2 className="mr-2 h-4 w-4" />Save & minimize
+                </Button>
+                <Button type="button" variant="ghost" className="text-muted-foreground hover:text-foreground" onClick={() => void exitSetup()} disabled={saving || runningTest || leaving}>
+                  <X className="mr-2 h-4 w-4" />Exit setup
+                </Button>
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 {step > 1 && !testResult && (
                   <Button type="button" variant="outline" onClick={() => setStep((current) => current - 1)} disabled={saving || runningTest}>

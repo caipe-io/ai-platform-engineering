@@ -151,6 +151,33 @@ describe("SetupWizardSettings", () => {
     expect(screen.getByText(/automatic setup is disabled/i)).toBeInTheDocument();
   });
 
+  it("lets an administrator exit setup without marking it complete", async () => {
+    const onOpenChange = jest.fn();
+    render(<SetupWizardDialog open onOpenChange={onOpenChange} />);
+
+    expect(await screen.findByRole("heading", { name: "Try your agent" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Welcome" }));
+    fireEvent.click(screen.getByRole("button", { name: "Exit setup" }));
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      "/api/admin/setup-wizard",
+      expect.objectContaining({
+        method: "PATCH",
+        body: expect.stringContaining('"action":"dismiss"'),
+      }),
+    ));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("shows optional capabilities expanded on the welcome screen", async () => {
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+
+    expect(await screen.findByRole("heading", { name: "Try your agent" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Welcome" }));
+    expect(screen.getByText(/Choose what appears in your navigation/)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Show Workflows in navigation" })).toBeInTheDocument();
+  });
+
   it("keeps the add-model flow available when a model was discovered", async () => {
     render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
 
