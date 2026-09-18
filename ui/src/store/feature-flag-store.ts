@@ -73,9 +73,9 @@ export const FEATURE_FLAGS: FeatureFlag[] = [
   {
     id: "showContextUsage",
     label: "Show Context Usage",
-    description: "Show context remaining before automatic compaction",
+    description: "Show context remaining when automatic compaction is near",
     detail:
-      "Displays the percentage of the active agent context still available before older conversation history is compacted into a summary.",
+      "Shows a subtle percentage below Send when less than 30% of the active agent context remains. Detailed token usage appears under Advanced in Agent Info.",
     icon: "Gauge",
     category: "chat",
     defaultValue: true,
