@@ -7,6 +7,7 @@ const mockMatches = (doc: Doc, filter: Doc): boolean => Object.entries(filter).e
   if (condition && typeof condition === 'object' && !(condition instanceof Date)) {
     const operator = condition as Doc;
     if ('$exists' in operator) return (actual !== undefined) === operator.$exists;
+    if ('$ne' in operator) return actual !== operator.$ne;
     if ('$gt' in operator) return (actual as number) > (operator.$gt as number);
     if ('$lte' in operator) return (actual as number) <= (operator.$lte as number);
   }
@@ -157,9 +158,9 @@ it('fences late refresh completion after the lease deadline', async () => {
   expect(mockDocuments.size).toBe(0);
 });
 
-it('shares a retry cooldown and keeps only unexpired credentials after a definite rejection', async () => {
+it('shares repeated 60-second retry cooldowns and keeps only unexpired credentials', async () => {
   jest.useFakeTimers();
-  const valid = { ...tokens, expiresAt: Math.floor(Date.now() / 1000) + 60 };
+  const valid = { ...tokens, expiresAt: Math.floor(Date.now() / 1000) + 120 };
   const login = await store.createSession(sub, valid);
   const exchange = jest.fn(async () => { throw new store.RefreshRetryableError(); });
   expect(await store.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
@@ -168,14 +169,70 @@ it('shares a retry cooldown and keeps only unexpired credentials after a definit
   expect(exchange).toHaveBeenCalledTimes(1);
   jest.setSystemTime(Date.now() + 31_000);
   expect(await store.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
-  expect(exchange).toHaveBeenCalledTimes(2);
+  expect(exchange).toHaveBeenCalledTimes(1);
   jest.setSystemTime(Date.now() + 29_000);
-  await expect(peer.refreshSession(login.sessionId, sub, 1, exchange)).rejects.toBeInstanceOf(peer.SessionUnavailableError);
+  expect(await store.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
   expect(exchange).toHaveBeenCalledTimes(2);
-  jest.setSystemTime(Date.now() + 2000);
+  jest.setSystemTime(Date.now() + 59_000);
+  expect(await peer.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
+  jest.setSystemTime(Date.now() + 1000);
+  await expect(store.refreshSession(login.sessionId, sub, 1, exchange)).rejects.toBeInstanceOf(store.SessionUnavailableError);
+  expect(exchange).toHaveBeenCalledTimes(3);
+  jest.setSystemTime(Date.now() + 60_000);
   const recovered = { ...valid, accessToken: 'recovered', expiresAt: Math.floor(Date.now() / 1000) + 3600 };
   expect(await store.refreshSession(login.sessionId, sub, 1, async () => recovered)).toMatchObject(recovered);
   expect(mockDocuments.get(login.sessionId)!.refreshRetryAfter).toBeUndefined();
+});
+
+it('never retries rejected refresh credentials across replicas, even for forced refresh', async () => {
+  jest.useFakeTimers();
+  const valid = { ...tokens, expiresAt: Math.floor(Date.now() / 1000) + 60 };
+  const login = await store.createSession(sub, valid);
+  const exchange = jest.fn(async () => { throw new store.RefreshRejectedError(); });
+  expect(await store.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
+  expect(mockDocuments.get(login.sessionId)!.refreshLease).toBeUndefined();
+  expect(await peer.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
+  expect(exchange).toHaveBeenCalledTimes(1);
+  jest.setSystemTime(Date.now() + 60_000);
+  await expect(peer.refreshSession(login.sessionId, sub, 1, exchange)).rejects.toBeInstanceOf(peer.SessionExpiredError);
+  expect(exchange).toHaveBeenCalledTimes(1);
+  expect(mockDocuments.has(login.sessionId)).toBe(false);
+});
+
+it('expires rejected credentials immediately when access is already expired', async () => {
+  const login = await store.createSession(sub, tokens);
+  await expect(store.refreshSession(login.sessionId, sub, 1, async () => {
+    throw new store.RefreshRejectedError();
+  })).rejects.toBeInstanceOf(store.SessionExpiredError);
+  expect(mockDocuments.has(login.sessionId)).toBe(false);
+});
+
+it('cannot replay rejected credentials after a stale read preceding lease acquisition', async () => {
+  const valid = { ...tokens, expiresAt: Math.floor(Date.now() / 1000) + 60 };
+  const login = await store.createSession(sub, valid);
+  const update = mockCollection.updateOne.getMockImplementation()!;
+  mockCollection.updateOne.mockImplementationOnce(async (filter, change) => {
+    // The other replica records rejection after this caller reads the session.
+    mockDocuments.get(login.sessionId)!.refreshTerminal = true;
+    return update(filter, change);
+  });
+  const exchange = jest.fn();
+  expect(await store.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
+  expect(exchange).not.toHaveBeenCalled();
+});
+
+it('does not preserve a rejected session after logout or hide a storage failure', async () => {
+  const valid = { ...tokens, expiresAt: Math.floor(Date.now() / 1000) + 60 };
+  const login = await store.createSession(sub, valid);
+  await expect(store.refreshSession(login.sessionId, sub, 1, async () => {
+    await peer.revokeSession(login.sessionId, sub);
+    throw new store.RefreshRejectedError();
+  })).rejects.toBeInstanceOf(store.SessionExpiredError);
+  const second = await store.createSession(sub, valid);
+  await expect(store.refreshSession(second.sessionId, sub, 1, async () => {
+    mockCollection.findOne.mockRejectedValueOnce(new Error('database unavailable'));
+    throw new store.RefreshRejectedError();
+  })).rejects.toBeInstanceOf(store.SessionUnavailableError);
 });
 
 it('never falls back after logout or a failed post-rejection database read', async () => {

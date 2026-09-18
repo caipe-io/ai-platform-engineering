@@ -14,6 +14,8 @@ import { isMongoDBConfigured } from './mongodb';
  * - OIDC_ISSUER: OIDC provider issuer URL
  * - OIDC_CLIENT_ID: OIDC client ID
  * - OIDC_CLIENT_SECRET: OIDC client secret
+ * - OIDC_TOKEN_ENDPOINT: Optional server-side token endpoint override, for
+ *   example an internal endpoint when the public issuer passes through a WAF.
  * - SSO_ENABLED: "true" to enable SSO, otherwise disabled.
  *   (Also accepts NEXT_PUBLIC_SSO_ENABLED for backward compatibility.)
  *   If SSO does not appear enabled: check window.__APP_CONFIG__ in the browser.

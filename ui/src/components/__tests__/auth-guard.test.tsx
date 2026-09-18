@@ -5,7 +5,7 @@
 
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
-import { useSession } from 'next-auth/react'
+import { signOut, useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { AuthGuard } from '../auth-guard'
 
@@ -45,6 +45,7 @@ jest.mock('@/components/loading-screen', () => ({
 
 describe('AuthGuard', () => {
   const mockPush = jest.fn()
+  const mockSignOut = signOut as jest.MockedFunction<typeof signOut>
   const mockUseSession = useSession as jest.MockedFunction<typeof useSession>
   const mockUseRouter = useRouter as jest.MockedFunction<typeof useRouter>
 
@@ -704,6 +705,36 @@ describe('AuthGuard', () => {
           '/login?session_expired=true&callbackUrl=%2Fuse-cases'
         )
       })
+    })
+
+    it('should only initiate one sign-out while the failed session rerenders', async () => {
+      const failedSession = {
+        user: { name: 'Test User', email: 'test@example.com' },
+        isAuthorized: true,
+        error: 'RefreshTokenExpired',
+      }
+      mockUseSession.mockReturnValue({
+        data: failedSession as unknown,
+        status: 'authenticated',
+      })
+
+      const { rerender } = render(
+        <AuthGuard>
+          <div data-testid="protected-content">Protected Content</div>
+        </AuthGuard>
+      )
+
+      mockUseSession.mockReturnValue({
+        data: { ...failedSession } as unknown,
+        status: 'authenticated',
+      })
+      rerender(
+        <AuthGuard>
+          <div data-testid="protected-content">Protected Content</div>
+        </AuthGuard>
+      )
+
+      await waitFor(() => expect(mockSignOut).toHaveBeenCalledTimes(1))
     })
 
     it('should NOT include callbackUrl for RefreshTokenExpired when on root /', async () => {

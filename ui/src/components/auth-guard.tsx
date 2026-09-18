@@ -6,7 +6,7 @@ import { getConfig } from "@/lib/config";
 import { useSession } from "next-auth/react";
 import { signOutWithFeedback } from "@/lib/sign-out";
 import { usePathname,useRouter } from "next/navigation";
-import { useCallback,useEffect,useState } from "react";
+import { useCallback,useEffect,useRef,useState } from "react";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -25,6 +25,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const pathname = usePathname();
   const [loadingTimeout, setLoadingTimeout] = useState(false);
   const [autoResetInitiated, setAutoResetInitiated] = useState(false);
+  const signOutStarted = useRef(false);
 
   /**
    * Build a login URL that preserves the current page as callbackUrl so the
@@ -96,6 +97,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   }, [status, autoResetInitiated, loginUrl]);
 
   useEffect(() => {
+    if (status !== "authenticated" || !session?.error) signOutStarted.current = false;
     if (!getConfig('ssoEnabled')) {
       return;
     }
@@ -125,6 +127,8 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
       // Check if token refresh failed
       if (session?.error === "SessionExpired" || session?.error === "RefreshTokenExpired" || session?.error === "RefreshTokenError") {
+        if (signOutStarted.current) return;
+        signOutStarted.current = true;
         console.warn("[AuthGuard] Token refresh failed, signing out and redirecting to login...");
         // Sign out to clear the corrupted session, then redirect
         signOutWithFeedback({ redirect: false }).then((completed) => {

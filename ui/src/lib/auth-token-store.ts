@@ -6,7 +6,7 @@ export const SESSION_MAX_AGE = 24 * 60 * 60;
 const COLLECTION = 'auth_sessions';
 const LEASE_MS = 30_000;
 const WAIT_MS = 12_000;
-const RETRY_MS = 30_000;
+const RETRY_MS = 60_000;
 
 export interface StoredTokens {
   accessToken: string;
@@ -24,6 +24,7 @@ interface SessionDoc {
   expiresAt: Date;
   refreshLease?: { owner: string; until: Date };
   refreshRetryAfter?: Date;
+  refreshTerminal?: boolean;
 }
 
 export interface StoredSession extends StoredTokens {
@@ -42,6 +43,9 @@ export class SessionUnavailableError extends Error {
 
 /** A definitive provider failure before rotation, safe to retry later. */
 export class RefreshRetryableError extends SessionUnavailableError {}
+
+/** Rejected refresh credentials cannot be replayed; valid access may finish its lifetime. */
+export class RefreshRejectedError extends SessionExpiredError {}
 
 function cryptKey(): Buffer {
   if (!process.env.NEXTAUTH_SECRET) throw new SessionUnavailableError();
@@ -133,6 +137,16 @@ export async function refreshSession(
   while (Date.now() < deadline) {
     const doc = await readSession(id, sub);
     if (doc.version !== expectedVersion) return unpack(doc);
+    if (doc.refreshTerminal) {
+      const current = unpack(doc);
+      if (current.expiresAt > Math.floor(Date.now() / 1000)) return current;
+      try {
+        const deleted = await col.deleteOne({ _id: id, sub, version: doc.version,
+          refreshTerminal: true }, writeOptions);
+        if (!deleted.deletedCount) continue;
+      } catch { throw new SessionUnavailableError(); }
+      throw new SessionExpiredError();
+    }
     if (doc.refreshLease && doc.refreshLease.until.getTime() <= Date.now()) {
       try {
         const deleted = await col.deleteOne({ _id: id, sub, version: doc.version,
@@ -153,6 +167,7 @@ export async function refreshSession(
     try {
       acquired = await col.updateOne({ _id: id, sub, version: doc.version,
         expiresAt: { $gt: new Date() }, refreshLease: { $exists: false },
+        refreshTerminal: { $ne: true },
         $or: [{ refreshRetryAfter: { $exists: false } }, { refreshRetryAfter: { $lte: new Date() } }],
       }, {
         $set: { refreshLease: { owner, until: new Date(Date.now() + LEASE_MS) } },
@@ -166,7 +181,7 @@ export async function refreshSession(
       const enc = encrypt(fresh, id, sub);
       const saved = await col.updateOne({ ...fence, expiresAt: { $gt: new Date() },
         'refreshLease.until': { $gt: new Date() } }, {
-        $set: { enc }, $inc: { version: 1 }, $unset: { refreshLease: '', refreshRetryAfter: '' },
+        $set: { enc }, $inc: { version: 1 }, $unset: { refreshLease: '', refreshRetryAfter: '', refreshTerminal: '' },
       }, writeOptions);
       if (!saved.matchedCount) {
         await readSession(id, sub);
@@ -175,6 +190,12 @@ export async function refreshSession(
       return await getStoredSession(id, sub);
     } catch (error) {
       try {
+        if (error instanceof RefreshRejectedError) {
+          await col.updateOne(fence, {
+            $unset: { refreshLease: '', refreshRetryAfter: '' }, $set: { refreshTerminal: true },
+          }, writeOptions);
+          continue;
+        }
         if (error instanceof SessionExpiredError) await col.deleteOne(fence, writeOptions);
         if (error instanceof RefreshRetryableError) {
           const released = await col.updateOne(fence, {

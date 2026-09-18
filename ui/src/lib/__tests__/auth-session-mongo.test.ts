@@ -124,4 +124,39 @@ describeMongo('session coordination with real MongoDB', () => {
     await expect(store.refreshSession(login.sessionId, sub, 1, () => exchange(store))).rejects.toBeInstanceOf(store.SessionExpiredError);
     expect(exchange).toHaveBeenCalledTimes(1);
   });
+
+  it('persists terminal rejection across replicas until access expires, independently of a new login', async () => {
+    const timestamp = Date.now();
+    const valid = { ...credentials, expiresAt: Math.floor(timestamp / 1000) + 60 };
+    const login = await store.createSession(sub, valid);
+    const exchange = jest.fn(async (sessions: typeof store) => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      throw new sessions.RefreshRejectedError();
+    });
+    const [one, two] = await Promise.all([
+      store.refreshSession(login.sessionId, sub, 1, () => exchange(store)),
+      peer.refreshSession(login.sessionId, sub, 1, () => exchange(peer)),
+    ]);
+    expect(one).toMatchObject(valid);
+    expect(two).toEqual(one);
+    expect(exchange).toHaveBeenCalledTimes(1);
+    const replacement = await peer.createSession(sub, { ...valid, accessToken: 'new-login' });
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(timestamp + 61_000);
+    try {
+      await expect(peer.refreshSession(login.sessionId, sub, 1, () => exchange(peer)))
+        .rejects.toBeInstanceOf(peer.SessionExpiredError);
+      expect(exchange).toHaveBeenCalledTimes(1);
+      expect(await mockDb.collection('auth_sessions').countDocuments({ _id: login.sessionId as never })).toBe(0);
+      expect(await store.getStoredSession(replacement.sessionId, sub)).toMatchObject({ accessToken: 'new-login' });
+    } finally { clock.mockRestore(); }
+  });
+
+  it('does not restore a rejected session if logout wins on another replica', async () => {
+    const login = await store.createSession(sub, { ...credentials, expiresAt: Math.floor(Date.now() / 1000) + 60 });
+    await expect(store.refreshSession(login.sessionId, sub, 1, async () => {
+      await peer.revokeSession(login.sessionId, sub);
+      throw new store.RefreshRejectedError();
+    })).rejects.toBeInstanceOf(store.SessionExpiredError);
+    expect(await mockDb.collection('auth_sessions').countDocuments({ _id: login.sessionId as never })).toBe(0);
+  });
 });

@@ -6,21 +6,25 @@
 // Callback tests use a shared-record double; isolated replica races are covered
 // with the real store in auth-token-store.test.ts.
 const _mockTokenStore = new Map<string, import('../auth-token-store').StoredTokens>()
-jest.mock('../auth-token-store', () => ({
-  SESSION_FORMAT: 2, SESSION_MAX_AGE: 86400,
-  SessionExpiredError: class extends Error {},
-  SessionUnavailableError: class extends Error {},
-  RefreshRetryableError: class extends Error {},
-  createSession: jest.fn(async (_sub: string, tokens: import('../auth-token-store').StoredTokens) => {
-    _mockTokenStore.set('test-session', tokens)
-    return { ...tokens, sessionId: 'test-session', sessionVersion: 1 }
-  }),
-  getStoredSession: jest.fn(async (id: string) => ({ ..._mockTokenStore.get(id), sessionId: id, sessionVersion: 1 })),
-  refreshSession: jest.fn(async (id: string, _sub: string, _version: number, exchange: (t: import('../auth-token-store').StoredTokens) => Promise<import('../auth-token-store').StoredTokens>) => ({
-    ...await exchange(_mockTokenStore.get(id)!), sessionId: id, sessionVersion: 2,
-  })),
-  revokeSession: jest.fn(),
-}))
+jest.mock('../auth-token-store', () => {
+  class SessionExpiredError extends Error {}
+  return {
+    SESSION_FORMAT: 2, SESSION_MAX_AGE: 86400,
+    SessionExpiredError,
+    RefreshRejectedError: class extends SessionExpiredError {},
+    SessionUnavailableError: class extends Error {},
+    RefreshRetryableError: class extends Error {},
+    createSession: jest.fn(async (_sub: string, tokens: import('../auth-token-store').StoredTokens) => {
+      _mockTokenStore.set('test-session', tokens)
+      return { ...tokens, sessionId: 'test-session', sessionVersion: 1 }
+    }),
+    getStoredSession: jest.fn(async (id: string) => ({ ..._mockTokenStore.get(id), sessionId: id, sessionVersion: 1 })),
+    refreshSession: jest.fn(async (id: string, _sub: string, _version: number, exchange: (t: import('../auth-token-store').StoredTokens) => Promise<import('../auth-token-store').StoredTokens>) => ({
+      ...await exchange(_mockTokenStore.get(id)!), sessionId: id, sessionVersion: 2,
+    })),
+    revokeSession: jest.fn(),
+  }
+})
 
 // Mock jose so we can control decodeJwt in group re-evaluation tests
 jest.mock('jose', () => ({

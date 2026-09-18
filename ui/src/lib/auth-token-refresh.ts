@@ -1,4 +1,4 @@
-import { RefreshRetryableError, SessionExpiredError, SessionUnavailableError, type StoredTokens } from './auth-token-store';
+import { RefreshRejectedError, RefreshRetryableError, SessionExpiredError, SessionUnavailableError, type StoredTokens } from './auth-token-store';
 
 /** Expiry comes from the same trusted OAuth response as the token, never a cookie. */
 export function accessTokenExpiry(accessToken: string, responseExpiry?: number): number {
@@ -17,22 +17,46 @@ export function accessTokenExpiry(accessToken: string, responseExpiry?: number):
 export async function exchangeRefreshToken(tokens: StoredTokens): Promise<StoredTokens> {
   const now = Math.floor(Date.now() / 1000);
   if (!tokens.refreshToken || (tokens.refreshTokenExpiresAt && tokens.refreshTokenExpiresAt <= now)) {
-    throw new SessionExpiredError();
+    throw new RefreshRejectedError();
   }
-  const issuer = process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER;
+  const internalIssuer = process.env.OIDC_DISCOVERY_URL?.trim();
+  const issuer = internalIssuer || process.env.OIDC_ISSUER?.trim();
+  const configuredEndpoint = process.env.OIDC_TOKEN_ENDPOINT?.trim();
   const clientId = process.env.OIDC_CLIENT_ID;
   const clientSecret = process.env.OIDC_CLIENT_SECRET;
   if (!issuer || !clientId || !clientSecret) throw new RefreshRetryableError();
-  let endpoint = `${issuer}/protocol/openid-connect/token`;
+  let endpoint: string;
   try {
-    const discovery = await fetch(`${issuer}/.well-known/openid-configuration`, {
-      next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000),
-    });
-    if (discovery.ok) {
-      const configuration = await discovery.json();
-      if (typeof configuration.token_endpoint === 'string') endpoint = configuration.token_endpoint;
+    const realmBase = issuer.replace(/\/\.well-known\/openid-configuration\/?$/, '').replace(/\/$/, '');
+    const isKeycloakRealm = /\/realms\/[^/]+$/.test(new URL(realmBase).pathname);
+    if (configuredEndpoint) {
+      endpoint = configuredEndpoint;
+    } else if (internalIssuer && isKeycloakRealm) {
+      endpoint = `${realmBase}/protocol/openid-connect/token`;
+    } else {
+      try {
+        const discovery = await fetch(`${realmBase}/.well-known/openid-configuration`, {
+          next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000),
+        });
+        if (!discovery.ok) throw new Error('OIDC discovery failed');
+        const configuration = await discovery.json();
+        if (typeof configuration?.token_endpoint !== 'string' || !configuration.token_endpoint.trim()) {
+          throw new Error('OIDC discovery omitted token_endpoint');
+        }
+        endpoint = configuration.token_endpoint;
+      } catch (error) {
+        if (!isKeycloakRealm) throw error;
+        endpoint = `${realmBase}/protocol/openid-connect/token`;
+      }
     }
-  } catch { /* Preserve the existing Keycloak endpoint fallback. */ }
+    const parsed = new URL(endpoint);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+      throw new Error('Invalid OIDC token endpoint');
+    }
+  } catch {
+    // No exchange was sent, so retrying after the shared cooldown is safe.
+    throw new RefreshRetryableError();
+  }
   const response = await fetch(endpoint, {
     method: 'POST', signal: AbortSignal.timeout(10_000), cache: 'no-store',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -43,7 +67,7 @@ export async function exchangeRefreshToken(tokens: StoredTokens): Promise<Stored
   if (response.status >= 500) throw new SessionUnavailableError();
   const data = await response.json();
   if (!response.ok) {
-    if (data.error === 'invalid_grant') throw new SessionExpiredError();
+    if (data.error === 'invalid_grant' || data.error === 'invalid_token') throw new RefreshRejectedError();
     if (data.error === 'temporarily_unavailable' || data.error === 'invalid_client') throw new RefreshRetryableError();
     throw new SessionUnavailableError();
   }

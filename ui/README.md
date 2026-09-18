@@ -54,6 +54,16 @@ caches. All BFF replicas need the same `NEXTAUTH_SECRET`. Session-format upgrade
 require a coordinated cutover and a fresh login; existing grants are unchanged.
 See [browser-session architecture and rollout](../docs/docs/security/browser-sessions.md).
 
+`OIDC_TOKEN_ENDPOINT` optionally overrides the server-side refresh endpoint.
+Without an override, an internal Keycloak realm URL in `OIDC_DISCOVERY_URL` uses
+its local token path; other providers use their discovery document. Generic
+provider discovery failures never fall back to a Keycloak URL.
+
+Rejected refresh credentials are suppressed across replicas while a still-valid
+access token finishes its lifetime. Definite retryable failures use a shared
+60-second cooldown. A lost or ambiguous refresh response retains the existing
+lease protection against replaying a potentially consumed rotating token.
+
 Run the real MongoDB coordination tests with
 `AUTH_SESSION_TEST_MONGODB_URI=mongodb://127.0.0.1:27017 npm test -- --runInBand src/lib/__tests__/auth-session-mongo.test.ts`.
 
