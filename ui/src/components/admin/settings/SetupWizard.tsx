@@ -826,7 +826,7 @@ export function SetupWizardDialog({
                         <span><strong className="text-foreground">{payload?.inventory.mcp_servers ?? 0}</strong> MCP servers</span>
                         <span><strong className="text-foreground">{payload?.inventory.connected_credentials ?? 0}</strong> credentials</span>
                         <span><strong className="text-foreground">{payload?.inventory.knowledge_sources ?? 0}</strong> knowledge sources</span>
-                        <Link className="ml-auto text-primary hover:underline" href="/admin/operations/health">View details</Link>
+                        <Link className="ml-auto text-primary hover:underline" href="/admin/operations/health" onClick={() => onOpenChange(false)}>View details</Link>
                       </div>
                       {platformComponents.length > 0 && (
                         <details className="group rounded-xl border bg-muted/10 p-3">
@@ -840,7 +840,7 @@ export function SetupWizardDialog({
                               <PlatformComponentCard key={component.id} component={component} delay={index * 45} />
                             ))}
                           </div>
-                          <Link className="mt-2 inline-flex text-[11px] text-primary hover:underline" href="/admin/operations/health">Open full health details<ExternalLink className="ml-1 h-3 w-3" /></Link>
+                          <Link className="mt-2 inline-flex text-[11px] text-primary hover:underline" href="/admin/operations/health" onClick={() => onOpenChange(false)}>Open full health details<ExternalLink className="ml-1 h-3 w-3" /></Link>
                         </details>
                       )}
                       <details className="group rounded-xl border bg-muted/10 p-3" open={!readinessHealthy}>
@@ -876,7 +876,7 @@ export function SetupWizardDialog({
                                     </p>
                                     <div className="flex flex-wrap items-center gap-2">
                                       {probe.remediation && (
-                                        <Link className="text-[11px] text-primary hover:underline" href={probe.remediation.href}>
+                                        <Link className="text-[11px] text-primary hover:underline" href={probe.remediation.href} onClick={() => onOpenChange(false)}>
                                           {probe.remediation.label}
                                         </Link>
                                       )}
@@ -968,7 +968,7 @@ export function SetupWizardDialog({
                                     {deployed ? "Available in this deployment." : feature.deployment}
                                   </span>
                                   {deployed && (
-                                    <Link className="mt-0.5 inline-block text-[11px] text-primary hover:underline" href={feature.href}>
+                              <Link className="mt-0.5 inline-block text-[11px] text-primary hover:underline" href={feature.href} onClick={() => onOpenChange(false)}>
                                       Open {feature.label}
                                     </Link>
                                   )}
@@ -1111,7 +1111,7 @@ export function SetupWizardDialog({
                         {oauthConnectors.length === 0 ? (
                           <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
                             <p>No user OAuth connectors are configured in this deployment yet. An administrator can add GitHub, Notion, Webex, or another provider before you connect an account.</p>
-                            <Link className="mt-2 inline-flex items-center text-primary hover:underline" href="/admin/platform/credentials?credentialsTab=oauth-providers">
+                            <Link className="mt-2 inline-flex items-center text-primary hover:underline" href="/admin/platform/credentials?credentialsTab=oauth-providers" onClick={() => onOpenChange(false)}>
                               Configure connected apps <ExternalLink className="ml-1 h-3.5 w-3.5" />
                             </Link>
                           </div>
@@ -1134,7 +1134,7 @@ export function SetupWizardDialog({
                                   </div>
                                   {available && !connected && (
                                     <Button asChild size="sm" variant="outline">
-                                      <Link href={`/api/credentials/oauth/${entry.provider}/connect`}>Connect</Link>
+                                      <Link href={`/api/credentials/oauth/${entry.provider}/connect`} onClick={() => onOpenChange(false)}>Connect</Link>
                                     </Button>
                                   )}
                                 </div>
@@ -1144,7 +1144,7 @@ export function SetupWizardDialog({
                         )}
                         <div className="flex flex-wrap items-center gap-3">
                           <Button asChild size="sm" variant="outline">
-                            <Link href="/credentials/connections">Manage connected credentials<ExternalLink className="ml-2 h-3.5 w-3.5" /></Link>
+                            <Link href="/credentials/connections" onClick={() => onOpenChange(false)}>Manage connected credentials<ExternalLink className="ml-2 h-3.5 w-3.5" /></Link>
                           </Button>
                           <span className="text-xs text-muted-foreground">
                             {providerConnections.filter((connection) => connection.status === "connected").length} connected account{providerConnections.filter((connection) => connection.status === "connected").length === 1 ? "" : "s"}
@@ -1178,6 +1178,7 @@ export function SetupWizardDialog({
                               <Link
                                 className="mt-2 inline-flex items-center text-xs text-primary hover:underline"
                                 href="/dynamic-agents?tab=mcp-servers&add=remote"
+                                onClick={() => onOpenChange(false)}
                               >
                                 Add from catalog<ExternalLink className="ml-1 h-3.5 w-3.5" />
                               </Link>
@@ -1208,7 +1209,7 @@ export function SetupWizardDialog({
                                 </div>
                               </div>
                               <Button asChild size="sm" variant="outline">
-                                <Link href={integration.href}>Open {integration.label} setup</Link>
+                                <Link href={integration.href} onClick={() => onOpenChange(false)}>Open {integration.label} setup</Link>
                               </Button>
                             </div>
                           ))}
@@ -1235,7 +1236,7 @@ export function SetupWizardDialog({
                         <p className="mb-2 text-sm font-medium">MCP servers</p>
                         {mcpServers.length === 0 && (
                           <p className="mb-3 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-                            No MCP servers are available. <Link className="text-primary hover:underline" href="/dynamic-agents?tab=mcp-servers">Configure an MCP server</Link>, or skip this optional step.
+                            No MCP servers are available. <Link className="text-primary hover:underline" href="/dynamic-agents?tab=mcp-servers" onClick={() => onOpenChange(false)}>Configure an MCP server</Link>, or skip this optional step.
                           </p>
                         )}
                         <div className="grid gap-2 sm:grid-cols-2">
@@ -1288,12 +1289,12 @@ export function SetupWizardDialog({
                           <div className="mt-4 flex flex-wrap gap-2">
                             {testConversationId && (
                               <Button asChild size="sm">
-                                <Link href={`/chat/${encodeURIComponent(testConversationId)}`}>Open test chat</Link>
+                                <Link href={`/chat/${encodeURIComponent(testConversationId)}`} onClick={() => onOpenChange(false)}>Open test chat</Link>
                               </Button>
                             )}
                             {payload?.state.created_agent_id && (
                               <Button asChild size="sm" variant="outline">
-                                <Link href={`/dynamic-agents?tab=agents&agent=${encodeURIComponent(payload.state.created_agent_id)}`}>
+                                <Link href={`/dynamic-agents?tab=agents&agent=${encodeURIComponent(payload.state.created_agent_id)}`} onClick={() => onOpenChange(false)}>
                                   Open starter agent
                                 </Link>
                               </Button>
