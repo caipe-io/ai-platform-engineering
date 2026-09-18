@@ -5,7 +5,7 @@ import { isTokenExpired } from "@/lib/auth-utils";
 import { getConfig } from "@/lib/config";
 import { signOut,useSession } from "next-auth/react";
 import { usePathname,useRouter } from "next/navigation";
-import { useCallback,useEffect,useState } from "react";
+import { useCallback,useEffect,useRef,useState } from "react";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -24,6 +24,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const pathname = usePathname();
   const [loadingTimeout, setLoadingTimeout] = useState(false);
   const [autoResetInitiated, setAutoResetInitiated] = useState(false);
+  const refreshFailureSignOutRef = useRef(false);
 
   /**
    * Build a login URL that preserves the current page as callbackUrl so the
@@ -123,6 +124,8 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
       // Check if token refresh failed
       if (session?.error === "RefreshTokenExpired" || session?.error === "RefreshTokenError") {
+        if (refreshFailureSignOutRef.current) return;
+        refreshFailureSignOutRef.current = true;
         console.warn("[AuthGuard] Token refresh failed, signing out and redirecting to login...");
         // Sign out to clear the corrupted session, then redirect
         signOut({ redirect: false }).then(() => {
@@ -130,6 +133,8 @@ export function AuthGuard({ children }: AuthGuardProps) {
         });
         return;
       }
+
+      refreshFailureSignOutRef.current = false;
 
       // Check if user is authorized (has required group)
       if (session?.isAuthorized === false) {

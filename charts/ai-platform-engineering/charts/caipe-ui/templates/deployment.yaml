@@ -130,6 +130,8 @@ spec:
               value: {{ index .Values.config "KEYCLOAK_URL" | default (printf "http://%s-keycloak:8080" .Release.Name) | quote }}
             - name: OIDC_DISCOVERY_URL
               value: {{ index .Values.config "OIDC_DISCOVERY_URL" | default (printf "http://%s-keycloak:8080/realms/%s" .Release.Name (index .Values.config "KEYCLOAK_REALM" | default "caipe")) | quote }}
+            - name: OIDC_TOKEN_ENDPOINT
+              value: {{ index .Values.config "OIDC_TOKEN_ENDPOINT" | default (printf "http://%s-keycloak:8080/realms/%s/protocol/openid-connect/token" .Release.Name (index .Values.config "KEYCLOAK_REALM" | default "caipe")) | quote }}
             - name: SLACK_BOT_ADMIN_TOKEN_URL
               value: {{ index .Values.config "SLACK_BOT_ADMIN_TOKEN_URL" | default (printf "http://%s-keycloak:8080/realms/%s/protocol/openid-connect/token" .Release.Name (index .Values.config "KEYCLOAK_REALM" | default "caipe")) | quote }}
             - name: OPENFGA_HTTP
