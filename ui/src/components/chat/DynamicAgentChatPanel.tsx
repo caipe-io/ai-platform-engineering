@@ -1,6 +1,7 @@
 "use client";
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
+import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
 import { Button } from "@/components/ui/button";
@@ -83,8 +84,14 @@ export function ChatPanel({
   const agentSkills = agent?.skills;
   const { data: session } = useSession();
   const { toast } = useToast();
+  const initializeFeatureFlags = useFeatureFlagStore((s) => s.initialize);
   const autoScrollEnabled = useFeatureFlagStore((s) => s.flags.autoScroll ?? true);
   const showTimestamps = useFeatureFlagStore((s) => s.flags.showTimestamps ?? false);
+  const showContextUsage = useFeatureFlagStore((s) => s.flags.showContextUsage ?? true);
+
+  useEffect(() => {
+    initializeFeatureFlags();
+  }, [initializeFeatureFlags]);
 
   /**
    * Surface a structured auth-failure (from the Web UI backend or stream adapters) to
@@ -278,6 +285,23 @@ export function ChatPanel({
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
+  const contextUsage = useMemo(() => {
+    const persistedEvents = conversation?.messages.flatMap(
+      (message) => message.streamEvents ?? [],
+    ) ?? [];
+    const events = [...persistedEvents, ...(conversation?.streamEvents ?? [])];
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (
+        event.type === "context_usage" &&
+        (event.namespace?.length ?? 0) === 0 &&
+        event.contextUsageData
+      ) {
+        return event.contextUsageData;
+      }
+    }
+    return undefined;
+  }, [conversation?.messages, conversation?.streamEvents]);
 
   // Ref to track which conversations we've checked for HITL interrupt state
   const interruptCheckedRef = useRef<Set<string>>(new Set());
@@ -951,6 +975,14 @@ export function ChatPanel({
       const streamEvent = createStreamEvent("warning", {
         message,
         namespace: namespace ?? [],
+      });
+      addStreamEvent(streamEvent, convId);
+    },
+
+    onContextUsage(usage, namespace) {
+      const streamEvent = createStreamEvent("context_usage", {
+        ...usage,
+        namespace,
       });
       addStreamEvent(streamEvent, convId);
     },
@@ -2263,10 +2295,18 @@ export function ChatPanel({
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground text-center">
-            {getConfig('appName')} can make mistakes. Verify important info.
-            {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
-          </p>
+          <div className="relative flex min-h-6 items-center justify-center">
+            <p className="px-28 text-center text-xs text-muted-foreground max-sm:px-0 max-sm:pr-24">
+              {getConfig('appName')} can make mistakes. Verify important info.
+              {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
+            </p>
+            {showContextUsage && contextUsage && (
+              <ContextUsageIndicator
+                className="absolute right-0"
+                usage={contextUsage}
+              />
+            )}
+          </div>
         </div>
       </div>
       )}
