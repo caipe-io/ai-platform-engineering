@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -27,6 +27,7 @@ from autonomous_agents.models import (
     CronTrigger,
     TaskDefinition,
     TaskRun,
+    TaskRunFollowUpCreate,
     TaskStatus,
     WebhookTrigger,
 )
@@ -112,6 +113,7 @@ def _make_run(
     task_id: str = "t1",
     owner_id: str | None = None,
     conversation_id: str | None = None,
+    execution_context_id: str | None = None,
 ) -> TaskRun:
     return TaskRun(
         run_id=run_id,
@@ -121,6 +123,7 @@ def _make_run(
         started_at=datetime.now(timezone.utc),
         owner_id=owner_id,
         conversation_id=conversation_id,
+        execution_context_id=execution_context_id,
     )
 
 
@@ -288,7 +291,10 @@ class TestListAndGet:
         response = client.get("/api/v1/settings")
 
         assert response.status_code == 200
-        assert response.json() == {"minimum_schedule_interval_seconds": 1800}
+        assert response.json() == {
+            "minimum_schedule_interval_seconds": 1800,
+            "enabled_webhook_providers": ["github", "jira", "slack", "pagerduty"],
+        }
 
     def test_list_tasks_initially_empty(self, client: TestClient):
         """Empty store returns an empty list."""
@@ -314,6 +320,7 @@ class TestCreate:
         assert body["id"]  # server-generated; shape is asserted in TestTaskIdGeneration
         assert body["name"] == "Task cron-1"
         assert body["trigger"]["type"] == "cron"
+        assert body["trigger"]["timezone"] == "UTC"
         assert body["enabled"] is True
         for required in ("agent", "prompt", "llm_provider"):
             assert required in body
@@ -333,6 +340,20 @@ class TestCreate:
 
         assert tid in webhook_runtime._webhook_tasks
         assert get_scheduler().get_jobs() == []
+
+    def test_rejects_webhook_provider_disabled_by_deployment(self, monkeypatch):
+        settings = tasks_route.get_settings().model_copy(
+            update={"enabled_webhook_providers": ["github", "jira"]}
+        )
+        monkeypatch.setattr(tasks_route, "get_settings", lambda: settings)
+
+        task = TaskDefinition.model_validate(_webhook_task("hook1", provider="slack"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            tasks_route._assert_webhook_provider_enabled(task)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Webhook provider 'slack' is not enabled"
 
     def test_with_disabled_flag_skips_scheduler(self, client: TestClient):
         """Disabled tasks persist but are not scheduled."""
@@ -806,8 +827,8 @@ class TestRunHistory:
         assert runs[0].conversation_id == conversation_id
 
 
-class TestWebhookRunFollowUp:
-    """Authenticated UI continuation stays bound to an explicit webhook run."""
+class TestRunFollowUp:
+    """Authenticated UI continuation stays bound to an explicit autonomous run."""
 
     def test_queues_follow_up_for_selected_run(
         self, client: TestClient, _swap_run_store, monkeypatch
@@ -817,7 +838,14 @@ class TestWebhookRunFollowUp:
         task_id = _create_task(client, _webhook_task("hook1"), headers=headers)
         _swap_run_store(
             _RecordingStore(
-                [_make_run("run-parent", task_id=task_id, owner_id=owner)]
+                [
+                    _make_run(
+                        "run-parent",
+                        task_id=task_id,
+                        owner_id=owner,
+                        execution_context_id="selected-webhook-context",
+                    )
+                ]
             )
         )
         dispatch = AsyncMock(
@@ -866,21 +894,66 @@ class TestWebhookRunFollowUp:
         assert response.status_code == 404
         dispatch.assert_not_awaited()
 
-    def test_rejects_non_webhook_task(
-        self, client: TestClient, _swap_run_store, monkeypatch
+    async def test_queues_follow_up_for_selected_cron_run(
+        self, _swap_run_store
     ):
-        task_id = _create_task(client, _cron_task("scheduled"))
-        _swap_run_store(_RecordingStore([_make_run("run-parent", task_id=task_id)]))
-        dispatch = AsyncMock()
-        monkeypatch.setattr(tasks_route, "dispatch_webhook_run", dispatch)
+        task = TaskDefinition.model_validate(_cron_task("scheduled"))
+        task_id = task.id
+        await _seed_tasks([task])
+        _swap_run_store(
+            _RecordingStore(
+                [
+                    _make_run(
+                        "run-parent",
+                        task_id=task_id,
+                        execution_context_id="selected-run-context",
+                    )
+                ]
+            )
+        )
+        background_tasks = BackgroundTasks()
+        route_response = Response()
 
-        response = client.post(
-            f"/api/v1/tasks/{task_id}/runs/run-parent/follow-up",
-            json={"user_text": "Continue"},
+        result = await tasks_route.follow_up_task_run(
+            task_id=task_id,
+            run_id="run-parent",
+            payload=TaskRunFollowUpCreate(
+                user_text="Continue the selected scheduled run"
+            ),
+            request=_fake_request(),
+            response=route_response,
+            background_tasks=background_tasks,
         )
 
-        assert response.status_code == 400
-        dispatch.assert_not_awaited()
+        assert len(background_tasks.tasks) == 1
+        queued = background_tasks.tasks[0]
+        assert queued.func is tasks_route.execute_task
+        assert queued.args[0].id == task_id
+        follow_up = queued.kwargs["follow_up"]
+        assert follow_up.parent_run_id == "run-parent"
+        assert follow_up.user_text == "Continue the selected scheduled run"
+        assert queued.kwargs["run_id"] == result["run_id"]
+
+    async def test_rejects_legacy_run_without_isolated_context(
+        self, _swap_run_store
+    ):
+        task = TaskDefinition.model_validate(_cron_task("scheduled"))
+        await _seed_tasks([task])
+        _swap_run_store(
+            _RecordingStore([_make_run("legacy-run", task_id=task.id)])
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await tasks_route.follow_up_task_run(
+                task_id=task.id,
+                run_id="legacy-run",
+                payload=TaskRunFollowUpCreate(user_text="Continue"),
+                request=_fake_request(),
+                response=Response(),
+                background_tasks=BackgroundTasks(),
+            )
+
+        assert exc.value.status_code == 409
 
 
 class TestRunHistoryOwnership:

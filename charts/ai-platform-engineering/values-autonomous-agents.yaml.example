@@ -30,15 +30,22 @@ tags:
 
 ######### Autonomous Agents Configuration #########
 autonomous-agents:
-  # Authenticate calls to Dynamic Agents. These defaults use the bundled
-  # Keycloak platform client. Override tokenUrl and clientSecretRef when using
-  # an external identity provider.
+  # Optional deployment allowlist. Omit providers users must not configure.
+  enabledWebhookProviders:
+    - github
+    - jira
+
+  # Mint the task owner's bearer for Dynamic Agents and caller-scoped MCP
+  # credentials. The bundled scheduler-runner client is provisioned for RFC
+  # 8693 requested_subject token exchange.
   dynamicAgentsAuth:
     enabled: true
-    clientId: "caipe-platform"
+    clientId: "caipe-scheduler-runner"
+    audience: "caipe-platform"
     clientSecretRef:
-      name: "caipe-platform-secret"
-      key: "OIDC_CLIENT_SECRET"
+      # Empty defaults to <release>-keycloak-scheduler-runner.
+      name: ""
+      key: "KC_SCHEDULER_CLIENT_SECRET"
 
   config:
     # Defaults track the in-release supervisor; override for an external one.
@@ -94,20 +101,6 @@ caipe-ui:
     # "ai-platform-engineering"; change the hostname if your release differs.
     ENABLE_AUTONOMOUS_AGENTS: "true"
     AUTONOMOUS_AGENTS_URL: "http://ai-platform-engineering-autonomous-agents:8002"
-
-######### OpenFGA on-behalf-of Configuration #########
-# Enable when running the RBAC/OpenFGA stack with the bundled Keycloak platform
-# client. This seeds the platform service account as an organization auditor so
-# autonomous runs can be authorized on behalf of their task owner.
-openfga:
-  init:
-    platformClient:
-      enabled: true
-      clientId: caipe-platform
-      clientSecretRef:
-        name: caipe-platform-secret
-        key: OIDC_CLIENT_SECRET
-      orgObject: organization:caipe
 
 ######### Supervisor Configuration #########
 supervisor-agent:

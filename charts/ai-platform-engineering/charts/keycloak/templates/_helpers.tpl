@@ -211,11 +211,10 @@ keycloak.webexBotSecretName). Consumed by the keycloak init-token-exchange Job
 {{- end }}
 
 {{- define "keycloak.schedulerTokenExchangeEnabled" -}}
-{{- $featureEnabled := dig "scheduler" "enabled" true (.Values.global | default dict) -}}
 {{- if hasKey .Values.schedulerTokenExchange "enabled" -}}
-{{- and $featureEnabled .Values.schedulerTokenExchange.enabled -}}
+{{- .Values.schedulerTokenExchange.enabled -}}
 {{- else -}}
-{{- and $featureEnabled .Values.tokenExchange.enabled -}}
+{{- .Values.tokenExchange.enabled -}}
 {{- end -}}
 {{- end -}}
 

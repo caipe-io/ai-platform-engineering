@@ -10,9 +10,12 @@ import { useToast } from "@/components/ui/toast";
 import { AgentTaskAccordion } from "./AgentTaskAccordion";
 import { autonomousApi, AutonomousApiError } from "./api";
 import { isTaskOwnedByAgent } from "./taskOwnership";
-import { TaskFormDialog } from "./TaskFormDialog";
+import {
+  DEFAULT_WEBHOOK_PROVIDER_OPTIONS,
+  TaskFormDialog,
+} from "./TaskFormDialog";
 import { DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS } from "./formState";
-import type { AutonomousTask, TaskSaveResult } from "./types";
+import type { AutonomousTask, TaskSaveResult, WebhookProvider } from "./types";
 
 export interface MyTasksAgent {
   id: string;
@@ -46,6 +49,9 @@ export function MyTasksPanel({ agents, currentUserEmail }: MyTasksPanelProps) {
   const [lastCreatedId, setLastCreatedId] = useState<string | null>(null);
   const [minimumScheduleIntervalSeconds, setMinimumScheduleIntervalSeconds] = useState(
     DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS,
+  );
+  const [enabledWebhookProviders, setEnabledWebhookProviders] = useState<WebhookProvider[]>(
+    DEFAULT_WEBHOOK_PROVIDER_OPTIONS,
   );
   // Sections start COLLAPSED: the page can list many agents, and a wall of
   // expanded task lists buries the one the user came for. The header carries a
@@ -82,6 +88,11 @@ export function MyTasksPanel({ agents, currentUserEmail }: MyTasksPanelProps) {
       .getSettings()
       .then((settings) => {
         setMinimumScheduleIntervalSeconds(settings.minimum_schedule_interval_seconds);
+        if (settings.enabled_webhook_providers?.length) {
+        if (settings.enabled_webhook_providers.length > 0) {
+          setEnabledWebhookProviders(settings.enabled_webhook_providers);
+        }
+        }
       })
       .catch(() => {
         // Keep the chart default in the form. The backend remains authoritative
@@ -311,6 +322,7 @@ export function MyTasksPanel({ agents, currentUserEmail }: MyTasksPanelProps) {
           .filter((t) => t.id !== editingTask?.id)
           .map((t) => t.name)}
         minimumScheduleIntervalSeconds={minimumScheduleIntervalSeconds}
+        enabledWebhookProviders={enabledWebhookProviders}
         onSubmit={handleSubmitTask}
         onSaveWebhookSecret={handleSaveWebhookSecret}
       />

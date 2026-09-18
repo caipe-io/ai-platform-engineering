@@ -141,6 +141,10 @@ export interface Conversation {
   // run-history UI deep-link from a run row into the chat thread.
   task_id?: string;
   run_id?: string;
+  // Dynamic Agents checkpointer context for the latest autonomous run.
+  // Server-owned: the chat gateway uses it for interactive continuations while
+  // keeping messages under this conversation's stable visible `_id`.
+  execution_context_id?: string;
   /**
    * Set ONLY when the conversation was created by a service account (session.isServiceAccount).
    * Stores the SA's Keycloak sub (session.sub). Used by the audit/reconcile step to
@@ -178,6 +182,10 @@ export interface Message {
     is_final?: boolean;
     timeline_segments?: TimelineSegment[]; // Persisted for plan/thinking/answer reconstruction
     task_id?: string;
+    run_id?: string;
+    kind?: string;
+    execution_context_id?: string;
+    parent_run_id?: string;
     turn_status?: string;
     is_interrupted?: boolean;
     // Slack linking metadata — set on messages persisted by the Slack bot so

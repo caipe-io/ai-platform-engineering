@@ -208,6 +208,7 @@ export function AgentTaskAccordion({
                   taskId={task.id}
                   triggerType={task.trigger.type}
                   refreshKey={runHistoryRefreshKey}
+                  allowFollowUp
                 />
               </div>
             )}

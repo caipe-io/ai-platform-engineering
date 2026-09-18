@@ -771,7 +771,14 @@ describe('chat-store', () => {
             role: 'assistant',
             content: 'Here is the summary.',
             created_at: '2025-01-01T00:00:01Z',
-            metadata: { turn_id: 'turn-1', is_final: true },
+            metadata: {
+              turn_id: 'turn-1',
+              is_final: true,
+              task_id: 'task-1',
+              run_id: 'run-1',
+              kind: 'run_response',
+              execution_context_id: 'isolated-run-context',
+            },
           },
         ],
         total: 2,
@@ -792,6 +799,11 @@ describe('chat-store', () => {
       );
       expect(updatedConv!.messages).toHaveLength(2);
       expect(updatedConv!.messages[1].content).toBe('Here is the summary.');
+      expect(updatedConv!.messages[1].autonomousRunId).toBe('run-1');
+      expect(updatedConv!.messages[1].autonomousMessageKind).toBe('run_response');
+      expect(updatedConv!.messages[1].autonomousExecutionContextId).toBe(
+        'isolated-run-context',
+      );
     });
   });
 

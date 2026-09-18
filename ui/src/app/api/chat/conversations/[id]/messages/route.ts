@@ -111,6 +111,9 @@ export const POST = withErrorHandler(async (
     access_level = access.access_level;
   }
   await requireConversationResourcePermission(session, user.email, conversation, 'write');
+  if (conversation.source === 'autonomous') {
+    throw new ApiError('Automated history is read-only. Open a manual follow-up chat to reply.', 409);
+  }
 
   // Read-only access — block writes (service accounts are gated above by their
   // writer grant, so access_level is undefined and this does not apply to them)

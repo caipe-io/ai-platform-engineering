@@ -44,10 +44,12 @@ it through that custom agent (its tools / system prompt / model / middleware).
 
 Identity and access:
 
-- Each run carries the task owner's identity in the gateway `X-User-Context`
-  header, so the dynamic-agents service attributes the conversation to the
-  owner and enforces per-user / per-group authorization (OpenFGA) on the
-  target agent.
+- Each run uses a short-lived owner bearer obtained through RFC 8693
+  `requested_subject` token exchange and carries the same identity in
+  `X-User-Context`. Dynamic
+  Agents therefore authorizes the owner and resolves the owner's connected
+  provider credentials for MCP tools. No user access token is stored on the
+  task.
 - A missing or unauthorized agent surfaces as a failed run with a clear
   error rather than silently doing nothing.
 - Cron/interval tasks execute directly from APScheduler. Webhook deliveries
@@ -88,16 +90,18 @@ autonomous_agents/
 ## Trigger Types
 
 ### Cron
-Runs on a standard cron schedule (UTC).
+Runs on a standard cron schedule. UTC is the default; an IANA timezone can be
+selected when the schedule should follow local time and daylight-saving rules.
 
 ```yaml
 trigger:
   type: cron
-  schedule: "0 9 * * 1-5"   # 09:00 UTC, Monday-Friday
+  schedule: "0 9 * * 1-5"   # 09:00 Monday-Friday
+  timezone: "Europe/London"  # GMT in winter, BST (UTC+1) in summer
 ```
 
 ### Interval
-Runs repeatedly at a fixed time interval.
+Runs repeatedly after a fixed elapsed duration. Time zones do not apply.
 
 ```yaml
 trigger:
@@ -112,6 +116,14 @@ Runs when an external system POSTs to `/api/v1/hooks/{task_id}`.
 trigger:
   type: webhook
   provider: "github"               # UI: github, jira, slack, pagerduty
+  filter:                           # optional; works with every provider
+    conditions:                     # all conditions must match
+      - source: header
+        field: X-GitHub-Event
+        values: ["pull_request"]    # any value may match this condition
+      - source: payload
+        field: action               # bounded dot paths support nested fields
+        values: ["closed"]
   # The API requires a signing secret and securely stores it.
 ```
 
@@ -120,8 +132,12 @@ The server generates the task id and therefore the final endpoint:
 secret and returns it once after creation. Slack and PagerDuty issue their own
 secret, which the setup modal requires the user to paste back into CAIPE.
 
-The service also ships a `generic_hmac` adapter for API/configuration users,
-but it is intentionally absent from the UI task form.
+Structured filters are applied to authenticated deliveries before deduplication
+or queueing for every provider. Conditions use AND; the exact values within one
+condition use OR. Payload conditions accept bounded dot paths such as
+`event.event_type`; header conditions accept an HTTP header name. No user filter
+code or expression is executed. A non-match returns `200 ignored` and creates no
+task run, chat entry, or agent invocation.
 
 ---
 
@@ -162,12 +178,18 @@ tasks:
 | `DYNAMIC_AGENTS_TIMEOUT_SECONDS` | `300` | Deployment-wide timeout for each dynamic-agents streaming call. |
 | `DYNAMIC_AGENTS_PREFLIGHT_TIMEOUT_SECONDS` | `10` | Timeout budget for the preflight check. |
 | `DYNAMIC_AGENTS_SYSTEM_EMAIL` | `autonomous@system` | Fallback identity for tasks created before per-user ownership existed. |
+| `DYNAMIC_AGENTS_OAUTH2_TOKEN_URL` | `None` | OAuth token endpoint used for owner token exchange. |
+| `DYNAMIC_AGENTS_OAUTH2_CLIENT_ID` | `None` | Confidential client permitted to perform `requested_subject` token exchange. |
+| `DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET` | `None` | Secret for the token-exchange client. |
+| `DYNAMIC_AGENTS_OAUTH2_AUDIENCE` | `caipe-platform` | Audience requested for the minted owner bearer. |
+| `DYNAMIC_AGENTS_OAUTH2_SCOPE` | `None` | Optional scope requested during owner token exchange. |
 | `MINIMUM_SCHEDULE_INTERVAL_SECONDS` | `1800` | Minimum allowed gap between cron/interval fires. Webhook triggers are exempt. |
 | `LLM_PROVIDER` | `anthropic-claude` | Informational default; the dynamic agent's own model config governs execution. |
 | `HOST` | `0.0.0.0` | Server bind host |
 | `PORT` | `8002` | Server port |
 | `WEBHOOK_SECRET` | `None` | Global HMAC fallback for tasks without a per-task key and for the first-party follow-up bridge. New UI tasks use per-task secrets. |
-| `WEBHOOK_PROVIDERS_FILE` | bundled YAML | Optional replacement provider-adapter file. The bundled registry contains GitHub, Jira, Slack, PagerDuty, Webex, and generic HMAC. |
+| `WEBHOOK_PROVIDERS_FILE` | bundled YAML | Optional replacement adapter definitions for the supported providers. Extra adapter ids do not become task providers. |
+| `ENABLED_WEBHOOK_PROVIDERS` | `["github","jira","slack","pagerduty"]` | JSON deployment allowlist controlling which supported providers the UI offers and the service accepts. Helm sets this from `autonomous-agents.enabledWebhookProviders`. |
 | `WEBHOOK_REPLAY_WINDOW_SECONDS` | `0` | Optional replay window for adapters without a mandatory provider window. Slack always enforces its bundled 300-second window. |
 | `WEBHOOK_MAX_PAYLOAD_BYTES` | `1048576` | Maximum accepted webhook request body. Larger bodies are rejected with HTTP 413 before parsing. |
 | `WEBHOOK_MAX_PENDING_PER_TASK` | `100` | Maximum queued + running deliveries for one webhook task. Each task's FIFO still executes exactly one at a time. |
@@ -211,9 +233,10 @@ configure KMS before enabling webhook creation.
 ## Webhook Dispatch
 
 Webhook requests are HMAC-verified through the selected provider adapter,
-deduplicated through MongoDB, queued, and acknowledged with `202` plus a
+filtered, deduplicated through MongoDB, queued, and acknowledged with `202` plus a
 preallocated run id. Duplicate deliveries return `200` with the original run
-id. GitHub configuration pings are ignored without creating a run.
+id. GitHub configuration pings and filter mismatches are ignored without
+creating a run.
 
 The request body is capped at 1 MiB by default. Each task has one process-local
 FIFO consumer, so the same webhook never runs concurrently with itself.

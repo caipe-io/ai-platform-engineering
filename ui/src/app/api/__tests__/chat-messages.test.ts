@@ -248,6 +248,24 @@ describe('GET /api/chat/conversations/[id]/messages', () => {
 describe('POST /api/chat/conversations/[id]/messages', () => {
   beforeEach(resetMocks);
 
+  it('rejects messages appended directly to automated history', async () => {
+    mockGetServerSession.mockResolvedValue(authenticatedSession());
+    const conversations = createMockCollection();
+    conversations.findOne.mockResolvedValue({
+      _id: testConversationId, owner_id: 'user@example.com', source: 'autonomous',
+    });
+    mockCollections['conversations'] = conversations;
+    const messages = createMockCollection();
+    mockCollections['messages'] = messages;
+    const req = makeRequest(`/api/chat/conversations/${testConversationId}/messages`, {
+      method: 'POST', body: JSON.stringify({ role: 'user', content: 'Reply' }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: testConversationId }) });
+    expect(res.status).toBe(409);
+    expect(messages.updateOne).not.toHaveBeenCalled();
+    expect(conversations.updateOne).not.toHaveBeenCalled();
+  });
+
   it('returns 401 when not authenticated', async () => {
     mockGetServerSession.mockResolvedValue(null);
     const req = makeRequest(`/api/chat/conversations/${testConversationId}/messages`, {

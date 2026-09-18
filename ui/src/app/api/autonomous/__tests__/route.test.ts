@@ -22,7 +22,7 @@
  *    the load-bearing 403 path, not the proxy).
  */
 
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -56,6 +56,14 @@ jest.mock('@/lib/config', () => ({
 }));
 
 const mockCheckOpenFgaTuple = jest.fn();
+const mockAuthenticateRequest = jest.fn();
+const mockDynamicAgentsConfig = jest.fn();
+const mockProxyRequest = jest.fn();
+jest.mock('@/lib/da-proxy', () => ({
+  authenticateRequest: (...args: unknown[]) => mockAuthenticateRequest(...args),
+  getDynamicAgentsConfig: () => mockDynamicAgentsConfig(),
+  proxyRequest: (...args: unknown[]) => mockProxyRequest(...args),
+}));
 jest.mock('@/lib/rbac/openfga', () => ({
   checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
 }));
@@ -138,6 +146,52 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockAutonomousAgentsEnabled = true;
   mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
+  mockAuthenticateRequest.mockResolvedValue({ email: 'user@example.com', bearerToken: 'test-token' });
+  mockDynamicAgentsConfig.mockReturnValue({ dynamicAgentsUrl: 'http://runtime.example.test' });
+  mockProxyRequest.mockImplementation(async () => NextResponse.json({ conversation_id: 'manual-chat' }));
+});
+
+describe('independent manual follow-up chat proxy', () => {
+  it.each([
+    ['GET', 'tasks/example/follow-up-chats'],
+    ['POST', 'tasks/example/runs/run-1/follow-up-chat'],
+  ])('forwards %s %s to the checkpoint-owning runtime', async (method, path) => {
+    const handler = method === 'GET' ? GET : POST;
+    const response = await handler(makeRequest(method, path), paramsFor(path));
+    expect(response.status).toBe(200);
+    expect(mockProxyRequest).toHaveBeenCalledWith(
+      `http://runtime.example.test/api/v1/autonomous/${path}`, method,
+      { email: 'user@example.com', bearerToken: 'test-token' }, '[autonomous/follow-up-chat]',
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('requires authentication before forwarding', async () => {
+    mockAuthenticateRequest.mockResolvedValue(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }));
+    const path = 'tasks/example/runs/run-1/follow-up-chat';
+    expect((await POST(makeRequest('POST', path), paramsFor(path))).status).toBe(401);
+    expect(mockProxyRequest).not.toHaveBeenCalled();
+  });
+
+  it('respects the deployment feature flag', async () => {
+    mockAutonomousAgentsEnabled = false;
+    const path = 'tasks/example/follow-up-chats';
+    expect((await GET(makeRequest('GET', path), paramsFor(path))).status).toBe(404);
+    expect(mockProxyRequest).not.toHaveBeenCalled();
+  });
+
+  it('does not create a chat on GET', async () => {
+    const path = 'tasks/example/runs/run-1/follow-up-chat';
+    expect((await GET(makeRequest('GET', path), paramsFor(path))).status).toBe(405);
+    expect(mockProxyRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects the old inline follow-up endpoint', async () => {
+    mockGetServerSession.mockResolvedValue(plainUserSession());
+    const path = 'tasks/example/runs/run-1/follow-up';
+    expect((await POST(makeRequest('POST', path, { prompt: 'Reply' }), paramsFor(path))).status).toBe(409);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

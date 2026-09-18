@@ -139,6 +139,10 @@ class MongoDBService:
         servers_coll = self._get_servers_collection()
         servers_coll.create_index([("enabled", ASCENDING)])
 
+        self._db["autonomous_follow_up_chats"].create_index([
+            ("task_id", ASCENDING), ("owner_id", ASCENDING), ("state", ASCENDING),
+        ])
+
         logger.info("MongoDB indexes ensured")
 
     def _get_agents_collection(self) -> Collection:
