@@ -1050,7 +1050,7 @@ export function SetupWizardDialog({
                                   </div>
                                   {available && !connected && (
                                     <Button asChild size="sm" variant="outline">
-                                      <Link href={`/api/credentials/oauth/${entry.provider}/connect`} target="_blank" rel="noreferrer">Connect</Link>
+                                      <Link href={`/api/credentials/oauth/${entry.provider}/connect`}>Connect</Link>
                                     </Button>
                                   )}
                                 </div>
@@ -1060,7 +1060,7 @@ export function SetupWizardDialog({
                         )}
                         <div className="flex flex-wrap items-center gap-3">
                           <Button asChild size="sm" variant="outline">
-                            <Link href="/credentials/connections" target="_blank" rel="noreferrer">Manage connected credentials<ExternalLink className="ml-2 h-3.5 w-3.5" /></Link>
+                            <Link href="/credentials/connections">Manage connected credentials<ExternalLink className="ml-2 h-3.5 w-3.5" /></Link>
                           </Button>
                           <span className="text-xs text-muted-foreground">
                             {providerConnections.filter((connection) => connection.status === "connected").length} connected account{providerConnections.filter((connection) => connection.status === "connected").length === 1 ? "" : "s"}
@@ -1088,8 +1088,6 @@ export function SetupWizardDialog({
                               <Link
                                 className="mt-2 inline-flex items-center text-xs text-primary hover:underline"
                                 href="/dynamic-agents?tab=mcp-servers&add=remote"
-                                target="_blank"
-                                rel="noreferrer"
                               >
                                 Add from catalog<ExternalLink className="ml-1 h-3.5 w-3.5" />
                               </Link>
@@ -1120,7 +1118,7 @@ export function SetupWizardDialog({
                                 </div>
                               </div>
                               <Button asChild size="sm" variant="outline">
-                                <Link href={integration.href} target="_blank" rel="noreferrer">Open {integration.label} setup</Link>
+                                <Link href={integration.href}>Open {integration.label} setup</Link>
                               </Button>
                             </div>
                           ))}
