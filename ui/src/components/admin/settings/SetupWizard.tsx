@@ -1587,7 +1587,7 @@ export function SetupWizardGate(): React.ReactElement | null {
                 return (
                   <li key={item.label} className="text-xs">
                     {item.href && !item.done ? (
-                      <Link className="flex items-start gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/50" href={item.href} onClick={() => setChecklistOpen(false)}>
+                      <Link className="flex items-start gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/50" href={item.href} onClick={() => { setChecklistOpen(false); setOpen(false); }}>
                         {content}
                       </Link>
                     ) : (
@@ -1611,8 +1611,8 @@ export function SetupWizardGate(): React.ReactElement | null {
               </div>
             </div>
             <div className="mt-3 flex gap-3 border-t pt-3 text-[11px]">
-              <Link className="text-primary hover:underline" href="/admin/integrations/slack">Connect Slack</Link>
-              <Link className="text-primary hover:underline" href="/admin/integrations/webex">Connect Webex</Link>
+              <Link className="text-primary hover:underline" href="/admin/integrations/slack" onClick={() => { setChecklistOpen(false); setOpen(false); }}>Connect Slack</Link>
+              <Link className="text-primary hover:underline" href="/admin/integrations/webex" onClick={() => { setChecklistOpen(false); setOpen(false); }}>Connect Webex</Link>
             </div>
           </div>
         )}
