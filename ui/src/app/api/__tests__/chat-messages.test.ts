@@ -521,6 +521,59 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
     expect(updateDoc.$set.metadata.latency_ms).toBe(1200);
   });
 
+  it('persists Webex space metadata used by scoped Insights queries', async () => {
+    mockGetServerSession.mockResolvedValue(authenticatedSession());
+
+    const convCol = createMockCollection();
+    convCol.findOne.mockResolvedValue({
+      _id: testConversationId,
+      owner_id: 'user@example.com',
+      participants: [{ type: 'agent', id: 'agent-primary' }],
+    });
+    mockCollections['conversations'] = convCol;
+
+    const agentsCol = createMockCollection();
+    agentsCol.findOne.mockResolvedValue({ _id: 'agent-primary', name: 'Primary Agent' });
+    mockCollections['dynamic_agents'] = agentsCol;
+
+    const msgCol = createMockCollection();
+    msgCol.findOne.mockResolvedValue({
+      _id: new ObjectId(),
+      role: 'assistant',
+      conversation_id: testConversationId,
+    });
+    mockCollections['messages'] = msgCol;
+
+    const req = makeRequest(`/api/chat/conversations/${testConversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        message_id: 'webex-turn-assistant',
+        role: 'assistant',
+        metadata: {
+          source: 'webex',
+          webex_space_id: 'space-primary',
+          webex_room_id: 'room-primary',
+          webex_thread_parent_id: 'thread-primary',
+          webex_message_id: 'message-primary',
+          webex_is_direct: false,
+        },
+      }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: testConversationId }) });
+    expect(res.status).toBe(201);
+    expect(msgCol.updateOne.mock.calls[0][1].$set.metadata).toEqual(
+      expect.objectContaining({
+        source: 'webex',
+        webex_space_id: 'space-primary',
+        webex_room_id: 'room-primary',
+        webex_thread_parent_id: 'thread-primary',
+        webex_message_id: 'message-primary',
+        webex_is_direct: false,
+      }),
+    );
+  });
+
   it('returns 403 when user does not have access to conversation', async () => {
     mockGetServerSession.mockResolvedValue(authenticatedSession('other@example.com'));
 

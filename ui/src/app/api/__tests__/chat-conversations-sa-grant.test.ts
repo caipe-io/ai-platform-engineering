@@ -147,6 +147,9 @@ describe("POST /api/chat/conversations — SA auto-grant", () => {
       expect(col.insertOne).toHaveBeenCalledWith(
         expect.objectContaining({ created_by_service_account: SA_SUB }),
       );
+      expect(col.insertOne).toHaveBeenCalledWith(
+        expect.not.objectContaining({ owner_subject: expect.anything() }),
+      );
 
       // writer tuple must be written
       expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith(
@@ -229,6 +232,26 @@ describe("POST /api/chat/conversations — SA auto-grant", () => {
       expect(col.insertOne).toHaveBeenCalledWith(
         expect.objectContaining({
           owner_id: "alice@example.com",
+          owner_subject: "alice-sub",
+          owner_identity_version: 2,
+        }),
+      );
+    });
+
+    it("uses the linked user subject when Slack falls back to a connector user id", async () => {
+      mockGetAuthFromBearerOrSession.mockResolvedValue({
+        user: { email: "alice@example.com", name: "Alice" },
+        session: { sub: "alice-sub", role: "user", authMethod: "bearer" },
+      });
+      const col = makeCollection(null);
+      mockGetCollection.mockResolvedValue(col);
+      const { POST } = await import("../chat/conversations/route");
+
+      await POST(postRequest({ ...CONV_BODY, owner_id: "U123EXAMPLE" }));
+
+      expect(col.insertOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          owner_id: "U123EXAMPLE",
           owner_subject: "alice-sub",
           owner_identity_version: 2,
         }),

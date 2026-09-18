@@ -1,5 +1,5 @@
 /**
- * POST /api/v1/chat/invoke — transparent proxy to Dynamic Agents.
+ * POST /api/v1/chat/invoke — proxy to Dynamic Agents and persist API turns.
  *
  * Body: { message, conversation_id, agent_id, trace_id?, client_context? }
  * Response: JSON { success, content, agent_id, conversation_id, trace_id }
@@ -269,6 +269,118 @@ async function persistScheduledInvokeMessages(
   );
 }
 
+async function persistApiInvokeMessages(
+  body: Record<string, unknown>,
+  ownerUserId: string,
+  response: Response,
+): Promise<void> {
+  if (!isMongoDBConfigured) return;
+
+  const conversationId = stringValue(body.conversation_id);
+  const userContent = String(body.message || "").trim();
+  if (!conversationId || !userContent) return;
+
+  const conversations = await getCollection<Conversation>("conversations");
+  const conversation = await conversations.findOne(
+    { _id: conversationId },
+    { projection: { client_type: 1, owner_id: 1 } },
+  );
+  if (!conversation || (conversation.client_type !== "api" && conversation.source !== "api")) {
+    return;
+  }
+
+  let result: Record<string, unknown>;
+  try {
+    result = objectValue(await response.json());
+  } catch (error) {
+    console.warn("[invoke] API response was not JSON; skipping message persistence", error);
+    return;
+  }
+
+  const agentId = stringValue(body.agent_id);
+  const traceId = stringValue(result.trace_id) || stringValue(body.trace_id) || uuidv4();
+  const turnId = `turn-${traceId}`;
+  const succeeded = result.success !== false && response.ok;
+  if (!succeeded) return;
+  const messages = await getCollection<Document>("messages");
+  const createdAt = new Date();
+  let agentName = agentId;
+
+  if (agentId) {
+    const agents = await getCollection<{ _id: string; name?: string }>("dynamic_agents");
+    const agent = await agents.findOne(
+      { _id: agentId },
+      { projection: { _id: 1, name: 1 } },
+    );
+    agentName = agent?.name || agentId;
+  }
+
+  const metadata = compactMetadata({
+    turn_id: turnId,
+    source: "api",
+    trace_id: traceId,
+    agent_id: agentId,
+    agent_name: agentName,
+  });
+  const ownerId = conversation.owner_id || ownerUserId;
+
+  await messages.updateOne(
+    { conversation_id: conversationId, message_id: `${turnId}-user` },
+    {
+      $set: {
+        content: "",
+        metadata: { ...metadata, is_final: true },
+        updated_at: createdAt,
+      },
+      $setOnInsert: {
+        message_id: `${turnId}-user`,
+        conversation_id: conversationId,
+        owner_id: ownerId,
+        role: "user",
+        created_at: createdAt,
+        sender_email: ownerId,
+        sender_name: ownerId,
+      },
+    },
+    { upsert: true },
+  );
+
+  const assistantCreatedAt = new Date(createdAt.getTime() + 1);
+  await messages.updateOne(
+    { conversation_id: conversationId, message_id: `${turnId}-assistant` },
+    {
+      $set: {
+        content: "",
+        metadata: {
+          ...metadata,
+          is_final: true,
+          turn_status: "done",
+        },
+        updated_at: assistantCreatedAt,
+      },
+      $setOnInsert: {
+        message_id: `${turnId}-assistant`,
+        conversation_id: conversationId,
+        owner_id: ownerId,
+        role: "assistant",
+        created_at: assistantCreatedAt,
+      },
+    },
+    { upsert: true },
+  );
+
+  const totalMessages = await messages.countDocuments({ conversation_id: conversationId });
+  await conversations.updateOne(
+    { _id: conversationId },
+    {
+      $set: {
+        updated_at: assistantCreatedAt,
+        "metadata.total_messages": totalMessages,
+      },
+    },
+  );
+}
+
 /**
  * Build the base64 ``X-User-Context`` header DA expects for the schedule owner.
  * Mirrors the shape produced by ``authenticateRequest`` for interactive users
@@ -489,10 +601,18 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // Forward body as-is to DA backend (same path, same body format)
   const backendUrl = `${daConfig.dynamicAgentsUrl}/api/v1/chat/invoke`;
-  return proxyJSONRequest(
+  const response = await proxyJSONRequest(
     backendUrl,
     JSON.stringify(body),
     authResult,
     "[invoke]",
   );
+
+  try {
+    await persistApiInvokeMessages(body, authResult.email, response.clone());
+  } catch (error) {
+    console.error("[invoke] Failed to persist API invoke messages:", error);
+  }
+
+  return response;
 }
