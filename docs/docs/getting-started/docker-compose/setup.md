@@ -105,6 +105,26 @@ docker compose up
 Open the UI at **http://localhost:3000**. The Dynamic Agents API is exposed at
 **http://localhost:8100** and is also proxied through the UI API routes.
 
+### First-time setup wizard
+
+On a new deployment, the setup wizard checks the runtime and walks an admin
+through a first working agent:
+
+1. Select or add an LLM model and verify provider access.
+2. Choose a starter recipe.
+3. Connect optional user credentials such as GitHub or Notion. OAuth
+   connectors must be configured by the operator before they appear.
+4. Add a remote MCP server from the catalog, or configure a custom endpoint,
+   then select the server for the starter agent.
+5. Optionally enable a knowledge base and platform capabilities.
+6. Create the agent and run the end-to-end smoke test.
+
+The wizard never stores OAuth tokens in its setup state. Connections remain in
+the credential service and can be relinked from **Credentials → Connected
+Apps**. Providers that support OAuth client registration can complete that
+flow during provider onboarding; arbitrary custom endpoints still require
+their authentication to be configured in the MCP editor.
+
 To update `.env` to the latest published CAIPE release before starting Compose:
 
 ```bash
