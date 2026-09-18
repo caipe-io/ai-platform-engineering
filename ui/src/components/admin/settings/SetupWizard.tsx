@@ -1601,7 +1601,7 @@ export function SetupWizardGate(): React.ReactElement | null {
         // First launch should introduce the checklist without blocking the app.
         // The full wizard opens only when the administrator explicitly resumes it.
         setOpen(false);
-        setChecklistOpen(response.data.auto_start);
+        setChecklistOpen(false);
       })
       .catch(() => {
         // Non-admins and deployments still starting up should not see a noisy
@@ -1669,9 +1669,9 @@ export function SetupWizardGate(): React.ReactElement | null {
 
   return (
     <>
-      <div className="fixed right-4 top-16 z-[60]">
+      <div className="fixed bottom-4 right-4 z-[60]">
         {checklistOpen && (
-          <div className="mb-2 w-[min(22rem,calc(100vw-2rem))] animate-slide-in rounded-2xl border bg-card/95 p-4 shadow-2xl shadow-primary/10 backdrop-blur-xl">
+          <div className="mb-2 max-h-[min(36rem,calc(100vh-6rem))] w-[min(22rem,calc(100vw-2rem))] animate-slide-in overflow-y-auto rounded-2xl border bg-card/95 p-4 shadow-2xl shadow-primary/10 backdrop-blur-xl [scrollbar-width:thin]">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="flex items-center gap-2 text-sm font-semibold"><ListChecks className="h-4 w-4 text-primary" /> Setup checklist</p>
