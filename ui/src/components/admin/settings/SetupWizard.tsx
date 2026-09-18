@@ -712,6 +712,7 @@ export function SetupWizardDialog({
     ["chat-runtime", "dynamic-agents", "knowledge-bases", "authentication"].includes(capability.id),
   );
   const readinessProbes = health?.probes?.filter((probe) => probe.id === "rebac-migrations") ?? [];
+  const migrationProbe = readinessProbes[0];
   const readinessChecks = readinessCapabilities.length + readinessProbes.length;
   const healthyReadinessChecks = readinessCapabilities.filter((capability) => capability.status === "healthy").length
     + readinessProbes.filter((probe) => probe.status === "healthy").length;
@@ -845,6 +846,29 @@ export function SetupWizardDialog({
                           <Link href="/admin/operations/health">Open Platform Health<ChevronRight className="ml-1 h-4 w-4" /></Link>
                         </Button>
                       </div>
+                      {migrationProbe && (
+                        <div className={cn(
+                          "flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4",
+                          migrationProbe.status === "healthy"
+                            ? "border-emerald-500/20 bg-emerald-500/5"
+                            : "border-amber-500/30 bg-amber-500/5",
+                        )}>
+                          <div className="flex items-start gap-3">
+                            <KeyRound className={cn("mt-0.5 h-5 w-5 shrink-0", migrationProbe.status === "healthy" ? "text-emerald-500" : "text-amber-500")} />
+                            <div>
+                              <p className="text-sm font-semibold">Keycloak &amp; RBAC migration</p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {migrationProbe.status === "healthy" ? "Authorization schema is current." : migrationProbe.detail}
+                              </p>
+                            </div>
+                          </div>
+                          <Button asChild variant="outline" size="sm">
+                            <Link href={migrationProbe.remediation?.href ?? "/admin/security/access-operations?operationsTab=migrations"}>
+                              {migrationProbe.status === "healthy" ? "View migration status" : "Review migration"}<ChevronRight className="ml-1 h-4 w-4" />
+                            </Link>
+                          </Button>
+                        </div>
+                      )}
                       <details open className="group animate-fade-in rounded-xl border bg-muted/10 p-3">
                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
                           <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Optional capabilities</span>

@@ -85,6 +85,19 @@ describe("SetupWizardSettings", () => {
             detail: "Runtime reachable",
             required: true,
           }],
+          probes: [{
+            id: "rebac-migrations",
+            label: "RBAC Migrations",
+            group: "bootstrap",
+            status: "warning",
+            detail: "2 blocking migrations pending",
+            target: "release",
+            remediation: {
+              label: "Migration Assistant",
+              href: "/admin/security/access-operations?operationsTab=migrations",
+              description: "Review pending migrations",
+            },
+          }],
         });
       }
       if (url.startsWith("/api/llm-models")) {
@@ -176,6 +189,18 @@ describe("SetupWizardSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Welcome" }));
     expect(screen.getByText(/Choose what appears in your navigation/)).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Show Workflows in navigation" })).toBeInTheDocument();
+  });
+
+  it("keeps Keycloak and RBAC migrations visible in first-time readiness", async () => {
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+
+    expect(await screen.findByRole("heading", { name: "Try your agent" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Welcome" }));
+    expect(screen.getByText("Keycloak & RBAC migration")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Review migration" })).toHaveAttribute(
+      "href",
+      "/admin/security/access-operations?operationsTab=migrations",
+    );
   });
 
   it("keeps the add-model flow available when a model was discovered", async () => {
