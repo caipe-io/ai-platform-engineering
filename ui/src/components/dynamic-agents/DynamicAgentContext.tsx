@@ -3,12 +3,15 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
+import { ContextUsageDetails } from "@/components/chat/ContextUsageIndicator";
 import { FileTree } from "@/components/dynamic-agents/FileTree";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
+import type { ContextUsageEventData } from "@/lib/streaming/types";
 import { useChatStore } from "@/store/chat-store";
+import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { motion } from "framer-motion";
 import {
@@ -51,15 +54,20 @@ export function DynamicAgentContext({
   onCollapse,
 }: DynamicAgentContextProps) {
   const { data: session } = useSession();
-  const { clearStreamEvents, conversations } = useChatStore(
+  const { clearStreamEvents, contextUsageByConversation, conversations } = useChatStore(
     useShallow((s) => ({
       clearStreamEvents: s.clearStreamEvents,
+      contextUsageByConversation: s.contextUsageByConversation,
       conversations: s.conversations,
     }))
   );
+  const showContextUsage = useFeatureFlagStore((s) => s.flags.showContextUsage ?? true);
 
   // Get current conversation for download
   const conversation = conversations.find((c) => c.id === conversationId);
+  const contextUsage = conversationId
+    ? contextUsageByConversation[conversationId]
+    : undefined;
 
   // Restart runtime handler
   const [isRestarting, setIsRestarting] = useState(false);
@@ -328,6 +336,7 @@ export function DynamicAgentContext({
               onToggleFiles={handleToggleFiles}
               onFileDownload={handleFileDownload}
               getFileContent={handleGetFileContent}
+              contextUsage={showContextUsage ? contextUsage : undefined}
             />
           </div>
         </ScrollArea>
@@ -382,6 +391,7 @@ interface AgentInfoContentProps {
   onToggleFiles?: () => void;
   onFileDownload?: (path: string) => void;
   getFileContent?: (path: string) => Promise<string | null>;
+  contextUsage?: ContextUsageEventData;
 }
 
 function AgentInfoContent({
@@ -400,6 +410,7 @@ function AgentInfoContent({
   onToggleFiles,
   onFileDownload,
   getFileContent,
+  contextUsage,
 }: AgentInfoContentProps) {
   // Count total tools across all MCP servers
   const toolCount = agent?.allowed_tools
@@ -583,6 +594,7 @@ function AgentInfoContent({
             Advanced
           </h4>
           <div className="space-y-2">
+            {contextUsage && <ContextUsageDetails usage={contextUsage} />}
             <Button
               variant="outline"
               size="sm"

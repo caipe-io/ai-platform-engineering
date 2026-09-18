@@ -1,9 +1,7 @@
 "use client";
 
-import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import type { ContextUsageEventData } from "@/lib/streaming/types";
 import { cn } from "@/lib/utils";
-import { Gauge } from "lucide-react";
 
 interface ContextUsageIndicatorProps {
   usage: ContextUsageEventData;
@@ -11,42 +9,50 @@ interface ContextUsageIndicatorProps {
 }
 
 const numberFormatter = new Intl.NumberFormat();
+const LOW_CONTEXT_THRESHOLD_PERCENT = 30;
 
 export function ContextUsageIndicator({
   usage,
   className,
-}: ContextUsageIndicatorProps): React.ReactElement {
+}: ContextUsageIndicatorProps): React.ReactElement | null {
   const percent = Math.round(usage.remaining_percent);
-  const tone = percent <= 15
-    ? "text-destructive"
-    : percent <= 35
-      ? "text-amber-600 dark:text-amber-400"
-      : "text-muted-foreground";
+
+  if (percent >= LOW_CONTEXT_THRESHOLD_PERCENT) return null;
 
   return (
-    <TooltipProvider delayDuration={150}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div
-            aria-label={`${percent}% context left before compaction`}
-            className={cn(
-              "inline-flex cursor-help items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-1 text-[11px] font-medium tabular-nums",
-              tone,
-              className,
-            )}
-            data-testid="context-usage-indicator"
-            role="status"
-          >
-            <Gauge aria-hidden="true" className="h-3 w-3" />
-            <span>{percent}% context left</span>
-          </div>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-xs text-xs" side="top" sideOffset={6}>
-          {numberFormatter.format(usage.used_tokens)} of{" "}
-          {numberFormatter.format(usage.compaction_threshold)} tokens used. Older
-          conversation history is compacted automatically at this threshold.
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <span
+      aria-label={`${percent}% context remaining before compaction`}
+      className={cn("whitespace-nowrap text-xs text-muted-foreground tabular-nums",className)}
+      data-testid="context-usage-indicator"
+      role="status"
+    >
+      {percent}% context remaining
+    </span>
+  );
+}
+
+export function ContextUsageDetails({
+  usage,
+  className,
+}: ContextUsageIndicatorProps): React.ReactElement {
+  const percent = Math.round(usage.remaining_percent);
+
+  return (
+    <div
+      className={cn("rounded-lg border border-border/50 bg-muted/30 p-2.5",className)}
+      data-testid="context-usage-details"
+    >
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="text-muted-foreground">Context remaining</span>
+        <span className="font-medium tabular-nums">{percent}%</span>
+      </div>
+      <p className="mt-1 text-[11px] text-foreground/80 tabular-nums">
+        {numberFormatter.format(usage.used_tokens)} of{" "}
+        {numberFormatter.format(usage.compaction_threshold)} tokens used
+      </p>
+      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+        Older conversation history is compacted automatically at this threshold.
+      </p>
+    </div>
   );
 }

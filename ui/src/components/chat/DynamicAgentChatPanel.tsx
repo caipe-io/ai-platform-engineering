@@ -203,6 +203,8 @@ export function ChatPanel({
     updateMessage,
     appendToMessage,
     addStreamEvent,
+    contextUsageByConversation,
+    setContextUsage,
     clearStreamEvents,
     setConversationStreaming,
     isConversationStreaming,
@@ -285,23 +287,10 @@ export function ChatPanel({
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
-  const contextUsage = useMemo(() => {
-    const persistedEvents = conversation?.messages.flatMap(
-      (message) => message.streamEvents ?? [],
-    ) ?? [];
-    const events = [...persistedEvents, ...(conversation?.streamEvents ?? [])];
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      const event = events[index];
-      if (
-        event.type === "context_usage" &&
-        (event.namespace?.length ?? 0) === 0 &&
-        event.contextUsageData
-      ) {
-        return event.contextUsageData;
-      }
-    }
-    return undefined;
-  }, [conversation?.messages, conversation?.streamEvents]);
+  const contextUsageId = conversationId ?? activeConversationId;
+  const contextUsage = contextUsageId
+    ? contextUsageByConversation[contextUsageId]
+    : undefined;
 
   // Ref to track which conversations we've checked for HITL interrupt state
   const interruptCheckedRef = useRef<Set<string>>(new Set());
@@ -980,11 +969,7 @@ export function ChatPanel({
     },
 
     onContextUsage(usage, namespace) {
-      const streamEvent = createStreamEvent("context_usage", {
-        ...usage,
-        namespace,
-      });
-      addStreamEvent(streamEvent, convId);
+      if ((namespace?.length ?? 0) === 0) setContextUsage(convId,usage);
     },
 
     onDone() {
@@ -996,7 +981,7 @@ export function ChatPanel({
       loopState.hasError = true;
       loopState.errorMessage = message;
     },
-  }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks]);
+  }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks, setContextUsage]);
 
   /**
    * Finalize a stream loop — copies conversation-level streamEvents to the
