@@ -14,6 +14,7 @@ import {
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ModelPicker } from "@/components/ui/model-picker";
 import { getConfig } from "@/lib/config";
 import { useAdminRole } from "@/hooks/use-admin-role";
 import { requestProductTour } from "@/lib/product-tour";
@@ -29,7 +30,6 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Circle,
   Cloud,
   Database,
   ExternalLink,
@@ -39,6 +39,8 @@ import {
   LayoutGrid,
   ListChecks,
   Minimize2,
+  Maximize2,
+  Minus,
   Network,
   Play,
   Plug,
@@ -388,6 +390,7 @@ export function SetupWizardDialog({
   const [showAddModel, setShowAddModel] = useState(false);
   const [newModel, setNewModel] = useState({ model_id: "", name: "", provider: "" });
   const [leaving, setLeaving] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [contextSection, setContextSection] = useState("accounts");
 
   // Save the current draft before handing control to another workspace. Keeping
@@ -582,6 +585,9 @@ export function SetupWizardDialog({
     setSaving(true);
     setError(null);
     try {
+      const nextSelection = skippedStep === 4
+        ? { ...selection, mcp_server_ids: [], enable_knowledge_base: false }
+        : selection;
       const completed = [...new Set([...(payload?.state.completed_steps ?? []).filter((id) => id !== skippedStep), ...(skippedStep ? [] : [step])])];
       const skipped = skippedStep
         ? [...new Set([...(payload?.state.skipped_steps ?? []), skippedStep])]
@@ -591,8 +597,9 @@ export function SetupWizardDialog({
         current_step: nextStep,
         completed_steps: completed,
         skipped_steps: skipped,
-        selection,
+        selection: nextSelection,
       });
+      setSelection(nextSelection);
       window.dispatchEvent(new Event("caipe:platform-features-updated"));
       setStep(nextStep);
     } catch (saveError) {
@@ -681,7 +688,7 @@ export function SetupWizardDialog({
     }
   };
 
-  const canContinue = step !== 2 || Boolean(selectedModel);
+  const canContinue = !loading && (step !== 2 || Boolean(selectedModel));
 
   const readinessCapabilities = (health?.capabilities ?? []).filter((capability) =>
     ["chat-runtime", "dynamic-agents", "knowledge-bases", "authentication"].includes(capability.id),
@@ -709,7 +716,7 @@ export function SetupWizardDialog({
       <DialogContent
         onClickCapture={handleTaskLink}
         aria-busy={saving || leaving}
-        className={cn("setup-dialog h-[min(760px,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-5xl min-h-0 overflow-hidden rounded-2xl p-0", leaving && "setup-minimizing pointer-events-none")}
+        className={cn("setup-dialog h-[min(760px,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] min-h-0 overflow-hidden rounded-2xl p-0 transition-[max-width] duration-200 motion-reduce:transition-none", expanded ? "max-w-none" : "max-w-5xl", leaving && "setup-minimizing pointer-events-none")}
       >
         <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[220px_1fr]">
           <aside className="border-b bg-muted/25 p-4 md:border-b-0 md:border-r">
@@ -764,15 +771,16 @@ export function SetupWizardDialog({
           </aside>
 
           <section className="flex min-h-0 flex-col">
-            <DialogHeader className="relative border-b px-6 py-4 pr-24 text-left">
-              <Button type="button" size="icon" variant="ghost" className="absolute right-11 top-2" aria-label="Minimize setup" title="Save and minimize" onClick={() => void minimize()} disabled={saving || runningTest || leaving}><Minimize2 className="h-4 w-4" /></Button>
+            <DialogHeader className="relative border-b px-6 py-4 pr-36 text-left">
+              <Button type="button" size="icon" variant="ghost" className="absolute right-20 top-2" aria-label={expanded ? "Restore setup width" : "Expand setup width"} aria-pressed={expanded} title={expanded ? "Restore width" : "Expand width"} onClick={() => setExpanded((current) => !current)}>{expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</Button>
+              <Button type="button" size="icon" variant="ghost" className="absolute right-11 top-2" aria-label="Minimize setup" title="Save and minimize" onClick={() => void minimize()} disabled={saving || runningTest || leaving}><Minus className="h-4 w-4" /></Button>
               <DialogTitle>{STEPS[step - 1].label}</DialogTitle>
               <DialogDescription>
                 {step === 1 && "A few small steps to your first working agent."}
-                {step === 2 && "Select a model, or connect your provider to get started."}
-                {step === 3 && "Choose what your agent will help you do. You can edit it later."}
-                {step === 4 && "Optional · Give your agent useful tools, knowledge, and connected accounts."}
-                {step === 5 && "Send a real message and see your agent respond."}
+                {step === 2 && "Decide which AI will answer for your first agent."}
+                {step === 3 && "Give your agent a job. A recipe is a starting set of instructions."}
+                {step === 4 && "Optional · Connect information or tools only if your first task needs them."}
+                {step === 5 && "Check that your agent and its AI connection work together."}
               </DialogDescription>
             </DialogHeader>
 
@@ -796,7 +804,7 @@ export function SetupWizardDialog({
                           <div>
                             <p className="text-xs font-medium uppercase tracking-widest text-primary">Welcome to CAIPE</p>
                             <p className="mt-2 text-2xl font-semibold tracking-tight">Your first agent starts here.</p>
-                            <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">Connect a model, give your agent a purpose, and try a conversation. Everything else can wait.</p>
+                            <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">An agent is an AI assistant with a job and, optionally, tools. We’ll help you create one and try a first conversation.</p>
                           </div>
                           {readinessChecks > 0 && (
                             <div className="flex items-center gap-1.5 rounded-full border bg-background/70 px-2.5 py-1 text-[11px] font-medium">
@@ -807,7 +815,7 @@ export function SetupWizardDialog({
                         </div>
                       </div>
                       <div className="grid gap-3 sm:grid-cols-3">
-                        {[{ icon: Sparkles, title: "1. Connect a model", text: "Use your provider or a model already available." }, { icon: Bot, title: "2. Give it a purpose", text: "Start with a recipe you can make your own." }, { icon: Play, title: "3. See it work", text: "Run a short test before adding more features." }].map((item) => (
+                        {[{ icon: Sparkles, title: "1. Choose its AI", text: "Use an existing connection or bring your provider." }, { icon: Bot, title: "2. Give it a job", text: "Choose starter instructions you can change later." }, { icon: Play, title: "3. Say hello", text: "Create the agent and check a real response." }].map((item) => (
                           <div key={item.title} className="rounded-xl border bg-card/60 p-4"><item.icon className="mb-3 h-5 w-5 text-primary" /><p className="text-sm font-medium">{item.title}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.text}</p></div>
                         ))}
                       </div>
@@ -895,77 +903,64 @@ export function SetupWizardDialog({
                   )}
 
                   {step === 2 && (
-                    <div className="space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
-                        <div className="max-w-sm"><p className="text-sm font-semibold">Bring your own model provider</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Connect OpenAI, LiteLLM, Anthropic, or Bedrock. Setup will minimize while you configure access.</p></div>
-                        <Button asChild size="sm"><Link href="/dynamic-agents?tab=model-providers">Configure provider access<ChevronRight className="ml-1 h-4 w-4" /></Link></Button>
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-lg font-semibold">Which AI should your agent use?</h3>
+                        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">A model is the AI that reads your messages and writes your agent’s replies. This choice applies to the starter agent, not to every agent in CAIPE.</p>
                       </div>
-                      <details className="group rounded-xl border bg-muted/10 p-3">
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
-                          <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Provider guidance</span>
-                          <span className="text-[11px] text-muted-foreground">OpenAI-compatible · Anthropic · Bedrock</span>
-                        </summary>
-                        <div className="mt-3"><ModelProviderGuide onNavigate={() => onOpenChange(false)} /></div>
-                      </details>
-                      {models.length === 0 ? (
-                        <div className="space-y-4 rounded-xl border border-dashed p-6">
-                          <div className="text-center">
-                            <Sparkles className="mx-auto h-8 w-8 text-muted-foreground" />
-                            <p className="mt-3 font-semibold">No models are configured</p>
-                            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">Configure provider access above, then register a model below. Adding a model name alone does not connect its endpoint or credentials.</p>
+                      {models.length > 0 ? (
+                        <div className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-5">
+                          <div className="flex items-start gap-3">
+                            <Sparkles className="mt-1 h-5 w-5 shrink-0 text-primary" />
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-muted-foreground">For your first agent</p>
+                              <p className="mt-1 break-words text-lg font-semibold">{selectedModel?.name ?? "Choose an AI model"}</p>
+                              <p className="mt-2 text-sm text-muted-foreground">Already registered in this deployment. Provider access has not been verified by this selection—we’ll check it when you try your agent.</p>
+                            </div>
                           </div>
+                          <details>
+                            <summary className="cursor-pointer text-sm font-medium text-primary">Change model</summary>
+                            <div className="mt-3 space-y-2">
+                              <ModelPicker
+                                options={models.map((model) => ({ model_id: model._id, name: model.name, provider: model.provider }))}
+                                modelId={selection.model_id}
+                                modelProvider={selection.model_provider}
+                                onChange={(model_id, model_provider) => setSelection((current) => ({ ...current, model_id, model_provider }))}
+                                ariaLabel="AI model for your first agent"
+                                disabled={saving}
+                              />
+                              <p className="text-xs text-muted-foreground">Choose a model your administrator has configured. You can change it later in Custom Agents.</p>
+                            </div>
+                          </details>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-dashed p-5">
+                          <p className="font-semibold">Let’s connect your first AI provider</p>
+                          <p className="mt-2 text-sm text-muted-foreground">No model is registered yet. First configure a provider’s endpoint and access, then register a model it supports. If someone manages this deployment for you, ask them to help with this connection.</p>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
+                        <div className="max-w-sm">
+                          <p className="text-sm font-semibold">{models.length ? "Need a different AI provider?" : "Connect a provider"}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">Use OpenAI, an OpenAI-compatible service such as LiteLLM, Anthropic, or AWS Bedrock. Setup saves and minimizes while you configure access; use Resume setup to return.</p>
+                        </div>
+                        <Button asChild size="sm" variant={models.length ? "outline" : "default"}><Link href="/dynamic-agents?tab=model-providers">Configure provider access<ChevronRight className="ml-1 h-4 w-4" /></Link></Button>
+                      </div>
+                      <details className="rounded-xl border p-4">
+                        <summary className="cursor-pointer text-sm font-medium">Provider help & advanced model registration</summary>
+                        <div className="mt-4 space-y-4">
+                          <ModelProviderGuide />
+                          <p className="text-xs leading-relaxed text-muted-foreground">Already configured provider access? Register its model here. This adds a catalog entry only; it does not save an API key, configure an endpoint, or prove that the model works.</p>
                           {showAddModel ? (
-                            <div className="mx-auto max-w-md space-y-3">
-                              <div><Label htmlFor="setup-model-id">Model ID</Label><Input id="setup-model-id" placeholder="claude-haiku-4-5" value={newModel.model_id} onChange={(e) => setNewModel({ ...newModel, model_id: e.target.value })} /></div>
-                              <div><Label htmlFor="setup-model-name">Display name</Label><Input id="setup-model-name" placeholder="Claude Haiku" value={newModel.name} onChange={(e) => setNewModel({ ...newModel, name: e.target.value })} /></div>
+                            <div className="space-y-3">
+                              <div><Label htmlFor="setup-model-id">Model ID</Label><Input id="setup-model-id" placeholder="Provider’s exact model ID" value={newModel.model_id} onChange={(e) => setNewModel({ ...newModel, model_id: e.target.value })} /></div>
+                              <div><Label htmlFor="setup-model-name">Display name</Label><Input id="setup-model-name" placeholder="A name you’ll recognize" value={newModel.name} onChange={(e) => setNewModel({ ...newModel, name: e.target.value })} /></div>
                               <div><Label htmlFor="setup-model-provider">Provider</Label><Input id="setup-model-provider" placeholder="openai or anthropic" value={newModel.provider} onChange={(e) => setNewModel({ ...newModel, provider: e.target.value })} /></div>
                               <div className="flex gap-2"><Button onClick={() => void addModel()} disabled={saving || !newModel.model_id || !newModel.name || !newModel.provider}>{saving ? "Adding..." : "Add model"}</Button><Button variant="outline" onClick={() => setShowAddModel(false)}>Cancel</Button></div>
                             </div>
-                          ) : <div className="flex flex-wrap justify-center gap-2"><Button onClick={() => setShowAddModel(true)}><Sparkles className="mr-2 h-4 w-4" />Add a model</Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=model-providers" onClick={() => onOpenChange(false)}>Configure model access<ExternalLink className="ml-2 h-4 w-4" /></Link></Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=llm-models" onClick={() => onOpenChange(false)}>Advanced configuration<ExternalLink className="ml-2 h-4 w-4" /></Link></Button></div>}
+                          ) : <Button variant="outline" onClick={() => setShowAddModel(true)}>{models.length ? "Add another model" : "Add a model"}</Button>}
                         </div>
-                      ) : (
-                        <>
-                          {models.map((model) => (
-                            <button
-                              key={model._id}
-                              type="button"
-                              onClick={() => setSelection((current) => ({
-                                ...current,
-                                model_id: model._id,
-                                model_provider: model.provider,
-                              }))}
-                              aria-pressed={selection.model_id === model._id}
-                              className={cn(
-                                "flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border p-3 text-left transition-colors",
-                                selection.model_id === model._id ? "border-primary bg-primary/5" : "hover:bg-muted/40",
-                              )}
-                            >
-                              <span className="min-w-0 break-words">
-                                <span className="block font-medium">{model.name}</span>
-                                <span className="block text-xs text-muted-foreground">{model.provider} · {model._id}</span>
-                              </span>
-                              {selection.model_id === model._id ? <CheckCircle2 className="h-5 w-5 text-primary" /> : <Circle className="h-5 w-5 text-muted-foreground/50" />}
-                            </button>
-                          ))}
-                          {showAddModel ? (
-                            <div className="rounded-xl border border-dashed p-4">
-                              <div className="grid gap-3 md:grid-cols-3">
-                                <div><Label htmlFor="setup-model-id">Model ID</Label><Input id="setup-model-id" placeholder="claude-haiku-4-5" value={newModel.model_id} onChange={(e) => setNewModel({ ...newModel, model_id: e.target.value })} /></div>
-                                <div><Label htmlFor="setup-model-name">Display name</Label><Input id="setup-model-name" placeholder="Claude Haiku" value={newModel.name} onChange={(e) => setNewModel({ ...newModel, name: e.target.value })} /></div>
-                                <div><Label htmlFor="setup-model-provider">Provider</Label><Input id="setup-model-provider" placeholder="openai or anthropic" value={newModel.provider} onChange={(e) => setNewModel({ ...newModel, provider: e.target.value })} /></div>
-                              </div>
-                              <div className="mt-3 flex gap-2">
-                                <Button type="button" onClick={() => void addModel()} disabled={saving || !newModel.model_id || !newModel.name || !newModel.provider}>{saving ? "Adding..." : "Add model"}</Button>
-                                <Button type="button" variant="outline" onClick={() => setShowAddModel(false)}>Cancel</Button>
-                              </div>
-                            </div>
-                          ) : (
-                            <Button type="button" variant="outline" className="w-full" onClick={() => setShowAddModel(true)}>
-                              <Sparkles className="mr-2 h-4 w-4" />Add another model
-                            </Button>
-                          )}
-                        </>
-                      )}
+                      </details>
                     </div>
                   )}
 
@@ -973,8 +968,8 @@ export function SetupWizardDialog({
                     <div className="space-y-4">
                       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/10 p-3">
                         <div>
-                          <p className="text-sm font-semibold">Choose a starting point</p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">Pick a recipe here, or continue in the full Custom Agents workspace.</p>
+                          <p className="text-sm font-semibold">What would you like your agent to help with?</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">Pick starter instructions below. SRE means site reliability engineering—help with troubleshooting and incidents. For the simplest connection test, choose Hello World.</p>
                         </div>
                         <Button asChild size="sm" variant="outline">
                           <Link href="/dynamic-agents" onClick={() => onOpenChange(false)}>
@@ -1010,7 +1005,7 @@ export function SetupWizardDialog({
                   {step === 4 && (
                     <div className="space-y-4">
                       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
-                        <div className="max-w-md"><p className="text-sm font-semibold">Start simple. Connect more later.</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Your agent can have its first conversation without extra accounts or documents. Add only what you need today.</p></div>
+                        <div className="max-w-md"><p className="text-sm font-semibold">Does your first task need outside information?</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">For a first conversation, you can skip this step. Accounts authorize access, tools let the agent act, knowledge supplies searchable documents, and team channels bring it to Slack or Webex.</p></div>
                         <Button variant="outline" size="sm" onClick={() => void persistProgress(5, 4)} disabled={saving}>Try without extras<ChevronRight className="ml-1 h-4 w-4" /></Button>
                       </div>
                       <nav aria-label="Optional agent context" className="flex flex-wrap gap-2">
@@ -1139,7 +1134,7 @@ export function SetupWizardDialog({
                           <Database className="mt-0.5 h-5 w-5 text-primary" />
                           <span>
                             <span className="block font-medium">Use accessible knowledge bases</span>
-                            <span className="block text-sm text-muted-foreground">The runtime still enforces each caller&apos;s RAG permissions.</span>
+                            <span className="block text-sm text-muted-foreground">Your agent can only search sources the person chatting with it is allowed to access.</span>
                           </span>
                         </span>
                         <input
@@ -1193,11 +1188,11 @@ export function SetupWizardDialog({
                     <div className="space-y-4">
                       <div className="rounded-xl border bg-muted/20 p-5">
                         <p className="font-semibold">{testResult ? "Your starter configuration" : "Ready for your first conversation?"}</p>
-                        {!testResult && <p className="mt-1 text-sm text-muted-foreground">We’ll create your agent and send a short message using the model below.</p>}
+                        {!testResult && <p className="mt-1 text-sm text-muted-foreground">We’ll create a shared starter agent and send “Reply with a brief confirmation that the starter agent is ready.” The response confirms the AI connection works; it does not verify every optional tool. This test may use your provider’s paid quota.</p>}
                         <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                          <SummaryItem label="Recipe" value={RECIPES.find((recipe) => recipe.id === selection.recipe_id)?.title ?? "SRE starter"} />
-                          <SummaryItem label="Model" value={selectedModel?.name ?? "Not selected"} />
-                          <SummaryItem label="MCP servers" value={String(selection.mcp_server_ids?.length ?? 0)} />
+                          <SummaryItem label="Agent’s job" value={RECIPES.find((recipe) => recipe.id === selection.recipe_id)?.title ?? "SRE starter"} />
+                          <SummaryItem label="AI answering your messages" value={selectedModel?.name ?? "Not selected"} />
+                          <SummaryItem label="Connected tools" value={String(selection.mcp_server_ids?.length ?? 0)} />
                           <SummaryItem label="Knowledge" value={selection.enable_knowledge_base ? "Enabled" : "Skipped"} />
                         </dl>
                       </div>
@@ -1226,7 +1221,7 @@ export function SetupWizardDialog({
                       ) : (
                         <Button onClick={() => void createAndTest()} disabled={runningTest || !selectedModel || requiredHealthFailure} size="lg">
                           {runningTest ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-                          {runningTest ? "Running end-to-end test..." : "Create agent and run test"}
+                          {runningTest ? "Waiting for your agent’s reply..." : "Create agent and run test"}
                         </Button>
                       )}
                       {!testResult && !selectedModel && <Button variant="outline" onClick={() => setStep(2)}>Choose a model first</Button>}
@@ -1257,7 +1252,7 @@ export function SetupWizardDialog({
                     )}
                     <Button type="button" onClick={() => void persistProgress(step + 1)} disabled={saving || !canContinue}>
                       {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      {step === 1 ? "Let’s get started" : step === 2 ? "Choose an agent" : step === 3 ? "Add optional context" : "Review & test"} <ChevronRight className="ml-1 h-4 w-4" />
+                      {step === 1 ? "Let’s get started" : step === 2 ? "Use this AI & continue" : step === 3 ? "Add optional context" : "Review & test"} <ChevronRight className="ml-1 h-4 w-4" />
                     </Button>
                   </>
                 )}

@@ -118,6 +118,7 @@ describe("SetupWizardSettings", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /run setup again/i }));
 
+    expect(screen.getByRole("button", { name: /get started/i })).toBeDisabled();
     expect(await screen.findByRole("heading", { name: "Welcome" })).toBeInTheDocument();
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
@@ -156,10 +157,49 @@ describe("SetupWizardSettings", () => {
     expect(await screen.findByRole("heading", { name: "Try your agent" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Choose a model" }));
 
+    fireEvent.click(screen.getByText("Provider help & advanced model registration"));
+
     expect(await screen.findByRole("button", { name: /add another model/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /add another model/i }));
     expect(screen.getByLabelText("Model ID")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add model" })).toBeDisabled();
+  });
+
+  it("expands and restores width without losing the current step or model", async () => {
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose a model" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand setup width" }));
+    expect(screen.getByRole("dialog")).toHaveClass("max-w-none");
+    expect(screen.getByRole("button", { name: "Restore setup width" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Primary")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restore setup width" }));
+    expect(screen.getByRole("dialog")).toHaveClass("max-w-5xl");
+    expect(screen.getByRole("heading", { name: "Choose a model" })).toBeInTheDocument();
+  });
+
+  it("explains the model choice and puts the catalog behind Change model", async () => {
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose a model" }));
+    expect(screen.getByText(/This choice applies to the starter agent/)).toBeInTheDocument();
+    expect(screen.getByText(/Provider access has not been verified/)).toBeInTheDocument();
+    expect(screen.getByRole("combobox").closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Change model"));
+    expect(screen.getByRole("combobox", { name: "AI model for your first agent" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use this AI & continue" })).toBeEnabled();
+  });
+
+  it("guides a deployment without models to provider access before registration", async () => {
+    const fallback = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).startsWith("/api/llm-models")
+      ? response({ success: true, data: { items: [] } }) : fallback(input, init)) as jest.Mock;
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose a model" }));
+    expect(screen.getByText("Let’s connect your first AI provider")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Configure provider access" })[0]).toHaveAttribute("href", "/dynamic-agents?tab=model-providers");
+    expect(screen.getByRole("button", { name: "Use this AI & continue" })).toBeDisabled();
   });
 
   it("creates a starter agent and completes an end-to-end smoke test", async () => {
@@ -229,9 +269,10 @@ describe("SetupWizardSettings", () => {
     render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
 
     expect(await screen.findByRole("heading", { name: "Welcome" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /get started/i })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: /get started/i }));
     expect(await screen.findByRole("heading", { name: "Choose a model" })).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "Choose an agent" }).at(-1)!);
+    fireEvent.click(screen.getByRole("button", { name: "Use this AI & continue" }));
     expect(await screen.findByRole("heading", { name: "Choose an agent" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /add optional context/i }));
     expect(await screen.findByRole("heading", { name: "Add context" })).toBeInTheDocument();
@@ -245,6 +286,8 @@ describe("SetupWizardSettings", () => {
       "/api/v1/chat/invoke",
       expect.objectContaining({ method: "POST" }),
     );
+    const agentCall = (global.fetch as jest.Mock).mock.calls.find(([url, init]) => url === "/api/dynamic-agents" && init?.method === "POST");
+    expect(JSON.parse(agentCall[1].body).allowed_tools).toEqual({});
   });
 
   it("guides first-time users through credentials and remote MCP onboarding", async () => {

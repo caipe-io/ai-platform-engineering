@@ -13,8 +13,12 @@ connected accounts, and automation can be added later.
 1. **Welcome:** review the brief readiness summary. **Open Platform Health** for
    service inventory, component logos, detailed checks, and remediation links.
    A disabled optional service does not prevent a basic conversation.
-2. **Choose a model:** select an existing model or open **Configure provider
-   access**. Configure its endpoint and authentication in the provider workspace,
+2. **Choose a model:** the model is the AI that writes your agent’s replies. The
+   displayed choice is for this starter agent, not a platform-wide default.
+   Keep it or open **Change model** to search the catalog. Registration alone
+   does not verify provider access; the final conversation tests that connection.
+   For a different provider, open **Configure provider access** and configure
+   its endpoint and authentication in the provider workspace,
    then register/select the model. A model name alone does not configure access.
    LiteLLM uses an OpenAI-compatible endpoint. For Bedrock on Kubernetes, prefer
    workload identity such as an IAM role for a service account or EKS Pod Identity.
@@ -28,6 +32,8 @@ connected accounts, and automation can be added later.
 
 ## Leave and return
 
+- Use **Expand setup width** in the header for more room; **Restore setup width**
+  returns to the compact layout without losing your step or selections.
 - **Save & minimize**, the minimize icon, and links to CAIPE workspaces save
   your current step and selections before shrinking setup into the resume bubble.
 - Complete the task in the destination workspace, then choose **Resume setup**.
