@@ -30,6 +30,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
+  Cloud,
   Database,
   ExternalLink,
   Gauge,
@@ -203,6 +204,27 @@ const SETUP_CONNECTIONS = [
     provider: "notion",
     label: "Notion",
     description: "Search pages and databases through the Notion MCP server.",
+  },
+] as const;
+
+const MODEL_PROVIDER_GUIDANCE = [
+  {
+    label: "OpenAI-compatible endpoint",
+    description: "Connect to any OpenAI-compatible API endpoint, including LiteLLM.",
+    detail: "Configure the endpoint, API key, and model routing in Model providers.",
+    icon: Plug,
+  },
+  {
+    label: "Anthropic API",
+    description: "Use Anthropic models directly with an Anthropic API key.",
+    detail: "Keep the key in deployment configuration; this wizard never stores provider secrets.",
+    icon: Sparkles,
+  },
+  {
+    label: "AWS Bedrock",
+    description: "Use Bedrock models with static keys or workload identity.",
+    detail: "Recommended for Kubernetes: an IAM role, service account, IRSA, or EKS Pod Identity.",
+    icon: Cloud,
   },
 ] as const;
 
@@ -931,6 +953,7 @@ export function SetupWizardDialog({
 
                   {step === 2 && (
                     <div className="space-y-3">
+                      <ModelProviderGuide />
                       {models.length === 0 ? (
                         <div className="space-y-4 rounded-xl border border-dashed p-6">
                           <div className="text-center">
@@ -1257,6 +1280,48 @@ export function SetupWizardDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ModelProviderGuide() {
+  return (
+    <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-medium">Popular provider options</p>
+          <p className="text-xs text-muted-foreground">
+            Models are safe metadata. Provider endpoints and secrets stay in deployment configuration.
+          </p>
+        </div>
+        <Button asChild type="button" size="sm" variant="outline">
+          <Link href="/dynamic-agents?tab=model-providers">
+            Configure provider access <ExternalLink className="ml-2 h-3.5 w-3.5" />
+          </Link>
+        </Button>
+      </div>
+      <div className="grid gap-2 md:grid-cols-3">
+        {MODEL_PROVIDER_GUIDANCE.map((provider, index) => {
+          const Icon = provider.icon;
+          return (
+            <div
+              key={provider.label}
+              className="animate-slide-in rounded-lg border p-3"
+              style={{ animationDelay: `${index * 70}ms` }}
+            >
+              <div className="flex items-center gap-2">
+                <Icon className="h-4 w-4 text-primary" />
+                <p className="text-sm font-medium">{provider.label}</p>
+              </div>
+              <p className="mt-2 text-xs leading-snug text-muted-foreground">{provider.description}</p>
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">{provider.detail}</p>
+              <Link className="mt-2 inline-flex items-center text-[11px] text-primary hover:underline" href="/dynamic-agents?tab=model-providers">
+                Open provider settings <ChevronRight className="ml-0.5 h-3 w-3" />
+              </Link>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
