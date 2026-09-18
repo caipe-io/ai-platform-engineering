@@ -1511,6 +1511,7 @@ describe('Admin Dashboard Page', () => {
         statsChannels: 'primary-channel',
         statsAgents: 'agent-primary',
         statsIncludeBots: 'true',
+        statsIncludeServiceAccounts: 'true',
         users: 'test-user@example.com',
         dateRange: '7d',
       });
@@ -1528,15 +1529,18 @@ describe('Admin Dashboard Page', () => {
         && url.searchParams.get('channel') === 'primary-channel'
         && url.searchParams.get('agent') === 'agent-primary'
         && url.searchParams.get('include_bots') === 'true'
+        && url.searchParams.get('include_service_accounts') === 'true'
         && url.searchParams.get('user') === 'test-user@example.com'
         && url.searchParams.get('range') === '7d'
       ))).toBe(true);
       expect(screen.getByLabelText(/show bot users/i)).toBeChecked();
+      expect(screen.getByLabelText(/show service accounts/i)).toBeChecked();
       expect(await screen.findByRole('button', { name: /Primary Agent/ })).toBeInTheDocument();
 
       fireEvent.click(screen.getByLabelText(/show bot users/i));
       const updatedStatsUrl = new URL(replaceMock.mock.calls.at(-1)?.[0], 'http://localhost');
       expect(updatedStatsUrl.searchParams.has('statsIncludeBots')).toBe(false);
+      expect(updatedStatsUrl.searchParams.get('statsIncludeServiceAccounts')).toBe('true');
       expect(updatedStatsUrl.searchParams.get('statsChannels')).toBe('primary-channel');
       expect(updatedStatsUrl.searchParams.get('statsAgents')).toBe('agent-primary');
     });
@@ -2067,6 +2071,21 @@ describe('Admin Dashboard Page', () => {
         'response_time',
         'hourly_heatmap',
       ]));
+
+      const callsBeforeServiceAccountFilter = fetchMock.mock.calls.length;
+      fireEvent.click(screen.getByLabelText(/show service accounts/i));
+      await waitFor(() => {
+        expect(fetchMock.mock.calls.length).toBe(callsBeforeServiceAccountFilter + 4);
+      });
+      const serviceAccountFilterUrls = fetchMock.mock.calls
+        .slice(callsBeforeServiceAccountFilter)
+        .map(([url]) => new URL(url, 'http://localhost'));
+      expect(serviceAccountFilterUrls.every(
+        (url) => url.searchParams.get('include_service_accounts') === 'true',
+      )).toBe(true);
+      expect(new Set(serviceAccountFilterUrls.map((url) => url.searchParams.get('section')))).toEqual(
+        new Set(['top_users', 'top_agents', 'response_time', 'hourly_heatmap']),
+      );
     });
 
     it('applies an agent selection to every card, including overview', async () => {

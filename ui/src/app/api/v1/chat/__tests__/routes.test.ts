@@ -153,6 +153,98 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     );
   });
 
+  it("persists direct API invoke turns for Insights message counts", async () => {
+    const conversations = {
+      findOne: jest.fn(async () => ({
+        _id: "conv-1",
+        owner_id: "api-user@example.com",
+        owner_subject: "alice-sub",
+        client_type: "api",
+      })),
+      updateOne: jest.fn(async () => ({ acknowledged: true })),
+    };
+    const messages = {
+      updateOne: jest.fn(async () => ({ acknowledged: true, upsertedId: "message-id" })),
+      countDocuments: jest.fn(async () => 2),
+    };
+    const agents = {
+      findOne: jest.fn(async () => ({ _id: "agent-1", name: "Primary Agent" })),
+    };
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "conversations") return conversations;
+      if (name === "messages") return messages;
+      if (name === "dynamic_agents") return agents;
+      throw new Error(`Unexpected collection: ${name}`);
+    });
+    mockProxyJSONRequest.mockResolvedValue(NextResponse.json({
+      success: true,
+      content: "response",
+      trace_id: "trace-primary",
+    }));
+
+    const response = await invokePost(
+      jsonRequest("/api/v1/chat/invoke", {
+        message: "hello",
+        conversation_id: "conv-1",
+        agent_id: "agent-1",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(messages.updateOne).toHaveBeenCalledTimes(2);
+    expect(messages.updateOne.mock.calls.map((call) => call[1].$setOnInsert.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    for (const call of messages.updateOne.mock.calls) {
+      expect(call[1].$set.metadata).toEqual(expect.objectContaining({
+        source: "api",
+        trace_id: "trace-primary",
+        agent_id: "agent-1",
+        agent_name: "Primary Agent",
+      }));
+    }
+    expect(conversations.updateOne).toHaveBeenCalledWith(
+      { _id: "conv-1" },
+      { $set: expect.objectContaining({ "metadata.total_messages": 2 }) },
+    );
+  });
+
+  it("does not count a failed direct API invoke as an assistant message", async () => {
+    const messages = {
+      updateOne: jest.fn(),
+      countDocuments: jest.fn(),
+    };
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "conversations") {
+        return {
+          findOne: jest.fn(async () => ({
+            _id: "conv-1",
+            owner_id: "api-user@example.com",
+            client_type: "api",
+          })),
+        };
+      }
+      if (name === "messages") return messages;
+      throw new Error(`Unexpected collection: ${name}`);
+    });
+    mockProxyJSONRequest.mockResolvedValue(NextResponse.json(
+      { success: false, error: "upstream unavailable" },
+      { status: 503 },
+    ));
+
+    const response = await invokePost(
+      jsonRequest("/api/v1/chat/invoke", {
+        message: "hello",
+        conversation_id: "conv-1",
+        agent_id: "agent-1",
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(messages.updateOne).not.toHaveBeenCalled();
+  });
+
   it("threads isServiceAccount into the conversation write check so SA callers graph as service_account:<sub>", async () => {
     // Regression: requireConversationWriteAccess dropped isServiceAccount, so an
     // SA-routed Slack request was graphed as user:<sub> and 403'd conversation#write
