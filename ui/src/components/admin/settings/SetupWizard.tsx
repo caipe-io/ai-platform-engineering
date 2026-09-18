@@ -52,6 +52,7 @@ import {
   Workflow,
 } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 interface ModelOption {
@@ -855,6 +856,7 @@ export function SetupWizardDialog({
                                 capability={capability}
                                 remediation={getCapabilityRemediation(capability, health?.probes)}
                                 compact
+                                onNavigate={() => onOpenChange(false)}
                               />
                             </div>
                           ))}
@@ -1457,7 +1459,7 @@ function getCapabilityRemediation(
   return undefined;
 }
 
-function CapabilityRow({ capability, remediation, compact = false }: { capability: HealthCapability; remediation?: Remediation; compact?: boolean }) {
+function CapabilityRow({ capability, remediation, compact = false, onNavigate }: { capability: HealthCapability; remediation?: Remediation; compact?: boolean; onNavigate?: () => void }) {
   const healthy = capability.status === "healthy";
   const disabled = capability.status === "disabled";
   return (
@@ -1470,7 +1472,7 @@ function CapabilityRow({ capability, remediation, compact = false }: { capabilit
           {remediation && !healthy && (
             <div className={cn("space-y-1", compact ? "mt-1" : "mt-2")}>
               <p className={cn("text-muted-foreground", compact ? "text-[11px] leading-snug" : "text-xs")}><span className="font-medium">How to fix:</span> {remediation.description}</p>
-              <Link className={cn("text-primary hover:underline", compact ? "text-[11px]" : "text-xs")} href={remediation.href}>{remediation.label}</Link>
+              <Link className={cn("text-primary hover:underline", compact ? "text-[11px]" : "text-xs")} href={remediation.href} onClick={onNavigate}>{remediation.label}</Link>
             </div>
           )}
         </div>
@@ -1585,12 +1587,19 @@ export function SetupWizardSettings(): React.ReactElement {
 
 export function SetupWizardGate(): React.ReactElement | null {
   const { isAdmin, loading } = useAdminRole();
+  const pathname = usePathname();
   const [payload, setPayload] = useState<SetupWizardPayload | null>(null);
   const [open, setOpen] = useState(false);
   const [restart, setRestart] = useState(false);
   const [checklistOpen, setChecklistOpen] = useState(false);
   const [checklistHidden, setChecklistHidden] = useState(false);
   const [hidingChecklist, setHidingChecklist] = useState(false);
+
+  useEffect(() => {
+    // A setup handoff should never leave the full-screen dialog over the
+    // destination page, including when navigation remounts this gate.
+    setOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     if (loading || !isAdmin || !getConfig("setupWizardEnabled")) return;
