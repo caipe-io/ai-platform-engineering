@@ -1061,25 +1061,38 @@ export function SetupWizardDialog({
                   )}
 
                   {step === 3 && (
-                    <div className="grid gap-3 lg:grid-cols-3">
-                      {RECIPES.map((recipe) => (
-                        <button
-                          key={recipe.id}
-                          type="button"
-                          onClick={() => setSelection((current) => ({ ...current, recipe_id: recipe.id }))}
-                          className={cn(
-                            "rounded-xl border p-5 text-left transition-colors",
-                            selection.recipe_id === recipe.id ? "border-primary bg-primary/5" : "hover:bg-muted/40",
-                          )}
-                        >
-                          <div className="mb-4 flex items-center justify-between">
-                            <Bot className="h-6 w-6 text-primary" />
-                            {recipe.id === "sre" && <Badge variant="secondary">Recommended</Badge>}
-                          </div>
-                          <p className="font-semibold">{recipe.title}</p>
-                          <p className="mt-2 text-sm text-muted-foreground">{recipe.description}</p>
-                        </button>
-                      ))}
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/10 p-3">
+                        <div>
+                          <p className="text-sm font-semibold">Choose a starting point</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">Pick a recipe here, or continue in the full Custom Agents workspace.</p>
+                        </div>
+                        <Button asChild size="sm" variant="outline">
+                          <Link href="/dynamic-agents" onClick={() => onOpenChange(false)}>
+                            Open Custom Agents<ExternalLink className="ml-2 h-3.5 w-3.5" />
+                          </Link>
+                        </Button>
+                      </div>
+                      <div className="grid gap-3 lg:grid-cols-3">
+                        {RECIPES.map((recipe) => (
+                          <button
+                            key={recipe.id}
+                            type="button"
+                            onClick={() => setSelection((current) => ({ ...current, recipe_id: recipe.id }))}
+                            className={cn(
+                              "rounded-xl border p-5 text-left transition-colors",
+                              selection.recipe_id === recipe.id ? "border-primary bg-primary/5" : "hover:bg-muted/40",
+                            )}
+                          >
+                            <div className="mb-4 flex items-center justify-between">
+                              <Bot className="h-6 w-6 text-primary" />
+                              {recipe.id === "sre" && <Badge variant="secondary">Recommended</Badge>}
+                            </div>
+                            <p className="font-semibold">{recipe.title}</p>
+                            <p className="mt-2 text-sm text-muted-foreground">{recipe.description}</p>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
 
