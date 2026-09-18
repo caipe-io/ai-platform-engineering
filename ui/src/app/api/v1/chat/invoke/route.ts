@@ -155,10 +155,11 @@ async function ensureScheduledConversation(
   return conversationId;
 }
 
-async function persistScheduledInvokeMessages(
+async function persistInvokeMessages(
   body: Record<string, unknown>,
   ownerUserId: string,
   response: Response,
+  source: "api" | "scheduler",
 ): Promise<void> {
   if (!isMongoDBConfigured) return;
 
@@ -171,7 +172,7 @@ async function persistScheduledInvokeMessages(
     const parsed = await response.json();
     result = objectValue(parsed);
   } catch (error) {
-    console.warn("[invoke] Scheduled run response was not JSON; skipping message persistence", error);
+    console.warn(`[invoke] ${source} response was not JSON; skipping message persistence`, error);
     return;
   }
 
@@ -179,8 +180,13 @@ async function persistScheduledInvokeMessages(
   const clientContext = objectValue(body.client_context);
   const scheduleId = stringValue(clientContext.schedule_id);
   const scheduleTitle = stringValue(clientContext.schedule_title);
-  const traceId = stringValue(body.trace_id) || conversationId;
-  const runId = stringValue(clientContext.run_id) || traceId;
+  const traceId =
+    stringValue(body.trace_id) ||
+    stringValue(result.trace_id) ||
+    (source === "scheduler" ? conversationId : uuidv4());
+  const runId = source === "scheduler"
+    ? stringValue(clientContext.run_id) || traceId
+    : undefined;
   const turnId = `turn-${traceId}`;
   const succeeded = result.success !== false && response.ok;
   const assistantContent =
@@ -194,13 +200,15 @@ async function persistScheduledInvokeMessages(
   const assistantCreatedAt = new Date(userCreatedAt.getTime() + 1);
   const commonMetadata = {
     turn_id: turnId,
-    source: "scheduler",
-    schedule_id: scheduleId,
-    schedule_title: scheduleTitle,
-    run_id: runId,
+    source,
     trace_id: traceId,
     agent_id: agentId,
-    actor_client_id: schedulerActorClientId(),
+    ...(source === "scheduler" && {
+      schedule_id: scheduleId,
+      schedule_title: scheduleTitle,
+      run_id: runId,
+      actor_client_id: schedulerActorClientId(),
+    }),
   };
   const messageMetadata = compactMetadata(commonMetadata);
 
@@ -262,8 +270,10 @@ async function persistScheduledInvokeMessages(
       $set: {
         updated_at: assistantCreatedAt,
         "metadata.total_messages": totalMessages,
-        "metadata.last_run_at": assistantCreatedAt,
-        "metadata.last_status": succeeded ? "ok" : "error",
+        ...(source === "scheduler" && {
+          "metadata.last_run_at": assistantCreatedAt,
+          "metadata.last_status": succeeded ? "ok" : "error",
+        }),
       },
     },
   );
@@ -422,10 +432,11 @@ async function handleScheduledInvoke(
   );
 
   try {
-    await persistScheduledInvokeMessages(
+    await persistInvokeMessages(
       body,
       scheduledRun.email,
       response.clone(),
+      "scheduler",
     );
   } catch (error) {
     console.error("[invoke] Failed to persist scheduled invoke messages:", error);
@@ -487,12 +498,28 @@ export async function POST(request: NextRequest): Promise<Response> {
   );
   if (conversationAuthzResponse) return conversationAuthzResponse;
 
-  // Forward body as-is to DA backend (same path, same body format)
+  // Forward body as-is to DA backend (same path, same body format).
   const backendUrl = `${daConfig.dynamicAgentsUrl}/api/v1/chat/invoke`;
-  return proxyJSONRequest(
+  const response = await proxyJSONRequest(
     backendUrl,
     JSON.stringify(body),
     authResult,
     "[invoke]",
   );
+
+  // The non-streaming API has no browser store to persist its transcript.
+  // Keep the BFF message collection aligned so API conversations are readable
+  // and can continue through the web chat surface.
+  try {
+    await persistInvokeMessages(
+      body,
+      authResult.email,
+      response.clone(),
+      "api",
+    );
+  } catch (error) {
+    console.error("[invoke] Failed to persist API invoke messages:", error);
+  }
+
+  return response;
 }

@@ -89,6 +89,8 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
         owner_id: "alice@example.com",
         owner_subject: "alice-sub",
       })),
+      updateOne: jest.fn(async () => ({ acknowledged: true })),
+      countDocuments: jest.fn(async () => 2),
     });
     mockProxySSEStream.mockResolvedValue(new Response("event: done\n\n", { status: 200 }));
     mockProxyJSONRequest.mockResolvedValue(NextResponse.json({ success: true }));
@@ -149,6 +151,89 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     expect(proxy.mock.calls[0][2]).toEqual(
       expect.objectContaining({
         traceparent: expect.stringMatching(/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/),
+      }),
+    );
+  });
+
+  it("persists non-streaming API turns for web chat history", async () => {
+    const conversationUpdateOne = jest.fn(async () => ({ acknowledged: true }));
+    const messageUpdateOne = jest.fn(async () => ({ acknowledged: true }));
+    const conversations = {
+      findOne: jest.fn(async () => ({
+        _id: "conv-1",
+        owner_id: "alice@example.com",
+        owner_subject: "alice-sub",
+        client_type: "api",
+        source: "api",
+      })),
+      updateOne: conversationUpdateOne,
+    };
+    const messages = {
+      updateOne: messageUpdateOne,
+      countDocuments: jest.fn(async () => 2),
+    };
+    mockGetCollection.mockImplementation(async (name: string) =>
+      name === "messages" ? messages : conversations,
+    );
+    mockProxyJSONRequest.mockResolvedValue(
+      NextResponse.json({
+        success: true,
+        content: "Investigation complete.",
+        trace_id: "trace-api-1",
+      }),
+    );
+
+    const response = await invokePost(
+      jsonRequest("/api/v1/chat/invoke", {
+        message: "Investigate the service.",
+        conversation_id: "conv-1",
+        agent_id: "agent-1",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(messageUpdateOne).toHaveBeenCalledTimes(2);
+    expect(messageUpdateOne).toHaveBeenNthCalledWith(
+      1,
+      {
+        conversation_id: "conv-1",
+        message_id: "turn-trace-api-1-user",
+      },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          content: "Investigate the service.",
+          metadata: expect.objectContaining({
+            source: "api",
+            trace_id: "trace-api-1",
+            is_final: true,
+          }),
+        }),
+      }),
+      { upsert: true },
+    );
+    expect(messageUpdateOne).toHaveBeenNthCalledWith(
+      2,
+      {
+        conversation_id: "conv-1",
+        message_id: "turn-trace-api-1-assistant",
+      },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          content: "Investigation complete.",
+          metadata: expect.objectContaining({
+            source: "api",
+            trace_id: "trace-api-1",
+            is_final: true,
+            turn_status: "done",
+          }),
+        }),
+      }),
+      { upsert: true },
+    );
+    expect(conversationUpdateOne).toHaveBeenCalledWith(
+      { _id: "conv-1" },
+      expect.objectContaining({
+        $set: expect.objectContaining({ "metadata.total_messages": 2 }),
       }),
     );
   });
