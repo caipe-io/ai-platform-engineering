@@ -363,6 +363,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // implement a service account allowlist — only specific OAuth2 client IDs should be
   // permitted to set owner_id on behalf of users.
   const ownerId = body.owner_id || user.email;
+  // Linked Slack/Webex calls carry the human OBO subject even when the
+  // connector has to fall back to its immutable person id for owner_id. The
+  // shared unlinked/service-account path must not stamp its subject or every
+  // unlinked person would collapse into one identity.
+  const canBindOwnerSubject = session.isServiceAccount !== true && (
+    ownerId === user.email
+    || (session.authMethod === 'bearer' && isFirstPartyBotBearer)
+  );
 
   // QUAL-8: extract once; reused in both idempotency and new-conversation paths.
   const isSaCaller = session.isServiceAccount === true && typeof session.sub === 'string' && session.sub.trim() !== '';
@@ -413,7 +421,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     title: body.title,
     client_type: effectiveClientType,
     owner_id: ownerId,
-    ...(typeof session.sub === 'string' && session.sub.trim() && ownerId === user.email
+    ...(typeof session.sub === 'string' && session.sub.trim() && canBindOwnerSubject
       ? { owner_subject: session.sub.trim(), owner_identity_version: 2 }
       : {}),
     ...(body.idempotency_key && { idempotency_key: body.idempotency_key }),
