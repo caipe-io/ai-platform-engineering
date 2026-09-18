@@ -134,7 +134,7 @@ type mcp_tool        # RAG custom MCP tools (PUT /v1/mcp/custom-tools/<id>),
                      # distinct from the existing tool:<id> used by AgentGateway
 ```
 
-Both expose `manager: [user, service_account, team#admin, organization#admin]` so org admins are an explicit edge on the model — not just a runtime bypass. `buildDataSourceRelationshipTupleDiff` and `buildMcpToolRelationshipTupleDiff` (in `ui/src/lib/rbac/openfga-owned-resources.ts`) emit the same shared-teams diff that PR 3 introduced for `knowledge_base`. `mcp_tool` additionally emits the `user` relation on member tuples so team members get `can_call` (mirrors how `mcp_server` invokers are modelled).
+Both expose `manager: [user, service_account, team#member, team#admin, organization#admin]` so org admins are an explicit edge on the model — not just a runtime bypass. `buildDataSourceRelationshipTupleDiff` and `buildMcpToolRelationshipTupleDiff` (in `ui/src/lib/rbac/openfga-owned-resources.ts`) emit the same shared-teams diff that PR 3 introduced for `knowledge_base`, with the owner team's `manager` grant written to `team#member` (not `team#admin`) via the `ownerTeamManagerViaMember` opt-in — any owner-team member can manage, not just its admins. `mcp_tool` additionally emits the `user` relation on member tuples so team members get `can_call` (mirrors how `mcp_server` invokers are modelled).
 
 The BFF (`ui/src/app/api/rag/[...path]/route.ts`) now writes `mcp_tool:<tool_id>` tuples on a successful `PUT /v1/mcp/custom-tools/<tool_id>` (sourcing the owner team slug from the request body) and filters the `GET /v1/mcp/custom-tools` response by `mcp_tool:<id>#can_read`. Org admins bypass via the PR 1 super-grant; non-admins only see tools they have a tuple on.
 
@@ -1050,7 +1050,8 @@ Webex space ReBAC follows the same team-ownership shape with Webex-specific type
 of truth, while `webex_space_agent_routes` stores dependent dispatch metadata
 such as listen mode, priority, and enabled state. Team-space assignment writes
 `team:<slug>#member user webex_space:<workspace>--<space>` and
-`team:<slug>#admin manager webex_space:<workspace>--<space>`, and per-space
+`team:<slug>#member manager webex_space:<workspace>--<space>` (any owner-team
+member can manage, not just its admins), and per-space
 grant/route/diagnostic APIs check the derived Webex space permissions. The top-level
 Webex space list is also resource-scoped, and the Integrations → Webex tab appears
 for non-admin users who can manage at least one concrete `webex_space`. The Webex bot never trusts
@@ -1090,7 +1091,7 @@ grants, rolls back on failure, and never overwrites an existing active space
 mapping. The onboarding writer
 (`webex-space-onboarding.ts`) also emits the inbound
 `team:<slug>#member user webex_space:<workspace>--<space>` and
-`team:<slug>#admin manager webex_space:<workspace>--<space>` visibility tuples
+`team:<slug>#member manager webex_space:<workspace>--<space>` visibility tuples
 so the space surfaces in `/api/admin/webex/spaces` (which filters each row by
 `can_read`). Previously-onboarded spaces are backfilled by the same
 `messaging_team_visibility_v1` migration that handles Slack channels — both

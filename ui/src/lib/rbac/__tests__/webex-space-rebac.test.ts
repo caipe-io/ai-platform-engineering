@@ -21,7 +21,7 @@ describe("webex-space-rebac helpers", () => {
   });
 
   describe("webexSpaceTeamVisibilityRelationships", () => {
-    it("emits a team#admin -> manage and team#member -> use pair", () => {
+    it("emits a team#member -> manage and team#member -> use pair", () => {
       // Materializes policy `webex_space_team_assignment_v1`.
       // assisted-by Codex Codex-sonnet-4-6
       const rels = webexSpaceTeamVisibilityRelationships(
@@ -34,7 +34,7 @@ describe("webex-space-rebac helpers", () => {
       expect(rels).toEqual(
         expect.arrayContaining([
           {
-            subject: { type: "team", id: "platform", relation: "admin" },
+            subject: { type: "team", id: "platform", relation: "member" },
             action: "manage",
             resource: { type: "webex_space", id: "WEBEX--space-1" },
           },
@@ -52,7 +52,7 @@ describe("webex-space-rebac helpers", () => {
       const actions = rels.map((r) => r.action).sort();
       const subjectRelations = rels.map((r) => r.subject.relation).sort();
       expect(actions).toEqual(["manage", "use"]);
-      expect(subjectRelations).toEqual(["admin", "member"]);
+      expect(subjectRelations).toEqual(["member", "member"]);
     });
   });
 });

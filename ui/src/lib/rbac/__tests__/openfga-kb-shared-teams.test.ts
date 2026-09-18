@@ -24,7 +24,7 @@ describe("buildKnowledgeBaseRelationshipTupleDiff — shared teams", () => {
     expect(diff.writes).toEqual([
       { user: "user:alice-sub", relation: "owner", object: KB },
       { user: "team:platform#member", relation: "reader", object: KB },
-      { user: "team:platform#admin", relation: "manager", object: KB },
+      { user: "team:platform#member", relation: "manager", object: KB },
     ]);
     expect(diff.deletes).toEqual([
       { user: "team:platform#member", relation: "ingestor", object: KB },
@@ -40,14 +40,14 @@ describe("buildKnowledgeBaseRelationshipTupleDiff — shared teams", () => {
     expect(diff.writes).toEqual(
       expect.arrayContaining([
         { user: "team:platform#member", relation: "reader", object: KB },
-        { user: "team:platform#admin", relation: "manager", object: KB },
+        { user: "team:platform#member", relation: "manager", object: KB },
         { user: "team:data-eng#member", relation: "reader", object: KB },
         { user: "team:ml-ops#member", relation: "reader", object: KB },
       ]),
     );
     expect(
       diff.writes.some(
-        (tuple) => tuple.relation === "manager" && tuple.user !== "team:platform#admin",
+        (tuple) => tuple.relation === "manager" && tuple.user !== "team:platform#member",
       ),
     ).toBe(false);
     expect(diff.writes.some((tuple) => tuple.relation === "ingestor")).toBe(false);
@@ -156,13 +156,13 @@ describe("buildKnowledgeBaseRelationshipTupleDiff — shared teams", () => {
     expect(diff.writes).toEqual(
       expect.arrayContaining([
         { user: "team:data-eng#member", relation: "reader", object: KB },
-        { user: "team:data-eng#admin", relation: "manager", object: KB },
+        { user: "team:data-eng#member", relation: "manager", object: KB },
       ]),
     );
     expect(diff.deletes).toEqual(
       expect.arrayContaining([
         { user: "team:platform#member", relation: "reader", object: KB },
-        { user: "team:platform#admin", relation: "manager", object: KB },
+        { user: "team:platform#member", relation: "manager", object: KB },
       ]),
     );
     expect(diff.deletes).toEqual(expect.arrayContaining([

@@ -106,7 +106,7 @@ describe("RAG collection tuple projection", () => {
           object: "rag_collection:primary",
         },
         {
-          user: "team:maintainers#admin",
+          user: "team:maintainers#member",
           relation: "manager",
           object: "rag_collection:primary",
         },

@@ -10,7 +10,11 @@
 #   team:<slug>#member can_call tool:<tool_prefix>
 #   slack_channel:<workspace_id>--<channel_id> can_call tool:<tool_prefix>
 #   webex_space:<workspace_id>--<space_id> can_call tool:<tool_prefix>
-#   team:<slug>#member can_read knowledge_base:<kb_id>
+#   team:<slug>#member can_manage knowledge_base:<kb_id>
+#   team:<slug>#member can_manage data_source:<data_source_id>
+#   team:<slug>#member can_manage rag_collection:<collection_id>
+#   team:<slug>#member can_manage mcp_tool:<tool_id>
+#   team:<slug>#member can_manage webex_space:<workspace_id>--<space_id>
 #
 # Team relation semantics:
 #   - `admin` is a raw relation written when a user is granted team admin.
@@ -159,7 +163,7 @@ type webex_space
     define reader: [user, service_account, team#member, team#admin, external_group#member]
     define user: [user, service_account, team#member, team#admin, external_group#member]
     define writer: [user, service_account, team#member, team#admin, external_group#member]
-    define manager: [user, service_account, team#admin]
+    define manager: [user, service_account, team#member, team#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read
     define can_read: reader or can_use or can_manage or owner
@@ -272,7 +276,7 @@ type rag_collection
     define owner: [user, service_account]
     define reader: [user, user:*, service_account, team#member, team#admin, external_group#member, slack_channel, webex_space]
     define publisher: [user, service_account, team#member, team#admin]
-    define manager: [user, service_account, team#admin, organization#admin]
+    define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
     # A collection is a saved filter over datasources the caller can already
     # search, not an access grant: reader/can_read here controls who can use
@@ -292,7 +296,7 @@ type knowledge_base
     define owner: [user, service_account]
     define reader: [user, user:*, service_account, team#member, team#admin, external_group#member, slack_channel, webex_space]
     define ingestor: [user, service_account, team#member, team#admin, external_group#member]
-    define manager: [user, service_account, team#admin, organization#admin]
+    define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
     # A source may belong to several RAG collections. `parent_collection` is
     # a curation edge only: it records that a source has been added to a
@@ -333,7 +337,7 @@ type data_source
     define owner: [user, service_account]
     define reader: [user, user:*, service_account, team#member, team#admin, external_group#member]
     define ingestor: [user, service_account, team#member, team#admin, external_group#member]
-    define manager: [user, service_account, team#admin, organization#admin]
+    define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read
     define can_read: reader or can_manage or owner or can_read from parent_kb
@@ -357,7 +361,7 @@ type mcp_tool
     define reader: [user, service_account, team#member, team#admin, external_group#member, organization#member]
     define user: [user, service_account, team#member, team#admin, external_group#member, organization#member]
     define caller: [user, service_account, team#member, team#admin, external_group#member, organization#member, agent]
-    define manager: [user, service_account, team#admin, organization#admin]
+    define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read
     define can_read: reader or can_use or can_manage or owner
