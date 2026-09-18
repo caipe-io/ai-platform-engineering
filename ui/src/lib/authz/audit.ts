@@ -1,9 +1,15 @@
 // assisted-by Codex Codex-sonnet-4-6
 //
-// CAS decision audit. Writes ONE event per decision through audit-service,
-// conforming to the UnifiedAuditEvent contract that the admin audit tab
-// (`UnifiedAuditTab`) renders, so CAS decisions appear typed and filterable
-// alongside existing auth/openfga_rebac events.
+// CAS decision audit, written through audit-service and conforming to the
+// UnifiedAuditEvent contract the admin audit tab (`UnifiedAuditTab`) renders,
+// so CAS decisions appear typed and filterable alongside existing
+// auth/openfga_rebac events.
+//
+// Row granularity depends on what was asked:
+//   - a denied access decision  → its own row, always
+//   - an allowed access decision → counted, flushed as a periodic rollup row
+//   - a bulk evaluation (authorizeMany) → one row summarizing the whole filter
+// See CasBatchDecisionEvent for why bulk evaluation is summarized.
 //
 // Best-effort + fire-and-forget: an audit-service failure is logged but never blocks
 // or changes the decision (the decision is the authoritative output).
@@ -52,6 +58,62 @@ export interface CasDecisionEvent {
   trace_id?: string;
   span_id?: string;
 }
+
+/**
+ * One bulk evaluation (`authorizeMany`) — a list filter, not an access attempt.
+ *
+ * `authorizeMany` answers "which of these N resources may the subject touch",
+ * which is how every resource list in the UI is rendered. Auditing that
+ * per-resource made volume scale with catalog size: one agents-list render
+ * evaluates manage+write+discover across every agent, so N agents produced 3N
+ * rows, and the denials in them only ever said "this user does not have that
+ * agent" — enumeration noise, not a blocked access attempt.
+ *
+ * A single access decision still gets its own event: those go through
+ * `authorize`/`authorizeOrThrow`, never here. That is the line this split
+ * rests on — bulk evaluation summarizes, a real attempt does not.
+ *
+ * Allowed ids are listed because that set is the meaningful (and usually
+ * small) answer; denials are counted, because naming every resource a user
+ * cannot see is the noise this event exists to remove.
+ */
+export interface CasBatchDecisionEvent {
+  audit_event_id: string;
+  ts: Date;
+  type: "cas_decision";
+  tenant_id: string;
+  subject_hash: string;
+  subject_ref: string;
+  action: Action;
+  /** The evaluation itself; per-resource results are in the counts below. */
+  outcome: "allow" | "deny";
+  reason_code: AuthorizeResult["reason"];
+  correlation_id: string;
+  component: "cas";
+  resource_ref: string;
+  resource_type: string;
+  pdp: "openfga";
+  source: "cas";
+  /** Marks this row as a bulk evaluation so consumers don't read it as one decision. */
+  batch: true;
+  evaluated_count: number;
+  allowed_count: number;
+  denied_count: number;
+  /** Capped; `allowed_truncated` says whether ids were dropped from the list. */
+  allowed_ids: string[];
+  allowed_truncated?: boolean;
+  /** Denial reason → count, so a policy-relevant denial reason stays visible. */
+  denied_reasons?: Record<string, number>;
+  trace_id?: string;
+  span_id?: string;
+}
+
+/**
+ * Cap on ids listed in one batch row. A filter that allows more than this is
+ * a broad-access case where the exact list matters least, and the counts plus
+ * `allowed_truncated` still describe it faithfully.
+ */
+const BATCH_ALLOWED_IDS_CAP = 100;
 
 function hashSubject(id: string): string {
   return "sha256:" + createHash("sha256").update(`${SUBJECT_SALT}:${id}`).digest("hex");
@@ -188,6 +250,69 @@ export function emitDecisionAudit(
     recordAllow(event);
     return;
   }
+  writeAuditEvent(event as unknown as Record<string, unknown>);
+}
+
+export function buildBatchDecisionEvent(
+  subject: Subject,
+  action: Action,
+  resourceType: string,
+  results: Map<string, AuthorizeResult>,
+  ctx: DecisionContext = {},
+): CasBatchDecisionEvent {
+  const allowedIds: string[] = [];
+  const deniedReasons: Record<string, number> = {};
+  for (const [id, result] of results) {
+    if (result.decision === "ALLOW") {
+      allowedIds.push(id);
+    } else {
+      deniedReasons[result.reason] = (deniedReasons[result.reason] ?? 0) + 1;
+    }
+  }
+  const deniedCount = results.size - allowedIds.length;
+
+  return {
+    audit_event_id: randomUUID(),
+    ts: new Date(),
+    type: "cas_decision",
+    tenant_id: ctx.tenantId ?? process.env.TENANT_ID ?? "default",
+    subject_hash: hashSubject(subject.id),
+    subject_ref: principalRef(subject.type, subject.id),
+    action,
+    // The filter ran; whether any individual resource was accessible is in the
+    // counts. A bulk evaluation returning nothing accessible is the one case
+    // worth surfacing as a denial.
+    outcome: allowedIds.length > 0 ? "allow" : "deny",
+    reason_code: allowedIds.length > 0 ? "OK" : "NO_CAPABILITY",
+    correlation_id: ctx.correlationId ?? `batch:${randomUUID()}`,
+    component: "cas",
+    // No single resource id applies, so the ref names the evaluated collection.
+    resource_ref: `${resourceType}:*`,
+    resource_type: resourceType,
+    pdp: "openfga",
+    source: "cas",
+    batch: true,
+    evaluated_count: results.size,
+    allowed_count: allowedIds.length,
+    denied_count: deniedCount,
+    allowed_ids: allowedIds.slice(0, BATCH_ALLOWED_IDS_CAP),
+    ...(allowedIds.length > BATCH_ALLOWED_IDS_CAP ? { allowed_truncated: true } : {}),
+    ...(deniedCount > 0 ? { denied_reasons: deniedReasons } : {}),
+    ...(ctx.traceId ? { trace_id: ctx.traceId } : {}),
+    ...(ctx.spanId ? { span_id: ctx.spanId } : {}),
+  };
+}
+
+/** Audit one bulk evaluation as a single row. Empty batches write nothing. */
+export function emitBatchDecisionAudit(
+  subject: Subject,
+  action: Action,
+  resourceType: string,
+  results: Map<string, AuthorizeResult>,
+  ctx: DecisionContext = {},
+): void {
+  if (results.size === 0) return;
+  const event = buildBatchDecisionEvent(subject, action, resourceType, results, ctx);
   writeAuditEvent(event as unknown as Record<string, unknown>);
 }
 
