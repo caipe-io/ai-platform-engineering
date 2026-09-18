@@ -43,23 +43,14 @@ import {
   Play,
   Plug,
   RotateCcw,
-  Route,
   Sparkles,
-  ShieldCheck,
   TriangleAlert,
-  Activity,
-  Waypoints,
   XCircle,
   Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  siKeycloak,
-  siOpentelemetry,
-  type SimpleIcon,
-} from "simple-icons";
 
 interface ModelOption {
   _id: string;
@@ -96,12 +87,6 @@ interface HealthCapability {
   status: "healthy" | "degraded" | "down" | "disabled";
   detail: string;
   required: boolean;
-}
-
-interface Remediation {
-  href: string;
-  label: string;
-  description: string;
 }
 
 interface HealthPayload {
@@ -167,7 +152,6 @@ const RECIPES = [
   },
 ];
 
-const APPLY_ALL_MIGRATIONS_CONFIRMATION = "APPLY ALL PENDING MIGRATIONS";
 
 type SetupFeatureKey = "workflows" | "schedules" | "autonomous_agents" | "apps";
 
@@ -403,9 +387,6 @@ export function SetupWizardDialog({
   const [testConversationId, setTestConversationId] = useState<string | null>(null);
   const [showAddModel, setShowAddModel] = useState(false);
   const [newModel, setNewModel] = useState({ model_id: "", name: "", provider: "" });
-  const [confirmMigrationRemediation, setConfirmMigrationRemediation] = useState(false);
-  const [remediatingMigrations, setRemediatingMigrations] = useState(false);
-  const [migrationRemediationResult, setMigrationRemediationResult] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
   const [contextSection, setContextSection] = useState("accounts");
 
@@ -700,35 +681,6 @@ export function SetupWizardDialog({
     }
   };
 
-  const autoRemediateMigrations = async () => {
-    setError(null);
-    setMigrationRemediationResult(null);
-    setRemediatingMigrations(true);
-    try {
-      const result = await jsonRequest<ApiEnvelope<{
-        applied_count: number;
-        failed_count: number;
-        skipped_count: number;
-      }>>("/api/admin/rebac/migrations/apply-all", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmation: APPLY_ALL_MIGRATIONS_CONFIRMATION }),
-      });
-      const summary = result.data;
-      setMigrationRemediationResult(
-        `${summary.applied_count} migration${summary.applied_count === 1 ? "" : "s"} applied` +
-          (summary.failed_count > 0 ? `; ${summary.failed_count} failed` : "") +
-          (summary.skipped_count > 0 ? `; ${summary.skipped_count} skipped` : ""),
-      );
-      setConfirmMigrationRemediation(false);
-      setHealth(await healthRequest());
-    } catch (remediationError) {
-      setError(remediationError instanceof Error ? remediationError.message : "Could not apply RBAC migrations");
-    } finally {
-      setRemediatingMigrations(false);
-    }
-  };
-
   const canContinue = step !== 2 || Boolean(selectedModel);
 
   const readinessCapabilities = (health?.capabilities ?? []).filter((capability) =>
@@ -738,8 +690,6 @@ export function SetupWizardDialog({
   const readinessChecks = readinessCapabilities.length + readinessProbes.length;
   const healthyReadinessChecks = readinessCapabilities.filter((capability) => capability.status === "healthy").length
     + readinessProbes.filter((probe) => probe.status === "healthy").length;
-  const readinessHealthy = readinessChecks > 0 && healthyReadinessChecks === readinessChecks;
-  const platformComponents = health?.components ?? [];
   const completedSteps = (payload?.state.completed_steps ?? []).filter((id) => !(payload?.state.skipped_steps ?? []).includes(id));
   const progress = Math.round(completedSteps.filter((id) => id !== 4).length / 4 * 100);
 
@@ -861,109 +811,14 @@ export function SetupWizardDialog({
                           <div key={item.title} className="rounded-xl border bg-card/60 p-4"><item.icon className="mb-3 h-5 w-5 text-primary" /><p className="text-sm font-medium">{item.title}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.text}</p></div>
                         ))}
                       </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground">
-                        <span><strong className="text-foreground">{payload?.inventory.models ?? 0}</strong> models</span>
-                        <span><strong className="text-foreground">{payload?.inventory.mcp_servers ?? 0}</strong> MCP servers</span>
-                        <span><strong className="text-foreground">{payload?.inventory.connected_credentials ?? 0}</strong> credentials</span>
-                        <span><strong className="text-foreground">{payload?.inventory.knowledge_sources ?? 0}</strong> knowledge sources</span>
-                        <Link className="ml-auto text-primary hover:underline" href="/admin/operations/health" onClick={() => onOpenChange(false)}>View details</Link>
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/10 p-4">
+                        <p className="text-sm text-muted-foreground">
+                          {!health ? "Platform health is unavailable. Check it before testing." : requiredHealthFailure ? "A required service needs attention before your first test." : "Review service status and deployment details in Platform Health."}
+                        </p>
+                        <Button asChild variant="outline" size="sm">
+                          <Link href="/admin/operations/health">Open Platform Health<ChevronRight className="ml-1 h-4 w-4" /></Link>
+                        </Button>
                       </div>
-                      {platformComponents.length > 0 && (
-                        <details className="group rounded-xl border bg-muted/10 p-3">
-                          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
-                            <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Platform services</span>
-                            <Badge variant="outline" className="text-[10px]">{platformComponents.filter((component) => component.status === "healthy").length}/{platformComponents.length} ready</Badge>
-                          </summary>
-                          <p className="mt-2 text-xs text-muted-foreground">Live status of the services that power your agent.</p>
-                          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                            {platformComponents.map((component, index) => (
-                              <PlatformComponentCard key={component.id} component={component} delay={index * 45} />
-                            ))}
-                          </div>
-                          <Link className="mt-2 inline-flex text-[11px] text-primary hover:underline" href="/admin/operations/health" onClick={() => onOpenChange(false)}>Open full health details<ExternalLink className="ml-1 h-3 w-3" /></Link>
-                        </details>
-                      )}
-                      <details className="group rounded-xl border bg-muted/10 p-3" open={!readinessHealthy}>
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
-                          <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Readiness checks</span>
-                          <Badge variant="outline" className="text-[10px]">{healthyReadinessChecks}/{readinessChecks || "—"} ready</Badge>
-                        </summary>
-                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                          {readinessCapabilities.map((capability, index) => (
-                            <div key={capability.id} className="animate-slide-in" style={{ animationDelay: `${index * 70}ms` }}>
-                              <CapabilityRow
-                                capability={capability}
-                                remediation={getCapabilityRemediation(capability, health?.probes)}
-                                compact
-                                onNavigate={() => onOpenChange(false)}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                        <div className="mt-2 space-y-2">
-                          {readinessProbes.map((probe) => (
-                            <div key={probe.id} className="animate-slide-in flex items-start justify-between gap-3 rounded-lg border p-2.5" style={{ animationDelay: "280ms" }}>
-                            <div className="flex gap-3">
-                              {probe.status === "healthy"
-                                ? <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
-                                : <TriangleAlert className="mt-0.5 h-4 w-4 text-amber-500" />}
-                              <div>
-                                <p className="text-sm font-medium">{probe.label}</p>
-                                <p className="text-[11px] text-muted-foreground">{probe.detail}</p>
-                                {probe.status !== "healthy" && (
-                                  <div className="mt-1.5 space-y-1.5">
-                                    <p className="text-[11px] text-muted-foreground">
-                                      Review the pending changes before applying them. The operation is idempotent and runs in dependency order.
-                                    </p>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      {probe.remediation && (
-                                        <Link className="text-[11px] text-primary hover:underline" href={probe.remediation.href} onClick={() => onOpenChange(false)}>
-                                          {probe.remediation.label}
-                                        </Link>
-                                      )}
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => setConfirmMigrationRemediation(true)}
-                                        disabled={remediatingMigrations}
-                                      >
-                                        {remediatingMigrations && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-                                        Auto-remediate
-                                      </Button>
-                                    </div>
-                                    {confirmMigrationRemediation && (
-                                      <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2">
-                                        <p className="text-xs text-amber-700 dark:text-amber-300">
-                                          This applies all pending RBAC migrations and changes live access data. Continue only if this deployment is ready for the migration.
-                                        </p>
-                                        <div className="mt-2 flex gap-2">
-                                          <Button type="button" size="sm" variant="outline" onClick={() => setConfirmMigrationRemediation(false)} disabled={remediatingMigrations}>
-                                            Cancel
-                                          </Button>
-                                          <Button type="button" size="sm" onClick={() => void autoRemediateMigrations()} disabled={remediatingMigrations}>
-                                            Confirm and apply
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    )}
-                                    {migrationRemediationResult && (
-                                      <p className="text-xs text-emerald-700 dark:text-emerald-300">{migrationRemediationResult}</p>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            <Badge className="text-[10px]" variant="outline">{probe.status}</Badge>
-                            </div>
-                          ))}
-                          {!health && (
-                            <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
-                              Health details are unavailable. You can continue and validate with the smoke test.
-                            </p>
-                          )}
-                        </div>
-                      </details>
                       <details className="group animate-fade-in rounded-xl border bg-muted/10 p-3">
                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
                           <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Optional capabilities</span>
@@ -1470,104 +1325,6 @@ function InventoryTile({ label, value, delay = 0 }: { label: string; value: numb
     <div className="animate-fade-in rounded-lg border bg-card p-3 transition-transform duration-300 hover:-translate-y-0.5" style={{ animationDelay: `${delay}ms` }}>
       <p className="text-2xl font-semibold">{value}</p>
       <p className="text-xs text-muted-foreground">{label}</p>
-    </div>
-  );
-}
-
-const PLATFORM_COMPONENT_MARKS: Record<string, { icon: typeof Activity; className: string; logo?: SimpleIcon; logoUrl?: string }> = {
-  "caipe-ui": { icon: Sparkles, className: "from-cyan-500/30 to-violet-500/30 text-cyan-300" },
-  keycloak: { icon: ShieldCheck, className: "from-blue-500/30 to-indigo-500/30 text-blue-300", logo: siKeycloak },
-  openfga: { icon: Network, className: "from-amber-500/30 to-orange-500/30 text-amber-300", logoUrl: "https://raw.githubusercontent.com/openfga/openfga/main/openfga-logo.png" },
-  "caipe-agent-harness": { icon: Bot, className: "from-emerald-500/30 to-teal-500/30 text-emerald-300" },
-  scheduler: { icon: CalendarClock, className: "from-cyan-500/30 to-blue-500/30 text-cyan-300" },
-  "autonomous-agents": { icon: Bot, className: "from-emerald-500/30 to-lime-500/30 text-emerald-300" },
-  agentgateway: { icon: Route, className: "from-fuchsia-500/30 to-pink-500/30 text-fuchsia-300", logoUrl: "https://raw.githubusercontent.com/agentgateway/agentgateway/main/ui/public/agw-mark-color.svg" },
-  "otel-tracing": { icon: Activity, className: "from-sky-500/30 to-cyan-500/30 text-sky-300", logo: siOpentelemetry },
-  litellm: { icon: Waypoints, className: "from-violet-500/30 to-purple-500/30 text-violet-300", logoUrl: "https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/proxy/_experimental/out/assets/logos/litellm_logo.jpg" },
-};
-
-function PlatformComponentCard({
-  component,
-  delay,
-}: {
-  component: NonNullable<HealthPayload["components"]>[number];
-  delay: number;
-}) {
-  const mark = PLATFORM_COMPONENT_MARKS[component.id] ?? { icon: Cloud, className: "from-slate-500/30 to-slate-700/30 text-slate-300" };
-  const Icon = mark.icon;
-  const healthy = component.status === "healthy";
-  const disabled = component.status === "disabled";
-  const usesCaipeLogo = ["caipe-ui", "caipe-agent-harness", "scheduler", "autonomous-agents"].includes(component.id);
-  const enableGuide = component.id === "scheduler"
-    ? SETUP_FEATURES.find((feature) => feature.key === "schedules")?.docs
-    : component.id === "autonomous-agents"
-      ? SETUP_FEATURES.find((feature) => feature.key === "autonomous_agents")?.docs
-      : "https://caipe.io/docs/";
-  return (
-    <div className={cn("animate-slide-in flex items-center gap-2.5 rounded-lg border bg-card/60 p-2.5 transition-transform duration-300 hover:-translate-y-0.5", disabled && "opacity-60 grayscale")} style={{ animationDelay: `${delay}ms` }}>
-      <span className={cn("relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br", mark.className)} aria-hidden="true">
-        {usesCaipeLogo ? (
-          // The configured logo may be deployment-provided and is intentionally not optimized.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={getConfig("logoUrl")} alt="" className="h-7 w-7 object-contain" />
-        ) : mark.logo ? (
-          <svg viewBox="0 0 24 24" className="h-5 w-5" role="img" aria-label={`${component.label} logo`}>
-            <path d={mark.logo.path} fill="currentColor" />
-          </svg>
-        ) : mark.logoUrl ? (
-          // These upstream service marks are optional presentation assets.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={mark.logoUrl} alt={`${component.label} logo`} className="h-7 w-7 rounded object-contain" />
-        ) : (
-          <Icon className="h-5 w-5" />
-        )}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center justify-between gap-2">
-          <span className="break-words text-xs font-medium">{component.label}</span>
-          <span className={cn("h-2 w-2 shrink-0 rounded-full", healthy ? "bg-emerald-500" : disabled ? "bg-slate-500" : "bg-amber-500")} title={disabled ? "Not installed" : component.status} />
-        </span>
-        <span className="block truncate text-[10px] text-muted-foreground" title={component.detail}>{component.detail}</span>
-        {disabled && <details className="mt-1 text-[11px]"><summary className="cursor-pointer">How to enable</summary><p className="mt-1 leading-relaxed">{component.detail}</p><a className="mt-1 inline-flex items-center gap-1 underline" href={enableGuide} target="_blank" rel="noreferrer">Deployment guide<ExternalLink className="h-3 w-3" /></a></details>}
-      </span>
-    </div>
-  );
-}
-
-function getCapabilityRemediation(
-  capability: HealthCapability,
-  probes: HealthPayload["probes"],
-): Remediation | undefined {
-  if (capability.id === "knowledge-bases") {
-    const ragProbe = probes?.find((probe) => probe.id === "rag-server");
-    return {
-      href: ragProbe?.remediation?.href ?? "/knowledge-bases",
-      label: ragProbe?.remediation?.label ?? "Open Knowledge Bases",
-      description: ragProbe?.detail ?? "Check the RAG server dependencies and enable the RAG service/profile if it is not running.",
-    };
-  }
-  return undefined;
-}
-
-function CapabilityRow({ capability, remediation, compact = false, onNavigate }: { capability: HealthCapability; remediation?: Remediation; compact?: boolean; onNavigate?: () => void }) {
-  const healthy = capability.status === "healthy";
-  const disabled = capability.status === "disabled";
-  return (
-    <div className={cn("flex h-full items-start justify-between gap-3 rounded-lg border", compact ? "p-2.5" : "p-3")}>
-      <div className="flex gap-3">
-        {healthy ? <CheckCircle2 className={cn("mt-0.5 text-emerald-500", compact ? "h-4 w-4" : "h-5 w-5")} /> : disabled ? <Circle className={cn("mt-0.5 text-muted-foreground", compact ? "h-4 w-4" : "h-5 w-5")} /> : <TriangleAlert className={cn("mt-0.5 text-amber-500", compact ? "h-4 w-4" : "h-5 w-5")} />}
-        <div>
-          <p className="text-sm font-medium">{capability.label}</p>
-          <p className={cn("text-muted-foreground", compact ? "text-[11px] leading-snug" : "text-xs")}>{capability.detail}</p>
-          {remediation && !healthy && (
-            <div className={cn("space-y-1", compact ? "mt-1" : "mt-2")}>
-              <p className={cn("text-muted-foreground", compact ? "text-[11px] leading-snug" : "text-xs")}><span className="font-medium">How to fix:</span> {remediation.description}</p>
-              <Link className={cn("text-primary hover:underline", compact ? "text-[11px]" : "text-xs")} href={remediation.href} onClick={onNavigate}>{remediation.label}</Link>
-            </div>
-          )}
-        </div>
-      </div>
-      <Badge className={compact ? "text-[10px]" : undefined} variant="outline">{capability.status}</Badge>
     </div>
   );
 }

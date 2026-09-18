@@ -72,6 +72,7 @@ describe('usePlatformHealthProbes', () => {
 
   it('diagnostics mode fetches probes from /api/platform/health?diagnostics=1', async () => {
     const body = makeHealthyResponse({
+      components: [{ id: 'scheduler', label: 'CAIPE Agent Scheduler', status: 'disabled', detail: 'Not enabled', version: null }],
       probe_summary: { total: 1, healthy: 1, warning: 0, down: 0 },
       probes: [
         {
@@ -98,6 +99,7 @@ describe('usePlatformHealthProbes', () => {
 
     expect(result.current.probeSummary).toEqual({ total: 1, healthy: 1, warning: 0, down: 0 });
     expect(result.current.probes.map((probe) => probe.id)).toEqual(['keycloak']);
+    expect(result.current.components[0].id).toBe('scheduler');
     expect(global.fetch).toHaveBeenCalledWith(
       '/api/platform/health?diagnostics=1',
       expect.objectContaining({ method: 'GET' })

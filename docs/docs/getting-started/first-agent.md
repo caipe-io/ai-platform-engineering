@@ -10,8 +10,9 @@ connected accounts, and automation can be added later.
 
 ## Complete basic setup
 
-1. **Welcome:** review platform readiness. Expand checks that need attention;
-   a disabled optional service does not prevent a basic conversation.
+1. **Welcome:** review the brief readiness summary. **Open Platform Health** for
+   service inventory, component logos, detailed checks, and remediation links.
+   A disabled optional service does not prevent a basic conversation.
 2. **Choose a model:** select an existing model or open **Configure provider
    access**. Configure its endpoint and authentication in the provider workspace,
    then register/select the model. A model name alone does not configure access.

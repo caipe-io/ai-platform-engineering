@@ -2,6 +2,8 @@
 
 // assisted-by Codex Codex-sonnet-4-6
 import { Button } from "@/components/ui/button";
+import { PlatformComponentCard } from "./PlatformComponentCard";
+import type { SetupWizardPayload } from "@/lib/setup-wizard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -170,6 +172,7 @@ export function HealthTab() {
   const { versionInfo } = useVersion();
   const {
     capabilities,
+    components = [],
     summary,
     probes,
     probeSummary,
@@ -194,6 +197,17 @@ export function HealthTab() {
   const [selectedCapability, setSelectedCapability] = useState<PlatformHealthCapability | null>(null);
   const [resolvingNotification,setResolvingNotification] = useState(false);
   const [resolutionMessage,setResolutionMessage] = useState<string | null>(null);
+  const [inventory, setInventory] = useState<SetupWizardPayload["inventory"] | null>(null);
+
+  const loadInventory = useCallback(async () => {
+    try {
+      const response = await fetch("/api/admin/setup-wizard", { cache: "no-store" });
+      const body = await response.json();
+      setInventory(response.ok && body.success ? body.data.inventory : null);
+    } catch {
+      setInventory(null);
+    }
+  }, []);
 
   const loadSlackStatus = useCallback(async () => {
     try {
@@ -237,15 +251,17 @@ export function HealthTab() {
     const timer = window.setTimeout(() => {
       void loadSlackStatus();
       void loadWebexStatus();
+      void loadInventory();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadSlackStatus, loadWebexStatus]);
+  }, [loadSlackStatus, loadWebexStatus, loadInventory]);
 
   const refreshAll = useCallback(() => {
     refreshPlatformHealth();
     void loadSlackStatus();
     void loadWebexStatus();
-  }, [refreshPlatformHealth, loadSlackStatus, loadWebexStatus]);
+    void loadInventory();
+  }, [refreshPlatformHealth, loadSlackStatus, loadWebexStatus, loadInventory]);
 
   const slackCapability = capabilities.find((capability) => capability.id === "slack-integration") ?? null;
   const webexCapability = capabilities.find((capability) => capability.id === "webex-integration") ?? null;
@@ -343,6 +359,24 @@ export function HealthTab() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Platform services</CardTitle>
+          <CardDescription>Services that power CAIPE. Disabled services are greyed out and include deployment guidance.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {inventory && <dl className="grid grid-cols-2 gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-4">
+            {[{ label: "Models", value: inventory.models }, { label: "MCP servers", value: inventory.mcp_servers }, { label: "Connected credentials", value: inventory.connected_credentials }, { label: "Knowledge sources", value: inventory.knowledge_sources }].map((item) => (
+              <div key={item.label}><dt className="text-xs text-muted-foreground">{item.label}</dt><dd className="mt-1 text-xl font-semibold">{item.value}</dd></div>
+            ))}
+          </dl>}
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {components.map((component) => <PlatformComponentCard key={component.id} component={component} />)}
+          </div>
+          {components.length === 0 && <p className="text-sm text-muted-foreground">{platformStatus === "checking" ? "Checking platform services…" : "Service inventory is unavailable. Refresh to try again."}</p>}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
               <CardTitle>Platform Capabilities</CardTitle>
               <CardDescription>
                 Select a capability to inspect upstream service probes.
@@ -379,6 +413,18 @@ export function HealthTab() {
           )}
         </CardContent>
       </Card>
+
+      {probes.length > 0 && <Card>
+        <CardHeader>
+          <CardTitle>Readiness checks</CardTitle>
+          <CardDescription>Dependency and bootstrap diagnostics. Follow a check’s remediation link to review and resolve issues, including pending RBAC migrations.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/70">
+            {probes.map((probe) => <DiagnosticProbeRow key={probe.id} probe={probe} />)}
+          </div>
+        </CardContent>
+      </Card>}
 
       {(showSlack || showWebex) && (
         <Card>

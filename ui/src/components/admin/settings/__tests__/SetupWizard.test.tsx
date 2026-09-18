@@ -322,7 +322,7 @@ describe("SetupWizardSettings", () => {
     expect(await screen.findByRole("heading", { name: "Choose a model" })).toBeInTheDocument();
   });
 
-  it("explains degraded knowledge bases and offers guarded migration remediation", async () => {
+  it("links to Platform Health instead of duplicating diagnostics and remediation", async () => {
     const freshPayload = {
       ...setupPayload,
       data: {
@@ -376,21 +376,10 @@ describe("SetupWizardSettings", () => {
 
     render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
 
-    expect(await screen.findByText(/How to fix:/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open Knowledge Bases" })).toHaveAttribute("href", "/knowledge-bases");
-    fireEvent.click(screen.getByRole("button", { name: "Auto-remediate" }));
-    expect(screen.getByText(/changes live access data/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Confirm and apply" }));
+    expect(await screen.findByRole("link", { name: "Open Platform Health" })).toHaveAttribute("href", "/admin/operations/health");
+    expect(screen.queryByText("Platform services")).not.toBeInTheDocument();
+    expect(screen.queryByText("Readiness checks")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Auto-remediate" })).not.toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith(
-        "/api/admin/rebac/migrations/apply-all",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({ confirmation: "APPLY ALL PENDING MIGRATIONS" }),
-        }),
-      );
-    });
-    expect(await screen.findByText("23 migrations applied")).toBeInTheDocument();
   });
 });
