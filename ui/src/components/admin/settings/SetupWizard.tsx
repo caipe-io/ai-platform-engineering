@@ -715,6 +715,7 @@ export function SetupWizardDialog({
   const readinessChecks = readinessCapabilities.length + readinessProbes.length;
   const healthyReadinessChecks = readinessCapabilities.filter((capability) => capability.status === "healthy").length
     + readinessProbes.filter((probe) => probe.status === "healthy").length;
+  const readinessHealthy = readinessChecks > 0 && healthyReadinessChecks === readinessChecks;
   const platformComponents = health?.components ?? [];
 
   const closeCompleted = () => {
@@ -820,42 +821,47 @@ export function SetupWizardDialog({
                           )}
                         </div>
                       </div>
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <InventoryTile label="Models" value={payload?.inventory.models ?? 0} delay={0} />
-                        <InventoryTile label="MCP servers" value={payload?.inventory.mcp_servers ?? 0} delay={70} />
-                        <InventoryTile label="Connected credentials" value={payload?.inventory.connected_credentials ?? 0} delay={140} />
-                        <InventoryTile label="Knowledge sources" value={payload?.inventory.knowledge_sources ?? 0} delay={210} />
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground">
+                        <span><strong className="text-foreground">{payload?.inventory.models ?? 0}</strong> models</span>
+                        <span><strong className="text-foreground">{payload?.inventory.mcp_servers ?? 0}</strong> MCP servers</span>
+                        <span><strong className="text-foreground">{payload?.inventory.connected_credentials ?? 0}</strong> credentials</span>
+                        <span><strong className="text-foreground">{payload?.inventory.knowledge_sources ?? 0}</strong> knowledge sources</span>
+                        <Link className="ml-auto text-primary hover:underline" href="/admin/operations/health">View details</Link>
                       </div>
                       {platformComponents.length > 0 && (
-                        <div className="space-y-2 rounded-xl border bg-muted/10 p-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-semibold">Platform services</p>
-                              <p className="text-xs text-muted-foreground">Live status of the services that power your agent.</p>
-                            </div>
+                        <details className="group rounded-xl border bg-muted/10 p-3">
+                          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+                            <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Platform services</span>
                             <Badge variant="outline" className="text-[10px]">{platformComponents.filter((component) => component.status === "healthy").length}/{platformComponents.length} ready</Badge>
-                          </div>
-                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          </summary>
+                          <p className="mt-2 text-xs text-muted-foreground">Live status of the services that power your agent.</p>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                             {platformComponents.map((component, index) => (
                               <PlatformComponentCard key={component.id} component={component} delay={index * 45} />
                             ))}
                           </div>
-                        </div>
+                          <Link className="mt-2 inline-flex text-[11px] text-primary hover:underline" href="/admin/operations/health">Open full health details<ExternalLink className="ml-1 h-3 w-3" /></Link>
+                        </details>
                       )}
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        {readinessCapabilities.map((capability, index) => (
-                          <div key={capability.id} className="animate-slide-in" style={{ animationDelay: `${index * 70}ms` }}>
-                            <CapabilityRow
-                              capability={capability}
-                              remediation={getCapabilityRemediation(capability, health?.probes)}
-                              compact
-                            />
-                          </div>
-                        ))}
-                      </div>
-                      <div className="space-y-2">
-                        {readinessProbes.map((probe) => (
-                          <div key={probe.id} className="animate-slide-in flex items-start justify-between gap-3 rounded-lg border p-2.5" style={{ animationDelay: "280ms" }}>
+                      <details className="group rounded-xl border bg-muted/10 p-3" open={!readinessHealthy}>
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+                          <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Readiness checks</span>
+                          <Badge variant="outline" className="text-[10px]">{healthyReadinessChecks}/{readinessChecks || "—"} ready</Badge>
+                        </summary>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                          {readinessCapabilities.map((capability, index) => (
+                            <div key={capability.id} className="animate-slide-in" style={{ animationDelay: `${index * 70}ms` }}>
+                              <CapabilityRow
+                                capability={capability}
+                                remediation={getCapabilityRemediation(capability, health?.probes)}
+                                compact
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-2 space-y-2">
+                          {readinessProbes.map((probe) => (
+                            <div key={probe.id} className="animate-slide-in flex items-start justify-between gap-3 rounded-lg border p-2.5" style={{ animationDelay: "280ms" }}>
                             <div className="flex gap-3">
                               {probe.status === "healthy"
                                 ? <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
@@ -908,20 +914,23 @@ export function SetupWizardDialog({
                               </div>
                             </div>
                             <Badge className="text-[10px]" variant="outline">{probe.status}</Badge>
-                          </div>
-                        ))}
-                        {!health && (
-                          <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
-                            Health details are unavailable. You can continue and validate with the smoke test.
-                          </p>
-                        )}
-                      </div>
-                      <div className="animate-fade-in space-y-2.5 rounded-xl border bg-muted/10 p-3">
+                            </div>
+                          ))}
+                          {!health && (
+                            <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
+                              Health details are unavailable. You can continue and validate with the smoke test.
+                            </p>
+                          )}
+                        </div>
+                      </details>
+                      <details className="group animate-fade-in rounded-xl border bg-muted/10 p-3">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+                          <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Optional capabilities</span>
+                          <span className="text-[11px] text-muted-foreground">Configure later</span>
+                        </summary>
+                        <div className="mt-2 space-y-2.5">
                         <div>
-                          <p className="text-sm font-medium">Make the platform yours</p>
-                          <p className="text-xs text-muted-foreground">
-                            Choose which deployed surfaces should appear in the application navigation. Deployment flags remain the hard service gate.
-                          </p>
+                          <p className="text-xs text-muted-foreground">Choose which deployed surfaces appear in navigation. Deployment flags remain the hard service gate.</p>
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2">
                           {SETUP_FEATURES.map((feature) => {
@@ -972,6 +981,7 @@ export function SetupWizardDialog({
                           Workflows include a short guided explanation in the Workflows workspace. Apps require a deployment-owned catalog before they can be enabled.
                         </p>
                       </div>
+                      </details>
                       {requiredHealthFailure && (
                         <p className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
                           <TriangleAlert className="h-4 w-4" /> A required service is down. Fix it before the final smoke test.
@@ -982,7 +992,13 @@ export function SetupWizardDialog({
 
                   {step === 2 && (
                     <div className="space-y-3">
-                      <ModelProviderGuide onNavigate={() => onOpenChange(false)} />
+                      <details className="group rounded-xl border bg-muted/10 p-3">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+                          <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Provider guidance</span>
+                          <span className="text-[11px] text-muted-foreground">OpenAI-compatible · Anthropic · Bedrock</span>
+                        </summary>
+                        <div className="mt-3"><ModelProviderGuide onNavigate={() => onOpenChange(false)} /></div>
+                      </details>
                       {models.length === 0 ? (
                         <div className="space-y-4 rounded-xl border border-dashed p-6">
                           <div className="text-center">
@@ -1123,6 +1139,12 @@ export function SetupWizardDialog({
                         </div>
                       </div>
 
+                      <details className="group rounded-xl border bg-muted/10 p-3">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+                          <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Tools, knowledge, and team integrations</span>
+                          <span className="text-[11px] text-muted-foreground">Optional</span>
+                        </summary>
+                        <div className="mt-3 space-y-4">
                       <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
                         <div className="flex items-start gap-3">
                           <Plug className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -1228,6 +1250,8 @@ export function SetupWizardDialog({
                           })}
                         </div>
                       </div>
+                        </div>
+                      </details>
                     </div>
                   )}
 
