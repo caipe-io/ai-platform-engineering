@@ -737,7 +737,7 @@ export function SetupWizardDialog({
         else void dismiss();
       }
     }}>
-      <DialogContent className="h-[min(860px,calc(100vh-2rem))] max-h-[calc(100vh-2rem)] max-w-6xl min-h-0 overflow-hidden p-0">
+      <DialogContent className="h-[min(860px,calc(100vh-2rem))] max-h-[calc(100vh-2rem)] max-w-6xl min-h-0 overflow-hidden p-0 data-[state=closed]:animate-setup-minimize">
         <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[220px_1fr]">
           <aside className="border-b bg-muted/25 p-4 md:border-b-0 md:border-r">
             <div className="mb-5 flex items-center gap-2">
@@ -1612,14 +1612,16 @@ export function SetupWizardGate(): React.ReactElement | null {
   const [open, setOpen] = useState(false);
   const [restart, setRestart] = useState(false);
   const [checklistOpen, setChecklistOpen] = useState(false);
+  const [resumePulse, setResumePulse] = useState(0);
   const [checklistHidden, setChecklistHidden] = useState(false);
   const [hidingChecklist, setHidingChecklist] = useState(false);
 
   useEffect(() => {
     // A setup handoff should never leave the full-screen dialog over the
     // destination page, including when navigation remounts this gate.
+    if (open) setResumePulse((current) => current + 1);
     setOpen(false);
-  }, [pathname]);
+  }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (loading || !isAdmin || !getConfig("setupWizardEnabled")) return;
@@ -1757,16 +1759,20 @@ export function SetupWizardGate(): React.ReactElement | null {
           </div>
         )}
         <Button
+          key={resumePulse}
           type="button"
           size="sm"
           variant="outline"
-          className="ml-auto flex animate-pulse-gentle items-center gap-2 rounded-full bg-card/90 shadow-lg backdrop-blur-xl"
+          className={cn(
+            "ml-auto flex items-center gap-2 rounded-full bg-card/90 shadow-lg backdrop-blur-xl",
+            resumePulse > 0 ? "animate-setup-bubble-in" : "animate-pulse-gentle",
+          )}
           onClick={() => setChecklistOpen((current) => !current)}
           aria-expanded={checklistOpen}
-          aria-label="Open setup checklist"
+          aria-label="Resume setup"
         >
           <ListChecks className="h-4 w-4 text-primary" />
-          Setup checklist
+          {checklistOpen ? "Setup checklist" : "Resume setup"}
           <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">{completedChecklistItems}/{checklistItems.length}</span>
         </Button>
       </div>
@@ -1775,6 +1781,7 @@ export function SetupWizardGate(): React.ReactElement | null {
         restart={restart}
         initialPayload={payload}
         onOpenChange={(nextOpen) => {
+          if (!nextOpen && open) setResumePulse((current) => current + 1);
           setOpen(nextOpen);
           if (!nextOpen) refreshPayload();
         }}
