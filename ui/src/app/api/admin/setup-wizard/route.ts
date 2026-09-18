@@ -40,6 +40,7 @@ interface SetupWizardPatchBody {
   selection?: unknown;
   created_agent_id?: unknown;
   smoke_test?: unknown;
+  checklist_hidden?: unknown;
 }
 
 function stringArray(value: unknown): string[] | undefined {
@@ -184,8 +185,8 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
     await requireSetupAdmin(session, "admin");
     const body = await request.json() as SetupWizardPatchBody;
     const action = body.action;
-    if (action !== "start" && action !== "progress" && action !== "dismiss" && action !== "complete" && action !== "reset") {
-      throw new ApiError("action must be start, progress, dismiss, complete, or reset", 400, "INVALID_SETUP_ACTION");
+    if (action !== "start" && action !== "progress" && action !== "dismiss" && action !== "complete" && action !== "reset" && action !== "hide_checklist") {
+      throw new ApiError("action must be start, progress, dismiss, complete, reset, or hide_checklist", 400, "INVALID_SETUP_ACTION");
     }
 
     const collection = await getCollection<PlatformConfigDocument>("platform_config");
@@ -217,6 +218,8 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
           ? "completed"
           : action === "dismiss"
             ? "dismissed"
+            : action === "hide_checklist"
+              ? previous.status
             : "in_progress",
         current_step: currentStep ?? previous.current_step,
         completed_steps: completedSteps ?? previous.completed_steps,
@@ -227,6 +230,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
         updated_at: now,
         ...(action === "complete" ? { completed_at: now, dismissed_at: undefined } : {}),
         ...(action === "dismiss" ? { dismissed_at: now } : {}),
+        ...(action === "hide_checklist" ? { checklist_hidden: true } : {}),
         run_count: Math.max(1, previous.run_count ?? 0),
       };
     }

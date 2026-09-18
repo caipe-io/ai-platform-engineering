@@ -35,6 +35,7 @@ export interface SetupWizardState {
   updated_at?: string;
   completed_at?: string;
   dismissed_at?: string;
+  checklist_hidden?: boolean;
   last_smoke_test?: {
     status: "passed" | "failed";
     detail?: string;
@@ -115,6 +116,7 @@ export function normalizeSetupWizardState(value: unknown): SetupWizardState {
   const updatedAt = timestamp(source.updated_at);
   const completedAt = timestamp(source.completed_at);
   const dismissedAt = timestamp(source.dismissed_at);
+  const checklistHidden = source.checklist_hidden === true;
 
   return {
     version: SETUP_WIZARD_VERSION,
@@ -157,6 +159,7 @@ export function normalizeSetupWizardState(value: unknown): SetupWizardState {
     ...(updatedAt ? { updated_at: updatedAt } : {}),
     ...(completedAt ? { completed_at: completedAt } : {}),
     ...(dismissedAt ? { dismissed_at: dismissedAt } : {}),
+    ...(checklistHidden ? { checklist_hidden: true } : {}),
     run_count: Number.isInteger(source.run_count) && Number(source.run_count) >= 0
       ? Number(source.run_count)
       : 0,

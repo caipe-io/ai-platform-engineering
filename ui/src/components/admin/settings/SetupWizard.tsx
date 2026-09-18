@@ -36,6 +36,7 @@ import {
   KeyRound,
   Loader2,
   LayoutGrid,
+  ListChecks,
   Play,
   Plug,
   RotateCcw,
@@ -202,6 +203,21 @@ const SETUP_CONNECTIONS = [
     provider: "notion",
     label: "Notion",
     description: "Search pages and databases through the Notion MCP server.",
+  },
+] as const;
+
+const SETUP_INTEGRATIONS = [
+  {
+    id: "slack",
+    label: "Slack",
+    description: "Bring your team channels and bot conversations into the platform.",
+    href: "/admin/integrations/slack",
+  },
+  {
+    id: "webex",
+    label: "Webex",
+    description: "Connect spaces and the Webex bot for team-friendly agent access.",
+    href: "/admin/integrations/webex",
   },
 ] as const;
 
@@ -658,6 +674,14 @@ export function SetupWizardDialog({
 
   const canContinue = step !== 2 || Boolean(selectedModel);
 
+  const readinessCapabilities = (health?.capabilities ?? []).filter((capability) =>
+    ["chat-runtime", "dynamic-agents", "knowledge-bases", "authentication"].includes(capability.id),
+  );
+  const readinessProbes = health?.probes?.filter((probe) => probe.id === "rebac-migrations") ?? [];
+  const readinessChecks = readinessCapabilities.length + readinessProbes.length;
+  const healthyReadinessChecks = readinessCapabilities.filter((capability) => capability.status === "healthy").length
+    + readinessProbes.filter((probe) => probe.status === "healthy").length;
+
   const closeCompleted = () => {
     onOpenChange(false);
     onStateChange?.(null);
@@ -671,11 +695,11 @@ export function SetupWizardDialog({
         else void dismiss();
       }
     }}>
-      <DialogContent className="max-h-[92vh] max-w-5xl overflow-hidden p-0">
-        <div className="grid min-h-[650px] grid-cols-1 md:grid-cols-[220px_1fr]">
-          <aside className="border-b bg-muted/25 p-5 md:border-b-0 md:border-r">
-            <div className="mb-6 flex items-center gap-2">
-              <span className="rounded-lg bg-primary/10 p-2 text-primary"><Sparkles className="h-5 w-5" /></span>
+      <DialogContent className="h-[min(860px,calc(100vh-2rem))] max-h-[calc(100vh-2rem)] max-w-6xl min-h-0 overflow-hidden p-0">
+        <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[220px_1fr]">
+          <aside className="border-b bg-muted/25 p-4 md:border-b-0 md:border-r">
+            <div className="mb-5 flex items-center gap-2">
+              <span className="animate-pulse-glow rounded-lg bg-primary/10 p-2 text-primary"><Sparkles className="h-5 w-5" /></span>
               <div>
                 <p className="font-semibold">Platform setup</p>
                 <p className="text-xs text-muted-foreground">First working agent</p>
@@ -691,12 +715,12 @@ export function SetupWizardDialog({
                     <button
                       type="button"
                       className={cn(
-                        "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors md:text-sm",
-                        active ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted",
+                        "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs transition-all duration-300 md:text-sm",
+                        active ? "bg-primary/10 font-medium text-primary shadow-[0_0_24px_-14px_hsl(var(--primary))]" : "text-muted-foreground hover:bg-muted",
                       )}
                       onClick={() => setStep(item.id)}
                     >
-                      <span className={cn("grid h-6 w-6 shrink-0 place-items-center rounded-full border", complete && "border-primary bg-primary text-primary-foreground", active && !complete && "border-primary")}>
+                      <span className={cn("grid h-6 w-6 shrink-0 place-items-center rounded-full border transition-all duration-300", complete && "border-primary bg-primary text-primary-foreground", active && !complete && "animate-pulse-gentle border-primary")}>
                         {complete ? <Check className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
                       </span>
                       <span className="hidden md:inline">{item.label}</span>
@@ -705,10 +729,23 @@ export function SetupWizardDialog({
                 );
               })}
             </ol>
+            <div className="mt-6 hidden md:block">
+              <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>Setup progress</span>
+                <span>{Math.round((Math.max(step, payload?.state.completed_steps?.length ?? 0) / STEPS.length) * 100)}%</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-primary via-cyan-400 to-violet-500 transition-[width] duration-500"
+                  style={{ width: `${Math.max(20, (Math.max(step, payload?.state.completed_steps?.length ?? 0) / STEPS.length) * 100)}%` }}
+                />
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">A few quick choices, then we’ll prove your first agent works.</p>
+            </div>
           </aside>
 
           <section className="flex min-h-0 flex-col">
-            <DialogHeader className="border-b px-6 py-5 text-left">
+            <DialogHeader className="border-b px-6 py-4 text-left">
               <DialogTitle>{STEPS[step - 1].label}</DialogTitle>
               <DialogDescription>
                 {step === 1 && "Check the services needed for a working agent."}
@@ -719,7 +756,7 @@ export function SetupWizardDialog({
               </DialogDescription>
             </DialogHeader>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {loading ? (
                 <div className="grid min-h-72 place-items-center"><CAIPESpinner message="Inspecting this deployment..." /></div>
               ) : (
@@ -732,40 +769,57 @@ export function SetupWizardDialog({
                   )}
 
                   {step === 1 && (
-                    <div className="space-y-4">
+                    <div className="space-y-3">
+                      <div className="animate-fade-in relative overflow-hidden rounded-xl border bg-gradient-to-br from-primary/10 via-background to-violet-500/10 p-3.5">
+                        <div className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-primary/15 blur-3xl animate-pulse-glow" />
+                        <div className="relative flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold">Let’s get your first agent ready</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">We’ll check the platform, connect what you need, and run a real test.</p>
+                          </div>
+                          {readinessChecks > 0 && (
+                            <div className="flex items-center gap-1.5 rounded-full border bg-background/70 px-2.5 py-1 text-[11px] font-medium">
+                              <span className={cn("h-2 w-2 rounded-full", healthyReadinessChecks === readinessChecks ? "animate-pulse bg-emerald-500" : "bg-amber-500")} />
+                              {healthyReadinessChecks}/{readinessChecks} checks ready
+                            </div>
+                          )}
+                        </div>
+                      </div>
                       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <InventoryTile label="Models" value={payload?.inventory.models ?? 0} />
-                        <InventoryTile label="MCP servers" value={payload?.inventory.mcp_servers ?? 0} />
-                        <InventoryTile label="Connected credentials" value={payload?.inventory.connected_credentials ?? 0} />
-                        <InventoryTile label="Knowledge sources" value={payload?.inventory.knowledge_sources ?? 0} />
+                        <InventoryTile label="Models" value={payload?.inventory.models ?? 0} delay={0} />
+                        <InventoryTile label="MCP servers" value={payload?.inventory.mcp_servers ?? 0} delay={70} />
+                        <InventoryTile label="Connected credentials" value={payload?.inventory.connected_credentials ?? 0} delay={140} />
+                        <InventoryTile label="Knowledge sources" value={payload?.inventory.knowledge_sources ?? 0} delay={210} />
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {readinessCapabilities.map((capability, index) => (
+                          <div key={capability.id} className="animate-slide-in" style={{ animationDelay: `${index * 70}ms` }}>
+                            <CapabilityRow
+                              capability={capability}
+                              remediation={getCapabilityRemediation(capability, health?.probes)}
+                              compact
+                            />
+                          </div>
+                        ))}
                       </div>
                       <div className="space-y-2">
-                        {(health?.capabilities ?? []).filter((capability) =>
-                          ["chat-runtime", "dynamic-agents", "knowledge-bases", "authentication"].includes(capability.id)
-                        ).map((capability) => (
-                          <CapabilityRow
-                            key={capability.id}
-                            capability={capability}
-                            remediation={getCapabilityRemediation(capability, health?.probes)}
-                          />
-                        ))}
-                        {health?.probes?.filter((probe) => probe.id === "rebac-migrations").map((probe) => (
-                          <div key={probe.id} className="flex items-start justify-between gap-4 rounded-lg border p-3">
+                        {readinessProbes.map((probe) => (
+                          <div key={probe.id} className="animate-slide-in flex items-start justify-between gap-3 rounded-lg border p-2.5" style={{ animationDelay: "280ms" }}>
                             <div className="flex gap-3">
                               {probe.status === "healthy"
-                                ? <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-500" />
-                                : <TriangleAlert className="mt-0.5 h-5 w-5 text-amber-500" />}
+                                ? <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
+                                : <TriangleAlert className="mt-0.5 h-4 w-4 text-amber-500" />}
                               <div>
                                 <p className="text-sm font-medium">{probe.label}</p>
-                                <p className="text-xs text-muted-foreground">{probe.detail}</p>
+                                <p className="text-[11px] text-muted-foreground">{probe.detail}</p>
                                 {probe.status !== "healthy" && (
-                                  <div className="mt-2 space-y-2">
-                                    <p className="text-xs text-muted-foreground">
+                                  <div className="mt-1.5 space-y-1.5">
+                                    <p className="text-[11px] text-muted-foreground">
                                       Review the pending changes before applying them. The operation is idempotent and runs in dependency order.
                                     </p>
                                     <div className="flex flex-wrap items-center gap-2">
                                       {probe.remediation && (
-                                        <Link className="text-xs text-primary hover:underline" href={probe.remediation.href}>
+                                        <Link className="text-[11px] text-primary hover:underline" href={probe.remediation.href}>
                                           {probe.remediation.label}
                                         </Link>
                                       )}
@@ -781,7 +835,7 @@ export function SetupWizardDialog({
                                       </Button>
                                     </div>
                                     {confirmMigrationRemediation && (
-                                      <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+                                      <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2">
                                         <p className="text-xs text-amber-700 dark:text-amber-300">
                                           This applies all pending RBAC migrations and changes live access data. Continue only if this deployment is ready for the migration.
                                         </p>
@@ -802,7 +856,7 @@ export function SetupWizardDialog({
                                 )}
                               </div>
                             </div>
-                            <Badge variant="outline">{probe.status}</Badge>
+                            <Badge className="text-[10px]" variant="outline">{probe.status}</Badge>
                           </div>
                         ))}
                         {!health && (
@@ -811,10 +865,10 @@ export function SetupWizardDialog({
                           </p>
                         )}
                       </div>
-                      <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
+                      <div className="animate-fade-in space-y-2.5 rounded-xl border bg-muted/10 p-3">
                         <div>
-                          <p className="font-medium">Enable platform capabilities</p>
-                          <p className="text-sm text-muted-foreground">
+                          <p className="text-sm font-medium">Make the platform yours</p>
+                          <p className="text-xs text-muted-foreground">
                             Choose which deployed surfaces should appear in the application navigation. Deployment flags remain the hard service gate.
                           </p>
                         </div>
@@ -827,11 +881,11 @@ export function SetupWizardDialog({
                               <label
                                 key={feature.key}
                                 className={cn(
-                                  "flex items-start gap-3 rounded-lg border p-3",
+                                  "flex items-start gap-2.5 rounded-lg border p-2.5 transition-colors",
                                   deployed ? "cursor-pointer hover:bg-muted/40" : "cursor-not-allowed opacity-70",
                                 )}
                               >
-                                <Icon className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                                <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                                 <span className="min-w-0 flex-1">
                                   <span className="flex items-center justify-between gap-2">
                                     <span className="text-sm font-medium">{feature.label}</span>
@@ -849,12 +903,12 @@ export function SetupWizardDialog({
                                       className="h-4 w-4 accent-primary"
                                     />
                                   </span>
-                                  <span className="mt-1 block text-xs text-muted-foreground">{feature.description}</span>
-                                  <span className="mt-2 block text-[11px] text-muted-foreground">
+                                  <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{feature.description}</span>
+                                  <span className="mt-1 block text-[10px] text-muted-foreground">
                                     {deployed ? "Available in this deployment." : feature.deployment}
                                   </span>
                                   {deployed && (
-                                    <Link className="mt-1 inline-block text-xs text-primary hover:underline" href={feature.href}>
+                                    <Link className="mt-0.5 inline-block text-[11px] text-primary hover:underline" href={feature.href}>
                                       Open {feature.label}
                                     </Link>
                                   )}
@@ -863,7 +917,7 @@ export function SetupWizardDialog({
                             );
                           })}
                         </div>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-[11px] text-muted-foreground">
                           Workflows include a short guided explanation in the Workflows workspace. Apps require a deployment-owned catalog before they can be enabled.
                         </p>
                       </div>
@@ -1047,6 +1101,32 @@ export function SetupWizardDialog({
                         </p>
                       </div>
 
+                      <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
+                        <div className="flex items-start gap-3">
+                          <LayoutGrid className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                          <div>
+                            <p className="font-medium">Connect your team workspace</p>
+                            <p className="text-sm text-muted-foreground">Optional: let people reach your agent from the tools they already use.</p>
+                          </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {SETUP_INTEGRATIONS.map((integration) => (
+                            <div key={integration.id} className="flex items-start justify-between gap-3 rounded-lg border p-3">
+                              <div className="flex min-w-0 gap-2">
+                                <Plug className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium">{integration.label}</p>
+                                  <p className="text-xs text-muted-foreground">{integration.description}</p>
+                                </div>
+                              </div>
+                              <Button asChild size="sm" variant="outline">
+                                <Link href={integration.href} target="_blank" rel="noreferrer">Open {integration.label} setup</Link>
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
                       <label className="flex cursor-pointer items-start justify-between gap-4 rounded-lg border p-4">
                         <span className="flex gap-3">
                           <Database className="mt-0.5 h-5 w-5 text-primary" />
@@ -1142,7 +1222,7 @@ export function SetupWizardDialog({
               )}
             </div>
 
-            <DialogFooter className="flex-row items-center justify-between border-t px-6 py-4 sm:justify-between">
+            <DialogFooter className="flex-row items-center justify-between border-t px-6 py-3 sm:justify-between">
               <Button type="button" variant="ghost" onClick={() => void dismiss()} disabled={saving || runningTest}>
                 Skip for now
               </Button>
@@ -1182,9 +1262,9 @@ export function SetupWizardDialog({
   );
 }
 
-function InventoryTile({ label, value }: { label: string; value: number }) {
+function InventoryTile({ label, value, delay = 0 }: { label: string; value: number; delay?: number }) {
   return (
-    <div className="rounded-lg border bg-card p-4">
+    <div className="animate-fade-in rounded-lg border bg-card p-3 transition-transform duration-300 hover:-translate-y-0.5" style={{ animationDelay: `${delay}ms` }}>
       <p className="text-2xl font-semibold">{value}</p>
       <p className="text-xs text-muted-foreground">{label}</p>
     </div>
@@ -1206,25 +1286,25 @@ function getCapabilityRemediation(
   return undefined;
 }
 
-function CapabilityRow({ capability, remediation }: { capability: HealthCapability; remediation?: Remediation }) {
+function CapabilityRow({ capability, remediation, compact = false }: { capability: HealthCapability; remediation?: Remediation; compact?: boolean }) {
   const healthy = capability.status === "healthy";
   const disabled = capability.status === "disabled";
   return (
-    <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+    <div className={cn("flex h-full items-start justify-between gap-3 rounded-lg border", compact ? "p-2.5" : "p-3")}>
       <div className="flex gap-3">
-        {healthy ? <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-500" /> : disabled ? <Circle className="mt-0.5 h-5 w-5 text-muted-foreground" /> : <TriangleAlert className="mt-0.5 h-5 w-5 text-amber-500" />}
+        {healthy ? <CheckCircle2 className={cn("mt-0.5 text-emerald-500", compact ? "h-4 w-4" : "h-5 w-5")} /> : disabled ? <Circle className={cn("mt-0.5 text-muted-foreground", compact ? "h-4 w-4" : "h-5 w-5")} /> : <TriangleAlert className={cn("mt-0.5 text-amber-500", compact ? "h-4 w-4" : "h-5 w-5")} />}
         <div>
           <p className="text-sm font-medium">{capability.label}</p>
-          <p className="text-xs text-muted-foreground">{capability.detail}</p>
+          <p className={cn("text-muted-foreground", compact ? "text-[11px] leading-snug" : "text-xs")}>{capability.detail}</p>
           {remediation && !healthy && (
-            <div className="mt-2 space-y-1">
-              <p className="text-xs text-muted-foreground"><span className="font-medium">How to fix:</span> {remediation.description}</p>
-              <Link className="text-xs text-primary hover:underline" href={remediation.href}>{remediation.label}</Link>
+            <div className={cn("space-y-1", compact ? "mt-1" : "mt-2")}>
+              <p className={cn("text-muted-foreground", compact ? "text-[11px] leading-snug" : "text-xs")}><span className="font-medium">How to fix:</span> {remediation.description}</p>
+              <Link className={cn("text-primary hover:underline", compact ? "text-[11px]" : "text-xs")} href={remediation.href}>{remediation.label}</Link>
             </div>
           )}
         </div>
       </div>
-      <Badge variant="outline">{capability.status}</Badge>
+      <Badge className={compact ? "text-[10px]" : undefined} variant="outline">{capability.status}</Badge>
     </div>
   );
 }
@@ -1336,6 +1416,9 @@ export function SetupWizardGate(): React.ReactElement | null {
   const { isAdmin, loading } = useAdminRole();
   const [payload, setPayload] = useState<SetupWizardPayload | null>(null);
   const [open, setOpen] = useState(false);
+  const [checklistOpen, setChecklistOpen] = useState(false);
+  const [checklistHidden, setChecklistHidden] = useState(false);
+  const [hidingChecklist, setHidingChecklist] = useState(false);
 
   useEffect(() => {
     if (loading || !isAdmin || !getConfig("setupWizardEnabled")) return;
@@ -1353,13 +1436,99 @@ export function SetupWizardGate(): React.ReactElement | null {
     return () => { cancelled = true; };
   }, [isAdmin, loading]);
 
-  if (!payload) return null;
+  const refreshPayload = () => {
+    void jsonRequest<ApiEnvelope<SetupWizardPayload>>("/api/admin/setup-wizard")
+      .then((response) => setPayload(response.data))
+      .catch(() => undefined);
+  };
+
+  const hideChecklist = async () => {
+    setHidingChecklist(true);
+    try {
+      await jsonRequest<ApiEnvelope<{ state: SetupWizardPayload["state"] }>>("/api/admin/setup-wizard", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "hide_checklist" }),
+      });
+      setChecklistHidden(true);
+      setChecklistOpen(false);
+    } finally {
+      setHidingChecklist(false);
+    }
+  };
+
+  if (!payload || checklistHidden || payload.state.checklist_hidden || payload.state.status === "completed") return null;
+
+  const checklistItems = [
+    { label: "Connect a model", detail: "Give your first agent a brain.", done: payload.inventory.models > 0 },
+    { label: "Choose an agent recipe", detail: "Start with SRE, Hello World, or a blank agent.", done: Boolean(payload.state.selection?.recipe_id) },
+    { label: "Add tools or knowledge", detail: "Make answers useful with MCP or RAG.", done: payload.inventory.mcp_servers > 0 || payload.inventory.knowledge_sources > 0 },
+    { label: "Connect your workspace", detail: "Reach the agent from Slack or Webex when ready.", done: payload.inventory.connected_credentials > 0 },
+    { label: "Run the first test", detail: "Verify the whole path before inviting your team.", done: payload.state.last_smoke_test?.status === "passed" },
+  ];
+  const completedChecklistItems = checklistItems.filter((item) => item.done).length;
+
   return (
-    <SetupWizardDialog
-      open={open}
-      initialPayload={payload}
-      onOpenChange={setOpen}
-      onStateChange={() => setPayload(null)}
-    />
+    <>
+      <div className="fixed right-4 top-16 z-[60]">
+        {checklistOpen && (
+          <div className="mb-2 w-[min(22rem,calc(100vw-2rem))] animate-slide-in rounded-2xl border bg-card/95 p-4 shadow-2xl shadow-primary/10 backdrop-blur-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="flex items-center gap-2 text-sm font-semibold"><ListChecks className="h-4 w-4 text-primary" /> Setup checklist</p>
+                <p className="mt-1 text-xs text-muted-foreground">A friendly path to your first working agent.</p>
+              </div>
+              <button type="button" className="text-muted-foreground transition-colors hover:text-foreground" onClick={() => setChecklistOpen(false)} aria-label="Close setup checklist">×</button>
+            </div>
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-gradient-to-r from-primary to-violet-500 transition-[width] duration-500" style={{ width: `${(completedChecklistItems / checklistItems.length) * 100}%` }} />
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">{completedChecklistItems} of {checklistItems.length} ready</p>
+            <ul className="mt-3 space-y-2">
+              {checklistItems.map((item) => (
+                <li key={item.label} className="flex items-start gap-2 text-xs">
+                  <span className={cn("mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border", item.done ? "border-emerald-500 bg-emerald-500 text-white" : "border-muted-foreground/40 text-transparent")}>
+                    <Check className="h-3 w-3" />
+                  </span>
+                  <span><span className={cn("font-medium", item.done && "text-muted-foreground line-through")}>{item.label}</span><span className="block text-[11px] text-muted-foreground">{item.detail}</span></span>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-4 flex items-center gap-2">
+              <Button size="sm" className="flex-1" onClick={() => { setChecklistOpen(false); setOpen(true); }}>
+                {payload.state.status === "dismissed" ? "Continue setup" : "Open setup"}<ChevronRight className="ml-1 h-3.5 w-3.5" />
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => void hideChecklist()} disabled={hidingChecklist}>Don’t show again</Button>
+            </div>
+            <div className="mt-3 flex gap-3 border-t pt-3 text-[11px]">
+              <Link className="text-primary hover:underline" href="/admin/integrations/slack">Connect Slack</Link>
+              <Link className="text-primary hover:underline" href="/admin/integrations/webex">Connect Webex</Link>
+            </div>
+          </div>
+        )}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="ml-auto flex animate-pulse-gentle items-center gap-2 rounded-full bg-card/90 shadow-lg backdrop-blur-xl"
+          onClick={() => setChecklistOpen((current) => !current)}
+          aria-expanded={checklistOpen}
+          aria-label="Open setup checklist"
+        >
+          <ListChecks className="h-4 w-4 text-primary" />
+          Setup checklist
+          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">{completedChecklistItems}/{checklistItems.length}</span>
+        </Button>
+      </div>
+      <SetupWizardDialog
+        open={open}
+        initialPayload={payload}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (!nextOpen) refreshPayload();
+        }}
+        onStateChange={refreshPayload}
+      />
+    </>
   );
 }
