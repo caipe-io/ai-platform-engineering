@@ -2,7 +2,7 @@
 
 // assisted-by Codex Codex-sonnet-4-6
 import { Button } from "@/components/ui/button";
-import { PlatformComponentCard } from "./PlatformComponentCard";
+import { PlatformServiceLogo } from "./PlatformServiceLogo";
 import type { SetupWizardPayload } from "@/lib/setup-wizard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -16,6 +16,7 @@ import {
   usePlatformHealthProbes,
   type PlatformHealthCapability,
   type PlatformDiagnosticProbe,
+  type PlatformHealthComponent,
 } from "@/hooks/use-platform-health-probes";
 import { useVersion } from "@/hooks/use-version";
 import { formatBuildIdentifier,formatComponentVersion } from "@/lib/build-identifier";
@@ -359,8 +360,8 @@ export function HealthTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Platform services</CardTitle>
-          <CardDescription>Services that power CAIPE. Disabled services are greyed out and include deployment guidance.</CardDescription>
+          <CardTitle>Platform Services - Readiness Checks</CardTitle>
+          <CardDescription>Service health, dependency checks, and deployment guidance in one place.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {inventory && <dl className="grid grid-cols-2 gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-4">
@@ -368,10 +369,10 @@ export function HealthTab() {
               <div key={item.label}><dt className="text-xs text-muted-foreground">{item.label}</dt><dd className="mt-1 text-xl font-semibold">{item.value}</dd></div>
             ))}
           </dl>}
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {components.map((component) => <PlatformComponentCard key={component.id} component={component} />)}
+          <div className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/70">
+            {mergeServiceChecks(probes, components).map((check) => <DiagnosticProbeRow key={check.id} probe={check} />)}
           </div>
-          {components.length === 0 && <p className="text-sm text-muted-foreground">{platformStatus === "checking" ? "Checking platform services…" : "Service inventory is unavailable. Refresh to try again."}</p>}
+          {components.length === 0 && probes.length === 0 && <p className="text-sm text-muted-foreground">{platformStatus === "checking" ? "Checking platform services…" : "Service inventory is unavailable. Refresh to try again."}</p>}
         </CardContent>
       </Card>
 
@@ -413,18 +414,6 @@ export function HealthTab() {
           )}
         </CardContent>
       </Card>
-
-      {probes.length > 0 && <Card>
-        <CardHeader>
-          <CardTitle>Readiness checks</CardTitle>
-          <CardDescription>Dependency and bootstrap diagnostics. Follow a check’s remediation link to review and resolve issues, including pending RBAC migrations.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/70">
-            {probes.map((probe) => <DiagnosticProbeRow key={probe.id} probe={probe} />)}
-          </div>
-        </CardContent>
-      </Card>}
 
       {(showSlack || showWebex) && (
         <Card>
@@ -563,10 +552,6 @@ function CapabilityRow({
   );
 }
 
-function probeToUiStatus(status: PlatformDiagnosticProbe["status"]): UiStatus {
-  return status === "warning" ? "degraded" : status;
-}
-
 function CapabilityDiagnosticsDialog({
   capability,
   probes,
@@ -659,25 +644,59 @@ function CapabilityDiagnosticsDialog({
   );
 }
 
-function DiagnosticProbeRow({ probe }: { probe: PlatformDiagnosticProbe }) {
-  const status = probeToUiStatus(probe.status);
+type ServiceReadinessCheck = Omit<PlatformDiagnosticProbe, "status" | "group"> & {
+  status: PlatformDiagnosticProbe["status"] | "disabled" | "degraded";
+  group?: PlatformDiagnosticProbe["group"];
+  logoId?: string;
+};
+
+const COMPONENT_PROBE_IDS: Record<string, string> = {
+  "caipe-agent-harness": "dynamic-agents-runtime",
+};
+
+function mergeServiceChecks(probes: PlatformDiagnosticProbe[], components: PlatformHealthComponent[]): ServiceReadinessCheck[] {
+  const byProbe = new Map(components.map((component) => [COMPONENT_PROBE_IDS[component.id] ?? component.id, component]));
+  const probeIds = new Set(probes.map((probe) => probe.id));
+  return [
+    ...probes.map((probe) => {
+      const component = byProbe.get(probe.id);
+      // Live diagnostic results remain authoritative; branding never masks a failed probe.
+      return { ...probe, label: component?.label ?? probe.label, logoId: component?.id ?? (probe.id === "dynamic-agents-runtime" ? "caipe-agent-harness" : probe.id) };
+    }),
+    ...components.filter((component) => !probeIds.has(COMPONENT_PROBE_IDS[component.id] ?? component.id)).map((component) => ({
+      ...component,
+      logoId: component.id,
+      target: "",
+      latency_ms: null,
+      remediation: component.status === "disabled" ? {
+        label: "How to enable",
+        href: component.id === "scheduler" ? "https://caipe.io/docs/architecture/scheduler/#enable-the-scheduler" : component.id === "autonomous-agents" ? "https://caipe.io/docs/architecture/autonomous-agents/" : "https://caipe.io/docs/",
+        description: component.detail,
+      } : undefined,
+    })),
+  ];
+}
+
+function DiagnosticProbeRow({ probe }: { probe: ServiceReadinessCheck }) {
+  const status: UiStatus = probe.status === "warning" ? "degraded" : probe.status;
   const cfg = STATUS_CONFIG[status];
   const Icon = cfg.icon;
 
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 bg-muted/30 px-4 py-3">
-      <div className="min-w-0">
+    <div className={cn("flex flex-wrap items-start gap-3 bg-muted/30 px-4 py-3", status === "disabled" && "text-muted-foreground")}>
+      <PlatformServiceLogo id={probe.logoId ?? (probe.id === "dynamic-agents-runtime" ? "caipe-agent-harness" : probe.id)} label={probe.label} disabled={status === "disabled"} />
+      <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm font-medium">{probe.label}</p>
-          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {probe.group && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             {PROBE_GROUP_LABELS[probe.group]}
-          </span>
+          </span>}
         </div>
         <p className="mt-1 break-words text-xs text-muted-foreground">
           {probe.detail}
           {probe.latency_ms !== null ? ` · ${probe.latency_ms}ms` : ""}
         </p>
-        <p className="mt-1 break-all text-[11px] text-muted-foreground/75">{probe.target}</p>
+        {probe.target && <p className="mt-1 break-all text-[11px] text-muted-foreground/75">{probe.target}</p>}
         {probe.remediation ? (
           <a
             href={probe.remediation.href}
@@ -689,7 +708,7 @@ function DiagnosticProbeRow({ probe }: { probe: PlatformDiagnosticProbe }) {
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <Icon className={cn("h-4 w-4", cfg.color)} />
+        {status === "disabled" ? <span className="h-2 w-2 rounded-full bg-slate-500" role="img" aria-label="Not enabled" /> : <Icon className={cn("h-4 w-4", cfg.color)} />}
         <span className="text-sm">{probe.status === "warning" ? "Warning" : cfg.label}</span>
       </div>
     </div>

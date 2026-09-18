@@ -71,18 +71,26 @@ describe("HealthTab",() => {
         { id: "scheduler", label: "CAIPE Agent Scheduler", status: "disabled", detail: "Enable SCHEDULER_ENABLED and deploy the scheduler", version: null },
         { id: "openfga", label: "OpenFGA", status: "down", detail: "Unreachable", version: null },
       ],
-      probes: [{ id: "rebac-migrations", label: "RBAC Migrations", group: "bootstrap", status: "warning", detail: "Pending migrations", target: "migration service", latency_ms: null, remediation: { href: "/admin/security", label: "Migration Assistant" } }],
+      probes: [
+        { id: "dynamic-agents-runtime", label: "Dynamic Agents", group: "runtime", status: "down", detail: "Runtime connection refused", target: "http://runtime.example.test:8000", latency_ms: 15 },
+        { id: "caipe-mongodb", label: "MongoDB", group: "storage", status: "healthy", detail: "Connected", target: "database.example.test:27017", latency_ms: 2 },
+        { id: "rebac-migrations", label: "RBAC Migrations", group: "bootstrap", status: "warning", detail: "Pending migrations", target: "migration service", latency_ms: null, remediation: { href: "/admin/security", label: "Migration Assistant" } },
+      ],
     });
     const { container } = render(<HealthTab />);
     await act(async () => { jest.advanceTimersByTime(0); });
     expect(screen.getByText("Connected credentials")).toBeInTheDocument();
-    expect(screen.getByText("Platform services")).toBeInTheDocument();
+    expect(screen.getByText("Platform Services - Readiness Checks")).toBeInTheDocument();
+    expect(screen.queryByText("Platform services")).not.toBeInTheDocument();
     expect(screen.getByText("CAIPE Agent Scheduler")).toBeInTheDocument();
-    expect(container.querySelectorAll('img[src="/logo.svg"]')).toHaveLength(2);
+    expect(container.querySelectorAll('img[src="/logo.svg"]')).toHaveLength(3);
     expect(screen.getByRole("img", { name: "Not enabled" })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "down" })).toHaveClass("bg-red-500");
-    expect(screen.getByRole("link", { name: "Deployment guide" })).toHaveAttribute("href", "https://caipe.io/docs/architecture/scheduler/#enable-the-scheduler");
-    expect(screen.getByText("Readiness checks")).toBeInTheDocument();
+    expect(screen.getAllByText("CAIPE Agent Harness")).toHaveLength(1);
+    expect(screen.getByText("Runtime connection refused · 15ms")).toBeInTheDocument();
+    expect(screen.getByText("http://runtime.example.test:8000")).toBeInTheDocument();
+    expect(screen.getByText("MongoDB")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "How to enable" })).toHaveAttribute("href", "https://caipe.io/docs/architecture/scheduler/#enable-the-scheduler");
+    expect(screen.queryByText("Readiness checks")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Migration Assistant" })).toHaveAttribute("href", "/admin/security");
     fireEvent.error(screen.getByAltText("OpenFGA logo"));
     expect(screen.queryByAltText("OpenFGA logo")).not.toBeInTheDocument();
