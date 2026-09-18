@@ -46,6 +46,7 @@ export const GET = withErrorHandler(async (
   await requireConversationResourcePermission(session, user.email, conversation, 'read');
 
   const { page, pageSize, skip } = getPaginationParams(request);
+  const latestFirst = new URL(request.url).searchParams.get('order') === 'latest';
 
   const messages = await getCollection<Message>('messages');
 
@@ -53,12 +54,15 @@ export const GET = withErrorHandler(async (
 
   const items = await messages
     .find({ conversation_id: conversationId })
-    .sort({ created_at: 1 })
+    .sort({
+      created_at: latestFirst ? -1 : 1,
+      _id: latestFirst ? -1 : 1,
+    })
     .skip(skip)
     .limit(pageSize)
     .toArray();
 
-  return paginatedResponse(items, total, page, pageSize);
+  return paginatedResponse(latestFirst ? items.reverse() : items, total, page, pageSize);
 });
 
 // POST /api/chat/conversations/[id]/messages

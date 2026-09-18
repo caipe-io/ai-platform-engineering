@@ -25,6 +25,8 @@ UserStats,
 } from '@/types/mongodb';
 import type { AuthFailureAction,AuthFailureReason } from "./auth-error";
 
+export type ConversationListFilter = 'web' | 'all' | 'autonomous' | 'scheduled' | 'api';
+
 /**
  * Thrown by {@link APIClient.request} for any non-OK response. Carries the
  * HTTP status plus the Web UI backend's structured auth-error fields (`code`, `reason`,
@@ -170,14 +172,10 @@ class APIClient {
     page_size?: number;
     archived?: boolean;
     pinned?: boolean;
-    /**
-     * Filter by conversation origin. The API only honors an allow-list of
-     * values ('autonomous' | 'web' | 'api'); any other value is ignored
-     * server-side and the default human view is returned. The chat store uses
-     * this to load API-originated conversations separately from browser chat.
-     */
-    source?: 'autonomous' | 'web' | 'api';
-    client_type?: ClientType;
+    /** Filter the unified chat history by its originating surface. */
+    source?: ConversationListFilter;
+    /** Pass null to include every non-Slack/Webex client type. */
+    client_type?: ClientType | null;
   }): Promise<PaginatedResponse<Conversation>> {
     const searchParams = new URLSearchParams();
     if (params?.page) searchParams.set('page', params.page.toString());
@@ -185,10 +183,11 @@ class APIClient {
     if (params?.archived !== undefined) searchParams.set('archived', params.archived.toString());
     if (params?.pinned !== undefined) searchParams.set('pinned', params.pinned.toString());
     if (params?.source) searchParams.set('source', params.source);
-    // Default to webui conversations only — excludes Slack/other client conversations.
-    // Use `??` so an explicit empty string from the caller is preserved (vs `||` which would
-    // overwrite it with the default).
-    searchParams.set('client_type', params?.client_type ?? 'webui');
+    // Default to webui conversations. Null intentionally omits the client filter
+    // for the unified All view; the server still excludes Slack and Webex there.
+    if (params?.client_type !== null) {
+      searchParams.set('client_type', params?.client_type ?? 'webui');
+    }
 
     return this.request(`/api/chat/conversations?${searchParams}`);
   }
@@ -259,11 +258,12 @@ class APIClient {
 
   async getMessages(
     conversationId: string,
-    params?: { page?: number; page_size?: number }
+    params?: { page?: number; page_size?: number; order?: 'latest' }
   ): Promise<PaginatedResponse<Message>> {
     const searchParams = new URLSearchParams();
     if (params?.page) searchParams.set('page', params.page.toString());
     if (params?.page_size) searchParams.set('page_size', params.page_size.toString());
+    if (params?.order) searchParams.set('order', params.order);
 
     return this.request(
       `/api/chat/conversations/${conversationId}/messages?${searchParams}`

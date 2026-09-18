@@ -18,7 +18,7 @@ import { takePendingFirstMessage } from "@/lib/pending-first-message";
 import { createSubagentResumeSeedEvents } from "@/lib/resume-subagent-context";
 import { createStreamAdapter,StreamError,type StreamCallbacks } from "@/lib/streaming";
 import { createStreamEvent,FILE_TOOL_NAMES,TODO_TOOL_NAME,type StreamEvent } from "@/lib/streaming/types";
-import { cn,deduplicateByKey } from "@/lib/utils";
+import { cn,deduplicateByKey,generateId } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
@@ -51,8 +51,19 @@ type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'age
  * too, not just the words.
  */
 interface QueuedMessage {
+  id: string;
   text: string;
   files: InputFile[];
+}
+
+function buildQueuedBatchPrompt(messages: QueuedMessage[]): string {
+  if (messages.length === 1) return messages[0].text;
+  return messages
+    .map((message, index) => {
+      const content = message.text.trim() || '(attachments only)';
+      return `[Queued message ${index + 1}]\n${content}`;
+    })
+    .join('\n\n');
 }
 
 interface ChatPanelProps {
@@ -194,11 +205,8 @@ export function ChatPanel({
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const isAutoScrollingRef = useRef(false);
-
-  // Message window: progressive loading of older turns
-  const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
-  // Ref to preserve scroll position when loading more turns
-  const scrollDistanceFromBottomRef = useRef<number | null>(null);
+  const loadingOlderRef = useRef(false);
+  const queueFlushInProgressRef = useRef(false);
 
   const {
     activeConversationId,
@@ -217,8 +225,9 @@ export function ChatPanel({
     cancelConversationRequest,
     updateMessageFeedback,
     consumePendingMessage,
-    loadMessagesFromServer,
     saveMessagesToServer,
+    loadOlderMessagesFromServer,
+    messageHistory,
     updateConversationTitle,
     clearConversationInputRequired,
   } = useChatStore();
@@ -393,6 +402,28 @@ export function ChatPanel({
     }
   }, []);
 
+  const loadOlderMessages = useCallback(() => {
+    if (!activeConversationId || loadingOlderRef.current) return;
+    const history = messageHistory[activeConversationId];
+    if (!history?.hasMore || history.isLoadingOlder) return;
+
+    const viewport = scrollViewportRef.current;
+    if (!viewport) return;
+    const previousScrollHeight = viewport.scrollHeight;
+    const previousScrollTop = viewport.scrollTop;
+    loadingOlderRef.current = true;
+    void loadOlderMessagesFromServer(activeConversationId).finally(() => {
+      requestAnimationFrame(() => {
+        const currentViewport = scrollViewportRef.current;
+        if (currentViewport) {
+          currentViewport.scrollTop =
+            currentViewport.scrollHeight - previousScrollHeight + previousScrollTop;
+        }
+        loadingOlderRef.current = false;
+      });
+    });
+  }, [activeConversationId, loadOlderMessagesFromServer, messageHistory]);
+
   // Handle scroll events to detect user scrolling
   const handleScroll = useCallback(() => {
     // Ignore scroll events caused by auto-scrolling
@@ -401,7 +432,16 @@ export function ChatPanel({
     const nearBottom = isNearBottom();
     setIsUserScrolledUp(!nearBottom);
     setShowScrollButton(!nearBottom);
-  }, [isNearBottom]);
+    if ((scrollViewportRef.current?.scrollTop ?? Number.POSITIVE_INFINITY) < 80) {
+      loadOlderMessages();
+    }
+  }, [isNearBottom, loadOlderMessages]);
+
+  const handleWheel = useCallback((event: WheelEvent) => {
+    if (event.deltaY < 0 && (scrollViewportRef.current?.scrollTop ?? 0) < 80) {
+      loadOlderMessages();
+    }
+  }, [loadOlderMessages]);
 
   // Set up scroll listener
   useEffect(() => {
@@ -409,8 +449,12 @@ export function ChatPanel({
     if (!viewport) return;
 
     viewport.addEventListener("scroll", handleScroll, { passive: true });
-    return () => viewport.removeEventListener("scroll", handleScroll);
-  }, [handleScroll]);
+    viewport.addEventListener("wheel", handleWheel, { passive: true });
+    return () => {
+      viewport.removeEventListener("scroll", handleScroll);
+      viewport.removeEventListener("wheel", handleWheel);
+    };
+  }, [handleScroll, handleWheel]);
 
   // Auto-scroll when new messages arrive (only if user hasn't scrolled up)
   useEffect(() => {
@@ -452,11 +496,11 @@ export function ChatPanel({
     return () => observer.disconnect();
   }, [isThisConversationStreaming, isUserScrolledUp, autoScrollEnabled]);
 
-  // Reset scroll state and visible turns when conversation changes
+  // Reset scroll state when conversation changes.
   useEffect(() => {
     setIsUserScrolledUp(false);
     setShowScrollButton(false);
-    setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
+    loadingOlderRef.current = false;
     // Scroll to bottom when switching conversations. Use rAF to wait for
     // the browser to lay out the newly rendered messages, then scroll.
     const raf = requestAnimationFrame(() => {
@@ -1048,10 +1092,15 @@ export function ChatPanel({
     // Store's setConversationStreaming(null) hook auto-saves after 500ms.
   }, [updateMessage, setConversationStreaming, agentName]);
 
-  // Core submit function that accepts a message directly
-  const submitMessage = useCallback(async (messageToSend: string, filesToSend: InputFile[] = []) => {
-    // A turn is valid if it has text OR at least one attachment.
-    if ((!messageToSend.trim() && filesToSend.length === 0) || isThisConversationStreaming) return;
+  // A queued batch renders as separate user bubbles but is sent as one prompt,
+  // producing one coherent assistant response for the whole batch.
+  const submitMessageBatch = useCallback(async (messagesToSend: QueuedMessage[]) => {
+    const validMessages = messagesToSend.filter(
+      (message) => message.text.trim() || message.files.length > 0,
+    );
+    if (validMessages.length === 0 || isThisConversationStreaming) return;
+    const messageToSend = buildQueuedBatchPrompt(validMessages);
+    const filesToSend = validMessages.flatMap((message) => message.files);
 
     // Create conversation if needed. This hits POST /api/chat/conversations
     // which is gated by the Web UI backend auth middleware, so we have to handle the
@@ -1098,20 +1147,22 @@ export function ChatPanel({
     // transcript (base64 size ≈ 3/4 of the string length, close enough for the
     // size label). Persistence caps large images in saveMessagesToServer.
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const attachments: MessageAttachment[] = filesToSend.map((f) => ({
-      mime_type: f.mime_type,
-      name: f.name,
-      data: f.data,
-      size: Math.floor((f.data.length * 3) / 4),
-    }));
-    addMessage(convId, {
-      role: "user",
-      content: messageToSend,
-      senderEmail: session?.user?.email ?? undefined,
-      senderName: session?.user?.name ?? undefined,
-      senderImage: session?.user?.image ?? undefined,
-      ...(attachments.length > 0 && { attachments }),
-    }, turnId);
+    validMessages.forEach((queuedMessage) => {
+      const attachments: MessageAttachment[] = queuedMessage.files.map((file) => ({
+        mime_type: file.mime_type,
+        name: file.name,
+        data: file.data,
+        size: Math.floor((file.data.length * 3) / 4),
+      }));
+      addMessage(convId, {
+        role: "user",
+        content: queuedMessage.text,
+        senderEmail: session?.user?.email ?? undefined,
+        senderName: session?.user?.name ?? undefined,
+        senderImage: session?.user?.image ?? undefined,
+        ...(attachments.length > 0 && { attachments }),
+      }, turnId);
+    });
 
     // Add assistant message placeholder with same turnId
     const assistantMsgId = addMessage(convId, { role: "assistant", content: "" }, turnId);
@@ -1185,6 +1236,15 @@ export function ChatPanel({
       setConversationStreaming(convId, null);
     }
   }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
+
+  const submitMessage = useCallback(
+    (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
+      id: generateId(),
+      text: messageToSend,
+      files: filesToSend,
+    }]),
+    [submitMessageBatch],
+  );
 
   const startEditingMessage = useCallback((message: ChatMessageType) => {
     setIsRewindConfirmationOpen(false);
@@ -1313,18 +1373,29 @@ export function ChatPanel({
     }
   }, [conversationId, panelReadOnly, submitMessage]);
 
-  // Handle queued messages after streaming completes
+  // Flush the entire queue atomically so it creates one assistant turn.
   useEffect(() => {
-    if (!isThisConversationStreaming && queuedMessages.length > 0) {
-      // Process first queued message
-      const [firstMessage, ...remaining] = queuedMessages;
-      setQueuedMessages(remaining);
-      // Small delay to ensure previous message is fully processed
-      setTimeout(() => {
-        submitMessage(firstMessage.text, firstMessage.files);
-      }, 300);
-    }
-  }, [isThisConversationStreaming, queuedMessages, submitMessage]);
+    if (
+      isThisConversationStreaming ||
+      queuedMessages.length === 0 ||
+      queueFlushInProgressRef.current ||
+      pendingUserInput ||
+      pendingToolApproval
+    ) return;
+
+    const batch = queuedMessages;
+    queueFlushInProgressRef.current = true;
+    setQueuedMessages([]);
+    void submitMessageBatch(batch).finally(() => {
+      queueFlushInProgressRef.current = false;
+    });
+  }, [
+    isThisConversationStreaming,
+    pendingToolApproval,
+    pendingUserInput,
+    queuedMessages,
+    submitMessageBatch,
+  ]);
 
   // Handle /skills chat command: show skills configured on this agent
   const handleSkillsCommand = useCallback(async () => {
@@ -1525,19 +1596,16 @@ export function ChatPanel({
       ? await Promise.all(attachments.map((a) => fileToInputFile(a.file)))
       : [];
 
-    // If streaming and not force sending, queue the message (up to 3)
+    // While a response streams, retain each prompt as a distinct queued bubble.
     if (isThisConversationStreaming && !forceSend) {
       const message = input.trim();
-
-      // Add to queue if under limit
-      if (queuedMessages.length < 3) {
-        setQueuedMessages(prev => [...prev, { text: message, files: encodedFiles }]);
-        setInput("");
-        setAttachments([]);
-      } else {
-        // Queue is full
-        console.log("Queue is full (3/3). Send or cancel messages to queue more.");
-      }
+      setQueuedMessages(prev => [...prev, {
+        id: generateId(),
+        text: message,
+        files: encodedFiles,
+      }]);
+      setInput("");
+      setAttachments([]);
       return;
     }
 
@@ -1562,7 +1630,7 @@ export function ChatPanel({
     setAttachments([]);
 
     await submitMessage(message, encodedFiles);
-  }, [input, attachments, submitMessage, isThisConversationStreaming, queuedMessages, pendingUserInput, slashCommands, executeSlashCommand, handleStop]);
+  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, slashCommands, executeSlashCommand, handleStop]);
 
   // Auto-submit pending message from use case selection
   useEffect(() => {
@@ -1945,63 +2013,16 @@ export function ChatPanel({
             <AnimatePresence mode="popLayout">
               {(() => {
                 const allMessages = deduplicateByKey(conversation?.messages ?? [], (msg) => msg.id);
-                const turns = groupMessagesIntoTurns(allMessages);
-                
-                // Progressive loading: show only the most recent N turns
-                const totalTurns = turns.length;
-                const effectiveVisibleCount = Math.min(visibleTurnCount, totalTurns);
-                const hiddenTurnCount = Math.max(0, totalTurns - effectiveVisibleCount);
-                const visibleTurns = turns.slice(-effectiveVisibleCount);
-                
-                // Flatten visible turns to messages for rendering
-                const visibleMessages = visibleTurns.flatMap(t =>
-                  [t.userMsg, t.assistantMsg].filter(Boolean) as ChatMessageType[]
-                );
-
-                // Build a Set of visible message IDs for quick lookup
-                const visibleMsgIds = new Set(visibleMessages.map(m => m.id));
-                const renderMessages = allMessages.filter(m => visibleMsgIds.has(m.id));
-
-                // Handle loading more turns
-                const handleLoadMore = async () => {
-                  // Capture scroll position before loading
-                  if (scrollViewportRef.current) {
-                    const viewport = scrollViewportRef.current;
-                    scrollDistanceFromBottomRef.current = viewport.scrollHeight - viewport.scrollTop;
-                  }
-                  
-                  // Increase visible turn count
-                  const newVisibleCount = Math.min(visibleTurnCount + LOAD_MORE_BATCH_SIZE, totalTurns);
-                  setVisibleTurnCount(newVisibleCount);
-                  
-                  // Re-load messages from MongoDB to restore evicted content
-                  if (activeConversationId) {
-                    await loadMessagesFromServer(activeConversationId, { force: true });
-                  }
-                  
-                  // Restore scroll position after render (use rAF to wait for layout)
-                  requestAnimationFrame(() => {
-                    if (scrollViewportRef.current && scrollDistanceFromBottomRef.current !== null) {
-                      const viewport = scrollViewportRef.current;
-                      viewport.scrollTop = viewport.scrollHeight - scrollDistanceFromBottomRef.current;
-                      scrollDistanceFromBottomRef.current = null;
-                    }
-                  });
-                };
 
                 return (
                   <>
-                    {/* Load earlier turns divider */}
-                    {hiddenTurnCount > 0 && (
-                      <LoadEarlierDivider
-                        key="load-earlier"
-                        count={hiddenTurnCount}
-                        onLoad={handleLoadMore}
-                      />
+                    {activeConversationId && messageHistory[activeConversationId]?.isLoadingOlder && (
+                      <div className="flex justify-center py-3" aria-label="Loading earlier messages">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
                     )}
 
-                    {/* Rendered messages (visible turns only) */}
-                    {renderMessages.map((msg, index, arr) => {
+                    {allMessages.map((msg, index, arr) => {
                       const isLastMessage = index === arr.length - 1;
                       const isAssistantStreaming = isThisConversationStreaming && msg.role === "assistant" && isLastMessage;
                       const messageOwner = msg.senderEmail ?? conversation?.owner_id;
@@ -2277,11 +2298,11 @@ export function ChatPanel({
         <div className="max-w-7xl mx-auto px-6 py-3 space-y-2">
           {/* Queued Messages Display */}
           {queuedMessages.length > 0 && (
-            <div className="space-y-2">
+            <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
               <AnimatePresence mode="popLayout">
                 {queuedMessages.map((queuedMsg, index) => (
                   <motion.div
-                    key={`${index}-${queuedMsg.text.slice(0, 20)}`}
+                    key={queuedMsg.id}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
@@ -2294,7 +2315,7 @@ export function ChatPanel({
                         </span>
                         <button
                           onClick={() => {
-                            setQueuedMessages(prev => prev.filter((_, i) => i !== index));
+                            setQueuedMessages(prev => prev.filter((message) => message.id !== queuedMsg.id));
                           }}
                           className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                           title="Remove this queued message"
@@ -2315,11 +2336,6 @@ export function ChatPanel({
                   </motion.div>
                 ))}
               </AnimatePresence>
-              {queuedMessages.length >= 3 && (
-                <div className="text-xs text-muted-foreground px-3">
-                  Maximum of 3 queued messages. Send or cancel messages to queue more.
-                </div>
-              )}
             </div>
           )}
 
@@ -2366,9 +2382,7 @@ export function ChatPanel({
                   onPaste={handlePaste}
                   placeholder={
                     isThisConversationStreaming
-                      ? queuedMessages.length >= 3
-                        ? "Queue full (3/3). Send or cancel messages to queue more, or Cmd+Enter to force send..."
-                        : `Type to queue message (${queuedMessages.length}/3), or Cmd+Enter to force send...`
+                      ? `Type to queue another message (${queuedMessages.length} queued), or Cmd+Enter to send now...`
                       : `Ask anything, or type / to see commands, skills, and agents...`
                   }
                   className="flex-1 bg-transparent resize-none outline-none px-3 py-2.5 text-sm"
@@ -2480,77 +2494,6 @@ function filterEventsForTurn(
     return eventTime >= msgTime && eventTime < endTime;
   });
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Message Window: Progressive loading of older turns
-// ─────────────────────────────────────────────────────────────────────────────
-
-const INITIAL_VISIBLE_TURNS = 3;
-const LOAD_MORE_BATCH_SIZE = 3;
-
-interface Turn {
-  userMsg?: ChatMessageType;
-  assistantMsg?: ChatMessageType;
-  preview: string;
-  timestamp: Date;
-}
-
-function groupMessagesIntoTurns(messages: ChatMessageType[]): Turn[] {
-  const turns: Turn[] = [];
-  let i = 0;
-  while (i < messages.length) {
-    const msg = messages[i];
-    if (msg.role === "user" && i + 1 < messages.length && messages[i + 1].role === "assistant") {
-      const assistantMsg = messages[i + 1];
-      turns.push({
-        userMsg: msg,
-        assistantMsg,
-        preview: msg.content.slice(0, 80).trim() + (msg.content.length > 80 ? "..." : ""),
-        timestamp: msg.timestamp,
-      });
-      i += 2;
-    } else {
-      turns.push({
-        ...(msg.role === "user" ? { userMsg: msg } : { assistantMsg: msg }),
-        preview: msg.content.slice(0, 80).trim() + (msg.content.length > 80 ? "..." : ""),
-        timestamp: msg.timestamp,
-      });
-      i += 1;
-    }
-  }
-  return turns;
-}
-
-/**
- * Subtle divider that shows how many earlier turns are available to load.
- * Clicking loads the next batch progressively.
- */
-const LoadEarlierDivider = React.memo(function LoadEarlierDivider({
-  count,
-  onLoad,
-}: {
-  count: number;
-  onLoad: () => void;
-}) {
-  return (
-    <motion.button
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      onClick={onLoad}
-      className={cn(
-        "w-full flex items-center justify-center gap-2 py-3 my-2",
-        "text-xs text-muted-foreground hover:text-foreground transition-colors group cursor-pointer"
-      )}
-    >
-      <span className="flex-1 h-px bg-border/40 group-hover:bg-border/60 transition-colors" />
-      <span className="flex items-center gap-1.5 px-3">
-        <ChevronUp className="h-3 w-3" />
-        {count} earlier
-      </span>
-      <span className="flex-1 h-px bg-border/40 group-hover:bg-border/60 transition-colors" />
-    </motion.button>
-  );
-});
 
 interface ChatMessageProps {
   message: ChatMessageType;

@@ -533,13 +533,7 @@ describe('Archive API', () => {
       );
     });
 
-    it('default listing INCLUDES autonomous conversations (only excludes slack and api)', async () => {
-      // Regression: pre-fix the default branch used
-      // ``$nin: ['slack', 'autonomous']`` which contradicted the
-      // sidebar's "All" filter and made autonomous threads vanish
-      // from the All view. The fix narrows the exclusion to slack
-      // (and api, for script-created conversations with no UI
-      // transcript) so autonomous chats appear alongside human ones.
+    it('default listing includes autonomous conversations but excludes Slack and API', async () => {
       const convCollection = createMockCollection();
       convCollection.find.mockReturnValue({
         sort: jest.fn().mockReturnValue({
@@ -604,6 +598,61 @@ describe('Archive API', () => {
       expect(findCall.$and).toEqual(
         expect.arrayContaining([{ source: 'api' }]),
       );
+    });
+
+    it('?source=all includes API chats while excluding Slack and Webex', async () => {
+      const convCollection = createMockCollection();
+      mockCollections['conversations'] = convCollection;
+
+      await GET_CONVERSATIONS(
+        makeRequest('http://localhost:3000/api/chat/conversations?source=all'),
+      );
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      expect(findCall.$and).toEqual(expect.arrayContaining([
+        { source: { $nin: ['slack'] } },
+        { client_type: { $nin: ['slack', 'webex'] } },
+      ]));
+    });
+
+    it('?source=web excludes scheduled runs from normal chat history', async () => {
+      const convCollection = createMockCollection();
+      mockCollections['conversations'] = convCollection;
+
+      await GET_CONVERSATIONS(
+        makeRequest('http://localhost:3000/api/chat/conversations?source=web'),
+      );
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      expect(findCall.$and).toEqual(expect.arrayContaining([
+        { source: { $in: ['web', null] } },
+        {
+          $nor: [
+            { 'metadata.schedule_id': { $exists: true } },
+            { _id: { $regex: 'sched_[a-z0-9]+', $options: 'i' } },
+          ],
+        },
+      ]));
+    });
+
+    it('?source=scheduled matches metadata and legacy scheduled conversation IDs', async () => {
+      const convCollection = createMockCollection();
+      mockCollections['conversations'] = convCollection;
+
+      await GET_CONVERSATIONS(
+        makeRequest('http://localhost:3000/api/chat/conversations?source=scheduled'),
+      );
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      expect(findCall.$and).toEqual(expect.arrayContaining([
+        { source: { $ne: 'autonomous' } },
+        {
+          $or: [
+            { 'metadata.schedule_id': { $exists: true, $ne: '' } },
+            { _id: { $regex: 'sched_[a-z0-9]+', $options: 'i' } },
+          ],
+        },
+      ]));
     });
 
     it('?source=autonomous does NOT bypass owner scoping (IDOR regression)', async () => {

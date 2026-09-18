@@ -5,7 +5,7 @@ import { Conversation, ChatMessage, MessageFeedback, TurnStatus, getAgentId, bui
 import { StreamEvent,type ContextUsageEventData } from "@/lib/streaming/types";
 import { generateId } from "@/lib/utils";
 import type { StreamAdapter } from "@/lib/streaming";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, type ConversationListFilter } from "@/lib/api-client";
 import { getStorageMode, shouldUseLocalStorage } from "@/lib/storage-config";
 import type { Artifact, Message as StoredMessage, StoredStreamEvent } from "@/types/mongodb";
 import { MAX_INLINE_PERSIST_BYTES } from "@/lib/file-attachments";
@@ -75,6 +75,12 @@ interface StreamingState {
   streamAdapter?: StreamAdapter;
 }
 
+interface MessageHistoryState {
+  nextPage: number;
+  hasMore: boolean;
+  isLoadingOlder: boolean;
+}
+
 interface ChatState {
   conversations: Conversation[];
   activeConversationId: string | null;
@@ -82,6 +88,11 @@ interface ChatState {
   streamingConversations: Map<string, StreamingState>;
   pendingMessage: string | null; // Message to auto-submit when the chat panel mounts
   contextUsageByConversation: Record<string,ContextUsageEventData>;
+  conversationFilter: ConversationListFilter;
+  conversationPage: number;
+  conversationHasMore: boolean;
+  isLoadingMoreConversations: boolean;
+  messageHistory: Record<string, MessageHistoryState>;
 
   // Conversations with new responses the user hasn't viewed yet
   unviewedConversations: Set<string>;
@@ -113,9 +124,10 @@ interface ChatState {
   updateConversationTitle: (conversationId: string, title: string) => Promise<void>;
   setPendingMessage: (message: string | null) => void;
   consumePendingMessage: () => string | null;
-  loadConversationsFromServer: () => Promise<void>; // Load conversations from server (MongoDB mode only)
+  loadConversationsFromServer: (options?: { filter?: ConversationListFilter; append?: boolean }) => Promise<void>; // Load conversations from server (MongoDB mode only)
   saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
   loadMessagesFromServer: (conversationId: string, options?: { force?: boolean }) => Promise<void>; // Load messages from MongoDB when opening conversation
+  loadOlderMessagesFromServer: (conversationId: string) => Promise<void>;
   evictOldMessageContent: (conversationId: string, messageIdsToEvict: string[]) => void; // Evict content from old messages to free memory
 
   // Unviewed conversation actions
@@ -149,8 +161,11 @@ declare global {
   }
 }
 
-// Coalesce concurrent conversation-list fetches (Sidebar + /chat redirect race).
-let loadConversationsInFlight: Promise<void> | null = null;
+const CONVERSATION_PAGE_SIZE = 30;
+const MESSAGE_PAGE_SIZE = 10;
+
+// Coalesce identical list requests while allowing a filter change to start immediately.
+const conversationLoadsInFlight = new Map<string, Promise<void>>();
 
 // NOTE: savedMessageIds / savedMessageState tracking removed.
 // With the upsert-based API, saveMessagesToServer sends ALL messages every
@@ -201,6 +216,83 @@ function serializeStreamEvent(event: StreamEvent): StoredStreamEvent {
   };
 }
 
+function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
+  return rawItems.map((msg, idx) => {
+    const streamEvents: StreamEvent[] = (msg.stream_events || msg.sse_events || []).map((event) => ({
+      ...event,
+      raw: event.raw ?? null,
+      timestamp: new Date(event.timestamp),
+    }));
+    let isFinal = msg.metadata?.is_final != null ? Boolean(msg.metadata.is_final) : true;
+    if (msg.role === 'assistant' && !isFinal) {
+      const hasFollowUp = rawItems.slice(idx + 1).some((message) => message.role === 'user');
+      if (hasFollowUp) isFinal = true;
+    }
+
+    const hasHitlForm = streamEvents.some((event) => event.type === 'input_required');
+    const attachments = (msg.artifacts || [])
+      .filter((artifact) => artifact.type === 'attachment')
+      .map((artifact) => {
+        const data = artifact.data as { mime_type?: string; size?: number; data?: string };
+        return {
+          name: artifact.name,
+          mime_type: data?.mime_type || 'application/octet-stream',
+          ...(typeof data?.size === 'number' && { size: data.size }),
+          ...(typeof data?.data === 'string' && { data: data.data }),
+        };
+      });
+
+    return {
+      id: msg.message_id || msg._id?.toString() || generateId(),
+      role: msg.role as 'user' | 'assistant',
+      content: msg.content,
+      timestamp: new Date(msg.created_at),
+      streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
+      isFinal,
+      turnId: msg.metadata?.turn_id,
+      taskId: msg.metadata?.task_id,
+      turnStatus: msg.metadata?.turn_status as TurnStatus | undefined,
+      isInterrupted: hasHitlForm
+        ? false
+        : Boolean(msg.metadata?.is_interrupted) || (msg.role === 'assistant' && !isFinal),
+      feedback: msg.feedback ? {
+        type: msg.feedback.rating === 'positive'
+          ? 'like' as const
+          : msg.feedback.rating === 'negative'
+            ? 'dislike' as const
+            : null,
+        submitted: true,
+      } : undefined,
+      senderEmail: msg.sender_email,
+      senderName: msg.sender_name,
+      senderImage: msg.sender_image,
+      ...(attachments.length > 0 && { attachments }),
+    };
+  });
+}
+
+function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  const messagesById = new Map(existing.map((message) => [message.id, message]));
+  for (const message of incoming) {
+    const localMessage = messagesById.get(message.id);
+    messagesById.set(message.id, localMessage?.isFinal && !message.isFinal ? localMessage : message);
+  }
+
+  const ordered = [...messagesById.values()].sort(
+    (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
+  );
+  return ordered.map((message, index) => {
+    if (
+      message.role === 'assistant' &&
+      !message.isFinal &&
+      ordered.slice(index + 1).some((candidate) => candidate.role === 'user')
+    ) {
+      return { ...message, isFinal: true, isInterrupted: false };
+    }
+    return message;
+  });
+}
+
 // Create store with conditional persistence
 const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       conversations: [],
@@ -209,6 +301,11 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       streamingConversations: new Map<string, StreamingState>(),
       pendingMessage: null,
       contextUsageByConversation: {},
+      conversationFilter: 'web',
+      conversationPage: 0,
+      conversationHasMore: false,
+      isLoadingMoreConversations: false,
+      messageHistory: {},
       unviewedConversations: new Set<string>(),
       inputRequiredConversations: new Set<string>(),
 
@@ -247,6 +344,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         // Update local state
         set((state: ChatState) => ({
           conversations: [newConversation, ...state.conversations],
+          ...(state.conversationFilter === 'web' || state.conversationFilter === 'all'
+            ? {}
+            : { conversationFilter: 'web' as const, conversationPage: 1 }),
           activeConversationId: id,
         }));
         persistLastActiveConversationId(id);
@@ -753,7 +853,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         return message;
       },
 
-      loadConversationsFromServer: async () => {
+      loadConversationsFromServer: async (options) => {
         const storageMode = getStorageMode();
 
         // Only load from server in MongoDB mode
@@ -762,37 +862,40 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           return;
         }
 
-        if (loadConversationsInFlight) {
-          console.log('[ChatStore] Joining in-flight conversation load...');
-          return loadConversationsInFlight;
+        const currentState = get();
+        const filter = options?.filter ?? currentState.conversationFilter;
+        const append = options?.append ?? false;
+        const page = append ? currentState.conversationPage + 1 : 1;
+        if (append && (!currentState.conversationHasMore || currentState.isLoadingMoreConversations)) {
+          return;
         }
 
-        loadConversationsInFlight = (async () => {
-        try {
-          console.log('[ChatStore] Loading conversations from MongoDB...');
-          let response;
+        set({
+          conversationFilter: filter,
+          conversationPage: append ? currentState.conversationPage : 0,
+          conversationHasMore: append ? currentState.conversationHasMore : false,
+          isLoadingMoreConversations: append,
+        });
+
+        const requestKey = `${filter}:${page}`;
+        const existingRequest = conversationLoadsInFlight.get(requestKey);
+        if (existingRequest) {
+          console.log('[ChatStore] Joining in-flight conversation load:', requestKey);
+          return existingRequest;
+        }
+
+        const request = (async () => {
           try {
-            const [browserResponse, apiResponse] = await Promise.all([
-              apiClient.getConversations({ page_size: 100 }),
-              apiClient.getConversations({
-                page_size: 100,
-                source: 'api',
-                client_type: 'api',
-              }),
-            ]);
-            const itemsById = new Map(
-              [...browserResponse.items, ...apiResponse.items].map((conversation) => [
-                conversation._id,
-                conversation,
-              ]),
-            );
-            response = {
-              ...browserResponse,
-              items: [...itemsById.values()],
-              total: browserResponse.total + apiResponse.total,
-              has_more: browserResponse.has_more || apiResponse.has_more,
-            };
-          } catch (apiError) {
+            console.log(`[ChatStore] Loading ${filter} conversations from MongoDB (page ${page})...`);
+            let response;
+            try {
+              response = await apiClient.getConversations({
+                page,
+                page_size: CONVERSATION_PAGE_SIZE,
+                source: filter,
+                client_type: filter === 'api' ? 'api' : filter === 'all' ? null : 'webui',
+              });
+            } catch (apiError) {
             // Check if it's an auth error (expected when not logged in)
             const errorMessage = apiError instanceof Error ? apiError.message : String(apiError);
             if (errorMessage.includes('Unauthorized') || errorMessage.includes('401')) {
@@ -805,8 +908,8 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
               });
             }
             // Don't clear conversations on API error - preserve what we have
-            return;
-          }
+              return;
+            }
 
           console.log('[ChatStore] API Response:', {
             responseType: typeof response,
@@ -851,7 +954,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           // Messages start empty — loadMessagesFromServer fills them when the
           // conversation is opened. Only preserve local-only conversations that
           // are actively streaming (just created, server hasn't caught up).
-          const currentState = get();
+          // Ignore a response that arrived after the user selected another filter.
+          if (get().conversationFilter !== filter) return;
+          const latestState = get();
 
           // Convert server items to local Conversation format
           const serverConversations: Conversation[] = serverItems.map((conv) => {
@@ -861,9 +966,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             //    discarding data that loadMessagesFromServer already fetched —
             //    otherwise switching tabs wipes the active conversation's content
             //    and the cooldown prevents an immediate re-fetch).
-            const isStreaming = currentState.streamingConversations.has(conv._id);
-            const isActive = currentState.activeConversationId === conv._id;
-            const localConv = currentState.conversations.find(c => c.id === conv._id);
+            const isStreaming = latestState.streamingConversations.has(conv._id);
+            const isActive = latestState.activeConversationId === conv._id;
+            const localConv = latestState.conversations.find(c => c.id === conv._id);
             const hasLoadedMessages = localConv && localConv.messages.length > 0;
 
             const title = (conv.title && conv.title.trim())
@@ -891,18 +996,12 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             };
           });
 
-          // Keep local-only conversations that should not be discarded:
-          // 1. Actively streaming (just created, server hasn't caught up)
-          // 2. Currently active (e.g. audit/shared conversations that belong
-          //    to another user and won't appear in the current user's server
-          //    response). No message-count check — preserving regardless of
-          //    whether messages have loaded yet eliminates a race condition
-          //    where the refresh fires before loadMessagesFromServer completes.
           const serverIds = new Set(serverConversations.map(c => c.id));
-          const localOnlyPreserved = currentState.conversations.filter(
+          const localOnlyPreserved = latestState.conversations.filter(
             conv => !serverIds.has(conv.id) && (
-              currentState.streamingConversations.has(conv.id) ||
-              conv.id === currentState.activeConversationId
+              append ||
+              latestState.streamingConversations.has(conv.id) ||
+              conv.id === latestState.activeConversationId
             )
           );
 
@@ -916,11 +1015,13 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           );
 
           // Check if active conversation was deleted on another device
-          const activeId = currentState.activeConversationId;
+          const activeId = latestState.activeConversationId;
           const activeStillExists = activeId ? sortedConversations.some(c => c.id === activeId) : true;
 
           set({
             conversations: sortedConversations,
+            conversationPage: page,
+            conversationHasMore: response.has_more,
             ...(activeId && !activeStillExists ? {
               activeConversationId: sortedConversations.length > 0 ? sortedConversations[0].id : null,
             } : {}),
@@ -932,20 +1033,24 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           }
 
           console.log(`[ChatStore] Loaded ${serverConversations.length} conversations from MongoDB (${localOnlyPreserved.length} local-only preserved)`);
-        } catch (error) {
-          console.error('[ChatStore] Failed to load conversations from MongoDB:', error);
-          console.error('[ChatStore] Error details:', {
-            error,
-            errorMessage: error instanceof Error ? getErrorMessage(error, "") : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined
-          });
-          // Don't clear conversations on error - preserve what we have
-        } finally {
-          loadConversationsInFlight = null;
-        }
+          } catch (error) {
+            console.error('[ChatStore] Failed to load conversations from MongoDB:', error);
+            console.error('[ChatStore] Error details:', {
+              error,
+              errorMessage: error instanceof Error ? getErrorMessage(error, "") : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined
+            });
+            // Don't clear conversations on error - preserve what we have
+          } finally {
+            conversationLoadsInFlight.delete(requestKey);
+            if (get().conversationFilter === filter) {
+              set({ isLoadingMoreConversations: false });
+            }
+          }
         })();
 
-        return loadConversationsInFlight;
+        conversationLoadsInFlight.set(requestKey, request);
+        return request;
       },
 
       // Save messages to MongoDB via upsert (idempotent).
@@ -988,21 +1093,28 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
         let savedCount = 0;
 
-        // Only save the current turn (last user message + last assistant message).
+        // Only save the current turn. A queued batch can contain several user
+        // bubbles sharing one turn ID and one assistant response.
         // Messages are append-only: older messages were already persisted by prior
         // saveMessagesToServer calls. Re-saving them all is wasteful and causes
         // request spam (one POST per message × every turn).
         const lastAssistantMsg = lastAssistantIdx >= 0 ? conv.messages[lastAssistantIdx] : null;
-        const lastUserIdx = (() => {
-          for (let i = conv.messages.length - 1; i >= 0; i--) {
-            if (conv.messages[i].role === 'user') return i;
-          }
-          return -1;
-        })();
-        const lastUserMsg = lastUserIdx >= 0 ? conv.messages[lastUserIdx] : null;
-
         const messagesToSave: { msg: typeof conv.messages[0]; idx: number }[] = [];
-        if (lastUserMsg) messagesToSave.push({ msg: lastUserMsg, idx: lastUserIdx });
+        const currentTurnId = lastAssistantMsg?.turnId;
+        if (currentTurnId) {
+          conv.messages.forEach((message, index) => {
+            if (message.role === 'user' && message.turnId === currentTurnId) {
+              messagesToSave.push({ msg: message, idx: index });
+            }
+          });
+        } else {
+          for (let index = conv.messages.length - 1; index >= 0; index -= 1) {
+            if (conv.messages[index].role === 'user') {
+              messagesToSave.push({ msg: conv.messages[index], idx: index });
+              break;
+            }
+          }
+        }
         if (lastAssistantMsg) messagesToSave.push({ msg: lastAssistantMsg, idx: lastAssistantIdx });
 
         for (const { msg, idx } of messagesToSave) {
@@ -1128,98 +1240,34 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
         try {
           console.log(`[ChatStore] Loading messages from MongoDB for: ${conversationId}`);
-          const response = await apiClient.getMessages(conversationId, { page_size: 100 });
+          const response = await apiClient.getMessages(conversationId, {
+            page: 1,
+            page_size: MESSAGE_PAGE_SIZE,
+            order: 'latest',
+          });
 
           if (!response?.items || response.items.length === 0) {
             console.log('[ChatStore] No messages found in MongoDB for:', conversationId);
+            set((state: ChatState) => ({
+              messageHistory: {
+                ...state.messageHistory,
+                [conversationId]: { nextPage: 2, hasMore: false, isLoadingOlder: false },
+              },
+            }));
             return;
           }
 
-          // Build an ordered list of raw items for look-ahead heuristics.
-          // We need to know whether a "not final" assistant message is actually
-          // followed by a subsequent user message — if so the response completed
-          // successfully but the original session crashed before writing is_final=true.
-          const rawItems = response.items;
-
-          // Convert MongoDB messages to ChatMessage format
-          const messages: ChatMessage[] = rawItems.map((msg, idx) => {
-            // Deserialize stream events (for Dynamic Agents). Legacy records may
-            // store them under `sse_events`.
-            const streamEvents: StreamEvent[] = (msg.stream_events || msg.sse_events || []).map((e) => ({
-              ...e,
-              raw: e.raw ?? null,
-              timestamp: new Date(e.timestamp),
-            }));
-
-            // Determine isFinal: prefer explicit metadata value.
-            // We now always save is_final explicitly (false for in-progress, true for complete).
-            // For legacy messages that don't have is_final, default to true (they were complete).
-            let isFinal = msg.metadata?.is_final != null
-              ? Boolean(msg.metadata.is_final)
-              : true; // Legacy messages without is_final metadata are assumed complete
-
-            // ── Stale is_final heal ──────────────────────────────────
-            // If an assistant message has is_final=false but a subsequent user
-            // message exists, the response DID complete — the original page just
-            // crashed before persisting is_final=true.  Fix the flag so the
-            // "Response was interrupted" banner does not show.
-            if (msg.role === 'assistant' && !isFinal) {
-              const hasFollowUp = rawItems.slice(idx + 1).some((message) => message.role === 'user');
-              if (hasFollowUp) {
-                console.log(`[ChatStore] Healing stale is_final=false for assistant message ${msg.message_id || msg._id} (followed by user message)`);
-                isFinal = true;
-              }
-            }
-
-            const isExplicitlyInterrupted = Boolean(msg.metadata?.is_interrupted);
-            const hasHitlForm = streamEvents.some((event) => event.type === 'input_required');
-
-            // Rehydrate user attachments from artifacts (type: "attachment").
-            // Data may be absent for large files (dropped at persist time) — the
-            // renderer falls back to a document chip in that case.
-            const attachments = (msg.artifacts || [])
-              .filter((a) => a.type === 'attachment')
-              .map((a) => {
-                const d = a.data as { mime_type?: string; size?: number; data?: string };
-                return {
-                  name: a.name,
-                  mime_type: d?.mime_type || 'application/octet-stream',
-                  ...(typeof d?.size === 'number' && { size: d.size }),
-                  ...(typeof d?.data === 'string' && { data: d.data }),
-                };
-              });
-
-            const chatMsg: ChatMessage = {
-              id: msg.message_id || msg._id?.toString() || generateId(),
-              role: msg.role as "user" | "assistant",
-              content: msg.content,
-              timestamp: new Date(msg.created_at),
-              streamEvents: streamEvents.length > 0 ? streamEvents : undefined, // Only set if present
-              isFinal,
-              turnId: msg.metadata?.turn_id,
-              taskId: msg.metadata?.task_id,
-              // Restore turnStatus from MongoDB (defaults to undefined for legacy messages)
-              turnStatus: msg.metadata?.turn_status as TurnStatus | undefined,
-              // Mark as interrupted only if explicitly flagged in MongoDB, or
-              // if this is the very last assistant message and it's not final
-              // (genuinely mid-stream when saved, with no follow-up).
-              // HITL messages are not interrupted — they're waiting for user input.
-              isInterrupted: hasHitlForm ? false : (isExplicitlyInterrupted || (msg.role === 'assistant' && !isFinal)),
-              feedback: msg.feedback ? {
-                type: msg.feedback.rating === 'positive' ? 'like' : msg.feedback.rating === 'negative' ? 'dislike' : null,
-                submitted: true,
-              } : undefined,
-              // Sender identity — present for messages created after this feature.
-              // Legacy messages without these fields will fall back to session-based
-              // display in the UI (backward compatible).
-              senderEmail: msg.sender_email,
-              senderName: msg.sender_name,
-              senderImage: msg.sender_image,
-              ...(attachments.length > 0 && { attachments }),
-            };
-
-            return chatMsg;
-          });
+          const messages = deserializeMessages(response.items);
+          set((state: ChatState) => ({
+            messageHistory: {
+              ...state.messageHistory,
+              [conversationId]: {
+                nextPage: 2,
+                hasMore: response.has_more,
+                isLoadingOlder: false,
+              },
+            },
+          }));
 
           // Reconstruct streamEvents for the timeline / Tasks / Debug panels.
           // Only use events from the LAST assistant message (current/latest turn),
@@ -1278,25 +1326,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             // prevent the UI from regressing to stale content.
             set((state: ChatState) => {
               const existingConv = state.conversations.find((c: Conversation) => c.id === conversationId);
-              const localMsgMap = new Map<string, ChatMessage>();
-              if (existingConv) {
-                for (const m of existingConv.messages) {
-                  localMsgMap.set(m.id, m);
-                }
-              }
-
-              const mergedMessages = messages.map((serverMsg: ChatMessage) => {
-                const localMsg = localMsgMap.get(serverMsg.id);
-                // Preserve local final content when MongoDB still has non-final
-                // (stale periodic-save data). Once MongoDB catches up (final save
-                // completes), isFinal will be true on both sides and we'll use
-                // the server version normally.
-                if (localMsg?.isFinal && !serverMsg.isFinal) {
-                  console.log(`[ChatStore] Preserving local final message ${serverMsg.id.substring(0, 8)} (MongoDB has stale non-final version)`);
-                  return localMsg;
-                }
-                return serverMsg;
-              });
+              const mergedMessages = mergeMessages(existingConv?.messages ?? [], messages);
 
               return {
                 conversations: state.conversations.map((c: Conversation) =>
@@ -1324,6 +1354,59 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           }
         } finally {
           messageLoadState.set(conversationId, { inFlight: false, lastLoadedAt: Date.now() });
+        }
+      },
+
+      loadOlderMessagesFromServer: async (conversationId: string) => {
+        if (getStorageMode() !== 'mongodb') return;
+
+        const history = get().messageHistory[conversationId];
+        if (!history) {
+          await get().loadMessagesFromServer(conversationId);
+          return;
+        }
+        if (!history.hasMore || history.isLoadingOlder) return;
+
+        set((state: ChatState) => ({
+          messageHistory: {
+            ...state.messageHistory,
+            [conversationId]: { ...history, isLoadingOlder: true },
+          },
+        }));
+
+        try {
+          const response = await apiClient.getMessages(conversationId, {
+            page: history.nextPage,
+            page_size: MESSAGE_PAGE_SIZE,
+            order: 'latest',
+          });
+          const olderMessages = deserializeMessages(response.items ?? []);
+          set((state: ChatState) => ({
+            conversations: state.conversations.map((conversation) =>
+              conversation.id === conversationId
+                ? {
+                    ...conversation,
+                    messages: mergeMessages(conversation.messages, olderMessages),
+                  }
+                : conversation,
+            ),
+            messageHistory: {
+              ...state.messageHistory,
+              [conversationId]: {
+                nextPage: history.nextPage + 1,
+                hasMore: response.has_more,
+                isLoadingOlder: false,
+              },
+            },
+          }));
+        } catch (error) {
+          console.error('[ChatStore] Failed to load older messages:', error);
+          set((state: ChatState) => ({
+            messageHistory: {
+              ...state.messageHistory,
+              [conversationId]: { ...history, isLoadingOlder: false },
+            },
+          }));
         }
       },
 
