@@ -162,10 +162,11 @@ async function ensureScheduledConversation(
   return conversationId;
 }
 
-async function persistScheduledInvokeMessages(
+async function persistInvokeMessages(
   body: Record<string, unknown>,
   ownerUserId: string,
   response: Response,
+  source: "api" | "scheduler",
 ): Promise<void> {
   if (!isMongoDBConfigured) return;
 
@@ -173,12 +174,25 @@ async function persistScheduledInvokeMessages(
   const userContent = String(body.message || "").trim();
   if (!conversationId || !userContent) return;
 
+  const conversations = await getCollection<Conversation>("conversations");
+  let ownerId = ownerUserId;
+  if (source === "api") {
+    const conversation = await conversations.findOne(
+      { _id: conversationId },
+      { projection: { client_type: 1, owner_id: 1, source: 1 } },
+    );
+    if (!conversation || (conversation.client_type !== "api" && conversation.source !== "api")) {
+      return;
+    }
+    ownerId = conversation.owner_id || ownerUserId;
+  }
+
   let result: Record<string, unknown> | null = null;
   try {
     const parsed = await response.json();
     result = objectValue(parsed);
   } catch (error) {
-    console.warn("[invoke] Scheduled run response was not JSON; skipping message persistence", error);
+    console.warn(`[invoke] ${source} response was not JSON; skipping message persistence`, error);
     return;
   }
 
@@ -186,28 +200,45 @@ async function persistScheduledInvokeMessages(
   const clientContext = objectValue(body.client_context);
   const scheduleId = stringValue(clientContext.schedule_id);
   const scheduleTitle = stringValue(clientContext.schedule_title);
-  const traceId = stringValue(body.trace_id) || conversationId;
-  const runId = stringValue(clientContext.run_id) || traceId;
+  const traceId =
+    stringValue(body.trace_id) ||
+    stringValue(result.trace_id) ||
+    (source === "scheduler" ? conversationId : uuidv4());
+  const runId = source === "scheduler"
+    ? stringValue(clientContext.run_id) || traceId
+    : undefined;
   const turnId = `turn-${traceId}`;
   const succeeded = result.success !== false && response.ok;
+  if (source === "api" && !succeeded) return;
   const assistantContent =
     stringValue(result.content) ||
     stringValue(result.error) ||
     (succeeded ? "" : "Scheduled run failed.");
 
   const messages = await getCollection<Document>("messages");
-  const conversations = await getCollection<Conversation>("conversations");
   const userCreatedAt = new Date();
   const assistantCreatedAt = new Date(userCreatedAt.getTime() + 1);
+  let agentName = agentId;
+  if (source === "api" && agentId) {
+    const agents = await getCollection<{ _id: string; name?: string }>("dynamic_agents");
+    const agent = await agents.findOne(
+      { _id: agentId },
+      { projection: { _id: 1, name: 1 } },
+    );
+    agentName = agent?.name || agentId;
+  }
   const commonMetadata = {
     turn_id: turnId,
-    source: "scheduler",
-    schedule_id: scheduleId,
-    schedule_title: scheduleTitle,
-    run_id: runId,
+    source,
     trace_id: traceId,
     agent_id: agentId,
-    actor_client_id: schedulerActorClientId(),
+    ...(source === "api" && { agent_name: agentName }),
+    ...(source === "scheduler" && {
+      schedule_id: scheduleId,
+      schedule_title: scheduleTitle,
+      run_id: runId,
+      actor_client_id: schedulerActorClientId(),
+    }),
   };
   const messageMetadata = compactMetadata(commonMetadata);
 
@@ -227,10 +258,10 @@ async function persistScheduledInvokeMessages(
         conversation_id: conversationId,
         role: "user",
         created_at: userCreatedAt,
-        ...(ownerUserId && {
-          owner_id: ownerUserId,
-          sender_email: ownerUserId,
-          sender_name: ownerUserId,
+        ...(ownerId && {
+          owner_id: ownerId,
+          sender_email: ownerId,
+          sender_name: ownerId,
         }),
       },
     },
@@ -255,7 +286,7 @@ async function persistScheduledInvokeMessages(
           conversation_id: conversationId,
           role: "assistant",
           created_at: assistantCreatedAt,
-          ...(ownerUserId && { owner_id: ownerUserId }),
+          ...(ownerId && { owner_id: ownerId }),
         },
       },
       { upsert: true },
@@ -269,120 +300,10 @@ async function persistScheduledInvokeMessages(
       $set: {
         updated_at: assistantCreatedAt,
         "metadata.total_messages": totalMessages,
-        "metadata.last_run_at": assistantCreatedAt,
-        "metadata.last_status": succeeded ? "ok" : "error",
-      },
-    },
-  );
-}
-
-async function persistApiInvokeMessages(
-  body: Record<string, unknown>,
-  ownerUserId: string,
-  response: Response,
-): Promise<void> {
-  if (!isMongoDBConfigured) return;
-
-  const conversationId = stringValue(body.conversation_id);
-  const userContent = String(body.message || "").trim();
-  if (!conversationId || !userContent) return;
-
-  const conversations = await getCollection<Conversation>("conversations");
-  const conversation = await conversations.findOne(
-    { _id: conversationId },
-    { projection: { client_type: 1, owner_id: 1 } },
-  );
-  if (!conversation || (conversation.client_type !== "api" && conversation.source !== "api")) {
-    return;
-  }
-
-  let result: Record<string, unknown>;
-  try {
-    result = objectValue(await response.json());
-  } catch (error) {
-    console.warn("[invoke] API response was not JSON; skipping message persistence", error);
-    return;
-  }
-
-  const agentId = stringValue(body.agent_id);
-  const traceId = stringValue(result.trace_id) || stringValue(body.trace_id) || uuidv4();
-  const turnId = `turn-${traceId}`;
-  const succeeded = result.success !== false && response.ok;
-  if (!succeeded) return;
-  const messages = await getCollection<Document>("messages");
-  const createdAt = new Date();
-  let agentName = agentId;
-
-  if (agentId) {
-    const agents = await getCollection<{ _id: string; name?: string }>("dynamic_agents");
-    const agent = await agents.findOne(
-      { _id: agentId },
-      { projection: { _id: 1, name: 1 } },
-    );
-    agentName = agent?.name || agentId;
-  }
-
-  const metadata = compactMetadata({
-    turn_id: turnId,
-    source: "api",
-    trace_id: traceId,
-    agent_id: agentId,
-    agent_name: agentName,
-  });
-  const ownerId = conversation.owner_id || ownerUserId;
-
-  await messages.updateOne(
-    { conversation_id: conversationId, message_id: `${turnId}-user` },
-    {
-      $set: {
-        content: "",
-        metadata: { ...metadata, is_final: true },
-        updated_at: createdAt,
-      },
-      $setOnInsert: {
-        message_id: `${turnId}-user`,
-        conversation_id: conversationId,
-        owner_id: ownerId,
-        role: "user",
-        created_at: createdAt,
-        sender_email: ownerId,
-        sender_name: ownerId,
-      },
-    },
-    { upsert: true },
-  );
-
-  const assistantCreatedAt = new Date(createdAt.getTime() + 1);
-  await messages.updateOne(
-    { conversation_id: conversationId, message_id: `${turnId}-assistant` },
-    {
-      $set: {
-        content: "",
-        metadata: {
-          ...metadata,
-          is_final: true,
-          turn_status: "done",
-        },
-        updated_at: assistantCreatedAt,
-      },
-      $setOnInsert: {
-        message_id: `${turnId}-assistant`,
-        conversation_id: conversationId,
-        owner_id: ownerId,
-        role: "assistant",
-        created_at: assistantCreatedAt,
-      },
-    },
-    { upsert: true },
-  );
-
-  const totalMessages = await messages.countDocuments({ conversation_id: conversationId });
-  await conversations.updateOne(
-    { _id: conversationId },
-    {
-      $set: {
-        updated_at: assistantCreatedAt,
-        "metadata.total_messages": totalMessages,
+        ...(source === "scheduler" && {
+          "metadata.last_run_at": assistantCreatedAt,
+          "metadata.last_status": succeeded ? "ok" : "error",
+        }),
       },
     },
   );
@@ -541,10 +462,11 @@ async function handleScheduledInvoke(
   );
 
   try {
-    await persistScheduledInvokeMessages(
+    await persistInvokeMessages(
       body,
       scheduledRun.email,
       response.clone(),
+      "scheduler",
     );
   } catch (error) {
     console.error("[invoke] Failed to persist scheduled invoke messages:", error);
@@ -606,7 +528,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   );
   if (conversationAuthzResponse) return conversationAuthzResponse;
 
-  // Forward body as-is to DA backend (same path, same body format)
+  // Forward body as-is to DA backend (same path, same body format).
   const backendUrl = `${daConfig.dynamicAgentsUrl}/api/v1/chat/invoke`;
   const response = await proxyJSONRequest(
     backendUrl,
@@ -615,8 +537,16 @@ export async function POST(request: NextRequest): Promise<Response> {
     "[invoke]",
   );
 
+  // The non-streaming API has no browser store to persist its transcript.
+  // Keep the BFF message collection aligned so API conversations are readable
+  // and can continue through the web chat surface.
   try {
-    await persistApiInvokeMessages(body, authResult.email, response.clone());
+    await persistInvokeMessages(
+      body,
+      authResult.email,
+      response.clone(),
+      "api",
+    );
   } catch (error) {
     console.error("[invoke] Failed to persist API invoke messages:", error);
   }

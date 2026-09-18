@@ -89,6 +89,8 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
         owner_id: "alice@example.com",
         owner_subject: "alice-sub",
       })),
+      updateOne: jest.fn(async () => ({ acknowledged: true })),
+      countDocuments: jest.fn(async () => 2),
     });
     mockProxySSEStream.mockResolvedValue(new Response("event: done\n\n", { status: 200 }));
     mockProxyJSONRequest.mockResolvedValue(NextResponse.json({ success: true }));
@@ -153,7 +155,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     );
   });
 
-  it("persists direct API invoke turns for Insights message counts", async () => {
+  it("persists direct API invoke turns for history and Insights message counts", async () => {
     const conversations = {
       findOne: jest.fn(async () => ({
         _id: "conv-1",
@@ -195,6 +197,10 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     expect(messages.updateOne.mock.calls.map((call) => call[1].$setOnInsert.role)).toEqual([
       "user",
       "assistant",
+    ]);
+    expect(messages.updateOne.mock.calls.map((call) => call[1].$set.content)).toEqual([
+      "hello",
+      "response",
     ]);
     for (const call of messages.updateOne.mock.calls) {
       expect(call[1].$set.metadata).toEqual(expect.objectContaining({
