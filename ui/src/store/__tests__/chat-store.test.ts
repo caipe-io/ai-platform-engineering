@@ -822,7 +822,7 @@ describe('chat-store', () => {
       const first = useChatStore.getState().loadConversationsFromServer();
       const second = useChatStore.getState().loadConversationsFromServer();
 
-      expect(mockApiClient.getConversations).toHaveBeenCalledTimes(1);
+      expect(mockApiClient.getConversations).toHaveBeenCalledTimes(2);
 
       resolveGet!({
         items: [
@@ -899,6 +899,54 @@ describe('chat-store', () => {
         task_id: 'review-open-prs-a1b2',
         metadata: { task_name: 'Review open pull requests' },
       });
+    });
+
+    it('loads API conversations with an explicit source and client filter', async () => {
+      mockApiClient.getConversations
+        .mockResolvedValueOnce({
+          items: [
+            {
+              _id: 'browser-conversation',
+              title: 'Browser Chat',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+          total: 1,
+          page: 1,
+          page_size: 100,
+          has_more: false,
+        })
+        .mockResolvedValueOnce({
+          items: [
+            {
+              _id: 'api-conversation',
+              title: 'CLI investigation',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              source: 'api',
+            },
+          ],
+          total: 1,
+          page: 1,
+          page_size: 100,
+          has_more: false,
+        });
+
+      await useChatStore.getState().loadConversationsFromServer();
+
+      expect(mockApiClient.getConversations).toHaveBeenNthCalledWith(1, { page_size: 100 });
+      expect(mockApiClient.getConversations).toHaveBeenNthCalledWith(2, {
+        page_size: 100,
+        source: 'api',
+        client_type: 'api',
+      });
+      expect(useChatStore.getState().conversations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'browser-conversation' }),
+          expect.objectContaining({ id: 'api-conversation', source: 'api' }),
+        ]),
+      );
     });
 
     it('removes conversations that exist locally but not on server', async () => {

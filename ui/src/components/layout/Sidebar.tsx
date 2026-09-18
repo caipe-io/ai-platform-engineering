@@ -67,7 +67,7 @@ interface ConversationTitleBadge {
   title: string;
 }
 
-type ConversationSectionId = "autonomous" | "webhook" | "scheduled" | "history";
+type ConversationSectionId = "autonomous" | "webhook" | "scheduled" | "api" | "history";
 
 type ConversationListItem =
   | {
@@ -175,6 +175,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   const [autonomousRunsExpanded, setAutonomousRunsExpanded] = useState(false);
   const [webhookRunsExpanded, setWebhookRunsExpanded] = useState(false);
   const [scheduledRunsExpanded, setScheduledRunsExpanded] = useState(false);
+  const [apiChatsExpanded, setApiChatsExpanded] = useState(false);
   const [webhookTasks, setWebhookTasks] = useState<AutonomousTask[]>([]);
   const { toast } = useToast();
 
@@ -426,8 +427,12 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   const scheduledConversations = conversations.filter(
     (conversation) => getConversationRunKind(conversation) === "scheduled",
   );
+  const apiConversations = conversations.filter(
+    (conversation) => conversation.source === "api",
+  );
   const historyConversations = conversations.filter(
-    (conversation) => getConversationRunKind(conversation) === null,
+    (conversation) =>
+      getConversationRunKind(conversation) === null && conversation.source !== "api",
   );
   const conversationListItems: ConversationListItem[] = collapsed
     ? conversations.map((conversation) => ({ kind: "conversation", conversation }))
@@ -473,6 +478,19 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
         },
         ...(scheduledRunsExpanded
           ? scheduledConversations.map(
+              (conversation): ConversationListItem => ({ kind: "conversation", conversation }),
+            )
+          : []),
+        {
+          kind: "section",
+          id: "api",
+          label: "API Chats",
+          count: apiConversations.length,
+          expanded: apiChatsExpanded,
+          onToggle: () => setApiChatsExpanded((expanded) => !expanded),
+        },
+        ...(apiChatsExpanded
+          ? apiConversations.map(
               (conversation): ConversationListItem => ({ kind: "conversation", conversation }),
             )
           : []),

@@ -172,11 +172,11 @@ class APIClient {
     pinned?: boolean;
     /**
      * Filter by conversation origin. The API only honors an allow-list of
-     * values ('autonomous' | 'web'); any other value is ignored server-side
-     * and the default human view is returned. Used by the sidebar's
-     * "Autonomous only" filter chip to surface autonomous_agents runs.
+     * values ('autonomous' | 'web' | 'api'); any other value is ignored
+     * server-side and the default human view is returned. The chat store uses
+     * this to load API-originated conversations separately from browser chat.
      */
-    source?: 'autonomous' | 'web';
+    source?: 'autonomous' | 'web' | 'api';
     client_type?: ClientType;
   }): Promise<PaginatedResponse<Conversation>> {
     const searchParams = new URLSearchParams();

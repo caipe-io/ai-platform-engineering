@@ -584,6 +584,28 @@ describe('Archive API', () => {
       );
     });
 
+    it('?source=api narrows to API-originated conversations', async () => {
+      const convCollection = createMockCollection();
+      convCollection.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      mockCollections['conversations'] = convCollection;
+
+      const req = makeRequest('http://localhost:3000/api/chat/conversations?source=api');
+      await GET_CONVERSATIONS(req);
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      expect(findCall.$and).toEqual(
+        expect.arrayContaining([{ source: 'api' }]),
+      );
+    });
+
     it('?source=autonomous does NOT bypass owner scoping (IDOR regression)', async () => {
       // Pre-fix the autonomous branch did `delete query.$or`, leaking
       // every user's autonomous conversations to any authed caller.

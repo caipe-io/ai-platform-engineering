@@ -180,7 +180,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const clientTypeParam = url.searchParams.get('client_type') as ClientType | null;
   const sourceParam = url.searchParams.get('source');
   const sourceFilter =
-    sourceParam === 'autonomous' || sourceParam === 'web' ? sourceParam : null;
+    sourceParam === 'autonomous' || sourceParam === 'web' || sourceParam === 'api'
+      ? sourceParam
+      : null;
 
   // Validate client_type param if provided
   if (clientTypeParam && !VALID_CLIENT_TYPES.includes(clientTypeParam)) {
@@ -234,6 +236,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   // `delete query.$or` for source=autonomous was an IDOR.
   if (sourceFilter === 'autonomous') {
     query.$and.push({ source: 'autonomous' });
+  } else if (sourceFilter === 'api') {
+    query.$and.push({ source: 'api' });
   } else if (sourceFilter === 'web') {
     query.$and.push({
       source: { $in: ['web', null] } as { $in: (string | null)[] },
@@ -242,10 +246,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     // Default ("All") view: include autonomous conversations alongside
     // regular human chats so the sidebar's "All" filter actually shows
     // both. Slack and Webex threads are still excluded because they have
-    // their own dedicated UI, and `api` conversations are excluded because
-    // they were created by a direct API caller (e.g. the ask-forge CLI)
-    // with no UI transcript to show — they still count in insights/stats,
-    // which query `conversations`/`messages` directly without this filter.
+    // their own dedicated UI. API conversations are excluded from this result
+    // because the chat store loads them with an explicit source filter for a
+    // separate sidebar section. They still count in insights/stats, which
+    // query `conversations`/`messages` directly without this filter.
     // Slack/Webex are checked on both the legacy `source` field and the
     // newer `client_type` field (Webex is never tagged via `source` — see
     // the `Conversation.source` union in mongodb.ts), mirroring the same
