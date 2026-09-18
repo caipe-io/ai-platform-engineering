@@ -1416,6 +1416,8 @@ const PLATFORM_COMPONENT_MARKS: Record<string, { icon: typeof Activity; classNam
   keycloak: { icon: ShieldCheck, className: "from-blue-500/30 to-indigo-500/30 text-blue-300", logo: siKeycloak },
   openfga: { icon: Network, className: "from-amber-500/30 to-orange-500/30 text-amber-300", logoUrl: "https://raw.githubusercontent.com/openfga/openfga/main/openfga-logo.png" },
   "caipe-agent-harness": { icon: Bot, className: "from-emerald-500/30 to-teal-500/30 text-emerald-300" },
+  scheduler: { icon: CalendarClock, className: "from-cyan-500/30 to-blue-500/30 text-cyan-300" },
+  "autonomous-agents": { icon: Bot, className: "from-emerald-500/30 to-lime-500/30 text-emerald-300" },
   agentgateway: { icon: Route, className: "from-fuchsia-500/30 to-pink-500/30 text-fuchsia-300", logoUrl: "https://raw.githubusercontent.com/agentgateway/agentgateway/main/ui/public/agw-mark-color.svg" },
   "otel-tracing": { icon: Activity, className: "from-sky-500/30 to-cyan-500/30 text-sky-300", logo: siOpentelemetry },
   litellm: { icon: Waypoints, className: "from-violet-500/30 to-purple-500/30 text-violet-300", logoUrl: "https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/proxy/_experimental/out/assets/logos/litellm_logo.jpg" },
@@ -1435,7 +1437,7 @@ function PlatformComponentCard({
   return (
     <div className="animate-slide-in flex items-center gap-2.5 rounded-lg border bg-card/60 p-2.5 transition-transform duration-300 hover:-translate-y-0.5" style={{ animationDelay: `${delay}ms` }}>
       <span className={cn("relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br", mark.className)} aria-hidden="true">
-        {component.id === "caipe-ui" ? (
+        {component.id === "caipe-ui" || component.id === "caipe-agent-harness" ? (
           // The configured logo may be deployment-provided and is intentionally not optimized.
           // eslint-disable-next-line @next/next/no-img-element
           <img src={getConfig("logoUrl")} alt="" className="h-7 w-7 object-contain" />
