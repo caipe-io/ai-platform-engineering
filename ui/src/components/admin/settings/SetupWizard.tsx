@@ -54,6 +54,11 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  siKeycloak,
+  siOpentelemetry,
+  type SimpleIcon,
+} from "simple-icons";
 
 interface ModelOption {
   _id: string;
@@ -1406,14 +1411,14 @@ function InventoryTile({ label, value, delay = 0 }: { label: string; value: numb
   );
 }
 
-const PLATFORM_COMPONENT_MARKS: Record<string, { mark: string; icon: typeof Activity; className: string }> = {
-  "caipe-ui": { mark: "C", icon: Sparkles, className: "from-cyan-500/30 to-violet-500/30 text-cyan-300" },
-  keycloak: { mark: "K", icon: ShieldCheck, className: "from-blue-500/30 to-indigo-500/30 text-blue-300" },
-  openfga: { mark: "F", icon: Network, className: "from-amber-500/30 to-orange-500/30 text-amber-300" },
-  "caipe-agent-harness": { mark: "A", icon: Bot, className: "from-emerald-500/30 to-teal-500/30 text-emerald-300" },
-  agentgateway: { mark: "G", icon: Route, className: "from-fuchsia-500/30 to-pink-500/30 text-fuchsia-300" },
-  "otel-tracing": { mark: "OT", icon: Activity, className: "from-sky-500/30 to-cyan-500/30 text-sky-300" },
-  litellm: { mark: "LL", icon: Waypoints, className: "from-violet-500/30 to-purple-500/30 text-violet-300" },
+const PLATFORM_COMPONENT_MARKS: Record<string, { icon: typeof Activity; className: string; logo?: SimpleIcon; logoUrl?: string }> = {
+  "caipe-ui": { icon: Sparkles, className: "from-cyan-500/30 to-violet-500/30 text-cyan-300" },
+  keycloak: { icon: ShieldCheck, className: "from-blue-500/30 to-indigo-500/30 text-blue-300", logo: siKeycloak },
+  openfga: { icon: Network, className: "from-amber-500/30 to-orange-500/30 text-amber-300", logoUrl: "https://raw.githubusercontent.com/openfga/openfga/main/openfga-logo.png" },
+  "caipe-agent-harness": { icon: Bot, className: "from-emerald-500/30 to-teal-500/30 text-emerald-300" },
+  agentgateway: { icon: Route, className: "from-fuchsia-500/30 to-pink-500/30 text-fuchsia-300", logoUrl: "https://raw.githubusercontent.com/agentgateway/agentgateway/main/ui/public/agw-mark-color.svg" },
+  "otel-tracing": { icon: Activity, className: "from-sky-500/30 to-cyan-500/30 text-sky-300", logo: siOpentelemetry },
+  litellm: { icon: Waypoints, className: "from-violet-500/30 to-purple-500/30 text-violet-300", logoUrl: "https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/proxy/_experimental/out/assets/logos/litellm_logo.jpg" },
 };
 
 function PlatformComponentCard({
@@ -1423,15 +1428,28 @@ function PlatformComponentCard({
   component: NonNullable<HealthPayload["components"]>[number];
   delay: number;
 }) {
-  const mark = PLATFORM_COMPONENT_MARKS[component.id] ?? { mark: "•", icon: Cloud, className: "from-slate-500/30 to-slate-700/30 text-slate-300" };
+  const mark = PLATFORM_COMPONENT_MARKS[component.id] ?? { icon: Cloud, className: "from-slate-500/30 to-slate-700/30 text-slate-300" };
   const Icon = mark.icon;
   const healthy = component.status === "healthy";
   const disabled = component.status === "disabled";
   return (
     <div className="animate-slide-in flex items-center gap-2.5 rounded-lg border bg-card/60 p-2.5 transition-transform duration-300 hover:-translate-y-0.5" style={{ animationDelay: `${delay}ms` }}>
       <span className={cn("relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br", mark.className)} aria-hidden="true">
-        <Icon className="h-4 w-4" />
-        <span className="absolute -bottom-1 -right-1 rounded bg-background px-0.5 text-[8px] font-bold leading-3">{mark.mark}</span>
+        {component.id === "caipe-ui" ? (
+          // The configured logo may be deployment-provided and is intentionally not optimized.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={getConfig("logoUrl")} alt="" className="h-7 w-7 object-contain" />
+        ) : mark.logo ? (
+          <svg viewBox="0 0 24 24" className="h-5 w-5" role="img" aria-label={`${component.label} logo`}>
+            <path d={mark.logo.path} fill="currentColor" />
+          </svg>
+        ) : mark.logoUrl ? (
+          // These upstream service marks are optional presentation assets.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={mark.logoUrl} alt={`${component.label} logo`} className="h-7 w-7 rounded object-contain" />
+        ) : (
+          <Icon className="h-5 w-5" />
+        )}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center justify-between gap-2">
