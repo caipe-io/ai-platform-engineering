@@ -51,6 +51,8 @@ describe("admin setup wizard route", () => {
   const counts: Record<string, number[]> = {
     dynamic_agents: [1, 0],
     conversations: [0],
+    provider_connections: [2],
+    oauth_connectors: [3],
     rag_ingestion_sources: [0],
     mcp_servers: [1],
     llm_models: [1],
@@ -62,6 +64,8 @@ describe("admin setup wizard route", () => {
     Object.assign(counts, {
       dynamic_agents: [1, 0],
       conversations: [0],
+      provider_connections: [2],
+      oauth_connectors: [3],
       rag_ingestion_sources: [0],
       mcp_servers: [1],
       llm_models: [1],
@@ -94,6 +98,10 @@ describe("admin setup wizard route", () => {
       auto_start: true,
       enabled: true,
       fresh_install: true,
+      inventory: {
+        connected_credentials: 2,
+        available_oauth_connectors: 3,
+      },
       state: { status: "not_started", current_step: 1 },
     });
     expect(mockRequireRbacPermission).toHaveBeenCalledWith(

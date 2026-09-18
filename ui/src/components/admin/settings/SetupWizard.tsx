@@ -33,9 +33,11 @@ import {
   Database,
   ExternalLink,
   Gauge,
+  KeyRound,
   Loader2,
   LayoutGrid,
   Play,
+  Plug,
   RotateCcw,
   Sparkles,
   TriangleAlert,
@@ -56,6 +58,22 @@ interface MCPOption {
   name: string;
   description?: string;
   enabled?: boolean;
+}
+
+interface OAuthConnectorOption {
+  id: string;
+  name: string;
+  provider: string;
+  enabled: boolean;
+}
+
+interface ProviderConnectionOption {
+  id: string;
+  provider: string;
+  status: string;
+  updatedAt?: string;
+  connectedAt?: string;
+  expiresAt?: string;
 }
 
 interface HealthCapability {
@@ -174,6 +192,19 @@ const SETUP_FEATURES: Array<{
   },
 ];
 
+const SETUP_CONNECTIONS = [
+  {
+    provider: "github",
+    label: "GitHub",
+    description: "Repository and pull-request access for developer and SRE agents.",
+  },
+  {
+    provider: "notion",
+    label: "Notion",
+    description: "Search pages and databases through the Notion MCP server.",
+  },
+] as const;
+
 function deploymentFeatureDefaults(): Record<SetupFeatureKey, boolean> {
   return {
     workflows: Boolean(getConfig("workflowsEnabled") && getConfig("workflowRunnerEnabled")),
@@ -195,6 +226,16 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw new Error(messageFromPayload(payload, `Request failed (${response.status})`));
   return payload as T;
+}
+
+async function optionalJsonRequest<T>(url: string): Promise<T | null> {
+  try {
+    return await jsonRequest<T>(url);
+  } catch {
+    // Credentials are optional. A deployment with that feature disabled must
+    // still be able to complete the first-install wizard.
+    return null;
+  }
 }
 
 async function healthRequest(): Promise<HealthPayload | null> {
@@ -280,6 +321,8 @@ export function SetupWizardDialog({
   const [payload, setPayload] = useState<SetupWizardPayload | null>(initialPayload ?? null);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [mcpServers, setMcpServers] = useState<MCPOption[]>([]);
+  const [oauthConnectors, setOauthConnectors] = useState<OAuthConnectorOption[]>([]);
+  const [providerConnections, setProviderConnections] = useState<ProviderConnectionOption[]>([]);
   const [health, setHealth] = useState<HealthPayload | null>(null);
   const [step, setStep] = useState(1);
   const [selection, setSelection] = useState<SetupWizardSelection>({
@@ -317,11 +360,13 @@ export function SetupWizardDialog({
     setLoading(true);
     setError(null);
     try {
-      const [setupResponse, healthResponse, modelResponse, mcpResponse] = await Promise.all([
+      const [setupResponse, healthResponse, modelResponse, mcpResponse, connectionsResponse, connectorsResponse] = await Promise.all([
         jsonRequest<ApiEnvelope<SetupWizardPayload>>("/api/admin/setup-wizard"),
         healthRequest(),
         jsonRequest<ApiEnvelope<ListEnvelope<ModelOption>>>("/api/llm-models?page_size=100"),
         jsonRequest<ApiEnvelope<ListEnvelope<MCPOption>>>("/api/mcp-servers?page_size=100"),
+        optionalJsonRequest<ApiEnvelope<ProviderConnectionOption[]>>("/api/credentials/connections"),
+        optionalJsonRequest<ApiEnvelope<OAuthConnectorOption[]>>("/api/credentials/oauth-connectors"),
       ]);
       const nextPayload = setupResponse.data;
       const nextModels = modelResponse.data.items ?? [];
@@ -330,6 +375,8 @@ export function SetupWizardDialog({
       setHealth(healthResponse);
       setModels(nextModels);
       setMcpServers(nextMcpServers);
+      setProviderConnections(connectionsResponse?.data ?? []);
+      setOauthConnectors(connectorsResponse?.data ?? []);
       const saved = nextPayload.state.selection;
       const defaultModel = saved?.model_id
         ? nextModels.find((model) => model._id === saved.model_id)
@@ -372,6 +419,44 @@ export function SetupWizardDialog({
     if (open) void load();
   }, [load, open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const refreshConnections = () => {
+      void Promise.all([
+        optionalJsonRequest<ApiEnvelope<ProviderConnectionOption[]>>("/api/credentials/connections"),
+        optionalJsonRequest<ApiEnvelope<OAuthConnectorOption[]>>("/api/credentials/oauth-connectors"),
+      ]).then(([connectionsResponse, connectorsResponse]) => {
+        const connections = connectionsResponse?.data ?? [];
+        setProviderConnections(connections);
+        setOauthConnectors(connectorsResponse?.data ?? []);
+        setPayload((current) => current
+          ? {
+              ...current,
+              inventory: {
+                ...current.inventory,
+                connected_credentials: connections.filter((connection) => connection.status === "connected").length,
+              },
+            }
+          : current);
+      });
+    };
+    const handleOAuthMessage = (event: MessageEvent) => {
+      if (event.origin === window.location.origin && event.data?.type === "caipe.oauth.connection") {
+        refreshConnections();
+      }
+    };
+    window.addEventListener("message", handleOAuthMessage);
+    const channel = typeof BroadcastChannel === "undefined"
+      ? null
+      : new BroadcastChannel("caipe.oauth.connection");
+    channel?.addEventListener("message", refreshConnections);
+    return () => {
+      window.removeEventListener("message", handleOAuthMessage);
+      channel?.removeEventListener("message", refreshConnections);
+      channel?.close();
+    };
+  }, [open]);
+
   const addModel = useCallback(async () => {
     setError(null);
     setSaving(true);
@@ -399,6 +484,11 @@ export function SetupWizardDialog({
   const requiredHealthFailure = health?.capabilities.some(
     (capability) => capability.required && capability.status === "down",
   ) ?? false;
+  const connectedProviders = new Set(
+    providerConnections
+      .filter((connection) => connection.status === "connected")
+      .map((connection) => connection.provider),
+  );
 
   const persistProgress = async (nextStep: number, skippedStep?: number) => {
     setSaving(true);
@@ -624,7 +714,7 @@ export function SetupWizardDialog({
                 {step === 1 && "Check the services needed for a working agent."}
                 {step === 2 && "Choose the model your starter agent will use."}
                 {step === 3 && "Start with a useful recipe or a minimal agent."}
-                {step === 4 && "Attach optional knowledge and MCP tools."}
+                {step === 4 && "Connect the accounts and tools that make your starter agent useful."}
                 {step === 5 && "Create the agent and verify an end-to-end response."}
               </DialogDescription>
             </DialogHeader>
@@ -643,9 +733,10 @@ export function SetupWizardDialog({
 
                   {step === 1 && (
                     <div className="space-y-4">
-                      <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                         <InventoryTile label="Models" value={payload?.inventory.models ?? 0} />
                         <InventoryTile label="MCP servers" value={payload?.inventory.mcp_servers ?? 0} />
+                        <InventoryTile label="Connected credentials" value={payload?.inventory.connected_credentials ?? 0} />
                         <InventoryTile label="Knowledge sources" value={payload?.inventory.knowledge_sources ?? 0} />
                       </div>
                       <div className="space-y-2">
@@ -791,7 +882,7 @@ export function SetupWizardDialog({
                           <div className="text-center">
                             <Sparkles className="mx-auto h-8 w-8 text-muted-foreground" />
                             <p className="mt-3 font-semibold">No models are configured</p>
-                            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">Add a model here to continue setting up your first working agent.</p>
+                            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">Add a model here to continue setting up your first working agent. Provider access is configured separately in Model providers.</p>
                           </div>
                           {showAddModel ? (
                             <div className="mx-auto max-w-md space-y-3">
@@ -800,7 +891,7 @@ export function SetupWizardDialog({
                               <div><Label htmlFor="setup-model-provider">Provider</Label><Input id="setup-model-provider" placeholder="openai or anthropic" value={newModel.provider} onChange={(e) => setNewModel({ ...newModel, provider: e.target.value })} /></div>
                               <div className="flex gap-2"><Button onClick={() => void addModel()} disabled={saving || !newModel.model_id || !newModel.name || !newModel.provider}>{saving ? "Adding..." : "Add model"}</Button><Button variant="outline" onClick={() => setShowAddModel(false)}>Cancel</Button></div>
                             </div>
-                          ) : <div className="flex justify-center gap-2"><Button onClick={() => setShowAddModel(true)}><Sparkles className="mr-2 h-4 w-4" />Add a model</Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=llm-models">Advanced configuration<ExternalLink className="ml-2 h-4 w-4" /></Link></Button></div>}
+                          ) : <div className="flex flex-wrap justify-center gap-2"><Button onClick={() => setShowAddModel(true)}><Sparkles className="mr-2 h-4 w-4" />Add a model</Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=model-providers">Configure model access<ExternalLink className="ml-2 h-4 w-4" /></Link></Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=llm-models">Advanced configuration<ExternalLink className="ml-2 h-4 w-4" /></Link></Button></div>}
                         </div>
                       ) : (
                         <>
@@ -872,6 +963,90 @@ export function SetupWizardDialog({
 
                   {step === 4 && (
                     <div className="space-y-4">
+                      <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
+                        <div className="flex items-start gap-3">
+                          <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                          <div>
+                            <p className="font-medium">Connect credentials</p>
+                            <p className="text-sm text-muted-foreground">
+                              Connect the accounts your agent should use. Tokens are stored by the credential service and are never saved in this wizard.
+                            </p>
+                          </div>
+                        </div>
+                        {oauthConnectors.length === 0 ? (
+                          <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                            No user OAuth connectors are enabled in this deployment. You can still use model credentials and unauthenticated MCP servers.
+                          </div>
+                        ) : (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {SETUP_CONNECTIONS.map((entry) => {
+                              const connected = connectedProviders.has(entry.provider);
+                              const available = oauthConnectors.some((connector) => connector.provider === entry.provider);
+                              return (
+                                <div key={entry.provider} className="flex items-start justify-between gap-3 rounded-lg border p-3">
+                                  <div className="flex min-w-0 gap-2">
+                                    <Plug className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium">{entry.label}</p>
+                                      <p className="text-xs text-muted-foreground">{entry.description}</p>
+                                      <p className={cn("mt-1 text-xs", connected ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
+                                        {!available ? "Not enabled" : connected ? "Connected" : "Not connected"}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  {available && !connected && (
+                                    <Button asChild size="sm" variant="outline">
+                                      <Link href={`/api/credentials/oauth/${entry.provider}/connect`} target="_blank" rel="noreferrer">Connect</Link>
+                                    </Button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap items-center gap-3">
+                          <Button asChild size="sm" variant="outline">
+                            <Link href="/credentials/connections" target="_blank" rel="noreferrer">Manage connected credentials<ExternalLink className="ml-2 h-3.5 w-3.5" /></Link>
+                          </Button>
+                          <span className="text-xs text-muted-foreground">
+                            {providerConnections.filter((connection) => connection.status === "connected").length} connected account{providerConnections.filter((connection) => connection.status === "connected").length === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
+                        <div className="flex items-start gap-3">
+                          <Plug className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                          <div>
+                            <p className="font-medium">Add remote MCP tools</p>
+                            <p className="text-sm text-muted-foreground">
+                              Pick a catalog provider such as Notion or GitHub, or configure any compatible MCP endpoint. The MCP editor will guide credential selection and tool discovery.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {SETUP_CONNECTIONS.map((entry) => (
+                            <div key={`${entry.provider}-mcp`} className="rounded-lg border p-3">
+                              <p className="text-sm font-medium">{entry.label} MCP</p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {entry.provider === "notion" ? "Read and search pages, databases, and blocks." : "Search repositories and inspect pull requests."}
+                              </p>
+                              <Link
+                                className="mt-2 inline-flex items-center text-xs text-primary hover:underline"
+                                href="/dynamic-agents?tab=mcp-servers&add=remote"
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Add from catalog<ExternalLink className="ml-1 h-3.5 w-3.5" />
+                              </Link>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          OAuth-capable providers can be connected during MCP setup. Generic dynamic client registration (DCR) still requires provider support and is not assumed for arbitrary endpoints.
+                        </p>
+                      </div>
+
                       <label className="flex cursor-pointer items-start justify-between gap-4 rounded-lg border p-4">
                         <span className="flex gap-3">
                           <Database className="mt-0.5 h-5 w-5 text-primary" />

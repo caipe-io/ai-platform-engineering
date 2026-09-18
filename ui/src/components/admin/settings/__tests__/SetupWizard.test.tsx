@@ -86,6 +86,15 @@ describe("SetupWizardSettings", () => {
       if (url.startsWith("/api/mcp-servers")) {
         return response({ success: true, data: { items: [{ _id: "netutils", name: "Network utilities", enabled: true }] } });
       }
+      if (url === "/api/credentials/connections") {
+        return response({ success: true, data: [{ id: "connection-github", provider: "github", status: "connected" }] });
+      }
+      if (url === "/api/credentials/oauth-connectors") {
+        return response({ success: true, data: [
+          { id: "connector-github", name: "GitHub", provider: "github", enabled: true },
+          { id: "connector-notion", name: "Notion", provider: "notion", enabled: true },
+        ] });
+      }
       return response({ error: "Not found" }, 404);
     }) as jest.Mock;
   });
@@ -228,6 +237,25 @@ describe("SetupWizardSettings", () => {
     expect(global.fetch).toHaveBeenCalledWith(
       "/api/v1/chat/invoke",
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("guides first-time users through credentials and remote MCP onboarding", async () => {
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+
+    expect(await screen.findByRole("heading", { name: "Test" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge & tools" }));
+
+    expect(await screen.findByText("Connect credentials")).toBeInTheDocument();
+    expect(screen.getByText("Connected", { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Connect" })).toHaveAttribute(
+      "href",
+      "/api/credentials/oauth/notion/connect",
+    );
+    expect(screen.getAllByRole("link", { name: /Add from catalog/i })).toHaveLength(2);
+    expect(screen.getByRole("link", { name: /Manage connected credentials/i })).toHaveAttribute(
+      "href",
+      "/credentials/connections",
     );
   });
 

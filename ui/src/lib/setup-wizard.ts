@@ -47,6 +47,8 @@ export interface SetupWizardInventory {
   agents: number;
   custom_agents: number;
   conversations: number;
+  connected_credentials: number;
+  available_oauth_connectors: number;
   knowledge_sources: number;
   mcp_servers: number;
   models: number;

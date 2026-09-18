@@ -105,15 +105,17 @@ function normalizeCurrentStep(value: unknown): number | undefined {
 }
 
 async function inventory(): Promise<SetupWizardInventory> {
-  const [agents, conversations, knowledgeSources, mcpServers, models, users] = await Promise.all([
+  const [agents, conversations, providerConnections, oauthConnectors, knowledgeSources, mcpServers, models, users] = await Promise.all([
     getCollection<CountDocument>("dynamic_agents"),
     getCollection<CountDocument>("conversations"),
+    getCollection<CountDocument>("provider_connections"),
+    getCollection<CountDocument>("oauth_connectors"),
     getCollection<CountDocument>("rag_ingestion_sources"),
     getCollection<CountDocument>("mcp_servers"),
     getCollection<CountDocument>("llm_models"),
     getCollection<CountDocument>("users"),
   ]);
-  const [agentCount, customAgentCount, conversationCount, knowledgeSourceCount, mcpServerCount, modelCount, userCount] =
+  const [agentCount, customAgentCount, conversationCount, connectedCredentialCount, availableOAuthConnectorCount, knowledgeSourceCount, mcpServerCount, modelCount, userCount] =
     await Promise.all([
       agents.countDocuments({}),
       agents.countDocuments({
@@ -121,6 +123,8 @@ async function inventory(): Promise<SetupWizardInventory> {
         config_driven: { $ne: true },
       }),
       conversations.countDocuments({}),
+      providerConnections.countDocuments({ status: "connected" }),
+      oauthConnectors.countDocuments({ enabled: { $ne: false } }),
       knowledgeSources.countDocuments({}),
       mcpServers.countDocuments({ enabled: { $ne: false } }),
       models.countDocuments({}),
@@ -130,6 +134,8 @@ async function inventory(): Promise<SetupWizardInventory> {
     agents: agentCount,
     custom_agents: customAgentCount,
     conversations: conversationCount,
+    connected_credentials: connectedCredentialCount,
+    available_oauth_connectors: availableOAuthConnectorCount,
     knowledge_sources: knowledgeSourceCount,
     mcp_servers: mcpServerCount,
     models: modelCount,
