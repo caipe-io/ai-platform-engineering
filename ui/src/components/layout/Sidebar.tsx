@@ -9,12 +9,14 @@ import { ShareButton } from "@/components/chat/ShareButton";
 import { UseCaseBuilderDialog } from "@/components/gallery/UseCaseBuilder";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { autonomousApi } from "@/components/autonomous/api";
 import type { AutonomousTask } from "@/components/autonomous/types";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
+import type { ConversationListFilter } from "@/lib/api-client";
 import { getErrorMessage } from "@/lib/error-utils";
 import { getStorageMode } from "@/lib/storage-config";
 import { cn,formatDate,truncateText } from "@/lib/utils";
@@ -25,12 +27,15 @@ import { AnimatePresence,motion } from "framer-motion";
 import {
 Archive,
 ArchiveRestore,
+CalendarClock,
 Check,
 ChevronLeft,
 ChevronRight,
+Code2,
 Database,
 HardDrive,
 History,
+Loader2,
 MessageCircleQuestion,
 MessageSquare,
 Pencil,
@@ -48,6 +53,8 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
+  useCallback,
+  useRef,
   useState,
   useTransition,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -67,21 +74,12 @@ interface ConversationTitleBadge {
   title: string;
 }
 
-type ConversationSectionId = "autonomous" | "webhook" | "scheduled" | "api" | "history";
+type ConversationHistoryFilter = ConversationListFilter | "webhook";
 
 type ConversationListItem =
   | {
       kind: "conversation";
       conversation: Conversation;
-    }
-  | {
-      kind: "section";
-      id: ConversationSectionId;
-      label: string;
-      count: number;
-      expanded?: boolean;
-      onToggle?: () => void;
-      nested?: boolean;
     }
   | {
       kind: "webhook-task";
@@ -153,6 +151,9 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     deleteConversation,
     updateConversationTitle,
     loadConversationsFromServer,
+    conversationFilter,
+    conversationHasMore,
+    isLoadingMoreConversations,
     loadMessagesFromServer,
     isConversationStreaming,
     hasUnviewedMessages,
@@ -172,11 +173,9 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [renameSavingId, setRenameSavingId] = useState<string | null>(null);
-  const [autonomousRunsExpanded, setAutonomousRunsExpanded] = useState(false);
-  const [webhookRunsExpanded, setWebhookRunsExpanded] = useState(false);
-  const [scheduledRunsExpanded, setScheduledRunsExpanded] = useState(false);
-  const [apiChatsExpanded, setApiChatsExpanded] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<ConversationHistoryFilter>('web');
   const [webhookTasks, setWebhookTasks] = useState<AutonomousTask[]>([]);
+  const conversationScrollViewportRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   // Agent name lookup for dynamic agent conversations
@@ -191,7 +190,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
       // Always load from server - the loadConversationsFromServer function
       // will merge server data with local cache intelligently
       setIsLoadingConversations(true);
-      void loadConversationsFromServer()
+      void loadConversationsFromServer({ filter: 'web' })
         .catch((error) => {
           console.error('[Sidebar] Failed to load conversations:', error);
         })
@@ -206,7 +205,9 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && activeTab === "chat" && storageMode === 'mongodb') {
         console.log('[Sidebar] Tab became visible, re-syncing conversations');
-        loadConversationsFromServer().catch((error) => {
+        loadConversationsFromServer({
+          filter: useChatStore.getState().conversationFilter,
+        }).catch((error) => {
           console.error('[Sidebar] Failed to re-sync conversations:', error);
         });
       }
@@ -219,6 +220,45 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, storageMode]); // Intentionally exclude loadConversationsFromServer to prevent re-runs
+
+  const handleHistoryFilterChange = useCallback((nextFilter: ConversationHistoryFilter) => {
+    setHistoryFilter(nextFilter);
+    if (nextFilter === 'webhook' || storageMode !== 'mongodb') return;
+    setIsLoadingConversations(true);
+    void loadConversationsFromServer({ filter: nextFilter })
+      .catch((error) => {
+        console.error('[Sidebar] Failed to filter conversations:', error);
+      })
+      .finally(() => setIsLoadingConversations(false));
+  }, [loadConversationsFromServer, storageMode]);
+
+  const handleConversationListScroll = useCallback(() => {
+    const viewport = conversationScrollViewportRef.current;
+    if (
+      !viewport ||
+      historyFilter === 'webhook' ||
+      !conversationHasMore ||
+      isLoadingMoreConversations
+    ) {
+      return;
+    }
+    if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100) {
+      void loadConversationsFromServer({ filter: conversationFilter, append: true });
+    }
+  }, [
+    conversationFilter,
+    conversationHasMore,
+    historyFilter,
+    isLoadingMoreConversations,
+    loadConversationsFromServer,
+  ]);
+
+  useEffect(() => {
+    const viewport = conversationScrollViewportRef.current;
+    if (!viewport) return;
+    viewport.addEventListener('scroll', handleConversationListScroll, { passive: true });
+    return () => viewport.removeEventListener('scroll', handleConversationListScroll);
+  }, [handleConversationListScroll]);
 
   // Fetch dynamic agents for name lookup in conversation list
   useEffect(() => {
@@ -308,7 +348,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     setIsReloading(true);
     try {
       console.log('[Sidebar] Manual reload triggered');
-      await loadConversationsFromServer();
+      await loadConversationsFromServer({ filter: conversationFilter });
       // Also force-reload the active conversation's messages to pick up
       // follow-up messages from other devices and refresh stream events
       if (activeConversationId) {
@@ -325,6 +365,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     let resolvedAgentId: string | null = null;
     try {
       resolvedAgentId = agentId?.trim() || await resolveUsableChatAgentId();
+      setHistoryFilter('web');
 
       if (storageMode === 'mongodb') {
         // MongoDB mode: Create conversation on server
@@ -352,6 +393,8 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
         useChatStore.setState((state) => ({
           conversations: [newConversation, ...state.conversations],
           activeConversationId: conversation._id,
+          conversationFilter: 'web',
+          conversationPage: Math.max(state.conversationPage, 1),
         }));
 
         // Small delay to ensure store update propagates before navigation
@@ -421,89 +464,18 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     }
   };
 
-  const autonomousConversations = conversations.filter(
-    (conversation) => getConversationRunKind(conversation) === "autonomous",
-  );
-  const scheduledConversations = conversations.filter(
-    (conversation) => getConversationRunKind(conversation) === "scheduled",
-  );
-  const apiConversations = conversations.filter(
-    (conversation) => conversation.source === "api",
-  );
-  const historyConversations = conversations.filter(
-    (conversation) =>
-      getConversationRunKind(conversation) === null && conversation.source !== "api",
-  );
-  const conversationListItems: ConversationListItem[] = collapsed
-    ? conversations.map((conversation) => ({ kind: "conversation", conversation }))
-    : [
-        {
-          kind: "section",
-          id: "autonomous",
-          label: "Autonomous Runs",
-          count: autonomousConversations.length + webhookTasks.length,
-          expanded: autonomousRunsExpanded,
-          onToggle: () => setAutonomousRunsExpanded((expanded) => !expanded),
-        },
-        ...(autonomousRunsExpanded
-          ? autonomousConversations.map(
-              (conversation): ConversationListItem => ({ kind: "conversation", conversation }),
-            )
-          : []),
-        ...(autonomousRunsExpanded
-          ? [
-              {
-                kind: "section" as const,
-                id: "webhook" as const,
-                label: "Webhook Runs",
-                count: webhookTasks.length,
-                expanded: webhookRunsExpanded,
-                onToggle: () => setWebhookRunsExpanded((expanded) => !expanded),
-                nested: true,
-              },
-              ...(webhookRunsExpanded
-                ? webhookTasks.map(
-                    (task): ConversationListItem => ({ kind: "webhook-task", task }),
-                  )
-                : []),
-            ]
-          : []),
-        {
-          kind: "section",
-          id: "scheduled",
-          label: "Scheduled Runs",
-          count: scheduledConversations.length,
-          expanded: scheduledRunsExpanded,
-          onToggle: () => setScheduledRunsExpanded((expanded) => !expanded),
-        },
-        ...(scheduledRunsExpanded
-          ? scheduledConversations.map(
-              (conversation): ConversationListItem => ({ kind: "conversation", conversation }),
-            )
-          : []),
-        {
-          kind: "section",
-          id: "api",
-          label: "API Chats",
-          count: apiConversations.length,
-          expanded: apiChatsExpanded,
-          onToggle: () => setApiChatsExpanded((expanded) => !expanded),
-        },
-        ...(apiChatsExpanded
-          ? apiConversations.map(
-              (conversation): ConversationListItem => ({ kind: "conversation", conversation }),
-            )
-          : []),
-        {
-          kind: "section",
-          id: "history",
-          label: "History",
-          count: historyConversations.length,
-        },
-        ...historyConversations.map(
-          (conversation): ConversationListItem => ({ kind: "conversation", conversation }),
-        ),
-      ];
+  const visibleConversations = conversations.filter((conversation) => {
+    const runKind = getConversationRunKind(conversation);
+    if (historyFilter === 'all') return true;
+    if (historyFilter === 'api') return conversation.source === 'api';
+    if (historyFilter === 'autonomous') return runKind === 'autonomous';
+    if (historyFilter === 'scheduled') return runKind === 'scheduled';
+    if (historyFilter === 'web') return runKind === null && conversation.source !== 'api';
+    return false;
+  });
+  const conversationListItems: ConversationListItem[] = historyFilter === 'webhook'
+    ? webhookTasks.map((task) => ({ kind: 'webhook-task', task }))
+    : visibleConversations.map((conversation) => ({ kind: 'conversation', conversation }));
 
   return (
     <motion.div
@@ -603,82 +575,57 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
       {/* Chat History */}
       {activeTab === "chat" && (
         <div className="flex-1 overflow-hidden flex flex-col min-w-0">
-          <ScrollArea className="flex-1 min-w-0">
+          {!collapsed && (
+            <div className="flex items-center gap-2 px-3 pb-2">
+              <History className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <Select
+                aria-label="Filter chat history"
+                value={historyFilter}
+                onChange={(event) => {
+                  handleHistoryFilterChange(event.target.value as ConversationHistoryFilter);
+                }}
+                className="h-8 min-w-0 flex-1 py-1 text-xs"
+              >
+                <option value="web">Web chats</option>
+                <option value="all">All chats</option>
+                <option value="autonomous">Autonomous runs</option>
+                <option value="scheduled">Scheduled runs</option>
+                <option value="api">API chats</option>
+                <option value="webhook">Webhook runs</option>
+              </Select>
+              {storageMode === "mongodb" && historyFilter !== 'webhook' && (
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 hover:bg-muted"
+                        onClick={handleReloadConversations}
+                        disabled={isReloading}
+                      >
+                        <RefreshCw className={cn("h-3.5 w-3.5", isReloading && "animate-spin")} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" sideOffset={4}>
+                      <p className="text-xs">Reload conversations</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+            </div>
+          )}
+          <ScrollArea
+            className="flex-1 min-w-0"
+            viewportRef={conversationScrollViewportRef}
+            data-testid="conversation-history-scroll"
+          >
             <div className="px-2 space-y-1 pb-4">
-              {isLoadingConversations && conversations.length === 0 ? (
+              {isLoadingConversations && conversationListItems.length === 0 ? (
                 <ConversationListSkeleton collapsed={collapsed} />
               ) : (
                 <AnimatePresence mode="popLayout">
                   {conversationListItems.map((item, index) => {
-                  if (item.kind === "section") {
-                    const sectionHeader = (
-                      <>
-                        {item.onToggle ? (
-                          <ChevronRight
-                            className={cn(
-                              "h-3.5 w-3.5 shrink-0 transition-transform",
-                              item.expanded && "rotate-90",
-                            )}
-                          />
-                        ) : (
-                          <History className="h-3.5 w-3.5 shrink-0" />
-                        )}
-                        <span className="flex-1 text-left">{item.label}</span>
-                        <span className="text-[10px] tabular-nums text-muted-foreground/70">
-                          {item.count}
-                        </span>
-                      </>
-                    );
-
-                    return (
-                      <div
-                        key={`section-${item.id}`}
-                        className={cn(
-                          "flex items-center gap-1.5 px-1 pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground",
-                          item.nested && "ml-4 border-l border-border/60 pl-2",
-                        )}
-                        data-testid={`conversation-section-${item.id}`}
-                      >
-                        {item.onToggle ? (
-                          <button
-                            type="button"
-                            className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left hover:bg-muted/50 hover:text-foreground"
-                            aria-expanded={item.expanded}
-                            onClick={item.onToggle}
-                          >
-                            {sectionHeader}
-                          </button>
-                        ) : (
-                          <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-1">
-                            {sectionHeader}
-                          </div>
-                        )}
-                        {item.id === "history" && storageMode === "mongodb" && (
-                          <TooltipProvider delayDuration={300}>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-5 w-5 hover:bg-muted"
-                                  onClick={handleReloadConversations}
-                                  disabled={isReloading}
-                                >
-                                  <RefreshCw
-                                    className={cn("h-3 w-3", isReloading && "animate-spin")}
-                                  />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="right" sideOffset={4}>
-                                <p className="text-xs">Reload conversations</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        )}
-                      </div>
-                    );
-                  }
-
                   if (item.kind === "webhook-task") {
                     const provider =
                       item.task.trigger.type === "webhook"
@@ -688,7 +635,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                       <button
                         key={`webhook-task-${item.task.id}`}
                         type="button"
-                        className="ml-4 flex w-[calc(100%-1rem)] min-w-0 items-center gap-2 rounded-lg border border-transparent p-2 text-left transition-colors hover:border-orange-500/20 hover:bg-orange-500/5"
+                        className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-transparent p-2 text-left transition-colors hover:border-orange-500/20 hover:bg-orange-500/5"
                         onClick={() => {
                           startTransition(() => {
                             router.push(`/chat/webhooks/${encodeURIComponent(item.task.id)}`);
@@ -744,6 +691,14 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                   const isInputRequired = !isLive && isConversationInputRequired(conv.id);
                   const isUnviewed = !isLive && !isInputRequired && hasUnviewedMessages(conv.id);
                   const titleBadge = getAutonomousBadge(conv) ?? getScheduleBadge(conv);
+                  const runKind = getConversationRunKind(conv);
+                  const ConversationIcon = conv.source === 'api'
+                    ? Code2
+                    : runKind === 'autonomous'
+                      ? Sparkles
+                      : runKind === 'scheduled'
+                        ? CalendarClock
+                        : MessageSquare;
                   const isEditingTitle = editingConversationId === conv.id;
                   const isSavingTitle = renameSavingId === conv.id;
 
@@ -808,13 +763,19 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                         </>
                       ) : (
                         <>
-                          <MessageSquare className={cn(
+                          <ConversationIcon className={cn(
                             "h-4 w-4",
                             isUnviewed
                               ? "text-blue-500"
                               : activeConversationId === conv.id
                                 ? "text-primary"
-                                : "text-muted-foreground"
+                                : conv.source === 'api'
+                                  ? "text-sky-500"
+                                  : runKind === 'autonomous'
+                                    ? "text-violet-500"
+                                    : runKind === 'scheduled'
+                                      ? "text-cyan-500"
+                                      : "text-muted-foreground"
                           )} />
                           {isUnviewed && (
                             <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
@@ -1081,16 +1042,26 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                 </AnimatePresence>
               )}
 
-              {!isLoadingConversations && conversations.length === 0 && !collapsed && (
+              {isLoadingMoreConversations && historyFilter !== 'webhook' && (
+                <div className="flex justify-center py-3" aria-label="Loading more chats">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              )}
+
+              {!isLoadingConversations && conversationListItems.length === 0 && !collapsed && (
                 <div className="text-center py-8 px-4">
                   <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-muted flex items-center justify-center">
                     <Sparkles className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <p className="text-sm font-medium text-muted-foreground">
-                    No conversations yet
+                    {historyFilter === 'web'
+                      ? 'No conversations yet'
+                      : `No ${historyFilter === 'webhook' ? 'webhook runs' : 'chats'} found`}
                   </p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
-                    Start a new chat to begin
+                    {historyFilter === 'web'
+                      ? 'Start a new chat to begin'
+                      : 'Choose another history filter'}
                   </p>
                 </div>
               )}

@@ -180,7 +180,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const clientTypeParam = url.searchParams.get('client_type') as ClientType | null;
   const sourceParam = url.searchParams.get('source');
   const sourceFilter =
-    sourceParam === 'autonomous' || sourceParam === 'web' || sourceParam === 'api'
+    sourceParam === 'autonomous' || sourceParam === 'scheduled' ||
+    sourceParam === 'web' || sourceParam === 'api' || sourceParam === 'all'
       ? sourceParam
       : null;
 
@@ -238,23 +239,34 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     query.$and.push({ source: 'autonomous' });
   } else if (sourceFilter === 'api') {
     query.$and.push({ source: 'api' });
+  } else if (sourceFilter === 'scheduled') {
+    query.$and.push({ source: { $ne: 'autonomous' } });
+    query.$and.push({
+      $or: [
+        { 'metadata.schedule_id': { $exists: true, $ne: '' } },
+        { _id: { $regex: 'sched_[a-z0-9]+', $options: 'i' } },
+      ],
+    });
   } else if (sourceFilter === 'web') {
     query.$and.push({
       source: { $in: ['web', null] } as { $in: (string | null)[] },
     });
+    query.$and.push({
+      $nor: [
+        { 'metadata.schedule_id': { $exists: true } },
+        { _id: { $regex: 'sched_[a-z0-9]+', $options: 'i' } },
+      ],
+    });
   } else {
-    // Default ("All") view: include autonomous conversations alongside
-    // regular human chats so the sidebar's "All" filter actually shows
-    // both. Slack and Webex threads are still excluded because they have
-    // their own dedicated UI. API conversations are excluded from this result
-    // because the chat store loads them with an explicit source filter for a
-    // separate sidebar section. They still count in insights/stats, which
-    // query `conversations`/`messages` directly without this filter.
+    // The explicit All filter includes API chats. The legacy unfiltered view
+    // keeps excluding them for callers that have not adopted the unified list.
     // Slack/Webex are checked on both the legacy `source` field and the
     // newer `client_type` field (Webex is never tagged via `source` — see
     // the `Conversation.source` union in mongodb.ts), mirroring the same
     // dual-field exclusion used in admin/users/activity/[identity]/route.ts.
-    query.$and.push({ source: { $nin: ['slack', 'api'] } });
+    query.$and.push({
+      source: { $nin: sourceFilter === 'all' ? ['slack'] : ['slack', 'api'] },
+    });
     if (clientTypeParam !== 'slack' && clientTypeParam !== 'webex') {
       query.$and.push({ client_type: { $nin: ['slack', 'webex'] } });
     }

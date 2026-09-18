@@ -84,6 +84,11 @@ function resetStore() {
     isStreaming: false,
     streamingConversations: new Map(),
     pendingMessage: null,
+    conversationFilter: 'web',
+    conversationPage: 0,
+    conversationHasMore: false,
+    isLoadingMoreConversations: false,
+    messageHistory: {},
     unviewedConversations: new Set(),
     inputRequiredConversations: new Set(),
   });
@@ -278,7 +283,11 @@ describe('chat-store', () => {
       await useChatStore.getState().loadMessagesFromServer('stubs-no-events');
 
       // API should have been called
-      expect(mockApiClient.getMessages).toHaveBeenCalledWith('stubs-no-events', { page_size: 100 });
+      expect(mockApiClient.getMessages).toHaveBeenCalledWith('stubs-no-events', {
+        page: 1,
+        page_size: 10,
+        order: 'latest',
+      });
 
       const updatedConv = useChatStore.getState().conversations.find(c => c.id === 'stubs-no-events');
       expect(updatedConv).toBeDefined();
@@ -784,7 +793,7 @@ describe('chat-store', () => {
 
       expect(mockApiClient.getMessages).toHaveBeenCalledWith(
         'conv-history',
-        { page_size: 100 },
+        { page: 1, page_size: 10, order: 'latest' },
       );
 
       const updatedConv = useChatStore.getState().conversations.find(
@@ -792,6 +801,73 @@ describe('chat-store', () => {
       );
       expect(updatedConv!.messages).toHaveLength(2);
       expect(updatedConv!.messages[1].content).toBe('Here is the summary.');
+    });
+
+    it('prepends the next 10-message page when older history is requested', async () => {
+      const conv = makeConversation({ id: 'paged-history' });
+      useChatStore.setState({ conversations: [conv] });
+      mockApiClient.getMessages
+        .mockResolvedValueOnce({
+          items: [
+            {
+              message_id: 'newer', conversation_id: 'paged-history', role: 'assistant',
+              content: 'Newest answer', created_at: '2025-01-02T00:00:00Z',
+              metadata: { turn_id: 'turn-2', is_final: true },
+            },
+          ],
+          total: 2, page: 1, page_size: 10, has_more: true,
+        })
+        .mockResolvedValueOnce({
+          items: [
+            {
+              message_id: 'older', conversation_id: 'paged-history', role: 'user',
+              content: 'Older question', created_at: '2025-01-01T00:00:00Z',
+              metadata: { turn_id: 'turn-1', is_final: true },
+            },
+          ],
+          total: 2, page: 2, page_size: 10, has_more: false,
+        });
+
+      await useChatStore.getState().loadMessagesFromServer('paged-history', { force: true });
+      await useChatStore.getState().loadOlderMessagesFromServer('paged-history');
+
+      expect(mockApiClient.getMessages).toHaveBeenNthCalledWith(2, 'paged-history', {
+        page: 2,
+        page_size: 10,
+        order: 'latest',
+      });
+      const messages = useChatStore.getState().conversations[0].messages;
+      expect(messages.map((message) => message.id)).toEqual(['older', 'newer']);
+      expect(useChatStore.getState().messageHistory['paged-history']).toMatchObject({
+        nextPage: 3,
+        hasMore: false,
+        isLoadingOlder: false,
+      });
+    });
+  });
+
+  describe('saveMessagesToServer — queued batches', () => {
+    it('persists every user bubble sharing the latest assistant turn', async () => {
+      const turnId = 'turn-batch';
+      const conv = makeConversation({
+        id: 'queued-batch',
+        messages: [
+          makeMessage({ id: 'user-1', role: 'user', content: 'First', turnId }),
+          makeMessage({ id: 'user-2', role: 'user', content: 'Second', turnId }),
+          makeMessage({ id: 'user-3', role: 'user', content: 'Third', turnId }),
+          makeMessage({
+            id: 'assistant-1', role: 'assistant', content: 'Combined answer', turnId, isFinal: true,
+          }),
+        ],
+      });
+      useChatStore.setState({ conversations: [conv] });
+
+      await useChatStore.getState().saveMessagesToServer('queued-batch');
+
+      expect(mockApiClient.addMessage).toHaveBeenCalledTimes(4);
+      expect(mockApiClient.addMessage.mock.calls.map(([, message]) => message.message_id)).toEqual([
+        'user-1', 'user-2', 'user-3', 'assistant-1',
+      ]);
     });
   });
 
@@ -822,7 +898,7 @@ describe('chat-store', () => {
       const first = useChatStore.getState().loadConversationsFromServer();
       const second = useChatStore.getState().loadConversationsFromServer();
 
-      expect(mockApiClient.getConversations).toHaveBeenCalledTimes(2);
+      expect(mockApiClient.getConversations).toHaveBeenCalledTimes(1);
 
       resolveGet!({
         items: [
@@ -901,27 +977,13 @@ describe('chat-store', () => {
       });
     });
 
-    it('loads API conversations with an explicit source and client filter', async () => {
+    it('loads API conversations in 30-item pages with an explicit filter', async () => {
       mockApiClient.getConversations
         .mockResolvedValueOnce({
           items: [
             {
-              _id: 'browser-conversation',
-              title: 'Browser Chat',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            },
-          ],
-          total: 1,
-          page: 1,
-          page_size: 100,
-          has_more: false,
-        })
-        .mockResolvedValueOnce({
-          items: [
-            {
-              _id: 'api-conversation',
-              title: 'CLI investigation',
+              _id: 'api-conversation-1',
+              title: 'First API Chat',
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
               source: 'api',
@@ -929,22 +991,44 @@ describe('chat-store', () => {
           ],
           total: 1,
           page: 1,
-          page_size: 100,
+          page_size: 30,
+          has_more: true,
+        })
+        .mockResolvedValueOnce({
+          items: [
+            {
+              _id: 'api-conversation-2',
+              title: 'Second API Chat',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              source: 'api',
+            },
+          ],
+          total: 2,
+          page: 2,
+          page_size: 30,
           has_more: false,
         });
 
-      await useChatStore.getState().loadConversationsFromServer();
+      await useChatStore.getState().loadConversationsFromServer({ filter: 'api' });
+      await useChatStore.getState().loadConversationsFromServer({ filter: 'api', append: true });
 
-      expect(mockApiClient.getConversations).toHaveBeenNthCalledWith(1, { page_size: 100 });
+      expect(mockApiClient.getConversations).toHaveBeenNthCalledWith(1, {
+        page: 1,
+        page_size: 30,
+        source: 'api',
+        client_type: 'api',
+      });
       expect(mockApiClient.getConversations).toHaveBeenNthCalledWith(2, {
-        page_size: 100,
+        page: 2,
+        page_size: 30,
         source: 'api',
         client_type: 'api',
       });
       expect(useChatStore.getState().conversations).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ id: 'browser-conversation' }),
-          expect.objectContaining({ id: 'api-conversation', source: 'api' }),
+          expect.objectContaining({ id: 'api-conversation-1', source: 'api' }),
+          expect.objectContaining({ id: 'api-conversation-2', source: 'api' }),
         ]),
       );
     });

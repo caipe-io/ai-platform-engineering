@@ -215,14 +215,15 @@ describe('GET /api/chat/conversations/[id]/messages', () => {
     ];
 
     msgCol.countDocuments.mockResolvedValue(2);
-    msgCol.find.mockReturnValue({
-      sort: jest.fn().mockReturnValue({
+    const sortMessages = jest.fn().mockReturnValue({
         skip: jest.fn().mockReturnValue({
           limit: jest.fn().mockReturnValue({
-            toArray: jest.fn().mockResolvedValue(testMessages),
+            toArray: jest.fn().mockResolvedValue([...testMessages].reverse()),
           }),
         }),
-      }),
+      });
+    msgCol.find.mockReturnValue({
+      sort: sortMessages,
     });
     mockCollections['messages'] = msgCol;
 
@@ -230,14 +231,19 @@ describe('GET /api/chat/conversations/[id]/messages', () => {
     const sharingCol = createMockCollection();
     mockCollections['sharing_access'] = sharingCol;
 
-    const req = makeRequest(`/api/chat/conversations/${testConversationId}/messages?page=1&page_size=20`);
+    const req = makeRequest(`/api/chat/conversations/${testConversationId}/messages?page=1&page_size=20&order=latest`);
     const res = await GET(req, { params: Promise.resolve({ id: testConversationId }) });
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.data.items).toHaveLength(2);
+    expect(body.data.items.map((message: { message_id: string }) => message.message_id)).toEqual([
+      'msg-1',
+      'msg-2',
+    ]);
     expect(body.data.total).toBe(2);
+    expect(sortMessages).toHaveBeenCalledWith({ created_at: -1, _id: -1 });
   });
 });
 
