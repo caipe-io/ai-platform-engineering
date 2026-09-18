@@ -121,9 +121,10 @@ through a first working agent:
 
 The wizard never stores OAuth tokens in its setup state. Connections remain in
 the credential service and can be relinked from **Credentials → Connected
-Apps**. Providers that support OAuth client registration can complete that
-flow during provider onboarding; arbitrary custom endpoints still require
-their authentication to be configured in the MCP editor.
+Apps**. The current catalog uses operator-configured OAuth connectors;
+arbitrary custom endpoints still require their authentication to be configured
+in the MCP editor. Generic dynamic client registration (DCR) is not yet
+assumed for custom endpoints.
 
 To update `.env` to the latest published CAIPE release before starting Compose:
 
