@@ -953,7 +953,7 @@ export function SetupWizardDialog({
 
                   {step === 2 && (
                     <div className="space-y-3">
-                      <ModelProviderGuide />
+                      <ModelProviderGuide onNavigate={() => onOpenChange(false)} />
                       {models.length === 0 ? (
                         <div className="space-y-4 rounded-xl border border-dashed p-6">
                           <div className="text-center">
@@ -968,7 +968,7 @@ export function SetupWizardDialog({
                               <div><Label htmlFor="setup-model-provider">Provider</Label><Input id="setup-model-provider" placeholder="openai or anthropic" value={newModel.provider} onChange={(e) => setNewModel({ ...newModel, provider: e.target.value })} /></div>
                               <div className="flex gap-2"><Button onClick={() => void addModel()} disabled={saving || !newModel.model_id || !newModel.name || !newModel.provider}>{saving ? "Adding..." : "Add model"}</Button><Button variant="outline" onClick={() => setShowAddModel(false)}>Cancel</Button></div>
                             </div>
-                          ) : <div className="flex flex-wrap justify-center gap-2"><Button onClick={() => setShowAddModel(true)}><Sparkles className="mr-2 h-4 w-4" />Add a model</Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=model-providers">Configure model access<ExternalLink className="ml-2 h-4 w-4" /></Link></Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=llm-models">Advanced configuration<ExternalLink className="ml-2 h-4 w-4" /></Link></Button></div>}
+                          ) : <div className="flex flex-wrap justify-center gap-2"><Button onClick={() => setShowAddModel(true)}><Sparkles className="mr-2 h-4 w-4" />Add a model</Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=model-providers" onClick={() => onOpenChange(false)}>Configure model access<ExternalLink className="ml-2 h-4 w-4" /></Link></Button><Button asChild variant="outline"><Link href="/dynamic-agents?tab=llm-models" onClick={() => onOpenChange(false)}>Advanced configuration<ExternalLink className="ml-2 h-4 w-4" /></Link></Button></div>}
                         </div>
                       ) : (
                         <>
@@ -1283,7 +1283,7 @@ export function SetupWizardDialog({
   );
 }
 
-function ModelProviderGuide() {
+function ModelProviderGuide({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="space-y-3 rounded-xl border bg-muted/10 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1294,7 +1294,7 @@ function ModelProviderGuide() {
           </p>
         </div>
         <Button asChild type="button" size="sm" variant="outline">
-          <Link href="/dynamic-agents?tab=model-providers">
+          <Link href="/dynamic-agents?tab=model-providers" onClick={onNavigate}>
             Configure provider access <ExternalLink className="ml-2 h-3.5 w-3.5" />
           </Link>
         </Button>
@@ -1314,7 +1314,7 @@ function ModelProviderGuide() {
               </div>
               <p className="mt-2 text-xs leading-snug text-muted-foreground">{provider.description}</p>
               <p className="mt-2 text-[11px] leading-snug text-muted-foreground">{provider.detail}</p>
-              <Link className="mt-2 inline-flex items-center text-[11px] text-primary hover:underline" href="/dynamic-agents?tab=model-providers">
+              <Link className="mt-2 inline-flex items-center text-[11px] text-primary hover:underline" href="/dynamic-agents?tab=model-providers" onClick={onNavigate}>
                 Open provider settings <ChevronRight className="ml-0.5 h-3 w-3" />
               </Link>
             </div>
@@ -1479,6 +1479,7 @@ export function SetupWizardGate(): React.ReactElement | null {
   const { isAdmin, loading } = useAdminRole();
   const [payload, setPayload] = useState<SetupWizardPayload | null>(null);
   const [open, setOpen] = useState(false);
+  const [restart, setRestart] = useState(false);
   const [checklistOpen, setChecklistOpen] = useState(false);
   const [checklistHidden, setChecklistHidden] = useState(false);
   const [hidingChecklist, setHidingChecklist] = useState(false);
@@ -1505,6 +1506,26 @@ export function SetupWizardGate(): React.ReactElement | null {
       .catch(() => undefined);
   };
 
+  const openWizard = (shouldRestart = false) => {
+    setRestart(shouldRestart);
+    setChecklistOpen(false);
+    setOpen(true);
+  };
+
+  const restartSetup = async () => {
+    try {
+      await jsonRequest<ApiEnvelope<{ state: SetupWizardPayload["state"] }>>("/api/admin/setup-wizard", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset" }),
+      });
+      openWizard(true);
+      refreshPayload();
+    } catch {
+      // The admin settings page remains available if reset fails.
+    }
+  };
+
   const hideChecklist = async () => {
     setHidingChecklist(true);
     try {
@@ -1522,11 +1543,16 @@ export function SetupWizardGate(): React.ReactElement | null {
 
   if (!payload || checklistHidden || payload.state.checklist_hidden || payload.state.status === "completed") return null;
 
-  const checklistItems = [
-    { label: "Connect a model", detail: "Give your first agent a brain.", done: payload.inventory.models > 0 },
+  const checklistItems: Array<{
+    label: string;
+    detail: string;
+    done: boolean;
+    href?: string;
+  }> = [
+    { label: "Connect a model", detail: "Give your first agent a brain.", done: payload.inventory.models > 0, href: "/dynamic-agents?tab=model-providers" },
     { label: "Choose an agent recipe", detail: "Start with SRE, Hello World, or a blank agent.", done: Boolean(payload.state.selection?.recipe_id) },
-    { label: "Add tools or knowledge", detail: "Make answers useful with MCP or RAG.", done: payload.inventory.mcp_servers > 0 || payload.inventory.knowledge_sources > 0 },
-    { label: "Connect your workspace", detail: "Reach the agent from Slack or Webex when ready.", done: payload.inventory.connected_credentials > 0 },
+    { label: "Add tools or knowledge", detail: "Make answers useful with MCP or RAG.", done: payload.inventory.mcp_servers > 0 || payload.inventory.knowledge_sources > 0, href: "/dynamic-agents?tab=mcp-servers" },
+    { label: "Connect your workspace", detail: "Reach the agent from Slack or Webex when ready.", done: payload.inventory.connected_credentials > 0, href: "/admin/integrations/slack" },
     { label: "Run the first test", detail: "Verify the whole path before inviting your team.", done: payload.state.last_smoke_test?.status === "passed" },
   ];
   const completedChecklistItems = checklistItems.filter((item) => item.done).length;
@@ -1548,20 +1574,41 @@ export function SetupWizardGate(): React.ReactElement | null {
             </div>
             <p className="mt-2 text-[11px] text-muted-foreground">{completedChecklistItems} of {checklistItems.length} ready</p>
             <ul className="mt-3 space-y-2">
-              {checklistItems.map((item) => (
-                <li key={item.label} className="flex items-start gap-2 text-xs">
-                  <span className={cn("mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border", item.done ? "border-emerald-500 bg-emerald-500 text-white" : "border-muted-foreground/40 text-transparent")}>
-                    <Check className="h-3 w-3" />
-                  </span>
-                  <span><span className={cn("font-medium", item.done && "text-muted-foreground line-through")}>{item.label}</span><span className="block text-[11px] text-muted-foreground">{item.detail}</span></span>
-                </li>
-              ))}
+              {checklistItems.map((item) => {
+                const content = (
+                  <>
+                    <span className={cn("mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border", item.done ? "border-emerald-500 bg-emerald-500 text-white" : "border-muted-foreground/40 text-transparent")}>
+                      <Check className="h-3 w-3" />
+                    </span>
+                    <span className="text-left"><span className={cn("font-medium", item.done && "text-muted-foreground line-through")}>{item.label}</span><span className="block text-[11px] text-muted-foreground">{item.detail}</span></span>
+                    {!item.done && item.href && <ChevronRight className="ml-auto mt-1 h-3.5 w-3.5 shrink-0 text-primary" />}
+                  </>
+                );
+                return (
+                  <li key={item.label} className="text-xs">
+                    {item.href && !item.done ? (
+                      <Link className="flex items-start gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/50" href={item.href} onClick={() => setChecklistOpen(false)}>
+                        {content}
+                      </Link>
+                    ) : (
+                      <button type="button" className={cn("flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors", !item.done && "hover:bg-muted/50")} onClick={() => !item.done && openWizard(false)}>
+                        {content}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
-            <div className="mt-4 flex items-center gap-2">
-              <Button size="sm" className="flex-1" onClick={() => { setChecklistOpen(false); setOpen(true); }}>
+            <div className="mt-4 grid gap-2">
+              <Button size="sm" onClick={() => openWizard(false)}>
                 {payload.state.status === "dismissed" ? "Continue setup" : "Open setup"}<ChevronRight className="ml-1 h-3.5 w-3.5" />
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => void hideChecklist()} disabled={hidingChecklist}>Don’t show again</Button>
+              <div className="flex items-center justify-between gap-2">
+                <Button size="sm" variant="outline" onClick={() => void restartSetup()}>
+                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Restart platform setup
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => void hideChecklist()} disabled={hidingChecklist}>Don’t show again</Button>
+              </div>
             </div>
             <div className="mt-3 flex gap-3 border-t pt-3 text-[11px]">
               <Link className="text-primary hover:underline" href="/admin/integrations/slack">Connect Slack</Link>
@@ -1585,6 +1632,7 @@ export function SetupWizardGate(): React.ReactElement | null {
       </div>
       <SetupWizardDialog
         open={open}
+        restart={restart}
         initialPayload={payload}
         onOpenChange={(nextOpen) => {
           setOpen(nextOpen);
