@@ -1052,7 +1052,10 @@ export function SetupWizardDialog({
                         </div>
                         {oauthConnectors.length === 0 ? (
                           <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-                            No user OAuth connectors are enabled in this deployment. You can still use model credentials and unauthenticated MCP servers.
+                            <p>No user OAuth connectors are configured in this deployment yet. An administrator can add GitHub, Notion, Webex, or another provider before you connect an account.</p>
+                            <Link className="mt-2 inline-flex items-center text-primary hover:underline" href="/admin/platform/credentials?credentialsTab=oauth-providers">
+                              Configure connected apps <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                            </Link>
                           </div>
                         ) : (
                           <div className="grid gap-2 sm:grid-cols-2">
@@ -1552,7 +1555,7 @@ export function SetupWizardGate(): React.ReactElement | null {
     { label: "Connect a model", detail: "Give your first agent a brain.", done: payload.inventory.models > 0, href: "/dynamic-agents?tab=model-providers" },
     { label: "Choose an agent recipe", detail: "Start with SRE, Hello World, or a blank agent.", done: Boolean(payload.state.selection?.recipe_id) },
     { label: "Add tools or knowledge", detail: "Make answers useful with MCP or RAG.", done: payload.inventory.mcp_servers > 0 || payload.inventory.knowledge_sources > 0, href: "/dynamic-agents?tab=mcp-servers" },
-    { label: "Connect your workspace", detail: "Reach the agent from Slack or Webex when ready.", done: payload.inventory.connected_credentials > 0, href: "/admin/integrations/slack" },
+    { label: "Connect credentials", detail: "Connect GitHub, Notion, Webex, or another account.", done: payload.inventory.connected_credentials > 0, href: "/credentials/connections" },
     { label: "Run the first test", detail: "Verify the whole path before inviting your team.", done: payload.state.last_smoke_test?.status === "passed" },
   ];
   const completedChecklistItems = checklistItems.filter((item) => item.done).length;

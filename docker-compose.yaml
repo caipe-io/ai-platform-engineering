@@ -448,15 +448,19 @@ services:
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
       - HARNESS_ENGINE_URL=${HARNESS_ENGINE_URL:-http://harness-engine:8010}
       - HARNESS_ENGINE_INTERNAL_TOKEN=${HARNESS_ENGINE_INTERNAL_TOKEN:-}
-      # Connections & Secrets. Docker Compose reads provider bootstrap values
-      # from .env; Kubernetes deployments use ESO to inject the same env names.
-      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
+      # Connections & Secrets. The local Compose install exposes the credential
+      # workspace by default so users can configure OAuth connectors. Kubernetes
+      # deployments should inject production values from their secret store.
+      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-true}
       - CREDENTIAL_STORE_BACKEND=${CREDENTIAL_STORE_BACKEND:-mongodb-envelope}
       - CREDENTIAL_KEY_PROVIDER=${CREDENTIAL_KEY_PROVIDER:-local-cmk}
       - CREDENTIAL_KMS_CMK_ID=${CREDENTIAL_KMS_CMK_ID:-}
       - CREDENTIAL_KMS_REGION=${CREDENTIAL_KMS_REGION:-}
+      # Local-only prod-image escape hatches. Use AWS KMS in production.
+      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-true}
+      - CREDENTIAL_ALLOW_LOCALHOST_OAUTH_REDIRECTS=${CREDENTIAL_ALLOW_LOCALHOST_OAUTH_REDIRECTS:-true}
       - CREDENTIAL_SERVICE_AUDIENCE=${CREDENTIAL_SERVICE_AUDIENCE:-caipe-credential-service}
-      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-false}
+      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-true}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}

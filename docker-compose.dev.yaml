@@ -700,7 +700,7 @@ services:
       # Connections & Secrets. Local OAuth connector bootstrap reads these
       # values from .env; Kubernetes deployments use ESO to inject the same
       # variable names into caipe-ui.
-      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
+      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-true}
       - CREDENTIAL_STORE_BACKEND=${CREDENTIAL_STORE_BACKEND:-mongodb-envelope}
       - CREDENTIAL_KEY_PROVIDER=${CREDENTIAL_KEY_PROVIDER:-local-cmk}
       - CREDENTIAL_KMS_CMK_ID=${CREDENTIAL_KMS_CMK_ID:-}
@@ -709,9 +709,9 @@ services:
       # run under NODE_ENV=production for prod-parity testing. INSECURE — keys
       # are wrapped with locally-derived material, not a real KMS/HSM. Never set
       # this true in a real production deployment.
-      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-false}
+      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-true}
       - CREDENTIAL_SERVICE_AUDIENCE=${CREDENTIAL_SERVICE_AUDIENCE:-caipe-credential-service}
-      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-false}
+      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-true}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
@@ -942,7 +942,7 @@ services:
       - MONGODB_URI=${MONGODB_URI:-mongodb://admin:changeme@caipe-mongodb:27017/caipe?authSource=admin}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - AGENTGATEWAY_TARGETS_TOKEN=${AGENTGATEWAY_TARGETS_TOKEN:-agentgateway-config-bridge-dev-token}
-      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
+      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-true}
       - CREDENTIAL_STORE_BACKEND=${CREDENTIAL_STORE_BACKEND:-mongodb-envelope}
       - CREDENTIAL_KEY_PROVIDER=${CREDENTIAL_KEY_PROVIDER:-local-cmk}
       - CREDENTIAL_KMS_CMK_ID=${CREDENTIAL_KMS_CMK_ID:-}
@@ -950,10 +950,10 @@ services:
       # DEV-ONLY escape hatch (prod-parity image runs NODE_ENV=production). Lets
       # the local key wrapper run despite production. INSECURE — never set true
       # in a real production deployment. See build/Dockerfile.caipe-ui header.
-      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-false}
+      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-true}
       - CREDENTIAL_ALLOW_LOCALHOST_OAUTH_REDIRECTS=${CREDENTIAL_ALLOW_LOCALHOST_OAUTH_REDIRECTS:-true}
       - CREDENTIAL_SERVICE_AUDIENCE=${CREDENTIAL_SERVICE_AUDIENCE:-caipe-credential-service}
-      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-false}
+      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-true}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
@@ -1230,7 +1230,7 @@ services:
       # Connections & Secrets credential exchange. Disabled by default; when
       # USE_IMPERSONATION_TOKENS=true, DA resolves MCP credential refs via the
       # server-to-server credential API instead of browser/session cookies.
-      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
+      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-true}
       - CREDENTIAL_API_URL=${CREDENTIAL_API_URL:-http://caipe-ui:3000/api/credentials}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
       # Browser-reachable Grid URL for workflow run links returned by workflow tools.
