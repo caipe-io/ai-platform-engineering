@@ -772,7 +772,26 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           console.log('[ChatStore] Loading conversations from MongoDB...');
           let response;
           try {
-            response = await apiClient.getConversations({ page_size: 100 });
+            const [browserResponse, apiResponse] = await Promise.all([
+              apiClient.getConversations({ page_size: 100 }),
+              apiClient.getConversations({
+                page_size: 100,
+                source: 'api',
+                client_type: 'api',
+              }),
+            ]);
+            const itemsById = new Map(
+              [...browserResponse.items, ...apiResponse.items].map((conversation) => [
+                conversation._id,
+                conversation,
+              ]),
+            );
+            response = {
+              ...browserResponse,
+              items: [...itemsById.values()],
+              total: browserResponse.total + apiResponse.total,
+              has_more: browserResponse.has_more || apiResponse.has_more,
+            };
           } catch (apiError) {
             // Check if it's an auth error (expected when not logged in)
             const errorMessage = apiError instanceof Error ? apiError.message : String(apiError);

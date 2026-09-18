@@ -598,6 +598,27 @@ describe('Sidebar — Live Status Indicator', () => {
       expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
     })
 
+    it('groups API conversations in a collapsed section outside History', () => {
+      mockConversations = [
+        makeConv('conv-normal', 'Normal Chat'),
+        makeConv('conv-api', 'CLI investigation', { source: 'api' }),
+      ]
+
+      render(<Sidebar {...defaultProps} />)
+
+      const apiChats = screen.getByRole('button', { name: /API Chats/i })
+      expect(apiChats).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByText('CLI investigation')).not.toBeInTheDocument()
+      expect(screen.getByText('Normal Chat')).toBeInTheDocument()
+
+      fireEvent.click(apiChats)
+      expect(apiChats).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByText('CLI investigation')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByText('CLI investigation'))
+      expect(mockPush).toHaveBeenCalledWith('/chat/conv-api')
+    })
+
     it('groups the current user webhook tasks in a nested collapsed section', async () => {
       mockLoadConversationsFromServer.mockResolvedValueOnce(undefined)
       mockListAutonomousTasks.mockResolvedValue([

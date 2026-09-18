@@ -41,9 +41,10 @@ export interface Conversation {
   };
   /**
    * Origin of the conversation. 'autonomous' is set when a scheduled task run
-   * is surfaced as a chat conversation. Undefined = legacy / human chat.
+   * is surfaced as a chat conversation, while 'api' identifies direct API
+   * callers such as CLI skills. Undefined = legacy / human chat.
    */
-  source?: 'web' | 'slack' | 'autonomous';
+  source?: 'web' | 'slack' | 'autonomous' | 'api';
   /** Autonomous task identifier (only when source === 'autonomous') */
   task_id?: string;
   /** Autonomous run identifier (only when source === 'autonomous') */
