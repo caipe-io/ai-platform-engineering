@@ -26,6 +26,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from dynamic_agents.services.context_usage import CONTEXT_USAGE_EVENT
 from dynamic_agents.services.stream_encoders import StreamEncoder
 from dynamic_agents.services.stream_encoders.langgraph_helpers import (
     LangGraphStreamHelper,
@@ -122,7 +123,32 @@ class AGUIStreamEncoder(StreamEncoder):
             return self._handle_messages(data, correlated_ns)
         if mode == "updates":
             return self._handle_updates(data, correlated_ns)
+        if mode == "custom":
+            return self._handle_custom(data, correlated_ns)
         return []
+
+    def _handle_custom(
+        self,
+        data: Any,
+        namespace: tuple[str, ...],
+    ) -> list[str]:
+        """Encode transport-neutral runtime signals as AG-UI custom events."""
+        if not isinstance(data, dict) or data.get("type") != CONTEXT_USAGE_EVENT:
+            return []
+
+        value = {key: item for key, item in data.items() if key != "type"}
+        value["namespace"] = list(namespace)
+        return [
+            _sse_frame(
+                "CUSTOM",
+                {
+                    "type": "CUSTOM",
+                    "name": "CONTEXT_USAGE",
+                    "value": value,
+                    "timestamp": _ts(),
+                },
+            )
+        ]
 
     def on_stream_end(self) -> list[str]:
         """Close any still-open text messages."""

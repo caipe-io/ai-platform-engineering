@@ -43,6 +43,15 @@ describe("feature flag preference hydration",() => {
     });
   });
 
+  it("exposes context usage under chat preferences by default",() => {
+    expect(FEATURE_FLAGS).toContainEqual(expect.objectContaining({
+      id: "showContextUsage",
+      category: "chat",
+      defaultValue: true,
+      preferencesKey: "show_context_usage_enabled",
+    }));
+  });
+
   it("does not let late hydration overwrite a newer interaction",async () => {
     let resolveSettings!: (value: unknown) => void;
     getSettingsMock.mockReturnValue(new Promise((resolve) => {
@@ -66,5 +75,13 @@ describe("feature flag preference hydration",() => {
     await persistFeatureFlag("autoScroll",false);
 
     expect(updatePreferencesMock).toHaveBeenCalledWith({ auto_scroll_enabled: "false" });
+  });
+
+  it("persists the context usage visibility preference",async () => {
+    updatePreferencesMock.mockResolvedValue({});
+
+    await persistFeatureFlag("showContextUsage",false);
+
+    expect(updatePreferencesMock).toHaveBeenCalledWith({ show_context_usage_enabled: "false" });
   });
 });

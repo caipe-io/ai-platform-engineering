@@ -8,6 +8,7 @@
  * Event types match the backend stream encoder output:
  * - content: LLM token streaming
  * - tool_start/tool_end: Tool invocations (including task tool for subagents)
+ * - context_usage: Remaining prompt capacity before automatic compaction
  * - warning/error: Warnings and errors (rendered inline in chat)
  * - done: Stream completion
  */
@@ -73,6 +74,47 @@ export interface TodoItem {
 /** Warning data from warning events */
 export interface WarningEventData {
   message: string;
+}
+
+/** Prompt usage relative to the runtime's automatic compaction threshold. */
+export interface ContextUsageEventData {
+  used_tokens: number;
+  compaction_threshold: number;
+  remaining_tokens: number;
+  remaining_percent: number;
+}
+
+/** Validate a context usage payload received from any streaming protocol. */
+export function parseContextUsageData(
+  data: Record<string, unknown>,
+): ContextUsageEventData | undefined {
+  const usedTokens = data.used_tokens;
+  const compactionThreshold = data.compaction_threshold;
+  const remainingTokens = data.remaining_tokens;
+  const remainingPercent = data.remaining_percent;
+  if (
+    typeof usedTokens !== "number" ||
+    typeof compactionThreshold !== "number" ||
+    typeof remainingTokens !== "number" ||
+    typeof remainingPercent !== "number" ||
+    !Number.isFinite(usedTokens) ||
+    !Number.isFinite(compactionThreshold) ||
+    !Number.isFinite(remainingTokens) ||
+    !Number.isFinite(remainingPercent) ||
+    usedTokens < 0 ||
+    compactionThreshold <= 0 ||
+    remainingTokens < 0 ||
+    remainingPercent < 0 ||
+    remainingPercent > 100
+  ) {
+    return undefined;
+  }
+  return {
+    used_tokens: usedTokens,
+    compaction_threshold: compactionThreshold,
+    remaining_tokens: remainingTokens,
+    remaining_percent: remainingPercent,
+  };
 }
 
 /** Input required data from input_required events (HITL forms) */
@@ -145,6 +187,7 @@ export type StreamEventType =
   | "tool_start" // Tool invocation started (task tool = subagent invocation)
   | "tool_end" // Tool invocation completed
   | "input_required" // Agent requests user input via form (HITL)
+  | "context_usage" // Prompt usage before automatic conversation compaction
   | "warning" // Warning event (e.g., missing tools) - rendered inline
   | "error"; // Error event - rendered inline
 
@@ -182,6 +225,9 @@ export interface StreamEvent {
 
   /** Warning data for warning events */
   warningData?: WarningEventData;
+
+  /** Context usage for context_usage events */
+  contextUsageData?: ContextUsageEventData;
 
   /** Input required data for input_required events (HITL forms) */
   inputRequiredData?: InputRequiredEventData;
@@ -238,6 +284,11 @@ export interface StreamBackendData {
   agent?: string;
   // Warning events
   message?: string;
+  // Context usage events
+  used_tokens?: number;
+  compaction_threshold?: number;
+  remaining_tokens?: number;
+  remaining_percent?: number;
   // Allow other fields
   [key: string]: unknown;
 }
@@ -326,6 +377,11 @@ export function createStreamEvent(
         warningData,
         displayContent: data.message,
       };
+    }
+
+    case "context_usage": {
+      const contextUsageData = parseContextUsageData(data);
+      return contextUsageData ? { ...base, contextUsageData } : base;
     }
 
     default:
