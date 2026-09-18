@@ -490,15 +490,18 @@ export function SetupWizardDialog({
       const defaultModel = saved?.model_id
         ? nextModels.find((model) => model._id === saved.model_id)
         : nextModels[0];
-      const defaults = nextMcpServers
-        .filter((server) => server._id === "netutils" || server._id === "knowledge-base")
-        .map((server) => server._id);
+      // Start with every enabled catalog server. The user can still narrow the
+      // selection on the optional context step before the starter agent is made.
+      // Knowledge Base keeps its dedicated toggle in the UI, so avoid storing it
+      // twice in the general MCP selection.
+      const defaults = nextMcpServers.map((server) => server._id);
+      const defaultMcpServerIds = defaults.filter((serverId) => serverId !== "knowledge-base");
       const defaultFeatures = deploymentFeatureDefaults();
       setSelection({
         recipe_id: saved?.recipe_id ?? "sre",
         model_id: defaultModel?._id,
         model_provider: defaultModel?.provider,
-        mcp_server_ids: saved?.mcp_server_ids ?? defaults,
+        mcp_server_ids: saved?.mcp_server_ids ?? defaultMcpServerIds,
         enable_knowledge_base: saved?.enable_knowledge_base
           ?? defaults.includes("knowledge-base"),
         enabled_features: {
@@ -638,7 +641,7 @@ export function SetupWizardDialog({
     setTestResult(null);
     try {
       const selectedMcp = [...new Set([
-        ...(selection.mcp_server_ids ?? []),
+        ...(selection.mcp_server_ids ?? []).filter((serverId) => serverId !== "knowledge-base"),
         ...(selection.enable_knowledge_base && mcpServers.some((server) => server._id === "knowledge-base")
           ? ["knowledge-base"]
           : []),
@@ -1116,7 +1119,7 @@ export function SetupWizardDialog({
                           <div>
                             <p className="font-medium">Add remote MCP tools</p>
                             <p className="text-sm text-muted-foreground">
-                              Pick a catalog provider such as Notion or GitHub, or configure any compatible MCP endpoint. The MCP editor will guide credential selection and tool discovery.
+                              Enabled catalog servers start selected so your first agent can use the tools already available in this deployment. Uncheck anything you do not want to include, or configure another compatible MCP endpoint in the MCP editor.
                             </p>
                           </div>
                         </div>
@@ -1181,6 +1184,7 @@ export function SetupWizardDialog({
                         </span>
                         <input
                           type="checkbox"
+                          aria-label="Use accessible knowledge bases"
                           checked={selection.enable_knowledge_base === true}
                           disabled={!mcpServers.some((server) => server._id === "knowledge-base")}
                           onChange={(event) => setSelection((current) => ({ ...current, enable_knowledge_base: event.target.checked }))}
@@ -1204,6 +1208,7 @@ export function SetupWizardDialog({
                               <label key={server._id} className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 hover:bg-muted/40">
                                 <input
                                   type="checkbox"
+                                  aria-label={`Use ${server.name}`}
                                   checked={checked}
                                   onChange={(event) => setSelection((current) => ({
                                     ...current,

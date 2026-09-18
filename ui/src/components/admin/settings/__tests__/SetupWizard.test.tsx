@@ -362,6 +362,34 @@ describe("SetupWizardSettings", () => {
     expect(screen.getAllByRole("link", { name: /Add from catalog/i })).toHaveLength(2);
   });
 
+  it("preselects every enabled MCP server while leaving disabled servers out", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith("/api/mcp-servers")) {
+        return response({ success: true, data: { items: [
+          { _id: "netutils", name: "Network utilities", enabled: true },
+          { _id: "github", name: "GitHub", enabled: true },
+          { _id: "knowledge-base", name: "Knowledge Base", enabled: true },
+          { _id: "disabled", name: "Disabled server", enabled: false },
+        ] } });
+      }
+      return originalFetch(input, init);
+    }) as jest.Mock;
+
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+
+    expect(await screen.findByRole("heading", { name: "Try your agent" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add context" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tools", exact: true }));
+
+    expect(screen.getByRole("checkbox", { name: "Use Network utilities" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Use GitHub" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Use Disabled server" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge", exact: true }));
+    expect(screen.getByRole("checkbox", { name: "Use accessible knowledge bases" })).toBeChecked();
+  });
+
   it("saves the selected step before minimizing and navigating to provider access", async () => {
     const originalFetch = global.fetch;
     global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
