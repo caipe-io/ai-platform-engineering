@@ -1741,11 +1741,11 @@ export function SetupWizardGate(): React.ReactElement | null {
               <Button size="sm" onClick={() => openWizard(false)}>
                 {payload.state.status === "dismissed" ? "Continue setup" : "Resume setup"}<ChevronRight className="ml-1 h-3.5 w-3.5" />
               </Button>
-              <div className="flex items-center justify-between gap-2">
-                <Button size="sm" variant="outline" onClick={() => void restartSetup()}>
+              <div className="grid gap-2">
+                <Button size="sm" variant="outline" className="w-full justify-center" onClick={() => void restartSetup()}>
                   <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Restart platform setup
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => void hideChecklist()} disabled={hidingChecklist}>Don’t show again</Button>
+                <Button size="sm" variant="ghost" className="w-full justify-center" onClick={() => void hideChecklist()} disabled={hidingChecklist}>Don’t show again</Button>
               </div>
             </div>
             <div className="mt-3 flex gap-3 border-t pt-3 text-[11px]">
