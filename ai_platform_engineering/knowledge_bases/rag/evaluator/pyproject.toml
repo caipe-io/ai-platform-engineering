@@ -1,0 +1,48 @@
+[build-system]
+requires = ['setuptools>=45', 'wheel']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'caipe-deepeval-evaluation'
+version = '0.1.0'
+description = 'CAIPE DeepEval evaluation scripts for EnterpriseRAG-Bench and HotpotQA'
+requires-python = '>=3.13,<3.14'
+dependencies = [
+  'deepeval',
+  'httpx',
+  'httpx2',
+  'requests',
+  'pydantic',
+  'pydantic-settings',
+  'pyyaml',
+  'fastapi',
+  'uvicorn',
+  'python-multipart',
+  'pyjwt',
+  'cryptography',
+  'psycopg2-binary',
+  'prometheus-client',
+  'opentelemetry-api',
+  'opentelemetry-sdk',
+  'opentelemetry-exporter-otlp-proto-grpc',
+  'opentelemetry-instrumentation-fastapi',
+]
+
+[tool.coverage.run]
+branch = true
+
+[dependency-groups]
+dev = [
+  "pytest-cov",
+  "ruff",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501", "UP042"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not e2e'"
+markers = [
+    "e2e: mark test as a live system end-to-end test requiring real infrastructure services",
+]

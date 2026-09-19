@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  caipe-evaluator-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: caipe-deepeval-evaluator
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # Mount local data, logs, and results directories into the container
+      - ./data:/app/data:ro
+      - ./logs:/app/logs:rw
+      - ./results:/app/results:rw
+      - ./caipe_eval_db:/app/caipe_eval_db:rw
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8000/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

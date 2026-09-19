@@ -61,6 +61,7 @@ If you have Claude code, VS code, Cursor etc. you can connect upto the MCP serve
 - [Server](server/README.md) - Core API and orchestration layer
 - [Ontology Agent](agent_ontology/README.md) - Autonomous schema discovery
 - [Ingestors](ingestors/README.md) - Data source integrations
+- [Evaluator](evaluator/README.md) - RAG evaluation service and benchmark scoring
 
 ## Connections
 
