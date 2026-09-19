@@ -8917,6 +8917,15 @@ BANNER
       err "  git clone https://github.com/caipe-io/ai-platform-engineering && cd ai-platform-engineering && bash setup-caipe.sh"
       exit 1
     fi
+    # ollama.yaml declares OPENAI_MODEL_NAME/EMBEDDINGS_MODEL via `valueFrom:
+    # secretKeyRef`, but in LiteLLM mode the block below overwrites them on the
+    # live Deployment to a literal `value:` (the real Ollama model, not the
+    # llm-secret alias). A later `kubectl apply -f` of the unchanged manifest
+    # then tries to merge `valueFrom` back onto an object that still has
+    # `value` set, and the API rejects an EnvVar with both fields present.
+    # Delete first so apply always starts from a clean object — the PVC (and
+    # its cached models) is untouched, only the Deployment/pod are recreated.
+    kubectl delete deployment ollama -n caipe --ignore-not-found &>/dev/null
     kubectl apply -f "$_ollama_yaml" 2>&1 \
       | grep -v "^$" | while IFS= read -r line; do log "$line"; done
 
