@@ -112,6 +112,8 @@ export interface Config {
    * Set DYNAMIC_AGENTS_ENABLED=true to enable.
    */
   dynamicAgentsEnabled: boolean;
+  /** Whether first-install admins are automatically offered the guided setup wizard. */
+  setupWizardEnabled: boolean;
   /**
    * Whether the admin Feedback tab and feedback API are enabled.
    * Enabled by default. Set FEEDBACK_ENABLED=false to disable.
@@ -267,6 +269,7 @@ const DEFAULT_CONFIG: Config = {
   workflowsEnabled: false,
   projectsEnabled: false,
   dynamicAgentsEnabled: false,
+  setupWizardEnabled: true,
   feedbackEnabled: true,
   allowBuiltinSkillMutation: false,
   auditLogsEnabled: false,
@@ -379,6 +382,7 @@ export function getServerConfig(): Config {
   const workflowsEnabled = env('WORKFLOWS_ENABLED') === 'true';
   const projectsEnabled = env('PROJECTS_ENABLED') === 'true';
   const dynamicAgentsEnabled = env('DYNAMIC_AGENTS_ENABLED') === 'true';
+  const setupWizardEnabled = env('SETUP_WIZARD_ENABLED') !== 'false';
   const feedbackEnabled = env('FEEDBACK_ENABLED') !== 'false';
   // Default `false` (locked). Must mirror the server-side check in
   // `lib/builtin-skill-policy.ts` so the UI never offers an action
@@ -469,6 +473,7 @@ export function getServerConfig(): Config {
     workflowsEnabled,
     projectsEnabled,
     dynamicAgentsEnabled,
+    setupWizardEnabled,
     feedbackEnabled,
     allowBuiltinSkillMutation,
     auditLogsEnabled,

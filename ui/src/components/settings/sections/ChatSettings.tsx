@@ -1,5 +1,6 @@
 import { FeaturePreferences } from "@/components/settings/FeaturePreferences";
 import { UserDefaultAgentsPanel } from "@/components/settings/DefaultAgents/UserDefaultAgentsPanel";
+import { ProductTourSettings } from "@/components/onboarding/ProductTour";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { Bot,MessageSquare } from "lucide-react";
 
@@ -19,6 +20,8 @@ export function ChatSettings(): React.ReactElement {
       >
         <FeaturePreferences categories={["ai","chat"]} />
       </SettingsCard>
+
+      <ProductTourSettings />
     </div>
   );
 }

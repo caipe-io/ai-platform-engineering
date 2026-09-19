@@ -375,6 +375,9 @@ services:
       - OIDC_ISSUER=${OIDC_ISSUER:-}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      # Keycloak user tokens target the platform resource server, while the
+      # browser client uses caipe-ui. Keep both audiences valid for BFF OBO.
+      - OIDC_ACCEPTED_AUDIENCES=${OIDC_ACCEPTED_AUDIENCES:-caipe-platform}
       - OIDC_GROUP_CLAIM=${OIDC_GROUP_CLAIM:-}
       - OIDC_REQUIRED_GROUP=${OIDC_REQUIRED_GROUP:-}
       - OIDC_REQUIRED_ADMIN_GROUP=${OIDC_REQUIRED_ADMIN_GROUP:-}
@@ -390,26 +393,33 @@ services:
       - KEYCLOAK_ADMIN_CLIENT_ID=${KEYCLOAK_ADMIN_CLIENT_ID:-caipe-platform}
       - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-caipe-platform-dev-secret}
       # Workflow runner - set WORKFLOW_RUNNER_ENABLED=true to show Run Workflow button and Multi-Step Workflows
-      - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
+      - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-true}
       # Projects - set PROJECTS_ENABLED=true to show the Projects workspace
       - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       # Top-level workflows and schedules are independent, opt-in navigation surfaces.
-      - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
-      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-true}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
       - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
-      - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-false}
+      - SCHEDULER_URL=${SCHEDULER_URL:-http://caipe-scheduler:8080}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
+      - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-true}
+      - SETUP_WIZARD_ENABLED=${SETUP_WIZARD_ENABLED:-true}
       # Compact header shortcut that reuses the existing feedback dialog.
       - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
-      # Connections & Secrets. Docker Compose reads provider bootstrap values
-      # from .env; Kubernetes deployments use ESO to inject the same env names.
-      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
+      # Connections & Secrets. The local Compose install exposes the credential
+      # workspace by default so users can configure OAuth connectors. Kubernetes
+      # deployments should inject production values from their secret store.
+      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-true}
       - CREDENTIAL_STORE_BACKEND=${CREDENTIAL_STORE_BACKEND:-mongodb-envelope}
       - CREDENTIAL_KEY_PROVIDER=${CREDENTIAL_KEY_PROVIDER:-local-cmk}
       - CREDENTIAL_KMS_CMK_ID=${CREDENTIAL_KMS_CMK_ID:-}
       - CREDENTIAL_KMS_REGION=${CREDENTIAL_KMS_REGION:-}
+      # Local-only prod-image escape hatches. Use AWS KMS in production.
+      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-true}
+      - CREDENTIAL_ALLOW_LOCALHOST_OAUTH_REDIRECTS=${CREDENTIAL_ALLOW_LOCALHOST_OAUTH_REDIRECTS:-true}
       - CREDENTIAL_SERVICE_AUDIENCE=${CREDENTIAL_SERVICE_AUDIENCE:-caipe-credential-service}
-      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-false}
+      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-true}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
@@ -425,12 +435,19 @@ services:
       # group, or set ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED=true ONLY for local dev.
       - ENABLE_AUTONOMOUS_AGENTS=${ENABLE_AUTONOMOUS_AGENTS:-false}
       - AUTONOMOUS_AGENTS_URL=${AUTONOMOUS_AGENTS_URL:-http://autonomous-agents:8002}
+      # External Apps are available in Compose through the deployment-owned
+      # catalog mounted below. The catalog is empty by default and can be
+      # populated without rebuilding the UI image.
+      - AGENTIC_APPS_INSTALL_ENABLED=${AGENTIC_APPS_INSTALL_ENABLED:-true}
+      - AGENTIC_APPS_CONFIG_PATH=/app/config/agentic-apps.yaml
+      - AGENTIC_APP_TOKEN_SECRET=${AGENTIC_APP_TOKEN_SECRET:-local-agentic-app-token-secret-change-me}
       # Audit log storage is owned by the lightweight Python audit-service.
       - AUDIT_LOG_BACKEND=${AUDIT_LOG_BACKEND:-service}
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
       - APP_CONFIG_PATH=/app/config/app-config.yaml
     volumes:
       - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
+      - ${AGENTIC_APPS_CONFIG_FILE:-./config/agentic-apps.yaml}:/app/config/agentic-apps.yaml:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s
@@ -532,7 +549,16 @@ services:
       - ONTOLOGY_AGENT_RESTAPI_ADDR=http://agent_ontology:8098
       - ENABLE_GRAPH_RAG=${ENABLE_GRAPH_RAG:-true}
       - CLEANUP_INTERVAL=86400
+      - EMBEDDINGS_PROVIDER=${EMBEDDINGS_PROVIDER:-openai}
       - EMBEDDINGS_MODEL=${EMBEDDINGS_MODEL:-text-embedding-3-large}
+      # Keep credentials supplied through the invoking environment so a
+      # first-install .env never needs to contain a secret placeholder.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-${OPENAI_ENDPOINT:-https://api.openai.com/v1}}
+      - OPENAI_ENDPOINT=${OPENAI_ENDPOINT:-https://api.openai.com/v1}
+      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o}
+      - LITELLM_API_BASE=${LITELLM_API_BASE:-${OPENAI_ENDPOINT:-https://api.openai.com/v1}}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-${OPENAI_API_KEY:-}}
       - OPENFGA_HTTP=${OPENFGA_HTTP:-http://openfga:8080}
       - OPENFGA_STORE_NAME=${OPENFGA_STORE_NAME:-caipe-openfga}
       - CAIPE_UNSAFE_RBAC_BYPASS=${CAIPE_UNSAFE_RBAC_BYPASS:-false}
@@ -570,6 +596,10 @@ services:
       - AWS_BEDROCK_STREAMING=${AWS_BEDROCK_STREAMING:-false}
       - AWS_BEDROCK_USE_CONVERSE_API=${AWS_BEDROCK_USE_CONVERSE_API:-true}
       - AWS_BEDROCK_BASE_MODEL_ID=${AWS_BEDROCK_BASE_MODEL_ID:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-${OPENAI_ENDPOINT:-https://api.openai.com/v1}}
+      - OPENAI_ENDPOINT=${OPENAI_ENDPOINT:-https://api.openai.com/v1}
+      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o}
       # MongoDB (same as CAIPE UI)
       - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
@@ -608,6 +638,43 @@ services:
       - dynamic-agents
 
   ####################################################################################################
+  #                                     Scheduler Service                                           #
+  ####################################################################################################
+  # The Compose backend runs schedule dispatch in-process and does not require
+  # a Kubernetes API. Kubernetes installs use the chart's CronJob backend.
+  caipe-scheduler:
+    image: ghcr.io/caipe-io/caipe-scheduler:${SCHEDULER_IMAGE_TAG:-1.1.1}
+    container_name: caipe-scheduler
+    env_file: [.env]
+    environment:
+      - SCHEDULER_BACKEND=${SCHEDULER_BACKEND:-local}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
+      - SCHEDULER_JWT_JWKS_URL=${SCHEDULER_JWT_JWKS_URL:-http://keycloak:7080/realms/caipe/protocol/openid-connect/certs}
+      - SCHEDULER_JWT_ISSUER=${SCHEDULER_JWT_ISSUER:-${OIDC_ISSUER:-http://localhost:7080/realms/caipe}}
+      - SCHEDULER_JWT_AUDIENCES=${SCHEDULER_JWT_AUDIENCES:-caipe-platform}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
+      - CAIPE_API_URL=${SCHEDULER_CAIPE_API_URL:-http://caipe-ui:3000}
+      - CAIPE_CHAT_PATH=/api/v1/chat/invoke
+      - SCHEDULER_INTERNAL_URL=http://caipe-scheduler:8080
+    depends_on:
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      keycloak:
+        condition: service_started
+        required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    profiles:
+      - dynamic-agents
+
+  ####################################################################################################
   #                                    Autonomous Agents Service                                     #
   ####################################################################################################
   # Autonomous Agents - Standalone scheduler that fires tasks (cron / interval / webhook)
@@ -623,7 +690,7 @@ services:
   # Ports:
   #   - 8002: Autonomous Agents API (proxied via UI at /api/autonomous, admin-only)
   autonomous-agents:
-    image: ghcr.io/cnoe-io/caipe-autonomous-agents:${IMAGE_TAG:-0.2.36}
+    image: ghcr.io/caipe-io/caipe-autonomous-agents:${AUTONOMOUS_AGENTS_IMAGE_TAG:-1.1.0}
     container_name: autonomous-agents
     # Bind to loopback only -- the FastAPI service has no auth layer of
     # its own; auth and admin gating live in the UI's /api/autonomous

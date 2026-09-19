@@ -65,6 +65,7 @@ interface MCPServersTabProps {
   selectedServerId?: string | null;
   onSelectedServerChange?: (serverId: string | null) => void;
   onSelectedServerNameChange?: (serverName: string | null) => void;
+  openRemoteCatalog?: boolean;
 }
 
 interface ToolTestResult {
@@ -190,6 +191,7 @@ export function MCPServersTab({
   selectedServerId,
   onSelectedServerChange,
   onSelectedServerNameChange,
+  openRemoteCatalog = false,
 }: MCPServersTabProps = {}) {
   const [servers, setServers] = React.useState<MCPServerConfigWithPermissions[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -200,7 +202,7 @@ export function MCPServersTab({
   const selectionRequestRef = React.useRef(0);
   const loadedSelectionIdRef = React.useRef<string | null>(null);
   const [isCreating, setIsCreating] = React.useState(false);
-  const [showCatalog, setShowCatalog] = React.useState(false);
+  const [showCatalog, setShowCatalog] = React.useState(openRemoteCatalog);
   const [catalogInitialValues, setCatalogInitialValues] = React.useState<MCPServerInitialValues | null>(null);
   const [probeResults, setProbeResults] = React.useState<Record<string, ProbeResult>>({});
   const [testingServer, setTestingServer] = React.useState<MCPServerConfigWithPermissions | null>(null);

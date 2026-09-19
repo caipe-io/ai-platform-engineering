@@ -1,6 +1,8 @@
 "use client";
 
 import { AppHeader } from "@/components/layout/AppHeader";
+import { SetupWizardGate } from "@/components/admin/settings/SetupWizard";
+import { ProductTourGate } from "@/components/onboarding/ProductTour";
 import {
   ApplicationNavigationDrawer,
   ApplicationNavigationRail,
@@ -44,6 +46,8 @@ export function AppLayoutClient({
             </div>
           </div>
           <ApplicationNavigationDrawer />
+          <SetupWizardGate />
+          <ProductTourGate />
         </div>
       </HeaderBreadcrumbSlotProvider>
     </ApplicationNavigationProvider>

@@ -183,6 +183,12 @@ config:
   # Feature flags
   ENABLE_SUBAGENT_CARDS: "true"
   SSO_ENABLED: "true"
+  # External Apps is disabled by default for standalone chart installs because
+  # the catalog and signing secret are deployment-owned. setup-caipe.sh enables
+  # the hub with a valid empty catalog and provisions its signing secret.
+  AGENTIC_APPS_INSTALL_ENABLED: "false"
+  AGENTIC_APPS_CONFIG_PATH: "/etc/caipe-ui-agentic-apps/agentic-apps.yaml"
+  AGENTIC_APP_TOKEN_ISSUER: "caipe-agentic-apps"
   # Built-in skill IDs to seed (comma-separated whitelist).
   # "none" (default) disables auto-seeding entirely — use "Import template skills"
   # in the Skills UI to load templates explicitly. Set to a comma-separated list
@@ -272,6 +278,8 @@ config:
   ENV_BADGE: ""
   # Workflow runner: set to "true" to show Run Workflow button and Multi-Step Workflows section
   WORKFLOW_RUNNER_ENABLED: "false"
+  # Automatic guided first-admin setup prompt. Disable for fully declarative installations.
+  SETUP_WIZARD_ENABLED: "true"
   # Dynamic Agents service URL. Leave empty to use the chart default.
   DYNAMIC_AGENTS_URL: ""
   # Connections & Secrets credential store. Disabled by default. Use local-cmk
@@ -335,7 +343,10 @@ config:
   # Accepted JWT audiences for Bearer token validation (comma-separated)
   # When the OIDC authorization server uses a fixed audience that differs
   # from OIDC_CLIENT_ID, list accepted values here.
-  # OIDC_ACCEPTED_AUDIENCES: "https://my-api.example.com"
+  # The bundled Keycloak realm mints user tokens for caipe-platform while
+  # the browser client is caipe-ui. Operators using another audience should
+  # override this value explicitly.
+  OIDC_ACCEPTED_AUDIENCES: "caipe-platform"
   # Support contact email
   SUPPORT_EMAIL: "support@example.com"
   # Header link URLs (leave empty/commented to hide)
