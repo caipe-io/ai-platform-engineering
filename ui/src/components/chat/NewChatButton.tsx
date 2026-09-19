@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
 import { cn } from "@/lib/utils";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
-import { ChevronDown,Loader2,Plus,Search } from "lucide-react";
+import { Check,ChevronDown,Loader2,Plus,Search,Star } from "lucide-react";
 import React,{ useEffect,useRef,useState } from "react";
 
 interface NewChatButtonProps {
@@ -22,8 +22,10 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [defaultAgentId, setDefaultAgentId] = useState<string | null>(null);
+  const [personalDefaultAgentId, setPersonalDefaultAgentId] = useState<string | null>(null);
   const [defaultAgentName, setDefaultAgentName] = useState<string>("New Chat");
   const [defaultAgentResolved, setDefaultAgentResolved] = useState(false);
+  const [savingDefaultId, setSavingDefaultId] = useState<string | null>(null);
 
   // Resolve the same usable agent as the Home composer: personal Web default,
   // platform default, then the first accessible agent. Keeping this selection
@@ -37,6 +39,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
 
         if (cancelled) return;
         setDefaultAgentId(agent.id);
+        setPersonalDefaultAgentId(agent.source === "user-default" ? agent.id : null);
         setDefaultAgentName(agent.name);
       } catch {
         if (!cancelled) {
@@ -133,6 +136,31 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
     onNewChat(agentId);
   };
 
+  const handleSetDefaultAgent = async (agent: DynamicAgentConfig) => {
+    if (savingDefaultId) return;
+    setSavingDefaultId(agent._id);
+    setError(null);
+    try {
+      const response = await fetch("/api/user/preferences", {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ web_default_agent_id: agent._id }),
+      });
+      const data = await response.json() as { success?: boolean; error?: string };
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || `Failed to save default agent (HTTP ${response.status})`);
+      }
+      setDefaultAgentId(agent._id);
+      setPersonalDefaultAgentId(agent._id);
+      setDefaultAgentName(agent.name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save default agent");
+    } finally {
+      setSavingDefaultId(null);
+    }
+  };
+
   // Auto-focus search input when dropdown opens
   useEffect(() => {
     if (dropdownOpen && searchInputRef.current) {
@@ -171,14 +199,14 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
           onClick={handleMainClick}
           disabled={!defaultAgentResolved}
           className={cn(
-            "flex-1 gap-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow",
+            "min-w-0 flex-1 gap-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow",
             "rounded-r-none border-r-0"
           )}
           variant="ghost"
           size="default"
         >
           <Plus className="h-4 w-4 shrink-0" />
-          <span className="whitespace-nowrap">{defaultAgentName}</span>
+          <span className="min-w-0 truncate" title={defaultAgentName}>{defaultAgentName}</span>
         </Button>
 
         {/* Dropdown trigger */}
@@ -238,12 +266,11 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
             )}
 
             {/* Dynamic agents list */}
-            {!loading && !error && filteredAgents.map((agent) => {
-              return (
+            {!loading && !error && filteredAgents.map((agent) => (
+              <div key={agent._id} className="flex items-center gap-1 px-1">
                 <button
-                  key={agent._id}
                   onClick={() => handleSelectAgent(agent._id)}
-                  className="w-full flex items-center gap-3 px-3 py-2 text-sm hover:bg-accent transition-colors text-left"
+                  className="min-w-0 flex-1 flex items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-accent transition-colors"
                 >
                   <AgentAvatar
                     agent={agent}
@@ -251,7 +278,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
                     size="w-8 h-8"
                     iconSize="h-4 w-4"
                   />
-                  <div className="flex-1 min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="font-medium truncate">{agent.name}</div>
                     {agent.description && (
                       <div className="text-xs text-muted-foreground truncate">
@@ -260,8 +287,27 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
                     )}
                   </div>
                 </button>
-              );
-            })}
+                <button
+                  type="button"
+                  aria-label={personalDefaultAgentId === agent._id ? `${agent.name} is your default agent` : `Set ${agent.name} as your default agent`}
+                  title={personalDefaultAgentId === agent._id ? "Your default agent" : "Set as your default agent"}
+                  disabled={savingDefaultId !== null}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void handleSetDefaultAgent(agent);
+                  }}
+                  className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-primary disabled:opacity-50"
+                >
+                  {savingDefaultId === agent._id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : personalDefaultAgentId === agent._id ? (
+                    <Check className="h-4 w-4 text-primary" />
+                  ) : (
+                    <Star className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            ))}
 
             {/* No results */}
             {!loading && !error && filteredAgents.length === 0 && (

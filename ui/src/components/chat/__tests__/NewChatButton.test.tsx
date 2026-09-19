@@ -13,11 +13,13 @@ jest.mock("@/components/ui/button", () => ({
 }));
 
 jest.mock("lucide-react", () => ({
+  Check: () => <span data-testid="check-icon" />,
   Plus: () => <span data-testid="plus-icon" />,
   ChevronDown: () => <span data-testid="chevron-icon" />,
   Bot: () => <span data-testid="bot-icon" />,
   Loader2: () => <span data-testid="loader-icon" />,
   Search: () => <span data-testid="search-icon" />,
+  Star: () => <span data-testid="star-icon" />,
 }));
 
 const mockFetch = jest.fn();
@@ -67,6 +69,39 @@ describe("NewChatButton", () => {
     render(<NewChatButton collapsed={false} onNewChat={jest.fn()} />);
 
     expect(await screen.findByText("Platform Helper")).toBeInTheDocument();
+  });
+
+  it("lets the user save an agent as the Web default from the new-chat menu", async () => {
+    mockResolveUsableChatAgent.mockResolvedValue({
+      id: "agent-default",
+      name: "Platform Helper",
+      source: "platform-default",
+    });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: [{ _id: "agent-sre", name: "SRE Agent", description: "Operations" }],
+      }),
+    });
+
+    render(<NewChatButton collapsed={false} onNewChat={jest.fn()} />);
+    const dropdownToggle = screen.getByTestId("chevron-icon").closest("button");
+    expect(dropdownToggle).not.toBeNull();
+    fireEvent.click(dropdownToggle!);
+    fireEvent.click(await screen.findByRole("button", { name: "Set SRE Agent as your default agent" }));
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/user/preferences",
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ web_default_agent_id: "agent-sre" }),
+        }),
+      );
+    });
+    expect((await screen.findAllByText("SRE Agent")).length).toBeGreaterThanOrEqual(1);
   });
 
   it("prefers the user's web default over the platform default", async () => {
