@@ -12,7 +12,7 @@ class Settings(BaseModel):
   mongodb_uri: str = Field(
     default_factory=lambda: os.environ.get(
       "MONGODB_URI",
-      "mongodb://admin:changeme@caipe-mongodb:27017/caipe?authSource=admin",
+      "mongodb://admin:changeme@caipe-documentdb:10260/caipe?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true",
     )
   )
   mongodb_database: str = Field(default_factory=lambda: os.environ.get("MONGODB_DATABASE", "caipe"))
