@@ -77,6 +77,7 @@ export class CustomStreamAdapter implements StreamAdapter {
       message: params.message,
       conversation_id: params.conversationId,
       agent_id: params.agentId,
+      ...(params.turnId && { turn_id: params.turnId }),
       protocol: "custom",
       ...(params.clientContext && { client_context: params.clientContext }),
       ...(params.files?.length && { files: params.files }),

@@ -27,6 +27,7 @@ jest.mock('@/lib/api-client', () => ({
     createConversation: jest.fn().mockResolvedValue({ conversation: { _id: 'server-generated-id' }, created: true }),
     deleteConversation: jest.fn().mockResolvedValue({ deleted: true }),
     updateConversation: jest.fn().mockResolvedValue({}),
+    rewindConversation: jest.fn().mockResolvedValue({}),
   },
 }));
 
@@ -100,6 +101,49 @@ describe('chat-store', () => {
     window.localStorage.clear();
     (global as unknown).__mockStorageMode = 'mongodb';
     resetStore();
+  });
+
+  describe('truncateConversationFromMessage', () => {
+    it('removes the selected message and every later message', () => {
+      const conversation = makeConversation({
+        id: 'rewind-conversation',
+        streamEvents: [{ id: 'event-1' } as never],
+        messages: [
+          makeMessage({ id: 'user-1', turnId: 'turn-1' }),
+          makeMessage({ id: 'assistant-1', role: 'assistant', turnId: 'turn-1' }),
+          makeMessage({ id: 'user-2', turnId: 'turn-2' }),
+          makeMessage({ id: 'assistant-2', role: 'assistant', turnId: 'turn-2' }),
+        ],
+      });
+      useChatStore.setState({ conversations: [conversation] });
+
+      useChatStore.getState().truncateConversationFromMessage(
+        'rewind-conversation',
+        'user-2',
+      );
+
+      const updated = useChatStore.getState().conversations[0];
+      expect(updated.messages.map((message) => message.id)).toEqual([
+        'user-1',
+        'assistant-1',
+      ]);
+      expect(updated.streamEvents).toEqual([]);
+    });
+
+    it('leaves the conversation unchanged when the message is missing', () => {
+      const conversation = makeConversation({
+        id: 'rewind-missing',
+        messages: [makeMessage({ id: 'user-1' })],
+      });
+      useChatStore.setState({ conversations: [conversation] });
+
+      useChatStore.getState().truncateConversationFromMessage(
+        'rewind-missing',
+        'unknown',
+      );
+
+      expect(useChatStore.getState().conversations[0]).toBe(conversation);
+    });
   });
 
   afterEach(() => {

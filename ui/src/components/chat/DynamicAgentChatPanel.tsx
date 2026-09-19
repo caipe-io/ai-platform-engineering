@@ -23,7 +23,7 @@ import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { AnimatePresence,motion } from "framer-motion";
-import { Activity,ArrowDown,ArrowLeft,Check,ChevronUp,Copy,Loader2,Paperclip,RotateCcw,Send,ShieldCheck,Sparkles,Square,User } from "lucide-react";
+import { Activity,ArrowDown,ArrowLeft,Check,ChevronUp,Copy,Loader2,Paperclip,Pencil,RotateCcw,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
@@ -132,6 +132,9 @@ export function ChatPanel({
   const panelReadOnly = readOnly && !hasRelinkedAgent;
   const panelReadOnlyReason = hasRelinkedAgent ? undefined : readOnlyReason;
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   // Files staged in the composer for the next turn (multimodal input).
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -195,6 +198,7 @@ export function ChatPanel({
     addMessage,
     updateMessage,
     appendToMessage,
+    truncateConversationFromMessage,
     addStreamEvent,
     clearStreamEvents,
     setConversationStreaming,
@@ -203,7 +207,9 @@ export function ChatPanel({
     updateMessageFeedback,
     consumePendingMessage,
     loadMessagesFromServer,
+    saveMessagesToServer,
     updateConversationTitle,
+    clearConversationInputRequired,
   } = useChatStore();
 
   // Re-link this deprecated/deleted-agent conversation to the platform default agent,
@@ -1116,6 +1122,7 @@ export function ChatPanel({
           message: messageToSend,
           conversationId: convId,
           agentId,
+          turnId,
           clientContext,
           ...(filesToSend.length > 0 && { files: filesToSend }),
         },
@@ -1153,6 +1160,85 @@ export function ChatPanel({
       setConversationStreaming(convId, null);
     }
   }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
+
+  const startEditingMessage = useCallback((message: ChatMessageType) => {
+    setEditingMessageId(message.id);
+    setEditDraft(message.content);
+  }, []);
+
+  const cancelEditingMessage = useCallback(() => {
+    if (isSavingEdit) return;
+    setEditingMessageId(null);
+    setEditDraft("");
+  }, [isSavingEdit]);
+
+  const saveEditedMessage = useCallback(async () => {
+    if (!editingMessageId || !activeConversationId || isSavingEdit) return;
+    const targetMessage = getActiveConversation()?.messages.find(
+      (message) => message.id === editingMessageId,
+    );
+    if (!targetMessage) {
+      toast("The message is no longer available to edit.", "error", 6000);
+      cancelEditingMessage();
+      return;
+    }
+
+    const targetAttachments = targetMessage.attachments ?? [];
+    if (targetAttachments.some((attachment) => !attachment.data)) {
+      toast(
+        "This message has an attachment that is no longer available. Re-upload it in a new message instead.",
+        "error",
+        8000,
+      );
+      return;
+    }
+    if (!editDraft.trim() && targetAttachments.length === 0) return;
+
+    const files: InputFile[] = targetAttachments.map((attachment) => ({
+      mime_type: attachment.mime_type,
+      name: attachment.name,
+      data: attachment.data!,
+    }));
+
+    setIsSavingEdit(true);
+    try {
+      await saveMessagesToServer(activeConversationId);
+      await apiClient.rewindConversation(activeConversationId, {
+        agent_id: agentId,
+        message_id: editingMessageId,
+      });
+      truncateConversationFromMessage(activeConversationId, editingMessageId);
+      setQueuedMessages([]);
+      setPendingUserInput(null);
+      setPendingToolApproval(null);
+      clearConversationInputRequired(activeConversationId);
+      dismissedInputForMessageRef.current.clear();
+      setEditingMessageId(null);
+      setEditDraft("");
+      await submitMessage(editDraft, files);
+    } catch (error) {
+      toast(
+        `Could not edit message: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+        8000,
+      );
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [
+    activeConversationId,
+    agentId,
+    cancelEditingMessage,
+    clearConversationInputRequired,
+    editDraft,
+    editingMessageId,
+    getActiveConversation,
+    isSavingEdit,
+    saveMessagesToServer,
+    submitMessage,
+    toast,
+    truncateConversationFromMessage,
+  ]);
 
   // The Home page hero composer creates a conversation and navigates here
   // before a message can be sent (this panel only mounts once a conversation
@@ -1865,6 +1951,21 @@ export function ChatPanel({
                     {renderMessages.map((msg, index, arr) => {
                       const isLastMessage = index === arr.length - 1;
                       const isAssistantStreaming = isThisConversationStreaming && msg.role === "assistant" && isLastMessage;
+                      const messageOwner = msg.senderEmail ?? conversation?.owner_id;
+                      const isOwnMessage = !messageOwner || !session?.user?.email ||
+                        messageOwner === session.user.email;
+                      const isConversationOwner = !conversation?.owner_id || !session?.user?.email ||
+                        conversation.owner_id === session.user.email;
+                      const isLocalCommand = msg.content.trim() === "/skills" ||
+                        msg.content.trim() === "/help";
+                      const canEditMessage = msg.role === "user" &&
+                        isOwnMessage &&
+                        isConversationOwner &&
+                        !isLocalCommand &&
+                        !panelReadOnly &&
+                        !isThisConversationStreaming &&
+                        !pendingUserInput &&
+                        !pendingToolApproval;
 
                       // For retry: if user message, use its content; if assistant, find preceding user message
                       const getRetryContent = () => {
@@ -1911,6 +2012,14 @@ export function ChatPanel({
                           key={msg.id}
                           message={msg}
                           onCopy={handleCopy}
+                          canEdit={canEditMessage}
+                          isEditing={editingMessageId === msg.id}
+                          editDraft={editingMessageId === msg.id ? editDraft : undefined}
+                          isSavingEdit={isSavingEdit && editingMessageId === msg.id}
+                          onStartEdit={() => startEditingMessage(msg)}
+                          onEditDraftChange={setEditDraft}
+                          onCancelEdit={cancelEditingMessage}
+                          onSaveEdit={saveEditedMessage}
                           isCopied={copiedId === msg.id}
                           isStreaming={isAssistantStreaming}
                           isLatestAnswer={isLastAssistantMessage}
@@ -2387,6 +2496,14 @@ const LoadEarlierDivider = React.memo(function LoadEarlierDivider({
 interface ChatMessageProps {
   message: ChatMessageType;
   onCopy: (content: string, id: string) => void;
+  canEdit?: boolean;
+  isEditing?: boolean;
+  editDraft?: string;
+  isSavingEdit?: boolean;
+  onStartEdit?: () => void;
+  onEditDraftChange?: (value: string) => void;
+  onCancelEdit?: () => void;
+  onSaveEdit?: () => void;
   isCopied: boolean;
   isStreaming?: boolean;
   isLatestAnswer?: boolean;
@@ -2419,6 +2536,14 @@ interface ChatMessageProps {
 const ChatMessage = React.memo(function ChatMessage({
   message,
   onCopy,
+  canEdit = false,
+  isEditing = false,
+  editDraft = "",
+  isSavingEdit = false,
+  onStartEdit,
+  onEditDraftChange,
+  onCancelEdit,
+  onSaveEdit,
   isCopied,
   isStreaming = false,
   isLatestAnswer = false,
@@ -2555,7 +2680,53 @@ const ChatMessage = React.memo(function ChatMessage({
                 <MessageAttachments attachments={message.attachments} align="end" />
               </div>
             )}
-            {message.content.trim() && (
+            {isEditing ? (
+              <div className="ml-auto w-full max-w-2xl rounded-xl border border-primary/40 bg-card p-3 text-left shadow-sm">
+                <TextareaAutosize
+                  autoFocus
+                  minRows={2}
+                  maxRows={12}
+                  value={editDraft}
+                  disabled={isSavingEdit}
+                  onChange={(event) => onEditDraftChange?.(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      onCancelEdit?.();
+                    }
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      onSaveEdit?.();
+                    }
+                  }}
+                  className="w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
+                  aria-label="Edit message"
+                />
+                <div className="mt-3 flex items-center justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isSavingEdit}
+                    onClick={onCancelEdit}
+                  >
+                    <X className="mr-1.5 h-3.5 w-3.5" />
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={isSavingEdit || (!editDraft.trim() && !message.attachments?.length)}
+                    onClick={onSaveEdit}
+                  >
+                    {isSavingEdit ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Send className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    Save and send
+                  </Button>
+                </div>
+              </div>
+            ) : message.content.trim() ? (
               <div
                 className="rounded-xl rounded-tr-sm relative overflow-hidden inline-block bg-primary text-primary-foreground px-4 py-3 max-w-full selection:bg-primary-foreground selection:text-primary"
               >
@@ -2563,14 +2734,54 @@ const ChatMessage = React.memo(function ChatMessage({
                   <MarkdownRenderer content={message.content} variant="user" />
                 </div>
               </div>
-            )}
+            ) : null}
 
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: isHovered ? 1 : 0.8 }}
-              className="flex items-center gap-1 mt-2 justify-end"
-            >
-              {onRetry && (
+            {!isEditing && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: isHovered ? 1 : 0.8 }}
+                className="flex items-center gap-1 mt-2 justify-end"
+              >
+                {canEdit && onStartEdit && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
+                          onClick={onStartEdit}
+                          aria-label="Edit message"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Edit message and rewind conversation
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+                {onRetry && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
+                          onClick={onRetry}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Retry this prompt
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -2578,40 +2789,22 @@ const ChatMessage = React.memo(function ChatMessage({
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                        onClick={onRetry}
+                        onClick={() => onCopy(message.content, message.id)}
                       >
-                        <RotateCcw className="h-3.5 w-3.5" />
+                        {isCopied ? (
+                          <Check className="h-3.5 w-3.5 text-green-400" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      Retry this prompt
+                      {isCopied ? "Copied!" : "Copy message"}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-              )}
-
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                      onClick={() => onCopy(message.content, message.id)}
-                    >
-                      {isCopied ? (
-                        <Check className="h-3.5 w-3.5 text-green-400" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {isCopied ? "Copied!" : "Copy message"}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </motion.div>
+              </motion.div>
+            )}
           </>
         ) : (
           // ── Assistant message ──

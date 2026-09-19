@@ -221,6 +221,7 @@ async def _collect_invoke_response(
         request.trace_id,
         encoder,
         files=request.files,
+        turn_id=request.turn_id,
     ):
         pass
 
@@ -263,6 +264,7 @@ async def _generate_sse_events(
     mongo: MongoDBService | None = None,
     client_context: ClientContext | None = None,
     files: list[InputFile] | None = None,
+    turn_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Generate SSE events from agent streaming.
 
@@ -289,7 +291,15 @@ async def _generate_sse_events(
         )
 
         # Stream response with trace_id for Langfuse tracing
-        async for frame in runtime.stream(message, session_id, user.email, trace_id, encoder, files=files):
+        async for frame in runtime.stream(
+            message,
+            session_id,
+            user.email,
+            trace_id,
+            encoder,
+            files=files,
+            turn_id=turn_id,
+        ):
             yield frame
 
     except RuntimeCapacityError as e:
@@ -392,6 +402,7 @@ async def chat_start_stream(
             mongo=mongo,
             client_context=request.client_context,
             files=request.files,
+            turn_id=request.turn_id,
         ),
         media_type="text/event-stream",
         headers={
