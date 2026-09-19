@@ -83,7 +83,7 @@ caipe-ui:
         name: LiteLLM
         description: LiteLLM FinOps reporting tools
         transport: http
-        endpoint: http://ai-platform-engineering-litellm-mcp:8000/mcp/
+        endpoint: http://ai-platform-engineering-litellm-mcp:8000/mcp
         enabled: true
 ```
 
