@@ -25,6 +25,10 @@ import { NextRequest } from "next/server";
 
 const COLLECTION_NAME = "mcp_servers";
 const AGENT_CONTEXT_TTL_SECONDS = 300;
+// AgentGateway routes are reconciled asynchronously after an MCP server is
+// saved. Retry only the transient route-not-found response; authorization and
+// upstream failures must still fail immediately.
+const AGENT_GATEWAY_ROUTE_RETRY_DELAYS_MS = [250, 500, 1_000, 1_500, 2_500] as const;
 
 function readString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) {
@@ -178,6 +182,45 @@ async function mcpJsonRpc(input: {
   }
 }
 
+async function initializeMcpSession(input: {
+  endpoint: string;
+  headers: Record<string, string>;
+  viaAgentGateway: boolean;
+}): Promise<{ sessionId: string }> {
+  const initialize = () =>
+    mcpJsonRpc({
+      endpoint: input.endpoint,
+      headers: input.headers,
+      payload: {
+        jsonrpc: "2.0",
+        id: `initialize-${Date.now()}`,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "caipe-ui", version: "0.5.16" },
+        },
+      },
+    });
+
+  let initialized = await initialize();
+  if (input.viaAgentGateway) {
+    for (const delayMs of AGENT_GATEWAY_ROUTE_RETRY_DELAYS_MS) {
+      if (initialized.status !== 404) break;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      initialized = await initialize();
+    }
+  }
+  if (!initialized.ok || !initialized.sessionId) {
+    throw new ApiError(
+      `MCP initialize failed with HTTP ${initialized.status}`,
+      502,
+      "MCP_INIT_FAILED",
+    );
+  }
+  return { sessionId: initialized.sessionId };
+}
+
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const { session } = await getAuthFromBearerOrSession(request);
   const body = (await request.json()) as Record<string, unknown>;
@@ -234,23 +277,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       ...buildAgentContextHeaders(diagnosticAgent),
     };
 
-    const initialized = await mcpJsonRpc({
+    const initialized = await initializeMcpSession({
       endpoint: server.endpoint,
       headers,
-      payload: {
-        jsonrpc: "2.0",
-        id: `initialize-${Date.now()}`,
-        method: "initialize",
-        params: {
-          protocolVersion: "2024-11-05",
-          capabilities: {},
-          clientInfo: { name: "caipe-ui", version: "0.5.16" },
-        },
-      },
+      viaAgentGateway,
     });
-    if (!initialized.ok || !initialized.sessionId) {
-      throw new ApiError(`MCP initialize failed with HTTP ${initialized.status}`, 502, "MCP_INIT_FAILED");
-    }
 
     const invoked = await mcpJsonRpc({
       endpoint: server.endpoint,
