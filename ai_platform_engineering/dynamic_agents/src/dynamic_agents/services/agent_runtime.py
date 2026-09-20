@@ -832,6 +832,17 @@ class AgentRuntime:
             "signature": str(client_context.get("_caipe_trusted_interaction_signature") or ""),
         }
 
+    def refresh_client_context(self, client_context: ClientContext | None) -> None:
+        """Refresh the client context a cached runtime uses for trusted-interaction headers.
+
+        The runtime cache reuses one AgentRuntime across requests for the same
+        conversation, but the trusted-interaction token/signature in
+        ``client_context`` is short-lived and minted per request. Without this,
+        a cache hit keeps forwarding the token/signature captured when the
+        runtime was first created, which goes stale on every later request.
+        """
+        self._client_context = client_context
+
     def _record_mcp_credential_failures(
         self, failures: dict[str, McpCredentialUnavailableError]
     ) -> None:

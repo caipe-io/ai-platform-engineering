@@ -189,13 +189,16 @@ class AgentRuntimeCache:
                 prom_metrics.runtime_cache_evictions_total.labels(reason="expired").inc()
                 self._update_metrics()
             else:
+                runtime.refresh_client_context(client_context)
                 runtime.touch()
                 logger.debug("Runtime cache hit for agent %s session %s", agent_config.id, session_id)
                 return runtime
 
         # Someone else is already initializing this key — wait for their result
         if key in self._pending:
-            return await self._pending[key]
+            runtime = await self._pending[key]
+            runtime.refresh_client_context(client_context)
+            return runtime
 
         # We're the first — create a future and perform initialization
         loop = asyncio.get_event_loop()
