@@ -3,6 +3,10 @@ getAuthFromBearerOrSession,
 withErrorHandler,
 } from "@/lib/api-middleware";
 import type { SkillHubDoc } from "@/lib/hub-crawl";
+import {
+projectAgentSkillCatalogDoc,
+type AgentSkillCatalogDoc,
+} from "@/lib/catalog-skill-projection";
 import { checkOpenFgaTuple,type OpenFgaCheckResult,type OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import { organizationObjectId } from "@/lib/rbac/organization";
 import { NextRequest,NextResponse } from "next/server";
@@ -40,6 +44,8 @@ export interface CatalogSkill {
   description: string;
   source: "default" | "agent_skills" | "hub";
   source_id: string | null;
+  /** Owner email for Mongo-backed user skills. */
+  owner_id?: string | null;
   content: string | null;
   metadata: Record<string, unknown>;
   /**
@@ -423,7 +429,7 @@ async function aggregateLocally(
       "@/lib/mongodb"
     );
     if (isMongoDBConfigured) {
-      const collection = await getCollection("agent_skills");
+      const collection = await getCollection<AgentSkillCatalogDoc>("agent_skills");
       const docs = await collection
         .find(
           {
@@ -463,56 +469,8 @@ async function aggregateLocally(
         .toArray();
 
       for (const doc of docs) {
-        if (!doc.name || !doc.description) continue;
-        const content =
-          doc.skill_content || doc.skill_template || doc.tasks?.[0]?.llm_prompt || "";
-        skills.push({
-          id: String(doc.id || doc.name),
-          name: String(doc.name),
-          description: String(doc.description).slice(0, 1024),
-          source: "agent_skills",
-          source_id: doc.owner_id ?? null,
-          content: includeContent ? content : null,
-          metadata: {
-            ...doc.metadata,
-            category: doc.category,
-            visibility: doc.visibility,
-            is_system: doc.is_system,
-          },
-          ancillary_files:
-            includeContent && doc.ancillary_files
-              ? (doc.ancillary_files as Record<string, string>)
-              : undefined,
-          ...(doc.scan_status
-            ? {
-                scan_status: doc.scan_status as
-                  | "passed"
-                  | "flagged"
-                  | "unscanned",
-              }
-            : {}),
-          ...(doc.scan_summary !== undefined
-            ? { scan_summary: String(doc.scan_summary) }
-            : {}),
-          ...(doc.scan_updated_at
-            ? {
-                scan_updated_at:
-                  doc.scan_updated_at instanceof Date
-                    ? doc.scan_updated_at.toISOString()
-                    : String(doc.scan_updated_at),
-              }
-            : {}),
-          // Pass-through override audit metadata. We don't validate
-          // the shape here — the override route is the only writer
-          // and the type narrowing in the dialog component handles
-          // missing fields defensively (a hand-edited doc with a
-          // partial override should still render).
-          ...(doc.scan_override
-            ? {
-                scan_override: doc.scan_override as CatalogSkill["scan_override"],
-              }
-            : {}),
-        });
+        const projected = projectAgentSkillCatalogDoc(doc, includeContent);
+        if (projected) skills.push(projected);
       }
       sourcesLoaded.push("agent_skills");
     }

@@ -171,6 +171,12 @@ export function StepToolOverridePicker({
     },
     [configOverride],
   );
+  const staleOverrideServers = useMemo(
+    () => Object.keys(overrideAllowedTools ?? {})
+      .filter((serverId) => !Object.prototype.hasOwnProperty.call(baseAllowedTools, serverId))
+      .sort(),
+    [baseAllowedTools, overrideAllowedTools],
+  );
   const overrideBuiltinTools = useMemo(
     () => configOverride?.builtin_tools as Record<string, { enabled?: boolean }> | undefined,
     [configOverride],
@@ -399,7 +405,19 @@ export function StepToolOverridePicker({
               Select an agent to configure tool access.
             </p>
           ) : (
-            <fieldset disabled={!!readOnly} className="space-y-3">
+            <>
+              {staleOverrideServers.length > 0 && (
+                <div
+                  role="alert"
+                  className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300"
+                >
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    This saved override references unavailable server{staleOverrideServers.length !== 1 ? "s" : ""}: {staleOverrideServers.join(", ")}. Refresh the agent configuration and recreate the step override before running.
+                  </span>
+                </div>
+              )}
+              <fieldset disabled={!!readOnly} className="space-y-3">
               {/* Mode toggle */}
               <div className="flex gap-2">
                 <button
@@ -591,7 +609,8 @@ export function StepToolOverridePicker({
                   )}
                 </div>
               )}
-            </fieldset>
+              </fieldset>
+            </>
           )}
         </div>
       )}

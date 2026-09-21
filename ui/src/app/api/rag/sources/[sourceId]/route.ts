@@ -42,7 +42,6 @@ import {
   getRagIngestorLimits,
 } from "@/lib/rag-ingestor-limits.server";
 import {
-  datasourceCollectionAudience,
   removeDatasourceFromAgentPins,
   removeDatasourceFromRagCollections,
 } from "@/lib/rag-collections.server";
@@ -64,13 +63,13 @@ import {
   requireResourcePermission,
 } from "@/lib/rbac/resource-authz";
 import { resolveUserIdentitiesBySubject } from "@/lib/rbac/user-identity-directory";
-import type { IngestionSourceConfig } from "@/types/ingestion-source";
-import { NextRequest } from "next/server";
 import {
   optionalStringList,
   optionalStringMap,
   optionalWebSettings,
-} from "../route";
+} from "@/lib/ingestion-source-config";
+import type { IngestionSourceConfig } from "@/types/ingestion-source";
+import { NextRequest } from "next/server";
 
 const COLLECTION_NAME = "rag_ingestion_sources";
 const OPENFGA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
@@ -841,17 +840,6 @@ export const PATCH = withErrorHandler(
 
     const gatedSourceUpdate = changedApprovalGatedSourceUpdate(source, updateData);
     const materialChange = ownerChanged || Object.keys(gatedSourceUpdate).length > 0;
-    const collectionAudience = materialChange
-      ? await datasourceCollectionAudience(sourceId, {
-          ownerTeamSlug: previousOwnerTeamSlug,
-          ownerSubject: previousOwnerSubject,
-        })
-      : {
-          collectionIds: [],
-          readerTeamSlugs: [],
-          hasExternalPrincipal: false,
-          organizationWide: false,
-        };
     const publicationSource = {
       ...source,
       ...gatedSourceUpdate,
@@ -871,9 +859,6 @@ export const PATCH = withErrorHandler(
           }
         : undefined,
       materialChange,
-      externalAudienceTeamSlugs: collectionAudience.readerTeamSlugs,
-      externalBroadAudience: collectionAudience.hasExternalPrincipal,
-      externalOrganizationWide: collectionAudience.organizationWide,
     });
     await invalidatePublicationRequests(
       publication.resource,

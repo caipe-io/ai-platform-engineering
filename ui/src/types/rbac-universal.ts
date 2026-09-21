@@ -22,7 +22,8 @@ export type UniversalRebacResourceAction =
   | "invoke"
   | "map"
   | "ingest"
-  | "read-metadata";
+  | "read-metadata"
+  | "automate";
 
 /**
  * Canonical, runtime-enumerable list of universal ReBAC resource (object) types.

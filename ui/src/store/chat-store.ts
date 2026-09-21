@@ -830,6 +830,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
               accessLevel: conv.access_level,
               isSharedWithViewer: conv.viewer_has_shared_access,
               sharing: conv.sharing,
+              source: conv.source,
+              task_id: conv.task_id,
+              run_id: conv.run_id,
               metadata: conv.metadata,
             };
           });

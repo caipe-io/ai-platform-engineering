@@ -30,6 +30,7 @@ import {
   TeamPicker,
   type TeamPickerOption,
 } from "@/components/ui/team-picker";
+import { useUrlFilterParams } from "@/hooks/use-url-filter-params";
 import { cn } from "@/lib/utils";
 import type {
   PublicationApprovalSettings,
@@ -488,6 +489,7 @@ function SectionHelp({ label, children }: { label: string; children: React.React
 export function PublicationApprovalQueue({ readOnly = false }: PublicationApprovalQueueProps) {
   const { toast } = useToast();
   const searchParams = useSearchParams();
+  const setUrlParams = useUrlFilterParams();
   const linkedRequestId = searchParams.get("request");
   const linkedView = searchParams.get("view") === "history" ? "history" : "pending";
   const [view, setView] = React.useState<"pending" | "history">(linkedView);
@@ -517,7 +519,7 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
   const [loadingSettings, setLoadingSettings] = React.useState(false);
   const [savingSettings, setSavingSettings] = React.useState(false);
 
-  const load = React.useCallback(async () => {
+  const load = React.useCallback(async (overrideLinkedRequestId = linkedRequestId) => {
     setLoading(true);
     try {
       const status = view === "pending"
@@ -528,7 +530,7 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
       const summaryBody = await summaryResponse.json();
       const loadedSummary = (summaryBody as { data?: Summary }).data ?? summaryBody as Summary;
       const mine = !loadedSummary.can_approve || Boolean(
-        linkedRequestId &&
+        overrideLinkedRequestId &&
         view === "history" &&
         !loadedSummary.can_manage_settings,
       );
@@ -537,8 +539,8 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
         page: String(page),
         page_size: "20",
         ...(mine ? { mine: "true" } : {}),
-        ...(linkedRequestId && view === linkedView
-          ? { request_id: linkedRequestId }
+        ...(overrideLinkedRequestId && view === linkedView
+          ? { request_id: overrideLinkedRequestId }
           : {}),
       });
       const requestsResponse = await fetch(`/api/publication-requests?${params.toString()}`);
@@ -555,8 +557,8 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
       };
       setPagination(nextPagination);
       if (nextPagination.page !== page) setPage(nextPagination.page);
-      if (linkedRequestId && loadedRequests.some((item) => item._id === linkedRequestId)) {
-        setExpandedId(linkedRequestId);
+      if (overrideLinkedRequestId && loadedRequests.some((item) => item._id === overrideLinkedRequestId)) {
+        setExpandedId(overrideLinkedRequestId);
       }
       setSummary({
         pending_count: loadedSummary.pending_count ?? 0,
@@ -626,15 +628,29 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
+        if (response.status === 409 && body?.data?.conflict) {
+          const reason = body?.data?.request?.decision_note?.trim();
+          throw new Error(reason || "This request changed after it was submitted and could not be approved.", {
+            cause: "conflict",
+          });
+        }
         throw new Error(body?.error || body?.data?.error || `Could not ${decision} request`);
       }
       toast(decision === "approve" ? "Publication approved." : "Publication rejected.", "success");
       window.dispatchEvent(new Event("in-app-notifications:refresh"));
       setRejectingId(null);
       setDecisionNote("");
-      await load();
+      if (linkedRequestId === id) {
+        setUrlParams({ request: null });
+        await load(null);
+      } else {
+        await load();
+      }
     } catch (error) {
       toast(error instanceof Error ? error.message : `Could not ${decision} request`, "error", 6000);
+      if (error instanceof Error && error.cause === "conflict") {
+        await load();
+      }
     } finally {
       setActingId(null);
     }

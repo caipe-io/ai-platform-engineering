@@ -252,6 +252,9 @@
         "searcher": {
           "this": {}
         },
+        "automation_eligible": {
+          "this": {}
+        },
         "can_use": {
           "union": {
             "child": [
@@ -311,6 +314,22 @@
               {
                 "computedUserset": {
                   "relation": "searcher"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "admin"
+                }
+              }
+            ]
+          }
+        },
+        "can_automate": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "automation_eligible"
                 }
               },
               {
@@ -527,6 +546,18 @@
               {
                 "type": "service_account"
               },
+              {
+                "type": "team",
+                "relation": "member"
+              },
+              {
+                "type": "team",
+                "relation": "admin"
+              }
+            ]
+          },
+          "automation_eligible": {
+            "directly_related_user_types": [
               {
                 "type": "team",
                 "relation": "member"
@@ -2526,16 +2557,6 @@
               {
                 "computedUserset": {
                   "relation": "owner"
-                }
-              },
-              {
-                "tupleToUserset": {
-                  "tupleset": {
-                    "relation": "parent_collection"
-                  },
-                  "computedUserset": {
-                    "relation": "can_read"
-                  }
                 }
               }
             ]

@@ -26,7 +26,6 @@ import {
 import { DatasourceAccessFields } from "@/components/rag/DatasourceAccessFields";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
-import { BuiltInResourceHint } from "@/components/ui/built-in-resource-hint";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -53,8 +52,7 @@ interface DatasourceOption {
   source_type?: string;
   document_count?: number;
   chunk_count?: number;
-  can_manage?: boolean;
-  can_read?: boolean;
+  can_search?: boolean;
 }
 
 interface TeamRow {
@@ -132,7 +130,7 @@ export function RagCollectionsView() {
     ? null
     : (collections.find((item) => item._id === selectedId) ?? null);
   // User-created collections retain their personal owner as a reader even
-  // after team delegation, so additions must not elevate that owner's access.
+  // after team delegation; this drives the ownership copy shown below.
   const selectedHasPersonalOwner = isCreating || Boolean(selected?.owner_subject);
   const canManageDraft = isCreating || selected?._permissions.can_manage === true;
   const canPublishDraft =
@@ -466,7 +464,7 @@ export function RagCollectionsView() {
   }
 
   async function deleteCollection(): Promise<void> {
-    if (!selected || selected.is_platform) return;
+    if (!selected) return;
     if (
       !window.confirm(
         `Delete “${selected.name}”? Datasources and indexed data are not deleted.`,
@@ -531,20 +529,17 @@ export function RagCollectionsView() {
       subtitle: "Collection datasource",
     };
   });
+  function canAddDatasource(datasource: DatasourceOption | undefined): boolean {
+    return datasource?.can_search === true;
+  }
+
   const filteredDatasources = datasources.filter((datasource) => {
     if (draftSources.includes(datasource.datasource_id)) return false;
-    if (datasource.can_manage !== true) return false;
+    if (!canAddDatasource(datasource)) return false;
     const query = sourceSearch.trim().toLowerCase();
     if (!query) return true;
     return datasource.name.toLowerCase().includes(query);
   });
-
-  function canAddDatasource(datasource: DatasourceOption | undefined): boolean {
-    return Boolean(
-      datasource?.can_manage === true &&
-        (!selectedHasPersonalOwner || datasource.can_read === true),
-    );
-  }
 
   function addDatasourceToDraft(datasourceId: string): void {
     if (
@@ -622,12 +617,6 @@ export function RagCollectionsView() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate font-medium">{collection.name}</p>
-                    {collection.is_platform && (
-                      <BuiltInResourceHint
-                        text="Built-in collection for shared organization knowledge."
-                        focusable={false}
-                      />
-                    )}
                   </div>
                   <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                     {collection.description ||
@@ -676,6 +665,14 @@ export function RagCollectionsView() {
                       className="h-10 max-w-xl text-lg font-semibold"
                     />
                   </CardTitle>
+                  {!isCreating && selected && (
+                    <p className="pl-8 text-xs text-muted-foreground">
+                      id:{" "}
+                      <code className="rounded bg-muted px-1 py-0.5">
+                        {selected._id}
+                      </code>
+                    </p>
+                  )}
                   <CardDescription>
                     {isCreating
                       ? "Private by default. You are the Owner and the only person who can search this collection until you add teams below."
@@ -740,10 +737,7 @@ export function RagCollectionsView() {
                   </div>
                   <div className="max-h-72 space-y-1 overflow-y-auto rounded-xl border p-2">
                     {filteredDatasources.map((datasource) => {
-                      const canManage = datasource?.can_manage === true;
-                      const canAdd = canAddDatasource(datasource);
-                      const disabled =
-                        !canPublishDraft || saving || !canAdd;
+                      const disabled = !canPublishDraft || saving;
                       return (
                         <DatasourceOptionRow
                           key={datasource.datasource_id}
@@ -751,13 +745,6 @@ export function RagCollectionsView() {
                           name={datasource.name}
                           sourceType={datasource.source_type}
                           disabled={disabled}
-                          title={
-                            !canAdd
-                              ? !canManage
-                                ? "You must be able to manage this datasource before adding it"
-                                : "A personal collection can only include datasources you can already search"
-                              : undefined
-                          }
                           onDragStart={(event) => {
                             const candidate: KnowledgeDragCandidate = {
                               kind: "datasource",
@@ -869,7 +856,6 @@ export function RagCollectionsView() {
                     </Button>
                   ) : (
                     selected &&
-                    !selected.is_platform &&
                     selected._permissions.can_manage && (
                       <Button
                         variant="ghost"

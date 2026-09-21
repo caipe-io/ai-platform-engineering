@@ -9,14 +9,28 @@ jest.mock("@/lib/audit", () => ({
   getAuditBackend: () => mockGetAuditBackend(),
 }));
 
-import { buildDecisionEvent, buildGrantEvent, emitDecisionAudit, emitGrantAudit } from "../audit";
+import {
+  buildDecisionEvent,
+  buildGrantEvent,
+  emitDecisionAudit,
+  emitGrantAudit,
+  emitReconcileAudit,
+  flushAllowRollups,
+} from "../audit";
 
 const subject = { type: "user" as const, id: "alice" };
 const resource = { type: "agent" as const, id: "platform-engineer" };
 
+const ALLOW = { decision: "ALLOW" as const, reason: "OK" as const, retriable: false };
+const DENY = { decision: "DENY" as const, reason: "NO_CAPABILITY" as const, retriable: false };
+
 beforeEach(() => {
+  // Allow rollups accumulate in module state; drain them so a prior test's
+  // pending counts never leak into the next assertion.
+  flushAllowRollups();
   jest.clearAllMocks();
   mockGetAuditBackend.mockReturnValue({ write: mockWrite });
+  delete process.env.AUDIT_FULL_FIDELITY_ALLOWS;
 });
 
 describe("buildDecisionEvent — UnifiedAuditEvent conformance", () => {
@@ -75,10 +89,11 @@ describe("buildDecisionEvent — UnifiedAuditEvent conformance", () => {
 });
 
 describe("emitDecisionAudit", () => {
-  it("writes the event through the audit backend", () => {
-    emitDecisionAudit(subject, resource, "use", { decision: "ALLOW", reason: "OK", retriable: false });
+  it("writes a deny straight through, without aggregating it", () => {
+    emitDecisionAudit(subject, resource, "use", DENY);
     expect(mockWrite).toHaveBeenCalledTimes(1);
-    expect(mockWrite.mock.calls[0][0]).toMatchObject({ type: "cas_decision", outcome: "allow" });
+    expect(mockWrite.mock.calls[0][0]).toMatchObject({ type: "cas_decision", outcome: "deny" });
+    expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("count");
   });
 
   it("swallows backend lookup failures (never throws into the decision path)", () => {
@@ -86,9 +101,64 @@ describe("emitDecisionAudit", () => {
       throw new Error("audit-service down");
     });
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-    expect(() => emitDecisionAudit(subject, resource, "use", { decision: "DENY", reason: "NO_CAPABILITY", retriable: false })).not.toThrow();
+    expect(() => emitDecisionAudit(subject, resource, "use", DENY)).not.toThrow();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("emitDecisionAudit — allow aggregation", () => {
+  it("does not write an allow until the rollup is flushed", () => {
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("collapses repeated identical allows into one row carrying count", () => {
+    for (let i = 0; i < 4; i++) {
+      emitDecisionAudit(subject, resource, "use", ALLOW);
+    }
+    expect(mockWrite).not.toHaveBeenCalled();
+
+    flushAllowRollups();
+
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+    const row = mockWrite.mock.calls[0][0];
+    expect(row).toMatchObject({ type: "cas_decision", outcome: "allow", count: 4 });
+    // A rollup summarizes many requests, so it must not claim one request's id.
+    expect(row.correlation_id).toMatch(/^rollup:/);
+    expect(row.window_start).toBeDefined();
+    expect(row.window_end).toBeDefined();
+  });
+
+  it("keeps distinct subjects and resources in separate rows", () => {
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    emitDecisionAudit({ type: "user", id: "bob" }, resource, "use", ALLOW);
+    emitDecisionAudit(subject, { type: "agent", id: "other-agent" }, "use", ALLOW);
+
+    flushAllowRollups();
+
+    expect(mockWrite).toHaveBeenCalledTimes(3);
+    expect(mockWrite.mock.calls.every(([row]) => row.count === 1)).toBe(true);
+  });
+
+  it("clears pending counts so a second flush does not double-report", () => {
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    flushAllowRollups();
+    flushAllowRollups();
+
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes one row per allow when full-fidelity mode is enabled", () => {
+    process.env.AUDIT_FULL_FIDELITY_ALLOWS = "true";
+
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+
+    expect(mockWrite).toHaveBeenCalledTimes(2);
+    expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("count");
+    flushAllowRollups();
+    expect(mockWrite).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -193,5 +263,97 @@ describe("emitGrantAudit", () => {
     ).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledWith("[cas/audit] Failed to enqueue audit event:", expect.any(Error));
     warn.mockRestore();
+  });
+});
+
+describe("emitReconcileAudit", () => {
+  it("does not record a successful reconcile when OpenFGA applies no changes", () => {
+    emitReconcileAudit(
+      { writes: [{ user: "user:alice" }], deletes: [] },
+      { enabled: true, writes: 0, deletes: 0 },
+      { source: "config_seed" },
+    );
+
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("records applied and requested tuple counts with the human caller", () => {
+    emitReconcileAudit(
+      { writes: [{ user: "user:alice" }], deletes: [{ user: "user:bob" }] },
+      { enabled: true, writes: 1, deletes: 1 },
+      {
+        caller,
+        source: "team_resources",
+        tenantId: "acme",
+        correlationId: "reconcile-1",
+        traceId: "trace-1",
+      },
+    );
+
+    expect(mockWrite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "cas_reconcile",
+        source: "cas",
+        reconcile_scope: "team_resources",
+        action: "reconcile",
+        resource_ref: "authorization_policy:openfga_relationship_tuples",
+        resource_type: "authorization_policy",
+        resource_id: "openfga_relationship_tuples",
+        requested_writes: 1,
+        requested_deletes: 1,
+        writes: 1,
+        deletes: 1,
+        subject_ref: "user:alice",
+        actor_ref: "user:alice",
+        caller_ref: "user:alice",
+        tenant_id: "acme",
+        correlation_id: "reconcile-1",
+        trace_id: "trace-1",
+      }),
+    );
+  });
+
+  it("uses a readable, sanitized system actor without a fabricated hash", () => {
+    emitReconcileAudit(
+      { writes: [], deletes: [{ user: "user:alice" }] },
+      { enabled: true, writes: 0, deletes: 1 },
+      { source: " Config Seed / Restart " },
+      { outcome: "error", reasonCode: "PDP_WRITE_FAILED" },
+    );
+
+    const event = mockWrite.mock.calls[0][0];
+    expect(event).toMatchObject({
+      source: "cas",
+      reconcile_scope: "Config Seed / Restart",
+      subject_ref: "system:config-seed-restart",
+      actor_ref: "system:config-seed-restart",
+      requested_writes: 0,
+      requested_deletes: 1,
+      writes: 0,
+      deletes: 1,
+      outcome: "error",
+      reason_code: "PDP_WRITE_FAILED",
+    });
+    expect(event.subject_hash).toBeUndefined();
+    expect(event.actor_hash).toBeUndefined();
+    expect(event.caller_ref).toBeUndefined();
+  });
+
+  it("preserves a service-account caller as a service-account principal", () => {
+    emitReconcileAudit(
+      { writes: [{ user: "service_account:reconciler" }], deletes: [] },
+      { enabled: true, writes: 1, deletes: 0 },
+      { caller: { type: "service_account", id: "reconciler" } },
+    );
+
+    const event = mockWrite.mock.calls[0][0];
+    expect(event).toMatchObject({
+      reconcile_scope: "cas-reconciler",
+      subject_ref: "service_account:reconciler",
+      actor_ref: "service_account:reconciler",
+      caller_ref: "service_account:reconciler",
+    });
+    expect(event.subject_hash).toMatch(/^sha256:/);
+    expect(event.actor_hash).toBe(event.subject_hash);
   });
 });

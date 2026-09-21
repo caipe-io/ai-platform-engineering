@@ -239,7 +239,7 @@ test.describe("audit log — mocked regression", () => {
       handlers: [makeAuditConfigHandler(), makeAuditEventsHandler(baseAuditRecords(), queries)],
     });
 
-    await page.goto("/admin/security/rbac-audit", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/security/audit?auditTab=rbac", { waitUntil: "domcontentloaded" });
 
     await expect(page.getByText("RBAC Audit Log", { exact: true })).toBeVisible();
     await expect(page.getByText("Storage: S3 s3://caipe-audit/audit")).toBeVisible();
@@ -270,7 +270,7 @@ test.describe("audit log — mocked regression", () => {
       handlers: [makeAuditConfigHandler(), makeAuditEventsHandler(baseAuditRecords(), queries)],
     });
 
-    await page.goto("/admin/security/rbac-audit", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/security/audit?auditTab=rbac", { waitUntil: "domcontentloaded" });
     await expect(page.getByText("3 events found")).toBeVisible();
 
     await page.getByLabel("Audit time range").selectOption("6h");
@@ -328,7 +328,7 @@ test.describe("audit log — mocked regression", () => {
       handlers: [makeAuditConfigHandler(), makeAuditEventsHandler(records, queries)],
     });
 
-    await page.goto("/admin/security/rbac-audit", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/security/audit?auditTab=rbac", { waitUntil: "domcontentloaded" });
     await expect(page.getByText("205 events found")).toBeVisible();
 
     const downloadPromise = page.waitForEvent("download");
@@ -373,7 +373,7 @@ test.describe("audit log — mocked regression", () => {
       ],
     });
 
-    await page.goto("/admin/security/rbac-audit", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/security/audit?auditTab=rbac", { waitUntil: "domcontentloaded" });
 
     await expect(page.getByText("Storage: audit-service unavailable")).toBeVisible();
     await expect(page.getByText("1 event found")).toBeVisible();

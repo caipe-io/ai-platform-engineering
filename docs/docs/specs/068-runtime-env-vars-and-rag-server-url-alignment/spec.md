@@ -39,7 +39,7 @@ The `Dockerfile.caipe-ui` contained a `HEALTHCHECK` instruction. This is an anti
 
 ## Related
 
-- PR: https://github.com/cnoe-io/ai-platform-engineering/pull/778
+- PR: https://github.com/caipe-io/ai-platform-engineering/pull/778
 - Next.js docs on environment variables: https://nextjs.org/docs/app/building-your-application/configuring/environment-variables
 
 

@@ -1,126 +1,20 @@
 "use client";
 
-import { Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { Button } from "@/components/ui/button";
-import {
-Dialog,
-DialogContent,
-DialogDescription,
-DialogFooter,
-DialogHeader,
-DialogTitle,
-} from "@/components/ui/dialog";
-import { useToast } from "@/components/ui/toast";
 import { getConfig } from "@/lib/config";
 import type { AdminSimulationQueryTarget } from "@/lib/rbac/admin-simulation-query";
 import { withAdminSimulationParams } from "@/lib/rbac/admin-simulation-query";
 import { ConnectorAdminPanel } from "./ConnectorAdminPanel";
 import { WebexDirectUsersPanel } from "./WebexDirectUsersPanel";
-import { WebexBotMigrationPanel } from "./WebexBotMigrationPanel";
+import { WebexConfiguredSpaceDetail } from "./webex/WebexConfiguredSpaceDetail";
 import type {
 ConnectorAdminAdapter,
 DiagnosticRoute,
-ItemAgentRoute,
 ItemDiagnostics,
 ItemSummary,
 } from "./connector-admin-adapter";
 import { parsePendingConnectorPublication } from "./connector-admin-adapter";
-
-function WebexConfiguredSpaceDelete({
-  item,
-  routeCount,
-  disabled,
-  loading,
-  selectedCanManage,
-  setLoading,
-  onRefresh,
-  onDeselect,
-}: {
-  item: ItemSummary;
-  routeCount: number;
-  disabled: boolean;
-  loading: boolean;
-  selectedCanManage: boolean;
-  setLoading: (loading: boolean) => void;
-  onRefresh: () => Promise<void> | void;
-  onDeselect: () => void;
-}) {
-  const { toast } = useToast();
-  const appName = getConfig("appName");
-  const [open, setOpen] = useState(false);
-  const label = item.item_name || item.item_id;
-
-  const deleteSpace = async () => {
-    setLoading(true);
-    try {
-      const url = `/api/admin/webex/spaces/${encodeURIComponent(item.workspace_id)}/${encodeURIComponent(item.item_id)}`;
-      const params = new URLSearchParams({ bot_id: item.bot_id ?? "" });
-      const res = await fetch(`${url}?${params.toString()}`, { method: "DELETE" });
-      if (!res.ok) {
-        throw new Error(await responseErrorMessage(res, "Failed to delete Webex space"));
-      }
-      setOpen(false);
-      onDeselect();
-      toast(`Removed ${label} from ${appName}.`, "success");
-      await onRefresh();
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "Failed to delete Webex space", "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs font-medium uppercase tracking-wide text-destructive">Danger zone</div>
-          <p className="text-sm text-muted-foreground">
-            Remove this space&apos;s team assignment, agent routes, and access rules.
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="destructive"
-          size="sm"
-          onClick={() => setOpen(true)}
-          disabled={disabled || !selectedCanManage || loading}
-          aria-label={`Delete space ${label}`}
-        >
-          <Trash2 className="h-4 w-4" aria-hidden="true" />
-          Delete space
-        </Button>
-      </div>
-
-      <Dialog open={open} onOpenChange={(nextOpen) => { if (!loading) setOpen(nextOpen); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete space from {appName}?</DialogTitle>
-            <DialogDescription>
-              This permanently removes everything {appName} stores for {label}. It does not remove the bot from Webex.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2 text-sm text-muted-foreground">
-            <p>The following are deleted:</p>
-            <ul className="list-disc space-y-1 pl-5">
-              <li>{item.team_slug ? `The team:${item.team_slug} assignment.` : "Any saved team assignment."}</li>
-              <li>{routeCount > 0 ? `${routeCount} agent route${routeCount === 1 ? "" : "s"}.` : "All agent routes."}</li>
-              <li>All saved access rules for this space.</li>
-            </ul>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={loading}>Cancel</Button>
-            <Button type="button" variant="destructive" onClick={() => void deleteSpace()} disabled={loading}>
-              {loading ? "Deleting..." : "Delete space"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
 
 function apiData<T>(payload: { data?: T } & T): T {
   return (payload.data ?? payload) as T;
@@ -148,15 +42,11 @@ const WEBEX_ADAPTER: ConnectorAdminAdapter = {
   itemSingular: "space",
   itemPlural: "spaces",
   singlePanelView: "onboard",
+  advancedTabMinimal: true,
   directMessagesPanel: {
     title: "1:1 Messages",
     description: "Configure who can message each Webex bot and how their agent is selected.",
     render: ({ disabled }) => <WebexDirectUsersPanel disabled={disabled} />,
-  },
-  migrationPanel: {
-    title: "Legacy migration",
-    description: "Assign pre-multi-bot Webex spaces to an explicit bot.",
-    render: ({ disabled }) => <WebexBotMigrationPanel disabled={disabled} />,
   },
 
   api: {
@@ -333,62 +223,40 @@ const WEBEX_ADAPTER: ConnectorAdminAdapter = {
   ],
 
   authzDisclaimer: (
-    <>
-      <div>
-        Assigning an agent controls which agent can answer in this Webex space.
-        People must also have access to that agent before they can use it.
-      </div>
-      <div className="rounded-md border border-amber-300/60 bg-amber-50 p-2 text-amber-950 dark:bg-amber-950/30 dark:text-amber-200">
-        <span className="font-medium">Sharing model:</span> Assigning an agent to a
-        space exposes it to users who message in that space. Grant agent access to
-        individual users or teams separately; space assignment alone does not
-        substitute for a person&apos;s agent access.
-      </div>
-    </>
+    <div>
+      Assigning an agent controls which agent can answer in this Webex space.
+      People must also have access to that agent before they can use it.
+    </div>
   ),
 
   configuredDetailExtra: (ctx) => (
-    <WebexConfiguredSpaceDelete
-      item={ctx.item}
-      routeCount={ctx.routes.length}
+    <WebexConfiguredSpaceDetail
+      selected={ctx.item}
+      routes={ctx.routes}
+      dynamicAgents={ctx.dynamicAgents}
+      teams={ctx.teams}
       disabled={ctx.disabled}
       loading={ctx.loading}
       selectedCanManage={ctx.selectedCanManage}
       setLoading={ctx.setLoading}
       onRefresh={ctx.onRefresh}
       onDeselect={ctx.onDeselect}
+      routesFor={ctx.routesFor}
+      listApi={ctx.listApi}
     />
   ),
 
   diagnosticRouteIsFixable: (route: DiagnosticRoute) =>
-    (route.route_metadata && !route.openfga_tuple) ||
-    (route.openfga_tuple && route.listen !== "all"),
+    Boolean(route.route_metadata && !route.openfga_tuple),
 
-  fixDiagnosticRoute: async ({ item, route, routes }) => {
+  fixDiagnosticRoute: async ({ item, route }) => {
     const routeUrl = `/api/admin/webex/spaces/${encodeURIComponent(item.workspace_id)}/${encodeURIComponent(item.item_id)}/routes?bot_id=${encodeURIComponent(item.bot_id ?? "")}`;
-    if (route.route_metadata && !route.openfga_tuple) {
-      const res = await fetch(routeUrl, {
-        method: "DELETE", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_id: route.agent_id }),
-      });
-      if (!res.ok) throw new Error(await responseErrorMessage(res, `Failed to fix agent:${route.agent_id}`));
-      return { toast: `Removed stale route metadata for agent:${route.agent_id}.` };
-    }
-    const currentRoute = routes.find((r) => r.agent_id === route.agent_id);
-    const nextRoutes: ItemAgentRoute[] = [
-      ...routes.filter((r) => r.agent_id !== route.agent_id),
-      { agent_id: route.agent_id, enabled: true, priority: currentRoute?.priority ?? 100, users: { enabled: true, listen: "all" } },
-    ];
     const res = await fetch(routeUrl, {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ routes: nextRoutes }),
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_id: route.agent_id }),
     });
     if (!res.ok) throw new Error(await responseErrorMessage(res, `Failed to fix agent:${route.agent_id}`));
-    const data = apiData<{ routes: ItemAgentRoute[] }>(await res.json());
-    return {
-      toast: `Updated agent:${route.agent_id} to listen to mentions and plain messages.`,
-      nextRoutes: data.routes ?? [],
-    };
+    return { toast: `Removed stale route metadata for agent:${route.agent_id}.` };
   },
 
   applyOnboarding: async ({ rows, defaultTeamSlug, defaultAgentId, createDefaultRoutes, fetchFn }) => {
@@ -448,7 +316,7 @@ const WEBEX_ADAPTER: ConnectorAdminAdapter = {
 
   missingRouteableAgentAutoFix: {
     title: "Auto-fix missing Webex association",
-    description: "Create an OpenFGA-backed route with listen mode all so the Webex runtime has an agent to dispatch.",
+    description: "Add an agent so the Webex runtime has one to dispatch to.",
     buttonLabel: (agentId) => agentId ? `Fix missing association with agent:${agentId}` : "Select an agent to auto-fix",
     noAgentHelpText: "Select a Dynamic Agent below or configure a default Dynamic Agent first.",
     isApplicable: (_item: ItemSummary, diagnostics: ItemDiagnostics) =>
@@ -480,5 +348,12 @@ export function WebexSpaceRebacPanel({
     }),
     [appName, simulationTarget],
   );
-  return <ConnectorAdminPanel adapter={adapter} disabled={disabled} selfService={selfService} />;
+  return (
+    <ConnectorAdminPanel
+      adapter={adapter}
+      configuredSearchParam="webexSpaceSearch"
+      disabled={disabled}
+      selfService={selfService}
+    />
+  );
 }

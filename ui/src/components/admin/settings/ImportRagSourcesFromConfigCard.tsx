@@ -1,23 +1,21 @@
 "use client";
 
 /**
- * Admin -> Settings -> General pane for adopting already-ingested RAG
- * datasources into the DB as source of truth (spec
- * 2026-07-21-rag-source-config-db, US5) — mirrors
- * `ImportAgentsFromConfigCard.tsx`, adapted for `rag_ingestion_sources`
- * where the preview is sourced from the RAG server's `DataSourceInfo`
- * records (the BFF cannot read ingestor-pod env vars) and skips carry a
- * `reason`.
- *
- * Flow: the preview lists sources originating in environment configuration,
- * including disabled rows for prior imports. Applying creates editable
- * settings where supported and adds the sources to the selected collection
- * without changing that collection's Owner or Search access.
+ * Admin control for adopting application-config RAG sources into MongoDB as
+ * the editable source of truth. Sets management ownership and, optionally,
+ * a Search Access grant directly on the adopted sources - a collection is a
+ * saved search-time filter and grants no access to its members, so it is
+ * never a substitute for setting real access here.
  */
 
 import { AlertTriangle, FileUp, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import {
+  AccessSubjectMultiPicker,
+  AccessSubjectPicker,
+  type AccessSubjectRef,
+} from "@/components/ui/access-subject-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,10 +34,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import {
-  PLATFORM_RAG_COLLECTION_ID,
-  type RagCollectionWithPermissions,
-} from "@/types/rag-collection";
+import type { TeamPickerOption } from "@/components/ui/team-picker";
 
 interface PreviewSource {
   source_id: string;
@@ -48,30 +43,27 @@ interface PreviewSource {
   in_db: boolean;
   already_adopted: boolean;
   importable: boolean;
-  unavailable_reason?: "unsupported_legacy_id";
+  unavailable_reason?: "not_seeded" | "not_config_driven";
 }
 
 type SkipReason =
-  | "not_found_in_redis"
-  | "missing_identity_fields"
-  | "already_in_db"
-  | "unsupported_legacy_id";
+  | "not_found"
+  | "not_in_config"
+  | "not_seeded"
+  | "not_config_driven"
+  | "already_adopted";
 
 interface AdoptSkip {
   source_id: string;
   reason: SkipReason;
 }
 
-interface TeamRow {
-  slug?: string;
-  name?: string;
-}
-
 const SKIP_REASON_LABEL: Record<SkipReason, string> = {
-  not_found_in_redis: "not found",
-  missing_identity_fields: "missing required settings",
-  already_in_db: "already imported",
-  unsupported_legacy_id: "must be re-added before it can be imported",
+  not_found: "seeded record not found",
+  not_in_config: "not present in app config",
+  not_seeded: "not seeded into the database",
+  not_config_driven: "not managed by app config",
+  already_adopted: "already adopted",
 };
 
 interface ImportRagSourcesFromConfigCardProps {
@@ -89,21 +81,13 @@ export function ImportRagSourcesFromConfigCard({
   const [error, setError] = useState<string | null>(null);
   const [previewSources, setPreviewSources] = useState<PreviewSource[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [legacySourceCount, setLegacySourceCount] = useState(0);
-  const [compatibleSourceCount, setCompatibleSourceCount] = useState(0);
-  const [collections, setCollections] = useState<
-    RagCollectionWithPermissions[]
-  >([]);
-  const [teams, setTeams] = useState<TeamRow[]>([]);
-  const [destinationCollectionId, setDestinationCollectionId] = useState(
-    PLATFORM_RAG_COLLECTION_ID,
-  );
+  const [configuredSourceCount, setConfiguredSourceCount] = useState(0);
+  const [teams, setTeams] = useState<TeamPickerOption[]>([]);
+  const [owner, setOwner] = useState<AccessSubjectRef | null>(null);
+  const [searchAccess, setSearchAccess] = useState<AccessSubjectRef[]>([]);
   const [result, setResult] = useState<{
-    adopted: string[];
+    adoptedCount: number;
     skipped: AdoptSkip[];
-    destinationName: string;
-    destinationSourceCount: number;
-    agentsUpdated: number;
   } | null>(null);
 
   useEffect(() => {
@@ -112,7 +96,8 @@ export function ImportRagSourcesFromConfigCard({
     setLoading(true);
     setError(null);
     setResult(null);
-    setDestinationCollectionId(PLATFORM_RAG_COLLECTION_ID);
+    setOwner(null);
+    setSearchAccess([]);
     (async () => {
       try {
         const previewRes = await fetch(
@@ -125,49 +110,21 @@ export function ImportRagSourcesFromConfigCard({
         ).then((response) => response.json());
         if (!previewRes.success) {
           throw new Error(
-            previewRes.error || "Could not load sources from deployment settings",
+            previewRes.error || "Could not load sources from app config",
           );
         }
-        const [collectionRes, teamRes] = await Promise.all([
-          fetch("/api/rag/collections").then((response) => response.json()),
-          fetch("/api/dynamic-agents/teams").then((response) => response.json()),
-        ]);
+        const teamRes = await fetch("/api/dynamic-agents/teams").then(
+          (response) => response.json(),
+        );
         if (cancelled) return;
-        if (!collectionRes?.success) {
-          throw new Error(collectionRes?.error || "Could not load collections");
-        }
-        const availableCollections = (
-          (collectionRes.data?.collections ?? []) as RagCollectionWithPermissions[]
-        ).filter(
-          (collection) =>
-            collection._permissions.can_publish || collection._permissions.can_manage,
-        );
-        if (availableCollections.length === 0) {
-          throw new Error("No collection is available for this import");
-        }
-        const defaultDestination =
-          availableCollections.find(
-            (collection) => collection._id === PLATFORM_RAG_COLLECTION_ID,
-          ) ?? availableCollections[0];
-        const sources = (
-          (previewRes.data?.sources ?? []) as PreviewSource[]
-        ).filter(
-          (source) =>
-            source.importable ||
-            source.already_adopted ||
-            source.unavailable_reason,
-        );
-        setLegacySourceCount(previewRes.data?.legacy_source_count ?? sources.length);
-        setCompatibleSourceCount(
-          previewRes.data?.compatible_source_count ??
-            sources.filter((source) => !source.unavailable_reason).length,
+        const sources = (previewRes.data?.sources ?? []) as PreviewSource[];
+        setConfiguredSourceCount(
+          previewRes.data?.configured_source_count ?? sources.length,
         );
         setPreviewSources(sources);
-        setCollections(availableCollections);
         setTeams(
           teamRes?.success && Array.isArray(teamRes.data) ? teamRes.data : [],
         );
-        setDestinationCollectionId(defaultDestination._id);
         setSelectedIds(
           new Set(
             sources.filter((s) => s.importable).map((s) => s.source_id),
@@ -200,7 +157,7 @@ export function ImportRagSourcesFromConfigCard({
   }
 
   async function handleApply() {
-    if (readOnly) return;
+    if (readOnly || !owner) return;
     setApplying(true);
     setError(null);
     try {
@@ -210,7 +167,14 @@ export function ImportRagSourcesFromConfigCard({
         body: JSON.stringify({
           dry_run: false,
           source_ids: Array.from(selectedIds),
-          destination_collection_id: destinationCollectionId,
+          owner_team_slug: owner.kind === "team" ? owner.id : undefined,
+          owner_subject: owner.kind === "user" ? owner.id : undefined,
+          search_team_slugs: searchAccess
+            .filter((ref) => ref.kind === "team")
+            .map((ref) => ref.id),
+          search_user_subjects: searchAccess
+            .filter((ref) => ref.kind === "user")
+            .map((ref) => ref.id),
         }),
       });
       const data = await res.json();
@@ -218,20 +182,14 @@ export function ImportRagSourcesFromConfigCard({
         setError(data.error || "Import failed");
         return;
       }
+      const adopted = (data.data.adopted ?? []) as string[];
       setResult({
-        adopted: data.data.adopted ?? [],
+        adoptedCount: adopted.length,
         skipped: data.data.skipped ?? [],
-        destinationName:
-          collections.find(
-            (collection) => collection._id === destinationCollectionId,
-          )?.name ?? "the selected collection",
-        destinationSourceCount:
-          data.data.destination_collection?.source_count ?? 0,
-        agentsUpdated: data.data.destination_collection?.agents_updated ?? 0,
       });
       setPreviewSources((prev) =>
         prev.map((s) =>
-          data.data.adopted?.includes(s.source_id)
+          adopted.includes(s.source_id)
             ? {
                 ...s,
                 in_db: true,
@@ -251,34 +209,15 @@ export function ImportRagSourcesFromConfigCard({
 
   if (!isAdmin) return null;
 
-  const destinationCollection = collections.find(
-    (collection) => collection._id === destinationCollectionId,
-  );
-  const teamName = (slug: string): string =>
-    teams.find((team) => team.slug === slug)?.name ??
-    slug
-      .split("-")
-      .filter(Boolean)
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
-  const ownerLabel = destinationCollection?.maintainer_team_slugs.length
-    ? destinationCollection.maintainer_team_slugs.map(teamName).join(", ")
-    : "Personal owner";
-  const searchLabel = destinationCollection?.global_read
-    ? "Everyone"
-    : destinationCollection?.reader_team_slugs.length
-      ? destinationCollection.reader_team_slugs.map(teamName).join(", ")
-      : "Owner only";
-
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          Import Existing RAG Sources
+          Adopt App-Config RAG Sources
         </CardTitle>
         <CardDescription>
-          Bring existing sources into Knowledge Bases without ingesting them
-          again.
+          Move seeded source settings into the database so they can be edited
+          in the Web UI.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -293,18 +232,19 @@ export function ImportRagSourcesFromConfigCard({
           data-testid="import-rag-sources-from-config-button"
         >
           <FileUp className="h-4 w-4" />
-          Review Sources
+          Review App-Config Sources
         </Button>
       </CardContent>
 
       <Dialog open={open} onOpenChange={(next) => !applying && setOpen(next)}>
         <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] flex-col overflow-visible sm:max-w-[680px]">
           <DialogHeader>
-            <DialogTitle>Import existing RAG sources</DialogTitle>
+            <DialogTitle>Adopt app-config RAG sources</DialogTitle>
             <DialogDescription>
               <span className="block">
-                Choose where to add sources that were configured when this
-                platform was deployed. Their indexed content stays in place.
+                Choose which read-only app-config sources to make editable,
+                and set their Owner and Search Access directly. Indexed
+                content stays in place.
               </span>
             </DialogDescription>
           </DialogHeader>
@@ -331,23 +271,9 @@ export function ImportRagSourcesFromConfigCard({
                     className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300"
                     data-testid="import-rag-sources-result"
                   >
-                    Added the sources to {result.destinationName}. The
-                    collection now contains {result.destinationSourceCount} source
-                    {result.destinationSourceCount === 1 ? "" : "s"}.
-                    {result.adopted.length > 0 && (
-                      <>
-                        {" "}
-                        Imported editable settings for {result.adopted.length} source
-                        {result.adopted.length === 1 ? "" : "s"}.
-                      </>
-                    )}
-                    {result.agentsUpdated > 0 && (
-                      <>
-                        {" "}
-                        Updated {result.agentsUpdated} existing agent
-                        {result.agentsUpdated === 1 ? "" : "s"}.
-                      </>
-                    )}
+                    Adopted {result.adoptedCount} source
+                    {result.adoptedCount === 1 ? "" : "s"} into editable
+                    database settings.
                     {result.skipped.length > 0 && (
                       <ul className="mt-1 list-disc pl-5">
                         {result.skipped.map((skip) => (
@@ -360,71 +286,63 @@ export function ImportRagSourcesFromConfigCard({
                   </div>
                 )}
 
-                <div className="space-y-2 rounded-md border p-3">
-                  <Label htmlFor="rag-import-destination" className="block">
-                    Destination collection
-                  </Label>
-                  <select
-                    id="rag-import-destination"
-                    value={destinationCollectionId}
-                    onChange={(event) =>
-                      setDestinationCollectionId(event.target.value)
-                    }
-                    disabled={applying || collections.length === 0}
-                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                  >
-                    {collections.map((collection) => (
-                      <option key={collection._id} value={collection._id}>
-                        {collection.name}
-                        {collection.is_platform ? " (recommended)" : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {destinationCollection && (
-                    <div className="space-y-1 text-xs leading-relaxed text-muted-foreground">
-                      <p>
-                        Imported sources use this collection&apos;s current
-                        access.
-                        {destinationCollection.is_platform
-                          ? " Platform RAG is recommended because it keeps the shared access used before Knowledge Bases were managed here."
-                          : ""}
-                      </p>
-                      <p>
-                        <span className="font-medium text-foreground">Owner:</span>{" "}
-                        {ownerLabel}
-                        <span aria-hidden="true"> · </span>
-                        <span className="font-medium text-foreground">Search:</span>{" "}
-                        {searchLabel}
-                      </p>
-                    </div>
-                  )}
+                <div className="space-y-3 rounded-md border p-3">
+                  <div>
+                    <Label htmlFor="rag-import-owner" className="block">
+                      Owner
+                    </Label>
+                    <p className="mb-1.5 text-xs text-muted-foreground">
+                      Manages connector settings, reloads, and deletion for
+                      every source adopted below.
+                    </p>
+                    <AccessSubjectPicker
+                      id="rag-import-owner"
+                      teams={teams}
+                      knownUsers={[]}
+                      value={owner}
+                      onChange={setOwner}
+                      placeholder="Select a person or team"
+                      searchPlaceholder="Search people or teams..."
+                      ariaLabel="Owner"
+                      disabled={applying}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="rag-import-search" className="block">
+                      Search Access (optional)
+                    </Label>
+                    <p className="mb-1.5 text-xs text-muted-foreground">
+                      Lets selected people and teams query these sources
+                      through Search, APIs, and agents. Leave empty to grant
+                      no Search Access on adoption - add it later per source.
+                    </p>
+                    <AccessSubjectMultiPicker
+                      id="rag-import-search"
+                      teams={teams}
+                      knownUsers={[]}
+                      selected={searchAccess}
+                      onChange={setSearchAccess}
+                      placeholder="No Search Access — add people or teams"
+                      searchPlaceholder="Search people or teams..."
+                      ariaLabel="Search Access"
+                      disabled={applying}
+                      maxSelections={100}
+                      maxSelectionsByKind={{ team: 50, user: 200 }}
+                    />
+                  </div>
                 </div>
 
                 <div className="min-w-0 space-y-1 break-words text-xs text-muted-foreground">
                   <p>
-                    Found {legacySourceCount} existing source
-                    {legacySourceCount === 1 ? "" : "s"}. {compatibleSourceCount}{" "}
-                    will be added to{" "}
-                    {destinationCollection?.name ?? "the selected collection"}.
-                  </p>
-                  {legacySourceCount > compatibleSourceCount && (
-                    <p>
-                      {legacySourceCount - compatibleSourceCount} older source
-                      {legacySourceCount - compatibleSourceCount === 1 ? "" : "s"}{" "}
-                      cannot be imported and must be re-added from Data Sources.
-                    </p>
-                  )}
-                  <p>
-                    The checklist controls which supported connector settings
-                    become editable here. Sources that are not listed or
-                    selected are still added to the collection.
+                    Found {configuredSourceCount} source
+                    {configuredSourceCount === 1 ? "" : "s"} in app config. The
+                    checklist controls which seeded settings become editable.
                   </p>
                 </div>
 
                 {previewSources.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    No connector settings can be imported. The sources can
-                    still be added to the collection.
+                    No RAG sources are available in app config.
                   </p>
                 ) : (
                   <div
@@ -445,21 +363,26 @@ export function ImportRagSourcesFromConfigCard({
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate">{source.name}</span>
-                          {source.unavailable_reason ===
-                            "unsupported_legacy_id" && (
+                          {source.unavailable_reason === "not_seeded" && (
                             <span className="mt-0.5 block text-xs text-muted-foreground">
-                              This source uses an older format. Re-add it from
-                              Data Sources before importing it.
+                              This config entry has not been seeded into the
+                              database. Check the UI startup logs for validation
+                              errors.
+                            </span>
+                          )}
+                          {source.unavailable_reason === "not_config_driven" && (
+                            <span className="mt-0.5 block text-xs text-muted-foreground">
+                              A UI-managed source already uses this identity.
                             </span>
                           )}
                         </span>
-                        {source.unavailable_reason === "unsupported_legacy_id" ? (
-                          <Badge variant="destructive" className="shrink-0">
-                            Re-add required
+                        {source.unavailable_reason ? (
+                          <Badge variant="secondary" className="shrink-0">
+                            Unavailable
                           </Badge>
                         ) : source.already_adopted ? (
                           <Badge variant="secondary" className="shrink-0">
-                            Already imported
+                            Already adopted
                           </Badge>
                         ) : null}
                       </label>
@@ -484,13 +407,14 @@ export function ImportRagSourcesFromConfigCard({
               type="button"
               onClick={handleApply}
               disabled={
-                loading || applying || !destinationCollectionId
+                loading || applying || !owner || selectedIds.size === 0
               }
               className="gap-2"
               data-testid="import-rag-sources-apply-button"
             >
               {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Import to {destinationCollection?.name ?? "collection"}
+              Adopt {selectedIds.size > 0 ? selectedIds.size : ""} source
+              {selectedIds.size === 1 ? "" : "s"}
             </Button>
           </DialogFooter>
         </DialogContent>

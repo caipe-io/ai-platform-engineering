@@ -34,7 +34,6 @@ describe("user-preferences-store", () => {
       expect(result).toEqual({
         web_default_agent_id: null,
         slack_default_agent_id: null,
-        webex_default_agent_id: null,
       });
       expect(mockCollection.findOne).toHaveBeenCalledWith({
         tenant_id: "default",
@@ -48,7 +47,6 @@ describe("user-preferences-store", () => {
         user_id: "alice-sub",
         web_default_agent_id: "agent-web",
         slack_default_agent_id: "agent-slack",
-        webex_default_agent_id: "agent-webex",
       } satisfies Partial<UserPreferenceDocument>);
 
       const result = await getUserPreference({ tenantId: "default", userId: "alice-sub" });
@@ -56,7 +54,6 @@ describe("user-preferences-store", () => {
       expect(result).toEqual({
         web_default_agent_id: "agent-web",
         slack_default_agent_id: "agent-slack",
-        webex_default_agent_id: "agent-webex",
       });
     });
 
@@ -72,7 +69,6 @@ describe("user-preferences-store", () => {
       expect(result).toEqual({
         web_default_agent_id: "agent-web",
         slack_default_agent_id: null,
-        webex_default_agent_id: null,
       });
     });
 
@@ -82,7 +78,6 @@ describe("user-preferences-store", () => {
         user_id: "alice-sub",
         web_default_agent_id: "web-agent",
         slack_default_agent_id: null,
-        webex_default_agent_id: "webex-agent",
       } satisfies Partial<UserPreferenceDocument>);
 
       const result = await getUserPreference({ tenantId: "default", userId: "alice-sub" });
@@ -90,7 +85,6 @@ describe("user-preferences-store", () => {
       expect(result).toEqual({
         web_default_agent_id: "web-agent",
         slack_default_agent_id: null,
-        webex_default_agent_id: "webex-agent",
       });
     });
 
@@ -114,7 +108,6 @@ describe("user-preferences-store", () => {
         preferences: {
           web_default_agent_id: "web-agent",
           slack_default_agent_id: null,
-          webex_default_agent_id: "webex-agent",
         },
       });
 
@@ -125,7 +118,6 @@ describe("user-preferences-store", () => {
       expect(options).toEqual({ upsert: true });
       expect(update.$set.web_default_agent_id).toBe("web-agent");
       expect(update.$set.slack_default_agent_id).toBeNull();
-      expect(update.$set.webex_default_agent_id).toBe("webex-agent");
       expect(update.$set.tenant_id).toBe("default");
       expect(update.$set.user_id).toBe("alice-sub");
       const updatedAt = new Date(update.$set.updated_at).getTime();

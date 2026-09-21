@@ -90,8 +90,17 @@ function resolveTimeRange(searchParams: URLSearchParams): {
   return { since, until, windowLabel: windowKey };
 }
 
-function increment(map: Map<string, number>, key: string | undefined): void {
-  map.set(key ?? "UNKNOWN", (map.get(key ?? "UNKNOWN") ?? 0) + 1);
+function increment(map: Map<string, number>, key: string | undefined, by = 1): void {
+  map.set(key ?? "UNKNOWN", (map.get(key ?? "UNKNOWN") ?? 0) + by);
+}
+
+/**
+ * Decisions per row. Routine allows are aggregated into periodic rollup rows
+ * carrying `count` (see lib/authz/audit.ts), so a row is not always one
+ * decision; denials are never aggregated and always carry no `count`.
+ */
+function decisionCount(row: Record<string, unknown>): number {
+  return typeof row.count === "number" && Number.isFinite(row.count) && row.count > 0 ? row.count : 1;
 }
 
 function topCounts(map: Map<string, number>, label: "reason" | "resource"): Record<string, string | number>[] {
@@ -136,18 +145,19 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   for (const row of rows) {
     const outcome = row.outcome;
     const reason = typeof row.reason_code === "string" ? row.reason_code : undefined;
-    if (outcome === "allow") allow += 1;
+    const count = decisionCount(row);
+    if (outcome === "allow") allow += count;
     if (outcome === "deny") {
-      deny += 1;
+      deny += count;
       if (reason !== "AUTHZ_UNAVAILABLE") {
-        increment(topDenied, typeof row.resource_ref === "string" ? row.resource_ref : undefined);
+        increment(topDenied, typeof row.resource_ref === "string" ? row.resource_ref : undefined, count);
       }
     }
-    if (reason === "AUTHZ_UNAVAILABLE") unavailable += 1;
-    increment(byReason, reason);
+    if (reason === "AUTHZ_UNAVAILABLE") unavailable += count;
+    increment(byReason, reason, count);
   }
 
-  const total = rows.length;
+  const total = allow + deny;
   const policyDeny = Math.max(0, deny - unavailable);
 
   return NextResponse.json(

@@ -11,10 +11,10 @@ import {
 } from "@/lib/appearance-preferences";
 import { apiClient } from "@/lib/api-client";
 import { GuardedNavigationLink } from "@/components/layout/GuardedNavigationLink";
+import { useTheme } from "@/components/theme-provider";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { Palette } from "lucide-react";
-import { useTheme } from "next-themes";
-import { useEffect } from "react";
+import { useEffect,useRef } from "react";
 
 /**
  * Header shortcut plus the global appearance hydrator.
@@ -25,6 +25,11 @@ import { useEffect } from "react";
 export function SettingsPanel(): React.ReactElement {
   const { theme,setTheme } = useTheme();
   const hydrated = useHydrated();
+  const setThemeRef = useRef(setTheme);
+
+  useEffect(() => {
+    setThemeRef.current = setTheme;
+  }, [setTheme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +50,7 @@ export function SettingsPanel(): React.ReactElement {
           interactionSnapshot,
         );
         applyCachedAppearance(server);
-        setTheme(server.theme);
+        setThemeRef.current(server.theme);
       })
       .catch((error: unknown) => {
         console.warn("[SettingsPanel] Account appearance could not be loaded; using this device",error);
@@ -54,7 +59,7 @@ export function SettingsPanel(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [setTheme]);
+  }, []);
 
   const currentTheme = COLOR_THEMES.find((option) => option.id === theme);
 

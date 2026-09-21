@@ -188,4 +188,4 @@ The icon container (`shrink-0 w-8 h-8`) is rendered outside the `!collapsed` gua
 
 - ADR: [2026-03-03-live-status-indicator](../087-live-status-indicator/architecture.md)
 - Branch: `prebuild/feat/live-status-indicator`
-- PR: [#892](https://github.com/cnoe-io/ai-platform-engineering/pull/892)
+- PR: [#892](https://github.com/caipe-io/ai-platform-engineering/pull/892)

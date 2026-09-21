@@ -29,7 +29,7 @@ from deepagents.backends.store import StoreBackend
 from deepagents.middleware.skills import SkillsMiddleware
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from jinja2 import ChainableUndefined, TemplateSyntaxError
-from jinja2.sandbox import SandboxedEnvironment, SecurityError
+from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.store.memory import InMemoryStore
@@ -152,7 +152,7 @@ def _with_general_purpose_tool_result_recovery(
 # - ChainableUndefined: missing/nested keys return "" instead of raising.
 # - Built-in globals stripped: agent prompts only need conditionals and
 #   variable interpolation, not lipsum(), cycler(), namespace(), etc.
-_jinja_env = SandboxedEnvironment(undefined=ChainableUndefined)
+_jinja_env = ImmutableSandboxedEnvironment(undefined=ChainableUndefined)
 _jinja_env.globals = {}
 
 

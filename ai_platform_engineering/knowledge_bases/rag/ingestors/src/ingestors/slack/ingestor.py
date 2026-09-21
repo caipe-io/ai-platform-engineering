@@ -1,26 +1,17 @@
 #!/usr/bin/env python3
-"""
-Slack conversation ingestor for RAG.
-Fetches messages from configured Slack channels and ingests them as documents.
-Each channel becomes a datasource, and each thread becomes a document.
-"""
+"""Slack conversation ingestor for persisted and on-demand RAG datasources."""
 
 import os
-import json
 import time
 import traceback
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from langchain_core.documents import Document
 
 from common.ingestor import IngestorBuilder, Client
-from common.ingestor_listener import (
-  configured_reload_interval,
-  reload_persisted_datasources,
-  run_ingestor_listener,
-)
+from common.ingestor_listener import reload_persisted_datasources, run_ingestor_listener
 from common.models.rag import DataSourceInfo, DocumentMetadata
 from common.models.server import (
   SlackIngestRequest,
@@ -28,7 +19,7 @@ from common.models.server import (
   SlackReloadRequest,
 )
 from common.job_manager import JobStatus, JobManager
-from common.utils import get_logger, get_fresh_until, derive_friendly_name
+from common.utils import get_fresh_until, get_logger
 
 logger = get_logger(__name__)
 
@@ -36,15 +27,6 @@ logger = get_logger(__name__)
 init_delay = int(os.environ.get("INIT_DELAY_SECONDS", "0"))
 
 MAX_INGESTION_TASKS = int(os.environ.get("SLACK_MAX_INGESTION_TASKS", "5"))
-
-
-def configured_channels() -> Dict[str, Dict[str, Any]]:
-  """Return the legacy SLACK_CHANNELS mapping, or an empty mapping."""
-  try:
-    parsed = json.loads(os.environ.get("SLACK_CHANNELS", "{}"))
-  except json.JSONDecodeError:
-    return {}
-  return parsed if isinstance(parsed, dict) else {}
 
 
 def get_message_fresh_until(message_ts: str, lookback_days: int) -> int:
@@ -324,135 +306,6 @@ class SlackChannelSyncer:
     return Document(page_content=content, metadata=metadata.model_dump())
 
 
-async def sync_slack_channels(client: Client):
-  """Bootstrap and sync Slack channels still managed by legacy env config."""
-
-  # Read config at runtime so DB-managed sources do not require SLACK_CHANNELS.
-  workspace_url = os.environ.get("SLACK_WORKSPACE_URL", "https://slack.com")
-  channels = configured_channels()
-  if not channels:
-    logger.warning("No channels configured (SLACK_CHANNELS not set or empty) — skipping sync")
-    return
-  slack_token = os.environ.get("SLACK_BOT_TOKEN")
-  if not slack_token:
-    logger.warning("SLACK_BOT_TOKEN not set — skipping sync")
-    return
-
-  # Initialize Slack client and syncer
-  slack_client = WebClient(token=slack_token)
-  syncer = SlackChannelSyncer(slack_client, workspace_url)
-
-  # Load timestamps and lookback_days from previous runs (stored in datasource metadata)
-  existing_datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
-  existing_by_id = {ds.datasource_id: ds for ds in existing_datasources}
-  timestamp_map = {}
-  stored_lookback_map = {}
-  for ds in existing_datasources:
-    if ds.metadata:
-      # Extract channel_id from datasource_id (format: slack-channel-{channel_id})
-      ch_id = ds.datasource_id.replace("slack-channel-", "")
-      if "last_ts" in ds.metadata:
-        timestamp_map[ch_id] = ds.metadata["last_ts"]
-      if "lookback_days" in ds.metadata:
-        stored_lookback_map[ch_id] = ds.metadata["lookback_days"]
-
-  # Process each channel
-  for channel_id, config in channels.items():
-    channel_name = config.get("name", channel_id)
-    lookback_days = config.get("lookback_days", 30)
-    include_bots = config.get("include_bots", False)
-
-    logger.info(f"Processing channel: #{channel_name} (ID: {channel_id})")
-
-    # Create or update datasource
-    datasource_id = f"slack-channel-{channel_id}"
-    existing = existing_by_id.get(datasource_id)
-    if existing and (existing.metadata or {}).get("config_managed") is True:
-      logger.debug(
-        f"Skipping legacy SLACK_CHANNELS config for database-managed datasource {datasource_id}"
-      )
-      continue
-    reload_interval = configured_reload_interval(config, existing)
-    if (
-      existing
-      and existing.last_updated
-      and int(time.time()) - existing.last_updated < reload_interval
-    ):
-      logger.debug(f"Skipping #{channel_name}: datasource refresh is not due")
-      continue
-    last_ts = timestamp_map.get(channel_id)
-
-    # Detect lookback_days change — if it changed, reset last_ts to force
-    # a full re-fetch with the new lookback window instead of incremental sync
-    stored_lookback = stored_lookback_map.get(channel_id)
-    if stored_lookback is not None and stored_lookback != lookback_days:
-      logger.info(f"lookback_days changed from {stored_lookback} to {lookback_days} for #{channel_name}, resetting last_ts for full re-ingestion")
-      last_ts = None
-
-    # Fetch messages
-    messages, newest_ts = syncer.fetch_channel_messages(channel_id, channel_name, lookback_days, last_ts)
-
-    # ALWAYS create/update datasource to record we checked this channel
-    # This prevents infinite sync loops when there are no new messages
-    datasource = DataSourceInfo(
-      datasource_id=datasource_id,
-      name=derive_friendly_name(source_type="slack", channel_name=channel_name),
-      ingestor_id=client.ingestor_id or "",
-      description=f"Slack conversations from #{channel_name}",
-      source_type="slack",
-      last_updated=int(time.time()),
-      default_chunk_size=existing.default_chunk_size if existing else 10000,
-      default_chunk_overlap=existing.default_chunk_overlap if existing else 2000,
-      reload_interval=reload_interval,
-      creator_subject=existing.creator_subject if existing else None,
-      owner_subject=existing.owner_subject if existing else None,
-      owner_team_slug=existing.owner_team_slug if existing else None,
-      shared_with_teams=existing.shared_with_teams if existing else [],
-      search_with_teams=existing.search_with_teams if existing else [],
-      metadata={
-        **((existing.metadata or {}) if existing else {}),
-        "channel_id": channel_id,
-        "channel_name": channel_name,
-        "last_ts": newest_ts if newest_ts else last_ts,  # Keep old ts if no new messages
-        "workspace_url": workspace_url,
-        "lookback_days": lookback_days,
-        "include_bots": include_bots,
-      },
-    )
-    await client.upsert_datasource(datasource)
-
-    if not messages:
-      logger.info(f"No new messages for #{channel_name} - datasource timestamp updated")
-      continue
-
-    # Convert messages to thread documents
-    documents = syncer.group_messages_by_thread(messages, channel_id, channel_name, include_bots, datasource_id, client.ingestor_id or "", lookback_days)
-
-    if not documents:
-      logger.info(f"No documents created for #{channel_name}")
-      continue
-
-    logger.info(f"Created {len(documents)} documents (threads/messages) for #{channel_name}")
-
-    # Create job
-    job_response = await client.create_job(datasource_id=datasource_id, job_status=JobStatus.IN_PROGRESS, message=f"Ingesting {len(documents)} threads/messages from #{channel_name}", total=len(documents))
-    job_id = job_response["job_id"]
-
-    try:
-      fresh_until = get_fresh_until(reload_interval)
-      await client.ingest_documents(job_id=job_id, datasource_id=datasource_id, documents=documents, fresh_until=fresh_until)
-
-      # Update job status
-      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully ingested {len(documents)} documents from #{channel_name}")
-
-      logger.info(f"✓ Successfully ingested {len(documents)} documents from #{channel_name}")
-
-    except Exception as e:
-      logger.error(f"Error ingesting documents for #{channel_name}: {e}")
-      await client.add_job_error(job_id, [str(e)])
-      await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=f"Failed to ingest documents: {str(e)}")
-
-
 async def process_channel_ingestion(
   client: Client,
   job_manager: JobManager,
@@ -643,33 +496,6 @@ async def reload_datasource(
 async def redis_listener(client: Client):
   """Run Slack commands through the shared per-ingestor listener."""
 
-  async def reconcile_legacy_config() -> None:
-    """Expose legacy connector options immediately for config migration."""
-    channels = configured_channels()
-    if not channels:
-      return
-    workspace_url = os.environ.get("SLACK_WORKSPACE_URL", "https://slack.com")
-    for datasource in await client.list_datasources(ingestor_id=client.ingestor_id):
-      metadata = datasource.metadata or {}
-      if metadata.get("config_managed") is True:
-        continue
-      channel_id = metadata.get("channel_id") or datasource.datasource_id.removeprefix(
-        "slack-channel-"
-      )
-      config = channels.get(channel_id)
-      if not isinstance(config, dict):
-        continue
-      datasource.reload_interval = configured_reload_interval(config, datasource)
-      datasource.metadata = {
-        **metadata,
-        "channel_id": channel_id,
-        "channel_name": config.get("name", channel_id),
-        "workspace_url": workspace_url,
-        "lookback_days": config.get("lookback_days", 30),
-        "include_bots": config.get("include_bots", False),
-      }
-      await client.upsert_datasource(datasource)
-
   await run_ingestor_listener(
     client,
     ingest_command=SlackIngestorCommand.INGEST_CHANNEL,
@@ -682,18 +508,12 @@ async def redis_listener(client: Client):
     reload_handler=reload_datasource,
     max_tasks=MAX_INGESTION_TASKS,
     describe_ingest=lambda request: f"Slack channel ingestion: {request.channel_id}",
-    on_startup=reconcile_legacy_config,
   )
 
 
 async def periodic_reload(client: Client) -> None:
-  """Refresh both legacy env sources and UI/database-managed sources."""
-  await sync_slack_channels(client)
-  await reload_persisted_datasources(
-    client,
-    reload_datasource,
-    config_managed_only=True,
-  )
+  """Refresh persisted Slack datasources whose interval is due."""
+  await reload_persisted_datasources(client, reload_datasource)
 
 
 async def reload_all_slack_channels(client: Client) -> None:
@@ -706,10 +526,8 @@ def main():
 
   bot_name = os.environ.get("SLACK_BOT_NAME", "slack")
   workspace_url = os.environ.get("SLACK_WORKSPACE_URL", "https://slack.com")
-  channels = configured_channels()
 
-  # The on-demand queue and persisted per-datasource schedules are independent
-  # from deployment configuration.
+  # The on-demand queue and persisted per-datasource schedules share one worker.
   (
     IngestorBuilder()
     .name(f"slack-{bot_name}")
@@ -720,7 +538,6 @@ def main():
         "workspace_url": workspace_url,
         "bot_name": bot_name,
         "init_delay": init_delay,
-        "channels": channels,
       }
     )
     .sync_with_fn(periodic_reload)

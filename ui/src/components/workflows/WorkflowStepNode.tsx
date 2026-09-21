@@ -1,10 +1,11 @@
 "use client";
 
 import { AgentAvatar,type AgentAvatarAgent } from "@/components/dynamic-agents/AgentAvatar";
+import { isLightColorTheme } from "@/lib/color-theme";
 import { cn } from "@/lib/utils";
 import { Handle,Position,type NodeProps } from "@xyflow/react";
 import { Plus } from "lucide-react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/theme-provider";
 import { memo } from "react";
 
 export interface WorkflowStepNodeData {
@@ -21,7 +22,7 @@ export interface WorkflowStepNodeData {
 function WorkflowStepNodeComponent({ data, selected }: NodeProps) {
   const nodeData = data as unknown as WorkflowStepNodeData;
   const { resolvedTheme } = useTheme();
-  const isDark = resolvedTheme !== "light";
+  const isDark = !isLightColorTheme(resolvedTheme);
 
   const agentName = nodeData.agent?.name || nodeData.agent_id || "No agent";
 

@@ -7,6 +7,7 @@ import { ScanAllDialog } from "@/components/skills/ScanAllDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { ScanStatus } from "@/types/agent-skill";
 import {
@@ -406,7 +407,7 @@ function FilterSelect({
   options: { v: string; l: string }[];
 }) {
   return (
-    <select
+    <Select
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
@@ -416,6 +417,6 @@ function FilterSelect({
           {o.l}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }

@@ -27,7 +27,11 @@ from typing import Any
 from uuid import uuid4
 
 from dynamic_agents.services.stream_encoders import StreamEncoder
-from dynamic_agents.services.stream_encoders.langgraph_helpers import LangGraphStreamHelper, truncate_tool_result
+from dynamic_agents.services.stream_encoders.langgraph_helpers import (
+    LangGraphStreamHelper,
+    normalize_tool_message_content,
+    truncate_tool_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -389,8 +393,8 @@ class AGUIStreamEncoder(StreamEncoder):
             for msg in messages:
                 tc_id = getattr(msg, "tool_call_id", None)
                 if tc_id:
-                    content = getattr(msg, "content", "")
-                    if isinstance(content, str) and "rejected" in content.lower():
+                    content = normalize_tool_message_content(getattr(msg, "content", ""))
+                    if "rejected" in content.lower():
                         rejected_tool_call_ids.add(tc_id)
 
             for msg in messages:
@@ -444,25 +448,22 @@ class AGUIStreamEncoder(StreamEncoder):
                         logger.debug(f"[sse:TOOL_CALL_END] SUPPRESSED (rejected) id={tool_call_id[:8]}...")
                         continue
 
-                    content = getattr(msg, "content", "")
-                    # MCP tools return content as list of blocks, e.g. [{"type": "text", "text": "..."}]
-                    if isinstance(content, list):
-                        text_parts = []
-                        for block in content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                text_parts.append(block.get("text", ""))
-                            elif isinstance(block, str):
-                                text_parts.append(block)
-                        content = "\n".join(p for p in text_parts if p)
+                    # ToolMessage.content can be str OR list[dict | str] (LangChain
+                    # >= 0.3). Bedrock and many MCP tools return list-of-blocks.
+                    # Normalise so the UI receives the tool's textual response
+                    # regardless of LLM transport (kept in lockstep with the
+                    # custom_sse encoder).
+                    raw_content = getattr(msg, "content", "")
+                    content = normalize_tool_message_content(raw_content)
                     error = None
-                    if isinstance(content, str) and content.startswith("ERROR: "):
+                    if content.startswith("ERROR: "):
                         error = content
 
                     logger.debug(f"[sse:TOOL_CALL_END] id={tool_call_id[:8]}... ns={namespace} error={bool(error)}")
                     results.extend(self._emit_namespace_if_changed(namespace))
 
                     # Emit TOOL_CALL_RESULT with the content (errors have "ERROR:" prefix)
-                    if isinstance(content, str) and content:
+                    if content:
                         results.append(
                             _sse_frame(
                                 "TOOL_CALL_RESULT",

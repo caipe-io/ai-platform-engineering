@@ -5,14 +5,12 @@ on:
   push:
     tags:
       - '**'
+    branches:
+      - main
   pull_request:
     paths:
       - 'build/Dockerfile.keycloak-init'
-      - 'charts/ai-platform-engineering/charts/keycloak/scripts/**'
-      - 'charts/ai-platform-engineering/charts/keycloak/realm-config.json'
-      - 'charts/ai-platform-engineering/charts/keycloak/templates/job-init-*.yaml'
-      - 'charts/ai-platform-engineering/charts/keycloak/templates/job-auth-reconcile.yaml'
-      - 'charts/ai-platform-engineering/charts/keycloak/templates/platform-client-external-secret.yaml'
+      - 'charts/ai-platform-engineering/charts/keycloak/**'
       - 'tests/integration/test_keycloak_platform_client_reconcile.sh'
       - 'tests/integration/test_keycloak_strict_client_secrets.sh'
       - 'tests/integration/test_keycloak_idp_hint_redirect.sh'
@@ -20,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_version:
-        description: 'Version tag to apply (e.g., 0.5.0-rc.7)'
+        description: 'Version tag to apply (e.g., 1.2.0 or 1.2.0-rc.1)'
         required: false
         type: string
 
@@ -33,7 +31,6 @@ jobs:
     outputs:
       should_build: ${{ steps.set-outputs.outputs.should_build }}
       tag_version: ${{ steps.version.outputs.tag_version }}
-      image_prefix: ${{ steps.set-outputs.outputs.image_prefix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -45,27 +42,35 @@ jobs:
         uses: ./.github/actions/determine-release-tag
         with:
           manual_tag: ${{ inputs.tag_version }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        with:
+          filters: |
+            keycloak_init:
+              - 'build/Dockerfile.keycloak-init'
+              - 'charts/ai-platform-engineering/charts/keycloak/**'
+              - 'tests/integration/test_keycloak_platform_client_reconcile.sh'
+              - 'tests/integration/test_keycloak_strict_client_secrets.sh'
+              - 'tests/integration/test_keycloak_idp_hint_redirect.sh'
+              - '.github/workflows/ci-keycloak-init.yml'
 
       - name: Set Outputs
         id: set-outputs
         env:
-          TAG_VERSION: ${{ steps.version.outputs.tag_version }}
+          KEYCLOAK_INIT_CHANGED: ${{ steps.filter.outputs.keycloak_init }}
         run: |
           SHOULD_BUILD="true"
-          TAG_VERSION="${TAG_VERSION}"
 
-          if [[ "$TAG_VERSION" =~ -chart\.[0-9]+$ ]]; then
+          # A plain push to main (canary) should only rebuild when this
+          # component's own paths changed; tag pushes, PRs (already
+          # path-filtered by the trigger above) and manual dispatch always build.
+          if [ "${{ github.event_name }}" == "push" ] && [ "$GITHUB_REF" == "refs/heads/main" ] && [ "$KEYCLOAK_INIT_CHANGED" != "true" ]; then
             SHOULD_BUILD="false"
-            IMAGE_PREFIX=""
-          elif [[ "$TAG_VERSION" =~ -(rc|hotfix)\.[0-9]+ ]]; then
-            IMAGE_PREFIX="pre-release/"
-          else
-            IMAGE_PREFIX=""
           fi
 
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
-          echo "image_prefix=$IMAGE_PREFIX" >> "$GITHUB_OUTPUT"
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -90,11 +95,11 @@ jobs:
             arch: arm64
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}keycloak-init
+      IMAGE_NAME: ${{ github.repository_owner }}/keycloak-init
       DOCKERFILE: build/Dockerfile.keycloak-init
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -102,7 +107,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -117,10 +122,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.') && !contains(github.ref_name, '-chart.')) }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
             type=raw,value=${{ needs.determine-changes.outputs.tag_version }},enable=${{ needs.determine-changes.outputs.tag_version != '' }}
             type=ref,event=tag,prefix=
-            type=sha,format=short,prefix=
+            type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
 
       - name: Build and push by digest
         id: build
@@ -130,21 +135,21 @@ jobs:
           file: ${{ env.DOCKERFILE }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=min,scope=${{ matrix.arch }}
           provenance: false
           sbom: false
 
       - name: Export digest
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: digests-${{ matrix.arch }}
@@ -158,16 +163,16 @@ jobs:
     needs: [determine-changes, build-and-push]
     if: |
       needs.determine-changes.outputs.should_build == 'true' &&
-      (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
+      (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')
     permissions:
       contents: read
       packages: write
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}keycloak-init
+      IMAGE_NAME: ${{ github.repository_owner }}/keycloak-init
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -179,7 +184,7 @@ jobs:
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -194,10 +199,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.') && !contains(github.ref_name, '-chart.')) }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
             type=raw,value=${{ needs.determine-changes.outputs.tag_version }},enable=${{ needs.determine-changes.outputs.tag_version != '' }}
             type=ref,event=tag,prefix=
-            type=sha,format=short,prefix=
+            type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
@@ -225,7 +230,7 @@ jobs:
       contents: read
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -233,7 +238,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Build keycloak-init image locally (amd64, no provenance for local test)
         # Provenance attestations confuse the legacy docker engine that the
@@ -293,7 +298,7 @@ jobs:
       contents: read
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -301,7 +306,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Build keycloak-init image locally (amd64, no provenance)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
@@ -361,7 +366,7 @@ jobs:
       contents: read
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -369,7 +374,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Build keycloak-init image locally (amd64, no provenance)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
@@ -414,6 +419,7 @@ jobs:
     needs: [determine-changes, build-and-push, merge-manifests, reconcile-test, strict-secrets-test, idp-hint-test]
     if: |
       always() &&
+      startsWith(github.ref, 'refs/tags/') &&
       needs.determine-changes.outputs.tag_version != '' &&
       !contains(needs.determine-changes.outputs.tag_version, '-') &&
       needs.reconcile-test.result == 'success' &&

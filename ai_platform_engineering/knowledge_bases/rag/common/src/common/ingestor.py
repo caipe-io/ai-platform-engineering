@@ -1,5 +1,6 @@
 import os
 import asyncio
+import inspect
 import time
 from typing import List, Optional, Dict, Any, Callable
 import aiohttp
@@ -784,9 +785,8 @@ class IngestorBuilder:
       datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
 
       if self._datasource_scheduled and self._last_sync_time is None:
-        # Run once at worker startup. This materializes newly-added legacy
-        # environment config while every persisted source still performs its
-        # own due check before contacting the upstream connector.
+        # Run once at worker startup so persisted sources perform their own due
+        # checks without waiting for the fallback interval.
         return (0, bool(datasources))
 
       if not datasources:
@@ -797,10 +797,9 @@ class IngestorBuilder:
           return (0, False)
 
         if self._datasource_scheduled:
-          # Startup already reconciled legacy configuration. UI-created
-          # sources arrive through the command listener and create their
+          # Sources arrive through the command listener and create their
           # datasource record, so an empty worker only needs to re-read
-          # schedule metadata from here onward.
+          # schedule metadata.
           self._schedule_check_only = True
           logger.info(
             "No datasources found, checking schedule metadata again in "
@@ -930,7 +929,7 @@ class IngestorBuilder:
       # Start optional startup function concurrently (e.g., server)
       if self._startup_function:
         logger.info("Starting user-provided startup function...")
-        if asyncio.iscoroutinefunction(self._startup_function):
+        if inspect.iscoroutinefunction(self._startup_function):
           startup_task = asyncio.create_task(self._startup_function(client))
         else:
           # Run sync function in executor to avoid blocking
@@ -957,7 +956,7 @@ class IngestorBuilder:
         logger.info("Running single sync cycle...")
 
         # Call user's sync function with client (original signature)
-        if asyncio.iscoroutinefunction(self._sync_function):
+        if inspect.iscoroutinefunction(self._sync_function):
           await self._sync_function(client)
         else:
           self._sync_function(client)
@@ -1006,7 +1005,7 @@ class IngestorBuilder:
           logger.info("Running sync cycle...")
 
           # Call user's sync function (original signature - no changes needed!)
-          if asyncio.iscoroutinefunction(self._sync_function):
+          if inspect.iscoroutinefunction(self._sync_function):
             await self._sync_function(client)
           else:
             self._sync_function(client)

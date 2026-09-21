@@ -36,7 +36,6 @@ export default function SkillsPage() {
               { label: "Home",href: "/" },
               { label: "Skills",href: "/skills" },
             ]}
-            className="mb-3"
           />
           <SkillsGallery
             onEditConfig={handleEditConfig}

@@ -55,7 +55,7 @@ docker compose -f docker-compose.dev.yaml --profile p2p-no-rag restart platform-
 ```
 
 Try queries like:
-- "show PRs in cnoe-io/ai-platform-engineering"
+- "show PRs in caipe-io/ai-platform-engineering"
 - "check argocd version"
 - "get recent alerts from komodor"
 

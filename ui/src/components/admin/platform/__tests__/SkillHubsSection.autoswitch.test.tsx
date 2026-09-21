@@ -164,7 +164,7 @@ describe("SkillHubsSection — auto-switch source pill on URL paste", () => {
               {
                 id: "hub-1",
                 type: "github",
-                location: "cnoe-io/ai-platform-engineering",
+                location: "caipe-io/ai-platform-engineering",
                 enabled: true,
                 credentials_ref: null,
                 labels: ["platform"],
@@ -191,7 +191,7 @@ describe("SkillHubsSection — auto-switch source pill on URL paste", () => {
 
     render(<SkillHubsSection isAdmin={false} />);
 
-    expect(await screen.findByText("cnoe-io/ai-platform-engineering")).toBeInTheDocument();
+    expect(await screen.findByText("caipe-io/ai-platform-engineering")).toBeInTheDocument();
     expect(screen.getByText("sre")).toBeInTheDocument();
     expect(screen.queryByText(/Admin access required to manage skill hubs/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Add Hub/i)).not.toBeInTheDocument();
@@ -230,7 +230,7 @@ describe("SkillHubsSection — auto-switch source pill on URL paste", () => {
     expect(getSourcePill("GitLab")).toHaveAttribute("aria-checked", "true");
 
     fireEvent.change(getLocationInput(), {
-      target: { value: "https://github.com/cnoe-io/ai-platform-engineering" },
+      target: { value: "https://github.com/caipe-io/ai-platform-engineering" },
     });
 
     await waitFor(() => {
@@ -244,7 +244,7 @@ describe("SkillHubsSection — auto-switch source pill on URL paste", () => {
 
     // GitHub is the default; type a flat owner/repo.
     fireEvent.change(getLocationInput(), {
-      target: { value: "cnoe-io/ai-platform-engineering" },
+      target: { value: "caipe-io/ai-platform-engineering" },
     });
 
     expect(getSourcePill("GitHub")).toHaveAttribute("aria-checked", "true");

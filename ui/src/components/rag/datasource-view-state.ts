@@ -1,6 +1,5 @@
 import type { DataSourceInfo } from "./Models";
 import type { IngestionSourceConfigWithPermissions } from "@/types/ingestion-source";
-import type { RagCollectionMembershipLabel } from "@/types/rag-collection";
 
 export const DEFAULT_INGEST_TYPE = "file";
 
@@ -40,14 +39,8 @@ function unique(values: readonly string[]): string[] {
 
 export function effectiveSearchTeamSlugs(input: {
   searchTeamSlugs?: readonly string[] | null;
-  ragCollections?: readonly RagCollectionMembershipLabel[] | null;
 }): string[] {
-  return unique([
-    ...(input.searchTeamSlugs ?? []),
-    ...(input.ragCollections ?? []).flatMap(
-      (collection) => collection.reader_team_slugs ?? [],
-    ),
-  ]);
+  return unique([...(input.searchTeamSlugs ?? [])]);
 }
 
 export function searchTeamLabel(teamSlug: string): string {
@@ -101,11 +94,9 @@ export function searchAccessFilterValues(input: {
   ownerDisplayName?: string | null;
   searchTeamSlugs?: readonly string[] | null;
   searchUserDisplayNames?: readonly string[] | null;
-  ragCollections?: readonly RagCollectionMembershipLabel[] | null;
 }): string[] {
   const effectiveTeams = effectiveSearchTeamSlugs({
     searchTeamSlugs: input.searchTeamSlugs,
-    ragCollections: input.ragCollections,
   });
   const values = [
     ...(input.ownerSubject && !input.ownerTeamSlug && input.ownerDisplayName
@@ -140,7 +131,6 @@ export function dataSourceFilterProjection(
       ownerDisplayName,
       searchTeamSlugs,
       searchUserDisplayNames,
-      ragCollections: source?.rag_collections ?? datasource.rag_collections,
     }),
     searchableText: [
       datasource.name,
@@ -172,7 +162,6 @@ export function sourceConfigFilterProjection(
       searchTeamSlugs: source.search_with_teams
         ?? (source.search_owner_team_slug ? [source.search_owner_team_slug] : []),
       searchUserDisplayNames: source.search_user_display_names,
-      ragCollections: source.rag_collections,
     }),
     searchableText: [source.name, source.source_id, source.source_type, source.description]
       .filter((value): value is string => Boolean(value))

@@ -72,6 +72,7 @@ function createMockCollection() {
       }),
     }),
     findOne: jest.fn().mockResolvedValue(null),
+    findOneAndUpdate: jest.fn().mockResolvedValue(null),
     insertOne: jest.fn().mockResolvedValue({ insertedId: new ObjectId() }),
     updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
     updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
@@ -125,11 +126,14 @@ describe('GET /api/settings', () => {
 
   it('creates default settings for new users', async () => {
     mockGetServerSession.mockResolvedValue(authenticatedSession());
-    // First findOne returns null (no existing settings), second returns the created settings
-    const insertedId = new ObjectId();
     const col = createMockCollection();
-    col.findOne.mockResolvedValueOnce(null); // first call: check if exists
-    col.insertOne.mockResolvedValue({ insertedId });
+    const createdSettings = {
+      _id: new ObjectId(),
+      user_id: 'user@example.com',
+      ...DEFAULT_USER_SETTINGS,
+      updated_at: new Date(),
+    };
+    col.findOneAndUpdate.mockResolvedValue(createdSettings);
     // Mock users collection for admin check in withAuth
     const usersCol = createMockCollection();
     usersCol.findOne.mockResolvedValue(null);
@@ -142,15 +146,25 @@ describe('GET /api/settings', () => {
     const body = await res.json();
     expect(body.success).toBe(true);
 
-    // Verify insertOne was called with defaults
-    expect(col.insertOne).toHaveBeenCalledTimes(1);
-    const insertedDoc = col.insertOne.mock.calls[0][0];
-    expect(insertedDoc.user_id).toBe('user@example.com');
-    expect(insertedDoc.preferences.theme).toBe('dark');
-    expect(insertedDoc.preferences.font_size).toBe('medium');
-    expect(insertedDoc.preferences.font_family).toBe('inter');
-    expect(insertedDoc.preferences.gradient_theme).toBe('default');
-    expect(insertedDoc.updated_at).toBeInstanceOf(Date);
+    // Verify the atomic upsert was called with defaults
+    expect(col.findOneAndUpdate).toHaveBeenCalledTimes(1);
+    expect(col.findOneAndUpdate).toHaveBeenCalledWith(
+      { user_id: 'user@example.com' },
+      {
+        $setOnInsert: expect.objectContaining({
+          user_id: 'user@example.com',
+          preferences: expect.objectContaining({
+            theme: 'dark',
+            font_size: 'medium',
+            font_family: 'inter',
+            gradient_theme: 'default',
+          }),
+          updated_at: expect.any(Date),
+        }),
+      },
+      { upsert: true, returnDocument: 'after' },
+    );
+    expect(col.insertOne).not.toHaveBeenCalled();
   });
 
   it('returns existing settings without re-creating defaults', async () => {
@@ -174,7 +188,7 @@ describe('GET /api/settings', () => {
     };
 
     const col = createMockCollection();
-    col.findOne.mockResolvedValue(existingSettings);
+    col.findOneAndUpdate.mockResolvedValue(existingSettings);
     const usersCol = createMockCollection();
     usersCol.findOne.mockResolvedValue(null);
     mockCollections['users'] = usersCol;
@@ -190,6 +204,7 @@ describe('GET /api/settings', () => {
     expect(body.data.preferences.font_family).toBe('ibm-plex');
 
     // insertOne should NOT be called since settings already exist
+    expect(col.findOneAndUpdate).toHaveBeenCalledTimes(1);
     expect(col.insertOne).not.toHaveBeenCalled();
   });
 });
@@ -573,6 +588,7 @@ describe('PATCH /api/settings/notifications', () => {
       body: JSON.stringify({
         email_enabled: false,
         weekly_summary: true,
+        platform_health: false,
       }),
     });
 
@@ -582,6 +598,7 @@ describe('PATCH /api/settings/notifications', () => {
     const $set = col.updateOne.mock.calls[0][1].$set;
     expect($set['notifications.email_enabled']).toBe(false);
     expect($set['notifications.weekly_summary']).toBe(true);
+    expect($set['notifications.platform_health']).toBe(false);
     expect($set.updated_at).toBeInstanceOf(Date);
   });
 });

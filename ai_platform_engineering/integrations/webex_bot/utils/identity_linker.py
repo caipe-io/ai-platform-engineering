@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import logging
 import os
 import time
 from typing import Optional
-from urllib.parse import quote
 
 from .keycloak_admin import WEBEX_USER_ATTRIBUTE, get_user_by_attribute, set_user_attribute
 from .webex_ids import is_valid_webex_person_id
@@ -19,9 +16,6 @@ _LINK_BASE_URL = os.environ.get(
     "WEBEX_LINKING_BASE_URL",
     os.environ.get("CAIPE_UI_BASE_URL", "http://localhost:3000"),
 )
-# Mongo collection persisted by the CAIPE UI BFF (`webex_link_nonces`); the bot does
-# not write link nonces — see ui/src/lib/rbac/webex-link-nonce.ts.
-UI_WEBEX_LINK_NONCES_COLLECTION = "webex_link_nonces"
 
 # Brief positive cache so a just-completed SSO link is visible before Keycloak
 # attribute search catches up on the next Webex message.
@@ -29,37 +23,23 @@ _RESOLVE_CACHE_TTL_SECONDS = 60
 _resolve_cache: dict[str, tuple[str, float]] = {}
 
 
-def _hmac_secret() -> str:
-    secret = os.environ.get("WEBEX_LINK_HMAC_SECRET", "").strip()
-    if not secret:
-        secret = os.environ.get("WEBEX_SIGNING_SECRET", "").strip()
-    if not secret:
-        raise RuntimeError(
-            "WEBEX_LINK_HMAC_SECRET or WEBEX_SIGNING_SECRET is required "
-            "for Webex identity linking"
-        )
-    return secret
-
-
-def _sign(webex_user_id: str, ts: int) -> str:
-    msg = f"{webex_user_id}:{ts}"
-    return hmac.new(_hmac_secret().encode(), msg.encode(), hashlib.sha256).hexdigest()
-
-
 async def generate_linking_url(webex_user_id: str) -> str:
-    """Create a time-bounded, HMAC-signed linking URL for the given Webex person."""
-    if not is_valid_webex_person_id(webex_user_id):
-        raise ValueError("Invalid Webex person id for linking URL")
-    ts = int(time.time())
-    sig = _sign(webex_user_id, ts)
+    """Return the CAIPE UI's Webex OAuth account-linking entry point.
+
+    The link does not carry the Webex person id or any bot-issued token —
+    ``/api/auth/webex-link/start`` requires its own CAIPE login and then
+    verifies the caller's Webex identity via a real Webex OAuth round trip
+    (see ``ui/src/app/api/auth/webex-link/{start,callback}/route.ts``), so
+    the URL is not a bearer credential someone else could redeem to claim
+    a different Webex identity.
+    """
+    del webex_user_id  # unused: identity is proven by Webex OAuth, not the URL
     base = _LINK_BASE_URL.rstrip("/")
-    q_sid = quote(webex_user_id, safe="")
-    url = f"{base}/api/auth/webex-link?webex_user_id={q_sid}&ts={ts}&sig={sig}"
+    url = f"{base}/api/auth/webex-link/start"
 
     if os.environ.get("NODE_ENV") == "production" and not url.startswith("https://"):
         raise ValueError("Linking URLs must use HTTPS in production")
 
-    logger.info("Generated Webex linking URL for webex_user_id=%s (ts=%d)", webex_user_id, ts)
     return url
 
 

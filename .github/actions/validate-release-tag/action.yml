@@ -1,0 +1,127 @@
+name: 'Validate Release Tag'
+description: >
+  Validates a release version string against format and monotonicity rules.
+
+  Two modes, chosen by whether `base_version` is set:
+
+  - Stable mode (base_version empty): `version` must be a plain semver
+    (x.y.z) or an rc (x.y.z-rc.N), and its bare x.y.z must be strictly
+    greater than the latest existing stable tag. Used for tags cut from
+    main (release-manual.yml).
+
+  - Prerelease mode (base_version set): `version` must be
+    `${base_version}-${suffix_type}.N`, and N must be strictly greater than
+    the highest existing tag N in that exact base+suffix series. Used for
+    rc/hotfix tags cut from a release/* branch (release-prerelease.yml),
+    where the series does not need to exceed the latest stable tag —
+    hotfixes patch older releases.
+
+  In both modes the exact tag must not already exist locally or on the
+  remote.
+
+inputs:
+  version:
+    description: 'The version/tag string to validate'
+    required: true
+  base_version:
+    description: >
+      Bare x.y.z base version for prerelease mode (e.g. from a release/x.y.z
+      branch name). Leave empty for stable mode.
+    required: false
+    default: ''
+  suffix_type:
+    description: 'rc or hotfix — required when base_version is set'
+    required: false
+    default: ''
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🔎 Fetch tags
+      shell: bash
+      run: git fetch --tags --force --quiet || true
+
+    - name: ✅ Validate version
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        BASE_VERSION: ${{ inputs.base_version }}
+        SUFFIX_TYPE: ${{ inputs.suffix_type }}
+      run: |
+        set -euo pipefail
+
+        tag_exists() {
+          local tag="$1"
+          git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null 2>&1 ||
+            git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1
+        }
+
+        if [[ -n "$BASE_VERSION" ]]; then
+          # ── Prerelease mode ──────────────────────────────────────────
+          if [[ "$SUFFIX_TYPE" != "rc" && "$SUFFIX_TYPE" != "hotfix" ]]; then
+            echo "❌ ERROR: suffix_type must be 'rc' or 'hotfix' when base_version is set (got '${SUFFIX_TYPE}')"
+            exit 1
+          fi
+
+          BASE_RE="${BASE_VERSION//./\\.}"
+          if ! [[ "$VERSION" =~ ^${BASE_RE}-${SUFFIX_TYPE}\.([0-9]+)$ ]]; then
+            echo "❌ ERROR: '${VERSION}' must match ${BASE_VERSION}-${SUFFIX_TYPE}.N"
+            exit 1
+          fi
+          NEW_N="${BASH_REMATCH[1]}"
+
+          if tag_exists "$VERSION"; then
+            echo "❌ ERROR: tag '${VERSION}' already exists"
+            exit 1
+          fi
+
+          MAX_N=0
+          while IFS= read -r TAG_NAME; do
+            [[ -z "$TAG_NAME" ]] && continue
+            if [[ "$TAG_NAME" =~ ^${BASE_RE}-${SUFFIX_TYPE}\.([0-9]+)$ ]]; then
+              N="${BASH_REMATCH[1]}"
+              (( N > MAX_N )) && MAX_N="$N"
+            fi
+          done < <(git tag -l "${BASE_VERSION}-${SUFFIX_TYPE}.*")
+
+          if (( 10#$NEW_N <= 10#$MAX_N )); then
+            echo "❌ ERROR: ${SUFFIX_TYPE} number ${NEW_N} must be greater than the latest existing ${BASE_VERSION}-${SUFFIX_TYPE}.${MAX_N}"
+            exit 1
+          fi
+
+          echo "✅ ${VERSION} is valid (series max was ${SUFFIX_TYPE}.${MAX_N})"
+        else
+          # ── Stable mode ──────────────────────────────────────────────
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]]; then
+            echo "❌ ERROR: '${VERSION}' must be a final or RC semver (e.g. 1.0.0 or 1.0.0-rc.1)"
+            exit 1
+          fi
+
+          if tag_exists "$VERSION"; then
+            echo "❌ ERROR: tag '${VERSION}' already exists"
+            exit 1
+          fi
+
+          NEW_BARE=$(echo "$VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+
+          LATEST_STABLE=""
+          while IFS= read -r TAG_NAME; do
+            [[ -z "$TAG_NAME" ]] && continue
+            if [[ -z "$LATEST_STABLE" ]]; then
+              LATEST_STABLE="$TAG_NAME"
+            else
+              HIGHER=$(printf '%s\n' "$LATEST_STABLE" "$TAG_NAME" | sort -V | tail -n1)
+              LATEST_STABLE="$HIGHER"
+            fi
+          done < <(git tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$')
+
+          if [[ -n "$LATEST_STABLE" ]]; then
+            HIGHER=$(printf '%s\n' "$LATEST_STABLE" "$NEW_BARE" | sort -V | tail -n1)
+            if [[ "$HIGHER" != "$NEW_BARE" || "$NEW_BARE" == "$LATEST_STABLE" ]]; then
+              echo "❌ ERROR: ${VERSION} (base ${NEW_BARE}) must be strictly greater than the latest stable tag ${LATEST_STABLE}"
+              exit 1
+            fi
+          fi
+
+          echo "✅ ${VERSION} is valid (latest stable was ${LATEST_STABLE:-none})"
+        fi

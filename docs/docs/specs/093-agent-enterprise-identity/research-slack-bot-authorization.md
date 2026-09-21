@@ -1,6 +1,6 @@
 # Slack Bot Authorization Architecture
 
-**Pulled from [PR #975](https://github.com/cnoe-io/ai-platform-engineering/pull/975) for spec 093 (`093-agent-enterprise-identity`).**
+**Pulled from [PR #975](https://github.com/caipe-io/ai-platform-engineering/pull/975) for spec 093 (`093-agent-enterprise-identity`).**
 
 This document provides a visual reference for the end-to-end authorization flow when a user interacts with CAIPE through Slack. It covers the trust chain from Okta enterprise SSO through Slack, Keycloak token exchange, CAIPE orchestration, and user scope validation at every boundary.
 

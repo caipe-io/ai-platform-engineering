@@ -30,6 +30,94 @@ MCP_PORT=18000
 set -a; source .env; set +a && uv run python mcp_jira/server.py
 ```
 
+## Jira Cloud Rich Text
+
+The `add_comment`, `add_internal_comment`, and `update_comment` tools support
+both backward-compatible plain text and native
+[Atlassian Document Format (ADF)](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/)
+for Jira Cloud rich comments and internal notes.
+
+- Use `body_format: "text"` (the default) with a string body. Existing callers
+  continue to produce the same single-paragraph comment payload.
+- Use `body_format: "adf"` with a complete ADF document to preserve headings,
+  bold text, links, lists, code blocks, tables, and other Jira-native formatting.
+- Use `visibility` with either a Jira role or group when the comment must be
+  restricted, for example `{"type": "role", "value": "Administrators"}`.
+
+Example rich-comment tool arguments:
+
+```json
+{
+  "issue_key": "PROJ-123",
+  "body_format": "adf",
+  "visibility": {
+    "type": "role",
+    "value": "Administrators"
+  },
+  "body": {
+    "type": "doc",
+    "version": 1,
+    "content": [
+      {
+        "type": "heading",
+        "attrs": {"level": 2},
+        "content": [{"type": "text", "text": "Analysis"}]
+      },
+      {
+        "type": "paragraph",
+        "content": [
+          {"type": "text", "text": "Related issue: "},
+          {
+            "type": "text",
+            "text": "PROJ-122",
+            "marks": [
+              {
+                "type": "link",
+                "attrs": {"href": "https://example.atlassian.net/browse/PROJ-122"}
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The server validates the ADF document root before sending it to Jira REST API
+v3. Jira performs the authoritative validation of nested ADF nodes and marks.
+
+Issue descriptions support the same native format:
+
+- `create_issue` accepts a string with `description_format: "text"` (default),
+  or a complete ADF document with `description_format: "adf"`.
+- Each `batch_create_issues` item accepts the same `description` and
+  `description_format` fields. A valid ADF object is also auto-detected for
+  compatibility with existing batch payloads.
+- `update_issue` accepts either plain text or a valid ADF document in its
+  `description` field and preserves native ADF without stringifying it.
+
+Example rich-description arguments for `create_issue`:
+
+```json
+{
+  "project_key": "PROJ",
+  "summary": "Document the recovery procedure",
+  "description_format": "adf",
+  "description": {
+    "type": "doc",
+    "version": 1,
+    "content": [
+      {
+        "type": "heading",
+        "attrs": {"level": 2},
+        "content": [{"type": "text", "text": "Recovery procedure"}]
+      }
+    ]
+  }
+}
+```
+
 ## MCP Inspector Tool
 
 The **MCP Inspector** is a utility for inspecting and debugging MCP servers. It provides a visual interface to explore generated tools, models, and APIs.

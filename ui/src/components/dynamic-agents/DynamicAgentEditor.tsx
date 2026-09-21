@@ -22,6 +22,8 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ModelPicker } from "@/components/ui/model-picker";
+import { Switch } from "@/components/ui/switch";
 import { type TeamPickerOption } from "@/components/ui/team-picker";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
@@ -84,7 +86,6 @@ interface DynamicAgentEditorProps {
   onSave: () => void;
   onCancel: () => void;
 }
-
 /**
  * Generate a URL-safe slug from an agent name with agent- prefix.
  * e.g., "Knowledge Agent" -> "agent-knowledge-agent"
@@ -319,7 +320,7 @@ function AdvancedStep({
     <div className="space-y-4 pt-2">
       <CollapsibleSection
         title="Subagents"
-        description="Delegate tasks to other custom agents"
+        description="Delegate tasks to other agents"
         badge={`${subagents.length} subagent${subagents.length !== 1 ? "s" : ""}`}
         defaultExpanded={false}
       >
@@ -461,6 +462,19 @@ export function DynamicAgentEditor({
   const [ragCollectionIds, setRagCollectionIds] = React.useState<string[]>(() =>
     normalizeKnowledgeIds(source?.rag_collection_ids),
   );
+  // An agent with neither field configured is unrestricted: it searches
+  // whatever the calling user can already access, with no additional
+  // agent-level narrowing. This toggle is how the editor distinguishes that
+  // intentional default from "restricted, but to nothing" (both fields
+  // present as explicit empty arrays). Default a brand-new agent to
+  // unrestricted; preserve whatever an existing agent already has.
+  const [restrictKnowledge, setRestrictKnowledge] = React.useState<boolean>(
+    () => source?.datasource_ids != null || source?.rag_collection_ids != null,
+  );
+  // Stable snapshot of whether this agent had an explicit restriction when
+  // the editor opened, so turning the toggle off only sends a clearing
+  // `null` when there is actually something to clear.
+  const hadExplicitKnowledgeScope = React.useRef(restrictKnowledge).current;
   const [features, setFeatures] = React.useState<FeaturesConfig | undefined>(
     source?.features,
   );
@@ -1119,6 +1133,15 @@ export function DynamicAgentEditor({
       // overwrite a prior `last_review` with null.
       const lastReview = buildLastReview(reviewResult, "agent-system-prompt");
 
+      // Restricted: send the real (possibly empty) arrays. Unrestricted with
+      // nothing to clear: omit both fields entirely. Unrestricted after
+      // having been restricted: explicitly clear both back to unset.
+      const knowledgeFields = restrictKnowledge
+        ? { datasource_ids: datasourceIds, rag_collection_ids: ragCollectionIds }
+        : hadExplicitKnowledgeScope
+          ? { datasource_ids: null, rag_collection_ids: null }
+          : {};
+
       if (isEditing) {
         // Update existing agent
         const updateData: DynamicAgentConfigUpdate & {
@@ -1135,12 +1158,7 @@ export function DynamicAgentEditor({
           builtin_tools: builtinTools,
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
-          // Always send the array, even empty — `pickMutableFields` only
-          // omits keys that are `undefined`, so sending `undefined` here
-          // when the picker is cleared would leave the previously-saved
-          // restriction in place instead of clearing it.
-          datasource_ids: datasourceIds,
-          rag_collection_ids: ragCollectionIds,
+          ...knowledgeFields,
           model: { id: modelId, provider: modelProvider },
           ui: uiConfig,
           features: features,
@@ -1190,11 +1208,7 @@ export function DynamicAgentEditor({
           builtin_tools: builtinTools,
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
-          // New agents follow the combined collection + datasource hand
-          // exactly. Empty arrays keep the MCP server selected but scope its
-          // RAG tools to no indexed content.
-          datasource_ids: datasourceIds,
-          rag_collection_ids: ragCollectionIds,
+          ...knowledgeFields,
           model: { id: modelId, provider: modelProvider },
           ui: uiConfig,
           features: features,
@@ -1280,8 +1294,38 @@ export function DynamicAgentEditor({
           step: "instructions",
         });
       }
+      // Restrict was just turned on (it wasn't already an explicit scope
+      // when this editor opened) and nothing has been picked yet - saving
+      // now would send explicit empty arrays, a deliberate opt-out that
+      // disables this agent's RAG tools entirely, not "unrestricted"
+      // (that's what leaving Restrict off does). Block the save instead of
+      // silently locking the agent out of every datasource. An agent that
+      // already had an explicit scope may still be intentionally cleared
+      // to opt out - only gate the "just enabled, nothing picked" case.
+      if (
+        restrictKnowledge &&
+        !hadExplicitKnowledgeScope &&
+        datasourceIds.length === 0 &&
+        ragCollectionIds.length === 0
+      ) {
+        list.push({
+          field: "knowledgeScope",
+          label: "Pick at least one collection or datasource, or turn off Restrict",
+          step: "knowledge",
+        });
+      }
       return list;
-    }, [name, systemPrompt, modelId, availableModels.length, ownerTeamMissing]);
+    }, [
+      name,
+      systemPrompt,
+      modelId,
+      availableModels.length,
+      ownerTeamMissing,
+      restrictKnowledge,
+      hadExplicitKnowledgeScope,
+      datasourceIds,
+      ragCollectionIds,
+    ]);
 
   const isValid = blockers.length === 0;
   const firstBlocker = blockers[0];
@@ -1423,53 +1467,22 @@ export function DynamicAgentEditor({
                     LLM Model <span className="text-destructive">*</span>
                   </Label>
                   <div className="p-3 rounded-lg border-2 border-primary/20 bg-primary/5">
-                    <select
+                    <ModelPicker
                       id="modelId"
-                      value={`${modelId}::${modelProvider}`}
-                      onChange={(e) => {
-                        const lastDelimiter = e.target.value.lastIndexOf("::");
-                        if (lastDelimiter > 0) {
-                          const selectedId = e.target.value.slice(
-                            0,
-                            lastDelimiter,
-                          );
-                          const selectedProvider = e.target.value.slice(
-                            lastDelimiter + 2,
-                          );
-                          if (selectedId && selectedProvider) {
-                            setModelId(selectedId);
-                            setModelProvider(selectedProvider);
-                          }
-                        }
+                      options={availableModels}
+                      modelId={modelId}
+                      modelProvider={modelProvider}
+                      onChange={(selectedId, selectedProvider) => {
+                        setModelId(selectedId);
+                        setModelProvider(selectedProvider);
                       }}
+                      loading={modelsLoading}
                       disabled={
                         loading ||
-                        !!readOnly ||
-                        modelsLoading ||
-                        availableModels.length === 0
+                        !!readOnly
                       }
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {modelsLoading ? (
-                        <option value="">Loading models...</option>
-                      ) : availableModels.length === 0 ? (
-                        <option value="" disabled>
-                          No models available
-                        </option>
-                      ) : (
-                        availableModels.map((model) => (
-                          <option
-                            key={`${model.model_id}::${model.provider}`}
-                            value={`${model.model_id}::${model.provider}`}
-                          >
-                            {model.name}
-                            {model.provider && model.provider !== "default"
-                              ? ` (${model.provider})`
-                              : ""}
-                          </option>
-                        ))
-                      )}
-                    </select>
+                      triggerClassName="font-medium"
+                    />
                     {!modelsLoading && availableModels.length === 0 ? (
                       <p className="text-xs text-destructive mt-2">
                         No LLM models available. Please check your deployment
@@ -2312,21 +2325,38 @@ export function DynamicAgentEditor({
                     !hasRagToolAccess(allowedTools) && "opacity-50",
                   )}
                 >
-                  <DatasourcePicker
-                    ownerTeamSlug={ownerTeamSlug}
-                    value={datasourceIds}
-                    onChange={setDatasourceIds}
-                    collectionValue={ragCollectionIds}
-                    onCollectionChange={setRagCollectionIds}
-                    // A new RAG-enabled agent starts with Platform RAG only
-                    // after migration has actually created that collection.
-                    defaultToPlatform={
-                      !source && hasRagToolAccess(allowedTools)
-                    }
-                    disabled={
-                      loading || !!readOnly || !hasRagToolAccess(allowedTools)
-                    }
-                  />
+                  <div className="mb-4 flex items-center justify-between gap-4 rounded-lg border p-3">
+                    <div>
+                      <Label htmlFor="restrict-knowledge">
+                        Restrict to collections or datasources
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        {restrictKnowledge
+                          ? "This agent's RAG tools are pinned to the picks below. Every query still respects the calling user's own Search access."
+                          : "Off: this agent searches everything the calling user can already access, with no additional restriction. Turn this on to pin it to specific collections or datasources instead."}
+                      </p>
+                    </div>
+                    <Switch
+                      id="restrict-knowledge"
+                      checked={restrictKnowledge}
+                      disabled={
+                        loading || !!readOnly || !hasRagToolAccess(allowedTools)
+                      }
+                      onCheckedChange={setRestrictKnowledge}
+                    />
+                  </div>
+                  {restrictKnowledge && (
+                    <DatasourcePicker
+                      ownerTeamSlug={ownerTeamSlug}
+                      value={datasourceIds}
+                      onChange={setDatasourceIds}
+                      collectionValue={ragCollectionIds}
+                      onCollectionChange={setRagCollectionIds}
+                      disabled={
+                        loading || !!readOnly || !hasRagToolAccess(allowedTools)
+                      }
+                    />
+                  )}
                 </div>
               </div>
             )}

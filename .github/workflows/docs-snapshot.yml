@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -98,7 +98,7 @@ jobs:
 
           # persist-credentials: false means the checkout step does not configure
           # git credentials. Wire the App token into the remote URL so git push works.
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/cnoe-io/ai-platform-engineering.git"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/caipe-io/ai-platform-engineering.git"
 
           # Only the published-versions list (and any current-version helm docs that
           # legitimately changed) are committed — versioned_docs is never committed.

@@ -11,6 +11,7 @@ TopCreatorsCard,
 VisibilityBreakdown,
 } from "@/components/admin/insights/SkillMetricsCards";
 import { AsyncStatsCard } from "@/components/admin/insights/AsyncStatsCard";
+import { AutonomousTeamAccessPanel } from "@/components/admin/autonomous/AutonomousTeamAccessPanel";
 import { ReviewConfigsTab } from "@/components/admin/settings/ReviewConfigsTab";
 import {
   AdminNavigation,
@@ -28,8 +29,10 @@ import { CrawlConsoleDialog } from "@/components/admin/platform/CrawlConsoleDial
 import { CrawlConsoleHeaderPill } from "@/components/admin/platform/CrawlConsoleHeaderPill";
 import { HealthTab } from "@/components/admin/platform/HealthTab";
 import { MetricsTab } from "@/components/admin/platform/MetricsTab";
+import { ApiStatsSection } from "@/components/admin/platform/ApiStatsSection";
 import { SkillHubsSection } from "@/components/admin/platform/SkillHubsSection";
 import { SlackStatsSection } from "@/components/admin/platform/SlackStatsSection";
+import { WebexStatsSection } from "@/components/admin/platform/WebexStatsSection";
 import { SlackChannelRebacPanel } from "@/components/admin/rebac/SlackChannelRebacPanel";
 import { WebexSpaceRebacPanel } from "@/components/admin/rebac/WebexSpaceRebacPanel";
 import { AuditLogsTab } from "@/components/admin/security/AuditLogsTab";
@@ -38,6 +41,7 @@ import { MigrationTab } from "@/components/admin/security/MigrationTab";
 import { PublicationApprovalQueue } from "@/components/admin/security/PublicationApprovalQueue";
 import { AccessExplorerTab } from "@/components/admin/security/AccessExplorerTab";
 import { RbacSelfCheckTab } from "@/components/admin/security/RbacSelfCheckTab";
+import { SecurityWorkspaceTabs } from "@/components/admin/security/SecurityWorkspaceTabs";
 import { UnifiedAuditTab } from "@/components/admin/security/UnifiedAuditTab";
 import { ImportAgentsFromConfigCard } from "@/components/admin/settings/ImportAgentsFromConfigCard";
 import { MCPCatalogSettingsCard } from "@/components/admin/settings/MCPCatalogSettingsCard";
@@ -67,6 +71,7 @@ import {
 } from "@/components/ui/built-in-resource-hint";
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import {
 Dialog,
 DialogContent,
@@ -508,6 +513,7 @@ function AdminPage() {
       // Agents subtab (Import Agents from Config) is an admin-only action.
       agents: effectiveOrganizationAdmin,
       mcp: effectiveOrganizationAdmin,
+      autonomous: effectiveOrganizationAdmin && Boolean(getConfig('autonomousAgentsEnabled')),
       rag: effectiveOrganizationAdmin,
       // Identity Sync tab: superadmin-only (reuses the identity_group_sync
       // OpenFGA surface) AND only when an IdP directory connector is enabled.
@@ -568,7 +574,11 @@ function AdminPage() {
     if (adminRoleLoading || adminTabGatesLoading) return;
     if (visibleCategories.length === 0) return;
     const params = new URLSearchParams(searchParams.toString());
-    if (activeDestination.id !== 'access-explorer') {
+    if (activeDestination.id !== 'audit') {
+      params.delete('auditTab');
+    }
+    if (activeDestination.id !== 'access-operations') {
+      params.delete('operationsTab');
       params.delete('subtab');
       params.delete('openfgaTab');
     }
@@ -686,8 +696,8 @@ function AdminPage() {
   const [teamPendingDelete, setTeamPendingDelete] = useState<Team | null>(null);
   // ── Shared filters (source, users, date range) across feedback + stats tabs ──
   const requestedSource = searchParams.get('source');
-  const sourceFromUrl: 'all' | 'web' | 'slack' =
-    requestedSource === 'web' || requestedSource === 'slack' ? requestedSource : 'all';
+  const sourceFromUrl: 'all' | 'web' | 'slack' | 'webex' | 'api' =
+    requestedSource === 'web' || requestedSource === 'slack' || requestedSource === 'webex' || requestedSource === 'api' ? requestedSource : 'all';
   const usersFromUrl = commaSeparatedFilter(searchParams.get('users'));
   const requestedDatePreset = searchParams.get('dateRange');
   const requestedFrom = searchParams.get('from');
@@ -702,12 +712,28 @@ function AdminPage() {
     ? { from: requestedFrom as string, to: requestedTo as string }
     : presetToRange(datePresetFromUrl);
 
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'web' | 'slack'>(
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'web' | 'slack' | 'webex' | 'api'>(
     sourceFromUrl
   );
   const [userFilter, setUserFilter] = useState<string[]>(usersFromUrl);
   const [datePreset, setDatePreset] = useState<DateRangePreset>(datePresetFromUrl);
   const [dateRange, setDateRange] = useState<DateRange>(dateRangeFromUrl);
+  const [webexEnabled, setWebexEnabled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/user/preferences", { method: "GET", credentials: "same-origin" })
+      .then((response) => response.json())
+      .then((json: { data?: { integrations?: { webex?: boolean } } }) => {
+        if (!cancelled) setWebexEnabled(json.data?.integrations?.webex === true);
+      })
+      .catch(() => {
+        if (!cancelled) setWebexEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const openFeedbackForTrendPoint = useCallback((point: FeedbackTrendPoint) => {
     const range = feedbackDateRangeForBucket(point.date);
@@ -1295,7 +1321,7 @@ function AdminPage() {
   const loadFeedback = async (
     rating?: 'positive' | 'negative' | 'all',
     page = 1,
-    source?: 'all' | 'web' | 'slack',
+    source?: 'all' | 'web' | 'slack' | 'webex' | 'api',
     channels?: string[],
     searchTags?: string[],
     users?: string[],
@@ -1348,7 +1374,7 @@ function AdminPage() {
     updateFeedbackUrl({ rating: filter !== 'all' ? filter : null });
   };
 
-  const handleFeedbackSourceChange = (source: 'all' | 'web' | 'slack') => {
+  const handleFeedbackSourceChange = (source: 'all' | 'web' | 'slack' | 'webex' | 'api') => {
     setSourceFilter(source);
     setFeedbackChannelFilter([]);
     updateSharedFilterUrl({ source: source !== 'all' ? source : null });
@@ -1504,7 +1530,7 @@ function AdminPage() {
                         <label className="text-xs font-medium text-muted-foreground" htmlFor="simulate-type">
                           Subject type
                         </label>
-                        <select
+                        <Select
                           id="simulate-type"
                           value={simulationType}
                           onChange={(event) => {
@@ -1519,14 +1545,14 @@ function AdminPage() {
                         >
                           <option value="team">Team</option>
                           <option value="user">User</option>
-                        </select>
+                        </Select>
                       </div>
                       {simulationType === "team" && (
                         <div className="space-y-1">
                           <label className="text-xs font-medium text-muted-foreground" htmlFor="simulate-relation">
                             Role / relation
                           </label>
-                          <select
+                          <Select
                             id="simulate-relation"
                             value={simulationRelation}
                             onChange={(event) => setSimulationRelation(event.target.value as "member" | "admin")}
@@ -1534,7 +1560,7 @@ function AdminPage() {
                           >
                             <option value="admin">Manager/Admin</option>
                             <option value="member">Reader/Member</option>
-                          </select>
+                          </Select>
                         </div>
                       )}
                     </div>
@@ -1675,6 +1701,12 @@ function AdminPage() {
                     isAdmin={effectiveOrganizationAdmin}
                     readOnly={isSimulationActive}
                   />
+                </TabsContent>
+              )}
+
+              {tabGateValues.autonomous && (
+                <TabsContent value="autonomous" className="space-y-4">
+                  <AutonomousTeamAccessPanel />
                 </TabsContent>
               )}
 
@@ -2020,15 +2052,15 @@ function AdminPage() {
                       ))}
                     </div>
                     <div className="h-5 w-px bg-border" />
-                    <select
+                    <Select
                       value={sourceFilter}
-                      onChange={(e) => handleFeedbackSourceChange(e.target.value as 'all' | 'web' | 'slack')}
+                      onChange={(e) => handleFeedbackSourceChange(e.target.value as 'all' | 'web' | 'slack' | 'webex' | 'api')}
                       className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
                     >
                       <option value="all">All Sources</option>
                       <option value="web">Web</option>
                       <option value="slack">Slack</option>
-                    </select>
+                    </Select>
                     {sourceFilter === 'slack' && feedbackChannels.length > 0 && (
                       <>
                         <div className="h-5 w-px bg-border" />
@@ -2252,10 +2284,10 @@ function AdminPage() {
                 {/* Stats Filters */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3 flex-wrap">
-                    <select
+                    <Select
                       value={sourceFilter}
                       onChange={(e) => {
-                        const src = e.target.value as 'all' | 'web' | 'slack';
+                        const src = e.target.value as 'all' | 'web' | 'slack' | 'webex' | 'api';
                         setSourceFilter(src);
                         setStatsChannelFilter([]);
                         updateSharedFilterUrl({ source: src !== 'all' ? src : null });
@@ -2266,7 +2298,9 @@ function AdminPage() {
                       <option value="all">All Sources</option>
                       <option value="web">Web</option>
                       <option value="slack">Slack</option>
-                    </select>
+                      {webexEnabled ? <option value="webex">Webex</option> : null}
+                      <option value="api">API</option>
+                    </Select>
                     {sourceFilter === 'slack' && statsChannels.length > 0 && (
                       <MultiSelect
                         options={statsChannels}
@@ -2969,6 +3003,24 @@ function AdminPage() {
                       rangeLabel={rangeLabel}
                       slack={stats.slack}
                     />
+
+                    {/* ─── Webex Section ─── */}
+                    {webexEnabled && (
+                      <WebexStatsSection
+                        error={statsSectionStatuses.webex.error}
+                        loading={statsSectionStatuses.webex.loading}
+                        rangeLabel={rangeLabel}
+                        webex={stats.webex}
+                      />
+                    )}
+
+                    {/* ─── API Section ─── */}
+                    <ApiStatsSection
+                      api={stats.api}
+                      error={statsSectionStatuses.api.error}
+                      loading={statsSectionStatuses.api.loading}
+                      rangeLabel={rangeLabel}
+                    />
                   </div>
 
                 {/* ─── Skills Section ─── */}
@@ -3107,15 +3159,29 @@ function AdminPage() {
                 <HealthTab />
               </TabsContent>
 
-              {tabGateValues.audit_logs && (
-                <TabsContent value="audit-logs" className="space-y-4">
-                  <AuditLogsTab onUserClick={setSelectedUserEmail} />
-                </TabsContent>
-              )}
-
-              {tabGateValues.action_audit && (
-                <TabsContent value="action-audit" className="space-y-4">
-                  <UnifiedAuditTab isAdmin={canMutateAdminData} />
+              {(tabGateValues.action_audit || tabGateValues.audit_logs || tabGateValues.openfga) && (
+                <TabsContent value="audit" className="space-y-4">
+                  <SecurityWorkspaceTabs
+                    ariaLabel="Audit sections"
+                    items={[
+                      ...(tabGateValues.action_audit ? [{
+                        id: "rbac",
+                        label: "RBAC",
+                        content: <UnifiedAuditTab isAdmin={canMutateAdminData} />,
+                      }] : []),
+                      ...(tabGateValues.audit_logs ? [{
+                        id: "chat",
+                        label: "Chat",
+                        content: <AuditLogsTab onUserClick={setSelectedUserEmail} />,
+                      }] : []),
+                      ...(tabGateValues.openfga ? [{
+                        id: "self-check",
+                        label: "Self-check",
+                        content: <RbacSelfCheckTab isAdmin={canMutateAdminData} />,
+                      }] : []),
+                    ]}
+                    queryKey="auditTab"
+                  />
                 </TabsContent>
               )}
 
@@ -3125,27 +3191,29 @@ function AdminPage() {
                 </TabsContent>
               )}
 
-              {tabGateValues.openfga && (
-                <TabsContent value="access-explorer" className="space-y-4">
-                  <AccessExplorerTab isAdmin={canMutateAdminData} />
-                </TabsContent>
-              )}
-
-              {tabGateValues.openfga && (
-                <TabsContent value="rbac-self-check" className="space-y-4">
-                  <RbacSelfCheckTab isAdmin={canMutateAdminData} />
-                </TabsContent>
-              )}
-
-              {tabGateValues.migrations && (
-                <TabsContent value="keycloak" className="space-y-4">
-                  <KeycloakMigrationHealthPanel />
-                </TabsContent>
-              )}
-
-              {tabGateValues.migrations && (
-                <TabsContent value="migrations" className="space-y-4">
-                  <MigrationTab isAdmin={canMutateAdminData && tabGateValues.migrations} />
+              {(tabGateValues.openfga || tabGateValues.migrations) && (
+                <TabsContent value="access-operations" className="space-y-4">
+                  <SecurityWorkspaceTabs
+                    ariaLabel="Access operations sections"
+                    items={[
+                      ...(tabGateValues.openfga ? [{
+                        id: "access-explorer",
+                        label: "Access Explorer",
+                        content: <AccessExplorerTab isAdmin={canMutateAdminData} />,
+                      }] : []),
+                      ...(tabGateValues.migrations ? [{
+                        id: "keycloak",
+                        label: "Keycloak",
+                        content: <KeycloakMigrationHealthPanel />,
+                      },{
+                        id: "migrations",
+                        label: "Migrations",
+                        content: <MigrationTab isAdmin={canMutateAdminData && tabGateValues.migrations} />,
+                      }] : []),
+                    ]}
+                    queryKey="operationsTab"
+                    resetParams={["subtab","openfgaTab"]}
+                  />
                 </TabsContent>
               )}
 

@@ -14,7 +14,10 @@ from .utils.dm_thread_overrides import OverrideKey, get_default_override_store
 from .utils.identity_linker import WebexIdentityLinker
 from .utils.obo_exchange import OboExchangeError, OboToken, impersonate_user
 from .utils.space_team_resolver import SpaceTeamResolution, WebexSpaceTeamResolver
-from .utils.user_messages import TEAM_SESSION_UNAVAILABLE_MESSAGE
+from .utils.user_messages import (
+    TEAM_SESSION_UNAVAILABLE_MESSAGE,
+    WEBEX_DIRECT_MESSAGE_NOT_ONBOARDED_MESSAGE,
+)
 from .utils.webex_agent_routes import infer_listen_mode
 from .utils.webex_bot_catalog import configured_webex_bot
 from .utils.webex_direct_users import (
@@ -52,7 +55,11 @@ REASON_DISPATCH_ALLOWED = "WEBEX_DISPATCH_ALLOWED"
 # ReBAC so a non-mapped space still gets a useful response and
 # doesn't trip the "space not mapped" deny.
 REASON_COMMAND_HANDLED = "WEBEX_COMMAND_HANDLED"
+# Scoped to "the sender is not on this bot's DM allowlist / has no route" —
+# distinct from REASON_DM_DISABLED, which covers the bot's DM channel being
+# turned off deployment-wide (a per-user allowlist fix can never help there).
 REASON_DM_NOT_ONBOARDED = "WEBEX_DM_NOT_ONBOARDED"
+REASON_DM_DISABLED = "WEBEX_DM_DISABLED"
 REASON_BOT_NOT_ASSIGNED = "WEBEX_BOT_NOT_ASSIGNED"
 
 
@@ -151,6 +158,7 @@ class RouteResolverProtocol(Protocol):
         text: str,
         is_direct: bool = False,
         was_bot_mentioned: bool = False,
+        thread_parent_id: Optional[str] = None,
     ) -> WebexRouteResolution:
         """Resolve the agent route to dispatch this message to."""
         raise NotImplementedError
@@ -466,6 +474,7 @@ class _WebexAgentRouteResolver:
         text: str,
         is_direct: bool = False,
         was_bot_mentioned: bool = False,
+        thread_parent_id: Optional[str] = None,
     ) -> WebexRouteResolution:
         from .utils.webex_agent_routes import resolve_webex_agent_route
 
@@ -477,6 +486,7 @@ class _WebexAgentRouteResolver:
             text=text,
             is_direct=is_direct,
             was_bot_mentioned=was_bot_mentioned,
+            thread_parent_id=thread_parent_id,
         )
         return WebexRouteResolution(agent_id=agent_id, deny_message=deny_message)
 
@@ -498,9 +508,15 @@ async def handle_webex_message(
 ) -> WebexMessageResult:
     """Run the Webex RBAC runtime gate before agent dispatch.
 
-    Gate order: parse → ignore bot/self/malformed → identity link → space team
-    → OBO → route → ReBAC → dispatch. Route resolution runs before ReBAC because
-    it supplies the ``agent_id`` checked by the access-check endpoint.
+    Gate order: parse → ignore bot/self/malformed → space team (group spaces)
+    → identity link → DM access (direct messages) → OBO → route → ReBAC →
+    dispatch. Identity link runs before the DM access-mode check so an
+    unlinked user gets the "link your account" flow — except when the bot's
+    direct messages are disabled entirely, in which case both an unlinked
+    and a linked user are ignored silently rather than being prompted to
+    link, or told to ask an admin to enable something a per-user allowlist
+    change can never fix; route resolution runs before ReBAC because it
+    supplies the ``agent_id`` checked by the access-check endpoint.
     """
     linker = identity_linker or WebexIdentityLinker()
     resolver = team_resolver or WebexSpaceTeamResolver()
@@ -547,30 +563,6 @@ async def handle_webex_message(
         return _ignore(REASON_BOT_NOT_ASSIGNED)
     if not parsed.is_direct and bot_config.spaces_access_mode == "disabled":
         return _ignore(REASON_BOT_NOT_ASSIGNED)
-
-    direct_access: WebexDirectUserAccess | None = None
-    if parsed.is_direct:
-        try:
-            direct_access = await direct_users.resolve(
-                bot_id=parsed.bot_id,
-                webex_user_id=parsed.person_id,
-                person_email=parsed.person_email,
-            )
-        except Exception as exc:  # noqa: BLE001 - direct access fails closed
-            logger.warning(
-                "Webex direct-user access lookup failed (type=%s)",
-                type(exc).__name__,
-            )
-        if direct_access is None or not direct_access.allowed:
-            log_webex_authz_decision(
-                tenant_id=tenant_id,
-                sub=parsed.person_id,
-                outcome="deny",
-                reason_code=REASON_DM_NOT_ONBOARDED,
-                webex_person_id=parsed.person_id,
-                webex_space_id=parsed.space_id,
-            )
-            return _ignore(REASON_DM_NOT_ONBOARDED)
 
     if not parsed.workspace_id:
         log_webex_authz_decision(
@@ -674,9 +666,20 @@ async def handle_webex_message(
             deny_message=(
                 "Identity verification is temporarily unavailable. Please try again later."
             ),
+            explicit_invocation=explicit_invocation,
         )
 
     if keycloak_user_id is None:
+        if parsed.is_direct and bot_config.direct_messages_access_mode == "disabled":
+            log_webex_authz_decision(
+                tenant_id=tenant_id,
+                sub=parsed.person_id,
+                outcome="deny",
+                reason_code=REASON_DM_DISABLED,
+                webex_person_id=parsed.person_id,
+                webex_space_id=parsed.space_id,
+            )
+            return _ignore(REASON_DM_DISABLED)
         linking_url: Optional[str] = None
         try:
             linking_url = await linker.linking_url(parsed.person_id)
@@ -701,16 +704,58 @@ async def handle_webex_message(
                 "Complete account linking before using this bot."
             ),
             linking_url=linking_url,
+            explicit_invocation=explicit_invocation,
         )
 
-    if (
-        direct_access is not None
-        and keycloak_user_id != direct_access.keycloak_user_id
-    ):
-        logger.warning(
-            "Webex direct-user link did not match the onboarded deployment user"
-        )
-        return _ignore(REASON_DM_NOT_ONBOARDED)
+    direct_access: WebexDirectUserAccess | None = None
+    if parsed.is_direct:
+        try:
+            direct_access = await direct_users.resolve(
+                bot_id=parsed.bot_id,
+                webex_user_id=parsed.person_id,
+                keycloak_user_id=keycloak_user_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - direct access fails closed
+            logger.warning(
+                "Webex direct-user access lookup failed (type=%s)",
+                type(exc).__name__,
+            )
+        if direct_access is not None and direct_access.reason == "disabled":
+            # DMs are disabled for this bot deployment-wide — same silent
+            # short-circuit as the unlinked-sender case above. An explicit
+            # "ask an admin to enable 1:1 messages" reply would be misleading
+            # here since no per-user allowlist change can fix this.
+            log_webex_authz_decision(
+                tenant_id=tenant_id,
+                sub=keycloak_user_id,
+                outcome="deny",
+                reason_code=REASON_DM_DISABLED,
+                webex_person_id=parsed.person_id,
+                webex_space_id=parsed.space_id,
+            )
+            return _ignore(REASON_DM_DISABLED)
+        if direct_access is None or not direct_access.allowed:
+            log_webex_authz_decision(
+                tenant_id=tenant_id,
+                sub=keycloak_user_id,
+                outcome="deny",
+                reason_code=REASON_DM_NOT_ONBOARDED,
+                webex_person_id=parsed.person_id,
+                webex_space_id=parsed.space_id,
+            )
+            return _deny(
+                REASON_DM_NOT_ONBOARDED,
+                deny_message=WEBEX_DIRECT_MESSAGE_NOT_ONBOARDED_MESSAGE.format(
+                    app_name=APP_NAME
+                ),
+                keycloak_user_id=keycloak_user_id,
+                explicit_invocation=explicit_invocation,
+            )
+        if keycloak_user_id != direct_access.keycloak_user_id:
+            logger.warning(
+                "Webex direct-user link did not match the onboarded deployment user"
+            )
+            return _ignore(REASON_DM_NOT_ONBOARDED)
 
     team_slug = None if parsed.is_direct else team_resolution.team_slug
 
@@ -738,6 +783,7 @@ async def handle_webex_message(
             deny_message=TEAM_SESSION_UNAVAILABLE_MESSAGE,
             keycloak_user_id=keycloak_user_id,
             team_slug=team_slug,
+            explicit_invocation=explicit_invocation,
         )
 
     # Phase 2 (spec 2026-05-24): personal-DM commands intercept BEFORE
@@ -797,6 +843,7 @@ async def handle_webex_message(
             text=parsed.text,
             is_direct=parsed.is_direct,
             was_bot_mentioned=parsed.was_bot_mentioned,
+            thread_parent_id=parsed.thread_parent_id,
         )
     agent_id = route.agent_id
     if not parsed.is_direct and route.team_slug:
@@ -932,6 +979,7 @@ async def handle_webex_message(
                 "webex_room_id": parsed.webex_room_id,
                 "bot_id": parsed.bot_id,
                 "person_email": parsed.person_email,
+                "is_direct": parsed.is_direct,
             }
         )
 

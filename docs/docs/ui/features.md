@@ -4,8 +4,22 @@ sidebar_position: 2
 
 # Features and Components
 
-The CAIPE UI is an operational interface for chat, Dynamic Agents, skills,
-knowledge bases, credentials, RBAC, audit logs, and platform health.
+The CAIPE UI is where people use CAIPE day to day. It brings chat, Agent
+Builder, Skills, Knowledge Bases, credentials, workflows, and administration
+into one signed-in workspace.
+
+## Start with the task you need
+
+- **Ask for help:** open **Chat**, choose an agent, and send a request.
+- **Create a reusable assistant:** open **Agents**, choose **Create Agent**, and
+  follow the [Agent Builder guide](../features/agent-builder.md).
+- **Give an agent access to trusted information:** create or search a source in
+  **Knowledge Bases**, then attach it in Agent Builder.
+- **Coordinate several steps:** open **Workflows** and add agents in order.
+- **Reuse a procedure:** browse **Skills**, review its scan status, and attach
+  it to an agent.
+- **Connect an existing web product:** open **Apps** when an administrator has
+  enabled an External App.
 
 ## Main Surfaces
 
@@ -17,6 +31,35 @@ knowledge bases, credentials, RBAC, audit logs, and platform health.
 | Knowledge Bases | Ingest sources, run search, and inspect graph data when RAG is enabled |
 | Credentials | Connect user and service credentials for MCP-backed tools |
 | Admin | Platform settings, users, teams, RBAC, audit, metrics, and health |
+
+## Global Search and Command Palette
+
+- Select the **Search** control in the top-right application header, or press **Command+K** on macOS and
+  **Ctrl+K** on Windows or Linux.
+- Navigation results are built from the same feature flags and admin tab gates
+  as the sidebar. Hidden or disabled destinations are not added to the index.
+- Resource results use existing user-scoped BFF endpoints. Their authorization
+  checks run before data reaches the palette.
+- Use Up/Down Arrow to select a result and Enter to open it.
+
+Initial resource coverage:
+
+| Resource | Authorization source | Destination |
+|---|---|---|
+| Agents | OpenFGA `agent#use` filtering | Agent editor |
+| Conversations | Ownership, sharing, and OpenFGA discovery filtering | Chat thread |
+| Skills | Skill catalog OpenFGA read filtering | Skill workspace |
+| Workflows | Workflow visibility and OpenFGA read filtering | Workflows |
+
+Deferred resource types:
+
+- Knowledge Base collections: add after the collection page supports a stable
+  item deep link.
+- Schedules, MCP servers, and models: add after their list APIs expose
+  user-scoped search contracts and stable item deep links.
+- A dedicated search service is intentionally deferred. The palette performs
+  small parallel queries against authoritative APIs and tolerates a partial
+  endpoint failure.
 
 ## Chat
 

@@ -47,7 +47,10 @@ import "@xyflow/react/dist/style.css";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
+import { Select } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AgentPicker } from "@/components/ui/agent-picker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { RebacGraphFilters, subjectPrefix, type RebacGraphUserOption } from "../rebac/RebacGraphFilters";
@@ -1206,7 +1209,7 @@ function FeatureCheckPanel({
           </div>
         </FeatureSelectField>
         <FeatureSelectField label="Feature">
-          <select
+          <Select
             className="h-10 w-full rounded-md border bg-background px-3 text-sm"
             value={featureKind}
             onChange={(event) => onFeatureKindChange(event.target.value as FeatureKind)}
@@ -1216,41 +1219,46 @@ function FeatureCheckPanel({
                 {option.label}
               </option>
             ))}
-          </select>
+          </Select>
         </FeatureSelectField>
         <FeatureSelectField label="Agent">
-          <select
-            className="h-10 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-60"
+          <AgentPicker
+            ariaLabel="Feature check agent"
             value={selectedAgentRef}
-            onChange={(event) => onAgentChange(event.target.value)}
+            onChange={onAgentChange}
+            options={agentOptions.map((option) => ({
+              value: option.id,
+              label: option.label,
+            }))}
             disabled={agentLocked || agentOptions.length === 0}
-          >
-            {agentOptions.length === 0 ? (
-              <option value="">No reachable agents</option>
-            ) : (
-              agentOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))
-            )}
-          </select>
+            placeholder={agentOptions.length === 0 ? "No reachable agents" : "Select an agent"}
+            searchPlaceholder="Search reachable agents..."
+            emptyLabel="No reachable agents match"
+            triggerClassName="h-10"
+            hideIdSuffix
+            allowClear={false}
+          />
         </FeatureSelectField>
         {showResourcePicker && (
           <FeatureSelectField label={activeFeature.targetLabel} className="lg:col-span-3">
-            <select
-              className="h-10 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-60"
-              value={selectedResourceRef}
-              onChange={(event) => onResourceChange(event.target.value)}
+            <SearchablePicker
+              options={resourceOptions}
+              selected={resourceOptions.find(
+                (option) => option.id === selectedResourceRef,
+              )}
+              onSelect={(option) => onResourceChange(option.id)}
+              getOptionKey={(option) => option.id}
+              getOptionLabel={(option) => `${option.label} (${option.id})`}
+              getSearchText={(option) => [option.id, option.label]}
+              placeholder={`Any ${activeFeature.targetLabel.toLowerCase()}`}
+              searchPlaceholder={`Search ${activeFeature.targetLabel.toLowerCase()}...`}
+              emptyLabel={`No ${activeFeature.targetLabel.toLowerCase()} match`}
+              ariaLabel={activeFeature.targetLabel}
               disabled={loadingAgentGraph}
-            >
-              <option value="">Any {activeFeature.targetLabel.toLowerCase()}</option>
-              {resourceOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label} ({option.id})
-                </option>
-              ))}
-            </select>
+              onClear={() => onResourceChange("")}
+              clearLabel={`Clear ${activeFeature.targetLabel.toLowerCase()}`}
+              triggerClassName="h-10 text-sm"
+            />
           </FeatureSelectField>
         )}
       </div>

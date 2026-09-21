@@ -32,7 +32,17 @@ from fastapi.responses import JSONResponse
 
 from dynamic_agents.config import get_settings
 from dynamic_agents.metrics import PrometheusHTTPMiddleware
-from dynamic_agents.routes import assistant, builtin_tools, chat, conversations, files, health, mcp_servers, middleware
+from dynamic_agents.routes import (
+    agents,
+    assistant,
+    builtin_tools,
+    chat,
+    conversations,
+    files,
+    health,
+    mcp_servers,
+    middleware,
+)
 from dynamic_agents.services.mongo import get_mongo_service, reset_mongo_service
 from dynamic_agents.services.runtime_cache import RuntimeCapacityError, RuntimeInitError, get_runtime_cache
 
@@ -160,6 +170,9 @@ def create_app() -> FastAPI:
     app.include_router(files.router, prefix="/api/v1")
     app.include_router(assistant.router, prefix="/api/v1")
     app.include_router(middleware.router, prefix="/api/v1")
+    # Agent reachability probe used by the autonomous-agents service
+    # to verify ``dynamic_agent_id`` targets exist before scheduling.
+    app.include_router(agents.router, prefix="/api/v1")
 
     @app.exception_handler(RuntimeInitError)
     async def runtime_init_error_handler(request: Request, exc: RuntimeInitError):

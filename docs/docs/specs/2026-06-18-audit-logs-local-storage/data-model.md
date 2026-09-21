@@ -53,6 +53,8 @@ All backends receive the same unified audit event dict. No new fields are added 
 | `pdp` | string | No | Policy decision point |
 | `trace_id` | string | No | OpenTelemetry trace id |
 | `span_id` | string | No | OpenTelemetry span id |
+| `count` | int | No | Decisions summarized by an aggregated allow row; absent means one. Sum this rather than counting rows |
+| `window_start` / `window_end` | ISO-8601 string | No | Time span an aggregated allow row covers |
 
 ---
 

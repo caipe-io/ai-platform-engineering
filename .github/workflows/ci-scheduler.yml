@@ -5,6 +5,8 @@ on:
   push:
     tags:
       - '**'
+    branches:
+      - main
   pull_request:
     paths:
       - 'ai_platform_engineering/scheduler/**'
@@ -14,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_version:
-        description: 'Version tag to apply (e.g., 0.4.5-dev.5)'
+        description: 'Version tag to apply (e.g., 1.2.0 or 1.2.0-rc.1)'
         required: false
         type: string
 
@@ -29,37 +31,24 @@ jobs:
   determine-changes:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')) ||
       (github.event_name == 'pull_request' && !startsWith(github.head_ref, 'prebuild/')) ||
       (github.event_name == 'workflow_dispatch')
     outputs:
       should_build_scheduler:    ${{ steps.set-outputs.outputs.should_build_scheduler }}
       should_build_cron_runner:  ${{ steps.set-outputs.outputs.should_build_cron_runner }}
       tag_version:               ${{ steps.version.outputs.tag_version }}
-      image_prefix:              ${{ steps.set-outputs.outputs.image_prefix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           fetch-depth: 0
 
-      - name: Generate GitHub App token
-        id: app-token
-        if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ secrets.CI_BUILD_APP_ID }}
-          private-key: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: read
-
       - name: Determine Tag
         id: version
         uses: ./.github/actions/determine-release-tag
         with:
           manual_tag: ${{ inputs.tag_version }}
-          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - name: Detect changed paths
         id: filter
@@ -83,24 +72,9 @@ jobs:
         run: |
           BUILD_SCHED="false"
           BUILD_RUNNER="false"
-          IMAGE_PREFIX=""
-
-          # Chart-only tag: skip image builds entirely
-          if [[ "$TAG_VERSION" =~ -chart\.[0-9]+$ ]]; then
-            echo "Chart-only tag: skipping image builds"
-            echo "should_build_scheduler=false"   >> $GITHUB_OUTPUT
-            echo "should_build_cron_runner=false" >> $GITHUB_OUTPUT
-            echo "image_prefix="                  >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # GHCR prefix: -rc.N and -hotfix.N go to pre-release/
-          if [[ "$TAG_VERSION" =~ -(rc|hotfix)\.[0-9]+ ]]; then
-            IMAGE_PREFIX="pre-release/"
-          fi
 
           # On any tag push or manual dispatch, always build both.
-          if [ -n "$TAG_VERSION" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [[ "$GITHUB_REF" == refs/tags/* ]] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             BUILD_SCHED="true"
             BUILD_RUNNER="true"
           else
@@ -111,8 +85,7 @@ jobs:
 
           echo "should_build_scheduler=$BUILD_SCHED"     >> $GITHUB_OUTPUT
           echo "should_build_cron_runner=$BUILD_RUNNER"  >> $GITHUB_OUTPUT
-          echo "image_prefix=$IMAGE_PREFIX"              >> $GITHUB_OUTPUT
-          echo "Outputs: scheduler=$BUILD_SCHED, cron_runner=$BUILD_RUNNER, prefix=$IMAGE_PREFIX"
+          echo "Outputs: scheduler=$BUILD_SCHED, cron_runner=$BUILD_RUNNER"
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -162,7 +135,7 @@ jobs:
             arch: arm64
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}${{ matrix.image }}
+      IMAGE_NAME: ${{ github.repository_owner }}/${{ matrix.image }}
 
     steps:
       - name: Skip if not building this image
@@ -171,7 +144,7 @@ jobs:
 
       - name: Harden runner
         if: matrix.should_build == 'true'
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -181,7 +154,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: matrix.should_build == 'true'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Log in to GitHub Container Registry
         if: matrix.should_build == 'true'
@@ -198,10 +171,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.') && !contains(github.ref_name, '-chart.')) }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
             type=raw,value=${{ needs.determine-changes.outputs.tag_version }},enable=${{ needs.determine-changes.outputs.tag_version != '' }}
             type=ref,event=tag,prefix=
-            type=sha,format=short,prefix=
+            type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
 
       - name: Build and push by digest
         if: matrix.should_build == 'true'
@@ -213,21 +186,21 @@ jobs:
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           # Push only on tag or manual dispatch; PR builds validate without publishing.
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' }}
           cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
           cache-to: type=gha,mode=min,scope=${{ matrix.name }}-${{ matrix.arch }}
           provenance: false
           sbom: false
 
       - name: Export digest
-        if: matrix.should_build == 'true' && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
+        if: matrix.should_build == 'true' && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
-        if: matrix.should_build == 'true' && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
+        if: matrix.should_build == 'true' && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: digests-${{ matrix.name }}--${{ matrix.arch }}
@@ -241,7 +214,7 @@ jobs:
     name: Merge manifest
     runs-on: ubuntu-latest
     needs: [determine-changes, build-and-push]
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
@@ -257,7 +230,7 @@ jobs:
             should_build: ${{ needs.determine-changes.outputs.should_build_cron_runner }}
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}${{ matrix.image }}
+      IMAGE_NAME: ${{ github.repository_owner }}/${{ matrix.image }}
     steps:
       - name: Skip if not building this image
         if: matrix.should_build != 'true'
@@ -265,7 +238,7 @@ jobs:
 
       - name: Harden runner
         if: matrix.should_build == 'true'
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -279,7 +252,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: matrix.should_build == 'true'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Log in to GitHub Container Registry
         if: matrix.should_build == 'true'
@@ -296,10 +269,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.') && !contains(github.ref_name, '-chart.')) }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
             type=raw,value=${{ needs.determine-changes.outputs.tag_version }},enable=${{ needs.determine-changes.outputs.tag_version != '' }}
             type=ref,event=tag,prefix=
-            type=sha,format=short,prefix=
+            type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
 
       - name: Create manifest list and push
         if: matrix.should_build == 'true'

@@ -1,28 +1,104 @@
 "use client";
 
-import { MessageSquare,Plus } from "lucide-react";
+import { MessageSquare, Plus } from "lucide-react";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
+import { apiClient } from "@/lib/api-client";
+import { getStorageMode } from "@/lib/storage-config";
+import { useChatStore } from "@/store/chat-store";
+import { getAgentId } from "@/types/a2a";
+import type { Conversation as MongoConversation } from "@/types/mongodb";
+import { useSession } from "next-auth/react";
+import { useCallback,useEffect,useState } from "react";
 import { ConversationCard } from "./ConversationCard";
 
-interface RecentChatsProps {
-  conversations: Array<{
-    id: string;
-    title: string;
-    updatedAt: Date | string;
-    totalMessages?: number;
-    agentName?: string;
-    isShared?: boolean;
-  }>;
-  loading: boolean;
-  maxItems?: number;
+interface HomeConversation {
+  id: string;
+  title: string;
+  updatedAt: Date | string;
+  totalMessages?: number;
+  agentName?: string;
+  isShared?: boolean;
 }
 
-export function RecentChats({
-  conversations,
-  loading,
-  maxItems = 6,
-}: RecentChatsProps) {
+interface RecentChatsProps {
+  maxItems?: number;
+  compact?: boolean;
+}
+
+export function RecentChats({ maxItems = 6, compact = false }: RecentChatsProps = {}) {
+  const { status } = useSession();
+  const isAuthenticated = status === "authenticated";
+  const isMongoMode = getStorageMode() === "mongodb";
+  const { conversations: localConversations, loadConversationsFromServer } = useChatStore();
+  const [conversations, setConversations] = useState<HomeConversation[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const mapMongoConversation = useCallback((conv: MongoConversation): HomeConversation => {
+    const enriched = conv as MongoConversation & {
+      agent_id?: string;
+      agent_name?: string;
+      metadata?: MongoConversation["metadata"] & { agent_name?: string };
+    };
+    const agentId = enriched.agent_id ?? getAgentId(conv);
+
+    return {
+      id: conv._id,
+      title: conv.title,
+      updatedAt: conv.updated_at,
+      totalMessages: conv.metadata?.total_messages,
+      agentName: enriched.agent_name ?? enriched.metadata?.agent_name ?? agentId,
+      isShared:
+        (conv.sharing?.shared_with?.length ?? 0) > 0 ||
+        (conv.sharing?.shared_with_teams?.length ?? 0) > 0,
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        if (isMongoMode) {
+          const response = await apiClient.getConversations({ page_size: 8 });
+          setConversations(response.items.map(mapMongoConversation));
+        } else {
+          await loadConversationsFromServer();
+        }
+      } catch (err) {
+        console.error("[RecentChats] Failed to load recent chats:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+  }, [isAuthenticated, isMongoMode, loadConversationsFromServer, mapMongoConversation]);
+
+  useEffect(() => {
+    if (!isAuthenticated || isMongoMode) return;
+    const sorted = [...localConversations]
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, 8);
+    setConversations(
+      sorted.map((conversation) => ({
+        id: conversation.id,
+        title: conversation.title,
+        updatedAt: conversation.updatedAt,
+        totalMessages: conversation.messages.length,
+        agentName: getAgentId(conversation),
+      })),
+    );
+    setLoading(false);
+  }, [isAuthenticated, isMongoMode, localConversations]);
+
   const items = conversations.slice(0, maxItems);
+  const gridClassName = compact
+    ? "grid grid-cols-1 gap-3 xl:grid-cols-2"
+    : "grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3";
 
   return (
     <div data-testid="recent-chats">
@@ -41,7 +117,7 @@ export function RecentChats({
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className={gridClassName}>
           {Array.from({ length: 3 }).map((_, i) => (
             <div
               key={i}
@@ -69,7 +145,7 @@ export function RecentChats({
           </NavigationProgressLink>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className={gridClassName}>
           {items.map((conv) => (
             <ConversationCard
               key={conv.id}

@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the Webex message runtime gate."""
 
@@ -13,6 +13,7 @@ from ai_platform_engineering.integrations.webex_bot.app import (
     REASON_COMMAND_HANDLED,
     REASON_BOT_NOT_ASSIGNED,
     REASON_DISPATCH_ALLOWED,
+    REASON_DM_DISABLED,
     REASON_IGNORED_BOT,
     REASON_IGNORED_MALFORMED,
     REASON_IGNORED_SELF,
@@ -149,6 +150,29 @@ def test_unlinked_webex_user_denies_before_dispatch() -> None:
     assert result.reason_code == REASON_USER_NOT_LINKED
     assert result.linking_url == "https://ui.example/api/auth/webex-link?x=1"
     assert dispatcher.calls == []
+    # Passive channel message (no @mention, no direct room) — must not be
+    # flagged as explicit, so the responder stays silent.
+    assert result.explicit_invocation is False
+
+
+def test_unlinked_webex_user_explicit_mention_marks_explicit_invocation() -> None:
+    dispatcher = FakeDispatcher()
+    result = asyncio.run(
+        handle_webex_message(
+            _event(text="@bot help", is_bot=False),
+            identity_linker=FakeIdentityLinker(linked=False, linking_url_value=""),
+            team_resolver=FakeTeamResolver(),
+            dispatcher=dispatcher,
+        )
+    )
+    assert result.allowed is False
+    assert result.reason_code == REASON_USER_NOT_LINKED
+    # Bug fix: explicit_invocation must propagate to the WEBEX_USER_NOT_LINKED
+    # deny result so the responder can decide to show feedback instead of
+    # silently dropping the request (parity with Slack's explicit-invocation
+    # behavior).
+    assert result.explicit_invocation is True
+    assert dispatcher.calls == []
 
 
 def test_linked_allowed_dispatches() -> None:
@@ -171,6 +195,47 @@ def test_linked_allowed_dispatches() -> None:
     assert dispatcher.calls[0]["obo_token"] == "obo-access"
     assert dispatcher.calls[0]["agent_id"] == "incident-agent"
     assert dispatcher.calls[0]["team_slug"] == "platform-eng"
+    assert dispatcher.calls[0]["is_direct"] is False
+
+
+def test_thread_reply_is_forwarded_to_route_resolver() -> None:
+    dispatcher = FakeDispatcher()
+    route_resolver = FakeRouteResolver(agent_id="incident-agent")
+    result = asyncio.run(
+        handle_webex_message(
+            _event(text="reply in thread"),
+            identity_linker=FakeIdentityLinker(),
+            team_resolver=FakeTeamResolver(),
+            obo_exchanger=FakeOboExchanger(),
+            rebac_checker=FakeRebacChecker(),
+            route_resolver=route_resolver,
+            dispatcher=dispatcher,
+        )
+    )
+    # Sanity check for the un-threaded control case: the resolver is called
+    # without a thread_parent_id and dispatch proceeds normally.
+    assert result.dispatched is True
+    assert route_resolver.calls[0]["thread_parent_id"] is None
+
+    dispatcher = FakeDispatcher()
+    route_resolver = FakeRouteResolver(agent_id="incident-agent")
+    event = {**_event(text="reply in thread"), "parent_id": "parent-message-1"}
+    asyncio.run(
+        handle_webex_message(
+            event,
+            identity_linker=FakeIdentityLinker(),
+            team_resolver=FakeTeamResolver(),
+            obo_exchanger=FakeOboExchanger(),
+            rebac_checker=FakeRebacChecker(),
+            route_resolver=route_resolver,
+            dispatcher=dispatcher,
+        )
+    )
+    # Regression coverage for the RouteResolverProtocol wiring: app.py must
+    # thread parsed.thread_parent_id through to resolve_route() so a real
+    # RouteResolverProtocol implementation (e.g. _WebexAgentRouteResolver)
+    # can exclude passive thread replies from message-mode routing.
+    assert route_resolver.calls[0]["thread_parent_id"] == "parent-message-1"
 
 
 def test_missing_team_mapping_is_silently_ignored(monkeypatch) -> None:
@@ -449,7 +514,13 @@ def test_parsed_webex_event_carries_is_direct_flag() -> None:
     assert unspecified.is_direct is False
 
 
-def test_direct_webex_event_is_silent_when_dm_access_is_disabled(monkeypatch) -> None:
+def test_linked_direct_webex_event_is_ignored_silently_when_dm_access_is_disabled(
+    monkeypatch,
+) -> None:
+    """A linked user DMing a bot whose DM channel is disabled deployment-wide
+    must be ignored the same way as an unlinked sender — not told to ask an
+    admin to enable 1:1 messages, since no per-space/per-user admin action
+    can fix a deployment-wide disable."""
     monkeypatch.setenv(
         "WEBEX_INTEGRATION_BOTS_JSON",
         json.dumps(
@@ -480,6 +551,7 @@ def test_direct_webex_event_is_silent_when_dm_access_is_disabled(monkeypatch) ->
 
     assert result.allowed is False
     assert result.ignored is True
-    assert result.reason_code == "WEBEX_DM_NOT_ONBOARDED"
+    assert result.reason_code == REASON_DM_DISABLED
+    assert result.deny_message is None
     assert route_resolver.calls == []
     assert dispatcher.calls == []

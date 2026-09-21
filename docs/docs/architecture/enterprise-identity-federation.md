@@ -946,7 +946,7 @@ This works and is the recommended starting point.
 
 ### What AgentGateway Adds
 
-AgentGateway provides a **centralized data plane** for agent-to-tool and agent-to-agent communication, adding capabilities that are difficult to implement consistently across individual agents:
+AgentGateway provides a **centralized data plane** for agent-to-tool and service-to-service communication, adding capabilities that are difficult to implement consistently across individual agents:
 
 ```mermaid
 graph TB
@@ -1066,7 +1066,7 @@ sequenceDiagram
     ORCH->>GH_AGENT: Execute with narrowed token
     GH_AGENT->>KC: Token Exchange<br/>requested_issuer=github
     KC->>GH_AGENT: Sri's GitHub OAuth token
-    GH_AGENT->>GH: GET /repos/cnoe-io/ai-platform-engineering/pulls/42<br/>Authorization: Bearer ghp_sri_xxx
+    GH_AGENT->>GH: GET /repos/caipe-io/ai-platform-engineering/pulls/42<br/>Authorization: Bearer ghp_sri_xxx
     GH->>GH_AGENT: PR data (as Sri)
     GH_AGENT->>ORCH: PR review results
 

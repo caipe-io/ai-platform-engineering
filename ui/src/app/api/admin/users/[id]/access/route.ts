@@ -1,16 +1,10 @@
 // GET /api/admin/users/[id]/access
 //
-// Effective access for one user, explained by team membership. This is the
-// read-only, contextual replacement for the old low-level Permissions Tool:
-// instead of asking "does user X have relation R on object O?", it answers
-// "what can this user reach, and which team grant put it there?".
-//
-// Access is derived from team grants (the source of truth that the Teams →
-// resource assignment flow reconciles into OpenFGA tuples), not by replaying
-// the OpenFGA graph. The "why" is therefore always a (team, role) pair:
-//   • member-level grants (agent use, tool call, skill/task use, KB read/ingest)
-//     apply to anyone in the team.
-//   • admin-level grants (agent manage, KB admin) apply only to team admins.
+// Effective access for one user with the source of each grant. Team resource
+// listings provide precise team/role attribution, while direct effective
+// queries retain global, collection-derived, and external-group access that
+// cannot be attributed to one local team. RAG Search and datasource Owner
+// access remain separate capabilities throughout the response.
 
 import {
   getAuthFromBearerOrSession,
@@ -23,38 +17,26 @@ import { getRealmUserById } from "@/lib/rbac/keycloak-admin";
 import { getRbacCollection } from "@/lib/rbac/mongo-collections";
 import { listOpenFgaObjects } from "@/lib/rbac/openfga";
 import {
-  listTeamKbGrantsBatch,
   listTeamResourceIdsBatch,
   TEAM_TOOL_WILDCARD_SENTINEL_ID,
   TeamResourceListingCache,
 } from "@/lib/rbac/team-resource-listing";
-import type { KbPermission } from "@/lib/rbac/types";
+import type { IngestionSourceConfig } from "@/types/ingestion-source";
 import type { Team } from "@/types/teams";
 import type { TeamMembershipSource } from "@/types/identity-group-sync";
 import { type NextRequest, NextResponse } from "next/server";
 
 type TeamRole = "member" | "admin";
 
-// KB permissions map to OpenFGA relations on different team usersets: read /
-// ingest are granted to `team:<slug>#member`, while admin is granted only to
-// `team:<slug>#admin`. So a plain member never sees an admin-level KB grant.
-const KB_PERMISSION_REQUIRED_ROLE: Record<KbPermission, TeamRole> = {
-  read: "member",
-  ingest: "member",
-  admin: "admin",
-};
-
-function roleSatisfies(role: TeamRole, required: TeamRole): boolean {
-  return required === "member" ? true : role === "admin";
-}
-
 interface AccessVia {
   /**
    * `team` — granted because the user belongs to a team that holds the grant.
    * `owned` — granted because the user personally owns the resource
    * (`user:<sub> owner <type>:<id>`), independent of any team.
+   * `effective` — granted through a direct, global, collection, or external
+   * group relationship that cannot be attributed to one local team.
    */
-  kind: "team" | "owned";
+  kind: "team" | "owned" | "effective";
   /** Team attribution (set when `kind === "team"`; empty for owned grants). */
   team_slug: string;
   team_name: string;
@@ -98,7 +80,27 @@ class AccessAccumulator {
     const key = `${id}\u0000${capability}`;
     const existing = this.byKey.get(key);
     if (existing) {
-      if (!existing.via.some((v) => v.team_slug === via.team_slug)) existing.via.push(via);
+      if (existing.name === existing.id && name !== id) existing.name = name;
+      if (
+        via.kind === "effective" &&
+        existing.via.some((candidate) => candidate.kind !== "effective")
+      ) {
+        return;
+      }
+      if (via.kind !== "effective") {
+        existing.via = existing.via.filter(
+          (candidate) => candidate.kind !== "effective",
+        );
+      }
+      if (
+        !existing.via.some(
+          (candidate) =>
+            candidate.kind === via.kind &&
+            candidate.team_slug === via.team_slug,
+        )
+      ) {
+        existing.via.push(via);
+      }
       return;
     }
     this.byKey.set(key, { id, name, capability, via: [via] });
@@ -130,14 +132,20 @@ export const GET = withErrorHandler(
     const knowledgeBases = new AccessAccumulator();
     const skills = new AccessAccumulator();
     const workflows = new AccessAccumulator();
+    const datasourceNamesPromise = loadDatasourceNames();
 
     // Wave 1: user profile + owned grants in parallel. Owned grants only need
     // the user's subject id, which equals the URL `id` param (`kcUser.id ?? id`
     // always resolves to `id`), so both can start immediately.
     const [kcUser] = await Promise.all([
       getRealmUserById(id),
-      addOwnedGrants(id, { agents, skills, workflows }),
+      addDirectGrants(
+        id,
+        { agents, knowledgeBases, skills, workflows },
+        datasourceNamesPromise,
+      ),
     ]);
+    const datasourceNameById = await datasourceNamesPromise;
 
     const buildAccess = (): AccessGroups => ({
       agents: agents.toSorted(),
@@ -187,7 +195,7 @@ export const GET = withErrorHandler(
     // and are fully independent of each other.
     const slugs = [...roleBySlug.keys()];
     const cache = new TeamResourceListingCache();
-    const [teamDocs, agentDocs, resourceIdsBySlug, toolEntries, kbGrantsBySlug] = await Promise.all([
+    const [teamDocs, agentDocs, resourceIdsBySlug, toolEntries, ragEntries] = await Promise.all([
       getCollection<Team>("teams").then((col) =>
         col.find({ slug: { $in: slugs } } as never).toArray(),
       ),
@@ -201,9 +209,29 @@ export const GET = withErrorHandler(
           await cache.listTeamResourceObjectIds({ teamSlug: slug, type: "tool", relation: "caller" }),
         ] as [string, string[]]),
       ),
-      listTeamKbGrantsBatch(slugs).catch((err) => {
-        console.error("[Admin UserAccess] failed to load OpenFGA KB grants", err);
-        return new Map<string, { kbIds: string[]; permissions: Record<string, KbPermission> }>();
+      Promise.all(
+        slugs.map(async (slug) => {
+          const searchPromise = cache.listTeamResourceObjectIds({
+            teamSlug: slug,
+            type: "knowledge_base",
+            relation: "can_read",
+          });
+          const ownerPromise = roleBySlug.get(slug) === "admin"
+            ? cache.listTeamAdminResourceObjectIds({
+                teamSlug: slug,
+                type: "ingestion_source",
+                relation: "can_manage",
+              })
+            : Promise.resolve([]);
+          const [search, owner] = await Promise.all([
+            searchPromise,
+            ownerPromise,
+          ]);
+          return [slug, { search, owner }] as const;
+        }),
+      ).catch((err) => {
+        console.error("[Admin UserAccess] failed to load RAG access", err);
+        return [] as Array<readonly [string, { search: string[]; owner: string[] }]>;
       }),
     ]);
 
@@ -214,6 +242,7 @@ export const GET = withErrorHandler(
       agentDocs.map((a) => [String(a._id), a.name ?? String(a._id)] as [string, string]),
     );
     const toolsBySlug = new Map(toolEntries);
+    const ragBySlug = new Map(ragEntries);
 
     for (const slug of slugs) {
       const role = roleBySlug.get(slug)!;
@@ -254,16 +283,25 @@ export const GET = withErrorHandler(
         workflows.add(workflowId, "use", workflowId, via);
       }
 
-      // Knowledge bases — OpenFGA team→KB grants with their strongest per-KB
-      // permission; member sees read/ingest, admin also sees admin grants.
-      const kbGrants = kbGrantsBySlug.get(slug);
-      if (kbGrants?.kbIds.length) {
-        for (const kbId of kbGrants.kbIds) {
-          const permission = kbGrants.permissions[kbId] ?? "read";
-          if (roleSatisfies(role, KB_PERMISSION_REQUIRED_ROLE[permission])) {
-            knowledgeBases.add(kbId, permission, kbId, via);
-          }
-        }
+      // RAG Search and datasource Owner access are independent grants. Search
+      // includes collection-inherited access; Owner follows the connector
+      // configuration rather than the indexed knowledge-base object.
+      const ragAccess = ragBySlug.get(slug);
+      for (const datasourceId of ragAccess?.search ?? []) {
+        knowledgeBases.add(
+          datasourceId,
+          "search",
+          datasourceNameById.get(datasourceId) ?? datasourceId,
+          via,
+        );
+      }
+      for (const datasourceId of ragAccess?.owner ?? []) {
+        knowledgeBases.add(
+          datasourceId,
+          "owner",
+          datasourceNameById.get(datasourceId) ?? datasourceId,
+          via,
+        );
       }
     }
 
@@ -277,24 +315,47 @@ export const GET = withErrorHandler(
 
 /** `via` attribution for a personally-owned (non-team) grant. */
 const OWNED_VIA: AccessVia = { kind: "owned", team_slug: "", team_name: "", role: "admin" };
+const EFFECTIVE_VIA: AccessVia = {
+  kind: "effective",
+  team_slug: "",
+  team_name: "",
+  role: "member",
+};
 
 /**
- * Surface resources the user personally OWNS (`user:<sub> owner <type>:<id>`)
- * — agents, skills, workflows authored by them — independent of any team. Owner
- * implies manage for agents; use for skills/workflows. Fail-soft: a transient
- * OpenFGA error just omits owner-direct rows (team grants still render).
+ * Surface direct ownership plus effective RAG access for the selected user.
+ * Effective RAG checks retain collection, global, and external-group access
+ * that cannot be reconstructed from local team membership rows.
  */
-async function addOwnedGrants(
+async function addDirectGrants(
   subject: string,
-  acc: { agents: AccessAccumulator; skills: AccessAccumulator; workflows: AccessAccumulator },
+  acc: {
+    agents: AccessAccumulator;
+    knowledgeBases: AccessAccumulator;
+    skills: AccessAccumulator;
+    workflows: AccessAccumulator;
+  },
+  datasourceNamesPromise: Promise<Map<string, string>>,
 ): Promise<void> {
   if (!subject) return;
   const user = `user:${subject}`;
   try {
-    const [ownedAgents, ownedSkills, ownedWorkflows] = await Promise.all([
+    const [
+      ownedAgents,
+      ownedSkills,
+      ownedWorkflows,
+      ownedSources,
+      manageableSources,
+      searchableKnowledgeBases,
+      datasourceNameById,
+    ] = await Promise.all([
       listOpenFgaObjects({ user, relation: "owner", type: "agent" }),
       listOpenFgaObjects({ user, relation: "owner", type: "skill" }),
       listOpenFgaObjects({ user, relation: "owner", type: "task" }),
+      listOpenFgaObjects({ user, relation: "owner", type: "ingestion_source" }),
+      listOpenFgaObjects({ user, relation: "can_manage", type: "ingestion_source" }),
+      listOpenFgaObjects({ user, relation: "can_read", type: "knowledge_base" }),
+      datasourceNamesPromise,
     ]);
     for (const obj of ownedAgents.objects) {
       const id = stripType(obj, "agent");
@@ -308,8 +369,59 @@ async function addOwnedGrants(
       const id = stripType(obj, "task");
       if (id) acc.workflows.add(id, "use", id, OWNED_VIA);
     }
+    const personallyOwnedSources = new Set<string>();
+    for (const obj of ownedSources.objects) {
+      const id = stripType(obj, "ingestion_source");
+      if (!id) continue;
+      personallyOwnedSources.add(id);
+      acc.knowledgeBases.add(
+        id,
+        "owner",
+        datasourceNameById.get(id) ?? id,
+        OWNED_VIA,
+      );
+    }
+    for (const obj of manageableSources.objects) {
+      const id = stripType(obj, "ingestion_source");
+      if (!id || personallyOwnedSources.has(id)) continue;
+      acc.knowledgeBases.add(
+        id,
+        "owner",
+        datasourceNameById.get(id) ?? id,
+        EFFECTIVE_VIA,
+      );
+    }
+    for (const obj of searchableKnowledgeBases.objects) {
+      const id = stripType(obj, "knowledge_base");
+      if (!id) continue;
+      acc.knowledgeBases.add(
+        id,
+        "search",
+        datasourceNameById.get(id) ?? id,
+        EFFECTIVE_VIA,
+      );
+    }
   } catch (err) {
-    console.error("[Admin UserAccess] failed to load owner-direct grants", err);
+    console.error("[Admin UserAccess] failed to load direct access", err);
+  }
+}
+
+async function loadDatasourceNames(): Promise<Map<string, string>> {
+  try {
+    const collection = await getCollection<
+      Pick<IngestionSourceConfig, "source_id" | "name">
+    >(
+      "rag_ingestion_sources",
+    );
+    const rows = await collection
+      .find({}, { projection: { _id: 0, source_id: 1, name: 1 } })
+      .toArray();
+    return new Map(
+      rows.map((row) => [row.source_id, row.name || row.source_id]),
+    );
+  } catch (err) {
+    console.error("[Admin UserAccess] failed to load datasource names", err);
+    return new Map();
   }
 }
 

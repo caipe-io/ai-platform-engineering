@@ -7,7 +7,7 @@ getPaginationParams,
 paginatedResponse,
 successResponse,
 validateRequired,
-validateUUID,
+validateConversationId,
 withAuth,
 withErrorHandler,
 } from '@/lib/api-middleware';
@@ -43,7 +43,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
     validateRequired(body, ['conversation_id']);
 
-    if (!validateUUID(body.conversation_id)) {
+    if (!validateConversationId(body.conversation_id)) {
       throw new ApiError('Invalid conversation ID format', 400);
     }
     await requireResourcePermission(session, {

@@ -29,24 +29,6 @@ export interface WebexSpaceHealthSummaryTarget {
   spaceId: string;
 }
 
-function buildExtraRouteWarnings(route: ConnectorRuntimeRouteDiagnostic): string[] {
-  // Webex surfaces explicit listen-mode warnings at the per-route
-  // level. Slack instead folds these into the ambiguous-route warning
-  // — so this function is Webex-specific and does not run for Slack.
-  const warnings: string[] = [];
-  if (route.listen === "mention") {
-    warnings.push(
-      `Route agent:${route.agent_id} only listens to mentions. Plain space messages will be ignored.`,
-    );
-  }
-  if (route.listen === "message") {
-    warnings.push(
-      `Route agent:${route.agent_id} only listens to plain messages. @mentions will not use this route.`,
-    );
-  }
-  return warnings;
-}
-
 function webexDiagnosticsAdapter(botId: string): ConnectorDiagnosticsAdapter {
   return {
   kind: "webex_space",
@@ -71,7 +53,6 @@ function webexDiagnosticsAdapter(botId: string): ConnectorDiagnosticsAdapter {
       users: route.users ? { listen: route.users.listen } : undefined,
     }));
   },
-  buildExtraRouteWarnings,
   shouldSurfaceLastRuntimeError: (lastError, openfgaError) => {
     // The Webex bot logs OPENFGA_READ_FAILED through audit-service when
     // tuple reads fail. Once OpenFGA is reachable again, the stored

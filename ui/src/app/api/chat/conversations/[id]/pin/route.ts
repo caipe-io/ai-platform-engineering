@@ -3,7 +3,7 @@
 import {
 ApiError,
 successResponse,
-validateUUID,
+validateConversationId,
 withAuth,
 withErrorHandler,
 } from '@/lib/api-middleware';
@@ -21,7 +21,7 @@ export const POST = withErrorHandler(async (
     const params = await context.params;
     const conversationId = params.id;
 
-    if (!validateUUID(conversationId)) {
+    if (!validateConversationId(conversationId)) {
       throw new ApiError('Invalid conversation ID format', 400);
     }
 

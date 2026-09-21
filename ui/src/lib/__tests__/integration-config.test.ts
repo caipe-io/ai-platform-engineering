@@ -5,7 +5,10 @@
 import {
   getIntegrationAvailability,
   getSlackIntegrationToken,
+  getWebexLinkAllowedOrgId,
+  getWebexLinkScopes,
   isSlackIntegrationEnabled,
+  isWebexIdentityLinkingEnabled,
   isWebexIntegrationEnabled,
 } from "../integration-config";
 
@@ -19,6 +22,11 @@ const ENV_KEYS = [
   "WEBEX_INTEGRATION_ENABLED",
   "WEBEX_BOT_ADMIN_CLIENT_SECRET",
   "KEYCLOAK_WEBEX_BOT_ADMIN_CLIENT_SECRET",
+  "WEBEX_LINK_CLIENT_ID",
+  "WEBEX_LINK_CLIENT_SECRET",
+  "WEBEX_LINK_REDIRECT_URI",
+  "WEBEX_LINK_ALLOWED_ORG_ID",
+  "WEBEX_LINK_SCOPES",
 ] as const;
 
 const originalEnv = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -73,4 +81,39 @@ it("returns both surface flags from the shared availability helper", () => {
   process.env.WEBEX_INTEGRATION_ENABLED = "on";
 
   expect(getIntegrationAvailability()).toEqual({ slack: true, webex: true });
+});
+
+describe("isWebexIdentityLinkingEnabled", () => {
+  it("is disabled when nothing is configured", () => {
+    expect(isWebexIdentityLinkingEnabled()).toBe(false);
+  });
+
+  it("fails closed when the org allowlist is missing, even with client id/secret set", () => {
+    process.env.WEBEX_LINK_CLIENT_ID = "client-id";
+    process.env.WEBEX_LINK_CLIENT_SECRET = "client-secret";
+    process.env.WEBEX_LINK_REDIRECT_URI = "http://localhost:3000/api/auth/webex-link/callback";
+
+    expect(isWebexIdentityLinkingEnabled()).toBe(false);
+  });
+
+  it("is enabled only once every required var is set, and ignores placeholders", () => {
+    process.env.WEBEX_LINK_CLIENT_ID = "<your-client-id>";
+    process.env.WEBEX_LINK_CLIENT_SECRET = "client-secret";
+    process.env.WEBEX_LINK_REDIRECT_URI = "http://localhost:3000/api/auth/webex-link/callback";
+    process.env.WEBEX_LINK_ALLOWED_ORG_ID = "org-1";
+    expect(isWebexIdentityLinkingEnabled()).toBe(false);
+
+    process.env.WEBEX_LINK_CLIENT_ID = "client-id";
+    expect(isWebexIdentityLinkingEnabled()).toBe(true);
+  });
+
+  it("defaults the link scopes and reads the org allowlist", () => {
+    expect(getWebexLinkScopes()).toBe("spark:people_read");
+    expect(getWebexLinkAllowedOrgId()).toBeNull();
+
+    process.env.WEBEX_LINK_SCOPES = "spark:people_read spark:kms";
+    process.env.WEBEX_LINK_ALLOWED_ORG_ID = "org-1";
+    expect(getWebexLinkScopes()).toBe("spark:people_read spark:kms");
+    expect(getWebexLinkAllowedOrgId()).toBe("org-1");
+  });
 });

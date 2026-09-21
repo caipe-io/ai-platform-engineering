@@ -1,12 +1,12 @@
 "use client";
 
 import type { ChangelogRelease } from "@/app/api/changelog/route";
+import { ApplicationVersion } from "@/components/layout/ApplicationVersion";
 import { ReportProblemDialog } from "@/components/ticket/ReportProblemDialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -19,7 +19,7 @@ import Image from "next/image";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import { useCallback,useEffect,useRef,useState } from "react";
 
-const CHANGELOG_URL = "https://github.com/cnoe-io/ai-platform-engineering/blob/main/CHANGELOG.md";
+const RELEASES_URL = "https://github.com/caipe-io/ai-platform-engineering/releases";
 
 export function UserMenu(): React.ReactElement | null {
   const { data: session,status } = useSession();
@@ -244,17 +244,17 @@ export function UserMenu(): React.ReactElement | null {
           <DialogHeader className="border-b border-border p-6 pb-4">
             <div className="flex items-center gap-3">
               <span className="gradient-primary-br rounded-xl p-2"><Info className="h-5 w-5 text-white" /></span>
-              <div>
-                <DialogTitle>About — {config.appName}</DialogTitle>
-                <DialogDescription>{config.tagline}</DialogDescription>
-              </div>
+              <DialogTitle>About</DialogTitle>
             </div>
           </DialogHeader>
           <div className="max-h-[60vh] overflow-y-auto p-6">
+            <div className="mb-5 rounded-lg border border-border bg-muted/20 px-3 py-2">
+              <ApplicationVersion />
+            </div>
             <div className="mb-4 flex items-center justify-between gap-4">
               <h3 className="text-sm font-semibold">Recent changes</h3>
-              <a className="flex items-center gap-1 text-xs text-primary hover:underline" href={CHANGELOG_URL} rel="noopener noreferrer" target="_blank">
-                Full changelog <ExternalLink className="h-3 w-3" />
+              <a className="flex items-center gap-1 text-xs text-primary hover:underline" href={RELEASES_URL} rel="noopener noreferrer" target="_blank">
+                Release notes <ExternalLink className="h-3 w-3" />
               </a>
             </div>
             {changelogLoading ? (

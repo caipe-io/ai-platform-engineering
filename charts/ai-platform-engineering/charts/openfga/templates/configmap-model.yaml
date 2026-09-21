@@ -9,11 +9,13 @@ data:
   authorization-model.json: |-
 {{ .Files.Get "authorization-model.json" | indent 4 }}
   seed.py: |-
+    import base64
     import json
     import os
     import sys
     import time
     import urllib.error
+    import urllib.parse
     import urllib.request
     from pathlib import Path
 
@@ -23,6 +25,10 @@ data:
     SEED_OBJECT = os.environ.get("OPENFGA_SEED_OBJECT", "mcp_gateway:list").strip()
     SEED_RELATION = os.environ.get("OPENFGA_SEED_RELATION", "caller").strip()
     SEED_TUPLES = os.environ.get("OPENFGA_SEED_TUPLES", "").strip()
+    KEYCLOAK_TOKEN_URL = os.environ.get("KEYCLOAK_TOKEN_URL", "").strip()
+    PLATFORM_CLIENT_ID = os.environ.get("KEYCLOAK_PLATFORM_CLIENT_ID", "").strip()
+    PLATFORM_CLIENT_SECRET = os.environ.get("KEYCLOAK_PLATFORM_CLIENT_SECRET", "").strip()
+    ORG_OBJECT = os.environ.get("OPENFGA_ORG_OBJECT", "organization:caipe").strip()
 
     def request(method, path, body=None):
         data = None
@@ -65,6 +71,45 @@ data:
             out.append(normalized)
         return out
 
+    def platform_service_account_sub():
+        body = urllib.parse.urlencode({
+            "grant_type": "client_credentials",
+            "client_id": PLATFORM_CLIENT_ID,
+            "client_secret": PLATFORM_CLIENT_SECRET,
+        }).encode("utf-8")
+        last_error = None
+        for attempt in range(30):
+            try:
+                req = urllib.request.Request(
+                    KEYCLOAK_TOKEN_URL,
+                    data=body,
+                    method="POST",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    token = json.loads(resp.read().decode("utf-8"))["access_token"]
+                payload = token.split(".")[1]
+                payload += "=" * (-len(payload) % 4)
+                claims = json.loads(base64.urlsafe_b64decode(payload))
+                sub = str(claims.get("sub", "")).strip()
+                if sub:
+                    return sub
+                last_error = "token has no sub claim"
+            except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError) as exc:
+                last_error = exc
+            print(f"waiting for Keycloak token ({attempt + 1}/30)...", file=sys.stderr)
+            time.sleep(2)
+        raise SystemExit(f"could not resolve platform service-account sub: {last_error}")
+
+    def ensure_tuple(store_id, tuple_key):
+        allowed = request("POST", f"/stores/{store_id}/check", {"tuple_key": tuple_key}).get("allowed")
+        label = f"{tuple_key['user']} {tuple_key['relation']} {tuple_key['object']}"
+        if allowed:
+            print(f"tuple already present for {label}")
+            return
+        request("POST", f"/stores/{store_id}/write", {"writes": {"tuple_keys": [tuple_key]}})
+        print(f"tuple written for {label}")
+
     wait_ready()
     stores = request("GET", "/stores").get("stores", [])
     store_id = next((store.get("id") for store in stores if store.get("name") == STORE_NAME), None)
@@ -82,10 +127,13 @@ data:
     if SEED_SUB:
         seed_tuples.append({"user": f"user:{SEED_SUB}", "relation": SEED_RELATION, "object": SEED_OBJECT})
     seed_tuples.extend(configured_seed_tuples())
+    if KEYCLOAK_TOKEN_URL and PLATFORM_CLIENT_ID and PLATFORM_CLIENT_SECRET:
+        seed_tuples.append({
+            "user": f"service_account:{platform_service_account_sub()}",
+            "relation": "auditor",
+            "object": ORG_OBJECT,
+        })
 
     for tuple_key in seed_tuples:
-        allowed = request("POST", f"/stores/{store_id}/check", {"tuple_key": tuple_key}).get("allowed")
-        if not allowed:
-            request("POST", f"/stores/{store_id}/write", {"writes": {"tuple_keys": [tuple_key]}})
-            print(f"tuple written for {tuple_key['user']} {tuple_key['relation']} {tuple_key['object']}")
+        ensure_tuple(store_id, tuple_key)
 {{- end }}

@@ -47,6 +47,11 @@ class UserContext(BaseModel):
 
     email: str
     name: str | None = None
+    # Keycloak subject (UUID). OpenFGA/CAS key subjects by ``sub``, so this is
+    # what agent-use authorization evaluates against. For autonomous
+    # (unattended) runs the scheduler puts the task owner's sub here so the
+    # decision is made on the owner, not the service principal.
+    sub: str | None = None
     groups: list[str] = []
     is_admin: bool = False
     raw_claims: dict[str, Any] = {}
@@ -548,7 +553,8 @@ class DynamicAgentConfigBase(BaseModel):
             "search tool is pinned to. Narrows, never widens: the runtime "
             "intersects this list with the caller's RBAC-accessible datasources, "
             "so None preserves the legacy 'search everything the caller can see' "
-            "behavior, while an explicit empty list disables RAG tools."
+            "behavior, while an explicit empty list keeps RAG tools available "
+            "with no indexed content in scope."
         ),
     )
     rag_collection_ids: list[str] | None = Field(
@@ -665,6 +671,13 @@ class ChatRequest(BaseModel):
     agent_id: str = Field(..., description="Dynamic agent config ID")
     protocol: str = Field("custom", pattern=r"^(custom|agui)$", description="Wire protocol: 'custom' or 'agui'")
     trace_id: str | None = Field(None, description="Optional trace ID for Langfuse tracing")
+    autonomous: bool = Field(
+        False,
+        description=(
+            "True when the scheduler/webhook runtime drives this call unattended. "
+            "Requires autonomous team entitlement in addition to agent use access."
+        ),
+    )
     client_context: ClientContext | None = Field(None, description="Opaque client context for system prompt rendering")
     config_override: dict | None = Field(
         None,

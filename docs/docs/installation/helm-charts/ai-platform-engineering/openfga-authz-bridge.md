@@ -14,17 +14,17 @@ Envoy ext_authz bridge that adapts AgentGateway authorization checks to OpenFGA
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.1.1` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install openfga-authz-bridge oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5.68
+helm install openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.1
 
 # Upgrade an existing release
-helm upgrade openfga-authz-bridge oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5.68
+helm upgrade openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.1
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install openfga-authz-bridge oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5.68 \
+helm install openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.1 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install openfga-authz-bridge oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5.68 \
+helm install openfga-authz-bridge oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.1 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/openfga-authz-bridge --version 1.1.1
 ```
 
 ## Reading the Values Table
@@ -60,14 +60,16 @@ helm show values oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5
 | affinity | object | `{}` |  |
 | agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
 | agentContext.existingSecret.name | string | `""` |  |
+| audit.allowRollupFlushSeconds | int | `60` |  |
 | audit.enabled | bool | `true` |  |
+| audit.fullFidelityAllows | bool | `false` |  |
 | audit.serviceUrl | string | `"http://{{ .Release.Name }}-audit-service:8010"` |  |
 | audit.subjectSalt | string | `"caipe-098-audit"` |  |
 | audit.tenantId | string | `"default"` |  |
 | callerToolCheck.enabled | bool | `false` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/openfga-authz-bridge"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/openfga-authz-bridge"` |  |
 | image.tag | string | `""` |  |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` |  |
@@ -99,6 +101,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/openfga-authz-bridge --version 0.5
 | service.port | int | `9100` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.annotations | object | `{}` |  |
+| serviceAccount.automount | bool | `false` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
 | tokenValidation.algorithms[0] | string | `"RS256"` |  |

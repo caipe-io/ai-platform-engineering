@@ -44,6 +44,37 @@ def truncate_tool_result(content: str, limit: int = TOOL_RESULT_DISPLAY_LIMIT) -
     return content[:limit] + f"...[{remaining} chars]"
 
 
+def normalize_tool_message_content(content: Any) -> str:
+    """Coerce ``ToolMessage.content`` into a flat string.
+
+    LangChain >= 0.3 may return ``ToolMessage.content`` as either ``str``
+    or ``list[dict | str]`` (content blocks). AWS Bedrock and many MCP
+    tools that emit ``TextContent`` items arrive as the list shape.
+
+    Downstream consumers in the autonomous-agents pipeline (the Webex
+    thread-map scanner in particular -- it grepps ``messageId=...`` out
+    of the artifact text) need a single string. Mirrors the helper in
+    ``multi_agents/platform_engineer/protocol_bindings/a2a/agent_executor.py``
+    so the two streaming paths stay in sync.
+
+    Returns an empty string for ``None`` / unknown shapes; the caller is
+    expected to check truthiness before emitting a ``result`` field.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    return ""
+
+
 class LangGraphStreamHelper:
     """Stateful helper for parsing LangGraph stream chunks.
 

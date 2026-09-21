@@ -19,6 +19,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "openfga.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:

@@ -2,8 +2,8 @@
  * Unit tests for InsightsWidget component
  *
  * Tests:
- * - Loading state: shows skeleton loader
- * - Empty state: shows "Start chatting" message when stats is null
+ * - Loading state: shows skeleton loader while the fetch is in flight
+ * - Empty state: shows "Start chatting" message when stats resolve to null-ish
  * - Renders total conversations count
  * - Renders conversations this week
  * - Renders messages this week
@@ -42,6 +42,17 @@ jest.mock('@/lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }))
 
+jest.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { email: 'test@example.com' } }, status: 'authenticated' }),
+}))
+
+const mockGetUserStats = jest.fn()
+jest.mock('@/lib/api-client', () => ({
+  apiClient: {
+    getUserStats: () => mockGetUserStats(),
+  },
+}))
+
 // ============================================================================
 // Imports — after mocks
 // ============================================================================
@@ -66,59 +77,76 @@ function makeStats(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function neverResolves() {
+  return new Promise(() => {})
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
 
 describe('InsightsWidget', () => {
+  beforeEach(() => {
+    mockGetUserStats.mockReset()
+  })
+
   describe('loading state', () => {
     it('shows loading skeleton', () => {
-      render(<InsightsWidget stats={null} loading={true} />)
+      mockGetUserStats.mockReturnValue(neverResolves())
+      render(<InsightsWidget />)
       expect(screen.getByTestId('insights-widget-loading')).toBeInTheDocument()
     })
 
-    it('does not render stats when loading', () => {
-      render(<InsightsWidget stats={makeStats()} loading={true} />)
+    it('does not render stats while loading', () => {
+      mockGetUserStats.mockReturnValue(neverResolves())
+      render(<InsightsWidget />)
       expect(screen.queryByTestId('total-conversations')).not.toBeInTheDocument()
     })
   })
 
   describe('empty state', () => {
-    it('shows "Start chatting" message when stats is null', () => {
-      render(<InsightsWidget stats={null} loading={false} />)
-      expect(screen.getByTestId('insights-widget-empty')).toBeInTheDocument()
+    it('shows "Start chatting" message when the fetch fails', async () => {
+      mockGetUserStats.mockRejectedValue(new Error('nope'))
+      render(<InsightsWidget />)
+      expect(await screen.findByTestId('insights-widget-empty')).toBeInTheDocument()
       expect(screen.getByText('Start chatting to build your insights.')).toBeInTheDocument()
     })
   })
 
   describe('with stats', () => {
     it('renders the widget container', () => {
-      render(<InsightsWidget stats={makeStats()} loading={false} />)
+      mockGetUserStats.mockResolvedValue(makeStats())
+      render(<InsightsWidget />)
       expect(screen.getByTestId('insights-widget')).toBeInTheDocument()
     })
 
-    it('renders total conversations', () => {
-      render(<InsightsWidget stats={makeStats()} loading={false} />)
-      expect(screen.getByTestId('total-conversations')).toHaveTextContent('42')
+    it('renders total conversations', async () => {
+      mockGetUserStats.mockResolvedValue(makeStats())
+      render(<InsightsWidget />)
+      expect(await screen.findByTestId('total-conversations')).toHaveTextContent('42')
     })
 
-    it('renders conversations this week', () => {
-      render(<InsightsWidget stats={makeStats()} loading={false} />)
-      expect(screen.getByTestId('conversations-this-week')).toHaveTextContent('7 this week')
+    it('renders conversations this week', async () => {
+      mockGetUserStats.mockResolvedValue(makeStats())
+      render(<InsightsWidget />)
+      expect(await screen.findByTestId('conversations-this-week')).toHaveTextContent('7 this week')
     })
 
-    it('renders messages this week', () => {
-      render(<InsightsWidget stats={makeStats()} loading={false} />)
-      expect(screen.getByTestId('messages-this-week-value')).toHaveTextContent('35')
+    it('renders messages this week', async () => {
+      mockGetUserStats.mockResolvedValue(makeStats())
+      render(<InsightsWidget />)
+      expect(await screen.findByTestId('messages-this-week-value')).toHaveTextContent('35')
     })
 
     it('renders the section title', () => {
-      render(<InsightsWidget stats={makeStats()} loading={false} />)
+      mockGetUserStats.mockResolvedValue(makeStats())
+      render(<InsightsWidget />)
       expect(screen.getByText('Your Insights')).toBeInTheDocument()
     })
 
     it('renders "View all" link to /insights', () => {
-      render(<InsightsWidget stats={makeStats()} loading={false} />)
+      mockGetUserStats.mockResolvedValue(makeStats())
+      render(<InsightsWidget />)
       const link = screen.getByTestId('view-all-insights')
       expect(link).toBeInTheDocument()
       expect(link).toHaveAttribute('href', '/insights')
@@ -126,9 +154,10 @@ describe('InsightsWidget', () => {
   })
 
   describe('favorite agents', () => {
-    it('renders top agents with names and counts', () => {
-      render(<InsightsWidget stats={makeStats()} loading={false} />)
-      expect(screen.getByTestId('agent-github')).toBeInTheDocument()
+    it('renders top agents with names and counts', async () => {
+      mockGetUserStats.mockResolvedValue(makeStats())
+      render(<InsightsWidget />)
+      expect(await screen.findByTestId('agent-github')).toBeInTheDocument()
       expect(screen.getByTestId('agent-argocd')).toBeInTheDocument()
       expect(screen.getByTestId('agent-aws')).toBeInTheDocument()
       expect(screen.getByText('20 uses')).toBeInTheDocument()
@@ -136,33 +165,34 @@ describe('InsightsWidget', () => {
       expect(screen.getByText('10 uses')).toBeInTheDocument()
     })
 
-    it('limits to top 3 agents', () => {
-      const stats = makeStats({
-        favorite_agents: [
-          { name: 'github', count: 20 },
-          { name: 'argocd', count: 15 },
-          { name: 'aws', count: 10 },
-          { name: 'slack', count: 5 },
-        ],
-      })
-      render(<InsightsWidget stats={stats} loading={false} />)
-      expect(screen.getByTestId('agent-github')).toBeInTheDocument()
+    it('limits to top 3 agents', async () => {
+      mockGetUserStats.mockResolvedValue(
+        makeStats({
+          favorite_agents: [
+            { name: 'github', count: 20 },
+            { name: 'argocd', count: 15 },
+            { name: 'aws', count: 10 },
+            { name: 'slack', count: 5 },
+          ],
+        }),
+      )
+      render(<InsightsWidget />)
+      expect(await screen.findByTestId('agent-github')).toBeInTheDocument()
       expect(screen.getByTestId('agent-argocd')).toBeInTheDocument()
       expect(screen.getByTestId('agent-aws')).toBeInTheDocument()
       expect(screen.queryByTestId('agent-slack')).not.toBeInTheDocument()
     })
 
-    it('shows singular "use" when count is 1', () => {
-      const stats = makeStats({
-        favorite_agents: [{ name: 'github', count: 1 }],
-      })
-      render(<InsightsWidget stats={stats} loading={false} />)
-      expect(screen.getByText('1 use')).toBeInTheDocument()
+    it('shows singular "use" when count is 1', async () => {
+      mockGetUserStats.mockResolvedValue(makeStats({ favorite_agents: [{ name: 'github', count: 1 }] }))
+      render(<InsightsWidget />)
+      expect(await screen.findByText('1 use')).toBeInTheDocument()
     })
 
-    it('hides agents section when no favorite agents', () => {
-      const stats = makeStats({ favorite_agents: [] })
-      render(<InsightsWidget stats={stats} loading={false} />)
+    it('hides agents section when no favorite agents', async () => {
+      mockGetUserStats.mockResolvedValue(makeStats({ favorite_agents: [] }))
+      render(<InsightsWidget />)
+      await screen.findByTestId('total-conversations')
       expect(screen.queryByText('Top Agents')).not.toBeInTheDocument()
     })
   })

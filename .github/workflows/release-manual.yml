@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'New version to release (e.g., 0.2.9, 0.3.0, 1.0.0)'
+        description: 'New version to release (e.g., 1.0.0 or 1.0.0-rc.1)'
         required: true
         type: string
 
@@ -25,7 +25,7 @@ jobs:
       current_version: ${{ steps.validate.outputs.current_version }}
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -44,65 +44,56 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: ✅ Validate version format
+      - name: ✅ Validate version format and monotonicity
+        uses: ./.github/actions/validate-release-tag
+        with:
+          version: ${{ env.RELEASE_VERSION }}
+
+      - name: 📰 Require a release post for the minor series
         run: |
           set -euo pipefail
 
           VERSION="$RELEASE_VERSION"
-          echo "📦 Requested version: $VERSION"
 
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "❌ ERROR: Version must be in semver format (e.g., 0.2.9, 0.3.0, 1.0.0)"
-            echo "   Received: '$VERSION'"
-            exit 1
+          # Release candidates ship before their series post is written; only a
+          # final release must have published notes to link to.
+          if [[ "$VERSION" == *-rc.* ]]; then
+            echo "⏭️  $VERSION is a release candidate — series post not required yet"
+            exit 0
           fi
 
-          echo "✅ Version format is valid"
+          BASE_VERSION="${VERSION%%-*}"
+          SERIES_MAJOR_MINOR="${BASE_VERSION%.*}"
+          SERIES_SLUG="release-${SERIES_MAJOR_MINOR//./-}-0"
 
-      - name: 🔍 Get current version and validate
+          if compgen -G "docs/releases/*${SERIES_SLUG}.md" > /dev/null; then
+            echo "✅ Found release post for the ${SERIES_MAJOR_MINOR}.0 series"
+            exit 0
+          fi
+
+          echo "❌ ERROR: no release post for the ${SERIES_MAJOR_MINOR}.0 series"
+          echo "   Expected a file matching: docs/releases/*${SERIES_SLUG}.md"
+          echo "   Release notes are published once per minor series and are what"
+          echo "   the in-app About dialog and GitHub Release link to, so the post"
+          echo "   must land before $VERSION is tagged."
+          exit 1
+
+      - name: 🔍 Read current version
         id: validate
-        run: |
-          # Extract current version from pyproject.toml (strip any pre-release suffix to bare x.y.z)
-          RAW_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-          CURRENT_BARE=$(echo "$RAW_VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
-          NEW_VERSION="$RELEASE_VERSION"
-
-          echo "📋 Current version (raw): $RAW_VERSION"
-          echo "📋 Current version (bare): $CURRENT_BARE"
-          echo "📦 New version: $NEW_VERSION"
-          echo "current_version=$RAW_VERSION" >> $GITHUB_OUTPUT
-
-          # If current bare version already matches, that's fine (pr-version-bump already ran)
-          if [[ "$CURRENT_BARE" == "$NEW_VERSION" || "$RAW_VERSION" == "$NEW_VERSION" ]]; then
-            echo "✅ Version already at $NEW_VERSION (pr-version-bump likely ran) — will verify files"
-          else
-            # Check for downgrade
-            HIGHER=$(echo -e "$CURRENT_BARE\n$NEW_VERSION" | sort -V | tail -n1)
-            if [[ "$HIGHER" == "$CURRENT_BARE" && "$CURRENT_BARE" != "$NEW_VERSION" ]]; then
-              echo "❌ ERROR: New version ($NEW_VERSION) must be greater than or equal to current version ($CURRENT_BARE)"
-              exit 1
-            fi
-            echo "✅ Version increment validated: $CURRENT_BARE -> $NEW_VERSION"
-          fi
-
-      - name: 🔍 Check tag doesn't already exist
         run: |
           set -euo pipefail
 
-          NEW_VERSION="$RELEASE_VERSION"
-          if git tag -l "$NEW_VERSION" | grep -q .; then
-            echo "❌ ERROR: Tag '$NEW_VERSION' already exists"
-            exit 1
-          fi
-          echo "✅ Tag '$NEW_VERSION' does not exist"
+          RAW_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "📋 Current version: $RAW_VERSION"
+          echo "current_version=$RAW_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: 🐍 Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: 📦 Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       - name: 📦 Prepare release (update files + changelog + verify)
         uses: ./.github/actions/prepare-release
@@ -175,11 +166,21 @@ jobs:
           NEW_VERSION="$RELEASE_VERSION"
           echo "🔄 Creating DRAFT GitHub Release for $NEW_VERSION..."
 
+          # Release notes live once per minor series on the docs site; the release
+          # body points there instead of carrying a second hand-written narrative.
+          BASE_VERSION="${NEW_VERSION%%-*}"
+          SERIES_MAJOR_MINOR="${BASE_VERSION%.*}"
+          SERIES_URL="https://caipe.io/releases/release-${SERIES_MAJOR_MINOR}.0"
+
+          NOTES=$(printf '%s\n\n%s\n' \
+            "<!-- release-initiator:$RELEASE_INITIATOR -->" \
+            "📖 Release notes: [${SERIES_MAJOR_MINOR}.0 release notes]($SERIES_URL)")
+
           gh release create "$NEW_VERSION" \
             --repo "${{ github.repository }}" \
             --title "Release $NEW_VERSION" \
             --generate-notes \
-            --notes "<!-- release-initiator:$RELEASE_INITIATOR -->" \
+            --notes "$NOTES" \
             --draft
 
           echo "✅ Draft release created"

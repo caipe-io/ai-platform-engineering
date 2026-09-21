@@ -38,7 +38,7 @@ jest.mock("@/lib/api-middleware", () => {
       },
     successResponse: (data: unknown, status = 200) => Response.json({ success: true, data }, { status }),
     ApiError,
-    validateUUID: () => true,
+    validateConversationId: () => true,
   };
 });
 

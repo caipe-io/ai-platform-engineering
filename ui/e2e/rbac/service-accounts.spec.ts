@@ -189,18 +189,27 @@ test.describe("mocked service accounts browser regression", () => {
         return true;
       }
 
+      if (
+        path === "/api/admin/service-accounts/sa-sub-playwright/scopes/bulk" &&
+        method === "POST"
+      ) {
+        const body = (await postJson(route)) as { scopes: ScopeRef[] };
+        requests.push({ method, path, body });
+        scopes.push(...body.scopes);
+        items = items.map((item) => ({
+          ...item,
+          scope_counts: counts(scopes),
+        }));
+        await fulfillJson(route, {
+          success: true,
+          data: { added: body.scopes, added_count: body.scopes.length },
+        });
+        return true;
+      }
+
       if (path === "/api/admin/service-accounts/sa-sub-playwright/scopes") {
         const body = (await postJson(route)) as ScopeRef;
         requests.push({ method, path, body });
-        if (method === "POST") {
-          scopes.push(body);
-          items = items.map((item) => ({
-            ...item,
-            scope_counts: counts(scopes),
-          }));
-          await fulfillJson(route, { success: true, data: { added: body } });
-          return true;
-        }
         if (method === "DELETE") {
           const index = scopes.findIndex(
             (scope) => scope.type === body.type && scope.ref === body.ref,
@@ -258,7 +267,6 @@ test.describe("mocked service accounts browser regression", () => {
     await createDialog.getByLabel("Name").fill("incident-bot");
     await createDialog.getByLabel(/Description/).fill("PagerDuty integration");
     await createDialog.getByLabel("Owning team").click();
-    await page.getByLabel("Search teams...").fill("sre");
     await page.getByRole("option", { name: /SRE Team/ }).click();
     await createDialog.getByRole("button", { name: "Grant agents you hold..." }).click();
     await page.getByRole("button", { name: "Incident Resolver" }).first().click({ force: true });
@@ -292,10 +300,10 @@ test.describe("mocked service accounts browser regression", () => {
     await manageDialog.getByRole("button", { name: /Add agents/ }).click();
     await page.getByRole("button", { name: "Runbook Agent" }).first().click({ force: true });
     await manageDialog.getByRole("button", { name: "Add", exact: true }).first().click({ force: true });
-    await expect.poll(() => requests.some((request) => request.method === "POST" && request.path.endsWith("/scopes"))).toBe(true);
+    await expect.poll(() => requests.some((request) => request.method === "POST" && request.path.endsWith("/scopes/bulk"))).toBe(true);
     expect(
-      requests.find((request) => request.method === "POST" && request.path.endsWith("/scopes"))?.body,
-    ).toEqual({ type: "agent", ref: "runbook-agent" });
+      requests.find((request) => request.method === "POST" && request.path.endsWith("/scopes/bulk"))?.body,
+    ).toEqual({ scopes: [{ type: "agent", ref: "runbook-agent" }] });
     await expect(manageDialog.getByText("runbook-agent")).toBeVisible();
 
     await manageDialog.getByRole("button", { name: "Remove tool jira/search" }).click();
@@ -410,15 +418,21 @@ test.describe("mocked service accounts browser regression", () => {
         return true;
       }
 
-      if (path === "/api/admin/service-accounts/sa-sub-full-catalog/scopes" && method === "POST") {
-        const body = (await postJson(route)) as ScopeRef;
+      if (
+        path === "/api/admin/service-accounts/sa-sub-full-catalog/scopes/bulk" &&
+        method === "POST"
+      ) {
+        const body = (await postJson(route)) as { scopes: ScopeRef[] };
         requests.push({ method, path, body });
-        if (body.ref === "github/*") {
+        if (body.scopes.some((scope) => scope.ref === "github/*")) {
           await fulfillJson(route, { success: false, error: "Backend rejected github wildcard" }, 403);
           return true;
         }
-        scopes.push(body);
-        await fulfillJson(route, { success: true, data: { added: body } });
+        scopes.push(...body.scopes);
+        await fulfillJson(route, {
+          success: true,
+          data: { added: body.scopes, added_count: body.scopes.length },
+        });
         return true;
       }
 
@@ -457,7 +471,7 @@ test.describe("mocked service accounts browser regression", () => {
     await page.getByRole("button", { name: "jira: search" }).click({ force: true });
     await dialog.getByRole("button", { name: "Add", exact: true }).first().click({ force: true });
     await expect.poll(() => requests.some((request) => request.method === "POST")).toBe(true);
-    expect(requests.at(-1)?.body).toEqual({ type: "tool", ref: "jira/search" });
+    expect(requests.at(-1)?.body).toEqual({ scopes: [{ type: "tool", ref: "jira/search" }] });
     await expect(dialog.getByText("jira/search")).toBeVisible();
 
     await dialog.getByRole("button", { name: /Add tools/ }).click();
@@ -471,7 +485,7 @@ test.describe("mocked service accounts browser regression", () => {
     await expect(scopeAdd).toBeEnabled();
     await scopeAdd.click({ force: true });
     await expect.poll(() => requests.length).toBe(requestCount + 1);
-    expect(requests.at(-1)?.body).toEqual({ type: "tool", ref: "github/*" });
+    expect(requests.at(-1)?.body).toEqual({ scopes: [{ type: "tool", ref: "github/*" }] });
     await expect(dialog.getByText("Backend rejected github wildcard")).toBeVisible();
     await expect(dialog.getByText("github/*")).toHaveCount(0);
   });
@@ -718,8 +732,10 @@ test.describe("mocked service accounts browser regression", () => {
     await expect(manageDialog.getByText(/No tokens added/)).toBeVisible();
     await expect(manageDialog.getByText("Add a token")).toBeVisible();
 
-    await manageDialog.getByRole("button", { name: "Token provider" }).click();
-    await page.getByRole("option", { name: "GitLab" }).click();
+    const providerSelect = manageDialog.getByRole("combobox", {
+      name: "Token provider",
+    });
+    await providerSelect.selectOption("gitlab");
     const tokenInput = manageDialog.getByLabel("Access token");
     await expect(tokenInput).toHaveAttribute("autocomplete", "off");
     await expect(tokenInput).toHaveAttribute("data-1p-ignore", "true");
@@ -751,10 +767,9 @@ test.describe("mocked service accounts browser regression", () => {
     await expect(manageDialog.getByText("connected")).toBeVisible();
     await expect(manageDialog.getByText("glpat-playwright-secret")).toHaveCount(0);
 
-    await manageDialog.getByRole("button", { name: "Token provider" }).click();
-    await expect(page.getByRole("option", { name: "GitLab" })).toHaveCount(0);
-    await expect(page.getByRole("option", { name: "GitHub" })).toBeVisible();
-    await page.getByRole("option", { name: "GitHub" }).click();
+    await expect(providerSelect.locator('option[value="gitlab"]')).toHaveCount(0);
+    await expect(providerSelect.locator('option[value="github"]')).toHaveCount(1);
+    await providerSelect.selectOption("github");
 
     await manageDialog.getByRole("button", { name: "Remove GitLab credential" }).click();
     await expect(manageDialog.getByText("Remove?")).toBeVisible();
@@ -770,9 +785,8 @@ test.describe("mocked service accounts browser regression", () => {
     ).toEqual({ connection_id: "conn-gitlab" });
     await expect(manageDialog.getByText(/No tokens added/)).toBeVisible();
 
-    await manageDialog.getByRole("button", { name: "Token provider" }).click();
-    await expect(page.getByRole("option", { name: "GitLab" })).toBeVisible();
-    await page.getByRole("option", { name: "GitLab" }).click();
+    await expect(providerSelect.locator('option[value="gitlab"]')).toHaveCount(1);
+    await providerSelect.selectOption("gitlab");
   });
 
   test("hides the Tokens section when service account token passthrough is disabled", async ({
@@ -909,11 +923,17 @@ test.describe("mocked service accounts browser regression", () => {
         return true;
       }
 
-      if (path === "/api/admin/service-accounts/sa-unlinked-platform/scopes" && method === "POST") {
-        const body = (await postJson(route)) as ScopeRef;
+      if (
+        path === "/api/admin/service-accounts/sa-unlinked-platform/scopes/bulk" &&
+        method === "POST"
+      ) {
+        const body = (await postJson(route)) as { scopes: ScopeRef[] };
         requests.push({ method, path, search: url.search, body });
-        scopes.push(body);
-        await fulfillJson(route, { success: true, data: { added: body } });
+        scopes.push(...body.scopes);
+        await fulfillJson(route, {
+          success: true,
+          data: { added: body.scopes, added_count: body.scopes.length },
+        });
         return true;
       }
 
@@ -934,13 +954,10 @@ test.describe("mocked service accounts browser regression", () => {
     const dialog = page.getByRole("dialog", { name: "Unlinked Access" });
     await expect(dialog).toBeVisible();
 
-    await dialog.getByLabel("Scope type").selectOption("tool");
-    await expect(dialog.getByLabel("Scope ref")).toContainText("jira: search");
-    await expect(dialog.getByLabel("Scope ref")).toContainText("github: all tools");
-    await expect(dialog.getByTestId("unlinked-modal-grantable-empty-note")).toHaveCount(0);
-
-    await dialog.getByLabel("Scope ref").selectOption("jira/search");
-    await dialog.getByRole("button", { name: "Add" }).click();
+    await dialog.getByRole("button", { name: "Add tools..." }).click();
+    await dialog.getByRole("button", { name: "jira: search" }).click();
+    await page.keyboard.press("Escape");
+    await dialog.getByRole("button", { name: "Add", exact: true }).click();
 
     await expect
       .poll(() =>
@@ -957,7 +974,7 @@ test.describe("mocked service accounts browser regression", () => {
         requests.some(
           (request) =>
             request.method === "POST" &&
-            request.path === "/api/admin/service-accounts/sa-unlinked-platform/scopes",
+            request.path === "/api/admin/service-accounts/sa-unlinked-platform/scopes/bulk",
         ),
       )
       .toBe(true);
@@ -965,9 +982,9 @@ test.describe("mocked service accounts browser regression", () => {
       requests.find(
         (request) =>
           request.method === "POST" &&
-          request.path === "/api/admin/service-accounts/sa-unlinked-platform/scopes",
+          request.path === "/api/admin/service-accounts/sa-unlinked-platform/scopes/bulk",
       )?.body,
-    ).toEqual({ type: "tool", ref: "jira/search" });
+    ).toEqual({ scopes: [{ type: "tool", ref: "jira/search" }] });
     await expect(dialog.getByText("tool/jira/search")).toBeVisible();
   });
 
@@ -1039,13 +1056,10 @@ test.describe("mocked service accounts browser regression", () => {
     const dialog = page.getByRole("dialog", { name: "Unlinked Access" });
     await expect(dialog).toBeVisible();
 
-    await dialog.getByLabel("Scope type").selectOption("tool");
-    await expect(dialog.getByTestId("unlinked-modal-grantable-empty-note")).toHaveText(
-      /No tools available to grant/i,
-    );
-    await expect(dialog.getByLabel("Scope ref")).toContainText("No more tools available");
-    await expect(dialog.getByLabel("Scope ref")).not.toContainText("jira: all tools");
-    await expect(dialog.getByRole("button", { name: "Add" })).toBeDisabled();
+    await dialog.getByRole("button", { name: "Add tools..." }).click();
+    await expect(dialog.getByText(/No more tools you can grant/i)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog.getByRole("button", { name: "Add", exact: true })).toBeDisabled();
     await expect
       .poll(() =>
         requests.some(

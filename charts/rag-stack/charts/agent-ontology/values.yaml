@@ -27,7 +27,7 @@ revisionHistoryLimit: 3
 # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
 image:
   # This sets the image repository for the corresponding agent.
-  repository: "ghcr.io/cnoe-io/caipe-rag-agent-ontology"
+  repository: "ghcr.io/caipe-io/caipe-rag-agent-ontology"
   # This sets the pull policy for images.
   pullPolicy: IfNotPresent
   # tag defaults to .Chart.AppVersion when not specified
@@ -44,7 +44,7 @@ serviceAccount:
   # Specifies whether a service account should be created
   create: true
   # Automatically mount a ServiceAccount's API credentials?
-  automount: true
+  automount: false
   # Annotations to add to the service account
   annotations: {}
   # The name of the service account to use.

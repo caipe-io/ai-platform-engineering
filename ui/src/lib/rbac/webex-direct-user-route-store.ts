@@ -6,7 +6,6 @@ export interface WebexDirectUserRouteDocument extends Document {
   bot_id: string;
   keycloak_user_id: string;
   user_email: string;
-  expected_webex_email: string;
   webex_user_id?: string;
   agent_id: string;
   status: "active" | "disabled";
@@ -47,11 +46,34 @@ export async function listWebexDirectUserRoutes(botId: string): Promise<WebexDir
     .toArray();
 }
 
+/** Routes for a specific bot, scoped to a known set of user ids — for joining against one page of Keycloak results without fetching every route for the bot. */
+export async function listWebexDirectUserRoutesByUserIds(
+  botId: string,
+  keycloakUserIds: string[],
+): Promise<Map<string, WebexDirectUserRouteDocument>> {
+  if (keycloakUserIds.length === 0) return new Map();
+  const collection = await getRbacCollection<WebexDirectUserRouteDocument>("webexDirectUserRoutes");
+  const normalizedBotId = requiredId(botId, "bot_id");
+  const routes = await collection
+    .find({ bot_id: normalizedBotId, keycloak_user_id: { $in: keycloakUserIds } } as never)
+    .toArray();
+  return new Map(routes.map((route) => [route.keycloak_user_id, route]));
+}
+
+/** All of one user's routes across every Webex bot, keyed by bot_id for lookup. */
+export async function listWebexDirectUserRoutesForUser(
+  keycloakUserId: string,
+): Promise<Map<string, WebexDirectUserRouteDocument>> {
+  const collection = await getRbacCollection<WebexDirectUserRouteDocument>("webexDirectUserRoutes");
+  const normalizedUserId = requiredId(keycloakUserId, "keycloak_user_id");
+  const routes = await collection.find({ keycloak_user_id: normalizedUserId } as never).toArray();
+  return new Map(routes.map((route) => [route.bot_id, route]));
+}
+
 export async function upsertWebexDirectUserRoute(input: {
   botId: string;
   keycloakUserId: string;
   userEmail: string;
-  expectedWebexEmail: string;
   webexUserId?: string;
   agentId: string;
   enabled: boolean;
@@ -69,14 +91,13 @@ export async function upsertWebexDirectUserRoute(input: {
         bot_id: botId,
         keycloak_user_id: keycloakUserId,
         user_email: normalizedEmail(input.userEmail, "user_email"),
-        expected_webex_email: normalizedEmail(input.expectedWebexEmail, "expected_webex_email"),
         ...(input.webexUserId?.trim() ? { webex_user_id: input.webexUserId.trim() } : {}),
         agent_id: requiredId(input.agentId, "agent_id"),
         status: input.enabled ? "active" : "disabled",
         updated_at: now,
         updated_by: actor,
       },
-      $unset: { team_slug: "" },
+      $unset: { team_slug: "", expected_webex_email: "" },
       $setOnInsert: { created_at: now, created_by: actor },
     } as never,
     { upsert: true },

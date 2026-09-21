@@ -3,10 +3,13 @@ version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
-    groups:
-      github:
-        patterns:
-          - "actions/*"
-          - "github/*"
     schedule:
       interval: "weekly"
+    groups:
+      # Grouping minor and patch updates for GitHub Actions
+      github-actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

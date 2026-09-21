@@ -1,6 +1,6 @@
 # 🚀 CAIPE RAG
 
-[![Python](https://img.shields.io/badge/python-3.13%2B-blue?logo=python)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.14-blue?logo=python)](https://www.python.org/)
 [![UV](https://img.shields.io/badge/uv-0.1%2B-blue?logo=python)](https://github.com/astral-sh/uv)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
 import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
 import { getConfig } from "@/lib/config";
@@ -345,7 +346,7 @@ function UserInputForm({
             )}
             
             {field.type === "select" && field.options ? (
-              <select
+              <Select
                 value={formData[field.name] || ""}
                 onChange={(e) => {
                   setFormData(prev => ({ ...prev, [field.name]: e.target.value }));
@@ -362,7 +363,7 @@ function UserInputForm({
                 {field.options.map(opt => (
                   <option key={opt} value={opt}>{opt}</option>
                 ))}
-              </select>
+              </Select>
             ) : field.type === "boolean" ? (
               <div className="flex gap-4">
                 {["Yes", "No"].map(opt => (

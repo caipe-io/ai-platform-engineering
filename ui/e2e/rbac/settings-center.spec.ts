@@ -70,7 +70,7 @@ function createState(): SettingsMockState {
       gradient_theme: "default",
       memory_enabled: "true",
       releaseNotesNotificationsEnabled: true,
-      releaseNotesDismissedVersions: ["playwright"],
+      releaseNotesDismissedVersions: ["0.5.67"],
       show_thinking_enabled: "true",
       show_timestamps_enabled: "false",
       theme: "dark",
@@ -81,7 +81,7 @@ function createState(): SettingsMockState {
       platform_default_agent_id: null,
       slack_default_agent_id: null,
       web_default_agent_id: null,
-      webex_default_agent_id: null,
+      webex_bots: [],
     },
     userPreferenceWrites: [],
   };
@@ -93,6 +93,47 @@ async function installSettingsCenterMocks(
   isAdmin = false,
 ): Promise<void> {
   const handler: MockRouteHandler = async ({ method,path,route }) => {
+    if (path === "/api/version" && method === "GET") {
+      await fulfillJson(route,{
+        version: "0.5.67",
+        gitCommit: "abc1234",
+        buildDate: "2026-08-20T12:00:00.000Z",
+        packageVersion: "0.5.67",
+      });
+      return true;
+    }
+
+    if (path === "/api/platform/health" && method === "GET") {
+      await fulfillJson(route,{
+        status: "healthy",
+        checked_at: "2026-08-20T12:00:00.000Z",
+        summary: { total: 2,healthy: 2,degraded: 0,down: 0,disabled: 0 },
+        capabilities: [
+          {
+            id: "chat-runtime",
+            label: "Chat Runtime",
+            group: "runtime",
+            status: "healthy",
+            required: true,
+            description: "Chat runtime availability.",
+            detail: "Runtime reachable",
+            latency_ms: 12,
+          },
+          {
+            id: "authentication",
+            label: "Authentication",
+            group: "identity",
+            status: "healthy",
+            required: true,
+            description: "Authentication availability.",
+            detail: "SSO enabled",
+            latency_ms: null,
+          },
+        ],
+      });
+      return true;
+    }
+
     if (path === "/api/settings/preferences" && method === "PATCH") {
       const body = (await postJson(route)) as Record<string,unknown>;
       state.settingsPreferenceWrites.push(body);
@@ -233,6 +274,19 @@ test.describe("mocked routed Settings browser regression",() => {
     );
   });
 
+  test("shows the version in About instead of the navigation footer",async ({ page }) => {
+    const state = createState();
+    await installSettingsCenterMocks(page,state);
+    await openSettings(page,"Notifications");
+
+    await expect(page.getByTestId("application-version")).toHaveCount(0);
+    await page.getByRole("button",{ name: /user menu for/i }).click();
+    await page.getByRole("button",{ name: "About" }).click();
+    await expect(page.getByTestId("application-version")).toContainText("Version: v0.5.67");
+    await expect(page.getByTestId("application-version")).not.toHaveAttribute("href");
+    await expect(page.getByRole("link",{ name: "System health" })).toHaveCount(0);
+  });
+
   test("opens Appearance from the header without hydration errors or a duplicate dialog",async ({ page }) => {
     const state = createState();
     await installSettingsCenterMocks(page,state);
@@ -259,6 +313,42 @@ test.describe("mocked routed Settings browser regression",() => {
       "/settings/chat-and-agents",
     );
     await expect(page.getByRole("dialog",{ name: "Settings" })).toHaveCount(0);
+    expect(
+      renderingErrors.filter((message) => /hydration|script tag while rendering/i.test(message)),
+    ).toEqual([]);
+  });
+
+  test("keeps Legacy Light native surfaces light after switching from Dark and reloading",async ({ page }) => {
+    const state = createState();
+    await installSettingsCenterMocks(page,state);
+    const renderingErrors: string[] = [];
+    page.on("console",(message) => {
+      if (message.type() === "error") renderingErrors.push(message.text());
+    });
+    page.on("pageerror",(error) => renderingErrors.push(error.message));
+    const settings = await openSettings(page,"Appearance");
+
+    await settings.getByRole("button",{
+      name: "Legacy Light Original bright neutral palette",
+    }).click();
+
+    await expect(page.locator("html")).toHaveAttribute("data-theme","legacy-light");
+    await expect.poll(() => page.evaluate(() => (
+      getComputedStyle(document.documentElement).colorScheme
+    ))).toBe("light");
+    await expect.poll(() => state.settingsPreferenceWrites).toContainEqual({
+      theme: "legacy-light",
+    });
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+
+    await expect(page.locator("html")).toHaveAttribute("data-theme","legacy-light");
+    await expect.poll(() => page.evaluate(() => (
+      getComputedStyle(document.documentElement).colorScheme
+    ))).toBe("light");
+    await expect(page.getByRole("link",{ name: "Appearance settings" })).toContainText(
+      "Legacy Light",
+    );
     expect(
       renderingErrors.filter((message) => /hydration|script tag while rendering/i.test(message)),
     ).toEqual([]);
@@ -311,14 +401,14 @@ test.describe("mocked routed Settings browser regression",() => {
     await installSettingsCenterMocks(page,state);
     const settings = await openSettings(page);
 
-    await settings.getByRole("button",{ name: "Web default agent" }).click();
+    await settings.getByRole("combobox",{ name: "Web default agent" }).click();
     await page.getByRole("option",{ name: "Incident Response" }).click();
 
     await expect.poll(() => state.userPreferenceWrites).toEqual([
       { web_default_agent_id: "incident-response" },
     ]);
-    await expect(settings.getByRole("button",{ name: "Web default agent" })).toContainText("Incident Response");
-    await expect(settings.getByRole("button",{ name: "Slack default agent" })).toContainText("Use platform default");
+    await expect(settings.getByRole("combobox",{ name: "Web default agent" })).toContainText("Incident Response");
+    await expect(settings.getByRole("combobox",{ name: "Slack default agent" })).toContainText("Use platform default");
     await expect(settings.getByRole("button",{ name: /^save$/i })).toHaveCount(0);
   });
 
@@ -329,11 +419,13 @@ test.describe("mocked routed Settings browser regression",() => {
     const defaults = page.getByRole("main");
 
     await expect(defaults.getByRole("heading",{ level: 1,name: "Defaults" })).toBeVisible();
-    await expect(defaults.getByRole("link",{ name: "Platform configuration" })).toHaveAttribute(
+    await expect(
+      page.getByRole("navigation",{ name: "Admin sections" }).getByRole("link",{ name: "Defaults" }),
+    ).toHaveAttribute(
       "href",
       "/admin/configuration/defaults",
     );
-    await defaults.getByRole("button",{ name: "Platform default agent for new chats" }).click();
+    await defaults.getByRole("combobox",{ name: "Platform default agent for new chats" }).click();
     await page.getByRole("option",{ name: "Incident Response" }).click();
 
     const confirmation = page.getByRole("dialog",{

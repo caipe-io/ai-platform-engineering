@@ -97,6 +97,84 @@ export function buildDecisionEvent(
   };
 }
 
+// Every authorize() call produces a decision, so one durable row per decision
+// makes audit volume scale with request count rather than with anything
+// security-relevant. Denials stay full-fidelity — they're rare and are the
+// signal reviewers actually need. Routine allows are counted in memory, keyed
+// by subject/action/resource/reason, and flushed as periodic aggregate rows
+// carrying `count`. Consumers must SUM `count` rather than count rows.
+//
+// Rollups live in the process, so a recycle can drop an unflushed window: that
+// undercounts an allow metric, and never loses a denial or a policy change.
+// AUDIT_FULL_FIDELITY_ALLOWS=true restores one row per allow for a bounded
+// investigation or compliance window.
+const ALLOW_ROLLUP_FLUSH_MS = parseInt(process.env.AUDIT_ALLOW_ROLLUP_FLUSH_MS ?? "60000", 10);
+
+function fullFidelityAllows(): boolean {
+  return ["1", "true", "yes", "on"].includes(
+    (process.env.AUDIT_FULL_FIDELITY_ALLOWS ?? "").trim().toLowerCase(),
+  );
+}
+
+interface AllowRollupEntry {
+  sample: CasDecisionEvent;
+  count: number;
+  windowStart: Date;
+  windowEnd: Date;
+}
+
+const allowRollups = new Map<string, AllowRollupEntry>();
+let allowFlushTimer: ReturnType<typeof setInterval> | null = null;
+
+function rollupKey(event: CasDecisionEvent): string {
+  // JSON-encoded so a field containing the delimiter can't collide two
+  // distinct decisions into one rollup.
+  return JSON.stringify([
+    event.tenant_id,
+    event.subject_ref,
+    event.action,
+    event.resource_ref,
+    event.reason_code,
+    event.decision_via ?? "",
+    event.workflow_run_id ?? "",
+  ]);
+}
+
+/** Emit one aggregated row per distinct key accumulated since the last flush. */
+export function flushAllowRollups(): void {
+  if (allowRollups.size === 0) return;
+  const pending = Array.from(allowRollups.values());
+  allowRollups.clear();
+  for (const entry of pending) {
+    writeAuditEvent({
+      ...entry.sample,
+      audit_event_id: randomUUID(),
+      ts: entry.windowEnd,
+      // This row summarizes `count` decisions, not one request, so there is no
+      // single correlation_id to attribute it to.
+      correlation_id: `rollup:${randomUUID()}`,
+      count: entry.count,
+      window_start: entry.windowStart,
+      window_end: entry.windowEnd,
+    } as unknown as Record<string, unknown>);
+  }
+}
+
+function recordAllow(event: CasDecisionEvent): void {
+  const key = rollupKey(event);
+  const existing = allowRollups.get(key);
+  if (existing) {
+    existing.count += 1;
+    existing.windowEnd = event.ts;
+  } else {
+    allowRollups.set(key, { sample: event, count: 1, windowStart: event.ts, windowEnd: event.ts });
+  }
+  if (!allowFlushTimer) {
+    allowFlushTimer = setInterval(() => flushAllowRollups(), ALLOW_ROLLUP_FLUSH_MS);
+    if (allowFlushTimer.unref) allowFlushTimer.unref();
+  }
+}
+
 export function emitDecisionAudit(
   subject: Subject,
   resource: Resource,
@@ -106,6 +184,10 @@ export function emitDecisionAudit(
   trustedContext: TrustedAuthorizeContext = {},
 ): void {
   const event = buildDecisionEvent(subject, resource, action, result, ctx, trustedContext);
+  if (event.outcome === "allow" && !fullFidelityAllows()) {
+    recordAllow(event);
+    return;
+  }
   writeAuditEvent(event as unknown as Record<string, unknown>);
 }
 
@@ -215,7 +297,15 @@ export interface CasReconcileEvent {
   actor_hash?: string;
   actor_ref?: string;
   caller_ref?: string;
-  source?: string;
+  /** CAS is the emitting subsystem; `reconcile_scope` identifies the caller. */
+  source: "cas";
+  reconcile_scope: string;
+  action: "reconcile";
+  resource_ref: "authorization_policy:openfga_relationship_tuples";
+  resource_type: "authorization_policy";
+  resource_id: "openfga_relationship_tuples";
+  requested_writes: number;
+  requested_deletes: number;
   writes: number;
   deletes: number;
   outcome: ReconcileAuditOutcome;
@@ -228,6 +318,21 @@ export interface CasReconcileEvent {
   span_id?: string;
 }
 
+const DEFAULT_RECONCILE_SCOPE = "cas-reconciler";
+
+function reconcileScope(source: string | undefined): string {
+  return source?.trim() || DEFAULT_RECONCILE_SCOPE;
+}
+
+function systemPrincipalRef(scope: string): string {
+  const normalized = scope
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `system:${normalized || DEFAULT_RECONCILE_SCOPE}`;
+}
+
 export function emitReconcileAudit(
   diff: { writes: unknown[]; deletes: unknown[] },
   result: { enabled: boolean; writes: number; deletes: number },
@@ -235,7 +340,11 @@ export function emitReconcileAudit(
   options: ReconcileAuditOptions = {},
 ): void {
   const outcome = options.outcome ?? "success";
+  if (outcome === "success" && result.writes === 0 && result.deletes === 0) return;
+
+  const scope = reconcileScope(ctx.source);
   const callerRef = ctx.caller ? principalRef(ctx.caller.type, ctx.caller.id) : undefined;
+  const systemRef = systemPrincipalRef(scope);
   const event: CasReconcileEvent = {
     audit_event_id: randomUUID(),
     ts: new Date(),
@@ -249,8 +358,18 @@ export function emitReconcileAudit(
           actor_ref: callerRef,
           caller_ref: callerRef,
         }
-      : {}),
-    source: ctx.source,
+      : {
+          subject_ref: systemRef,
+          actor_ref: systemRef,
+        }),
+    source: "cas",
+    reconcile_scope: scope,
+    action: "reconcile",
+    resource_ref: "authorization_policy:openfga_relationship_tuples",
+    resource_type: "authorization_policy",
+    resource_id: "openfga_relationship_tuples",
+    requested_writes: diff.writes.length,
+    requested_deletes: diff.deletes.length,
     writes: result.writes,
     deletes: result.deletes,
     outcome,

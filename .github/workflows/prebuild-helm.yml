@@ -2,223 +2,99 @@ name: "[Prebuild] Helm Chart"
 description: "Publish prebuild Helm charts"
 
 on:
-  # Called directly from pr-version-bump workflow
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/prebuild-helm.yml'
+      - '.github/actions/prebuild-status/**'
+      - '.github/actions/prebuild-version/**'
+      - 'charts/**'
+  # Called from prebuild-manual.yml for ad-hoc dispatch runs
   workflow_call:
     inputs:
       pr_number:
         description: 'PR number to publish prebuild for'
         required: true
         type: number
-      new_commit:
-        description: 'Whether a new commit was made by version bump'
-        required: false
-        type: boolean
-        default: false
       head_ref:
         description: 'PR head branch ref'
-        required: false
+        required: true
         type: string
-        default: ''
       head_sha:
         description: 'PR head commit SHA'
-        required: false
+        required: true
         type: string
-        default: ''
       base_ref:
         description: 'PR base branch ref'
-        required: false
+        required: true
         type: string
-        default: ''
       base_sha:
-        description: 'PR base commit SHA to diff against'
+        description: 'PR base commit SHA'
         required: false
         type: string
         default: ''
 
 permissions:
-  actions: read
-  contents: write
+  contents: read
   packages: write
   pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   publish-prebuild:
     name: Publish Prebuild Helm Chart
     runs-on: ubuntu-latest
-    # Skip if a new commit was made (will re-run on next trigger)
-    if: ${{ !inputs.new_commit }}
+    if: |
+      (github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]') &&
+      (
+        startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+        github.event.action != 'closed'
+      )
 
     steps:
-      - name: 📋 Set PR info from inputs
-        id: bump-status
-        run: |
-          echo "pr_number=${{ inputs.pr_number }}" >> $GITHUB_OUTPUT
-          echo "skip=false" >> $GITHUB_OUTPUT
-          echo "📋 Processing PR #${{ inputs.pr_number }}"
-
-      - name: 🔍 Get PR details
-        id: pr-info
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          INPUT_HEAD_REF: ${{ inputs.head_ref }}
-          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
-          INPUT_BASE_REF: ${{ inputs.base_ref }}
-          INPUT_BASE_SHA: ${{ inputs.base_sha }}
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
-          script: |
-            const prNumber = '${{ steps.bump-status.outputs.pr_number }}';
-            if (!prNumber) {
-              core.setFailed('PR number not found in artifact');
-              return;
-            }
-
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: parseInt(prNumber)
-            });
-
-            const inputHeadRef = process.env.INPUT_HEAD_REF || '';
-            const inputHeadSha = process.env.INPUT_HEAD_SHA || '';
-            const headRef = inputHeadRef || pr.head.ref;
-            const headSha = inputHeadSha || pr.head.sha;
-            const inputBaseRef = process.env.INPUT_BASE_REF || '';
-            const inputBaseSha = process.env.INPUT_BASE_SHA || '';
-            const baseRef = inputBaseRef || pr.base.ref;
-            const baseSha = inputBaseSha || pr.base.sha;
-
-            core.setOutput('head_ref', headRef);
-            core.setOutput('head_sha', headSha);
-            core.setOutput('base_ref', baseRef);
-            core.setOutput('base_sha', baseSha);
-            core.setOutput('head_repo_full_name', pr.head.repo.full_name);
-            core.setOutput('labels', pr.labels.map(l => l.name).join(','));
-
-            console.log(`PR #${prNumber}: ${pr.head.ref} -> ${baseRef}`);
-            console.log(`Head ref: ${headRef}`);
-            console.log(`Head SHA: ${headSha}`);
-            console.log(`Base SHA: ${baseSha}`);
-            console.log(`Labels: ${pr.labels.map(l => l.name).join(', ')}`);
+          egress-policy: audit
 
       - name: 📥 Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
-          ref: ${{ steps.pr-info.outputs.head_sha }}
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: 📥 Fetch PR base branch
-        id: base
-        shell: bash
+      - name: 🏷️ Compute prebuild version
+        id: version
+        uses: ./.github/actions/prebuild-version
+        with:
+          head_ref: ${{ inputs.head_ref || github.event.pull_request.head.ref }}
+          base_ref: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
+          base_sha: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+
+      - name: 🔍 Detect Changed Charts
+        id: detect
+        env:
+          BASE_REF: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
         run: |
-          BASE_REF="${{ steps.pr-info.outputs.base_ref }}"
-          BASE_SHA="${{ steps.pr-info.outputs.base_sha }}"
-
           git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-
           if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
             BASE_COMMIT="$BASE_SHA"
           else
-            BASE_COMMIT=$(git rev-parse "origin/${BASE_REF}")
+            BASE_COMMIT="origin/${BASE_REF}"
           fi
-
-          echo "base_ref=$BASE_REF" >> $GITHUB_OUTPUT
-          echo "base_commit=$BASE_COMMIT" >> $GITHUB_OUTPUT
-          echo "📌 Using $BASE_REF at $BASE_COMMIT as Helm prebuild diff base"
-
-      - name: 🔍 Check if chart versions are bumped
-        id: version-check
-        run: |
-          BASE_COMMIT="${{ steps.base.outputs.base_commit }}"
-          BASE_REF="${{ steps.base.outputs.base_ref }}"
-          HEAD_REF="${{ steps.pr-info.outputs.head_ref }}"
-
-          echo "🔍 Checking if chart versions have been bumped..."
-
-          if [[ "$HEAD_REF" == prebuild/* ]]; then
-            echo "✅ prebuild/* branch detected; proceeding even if chart version bump is pending"
-            echo "skip=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Check if any changed chart has unbumped version
-          CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT"..HEAD | grep "^charts/" || true)
-
-          if [[ -z "$CHANGED_FILES" ]]; then
-            echo "skip=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Find unique chart directories
-          CHART_DIRS=""
-          for FILE in $CHANGED_FILES; do
-            DIR=$(dirname "$FILE")
-            while [[ "$DIR" != "." && "$DIR" != "charts" ]]; do
-              if [[ -f "$DIR/Chart.yaml" ]]; then
-                if [[ ! "$CHART_DIRS" =~ "$DIR" ]]; then
-                  CHART_DIRS="$CHART_DIRS $DIR"
-                fi
-                break
-              fi
-              DIR=$(dirname "$DIR")
-            done
-          done
-
-          # Check if any chart version is NOT bumped
-          NEEDS_BUMP=false
-          for CHART_DIR in $CHART_DIRS; do
-            if [[ -f "$CHART_DIR/Chart.yaml" ]]; then
-              CURRENT_VERSION=$(grep "^version:" "$CHART_DIR/Chart.yaml" | awk '{print $2}' | tr -d '"')
-              BASE_VERSION=$(git show "$BASE_COMMIT:$CHART_DIR/Chart.yaml" 2>/dev/null | grep "^version:" | awk '{print $2}' | tr -d '"' || echo "0.0.0")
-
-              if [[ "$CURRENT_VERSION" == "$BASE_VERSION" ]]; then
-                echo "  ⏳ $CHART_DIR: version not bumped yet ($CURRENT_VERSION)"
-                NEEDS_BUMP=true
-              else
-                echo "  ✅ $CHART_DIR: version bumped ($BASE_VERSION → $CURRENT_VERSION)"
-              fi
-            fi
-          done
-
-          if [[ "$NEEDS_BUMP" == "true" ]]; then
-            echo "⏳ Skipping prebuild - waiting for version bump to complete against $BASE_REF"
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "✅ All chart versions bumped, proceeding with prebuild"
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: ⚙️ Set up Helm
-        if: steps.version-check.outputs.skip != 'true'
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with:
-          version: v3.14.0
-
-      - name: 🔐 Login to GHCR
-        if: steps.version-check.outputs.skip != 'true'
-        env:
-          GHCR_TOKEN: ${{ github.token }}
-          GHCR_ACTOR: ${{ github.actor }}
-        run: |
-          echo "${GHCR_TOKEN}" | helm registry login ghcr.io -u "${GHCR_ACTOR}" --password-stdin
-
-      - name: 🔍 Detect Changed Charts
-        if: steps.version-check.outputs.skip != 'true'
-        id: detect
-        run: |
-          # Detect which charts have changes (excluding Chart.lock only changes)
-          BASE_COMMIT="${{ steps.base.outputs.base_commit }}"
 
           CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT"..HEAD)
           echo "Changed files:"
           echo "$CHANGED_FILES"
 
-          # Check which charts changed (excluding Chart.lock only changes)
           RAG_STACK_CHANGED=false
           AI_PLATFORM_CHANGED=false
 
-          # Check rag-stack changes
           if echo "$CHANGED_FILES" | grep -q "^charts/rag-stack/"; then
-            # Check if changes are more than just Chart.lock
             if echo "$CHANGED_FILES" | grep "^charts/rag-stack/" | grep -qv "Chart.lock$"; then
               RAG_STACK_CHANGED=true
               echo "✅ rag-stack chart has substantive changes"
@@ -227,9 +103,7 @@ jobs:
             fi
           fi
 
-          # Check ai-platform-engineering changes
           if echo "$CHANGED_FILES" | grep -q "^charts/ai-platform-engineering/"; then
-            # Check if changes are more than just Chart.lock
             if echo "$CHANGED_FILES" | grep "^charts/ai-platform-engineering/" | grep -qv "Chart.lock$"; then
               AI_PLATFORM_CHANGED=true
               echo "✅ ai-platform-engineering chart has substantive changes"
@@ -241,138 +115,166 @@ jobs:
           echo "rag-stack-changed=$RAG_STACK_CHANGED" >> $GITHUB_OUTPUT
           echo "ai-platform-changed=$AI_PLATFORM_CHANGED" >> $GITHUB_OUTPUT
 
-      - name: 🏷️ Generate Prebuild Versions
-        if: steps.version-check.outputs.skip != 'true'
-        id: version
+      - name: ⚙️ Set up Helm
+        if: steps.detect.outputs.rag-stack-changed == 'true' || steps.detect.outputs.ai-platform-changed == 'true'
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.14.0
+
+      - name: 🔐 Login to GHCR
+        if: steps.detect.outputs.rag-stack-changed == 'true' || steps.detect.outputs.ai-platform-changed == 'true'
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_ACTOR: ${{ github.actor }}
         run: |
-          BASE_COMMIT="${{ steps.base.outputs.base_commit }}"
+          echo "${GHCR_TOKEN}" | helm registry login ghcr.io -u "${GHCR_ACTOR}" --password-stdin
 
-          # Get branch name and remove 'prebuild/' prefix if present
-          BRANCH_NAME="${{ steps.pr-info.outputs.head_ref }}"
-          CLEAN_BRANCH=$(echo "${BRANCH_NAME#prebuild/}" | tr '/' '-' | tr '_' '-' | tr '[:upper:]' '[:lower:]')
+      - name: 📝 Write local chart version normalizer
+        if: steps.detect.outputs.rag-stack-changed == 'true' || steps.detect.outputs.ai-platform-changed == 'true'
+        run: |
+          cat > /tmp/normalize-local-chart-tree-versions.py <<'PY'
+          import re
+          import sys
+          from pathlib import Path
 
-          # Get commit count for this PR
-          COMMIT_COUNT=$(git rev-list --count "$BASE_COMMIT"..HEAD)
+          root = Path(sys.argv[1])
+          chart_version = sys.argv[2]
+          app_version = sys.argv[3]
 
-          echo "clean-branch=$CLEAN_BRANCH" >> $GITHUB_OUTPUT
-          echo "commit-count=$COMMIT_COUNT" >> $GITHUB_OUTPUT
 
-          make_prebuild_version() {
-            local chart_file="$1"
-            local current_version
+          def replace_scalar(line: str, key: str, value: str) -> str:
+              match = re.match(rf"^(\s*{re.escape(key)}:\s*)(.*?)(\s*#.*)?$", line)
+              if not match:
+                  return line
+              return f"{match.group(1)}{value}{match.group(3) or ''}"
 
-            current_version=$(grep "^version:" "$chart_file" | awk '{print $2}' | tr -d '"')
-            if [[ -z "$current_version" ]]; then
-              echo "❌ Failed to read version from $chart_file"
-              exit 1
-            fi
 
-            echo "${current_version}-${CLEAN_BRANCH}-${COMMIT_COUNT}"
-          }
+          def repository_value(line: str) -> str:
+              value = line.split(":", 1)[1].strip()
+              return value.strip("\"'")
 
-          # Generate version for rag-stack if changed
-          if [[ "${{ steps.detect.outputs.rag-stack-changed }}" == "true" ]]; then
-            RAG_STACK_VERSION=$(make_prebuild_version "charts/rag-stack/Chart.yaml")
-            echo "rag-stack version: $RAG_STACK_VERSION"
-            echo "rag-stack-version=$RAG_STACK_VERSION" >> $GITHUB_OUTPUT
-          fi
 
-          # Generate version for ai-platform-engineering if changed
-          if [[ "${{ steps.detect.outputs.ai-platform-changed }}" == "true" ]]; then
-            AI_PLATFORM_VERSION=$(make_prebuild_version "charts/ai-platform-engineering/Chart.yaml")
-            echo "ai-platform-engineering version: $AI_PLATFORM_VERSION"
-            echo "ai-platform-version=$AI_PLATFORM_VERSION" >> $GITHUB_OUTPUT
-          fi
+          def update_chart(path: Path) -> None:
+              original = path.read_text()
+              lines = original.splitlines()
+
+              for index, line in enumerate(lines):
+                  if line.startswith("version:"):
+                      lines[index] = replace_scalar(line, "version", chart_version)
+                      break
+
+              for index, line in enumerate(lines):
+                  if line.startswith("appVersion:"):
+                      lines[index] = replace_scalar(line, "appVersion", app_version)
+                      break
+
+              try:
+                  deps_index = next(index for index, line in enumerate(lines) if line == "dependencies:")
+              except StopIteration:
+                  path.write_text("\n".join(lines) + ("\n" if original.endswith("\n") else ""))
+                  return
+
+              index = deps_index + 1
+              while index < len(lines):
+                  if lines[index] and not lines[index].startswith((" ", "\t", "-")):
+                      break
+                  if not re.match(r"^\s*-\s+name:\s*", lines[index]):
+                      index += 1
+                      continue
+
+                  start = index
+                  index += 1
+                  while index < len(lines):
+                      if re.match(r"^\s*-\s+name:\s*", lines[index]):
+                          break
+                      if lines[index] and not lines[index].startswith((" ", "\t")):
+                          break
+                      index += 1
+
+                  block = lines[start:index]
+                  repository = next(
+                      (repository_value(line) for line in block if re.match(r"^\s*repository:\s*", line)),
+                      "",
+                  )
+                  is_local_dependency = repository == "" or repository.startswith("file://")
+                  if not is_local_dependency:
+                      continue
+
+                  for dep_index in range(start, index):
+                      if re.match(r"^\s*version:\s*", lines[dep_index]):
+                          lines[dep_index] = replace_scalar(lines[dep_index], "version", chart_version)
+                          break
+
+              path.write_text("\n".join(lines) + ("\n" if original.endswith("\n") else ""))
+
+
+          for chart in sorted(root.rglob("Chart.yaml")):
+              update_chart(chart)
+              print(f"normalized {chart}")
+          PY
 
       - name: Upload building rag-stack prebuild status
-        if: steps.version-check.outputs.skip != 'true' && steps.detect.outputs.rag-stack-changed == 'true'
+        if: steps.detect.outputs.rag-stack-changed == 'true'
         uses: ./.github/actions/prebuild-status
         with:
-          pr_number: ${{ steps.bump-status.outputs.pr_number }}
-          head_sha: ${{ steps.pr-info.outputs.head_sha }}
-          head_ref: ${{ steps.pr-info.outputs.head_ref }}
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          head_sha: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+          head_ref: ${{ inputs.head_ref || github.event.pull_request.head.ref }}
           source: helm
           type: helm
           name: rag-stack
-          repository: ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts
-          tag: ${{ steps.version.outputs.rag-stack-version }}
-          ref: oci://ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts/rag-stack
-          version: ${{ steps.version.outputs.rag-stack-version }}
+          repository: ghcr.io/${{ github.repository_owner }}/charts
+          tag: ${{ steps.version.outputs.prebuild_tag }}
+          ref: oci://ghcr.io/${{ github.repository_owner }}/charts/rag-stack
+          version: ${{ steps.version.outputs.prebuild_tag }}
           release_name: rag
           status: building
           artifact_suffix: start
 
       - name: Upload building ai-platform-engineering prebuild status
-        if: steps.version-check.outputs.skip != 'true' && steps.detect.outputs.ai-platform-changed == 'true'
+        if: steps.detect.outputs.ai-platform-changed == 'true'
         uses: ./.github/actions/prebuild-status
         with:
-          pr_number: ${{ steps.bump-status.outputs.pr_number }}
-          head_sha: ${{ steps.pr-info.outputs.head_sha }}
-          head_ref: ${{ steps.pr-info.outputs.head_ref }}
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          head_sha: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+          head_ref: ${{ inputs.head_ref || github.event.pull_request.head.ref }}
           source: helm
           type: helm
           name: ai-platform-engineering
-          repository: ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts
-          tag: ${{ steps.version.outputs.ai-platform-version }}
-          ref: oci://ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts/ai-platform-engineering
-          version: ${{ steps.version.outputs.ai-platform-version }}
+          repository: ghcr.io/${{ github.repository_owner }}/charts
+          tag: ${{ steps.version.outputs.prebuild_tag }}
+          ref: oci://ghcr.io/${{ github.repository_owner }}/charts/ai-platform-engineering
+          version: ${{ steps.version.outputs.prebuild_tag }}
           release_name: ai-platform
           status: building
           artifact_suffix: start
 
       - name: 📦 Package rag-stack Chart
-        if: steps.version-check.outputs.skip != 'true' && steps.detect.outputs.rag-stack-changed == 'true'
+        if: steps.detect.outputs.rag-stack-changed == 'true'
+        env:
+          PREBUILD_TAG: ${{ steps.version.outputs.prebuild_tag }}
         run: |
           echo "📦 Packaging rag-stack..."
 
+          python3 /tmp/normalize-local-chart-tree-versions.py "charts/rag-stack" "$PREBUILD_TAG" "$PREBUILD_TAG"
+
           mkdir -p ./packaged-charts
-
-          # Update Chart.yaml with prebuild version and matching appVersion
-          sed -i "s/^version:.*/version: ${{ steps.version.outputs.rag-stack-version }}/" charts/rag-stack/Chart.yaml
-
-          # Restore appVersion from main so image tags aren't overridden by RC bump
-          # Apply to ALL Chart.yaml files (parent + subcharts)
-          MAIN_APP_VERSION=$(git show origin/main:charts/rag-stack/Chart.yaml 2>/dev/null | grep "^appVersion:" | awk '{print $2}' | tr -d '"')
-          if [[ -n "$MAIN_APP_VERSION" ]]; then
-            echo "📌 Restoring appVersion to $MAIN_APP_VERSION in all charts/ Chart.yaml files"
-            find charts/ -name Chart.yaml -exec grep -l '^appVersion:' {} \; | while read f; do
-              sed -i "s/^appVersion:.*/appVersion: $MAIN_APP_VERSION/" "$f"
-              echo "  ✅ $f"
-            done
-          fi
-
-          # Update dependencies and package
           helm dependency update charts/rag-stack/
           helm package charts/rag-stack/ --destination ./packaged-charts/
 
           echo "✅ rag-stack packaged successfully"
 
       - name: 📦 Package ai-platform-engineering Chart
-        if: steps.version-check.outputs.skip != 'true' && steps.detect.outputs.ai-platform-changed == 'true'
+        if: steps.detect.outputs.ai-platform-changed == 'true'
+        env:
+          PREBUILD_TAG: ${{ steps.version.outputs.prebuild_tag }}
         run: |
           echo "📦 Packaging ai-platform-engineering..."
 
+          python3 /tmp/normalize-local-chart-tree-versions.py "charts/rag-stack" "$PREBUILD_TAG" "$PREBUILD_TAG"
+          python3 /tmp/normalize-local-chart-tree-versions.py "charts/ai-platform-engineering" "$PREBUILD_TAG" "$PREBUILD_TAG"
+
           mkdir -p ./packaged-charts
-
-          # Update Chart.yaml with prebuild version and matching appVersion
-          sed -i "s/^version:.*/version: ${{ steps.version.outputs.ai-platform-version }}/" charts/ai-platform-engineering/Chart.yaml
-
-          # Restore appVersion from main so image tags aren't overridden by RC bump
-          # Apply to ALL Chart.yaml files (parent + subcharts)
-          MAIN_APP_VERSION=$(git show origin/main:charts/ai-platform-engineering/Chart.yaml 2>/dev/null | grep "^appVersion:" | awk '{print $2}' | tr -d '"')
-          if [[ -n "$MAIN_APP_VERSION" ]]; then
-            echo "📌 Restoring appVersion to $MAIN_APP_VERSION in all charts/ Chart.yaml files"
-            find charts/ -name Chart.yaml -exec grep -l '^appVersion:' {} \; | while read f; do
-              sed -i "s/^appVersion:.*/appVersion: $MAIN_APP_VERSION/" "$f"
-              echo "  ✅ $f"
-            done
-          fi
-
-          # If rag-stack was also changed, update its dependency version
-          if [[ "${{ steps.detect.outputs.rag-stack-changed }}" == "true" ]]; then
-            echo "📝 Updating rag-stack dependency version to ${{ steps.version.outputs.rag-stack-version }}"
-            sed -i "/name: rag-stack/,/repository:/ s/version:.*/version: ${{ steps.version.outputs.rag-stack-version }}/" charts/ai-platform-engineering/Chart.yaml
-          fi
 
           # CRITICAL: Always update rag-stack dependencies first
           # ai-platform-engineering depends on rag-stack, which depends on neo4j and milvus
@@ -385,7 +287,6 @@ jobs:
 
           helm package charts/ai-platform-engineering/ --destination ./packaged-charts/
 
-          # Verify dependencies are packaged correctly
           echo "🔍 Verifying rag-stack dependencies..."
           if tar -tzf charts/ai-platform-engineering/charts/rag-stack-*.tgz | grep -q "^rag-stack/charts/neo4j/Chart.yaml"; then
             echo "✅ neo4j dependency verified"
@@ -404,10 +305,10 @@ jobs:
           echo "✅ ai-platform-engineering packaged successfully with all dependencies"
 
       - name: 🚀 Push Prebuild Charts to GHCR
-        if: steps.version-check.outputs.skip != 'true'
+        if: steps.detect.outputs.rag-stack-changed == 'true' || steps.detect.outputs.ai-platform-changed == 'true'
         id: push
         run: |
-          REGISTRY="oci://ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts"
+          REGISTRY="oci://ghcr.io/${{ github.repository_owner }}/charts"
 
           echo "📦 Pushing prebuild charts to $REGISTRY"
 
@@ -423,37 +324,37 @@ jobs:
           done
 
       - name: Upload final rag-stack prebuild status
-        if: ${{ always() && steps.version-check.outputs.skip != 'true' && steps.detect.outputs.rag-stack-changed == 'true' }}
+        if: ${{ always() && steps.detect.outputs.rag-stack-changed == 'true' }}
         uses: ./.github/actions/prebuild-status
         with:
-          pr_number: ${{ steps.bump-status.outputs.pr_number }}
-          head_sha: ${{ steps.pr-info.outputs.head_sha }}
-          head_ref: ${{ steps.pr-info.outputs.head_ref }}
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          head_sha: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+          head_ref: ${{ inputs.head_ref || github.event.pull_request.head.ref }}
           source: helm
           type: helm
           name: rag-stack
-          repository: ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts
-          tag: ${{ steps.version.outputs.rag-stack-version }}
-          ref: oci://ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts/rag-stack
-          version: ${{ steps.version.outputs.rag-stack-version }}
+          repository: ghcr.io/${{ github.repository_owner }}/charts
+          tag: ${{ steps.version.outputs.prebuild_tag }}
+          ref: oci://ghcr.io/${{ github.repository_owner }}/charts/rag-stack
+          version: ${{ steps.version.outputs.prebuild_tag }}
           release_name: rag
           status: ${{ steps.push.outcome == 'success' && 'published' || 'failed' }}
           artifact_suffix: final
 
       - name: Upload final ai-platform-engineering prebuild status
-        if: ${{ always() && steps.version-check.outputs.skip != 'true' && steps.detect.outputs.ai-platform-changed == 'true' }}
+        if: ${{ always() && steps.detect.outputs.ai-platform-changed == 'true' }}
         uses: ./.github/actions/prebuild-status
         with:
-          pr_number: ${{ steps.bump-status.outputs.pr_number }}
-          head_sha: ${{ steps.pr-info.outputs.head_sha }}
-          head_ref: ${{ steps.pr-info.outputs.head_ref }}
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          head_sha: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+          head_ref: ${{ inputs.head_ref || github.event.pull_request.head.ref }}
           source: helm
           type: helm
           name: ai-platform-engineering
-          repository: ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts
-          tag: ${{ steps.version.outputs.ai-platform-version }}
-          ref: oci://ghcr.io/${{ github.repository_owner }}/prebuild-helm-charts/ai-platform-engineering
-          version: ${{ steps.version.outputs.ai-platform-version }}
+          repository: ghcr.io/${{ github.repository_owner }}/charts
+          tag: ${{ steps.version.outputs.prebuild_tag }}
+          ref: oci://ghcr.io/${{ github.repository_owner }}/charts/ai-platform-engineering
+          version: ${{ steps.version.outputs.prebuild_tag }}
           release_name: ai-platform
           status: ${{ steps.push.outcome == 'success' && 'published' || 'failed' }}
           artifact_suffix: final

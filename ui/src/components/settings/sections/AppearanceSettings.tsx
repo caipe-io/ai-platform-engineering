@@ -8,6 +8,7 @@ import {
   FONT_FAMILIES,
   FONT_SIZES,
   applyCachedAppearance,
+  applyColorTheme,
   applyFontFamily,
   applyFontSize,
   applyGradientTheme,
@@ -27,13 +28,14 @@ import {
 import { gradientThemes } from "@/lib/gradient-themes";
 import { cn } from "@/lib/utils";
 import { useKeyedAutoSave } from "@/hooks/use-keyed-auto-save";
+import { useTheme } from "@/components/theme-provider";
 import { Check,Monitor,Palette,Type } from "lucide-react";
-import { useTheme } from "next-themes";
 import { useEffect,useState } from "react";
 
 const THEME_SWATCHES: Record<ColorTheme,string> = {
   system: "bg-gray-400 border-gray-600",
-  light: "bg-white border-gray-200",
+  light: "border-teal-200 bg-gradient-to-br from-teal-50 via-sky-50 to-violet-100",
+  "legacy-light": "bg-white border-gray-200",
   dark: "bg-[#0a0b0f] border-[#1e2028]",
   midnight: "bg-black border-gray-800",
   nord: "bg-[#2e3440] border-[#3b4252]",
@@ -72,10 +74,12 @@ function ChoiceButton({
 
 export function AppearanceSettings(): React.ReactElement {
   const { setTheme } = useTheme();
-  const [preferences,setPreferences] = useState<AppearancePreferences>(() => ({
-    ...getDefaultAppearancePreferences(),
-    ...readCachedAppearancePreferences(),
-  }));
+  // Keep the server and first client render identical. next-themes applies the
+  // cached palette before paint; the settings controls adopt the cached values
+  // after hydration so React does not discard and repaint this subtree.
+  const [preferences,setPreferences] = useState<AppearancePreferences>(
+    getDefaultAppearancePreferences,
+  );
   const [loading,setLoading] = useState(true);
   const [loadError,setLoadError] = useState<string | null>(null);
 
@@ -87,12 +91,20 @@ export function AppearanceSettings(): React.ReactElement {
 
   useEffect(() => {
     let cancelled = false;
-    const cached = preferences;
+    const cached = {
+      ...getDefaultAppearancePreferences(),
+      ...readCachedAppearancePreferences(),
+    };
     const interactionSnapshot = snapshotAppearanceInteractions();
-    applyCachedAppearance(cached);
+    void (async () => {
+      // Yield past hydration before reflecting browser-only storage in React.
+      await Promise.resolve();
+      if (cancelled) return;
+      setPreferences(cached);
+      applyCachedAppearance(cached);
 
-    void apiClient.getSettings()
-      .then((settings) => {
+      try {
+        const settings = await apiClient.getSettings();
         if (cancelled) return;
         const serverPreferences = normalizeServerAppearancePreferences(
           settings.preferences as unknown as Record<string,unknown>,
@@ -104,11 +116,9 @@ export function AppearanceSettings(): React.ReactElement {
             interactionSnapshot,
           );
           applyCachedAppearance(server);
-          setTheme(server.theme);
           return server;
         });
-      })
-      .catch((reason: unknown) => {
+      } catch (reason: unknown) {
         if (!cancelled) {
           setLoadError(
             reason instanceof Error
@@ -116,15 +126,21 @@ export function AppearanceSettings(): React.ReactElement {
               : "Using settings from this device because account preferences could not be loaded.",
           );
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    applyColorTheme(preferences.theme);
+    setTheme(preferences.theme);
+  }, [loading,preferences.theme,setTheme]);
 
   const changeFontSize = (value: FontSize) => {
     markAppearanceInteraction("fontSize");
@@ -143,6 +159,7 @@ export function AppearanceSettings(): React.ReactElement {
   const changeTheme = (value: ColorTheme) => {
     markAppearanceInteraction("theme");
     setPreferences((current) => ({ ...current,theme: value }));
+    applyColorTheme(value);
     setTheme(value);
     autoSave.enqueue("theme",value);
   };

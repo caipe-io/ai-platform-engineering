@@ -287,35 +287,34 @@ describe('GET /api/admin/users — Keycloak list', () => {
     expect(mockSearchRealmUsers).not.toHaveBeenCalled();
   });
 
-  it('filters Slack pending users from active link nonces', async () => {
+  it('rejects an unknown slackStatus value', async () => {
+    mockGetServerSession.mockResolvedValue(adminSession());
+    const res = await GET(makeRequest('/api/admin/users?slackStatus=pending'));
+    expect(res.status).toBe(400);
+  });
+
+  it('filters users by Slack link status from slack_user_id attribute', async () => {
     mockGetServerSession.mockResolvedValue(adminSession());
     const raw = [
       {
         id: 'u1',
         username: 'alice',
         email: 'alice@example.com',
-        attributes: { slack_user_id: ['U_PENDING'] },
+        attributes: { slack_user_id: ['U012ABC'] },
       },
       {
         id: 'u2',
         username: 'bob',
         email: 'bob@example.com',
-        attributes: { slack_user_id: ['U_LINKED'] },
+        attributes: {},
       },
     ];
     mockSearchRealmUsers
       .mockResolvedValueOnce(raw)
       .mockResolvedValueOnce([]);
-    mockCollections.slack_link_nonces = {
-      find: jest.fn().mockReturnValue({
-        project: jest.fn().mockReturnValue({
-          toArray: jest.fn().mockResolvedValue([{ slack_user_id: 'U_PENDING' }]),
-        }),
-      }),
-      findOne: jest.fn(),
-    } as unknown;
+    mockListRealmRoleMappingsForUser.mockResolvedValue([]);
 
-    const res = await GET(makeRequest('/api/admin/users?slackStatus=pending'));
+    const res = await GET(makeRequest('/api/admin/users?slackStatus=linked'));
 
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -323,7 +322,7 @@ describe('GET /api/admin/users — Keycloak list', () => {
     expect(body.users[0]).toMatchObject({
       id: 'u1',
       email: 'alice@example.com',
-      slack_link_status: 'pending',
+      slack_link_status: 'linked',
     });
     expect(body.total).toBe(1);
   });

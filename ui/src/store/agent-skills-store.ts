@@ -10,9 +10,8 @@ import { create } from "zustand";
 /**
  * Agent Skills Store
  * 
- * Manages agent skills for the Agentic Workflows feature.
- * MongoDB-only storage (no localStorage fallback) since Agentic Workflows
- * requires persistent, shareable skills.
+ * Manages editable skills for the Skills Gallery and Dynamic Agents picker.
+ * Skill definitions use MongoDB so they remain persistent and shareable.
  * 
  * On first load, automatically seeds MongoDB with built-in templates.
  */

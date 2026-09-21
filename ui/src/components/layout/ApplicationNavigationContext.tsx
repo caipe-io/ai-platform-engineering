@@ -18,6 +18,7 @@ interface ApplicationNavigationContextValue {
     registration: ApplicationNavigationRegistration,
   ) => () => void;
   setMobileNavigationOpen: (open: boolean) => void;
+  updateNavigation: (registration: ApplicationNavigationRegistration) => void;
 }
 
 const ApplicationNavigationContext =
@@ -33,15 +34,30 @@ export function ApplicationNavigationProvider({
   const [registration,setRegistration] =
     React.useState<ApplicationNavigationRegistration | null>(null);
   const [mobileNavigationOpen,setMobileNavigationOpen] = React.useState(false);
+  const registrationGenerationRef = React.useRef(0);
 
   const registerNavigation = React.useCallback(
     (nextRegistration: ApplicationNavigationRegistration) => {
+      const generation = ++registrationGenerationRef.current;
       setRegistration(nextRegistration);
       return () => {
-        setRegistration((current) =>
-          current?.areaKey === nextRegistration.areaKey ? null : current,
-        );
+        queueMicrotask(() => {
+          if (registrationGenerationRef.current !== generation) return;
+          setRegistration((current) =>
+            current?.areaKey === nextRegistration.areaKey ? null : current,
+          );
+        });
       };
+    },
+    [],
+  );
+  const updateNavigation = React.useCallback(
+    (nextRegistration: ApplicationNavigationRegistration) => {
+      setRegistration((current) =>
+        current?.areaKey === nextRegistration.areaKey
+          ? nextRegistration
+          : current,
+      );
     },
     [],
   );
@@ -62,6 +78,7 @@ export function ApplicationNavigationProvider({
       registration,
       registerNavigation,
       setMobileNavigationOpen,
+      updateNavigation,
     }),
     [
       closeMobileNavigation,
@@ -69,6 +86,7 @@ export function ApplicationNavigationProvider({
       openMobileNavigation,
       registration,
       registerNavigation,
+      updateNavigation,
     ],
   );
 
@@ -103,6 +121,7 @@ export function useRegisterApplicationNavigation({
   const context = useApplicationNavigation();
   const contentRef = React.useRef(content);
   const registerNavigation = context?.registerNavigation;
+  const updateNavigation = context?.updateNavigation;
 
   React.useLayoutEffect(() => {
     contentRef.current = content;
@@ -111,7 +130,12 @@ export function useRegisterApplicationNavigation({
   React.useLayoutEffect(() => {
     if (!registerNavigation || !areaKey || !contentRef.current) return;
     return registerNavigation({ areaKey,content: contentRef.current });
-  }, [areaKey,registerNavigation,version]);
+  }, [areaKey,registerNavigation]);
+
+  React.useLayoutEffect(() => {
+    if (!updateNavigation || !areaKey || !contentRef.current) return;
+    updateNavigation({ areaKey,content: contentRef.current });
+  },[areaKey,updateNavigation,version]);
 
   return Boolean(context && areaKey && content != null);
 }

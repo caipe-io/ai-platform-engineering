@@ -8,13 +8,13 @@
  * - Switching tabs shows the correct content
  * - Shows empty state for each tab when empty
  * - Each tab shows correct empty message
- * - Shows loading skeletons
- * - Renders conversation cards with shared badge
+ * - Shows loading skeletons while the fetch is in flight
+ * - Renders conversation cards fetched via apiClient.getSharedConversations
  * - Tab switching clears old content and shows new content
  */
 
 import React from 'react'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 // ============================================================================
 // Mocks
@@ -34,11 +34,23 @@ jest.mock('lucide-react', () => ({
   Users: (props: unknown) => <svg data-testid="icon-users" {...props} />,
   MessageSquare: (props: unknown) => <svg data-testid="icon-message-square" {...props} />,
   Clock: (props: unknown) => <svg data-testid="icon-clock" {...props} />,
+  Bot: (props: unknown) => <svg data-testid="icon-bot" {...props} />,
 }))
 
 jest.mock('@/lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
   formatRelativeTimeCompact: () => 'Just now',
+}))
+
+jest.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { email: 'test@example.com' } }, status: 'authenticated' }),
+}))
+
+const mockGetSharedConversations = jest.fn()
+jest.mock('@/lib/api-client', () => ({
+  apiClient: {
+    getSharedConversations: (...args: unknown[]) => mockGetSharedConversations(...args),
+  },
 }))
 
 // ============================================================================
@@ -51,19 +63,20 @@ import { SharedConversations } from '../SharedConversations'
 // Helpers
 // ============================================================================
 
-function makeItems(prefix: string, count: number) {
+/** `team` items carry a non-empty `shared_with_teams` so they land in the Team tab too. */
+function makeRawItems(prefix: string, count: number, opts: { team?: boolean } = {}) {
   return Array.from({ length: count }, (_, i) => ({
-    id: `${prefix}-${i}`,
+    _id: `${prefix}-${i}`,
     title: `${prefix} Chat ${i + 1}`,
-    updatedAt: new Date().toISOString(),
-    totalMessages: 5,
+    updated_at: new Date().toISOString(),
+    metadata: { total_messages: 5 },
+    owner_id: 'owner@example.com',
+    sharing: { shared_with_teams: opts.team ? ['team-1'] : [] },
   }))
 }
 
-const defaultProps = {
-  sharedWithMe: [],
-  sharedWithTeam: [],
-  loading: false,
+function neverResolves() {
+  return new Promise(() => {})
 }
 
 // ============================================================================
@@ -71,108 +84,98 @@ const defaultProps = {
 // ============================================================================
 
 describe('SharedConversations', () => {
+  beforeEach(() => {
+    mockGetSharedConversations.mockReset()
+    mockGetSharedConversations.mockResolvedValue({ items: [] })
+  })
+
   it('renders the section heading', () => {
-    render(<SharedConversations {...defaultProps} />)
+    render(<SharedConversations />)
     expect(screen.getByText('Shared Conversations')).toBeInTheDocument()
   })
 
   it('renders data-testid', () => {
-    render(<SharedConversations {...defaultProps} />)
+    render(<SharedConversations />)
     expect(screen.getByTestId('shared-conversations')).toBeInTheDocument()
   })
 
   it('renders share tabs', () => {
-    render(<SharedConversations {...defaultProps} />)
+    render(<SharedConversations />)
     expect(screen.getByTestId('shared-tab-shared-with-me')).toBeInTheDocument()
     expect(screen.getByTestId('shared-tab-team')).toBeInTheDocument()
     expect(screen.queryByTestId('shared-tab-everyone')).not.toBeInTheDocument()
   })
 
   it('renders tab labels', () => {
-    render(<SharedConversations {...defaultProps} />)
+    render(<SharedConversations />)
     expect(screen.getByText('Shared with me')).toBeInTheDocument()
     expect(screen.getByText('Team')).toBeInTheDocument()
     expect(screen.queryByText('Everyone')).not.toBeInTheDocument()
   })
 
   describe('loading state', () => {
-    it('shows skeletons when loading', () => {
-      render(<SharedConversations {...defaultProps} loading={true} />)
+    it('shows skeletons while the fetch is in flight', () => {
+      mockGetSharedConversations.mockReturnValue(neverResolves())
+      render(<SharedConversations />)
       const skeletons = screen.getAllByTestId('skeleton')
       expect(skeletons.length).toBe(3)
     })
   })
 
   describe('empty states', () => {
-    it('shows "Shared with me" empty message by default', () => {
-      render(<SharedConversations {...defaultProps} />)
-      expect(screen.getByTestId('shared-empty')).toBeInTheDocument()
+    it('shows "Shared with me" empty message by default', async () => {
+      render(<SharedConversations />)
+      expect(await screen.findByTestId('shared-empty')).toBeInTheDocument()
       expect(screen.getByText('No conversations shared with you yet.')).toBeInTheDocument()
     })
 
-    it('shows "Team" empty message when Team tab is active', () => {
-      render(<SharedConversations {...defaultProps} />)
+    it('shows "Team" empty message when Team tab is active', async () => {
+      render(<SharedConversations />)
+      await waitFor(() => expect(mockGetSharedConversations).toHaveBeenCalled())
       fireEvent.click(screen.getByTestId('shared-tab-team'))
       expect(screen.getByText('No team-shared conversations yet.')).toBeInTheDocument()
     })
-
   })
 
   describe('with data', () => {
-    it('renders shared-with-me conversations by default', () => {
-      render(
-        <SharedConversations
-          {...defaultProps}
-          sharedWithMe={makeItems('me', 2)}
-        />
-      )
-      expect(screen.getByText('me Chat 1')).toBeInTheDocument()
+    it('renders shared-with-me conversations by default', async () => {
+      mockGetSharedConversations.mockResolvedValue({ items: makeRawItems('me', 2) })
+      render(<SharedConversations />)
+      expect(await screen.findByText('me Chat 1')).toBeInTheDocument()
       expect(screen.getByText('me Chat 2')).toBeInTheDocument()
     })
 
-    it('renders team conversations when Team tab is clicked', () => {
-      render(
-        <SharedConversations
-          {...defaultProps}
-          sharedWithMe={makeItems('me', 1)}
-          sharedWithTeam={makeItems('team', 2)}
-        />
-      )
+    it('renders team conversations when Team tab is clicked', async () => {
+      mockGetSharedConversations.mockResolvedValue({
+        items: [...makeRawItems('me', 1), ...makeRawItems('team', 2, { team: true })],
+      })
+      render(<SharedConversations />)
+      await screen.findByText('me Chat 1')
       fireEvent.click(screen.getByTestId('shared-tab-team'))
       expect(screen.getByText('team Chat 1')).toBeInTheDocument()
       expect(screen.getByText('team Chat 2')).toBeInTheDocument()
       expect(screen.queryByText('me Chat 1')).not.toBeInTheDocument()
     })
 
-    it('switching tabs updates visible conversations', () => {
-      render(
-        <SharedConversations
-          {...defaultProps}
-          sharedWithMe={makeItems('me', 1)}
-          sharedWithTeam={makeItems('team', 1)}
-        />
-      )
+    it('switching tabs updates visible conversations', async () => {
+      mockGetSharedConversations.mockResolvedValue({
+        items: [...makeRawItems('me', 1), ...makeRawItems('team', 1, { team: true })],
+      })
+      render(<SharedConversations />)
+      expect(await screen.findByText('me Chat 1')).toBeInTheDocument()
 
-      // Default: shared with me
-      expect(screen.getByText('me Chat 1')).toBeInTheDocument()
-
-      // Switch to team
       fireEvent.click(screen.getByTestId('shared-tab-team'))
       expect(screen.queryByText('me Chat 1')).not.toBeInTheDocument()
       expect(screen.getByText('team Chat 1')).toBeInTheDocument()
 
-      // Switch back to shared with me
       fireEvent.click(screen.getByTestId('shared-tab-shared-with-me'))
       expect(screen.getByText('me Chat 1')).toBeInTheDocument()
     })
 
-    it('does not show empty state when items exist', () => {
-      render(
-        <SharedConversations
-          {...defaultProps}
-          sharedWithMe={makeItems('me', 1)}
-        />
-      )
+    it('does not show empty state when items exist', async () => {
+      mockGetSharedConversations.mockResolvedValue({ items: makeRawItems('me', 1) })
+      render(<SharedConversations />)
+      await screen.findByText('me Chat 1')
       expect(screen.queryByTestId('shared-empty')).not.toBeInTheDocument()
     })
   })

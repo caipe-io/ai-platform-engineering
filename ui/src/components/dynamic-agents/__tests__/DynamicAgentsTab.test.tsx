@@ -327,6 +327,7 @@ describe("DynamicAgentsTab search + pagination", () => {
 
   it("loads a directly linked agent and keeps its setup step and close action URL-controlled", async () => {
     const onSelectedAgentChange = jest.fn();
+    const onSelectedAgentNameChange = jest.fn();
     const onStepChange = jest.fn();
     fetchMock.mockImplementation((url: string) => {
       if (url === "/api/dynamic-agents/agents/agent-1") {
@@ -342,6 +343,7 @@ describe("DynamicAgentsTab search + pagination", () => {
         selectedAgentId="agent-1"
         initialStep="instructions"
         onSelectedAgentChange={onSelectedAgentChange}
+        onSelectedAgentNameChange={onSelectedAgentNameChange}
         onStepChange={onStepChange}
       />,
     );
@@ -350,12 +352,14 @@ describe("DynamicAgentsTab search + pagination", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents/agents/agent-1");
     expect(editor).toHaveAttribute("data-agent-id", "agent-1");
     expect(editor).toHaveAttribute("data-step", "instructions");
+    expect(onSelectedAgentNameChange).toHaveBeenCalledWith("Ops Helper");
 
     fireEvent.click(screen.getByRole("button", { name: "Editor tools step" }));
     expect(onStepChange).toHaveBeenCalledWith("tools");
 
     fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
     expect(onSelectedAgentChange).toHaveBeenCalledWith(null);
+    expect(onSelectedAgentNameChange).toHaveBeenCalledWith(null);
   });
 
   it("shows an editor-shaped skeleton while a directly linked agent loads", async () => {
@@ -412,5 +416,38 @@ describe("DynamicAgentsTab search + pagination", () => {
       "data-agent-id",
       "agent-1",
     );
+  });
+  it("no longer renders the autonomous enablement or task controls", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          items: [
+            makeAgent({
+              _id: "deploy-agent",
+              name: "Deploy Agent",
+              owner_team_slug: "primary",
+              permissions: {
+                can_manage: true,
+                can_write: true,
+                can_discover: true,
+              },
+            }),
+          ],
+          total: 1,
+        },
+      }),
+    );
+
+    render(<DynamicAgentsTab />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByText("Deploy Agent")).toBeInTheDocument());
+    expect(screen.queryByLabelText(/enable autonomous/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/disable autonomous/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/autonomous status/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/manage autonomous tasks/i)).not.toBeInTheDocument();
   });
 });

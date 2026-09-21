@@ -148,6 +148,52 @@ class TestSandboxSecurity:
         with pytest.raises(SystemPromptRenderError, match="dict"):
             _render_system_prompt("{{ dict(a=1) }}", None)
 
+    def test_context_mutation_is_blocked(self):
+        """Templates cannot mutate list values supplied in render context."""
+        user = UserContext(email="user@example.com", groups=["primary"])
+        with pytest.raises(SystemPromptRenderError, match="unsafe"):
+            _render_system_prompt("{{ user.groups.append('secondary') }}", None, user=user)
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            "user.groups.append('secondary')",
+            "user.groups.clear()",
+            "user.groups.extend(['secondary'])",
+            "user.groups.insert(0, 'secondary')",
+            "user.groups.pop()",
+            "user.groups.remove('primary')",
+            "user.groups.reverse()",
+            "user.groups.sort()",
+            "client_context.labels.clear()",
+            "client_context.labels.pop('primary')",
+            "client_context.labels.popitem()",
+            "client_context.labels.setdefault('secondary', 'value')",
+            "client_context.labels.update({'secondary': 'value'})",
+        ],
+    )
+    def test_known_list_and_mapping_mutators_are_blocked(self, expression: str) -> None:
+        user = UserContext(email="user@example.com", groups=["primary"])
+        ctx = ClientContext(source="test", labels={"primary": "value"})
+
+        with pytest.raises(SystemPromptRenderError, match="unsafe"):
+            _render_system_prompt(f"{{{{ {expression} }}}}", ctx, user=user)
+
+        assert user.groups == ["primary"]
+        assert ctx.model_dump()["labels"] == {"primary": "value"}
+
+    def test_read_only_iteration_and_mapping_access_still_render(self) -> None:
+        user = UserContext(email="user@example.com", groups=["primary", "secondary"])
+        ctx = ClientContext(source="test", labels={"tier": "example"})
+
+        result = _render_system_prompt(
+            "{% for group in user.groups %}{{ group }};{% endfor %} {{ client_context.labels.tier }}",
+            ctx,
+            user=user,
+        )
+
+        assert result == "primary;secondary; example"
+
 
 class TestTemplateErrorHandling:
     """Tests that template failures raise SystemPromptRenderError."""

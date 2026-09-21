@@ -1,6 +1,6 @@
 # Slack Input/Output Guardrails
 
-**Pulled from [PR #975](https://github.com/cnoe-io/ai-platform-engineering/pull/975) for spec 093 (`093-agent-enterprise-identity`).**
+**Pulled from [PR #975](https://github.com/caipe-io/ai-platform-engineering/pull/975) for spec 093 (`093-agent-enterprise-identity`).**
 
 Every user prompt entering CAIPE through Slack and every LLM response leaving CAIPE back to Slack passes through a guardrail layer. Input guardrails protect the LLM and downstream systems from malicious, sensitive, or out-of-policy content. Output guardrails prevent the LLM from leaking secrets, PII, hallucinated actions, or harmful content back into Slack channels.
 

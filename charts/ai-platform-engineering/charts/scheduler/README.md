@@ -8,17 +8,17 @@ A Helm chart for caipe-scheduler - cron schedule registry + k8s CronJob orchestr
 
 | | |
 |---|---|
-| **Version** | `0.5.68` |
+| **Version** | `1.1.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install scheduler oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
+helm install scheduler oci://ghcr.io/caipe-io/charts/scheduler --version 1.1.0
 
 # Upgrade an existing release
-helm upgrade scheduler oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
+helm upgrade scheduler oci://ghcr.io/caipe-io/charts/scheduler --version 1.1.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install scheduler oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68 \
+helm install scheduler oci://ghcr.io/caipe-io/charts/scheduler --version 1.1.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install scheduler oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68 \
+helm install scheduler oci://ghcr.io/caipe-io/charts/scheduler --version 1.1.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
+helm show values oci://ghcr.io/caipe-io/charts/scheduler --version 1.1.0
 ```
 
 ## Reading the Values Table
@@ -64,7 +64,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
 | caipe.apiUrl | string | `"http://caipe-ui:3000"` |  |
 | caipe.chatPath | string | `"/api/v1/chat/invoke"` |  |
 | cronRunner.image.pullPolicy | string | `"IfNotPresent"` |  |
-| cronRunner.image.repository | string | `"ghcr.io/cnoe-io/caipe-cron-runner"` |  |
+| cronRunner.image.repository | string | `"ghcr.io/caipe-io/caipe-cron-runner"` |  |
 | cronRunner.image.tag | string | `""` |  |
 | cronRunner.resources.limits.cpu | string | `"100m"` |  |
 | cronRunner.resources.limits.memory | string | `"128Mi"` |  |
@@ -74,11 +74,12 @@ helm show values oci://ghcr.io/cnoe-io/charts/scheduler --version 0.5.68
 | cronRunnerServiceAccount.name | string | `"caipe-cron-runner"` |  |
 | fullnameOverride | string | `""` |  |
 | image.pullPolicy | string | `"Always"` |  |
-| image.repository | string | `"ghcr.io/cnoe-io/caipe-scheduler"` |  |
+| image.repository | string | `"ghcr.io/caipe-io/caipe-scheduler"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
 | limits.maxMessageChars | int | `2000` |  |
 | limits.maxSchedulesPerOwner | int | `50` |  |
+| limits.minimumScheduleIntervalSeconds | int | `1800` | Minimum permitted gap, in seconds, between recurring cron fires. |
 | livenessProbe.failureThreshold | int | `3` |  |
 | livenessProbe.httpGet.path | string | `"/healthz"` |  |
 | livenessProbe.httpGet.port | string | `"http"` |  |

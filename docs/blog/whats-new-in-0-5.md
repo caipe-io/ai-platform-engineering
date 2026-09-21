@@ -12,7 +12,9 @@ The 0.5 series is the biggest leap since the initial release. It ships a new wor
 
 <!-- truncate -->
 
-> **Latest release:** use the [releases page](/blog/releases) for the current 0.5.x patch, per-release upgrade guides, and Helm values diffs.
+> **Release notes:** see the [0.5.0 release notes](/releases/release-0.5.0) for the full
+> summary, breaking changes, and the upgrade guide. The
+> [releases page](/releases) lists every release.
 
 ---
 
@@ -218,8 +220,10 @@ New channel onboardings default to **mention-only** listen mode (0.5.49) — the
 
 ## Upgrade
 
-Pick the current patch from the [releases page](/blog/releases) and use the Helm command in that release post. Each release post includes upgrade notes, Helm values diffs, and data migrations.
+Use the Helm command and upgrade guide in the [0.5.0 release notes](/releases/release-0.5.0),
+which cover breaking changes, values changes, and data migrations for the whole series.
 
 ---
 
-*This post covers the full 0.5.x series. The 0.5 series is actively maintained — check the [releases blog](/blog/releases) for the latest patch-specific changes.*
+*This post is a feature tour of the 0.5 series. For the current release, see the
+[releases page](/releases).*

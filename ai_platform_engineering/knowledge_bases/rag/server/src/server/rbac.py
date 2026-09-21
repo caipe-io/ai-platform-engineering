@@ -23,6 +23,7 @@ import httpx
 from common.models.rbac import Role, UserContext
 from common.models.server import QueryRequest
 from common import utils
+from server import audit
 from server.auth import get_auth_manager, AuthManager
 
 logger = utils.get_logger(__name__)
@@ -478,8 +479,9 @@ def is_unsafe_rbac_bypass_enabled() -> bool:
 def is_trusted_ingestor_service(user_context: UserContext) -> bool:
   """Return True for the explicitly configured first-party ingestor client.
 
-  This is a narrow transport identity used only by heartbeat, job mutation,
-  and document-push endpoints. It never bypasses datasource search/read RBAC.
+  This transport identity handles heartbeats, job mutation, document pushes,
+  and startup of policy-preprovisioned declarative sources. It never bypasses
+  datasource search/read RBAC.
   """
   if user_context.subject_type != "service_account" or not user_context.client_id:
     return False
@@ -537,13 +539,13 @@ async def _get_openfga_store_id(client: httpx.AsyncClient, base_url: str) -> str
   raise RuntimeError(f"OpenFGA store {store_name} was not found")
 
 
-async def _openfga_check_object(
+async def _openfga_raw_check(
   user_context: UserContext,
   relation: str,
   object_type: str,
   object_id: str,
 ) -> bool:
-  """Check a user's derived relation on an OpenFGA object."""
+  """Perform the OpenFGA HTTP check itself, with no audit side effect."""
   base_url = _openfga_http_url()
   user = _openfga_user(user_context)
   if not base_url or not user:
@@ -564,6 +566,90 @@ async def _openfga_check_object(
     )
     response.raise_for_status()
     return bool(response.json().get("allowed"))
+
+
+def _audit_check_safely(
+  *,
+  subject: str,
+  subject_ref: str | None,
+  relation: str,
+  object_type: str,
+  object_id: str,
+  outcome: str,
+  reason_code: str,
+) -> None:
+  """Audit is a side channel — a broken writer must never affect a decision.
+
+  Allows are buffered and reported as a rollup (server/audit.py) so the
+  several checks one user question can fan out into — search, then a
+  handful of get_full_doc calls, etc. — land as one event listing every
+  resource touched, rather than scattering across separate rows. Denials and
+  PDP-unavailable errors are rare and are the signal reviewers act on, so
+  they are always written immediately, one row per decision.
+  """
+  try:
+    if outcome == "allow" and not audit.FULL_FIDELITY_ALLOWS:
+      audit.record_allow(
+        subject=subject,
+        subject_ref=subject_ref,
+        relation=relation,
+        object_type=object_type,
+        object_id=object_id,
+      )
+    else:
+      audit.log_openfga_decision(
+        subject=subject,
+        subject_ref=subject_ref,
+        relation=relation,
+        object_type=object_type,
+        object_id=object_id,
+        outcome=outcome,
+        reason_code=reason_code,
+      )
+  except Exception as exc:  # noqa: BLE001
+    logger.warning("Failed to audit OpenFGA decision: %s", exc)
+
+
+async def _openfga_check_object(
+  user_context: UserContext,
+  relation: str,
+  object_type: str,
+  object_id: str,
+) -> bool:
+  """Check a user's derived relation on an OpenFGA object.
+
+  Every check is audited (server/audit.py) — allow, deny, and PDP-unavailable
+  alike — so data_source#can_read, mcp_tool#can_call,
+  organization#can_search/#can_manage, and policy#can_approve decisions get a
+  durable trail. Auditing never changes this function's return value or the
+  exception it raises; callers keep their existing fail-open/fail-closed
+  behavior exactly as before.
+  """
+  subject = user_context.subject or "anonymous"
+  subject_ref = _openfga_user(user_context)
+  try:
+    allowed = await _openfga_raw_check(user_context, relation, object_type, object_id)
+  except Exception:
+    _audit_check_safely(
+      subject=subject,
+      subject_ref=subject_ref,
+      relation=relation,
+      object_type=object_type,
+      object_id=object_id,
+      outcome="deny",
+      reason_code="DENY_PDP_UNAVAILABLE",
+    )
+    raise
+  _audit_check_safely(
+    subject=subject,
+    subject_ref=subject_ref,
+    relation=relation,
+    object_type=object_type,
+    object_id=object_id,
+    outcome="allow" if allowed else "deny",
+    reason_code="OK" if allowed else "DENY_NO_CAPABILITY",
+  )
+  return allowed
 
 
 async def _openfga_check_data_source(
@@ -923,6 +1009,75 @@ async def _openfga_list_objects(
 def _strip_openfga_object_prefix(value: str, object_type: str) -> str:
   prefix = f"{object_type}:"
   return value[len(prefix):] if value.startswith(prefix) else value
+
+
+async def _openfga_read_related_objects(
+  object_type: str,
+  relation: str,
+  user: str,
+) -> List[str]:
+  """Return every ``object_type`` id with a direct ``(user, relation, object)`` tuple.
+
+  Unlike ``_openfga_list_objects`` (a caller-centric ``list-objects`` call), this
+  walks the raw ``/read`` endpoint with a partial tuple filter. It resolves a
+  structural edge — e.g. "which knowledge_base objects point at this
+  rag_collection via parent_collection" — rather than a user's effective
+  permissions, so it intentionally takes no ``UserContext``.
+  """
+  base_url = _openfga_http_url()
+  if not base_url:
+    return []
+
+  ids: List[str] = []
+  continuation_token = ""
+  async with httpx.AsyncClient(timeout=5.0) as client:
+    store_id = await _get_openfga_store_id(client, base_url)
+    while True:
+      body: Dict[str, Any] = {
+        "tuple_key": {"object": f"{object_type}:", "relation": relation, "user": user},
+        "page_size": 100,
+      }
+      if continuation_token:
+        body["continuation_token"] = continuation_token
+      response = await client.post(
+        f"{base_url}/stores/{store_id}/read",
+        headers={"Content-Type": "application/json"},
+        json=body,
+      )
+      response.raise_for_status()
+      payload = response.json()
+      for entry in payload.get("tuples", []):
+        obj = entry.get("key", {}).get("object", "")
+        if obj.startswith(f"{object_type}:"):
+          ids.append(_strip_openfga_object_prefix(obj, object_type))
+      continuation_token = payload.get("continuation_token", "")
+      if not continuation_token:
+        break
+  return ids
+
+
+async def get_datasource_ids_for_collection(collection_id: str) -> List[str]:
+  """Resolve the datasource ids that belong to ``rag_collection:<collection_id>``.
+
+  A source's ``knowledge_base:<id>`` object records the ``parent_collection``
+  edge (see ``deploy/openfga/model.fga``), and ``data_source`` shares its id
+  with its ``knowledge_base`` (``data_source.parent_kb`` is a 1:1, same-id
+  edge), so the resolved knowledge_base ids double as the collection's
+  datasource ids. Returns an empty list for an unknown or empty collection —
+  callers should treat that as "narrows to nothing", not an error.
+  """
+  if not collection_id:
+    return []
+  try:
+    return await _openfga_read_related_objects(
+      "knowledge_base", "parent_collection", f"rag_collection:{collection_id}"
+    )
+  except Exception as exc:
+    logger.warning("OpenFGA parent_collection read failed for collection %s: %s", collection_id, exc)
+    raise HTTPException(
+      status_code=503,
+      detail="Authorization service is temporarily unavailable",
+    ) from exc
 
 
 async def get_accessible_datasource_ids(

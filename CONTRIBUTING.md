@@ -82,8 +82,10 @@ docs(charts): document the OpenFGA values
 
 Prefix a branch with `prebuild/` when you want CI to build and publish
 prebuild container images for the PR — for example
-`prebuild/feat/rag-batch-job-status`. The images are pushed to
-`ghcr.io/<org>/prebuild/<component>` and cleaned up when the PR closes.
+`prebuild/feat/rag-batch-job-status`. Images are pushed to their canonical
+`ghcr.io/caipe-io/<component>` packages with temporary PR tags. Helm charts use
+their canonical `oci://ghcr.io/caipe-io/charts/<chart>` packages with the same
+temporary lifecycle. Prebuild artifacts are cleaned up when the PR closes.
 
 Without the prefix the standard CI build runs instead, and no prebuild image is
 published.

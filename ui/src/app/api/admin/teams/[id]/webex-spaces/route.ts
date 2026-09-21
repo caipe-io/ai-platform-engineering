@@ -24,8 +24,10 @@ import { NextRequest,NextResponse } from "next/server";
 
 interface WebexSpaceTeamMappingDoc {
   _id?: ObjectId;
+  bot_id?: string;
   webex_space_id: string;
   team_id: string;
+  team_slug?: string;
   space_name?: string;
   space_title?: string;
   webex_workspace_id?: string;
@@ -36,6 +38,7 @@ interface WebexSpaceTeamMappingDoc {
 }
 
 interface WebexSpaceInput {
+  bot_id?: string;
   webex_space_id: string;
   space_name: string;
   webex_workspace_id?: string;
@@ -120,7 +123,10 @@ function parseSpaceInput(value: unknown, idx: number): WebexSpaceInput {
       ? v.webex_workspace_id.trim()
       : undefined;
 
+  const botId = typeof v.bot_id === "string" && v.bot_id.trim() ? v.bot_id.trim() : undefined;
+
   return {
+    ...(botId ? { bot_id: botId } : {}),
     webex_space_id: webexSpaceId,
     space_name: spaceName,
     webex_workspace_id: webexWorkspaceRef(workspaceId),
@@ -151,6 +157,7 @@ export const GET = withErrorHandler(
       .toArray();
 
     const spaces = teamMappings.map((m) => ({
+      bot_id: m.bot_id,
       webex_space_id: m.webex_space_id,
       space_name: m.space_name ?? m.space_title ?? m.webex_space_id,
       webex_workspace_id: webexWorkspaceRef(m.webex_workspace_id),
@@ -244,13 +251,31 @@ export const PUT = withErrorHandler(
       );
     }
 
+    const previousBotIdBySpace = new Map(
+      previousMappings.map((m) => [m.webex_space_id, m.bot_id] as const)
+    );
+
     for (const s of next) {
+      // bot_id scopes the OpenFGA/runtime lookup (space_team_resolver.py) to a
+      // specific Webex bot. Fall back to whatever the existing mapping already
+      // has so re-saving unrelated changes (e.g. removing another space) doesn't
+      // require re-supplying it. A brand-new mapping has nothing to fall back to
+      // and must be rejected rather than silently written unresolvable.
+      const botId = s.bot_id ?? previousBotIdBySpace.get(s.webex_space_id);
+      if (!botId) {
+        throw new ApiError(
+          `spaces[].bot_id is required to assign Webex space "${s.webex_space_id}" to a team`,
+          400
+        );
+      }
       await teamCol.updateOne(
         { webex_space_id: s.webex_space_id, team_id: teamIdStr } as never,
         {
           $set: {
+            bot_id: botId,
             webex_space_id: s.webex_space_id,
             team_id: teamIdStr,
+            team_slug: ownerTeamSlug,
             space_name: s.space_name,
             webex_workspace_id: webexWorkspaceRef(s.webex_workspace_id),
             active: true,

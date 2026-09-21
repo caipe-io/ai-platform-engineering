@@ -99,7 +99,7 @@ class IngestionTuning(BaseModel):
   )
   config_managed: bool = Field(
     False,
-    description="The datasource configuration is managed in the application database rather than legacy connector env config.",
+    description="The datasource configuration is managed in the application database.",
   )
 
   @model_validator(mode="after")
@@ -160,7 +160,7 @@ class UrlIngestRequest(BaseModel):
   )
   config_managed: bool = Field(
     False,
-    description="The datasource configuration is managed in the application database rather than legacy connector env config.",
+    description="The datasource configuration is managed in the application database.",
   )
 
   # DEPRECATED fields - will be removed in a future version.

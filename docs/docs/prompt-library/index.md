@@ -149,6 +149,5 @@ Both prompts integrate with the CAIPE multi-agent system and work with:
 - **Specialized Agents**: ArgoCD, AWS, Jira, GitHub, PagerDuty, Slack, Splunk, Komodor, Confluence, Webex, Weather, Backstage
 - **RAG Knowledge Base**: Documentation and process recall
 - **Agent Workspace**: In-memory coordination for parallel execution (Deep Agent only)
-- **A2A Protocol**: Agent-to-Agent communication
 
 The prompts are used by the Platform Engineer orchestrator to route queries and coordinate agent execution based on the selected configuration.

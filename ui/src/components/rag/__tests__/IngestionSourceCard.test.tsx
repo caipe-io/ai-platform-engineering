@@ -92,14 +92,85 @@ describe("<IngestionSourceCard />", () => {
     await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(1));
   });
 
-  it("renders the config-driven badge", () => {
+  it("renders config-driven sources as view only", async () => {
+    const user = userEvent.setup();
+    const onEdit = jest.fn();
+    render(
+      <IngestionSourceCard
+        source={makeSource({ config_driven: true })}
+        onEdit={onEdit}
+        onDelete={jest.fn()}
+        onRetry={jest.fn()}
+      />,
+    );
+    expect(screen.getByText("Config")).toBeInTheDocument();
+    expect(screen.queryByTitle("Edit")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Delete source")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Retry ingestion")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "View example-channel" }));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders no selection checkbox when selectionMode is off", () => {
+    render(
+      <IngestionSourceCard
+        source={makeSource()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("renders an enabled, checkable selection checkbox for a source the caller manages", async () => {
+    const user = userEvent.setup();
+    const onToggleSelect = jest.fn();
+    render(
+      <IngestionSourceCard
+        source={makeSource()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        selectionMode
+        selected={false}
+        onToggleSelect={onToggleSelect}
+      />,
+    );
+    const checkbox = screen.getByRole("checkbox", { name: "Select example-channel" });
+    expect(checkbox).not.toBeDisabled();
+    await user.click(checkbox);
+    expect(onToggleSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the selection checkbox for a source the caller cannot manage", () => {
+    render(
+      <IngestionSourceCard
+        source={makeSource({ _permissions: { can_manage: false } })}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        selectionMode
+        selected={false}
+        onToggleSelect={jest.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Select example-channel" }),
+    ).toBeDisabled();
+  });
+
+  it("disables the selection checkbox for a config-driven source even though it is manageable", () => {
     render(
       <IngestionSourceCard
         source={makeSource({ config_driven: true })}
         onEdit={jest.fn()}
         onDelete={jest.fn()}
+        selectionMode
+        selected={false}
+        onToggleSelect={jest.fn()}
       />,
     );
-    expect(screen.getByText("Config")).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "Select example-channel" }),
+    ).toBeDisabled();
   });
 });

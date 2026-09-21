@@ -2,15 +2,15 @@
 name = "caipe-scheduler"
 version = "0.1.0"
 description = "Cron schedule registry + k8s CronJob orchestrator for CAIPE."
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.14,<3.15"
 dependencies = [
-    "fastapi==0.135.3",
-    "uvicorn[standard]==0.34.2",
-    "pydantic==2.11.3",
-    "pymongo==4.12.1",
-    "kubernetes==35.0.0",
-    "croniter==6.2.2",
-    "pytz==2025.2",
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
+    "pydantic==2.13.4",
+    "pymongo==4.16.0",
+    "kubernetes==36.0.3",
+    "croniter==6.2.4",
+    "pytz==2026.3.post1",
     "python-dotenv==1.2.2",
     "httpx==0.28.1",
     "pyjwt[crypto]==2.13.0",
@@ -18,9 +18,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest==9.0.3",
-    "pytest-asyncio==1.3.0",
-    "ruff==0.15.5",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.16.4",
 ]
 
 [project.scripts]
@@ -34,4 +34,4 @@ build-backend = "hatchling.build"
 packages = ["caipe_scheduler"]
 
 [tool.uv]
-constraint-dependencies = ["starlette>=0.50.0"]
+constraint-dependencies = ["starlette==1.6.0"]

@@ -1,8 +1,6 @@
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
 
-// assisted-by Codex Codex-sonnet-4-6
-
 const eslintConfig = [
   {
     ignores: [

@@ -5,7 +5,7 @@ import path from "path";
 export const dynamic = "force-dynamic";
 
 const CHANGELOG_URL =
-  "https://raw.githubusercontent.com/cnoe-io/ai-platform-engineering/main/CHANGELOG.md";
+  "https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/CHANGELOG.md";
 const STABLE_RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
 const RELEASE_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/;
 
@@ -170,6 +170,38 @@ function parseChangelog(markdown: string): ChangelogRelease[] {
   return releases;
 }
 
+// The running build's version, baked into public/version.json at image build.
+function readDeployedVersion(): string {
+  try {
+    const versionPath = path.join(process.cwd(), "public", "version.json");
+    if (!fs.existsSync(versionPath)) return "";
+    const parsed = JSON.parse(fs.readFileSync(versionPath, "utf-8")) as { version?: string };
+    return normalizeVersion(parsed.version);
+  } catch (err) {
+    console.warn("[Changelog API] Could not read deployed version:", err);
+    return "";
+  }
+}
+
+/**
+ * Prereleases are normally folded into the stable release that supersedes them,
+ * which hides the running version whenever a prerelease is deployed. Surface
+ * that one entry on its own; older prereleases stay rolled up.
+ */
+function withDeployedPrerelease(
+  stableReleases: ChangelogRelease[],
+  allReleases: ChangelogRelease[],
+  deployedVersion: string
+): ChangelogRelease[] {
+  if (!deployedVersion || STABLE_RELEASE_VERSION_PATTERN.test(deployedVersion)) {
+    return stableReleases;
+  }
+  const deployed = allReleases.find(
+    (release) => normalizeVersion(release.version) === deployedVersion
+  );
+  return deployed ? [deployed, ...stableReleases] : stableReleases;
+}
+
 async function fetchChangelogContent(): Promise<string | null> {
   try {
     const controller = new AbortController();
@@ -214,10 +246,14 @@ export async function GET() {
 
     const allReleases = parseChangelog(markdown);
 
-    const stableReleases = stableReleasesWithRolledUpPrereleases(allReleases);
-    const scopes = collectScopes(stableReleases);
+    const releases = withDeployedPrerelease(
+      stableReleasesWithRolledUpPrereleases(allReleases),
+      allReleases,
+      readDeployedVersion()
+    );
+    const scopes = collectScopes(releases);
 
-    return NextResponse.json({ releases: stableReleases, scopes });
+    return NextResponse.json({ releases, scopes });
   } catch (error) {
     console.error("[Changelog API] Error fetching changelog:", error);
     return NextResponse.json(

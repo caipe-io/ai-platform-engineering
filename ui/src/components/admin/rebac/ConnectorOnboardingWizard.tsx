@@ -18,6 +18,7 @@ import {
   DiscoveryCacheControls,
   type DiscoveryCacheProvider,
 } from "@/components/admin/rebac/DiscoveryCacheControls";
+import { ConnectorIdentityPicker } from "@/components/admin/rebac/ConnectorIdentityPicker";
 import {
   AgentPicker,
   type AgentPickerOption,
@@ -391,26 +392,22 @@ export function ConnectorOnboardingWizard({
         )}
         <div className="flex flex-wrap items-center gap-2">
           {discoveryIdentity && (
-            <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
               <span>{discoveryIdentity.label}</span>
-              <select
-                aria-label={discoveryIdentity.label}
+              <ConnectorIdentityPicker
+                ariaLabel={discoveryIdentity.label}
+                options={discoveryIdentity.options.map((option) => ({
+                  id: option.value,
+                  label: option.label,
+                  disabled: option.disabled,
+                }))}
                 value={discoveryIdentity.value}
-                onChange={(event) => discoveryIdentity.onChange(event.target.value)}
-                disabled={disabled || discoveryBusy || discoveryIdentity.loading}
-                className="h-8 min-w-[12rem] rounded-md border border-input bg-background px-2 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                {discoveryIdentity.loading && <option value="">Loading…</option>}
-                {!discoveryIdentity.loading && discoveryIdentity.options.length === 0 && (
-                  <option value="">No bots available</option>
-                )}
-                {discoveryIdentity.options.map((option) => (
-                  <option key={option.value} value={option.value} disabled={option.disabled}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                onChange={discoveryIdentity.onChange}
+                loading={discoveryIdentity.loading}
+                disabled={disabled || discoveryBusy}
+                triggerClassName="h-8 min-w-[12rem] text-sm"
+              />
+            </div>
           )}
           <Button
             type="button"
@@ -699,23 +696,22 @@ export function ConnectorOnboardingWizard({
                             </span>
                           </label>
                           {showBotColumn && (
-                            <select
-                              className="h-8 min-w-0 rounded-md border bg-background px-2 text-sm"
+                            <ConnectorIdentityPicker
+                              options={(row.botOptions ?? []).map((option) => ({
+                                id: option.value,
+                                label: option.label,
+                                disabled: option.disabled,
+                              }))}
                               value={row.botId ?? ""}
-                              onChange={(event) => onRowChange(row.id, {
-                                botId: event.target.value,
+                              onChange={(value) => onRowChange(row.id, {
+                                botId: value,
                                 selected: true,
                               })}
                               disabled={loading || !rowIsSelectable(row)}
-                              aria-label={row.botLabel ?? `Webex bot for ${row.name}`}
-                            >
-                              <option value="">Select a bot</option>
-                              {(row.botOptions ?? []).map((option) => (
-                                <option key={option.value} value={option.value} disabled={option.disabled}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
+                              ariaLabel={row.botLabel ?? `Webex bot for ${row.name}`}
+                              allowClear
+                              triggerClassName="h-8 min-w-0 text-sm"
+                            />
                           )}
                           {/* assisted-by Codex Codex-sonnet-4-6 */}
                           {/* Editing a selectable row implies intent to set it up, so the checkbox follows. */}

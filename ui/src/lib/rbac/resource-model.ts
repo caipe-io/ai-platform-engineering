@@ -22,7 +22,7 @@ export const UNIVERSAL_REBAC_RESOURCE_TYPES: readonly UniversalRebacResourceType
   [
     {
       type: "organization",
-      actions: ["discover", "read", "manage", "audit"],
+      actions: ["discover", "read", "manage", "audit", "automate"],
       description: "Platform-wide organization scope.",
     },
     {
@@ -240,7 +240,6 @@ const RESOURCE_TYPES_BY_NAME = new Map(
 export function listResourceTypeDefinitions(): readonly UniversalRebacResourceTypeDefinition[] {
   return UNIVERSAL_REBAC_RESOURCE_TYPES;
 }
-
 export function getResourceTypeDefinition(
   type: UniversalRebacResourceType,
 ): UniversalRebacResourceTypeDefinition | undefined {

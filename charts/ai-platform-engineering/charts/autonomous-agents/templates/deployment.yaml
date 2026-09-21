@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "autonomous-agents.fullname" . }}
+  labels:
+    {{- include "autonomous-agents.labels" . | nindent 4 }}
+spec:
+  {{- /*
+    No HPA support on purpose: the scheduler has no leader election, so more
+    than one replica double-fires every cron/interval task; webhook FIFOs are
+    also process-local. Recreate (not RollingUpdate) for the same reason -- a
+    rollout must not briefly run the old and new scheduler side by side.
+  */}}
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  {{- with .Values.revisionHistoryLimit }}
+  revisionHistoryLimit: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "autonomous-agents.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "autonomous-agents.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "autonomous-agents.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "autonomous-agents.appVersion" .) }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- if .Values.dynamicAgentsAuth.enabled }}
+          env:
+            - name: DYNAMIC_AGENTS_OAUTH2_TOKEN_URL
+              value: {{ include "autonomous-agents.dynamicAgentsTokenUrl" . | quote }}
+            - name: DYNAMIC_AGENTS_OAUTH2_CLIENT_ID
+              value: {{ required "dynamicAgentsAuth.clientId is required when dynamicAgentsAuth.enabled=true" .Values.dynamicAgentsAuth.clientId | quote }}
+            {{- with .Values.dynamicAgentsAuth.scope }}
+            - name: DYNAMIC_AGENTS_OAUTH2_SCOPE
+              value: {{ . | quote }}
+            {{- end }}
+            - name: DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "dynamicAgentsAuth.clientSecretRef.name is required when dynamicAgentsAuth.enabled=true" .Values.dynamicAgentsAuth.clientSecretRef.name | quote }}
+                  key: {{ required "dynamicAgentsAuth.clientSecretRef.key is required when dynamicAgentsAuth.enabled=true" .Values.dynamicAgentsAuth.clientSecretRef.key | quote }}
+          {{- else }}
+          env: []
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "autonomous-agents.fullname" . }}-config
+            {{- if .Values.existingSecret }}
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+            {{- end }}
+            {{- if .Values.llmSecret }}
+            - secretRef:
+                name: {{ .Values.llmSecret }}
+            {{- end }}
+            {{- if .Values.externalSecrets.enabled }}
+            - secretRef:
+                name: {{ include "autonomous-agents.fullname" . }}-secret
+            {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

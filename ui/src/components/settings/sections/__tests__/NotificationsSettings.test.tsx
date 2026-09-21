@@ -7,6 +7,10 @@ import { fireEvent,render,screen,waitFor } from "@testing-library/react";
 import { NotificationsSettings } from "../NotificationsSettings";
 import { PlatformAnnouncementsSettings } from "../PlatformAnnouncementsSettings";
 
+jest.mock("@/hooks/use-admin-role",() => ({
+  useAdminRole: () => ({ isAdmin: true }),
+}));
+
 jest.mock("@/components/settings/ReleaseNotesPreview",() => ({
   ReleaseNotesPreview: () => <button type="button">Show current release notes</button>,
 }));
@@ -19,9 +23,94 @@ function jsonResponse(body: unknown,ok = true): Response {
   } as Response;
 }
 
+class MockNotification {
+  static permission: NotificationPermission = "default";
+  static requestPermission = jest.fn<Promise<NotificationPermission>,[]>();
+
+  close = jest.fn();
+  onclick: (() => void) | null = null;
+
+  constructor() {}
+}
+
 describe("NotificationsSettings",() => {
   beforeEach(() => {
     jest.clearAllMocks();
+    MockNotification.permission = "default";
+    MockNotification.requestPermission.mockResolvedValue("granted");
+    Object.defineProperty(window,"Notification",{
+      configurable: true,
+      value: MockNotification,
+    });
+  });
+
+  it("requests permission from the browser toggle and saves completion alerts",async () => {
+    const fetchMock = jest.fn(async (_input: RequestInfo | URL,init?: RequestInit) => {
+      if (init?.method === "PATCH") return jsonResponse({ success: true,data: {} });
+      return jsonResponse({
+        success: true,
+        data: {
+          notifications: {
+            agent_completion_browser_enabled: false,
+            agent_completion_chime_enabled: false,
+          },
+        },
+      });
+    });
+    global.fetch = fetchMock;
+    render(<NotificationsSettings />);
+
+    fireEvent.click(await screen.findByRole("switch",{
+      name: "Browser notifications for agent completions",
+    }));
+
+    await waitFor(() => {
+      expect(MockNotification.requestPermission).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/settings/notifications",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ agent_completion_browser_enabled: true }),
+        }),
+      );
+    });
+  });
+
+  it("does not save browser alerts when permission is denied",async () => {
+    MockNotification.requestPermission.mockResolvedValue("denied");
+    global.fetch = jest.fn(async () => jsonResponse({ success: true,data: {} }));
+    render(<NotificationsSettings />);
+
+    fireEvent.click(await screen.findByRole("switch",{
+      name: "Browser notifications for agent completions",
+    }));
+
+    expect(await screen.findByText(/blocked by this browser/i)).toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      "/api/settings/notifications",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+  });
+
+  it("saves the optional completion chime independently",async () => {
+    const fetchMock = jest.fn(async (_input: RequestInfo | URL,init?: RequestInit) => {
+      if (init?.method === "PATCH") return jsonResponse({ success: true,data: {} });
+      return jsonResponse({ success: true,data: {} });
+    });
+    global.fetch = fetchMock;
+    render(<NotificationsSettings />);
+
+    fireEvent.click(await screen.findByRole("switch",{ name: "Completion chime" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/settings/notifications",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ agent_completion_chime_enabled: true }),
+        }),
+      );
+    });
   });
 
   it("loads an opted-out personal preference",async () => {
@@ -36,6 +125,27 @@ describe("NotificationsSettings",() => {
       "aria-checked",
       "false",
     );
+  });
+
+  it("expands and collapses notification sections individually or together",async () => {
+    global.fetch = jest.fn(async () => jsonResponse({ success: true,data: {} }));
+    render(<NotificationsSettings />);
+
+    await screen.findByRole("switch",{ name: "Browser notifications for agent completions" });
+    fireEvent.click(screen.getByRole("button",{ name: "Collapse Agent completions" }));
+    expect(screen.queryByRole("switch",{
+      name: "Browser notifications for agent completions",
+    })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch",{ name: "Notify me about new releases" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button",{ name: "Collapse all" }));
+    expect(screen.queryByRole("switch",{ name: "Notify me about new releases" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button",{ name: "Expand all" }));
+    expect(screen.getByRole("switch",{
+      name: "Browser notifications for agent completions",
+    })).toBeInTheDocument();
+    expect(screen.getByRole("switch",{ name: "Notify me about new releases" })).toBeInTheDocument();
   });
 
   it("auto-saves the personal preference without a Save button",async () => {

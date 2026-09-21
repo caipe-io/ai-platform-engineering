@@ -57,7 +57,6 @@ describe("webex-space stores", () => {
     expect(RBAC_COLLECTION_NAMES.webexSpaceGrants).toBe("webex_space_grants");
     expect(RBAC_COLLECTION_NAMES.webexSpaceAgentRoutes).toBe("webex_space_agent_routes");
     expect(RBAC_COLLECTION_NAMES.webexSpaceTeamMappings).toBe("webex_space_team_mappings");
-    expect(RBAC_COLLECTION_NAMES.webexLinkNonces).toBe("webex_link_nonces");
     expect(RBAC_COLLECTION_NAMES.webexUserMetrics).toBe("webex_user_metrics");
   });
 

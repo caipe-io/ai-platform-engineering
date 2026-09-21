@@ -39,6 +39,15 @@ export interface Conversation {
     team_permissions?: Record<string, "view" | "comment">;
     share_link_enabled?: boolean;
   };
+  /**
+   * Origin of the conversation. 'autonomous' is set when a scheduled task run
+   * is surfaced as a chat conversation. Undefined = legacy / human chat.
+   */
+  source?: 'web' | 'slack' | 'autonomous';
+  /** Autonomous task identifier (only when source === 'autonomous') */
+  task_id?: string;
+  /** Autonomous run identifier (only when source === 'autonomous') */
+  run_id?: string;
   /** Server-side metadata for integrations such as scheduled runs. */
   metadata?: Record<string, unknown>;
 }

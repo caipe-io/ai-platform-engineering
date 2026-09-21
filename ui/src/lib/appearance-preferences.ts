@@ -17,7 +17,8 @@ export const FONT_FAMILIES = [
 
 export const COLOR_THEMES = [
   { id: "system",label: "System",description: "Match your device" },
-  { id: "light",label: "Light",description: "Bright and clean" },
+  { id: "light",label: "Light",description: "Balanced tonal surfaces and brand color" },
+  { id: "legacy-light",label: "Legacy Light",description: "Original bright neutral palette" },
   { id: "dark",label: "Dark",description: "Easy on the eyes" },
   { id: "midnight",label: "Midnight",description: "Pure black for OLED" },
   { id: "nord",label: "Nord",description: "Muted arctic colors" },
@@ -64,6 +65,13 @@ function isOption<Value extends string>(
   options: ReadonlyArray<{ id: Value }>,
 ): value is Value {
   return typeof value === "string" && options.some((option) => option.id === value);
+}
+
+function hslComponents(color: string): string | null {
+  const match = color.match(
+    /^hsl\(\s*([-+]?\d*\.?\d+)\s*[, ]\s*([-+]?\d*\.?\d+)%\s*[, /]\s*([-+]?\d*\.?\d+)%/i,
+  );
+  return match ? `${match[1]} ${match[2]}% ${match[3]}%` : null;
 }
 
 export function getDefaultAppearancePreferences(): AppearancePreferences {
@@ -158,14 +166,41 @@ export function applyFontSize(value: FontSize): void {
 export function applyGradientTheme(value: GradientTheme): void {
   const selected = gradientThemes.find((theme) => theme.id === value);
   if (!selected) return;
-  document.documentElement.style.setProperty("--gradient-from",selected.from);
-  document.documentElement.style.setProperty("--gradient-to",selected.to);
-  document.documentElement.setAttribute("data-gradient-theme",value);
+  const root = document.documentElement;
+  root.style.setProperty("--gradient-from",selected.from);
+  root.style.setProperty("--gradient-to",selected.to);
+
+  // Primary controls are part of the selected accent system, so buttons,
+  // focus rings, selections, and active settings choices use the same hue.
+  const from = hslComponents(selected.from);
+  const to = hslComponents(selected.to);
+  if (from) {
+    root.style.setProperty("--primary",from);
+    root.style.setProperty("--ring",from);
+    root.style.setProperty("--gradient-start",from);
+    root.style.setProperty("--gradient-mid",from);
+  }
+  if (to) root.style.setProperty("--gradient-end",to);
+
+  root.setAttribute("data-gradient-theme",value);
   localStorage.setItem(STORAGE_KEYS.gradientTheme,value);
+}
+
+export function applyColorTheme(value: ColorTheme): void {
+  const resolvedTheme = value === "system"
+    ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+    : value;
+  const root = document.documentElement;
+  root.setAttribute("data-theme",resolvedTheme);
+  // Palette CSS owns color-scheme for custom light and dark themes. Clear
+  // inline values left by older builds so native controls use that palette.
+  root.style.removeProperty("color-scheme");
+  localStorage.setItem("theme",value);
 }
 
 export function applyCachedAppearance(preferences: AppearancePreferences): void {
   applyFontFamily(preferences.fontFamily);
   applyFontSize(preferences.fontSize);
   applyGradientTheme(preferences.gradientTheme);
+  applyColorTheme(preferences.theme);
 }

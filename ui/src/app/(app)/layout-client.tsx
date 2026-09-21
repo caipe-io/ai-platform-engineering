@@ -6,6 +6,7 @@ import {
   ApplicationNavigationRail,
 } from "@/components/layout/ApplicationNavigation";
 import { ApplicationNavigationProvider } from "@/components/layout/ApplicationNavigationContext";
+import { HeaderBreadcrumbSlotProvider } from "@/components/layout/HeaderBreadcrumbSlot";
 import { LiveStreamBanner } from "@/components/layout/LiveStreamBanner";
 import { useUserInit } from "@/hooks/use-user-init";
 import { finishNavigationProgress } from "@/lib/navigation-progress";
@@ -32,17 +33,19 @@ export function AppLayoutClient({
     <ApplicationNavigationProvider
       initialCollapsed={initialNavigationCollapsed}
     >
-      <div className="flex h-dvh overflow-hidden bg-background noise-overlay">
-        <ApplicationNavigationRail />
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <AppHeader />
-          <LiveStreamBanner />
-          <div className="flex min-h-0 flex-1 flex-col">
-            {children}
+      <HeaderBreadcrumbSlotProvider>
+        <div className="app-shell-canvas flex h-dvh overflow-hidden bg-background noise-overlay">
+          <ApplicationNavigationRail />
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <AppHeader />
+            <LiveStreamBanner />
+            <div className="flex min-h-0 flex-1 flex-col">
+              {children}
+            </div>
           </div>
+          <ApplicationNavigationDrawer />
         </div>
-        <ApplicationNavigationDrawer />
-      </div>
+      </HeaderBreadcrumbSlotProvider>
     </ApplicationNavigationProvider>
   );
 }

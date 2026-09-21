@@ -6,6 +6,7 @@ import React,{ useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState } f
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConnectorIdentityPicker } from "@/components/admin/rebac/ConnectorIdentityPicker";
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
 import {
@@ -36,8 +37,8 @@ import type {
   TeamOption,
 } from "./connector-admin-adapter";
 
-type PanelView = "channels" | "onboard" | "direct" | "migration" | "advanced";
-const PANEL_VIEWS: readonly PanelView[] = ["channels", "onboard", "direct", "migration", "advanced"];
+type PanelView = "channels" | "onboard" | "direct" | "advanced";
+const PANEL_VIEWS: readonly PanelView[] = ["channels", "onboard", "direct", "advanced"];
 type SyncModalMode = "preview" | "apply";
 type SyncModalStatus = "idle" | "loading" | "success" | "error";
 
@@ -672,18 +673,34 @@ export function ConnectorAdminPanel({
   const [view, setView] = useSubtabParam(PANEL_VIEWS, "channels");
   const singlePanelView = selfService ? undefined : adapter.singlePanelView;
   // When a singlePanelView is set (e.g. Webex → "onboard"), allow toggling
-  // between that view and the configured-channels view via a compact 2-tab bar.
-  const [localSingleView, setLocalSingleView] = useState<PanelView>(singlePanelView ?? "channels");
+  // between that view, the configured-items view, any direct-messages
+  // panel, and Advanced (always last) via a compact tab bar, mirrored to
+  // the `subtab` URL param. The valid values are scoped to this adapter's
+  // own tabs so a foreign `subtab` value falls back to "channels" instead
+  // of rendering a view this switcher has no tab for.
+  const singlePanelValidViews = useMemo<readonly PanelView[]>(() => {
+    if (!singlePanelView) return ["channels"];
+    return [
+      "channels",
+      singlePanelView,
+      ...(adapter.directMessagesPanel ? (["direct"] as const) : []),
+      ...(singlePanelView === "advanced" ? [] : (["advanced"] as const)),
+    ];
+  }, [singlePanelView, adapter.directMessagesPanel]);
+  const [singlePanelViewState, setSinglePanelViewState] = useSubtabParam(
+    singlePanelValidViews,
+    "channels",
+  );
   const panelView: PanelView = selfService
     ? (view === "onboard" ? "onboard" : "channels")
     : singlePanelView
-      ? localSingleView
+      ? singlePanelViewState
       : view;
   const previousPanelViewRef = useRef(panelView);
   const showTabBar = !selfService && !singlePanelView;
   const showSelfServiceSwitcher = selfService;
   const showSinglePanelSwitcher = !selfService && Boolean(singlePanelView);
-  const hasAdvancedView = !selfService && (!singlePanelView || singlePanelView === "advanced");
+  const hasAdvancedView = !selfService;
   const configuredSearchFromUrl = configuredSearchParam
     ? searchParams.get(configuredSearchParam) ?? ""
     : "";
@@ -706,7 +723,7 @@ export function ConnectorAdminPanel({
   const [discoverySearch, setDiscoverySearch] = useState("");
   const switchPanelView = (next: PanelView) => {
     if (selfService) setView(next);
-    else if (singlePanelView) setLocalSingleView(next);
+    else if (singlePanelView) setSinglePanelViewState(next);
     else setView(next);
   };
 
@@ -980,10 +997,10 @@ export function ConnectorAdminPanel({
     void loadDiscoveryIdentities();
   }, [adapter.api.discoveryIdentities, loadDiscoveryIdentities]);
   useEffect(() => {
-    if (!hasAdvancedView) return;
+    if (!hasAdvancedView || adapter.advancedTabMinimal) return;
     void loadRuntimeStatus().catch((e) =>
       setMessage(e instanceof Error ? e.message : `Failed to load ${adapter.connectorName} bot runtime status`));
-  }, [loadRuntimeStatus, hasAdvancedView, adapter.connectorName]);
+  }, [loadRuntimeStatus, hasAdvancedView, adapter.advancedTabMinimal, adapter.connectorName]);
   const connectorName = adapter.connectorName;
   const itemSingular = adapter.itemSingular;
   useEffect(() => {
@@ -1479,20 +1496,16 @@ export function ConnectorAdminPanel({
     channels: adapter.copy.configuredTabTitle,
     onboard: adapter.copy.onboardTabTitle,
     direct: adapter.directMessagesPanel?.title ?? "1:1 Messages",
-    migration: adapter.migrationPanel?.title ?? "Migration",
     advanced: adapter.copy.advancedTabTitle,
   };
   const viewDescription: Record<PanelView, string> = {
     channels: adapter.copy.configuredTabDescription,
     onboard: adapter.copy.onboardTabDescription,
     direct: adapter.directMessagesPanel?.description ?? "Configure direct-message access.",
-    migration: adapter.migrationPanel?.description ?? "Migrate legacy connector data.",
     advanced: adapter.copy.advancedTabDescription,
   };
   const availablePanelViews = PANEL_VIEWS.filter(
-    (key) =>
-      (key !== "direct" || Boolean(adapter.directMessagesPanel)) &&
-      (key !== "migration" || Boolean(adapter.migrationPanel)),
+    (key) => key !== "direct" || Boolean(adapter.directMessagesPanel),
   );
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -1572,43 +1585,42 @@ export function ConnectorAdminPanel({
           </div>
         )}
 
-        {/* Two-tab switcher for single-panel mode (e.g. Webex: Configure ↔ Configured) */}
+        {/* Two-tab switcher for single-panel mode (e.g. Webex: Configured ↔ Configure) */}
         {showSinglePanelSwitcher && (
           <div role="tablist" aria-label={adapter.ariaLabels.tablist}
             className="flex flex-wrap gap-1 rounded-md border bg-muted/30 p-1">
             <Button role="tab" type="button" size="sm"
-              variant={panelView === singlePanelView ? "default" : "ghost"}
-              aria-selected={panelView === singlePanelView}
-              onClick={() => setLocalSingleView(singlePanelView!)}>
-              {viewTitle[singlePanelView!]}
-            </Button>
-            <Button role="tab" type="button" size="sm"
               variant={panelView === "channels" ? "default" : "ghost"}
               aria-selected={panelView === "channels"}
-              onClick={() => setLocalSingleView("channels")}>
+              onClick={() => setSinglePanelViewState("channels")}>
               {viewTitle.channels}
+            </Button>
+            <Button role="tab" type="button" size="sm"
+              variant={panelView === singlePanelView ? "default" : "ghost"}
+              aria-selected={panelView === singlePanelView}
+              onClick={() => setSinglePanelViewState(singlePanelView!)}>
+              {viewTitle[singlePanelView!]}
             </Button>
             {adapter.directMessagesPanel && (
               <Button role="tab" type="button" size="sm"
                 variant={panelView === "direct" ? "default" : "ghost"}
                 aria-selected={panelView === "direct"}
-                onClick={() => setLocalSingleView("direct")}>
+                onClick={() => setSinglePanelViewState("direct")}>
                 {viewTitle.direct}
               </Button>
             )}
-            {adapter.migrationPanel && (
+            {singlePanelView !== "advanced" && (
               <Button role="tab" type="button" size="sm"
-                variant={panelView === "migration" ? "default" : "ghost"}
-                aria-selected={panelView === "migration"}
-                onClick={() => setLocalSingleView("migration")}>
-                {viewTitle.migration}
+                variant={panelView === "advanced" ? "default" : "ghost"}
+                aria-selected={panelView === "advanced"}
+                onClick={() => setSinglePanelViewState("advanced")}>
+                {viewTitle.advanced}
               </Button>
             )}
           </div>
         )}
 
         {!selfService && panelView === "direct" && adapter.directMessagesPanel?.render({ disabled })}
-        {!selfService && panelView === "migration" && adapter.migrationPanel?.render({ disabled })}
 
         {/* Auth disclaimer */}
         {adapter.authzDisclaimer && panelView === "onboard" && !showCompactOnboardingHeader && (
@@ -1620,6 +1632,31 @@ export function ConnectorAdminPanel({
         {/* Advanced tab */}
         {!selfService && panelView === "advanced" && (
           <div role="region" aria-label={adapter.ariaLabels.advancedRegion} className="space-y-3">
+            {adapter.advancedTabMinimal ? (
+              <div
+                data-section-tone="slate"
+                className="rounded-md border border-slate-500/20 bg-slate-500/5 p-4 space-y-3"
+              >
+                <div>
+                  <h3 className="inline-flex items-center gap-2 text-base font-semibold tracking-tight">
+                    <Settings2 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                    {adapter.copy.advancedHeading}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {adapter.copy.advancedSectionDescription ?? adapter.copy.advancedTabDescription}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <AdvancedActionButton
+                    label="Reload Bot Cache"
+                    description="Refreshes the running bot after UI route changes."
+                    icon={<RotateCw className="h-4 w-4" aria-hidden="true" />}
+                    onClick={() => void reloadBotRoutes()}
+                    disabled={disabled || loading}
+                  />
+                </div>
+              </div>
+            ) : (
             <div
               data-section-tone="slate"
               className="rounded-md border border-slate-500/20 bg-slate-500/5 p-4 space-y-3"
@@ -1679,6 +1716,7 @@ export function ConnectorAdminPanel({
                 </div>
               </div>
             </div>
+            )}
             {adapter.advancedTabExtraSection?.({ disabled })}
           </div>
         )}
@@ -1729,24 +1767,24 @@ export function ConnectorAdminPanel({
           <div aria-busy={showConfiguredLoading} className="min-h-[12rem]">
             <div className="mb-3 flex justify-end gap-2">
               {adapter.discoveryIdentity && !adapter.discoveryIdentityPerItem && (
-                <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
                   <span>{adapter.discoveryIdentity.label}</span>
-                  <select
-                    aria-label={`${adapter.discoveryIdentity.label} for configured ${adapter.itemPlural}`}
+                  <ConnectorIdentityPicker
+                    ariaLabel={`${adapter.discoveryIdentity.label} for configured ${adapter.itemPlural}`}
+                    options={discoveryIdentities.map((identity) => ({
+                      id: identity.id,
+                      label: identity.available
+                        ? identity.name
+                        : `${identity.name} (unavailable)`,
+                      disabled: !identity.available,
+                    }))}
                     value={selectedDiscoveryIdentityId}
-                    onChange={(event) => selectDiscoveryIdentity(event.target.value)}
-                    disabled={disabled || discoveryIdentitiesLoading}
-                    className="h-8 min-w-[12rem] rounded-md border border-input bg-background px-2 text-sm text-foreground shadow-sm"
-                  >
-                    {discoveryIdentitiesLoading && <option value="">Loading…</option>}
-                    {!discoveryIdentitiesLoading && discoveryIdentities.length === 0 && <option value="">No bots available</option>}
-                    {discoveryIdentities.map((identity) => (
-                      <option key={identity.id} value={identity.id} disabled={!identity.available}>
-                        {identity.available ? identity.name : `${identity.name} (unavailable)`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    onChange={selectDiscoveryIdentity}
+                    loading={discoveryIdentitiesLoading}
+                    disabled={disabled}
+                    triggerClassName="h-8 min-w-[12rem] text-sm"
+                  />
+                </div>
               )}
               <Button
                 type="button"

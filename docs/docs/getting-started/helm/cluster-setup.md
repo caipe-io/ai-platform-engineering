@@ -52,7 +52,7 @@ export AWS_DEFAULT_REGION=us-east-2
 ### Create the cluster
 
 ```bash
-git clone https://github.com/cnoe-io/ai-platform-engineering.git
+git clone https://github.com/caipe-io/ai-platform-engineering.git
 cd ai-platform-engineering
 cp deploy/eks/dev-eks-cluster-config.yaml.example dev-eks-cluster-config.yaml
 

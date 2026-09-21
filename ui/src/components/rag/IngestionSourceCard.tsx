@@ -13,7 +13,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { IngestionSourceConfigWithPermissions } from "@/types/ingestion-source";
-import { Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { Eye, Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { DatasourceAccessBadges } from "./DatasourceAccessBadges";
 import type { PendingPublicationRequestView } from "@/types/publication-approval";
@@ -57,6 +57,10 @@ export interface IngestionSourceCardProps {
   onDelete: (source: IngestionSourceConfigWithPermissions) => Promise<void>;
   onRetry?: (source: IngestionSourceConfigWithPermissions) => Promise<void>;
   pendingPublicationRequest?: PendingPublicationRequestView | null;
+  /** Bulk-edit selection — only rendered for sources the caller can manage. */
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (source: IngestionSourceConfigWithPermissions) => void;
 }
 
 export function IngestionSourceCard({
@@ -65,12 +69,16 @@ export function IngestionSourceCard({
   onDelete,
   onRetry,
   pendingPublicationRequest,
+  selectionMode,
+  selected,
+  onToggleSelect,
 }: IngestionSourceCardProps) {
   const [pendingDelete, setPendingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
   const canManage = source._permissions.can_manage;
+  const canSelect = canManage && !source.config_driven;
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -95,6 +103,17 @@ export function IngestionSourceCard({
   return (
     <div className="rounded-xl border border-border/50 bg-card/50 p-4 space-y-2">
       <div className="flex items-start justify-between gap-3">
+        {selectionMode && (
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4 shrink-0"
+            checked={Boolean(selected)}
+            disabled={!canSelect}
+            onChange={() => onToggleSelect?.(source)}
+            aria-label={`Select ${source.name}`}
+            title={canSelect ? undefined : "You do not manage this source"}
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-sm truncate">{source.name}</span>
@@ -116,7 +135,6 @@ export function IngestionSourceCard({
                 ?? (source.search_owner_team_slug ? [source.search_owner_team_slug] : [])
               }
               searchUserDisplayNames={source.search_user_display_names}
-              ragCollections={source.rag_collections}
               pendingPublicationRequest={pendingPublicationRequest}
               detailsKnown
             />
@@ -124,7 +142,7 @@ export function IngestionSourceCard({
               <Badge
                 variant="outline"
                 className="gap-1 bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30"
-                title="Loaded from config.yaml - cannot be edited"
+                title="Loaded from app-config.yaml — view only"
               >
                 Config
               </Badge>
@@ -167,12 +185,17 @@ export function IngestionSourceCard({
               size="icon"
               className="h-8 w-8"
               onClick={() => onEdit(source)}
-              title="Edit"
+              title={source.config_driven ? "View" : "Edit"}
+              aria-label={source.config_driven ? `View ${source.name}` : `Edit ${source.name}`}
             >
-              <Pencil className="h-4 w-4" />
+              {source.config_driven ? (
+                <Eye className="h-4 w-4" />
+              ) : (
+                <Pencil className="h-4 w-4" />
+              )}
             </Button>
           )}
-          {canManage &&
+          {canManage && !source.config_driven &&
             (pendingDelete ? (
               <div className="flex items-center gap-1 rounded-full border border-destructive/20 bg-destructive/10 px-2 py-1">
                 <span className="max-w-[7rem] truncate text-xs font-medium text-destructive">

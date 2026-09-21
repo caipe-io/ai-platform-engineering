@@ -186,9 +186,9 @@ export function scopeWriteTuple(
 /**
  * Read direct knowledge grants for a service account.
  *
- * A collection grant makes all of its member datasources readable. Listing
- * effective datasource access would therefore expand one collection into
- * hundreds of apparent datasource scopes. The management API must show and
+ * A collection grant only lets the service account use that collection as a
+ * search-time filter (mirrors the human collection-reader semantics); it does
+ * not grant access to member datasources. The management API must show and
  * remove only the grants the user actually selected.
  */
 export async function listDirectServiceAccountKnowledgeScopes(
@@ -203,9 +203,8 @@ export async function listDirectServiceAccountKnowledgeScopes(
   for (const { scopeType, objectPrefix } of types) {
     let continuationToken: string | undefined;
     do {
-      // OpenFGA requires Read filters to include an object type. Reading each
-      // direct knowledge type separately also prevents collection-inherited
-      // datasource access from appearing as an explicit scope.
+      // OpenFGA requires Read filters to include an object type, so each
+      // direct knowledge type is read separately.
       const page = await readOpenFgaTuples({
         tuple: {
           user: saSubject,

@@ -200,9 +200,11 @@ request → policy plan → publication_requests(pending)
 
 Slack and Webex bot channel/space team resolution uses Mongo mappings (`channel_team_mappings`, `webex_space_team_mappings`) to find the owning CAIPE team. Membership prechecks are OpenFGA-first: the bot checks `user:<sub> member team:<slug>` and only falls back to legacy `teams.members` when the PDP is not configured or unavailable. A negative OpenFGA decision denies the bot interaction before OBO so users get the friendly "not a member" response. (Phase 3 of spec 2026-05-24-derive-team-from-channel removed the per-team OBO scope mint — the bot now mints a team-agnostic OBO token and the channel→team mapping is the sole source of team identity downstream.)
 
-When a Slack channel route runs **as a service account** (the route's `execution_identity.mode = service_account`), the bot mints a service-account OBO token (`preferred_username = service-account-<clientId>`) and dispatches the agent under it. Dynamic Agents' CAS agent-use check (`require_agent_use_permission`) must namespace that caller as `service_account:<sub>` — not `user:<sub>` — when it POSTs to `/api/authz/v1/decisions`, because the BFF's subject-binding compares the decision `subject` against its own caller resolution (`service-account-` prefix ⇒ `service_account`). Sending `user` for a service-account token fails the bind, returning a meta `403` that the PEP fails closed into a `503`. The subject type is therefore derived from the token's `preferred_username` consistently across the BFF (`jwt-validation.ts`), the bridge, `openfga_authz.py`, and the DA CAS client (`auth/authz.py`).
+When a Slack channel route runs **as a service account** (the route's `execution_identity.mode = service_account`), the bot mints a service-account OBO token (`preferred_username = service-account-<clientId>`) and dispatches the agent under it. Dynamic Agents' CAS agent-use check (`require_agent_use_permission`) must namespace that caller as `service_account:<sub>` — not `user:<sub>` — when it POSTs to `/api/authz/v1/decisions`, because the BFF's subject-binding compares the decision `subject` against its own caller resolution (`service-account-` prefix ⇒ `service_account`). Sending `user` for a service-account token fails the bind, returning a meta `403` that the PEP fails closed into a `503`. The subject type is therefore derived from the token's `preferred_username` consistently across the BFF (`jwt-validation.ts`), the Dynamic Agents CAS client (`auth/authz.py`), and the bridge.
 
 RAG accepts both browser user tokens and ingestor client-credentials tokens from Keycloak. For local Docker Compose, `OIDC_DISCOVERY_URL` and `INGESTOR_OIDC_DISCOVERY_URL` may be either the realm base URL (`http://keycloak:7080/realms/caipe`) or the full `.well-known/openid-configuration` URL; the server normalizes both forms before fetching metadata. Keycloak service-account tokens use `preferred_username=service-account-<client>`, so RAG treats that token shape as machine-to-machine and assigns `RBAC_CLIENT_CREDENTIALS_ROLE`; human tokens are identity-only and use OpenFGA for authorization.
+
+The configured first-party ingestor service may start a declaratively seeded datasource only when the UI has already preprovisioned its ownership and Search policy. This narrow transport exception also covers heartbeats, job mutation, and document pushes; it does not bypass datasource read or Search authorization. Interactive and unmanaged datasource creation continues through the normal organization ingestion-capability and source-management checks.
 
 #### User-facing Role Cleanup
 
@@ -311,22 +313,26 @@ The Keycloak container exposes login/API traffic on `8080` and management health
 
 ### Account Linking (Slack)
 
-Three onboarding paths, evaluated in order:
+Two onboarding paths, evaluated in order:
 
-- **Auto-bootstrap** (default, `SLACK_FORCE_LINK=false`) — bot looks up the Slack user's email, finds an existing Keycloak user, writes `slack_user_id` silently. Zero user action required.
+- **Auto-bootstrap** — bot looks up the Slack user's email, finds an existing Keycloak user, writes `slack_user_id` silently. Zero user action required.
 - **Just-In-Time user creation** (default ON, `SLACK_JIT_CREATE_USER=true`, spec 103) — when no existing Keycloak user matches, the bot creates a federated-only shell user via `POST /admin/realms/{realm}/users` using the same `caipe-platform` admin credential. Optional domain allowlist via `SLACK_JIT_ALLOWED_EMAIL_DOMAINS`. 409 races are resolved by re-querying.
-- **Explicit link** (`SLACK_FORCE_LINK=true`, or fallback when JIT is off / not allowed / fails) — bot sends an HMAC-signed link prompt; user clicks → SSO login → `slack_user_id` written via Admin API.
 
-The full sequence (including HMAC URL shape, TTL enforcement, JIT request body, error kinds, and post-link OBO flow) is in [Workflows › Slack identity linking](./workflows.md#slack-identity-linking-auto-bootstrap--jit--forced-link).
+There is no interactive/bearer-link onboarding path for Slack: a signed link is redeemable by whoever holds it, not provably by the intended Slack user, so it was removed as a security hole. If neither path above resolves a Keycloak user (e.g. `SLACK_JIT_CREATE_USER=false` and no email match), the user is treated as unlinked and told to contact an admin.
+
+The full sequence (JIT request body, error kinds, and post-link OBO flow) is in [Workflows › Slack identity linking](./workflows.md#slack-identity-linking-auto-bootstrap--jit).
 
 ### Account Linking (Webex)
 
 Webex uses the same Keycloak identity boundary as Slack but stores the Webex
-person identifier in `webex_user_id`. The Webex link callback lives in the Web UI
-backend at `/api/auth/webex-link` and uses single-use, 10-minute nonces in
-`webex_link_nonces`; HMAC links are converted into nonce-backed completion URLs
-before the user reaches the OIDC session. The callback rejects attempts to bind
-one Webex person ID to multiple Keycloak users.
+person identifier in `webex_user_id`. Linking goes through a real Webex OAuth
+round trip at `/api/auth/webex-link/start` and `/api/auth/webex-link/callback`
+in the Web UI backend — the URL carries no bearer credential, so proof of the
+Webex identity comes from the OAuth exchange itself, not from a signed link.
+The callback rejects attempts to bind one Webex person ID to multiple
+Keycloak users. Admins can unlink a user's Webex identity
+(`DELETE /api/admin/webex/users/[id]`); re-linking is done by the user through
+the same self-service OAuth flow.
 
 For group spaces, the default Webex bootstrap path keeps signed linking URLs out
 of the shared room. The bot posts only a generic thread notice in the group, then
@@ -395,7 +401,7 @@ creator's later permission changes.
 (1) the BFF resource-authz (`jwt-validation.ts` / `resource-authz.ts`), (2) the **BFF agent-use check**
 (`requireAgentUsePermission` in `openfga-agent-authz.ts` — the gate the SA invoke path `/api/v1/chat/*`
 actually hits; for SA subjects it also skips the human-only email-principal and team-union fallbacks),
-(3) the Dynamic Agents backend (`openfga_authz.py`), and (4) the AgentGateway bridge (`bridge/main.py`).
+(3) the Dynamic Agents CAS client (`auth/authz.py`), and (4) the AgentGateway bridge (`bridge/main.py`).
 The bridge additionally enforces the **caller-keyed tool check** (see
 [Workflows › Caller-Keyed Tool Authorization](./workflows.md#caller-keyed-tool-authorization-service-accounts-fr-012a)),
 which only receives the data to run because the gateway's `extAuthz` policy forwards the request body
@@ -458,6 +464,8 @@ Two authorization paths:
 1. **Primary PDP:** `requireRbacPermission()` calls Keycloak Authorization Services with the caller's bearer/session access token and the requested `resource#scope`.
 2. **Role-based fallback:** `hasRoleFallback()` checks `realm_access.roles` from the session JWT when the PDP is unavailable or not configured.
 3. **Bootstrap admin path:** `isBootstrapAdmin(email)` still provides a temporary break-glass fallback from `BOOTSTRAP_ADMIN_EMAILS`, but the same email list is also reconciled by the BFF into durable OpenFGA tuples. Prefer the durable tuple state shown in Admin → Security & Policy → Keycloak, and remove the email fallback once group/team-admin relationships are configured. `requireMigrationSuperAdmin` (the guard on privileged ReBAC migration endpoints) gates on `user.role === 'admin'` rather than bootstrap email — AD group admins and super-admins team members both satisfy this check once their login bootstrap has run.
+
+**`authMethod` distinguishes the literal auth path taken, since `principalType` cannot (2026-09-01 fix).** `getAuthFromBearerOrSession()` now stamps `session.authMethod: 'bearer' | 'session'` at every return point. This exists because `principalType: 'oidc_user'` is set identically for a genuine browser session (NextAuth cookie) and for an OBO-exchanged Bearer token (Slack bot, Webex bot, or any external script relaying a human user) — it cannot be used to tell those apart. `authMethod` reflects which literal header/cookie the server actually saw and cannot be spoofed by the caller. `POST /api/chat/conversations` uses it to force `client_type: 'api'` (overriding a false `client_type: 'webui'` claim) on any Bearer-authenticated request that doesn't self-declare `'slack'`/`'webex'` — Slack/Webex bot's own Bearer calls are still trusted since we control that first-party code, but an arbitrary external caller can no longer successfully impersonate the browser UI.
 
 Routes that have not yet been rewritten inline no longer remain session-only: the deprecated `withAuth()` compatibility wrapper now uses `getAuthFromBearerOrSession()`, resolves the route family to a least-privilege RBAC policy, and calls `requireRbacPermission()` before invoking the handler. The old generic umbrella is now split for basic user surfaces: profile and identity-link routes use `self_profile#read/write`, user search uses `user_directory#read`, chat/model discovery uses `chat#invoke`, settings use `user_settings#read/write`, feedback uses `feedback#submit`, session files use `user_files#read/write`, AI assist uses `ai_assist#invoke`, credentials use `credential_vault#use`, and platform settings reads use `system_config#read`. Unmatched compatibility routes fall back to `admin_ui#view` for `GET` and `admin_ui#manage` for writes instead of a generic baseline-use capability. These user-surface capabilities map to organization-level OpenFGA relations (`can_read_self`, `can_manage_self`, `can_search_directory`, `can_chat`, `can_submit_feedback`, `can_use_files`, `can_use_ai_assist`, `can_use_credentials`) that derive from existing organization membership/admin relationships so upgrades preserve current access automatically.
 
@@ -524,11 +532,58 @@ denies, and PDP-unavailable failures alongside admin ReBAC graph/check actions.
 The Admin UI's RBAC Audit type filter uses `All` as a literal unfiltered view
 over audit-service events; selecting a specific type narrows the result to
 `auth`, `openfga_rebac`, `tool_action`, or `agent_delegation`. The AgentGateway
-`openfga-authz-bridge` also posts each external `ext_authz` decision through the
+`openfga-authz-bridge` also posts external `ext_authz` decisions through the
 same audit-service write path with `source=openfga_authz_bridge`, so
 gateway-level OpenFGA allow/deny/error decisions appear without a trace backend.
-`audit-service` is the audit owner; UI, Dynamic Agents, and bridge processes are
-producers only.
+The RAG server's own datasource/tool/search/org-admin/publication-approve
+OpenFGA checks (`server/rbac.py::_openfga_check_object`) post through the same
+write path with `source=rag_server` and `component=rag_server`.
+`audit-service` is the audit owner; UI, Dynamic Agents, the bridge, and the RAG
+server are producers only.
+
+#### Allow aggregation
+
+Decision volume tracks request count, not policy activity: a single MCP
+`tools/call` fans out into several `ext_authz` checks (coarse gateway gate,
+per-server invoke, per-tool, caller-keyed), and the BFF authorizes on
+effectively every request. Storing one durable row per decision therefore costs
+storage and query time without adding review signal.
+
+| Event | Stored | Rationale |
+|---|---|---|
+| Denials (`outcome=deny`), including `DENY_PDP_UNAVAILABLE` | Per decision | Rare, and the signal reviewers act on |
+| Policy/admin changes (`cas_grant`, `cas_reconcile`, ReBAC edits) | Per event | Compliance record of who changed what |
+| Routine allows | Periodic aggregate | Counted in memory, flushed as one row per distinct subject/action/resource/reason |
+
+Aggregate rows carry `count` (decisions summarized), `window_start`, and
+`window_end`, and a `correlation_id` prefixed `rollup:` — they summarize many
+requests, so no single request id applies. **Consumers must sum `count` rather
+than count rows**; a row without `count` is one decision.
+
+Counts live in process memory, so a restart can drop an unflushed window. That
+undercounts an allow metric and never loses a denial or a policy change. The
+bridge flushes on `SIGTERM` to narrow the gap.
+
+Set `AUDIT_FULL_FIDELITY_ALLOWS=true` (bridge: `audit.fullFidelityAllows`) to
+store one row per allow for a bounded investigation or compliance window.
+Aggregation resumes when it is turned back off. `AUDIT_ALLOW_ROLLUP_FLUSH_SECONDS`
+(bridge) and `AUDIT_ALLOW_ROLLUP_FLUSH_MS` (BFF) tune the flush interval: longer
+means fewer rows and a longer lag before allows appear.
+
+**RAG server** (`ai_platform_engineering/knowledge_bases/rag/server/src/server/audit.py`)
+groups differently: one question can fan out into several RAG tool calls
+(search, then a handful of `get_full_doc` calls, etc.), each its own OpenFGA
+decision on a *different* resource. There is no session/turn id threaded
+through the MCP tool-call path to group by, and an MCP session — if used —
+would span an entire connection, not one question, so grouping by session id
+would over-group. Instead, allows are grouped **by subject** over a short
+time window (`AUDIT_RAG_ROLLUP_FLUSH_SECONDS`, default 10s): every distinct
+resource an allowed subject touches in the window lands in one event's
+`resources` list (each entry: `action`, `resource_ref`, `count`), rather than
+one row per decision. `resource_ref` on that row is a comma-joined summary
+for consumers that only read the single-string field; `resources` is
+authoritative. Denials and PDP-unavailable errors are still written
+per-decision, immediately, same as the bridge.
 
 ### Personal DM Experience — Phase 2 (spec 2026-05-24)
 
@@ -1069,6 +1124,9 @@ Legacy Keycloak realm roles may still appear in old local data, but they are not
 | `GITHUB_PERSONAL_ACCESS_TOKEN` / `GITLAB_PERSONAL_ACCESS_TOKEN` (on **Dynamic Agents**) | Static org-PAT fallback read via `MCPCredentialSource.fallback_env` when a caller has not connected their personal GitHub/GitLab account                            | Keeps GitHub/GitLab tools backward compatible for unconnected callers. The PAT now lives only on Dynamic Agents (no longer a gateway `backendAuth` key); connected users always get their own OAuth token instead. Source from runtime secrets.   |
 | `AUDIT_SERVICE_URL`                                           | Enables Python and TypeScript audit writers, including Dynamic Agents and `openfga-authz-bridge`, to emit durable `openfga_rebac` rows to audit-service             | Point services at the in-cluster or compose `audit-service`; configure local/S3 storage on audit-service itself.                                                                                                                                |
 | `AUDIT_SERVICE_BACKEND` / `AUDIT_SERVICE_LOCAL_RETENTION_DAYS` | Selects the audit-service storage backend (`local` or `s3`) and controls local-disk retention                                                                       | `local` is the default backend. Local storage keeps `1` day by default and purges expired files on startup and periodically; S3 retention should be managed with bucket lifecycle policy.                                                        |
+| `AUDIT_FULL_FIDELITY_ALLOWS`                                  | Stores one durable event per allowed decision instead of periodic aggregate counts. Denials and policy changes are always per-event                                  | Off by default. Turn on only for a bounded investigation or compliance window — a single MCP `tools/call` fans out into several checks, so volume tracks request count. See [Allow aggregation](#allow-aggregation).                              |
+| `AUDIT_ALLOW_ROLLUP_FLUSH_SECONDS` (bridge) / `AUDIT_ALLOW_ROLLUP_FLUSH_MS` (BFF) | How often accumulated allow counts are flushed as aggregate rows                                                                  | Defaults to 60s. Longer means fewer rows and a longer lag before allows appear; unflushed counts are lost on restart (denials are never affected).                                                                                              |
+| `AUDIT_RAG_ROLLUP_FLUSH_SECONDS`                              | How often the RAG server's per-subject allow rollup (grouping every resource one subject touched, not one row per decision) is flushed | Defaults to 10s — short enough that one question's search + follow-up calls land together, long enough to actually collapse a burst. See [Allow aggregation](#allow-aggregation).                                                             |
 | `SLACK_AGENT_ROUTES_MODE`                                     | Slack bot route source: `db_prefer` (default; prefer OpenFGA-backed UI-managed channel-agent routes, fall back to static config), `config`, or `db_only`             | `db_prefer` and `db_only` require OpenFGA access; MongoDB is used only to enrich tuple-backed routes with listen/priority metadata. Use `config` only for static-only environments that should ignore UI-managed channel routes.                  |
 | `SLACK_INTEGRATION_SILENCE_ENV`                               | Initial setup switch that makes the Slack bot ignore inbound payloads before handlers can send user-visible Slack responses                                           | Use only during bootstrap or broken-route setup windows. Admin/runtime diagnostics remain the place to inspect OpenFGA route health while end-user channel noise is suppressed.                                                                  |
 | `SLACK_WORKSPACE_ALIAS`                                       | Canonical Slack workspace namespace used by the Web UI backend, Slack bot, Mongo route/grant rows, and OpenFGA `slack_channel:<alias>--<channel_id>` subjects      | Configure per deployment (for example, `CAIPE` or `Splunk`). The Slack bot maps incoming Slack `team_id` values to this alias before route and ReBAC lookups.                                                                                       |
@@ -1147,11 +1205,12 @@ bridge also requires a signed `X-CAIPE-Agent-Context` header so it can enforce
 per-agent tool allowlists (`agent:<id> can_call tool:<server>/<tool>`). See
 [Agent context HMAC](./agent-context-hmac.md).
 
-For observability and compliance, the bridge also writes a best-effort
-`openfga_rebac` event to audit-service for every terminal
-authorization result: missing subject, OpenFGA allow, OpenFGA deny, and
-OpenFGA unavailable. These writes never affect the allow/deny response returned
-to AgentGateway.
+For observability and compliance, the bridge also writes best-effort
+`openfga_rebac` events to audit-service for terminal authorization results:
+missing subject, OpenFGA allow, OpenFGA deny, and OpenFGA unavailable. Denials
+are written per decision; routine allows are aggregated into periodic counts
+(see [Allow aggregation](#allow-aggregation)). These writes never affect the
+allow/deny response returned to AgentGateway.
 
 ### ext_authz Timeout
 
@@ -1217,7 +1276,7 @@ Most production MCP traffic should still go through AgentGateway. The repository
 - **Local dev** — when an engineer runs a FastMCP server directly on `localhost` for `mcp dev`, `MCP_TRUSTED_LOCALHOST=true` can bypass auth for the real loopback peer only.
 - **Embedded MCPs** — when an MCP lives inside another Python service and therefore cannot be registered as a standalone AgentGateway backend, the same package validates the bearer token locally and can optionally call Keycloak's PDP for a per-MCP scope decision.
 
-That package lives under `ai_platform_engineering/agents/common/mcp-auth/` and is intentionally **authn-focused by default**. In the normal standalone path, AgentGateway remains the source of truth for RBAC.
+That package lives under `ai_platform_engineering/mcp/common/mcp-auth/` and is intentionally **authn-focused by default**. In the normal standalone path, AgentGateway remains the source of truth for RBAC.
 
 ---
 
@@ -1396,7 +1455,7 @@ The dev PDP model keeps the coarse AgentGateway gate and adds admin-configured t
 | `tool:<server>/*`              | base `caller`; derived `can_call`                     | AgentGateway runtime grant for every tool on a concrete MCP server; Team Resources expands all-MCP-server access into one tuple per registered server |
 | `knowledge_base:<id>`          | base `reader`, `ingestor`, `manager`; derived `can_read`, `can_ingest`, `can_admin` | Datasource Search settings write `reader` relationships. The `ingestor` relation remains available only for trusted ingestion transports; it is not granted by the Search UI. KB pages, sharing, and KB-scoped routes check these relationships. |
 | `data_source:<id>`             | base `reader` (incl. `user:*` wildcard), `ingestor`, `manager`, `parent_kb`; derived `can_read`, `can_ingest`, `can_manage` | Indexed-content policy. A 1:1 `parent_kb knowledge_base:<id>` edge inherits query grants without mirrored per-team tuples; direct component grants remain possible. Search intersects this policy with the caller, while reload requires `ingestion_source` management. A `user:* reader data_source:<id>` tuple makes a datasource searchable by every authenticated user who also has the organization Search capability. |
-| `rag_collection:<id>`          | base `owner`, `reader`, `publisher`, `manager`; derived `can_discover`, `can_read`, `can_publish`, `can_manage` | Control-plane grouping of datasource IDs. `reader` grants read access through `knowledge_base#parent_collection`; `data_source` then inherits through its existing `parent_kb` edge. `publisher` changes membership and `manager` changes settings; neither relation implies read access. |
+| `rag_collection:<id>`          | base `owner`, `reader`, `publisher`, `manager`; derived `can_discover`, `can_read`, `can_publish`, `can_manage` | Control-plane grouping of datasource IDs — a saved search-time filter, not an access grant. `reader` only lets the caller use the collection as a `collection_id` query scope; it does **not** propagate to member `knowledge_base`/`data_source` objects, so a reader still needs independent read access to see any given member's content. `publisher` adds/removes membership and requires only `can_read` on the datasource being added (never `can_manage`) — since membership grants no one new access, search-only access to a source can never be amplified into access for someone else via a shared collection. `manager` changes settings; neither relation implies read access to members. |
 | `ingestion_source:<id>`        | base `owner`, `reader`, `manager`; derived `can_read`, `can_manage` | Independent connector-configuration policy. Source create/edit/transfer/reload/delete and config visibility check this object; it does not inherit Search access from `data_source` or `knowledge_base`. |
 | `skill:<id>`                   | base `reader`, `user`, `writer`, `manager`; derived `can_read`, `can_use`, `can_write`, `can_manage` | Team Resources skill selection writes `user` relationships for local and Skill Hub catalog ids; `/api/skills` filters by `can_read`/`can_use`. |
 | `conversation:<id>`            | base `owner`, `reader`, `writer`, `sharer`, `manager`; derived `can_read`, `can_write`, `can_share`, `can_delete` | Chat list/read/write/share and Dynamic Agent stream/invoke/resume/cancel paths check implicit Mongo ownership first, then explicit OpenFGA conversation access. |
@@ -1415,18 +1474,38 @@ continue to replace each datasource's indexed rows wholesale, including
 removing stale pages when a source shrinks.
 
 - Direct Search/API calls use all datasources the caller can currently read.
+  The built-in `search` MCP tool also accepts an optional runtime
+  `collection_id` filter so a caller can scope a query to one or more
+  collections directly, without agent-level `rag_collection_ids`
+  configuration. `server/rbac.py`'s `get_datasource_ids_for_collection`
+  resolves a `rag_collection:<id>` to its member `knowledge_base`/
+  `data_source` ids via a structural OpenFGA tuple read on the
+  `parent_collection` edge — this resolution itself does **not** check the
+  caller's access to the collection or its members. Enforcement instead
+  comes from `tools.py`, which intersects the resolved ids with every other
+  datasource constraint (config-pinned `datasource_ids`, a `datasource_id`
+  filter, and the caller's live OpenFGA-accessible set) the same way
+  `datasource_id` narrowing already works: the result can only narrow, never
+  widen, so a collection containing a datasource the caller cannot read
+  simply drops that datasource from the results rather than exposing it or
+  erroring.
 - An agent stores direct `datasource_ids` plus `rag_collection_ids`. The runtime
   expands collection membership live for every RAG tool call, unions it with
   direct pins, and the RAG server intersects the result with the caller's live
   OpenFGA access.
-- Missing pin fields are a temporary pre-migration legacy state. Explicit empty
-  arrays are a deny/opt-out. The migration attaches otherwise-unscoped
-  RAG-enabled agents to `platform-rag`; new RAG-enabled agents default to that
-  collection when their owner can read it, and may remove it.
-- A personal collection writes separate owner and reader relationships. Its
-  owner can publish only datasources they both manage and read. Organization
-  admins may delegate Owner and Search teams for centrally managed
-  collections.
+- Missing pin fields (`datasource_ids`/`rag_collection_ids` both unset, not
+  sent as `[]`) are the intentional default for a new RAG-enabled agent: it is
+  unrestricted, searching whatever the calling user can already access with
+  no additional agent-level narrowing — safe because `tools.py` always
+  independently intersects with the caller's own OpenFGA-accessible set
+  regardless of agent config. There is no special default collection; an
+  editor opts into a narrower scope explicitly. Explicit empty arrays remain
+  a deliberate deny/opt-out, distinct from unset fields.
+- A personal collection writes separate owner and reader relationships. Any
+  editor can publish any datasource they can search — publishing never
+  extends read access to that datasource for anyone else, including the
+  collection's own readers. Organization admins may delegate Owner and Search
+  teams for centrally managed collections.
 - Service-account scope editing writes explicit `data_source#reader` grants for
   selected datasources. It uses the same grantable-resource rule as agents and
   tools: a creator cannot delegate a datasource they cannot access. There is no
@@ -1436,12 +1515,13 @@ removing stale pages when a source shrinks.
   from reviving an old agent selection. Collection deletion removes its agent
   references but never deletes indexed source data.
 
-This separation keeps collection Owners from reading content merely
-because they can curate it. When an organization admin delegates collection
-Search to a team, the BFF also adds the coarse organization `can_search`
-capability. That capability is additive-only because another collection or an
-explicit Team setting may still depend on it; datasource relationships remain
-the authoritative content boundary.
+This separation keeps collection membership from ever widening who can read a
+datasource's content: a collection's `reader` relation only controls who may
+use it as a query scope, and datasource relationships remain the sole
+authoritative content boundary. When an organization admin delegates
+collection Search to a team, the BFF also adds the coarse organization
+`can_search` capability. That capability is additive-only because another
+collection or an explicit Team setting may still depend on it.
 
 > **Team membership semantic:** On the `team` type, `member` is now defined as `[user, external_group#member] or admin` — i.e. anyone with the `admin` relation on a team automatically satisfies `team#member` checks (and, by extension, `team#member` userset references such as the `team:<slug>#member can_use agent:<id>` Slack/Webex resource paths). This means an admin no longer needs a separate `member` tuple to use the team's agents, and bots can ask `check(user, "member", team:<slug>)` as a single question. `admin` continues to be a directly-written relation; only `member` gains the derived branch. Callers that legacy-listed both `team#member` and `team#admin` as subject sets still work but are now redundant.
 
