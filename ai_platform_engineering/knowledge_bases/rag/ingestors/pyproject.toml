@@ -16,7 +16,7 @@ dependencies = [
     "kubernetes==36.0.3",
     "langchain-text-splitters==1.1.2",
     "lxml==6.1.2",
-    "pyjwt==2.13.0",
+    "pyjwt==2.14.0",
     "python-dotenv==1.2.2",
     "redis==8.1.0",
     "requests==2.34.2",
