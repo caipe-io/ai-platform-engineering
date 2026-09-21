@@ -14,17 +14,19 @@ const lowUsage = {
 };
 
 describe("ContextUsageIndicator",() => {
-  it("shows a plain status when less than 30 percent remains",() => {
-    render(<ContextUsageIndicator usage={lowUsage} />);
+  it("shows a plain status when less than 80 percent remains",() => {
+    render(
+      <ContextUsageIndicator usage={{ ...lowUsage,remaining_percent: 79 }} />,
+    );
 
     expect(screen.getByRole("status")).toHaveAccessibleName(
-      "29% context remaining before compaction",
+      "79% context remaining before compaction",
     );
-    expect(screen.getByText("29% context remaining")).toBeInTheDocument();
+    expect(screen.getByText("79% context remaining")).toBeInTheDocument();
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
-  it.each([30,75])("stays hidden with %s percent remaining",(remainingPercent) => {
+  it.each([80,100])("stays hidden with %s percent remaining",(remainingPercent) => {
     const { container } = render(
       <ContextUsageIndicator
         usage={{ ...lowUsage,remaining_percent: remainingPercent }}

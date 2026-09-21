@@ -9,7 +9,7 @@ interface ContextUsageIndicatorProps {
 }
 
 const numberFormatter = new Intl.NumberFormat();
-const LOW_CONTEXT_THRESHOLD_PERCENT = 30;
+const LOW_CONTEXT_THRESHOLD_PERCENT = 80;
 
 export function ContextUsageIndicator({
   usage,
