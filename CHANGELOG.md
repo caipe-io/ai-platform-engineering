@@ -1,3 +1,11 @@
+## 1.2.0-rc.4 (2026-09-21)
+
+### Fix
+
+- **helm**: support bridge image pull secrets (#2398)
+- **deps**: bump cnoe-agent-utils 0.4.1 -> 0.4.2 for Sonnet 5 temperature fix (#2776)
+- **ci**: drop unused GitHub App token steps (#2772)
+
 ## 1.2.0-rc.3 (2026-09-18)
 
 ### Feat
