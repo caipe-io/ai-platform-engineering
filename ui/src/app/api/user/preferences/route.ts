@@ -122,6 +122,20 @@ async function buildWebexBotSettings(subject: string): Promise<WebexBotAgentSett
   return settings;
 }
 
+async function buildOptionalWebexBotSettings(
+  subject: string,
+): Promise<WebexBotAgentSetting[]> {
+  try {
+    return await buildWebexBotSettings(subject);
+  } catch (error) {
+    console.error(
+      "[user-preferences] Optional Webex defaults are unavailable",
+      error instanceof Error ? error.message : String(error),
+    );
+    return [];
+  }
+}
+
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const { session } = await getAuthFromBearerOrSession(request);
   const subject = resolveSubject(session);
@@ -137,7 +151,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const [preference, platformDefaultAgentId, webexBots] = await Promise.all([
     getUserPreference({ tenantId, userId: subject }),
     getResolvedPlatformDefaultAgentId(),
-    buildWebexBotSettings(subject),
+    buildOptionalWebexBotSettings(subject),
   ]);
   return successResponse({
     ...preference,

@@ -154,6 +154,27 @@ describe("GET /api/user/preferences", () => {
     });
   });
 
+  it("returns saved defaults when the optional Webex service is unavailable", async () => {
+    mockGetUserPreference.mockResolvedValue({
+      web_default_agent_id: "agent-web",
+      slack_default_agent_id: null,
+    });
+    mockListWebexBotPolicies.mockRejectedValue(new TypeError("fetch failed"));
+
+    const response = await GET(makeRequest("GET"));
+
+    expect(response.status).toBe(200);
+    await expect(bodyOf(response)).resolves.toMatchObject({
+      success: true,
+      data: {
+        web_default_agent_id: "agent-web",
+        slack_default_agent_id: null,
+        webex_bots: [],
+        platform_default_agent_id: "platform-agent",
+      },
+    });
+  });
+
   it("rejects requests without a valid session", async () => {
     mockGetAuth.mockResolvedValue({
       user: { email: "x", name: "y", role: "user" },
