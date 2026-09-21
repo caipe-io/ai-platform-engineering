@@ -134,16 +134,30 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     });
   }
   const tenantId = resolveTenant(session);
+  const integrations = getIntegrationAvailability();
   const [preference, platformDefaultAgentId, webexBots] = await Promise.all([
     getUserPreference({ tenantId, userId: subject }),
     getResolvedPlatformDefaultAgentId(),
-    buildWebexBotSettings(subject),
+    // Do not make the personal Web/Slack settings page depend on the Webex
+    // service when Webex is not part of this deployment. In that case the
+    // service call can fail even though the user preferences are healthy.
+    integrations.webex
+      ? buildWebexBotSettings(subject).catch((error: unknown) => {
+          // Web and Slack preferences remain usable during a Webex admin
+          // service outage. The Webex rows will reappear on the next load.
+          console.warn(
+            "[user-preferences] Webex settings unavailable",
+            error instanceof Error ? error.message : String(error),
+          );
+          return [];
+        })
+      : Promise.resolve([]),
   ]);
   return successResponse({
     ...preference,
     webex_bots: webexBots,
     platform_default_agent_id: platformDefaultAgentId,
-    integrations: getIntegrationAvailability(),
+    integrations,
   });
 });
 
