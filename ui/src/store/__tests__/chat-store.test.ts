@@ -47,6 +47,7 @@ jest.mock('@/lib/utils', () => ({
 
 import { getLastActiveConversationId, resolveChatNavigationPath, useChatStore } from '../chat-store';
 import { apiClient } from '@/lib/api-client';
+import { createStreamEvent } from '@/lib/streaming/types';
 import type { Conversation, ChatMessage } from '@/types/a2a';
 
 // Get typed mock references
@@ -85,6 +86,7 @@ function resetStore() {
     isStreaming: false,
     streamingConversations: new Map(),
     pendingMessage: null,
+    contextUsageByConversation: {},
     unviewedConversations: new Set(),
     inputRequiredConversations: new Set(),
   });
@@ -149,6 +151,45 @@ describe('chat-store', () => {
   afterEach(() => {
     jest.useRealTimers();
     window.localStorage.clear();
+  });
+
+  describe('context usage', () => {
+    const usage = {
+      used_tokens: 71_000,
+      compaction_threshold: 100_000,
+      remaining_tokens: 29_000,
+      remaining_percent: 29,
+    };
+
+    it('keeps usage in memory when turn stream events are cleared', () => {
+      const conv = makeConversation({ id: 'usage-conv' });
+      useChatStore.setState({ conversations: [conv] });
+
+      useChatStore.getState().setContextUsage('usage-conv',usage);
+
+      expect(useChatStore.getState().contextUsageByConversation['usage-conv']).toEqual(usage);
+      expect(useChatStore.getState().conversations[0].streamEvents).toEqual([]);
+
+      useChatStore.getState().clearStreamEvents('usage-conv');
+      expect(useChatStore.getState().contextUsageByConversation['usage-conv']).toEqual(usage);
+    });
+
+    it('excludes context usage events from MongoDB persistence', async () => {
+      const contextEvent = createStreamEvent('context_usage',usage);
+      const conv = makeConversation({
+        id: 'usage-persistence-conv',
+        messages: [makeMessage({ id: 'assistant-msg',role: 'assistant',isFinal: true })],
+        streamEvents: [contextEvent],
+      });
+      useChatStore.setState({ conversations: [conv] });
+
+      await useChatStore.getState().saveMessagesToServer('usage-persistence-conv');
+
+      expect(mockApiClient.addMessage).toHaveBeenCalledWith(
+        'usage-persistence-conv',
+        expect.objectContaining({ stream_events: undefined }),
+      );
+    });
   });
 
 

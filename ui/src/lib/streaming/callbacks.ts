@@ -8,7 +8,7 @@
  * All callbacks are optional — adapters check before calling.
  */
 
-import type { InputFieldDefinition } from "@/lib/streaming/types";
+import type { ContextUsageEventData,InputFieldDefinition } from "@/lib/streaming/types";
 
 // ═══════════════════════════════════════════════════════════════
 // Raw event type for persistence / replay
@@ -112,6 +112,9 @@ export interface StreamCallbacks {
 
   /** Non-fatal warning from the agent */
   onWarning?(message: string, namespace?: string[]): void;
+
+  /** Prompt usage relative to the runtime's automatic compaction threshold */
+  onContextUsage?(usage: ContextUsageEventData, namespace: string[]): void;
 
   /** Stream completed successfully */
   onDone?(): void;

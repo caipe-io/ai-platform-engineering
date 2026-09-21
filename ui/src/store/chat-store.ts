@@ -2,7 +2,7 @@ import { getErrorMessage } from "@/lib/error-utils";
 import { create, type StateCreator } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { Conversation, ChatMessage, MessageFeedback, TurnStatus, getAgentId, buildParticipants } from "@/types/a2a";
-import { StreamEvent } from "@/lib/streaming/types";
+import { StreamEvent,type ContextUsageEventData } from "@/lib/streaming/types";
 import { generateId } from "@/lib/utils";
 import type { StreamAdapter } from "@/lib/streaming";
 import { apiClient } from "@/lib/api-client";
@@ -81,6 +81,7 @@ interface ChatState {
   isStreaming: boolean;
   streamingConversations: Map<string, StreamingState>;
   pendingMessage: string | null; // Message to auto-submit when the chat panel mounts
+  contextUsageByConversation: Record<string,ContextUsageEventData>;
 
   // Conversations with new responses the user hasn't viewed yet
   unviewedConversations: Set<string>;
@@ -101,6 +102,7 @@ interface ChatState {
   cancelConversationRequest: (conversationId: string) => void;
   // Stream events (for Dynamic Agents)
   addStreamEvent: (event: StreamEvent, conversationId?: string) => void;
+  setContextUsage: (conversationId: string,usage: ContextUsageEventData) => void;
   clearStreamEvents: (conversationId?: string) => void;
   getConversationStreamEvents: (conversationId: string) => StreamEvent[];
   deleteConversation: (id: string) => Promise<void>;
@@ -206,6 +208,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       isStreaming: false,
       streamingConversations: new Map<string, StreamingState>(),
       pendingMessage: null,
+      contextUsageByConversation: {},
       unviewedConversations: new Set<string>(),
       inputRequiredConversations: new Set<string>(),
 
@@ -541,6 +544,15 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         }
       },
 
+      setContextUsage: (conversationId: string,usage: ContextUsageEventData) => {
+        set((state: ChatState) => ({
+          contextUsageByConversation: {
+            ...state.contextUsageByConversation,
+            [conversationId]: usage,
+          },
+        }));
+      },
+
       clearStreamEvents: (conversationId?: string) => {
         if (conversationId) {
           set((prev: ChatState) => ({
@@ -600,6 +612,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           return {
             conversations: newConversations,
             activeConversationId: newActiveId,
+            contextUsageByConversation: Object.fromEntries(
+              Object.entries(state.contextUsageByConversation).filter(([conversationId]) => conversationId !== id),
+            ),
           };
         });
         const nextActiveId = get().activeConversationId;
@@ -646,6 +661,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         set({
           conversations: [],
           activeConversationId: null,
+          contextUsageByConversation: {},
         });
         persistLastActiveConversationId(null);
       },
@@ -937,6 +953,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         // we attach the conversation-level events to the last assistant message
         // being saved (the one that was just streamed).
         const convStreamEvents = conv.streamEvents || [];
+        const persistableStreamEvents = convStreamEvents.filter(
+          (event: StreamEvent) => event.type !== "context_usage",
+        );
         const lastAssistantIdx = (() => {
           for (let i = conv.messages.length - 1; i >= 0; i--) {
             if (conv.messages[i].role === 'assistant') return i;
@@ -981,9 +1000,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           try {
             // Attach conversation-level stream events to the last assistant message.
             let serializedStreamEvents: StoredStreamEvent[] | undefined;
-            if (idx === lastAssistantIdx && convStreamEvents.length > 0) {
-              serializedStreamEvents = convStreamEvents.map(serializeStreamEvent);
-              console.log(`[ChatStore] Attaching ${convStreamEvents.length} conversation-level stream events to assistant message ${msg.id}`);
+            if (idx === lastAssistantIdx && persistableStreamEvents.length > 0) {
+              serializedStreamEvents = persistableStreamEvents.map(serializeStreamEvent);
+              console.log(`[ChatStore] Attaching ${persistableStreamEvents.length} conversation-level stream events to assistant message ${msg.id}`);
             }
 
             // Persist user attachments as artifacts so the upload stays in the

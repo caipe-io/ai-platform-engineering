@@ -256,6 +256,7 @@ export interface UserSettings {
     show_thinking_enabled: string;
     auto_scroll_enabled: string;
     show_timestamps_enabled: string;
+    show_context_usage_enabled: string;
     // Per-user opt-out for the post-login release notes notification. When
     // false, the release upgrade dialog/toast is suppressed for this user only
     // (it does not change the platform-wide admin configuration). Defaults to
@@ -310,6 +311,7 @@ export const DEFAULT_USER_SETTINGS: Omit<
     show_thinking_enabled: "true",
     auto_scroll_enabled: "true",
     show_timestamps_enabled: "false",
+    show_context_usage_enabled: "true",
     releaseNotesNotificationsEnabled: true,
   },
   notifications: {
