@@ -18,8 +18,8 @@ Who checks what, and what a pull request needs before it is approved.
 | Structural | Human reviewer | correctness, architecture fit, security, failure modes, test value |
 | Narrative | Author, read by the reviewer | why the change exists, what it affects, how it was verified |
 
-Reviewers do not spend time on the mechanical layer. If a machine can catch it, a machine
-catches it — a missing check is a CI gap, not a review comment.
+Reviewers avoid repeating findings already reported by CI. If a reviewer finds a problem
+that CI missed, they should report it and suggest an automated check where practical.
 
 ```mermaid
 flowchart TD
