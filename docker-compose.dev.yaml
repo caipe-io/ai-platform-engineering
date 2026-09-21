@@ -120,7 +120,7 @@ services:
   mcp-gitlab:
     image: zereight050/gitlab-mcp:latest
     container_name: mcp-gitlab
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18010:8000"]
     environment:
       - STREAMABLE_HTTP=true
@@ -150,7 +150,7 @@ services:
         - AGENT_NAME=backstage
     image: ghcr.io/caipe-io/mcp-backstage:${IMAGE_TAG:-localtag}
     container_name: mcp-backstage
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18001:8000"]
     volumes:
       - ./ai_platform_engineering/mcp/backstage:/app/ai_platform_engineering/mcp/backstage
@@ -177,7 +177,7 @@ services:
         - AGENT_NAME=argocd
     image: ghcr.io/caipe-io/mcp-argocd:${IMAGE_TAG:-localtag}
     container_name: mcp-argocd
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18002:8000"]
     volumes:
       - ./ai_platform_engineering/mcp/argocd:/app/ai_platform_engineering/mcp/argocd
@@ -199,7 +199,7 @@ services:
   mcp-confluence:
     image: ghcr.io/sooperset/mcp-atlassian:latest
     container_name: mcp-confluence
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18003:8000"]
     environment:
       - CONFLUENCE_URL=${CONFLUENCE_URL}
@@ -218,7 +218,7 @@ services:
         - AGENT_NAME=jira
     image: ghcr.io/caipe-io/mcp-jira:${IMAGE_TAG:-localtag}
     container_name: mcp-jira
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18004:8000"]
     volumes:
       - ./ai_platform_engineering/mcp/jira:/app/ai_platform_engineering/mcp/jira
@@ -261,7 +261,7 @@ services:
         - AGENT_NAME=komodor
     image: ghcr.io/caipe-io/mcp-komodor:${IMAGE_TAG:-localtag}
     container_name: mcp-komodor
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18005:8000"]
     volumes:
       - ./ai_platform_engineering/mcp/komodor:/app/ai_platform_engineering/mcp/komodor
@@ -287,7 +287,7 @@ services:
         - AGENT_NAME=pagerduty
     image: ghcr.io/caipe-io/mcp-pagerduty:${IMAGE_TAG:-localtag}
     container_name: mcp-pagerduty
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18006:8000"]
     volumes:
       - ./ai_platform_engineering/mcp/pagerduty:/app/ai_platform_engineering/mcp/pagerduty
@@ -310,7 +310,7 @@ services:
   mcp-slack:
     image: ghcr.io/korotovsky/slack-mcp-server:v1.2.3
     container_name: mcp-slack
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18007:3001"]
     environment:
       - SLACK_MCP_HOST=0.0.0.0
@@ -341,7 +341,7 @@ services:
         - AGENT_NAME=splunk
     image: ghcr.io/caipe-io/mcp-splunk:${IMAGE_TAG:-localtag}
     container_name: mcp-splunk
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18008:8000"]
     volumes:
       - ./ai_platform_engineering/mcp/splunk:/app/ai_platform_engineering/mcp/splunk
@@ -368,7 +368,7 @@ services:
         - AGENT_NAME=webex
     image: ghcr.io/caipe-io/mcp-webex:${IMAGE_TAG:-localtag}
     container_name: mcp-webex
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18009:8000"]
     volumes:
       - ./ai_platform_engineering/mcp/webex:/app/ai_platform_engineering/mcp/webex
@@ -395,7 +395,7 @@ services:
         - AGENT_NAME=webex-meetings
     image: ghcr.io/caipe-io/mcp-webex-meetings:${IMAGE_TAG:-localtag}
     container_name: mcp-webex-meetings
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18013:8000"]
     volumes:
       - ./ai_platform_engineering/mcp/webex-meetings:/app/ai_platform_engineering/mcp/webex-meetings
@@ -422,7 +422,7 @@ services:
         - AGENT_NAME=victorops
     image: ghcr.io/caipe-io/mcp-victorops:${IMAGE_TAG:-localtag}
     container_name: mcp-victorops
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18012:8000"]
     volumes:
       - ./ai_platform_engineering/mcp/victorops:/app/ai_platform_engineering/mcp/victorops
@@ -449,7 +449,7 @@ services:
         - INSTALL_NETUTILS=true
     image: ghcr.io/caipe-io/mcp-netutils:${IMAGE_TAG:-localtag}
     container_name: mcp-netutils
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18011:8000"]
     volumes:
       - ./ai_platform_engineering/mcp/netutils:/app/ai_platform_engineering/mcp/netutils
@@ -512,7 +512,7 @@ services:
     container_name: caipe-ui
     ports: ["3000:3000"]
     env_file:
-      - .env
+      - "${CAIPE_COMPOSE_ENV_FILE:-.env}"
     environment:
       - NODE_ENV=development
       # Safe release metadata shown by System Health. A specific
@@ -795,7 +795,7 @@ services:
         aliases:
           - caipe-ui
     env_file:
-      - .env
+      - "${CAIPE_COMPOSE_ENV_FILE:-.env}"
     environment:
       - NODE_ENV=production
       # Safe release metadata shown by System Health. A specific
@@ -1031,7 +1031,7 @@ services:
       # bytes are content-addressed here; only a reference is persisted to the
       # Mongo checkpoint. Mirrors audit_service_data:/var/lib/caipe-audit-service.
       - dynamic_agents_attachments:/var/lib/caipe-attachments
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     environment:
       # Dev-only: DEV_HOT_RELOAD toggles the existing DEBUG-driven uvicorn reload
       # on the bind-mounted source under /app/dynamic_agents/src. Default off.
@@ -1176,7 +1176,7 @@ services:
     image: ghcr.io/caipe-io/caipe-autonomous-agents:${IMAGE_TAG:-localtag}
     container_name: autonomous-agents
     ports: ["8002:8002"]
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     environment:
       # Dynamic-agents runtime endpoint -- every autonomous task runs against a
       # dynamic agent selected by the task's dynamic_agent_id.
@@ -1299,7 +1299,7 @@ services:
       - CAIPE_UNSAFE_RBAC_BYPASS=${CAIPE_UNSAFE_RBAC_BYPASS:-false}
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
     restart: unless-stopped
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     depends_on:
       rag-redis:
         condition: service_started
@@ -1334,7 +1334,7 @@ services:
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
       - LANGFUSE_SESSION_ID=${LANGFUSE_SESSION_ID}
       - LANGFUSE_USER_ID=${LANGFUSE_USER_ID}
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     restart: unless-stopped
     depends_on: [rag-server, neo4j, rag-redis]
     profiles:
@@ -1368,7 +1368,7 @@ services:
       - INGESTOR_OIDC_CLIENT_SECRET=${INGESTOR_OIDC_CLIENT_SECRET}
       - INGESTOR_OIDC_DISCOVERY_URL=${INGESTOR_OIDC_DISCOVERY_URL:-}
       - INGESTOR_OIDC_SCOPE=${INGESTOR_OIDC_SCOPE:-}
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]
     profiles:
@@ -1397,7 +1397,7 @@ services:
       - MAX_DOCUMENTS_PER_INGEST=${BACKSTAGE_MAX_DOCUMENTS_PER_INGEST:-25}
       - MAX_INGESTION_CONCURRENCY=${BACKSTAGE_MAX_INGESTION_CONCURRENCY:-10}
       - IGNORE_TYPES=${BACKSTAGE_IGNORE_TYPES:-api,component,domain,group,location,system,template,user}
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     restart: unless-stopped
     profiles:
       - backstage-ingestor
@@ -1432,7 +1432,7 @@ services:
       - AWS_ACCOUNT_LIST=${AWS_ACCOUNT_LIST:-}
       - CROSS_ACCOUNT_ROLE_NAME=${CROSS_ACCOUNT_ROLE_NAME:-caipe-read-only}
     restart: no
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     profiles:
       - aws-ingestor
 
@@ -1466,7 +1466,7 @@ services:
       - EXIT_AFTER_FIRST_SYNC=${EXIT_AFTER_FIRST_SYNC:-false}
       - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
     restart: no
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     profiles:
       - k8s-ingestor
 
@@ -1493,7 +1493,7 @@ services:
       - EXIT_AFTER_FIRST_SYNC=${EXIT_AFTER_FIRST_SYNC:-false}
       - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
     restart: unless-stopped
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     depends_on: [rag-server, rag-redis]
     profiles:
       - slack-ingestor
@@ -1520,7 +1520,7 @@ services:
       - EXIT_AFTER_FIRST_SYNC=${EXIT_AFTER_FIRST_SYNC:-false}
       - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
     restart: unless-stopped
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     depends_on: [rag-server, rag-redis]
     profiles:
       - webex-ingestor
@@ -1548,7 +1548,7 @@ services:
       - EXIT_AFTER_FIRST_SYNC=${EXIT_AFTER_FIRST_SYNC:-false}
       - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
     restart: no
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     profiles:
       - argocd-ingestor
 
@@ -1581,7 +1581,7 @@ services:
       - EXIT_AFTER_FIRST_SYNC=${EXIT_AFTER_FIRST_SYNC:-false}
       - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
     restart: no
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     profiles:
       - github-ingestor
 
@@ -1608,7 +1608,7 @@ services:
       - EXIT_AFTER_FIRST_SYNC=${EXIT_AFTER_FIRST_SYNC:-false}
       - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
     restart: unless-stopped
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     depends_on: [rag-server, rag-redis]
     profiles:
       - jira-ingestor
@@ -1635,7 +1635,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
       - RAG_SERVER_URL=${RAG_SERVER_URL:-http://rag-server:9446}
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]
     profiles:
@@ -1963,7 +1963,7 @@ services:
         else
           uv sync --no-dev && exec python -m app
         fi
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["8030:3000"]  # Only used in HTTP mode (SLACK_INTEGRATION_BOT_MODE=http)
     environment:
       # Force unbuffered stdio so loguru/print output reaches `docker logs`
@@ -2064,7 +2064,7 @@ services:
         else
           exec python -m ai_platform_engineering.integrations.webex_bot.main
         fi
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["8032:3002"]
     environment:
       - DEV_HOT_RELOAD=${DEV_HOT_RELOAD:-false}
