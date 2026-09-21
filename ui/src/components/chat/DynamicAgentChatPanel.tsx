@@ -23,7 +23,7 @@ import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { AnimatePresence,motion } from "framer-motion";
-import { Activity,ArrowDown,ArrowLeft,Check,ChevronUp,Copy,Loader2,Paperclip,Pencil,RotateCcw,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
+import { Activity,ArrowDown,ArrowLeft,Check,ChevronUp,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
@@ -37,6 +37,7 @@ import { Feedback,FeedbackButton } from "./FeedbackButton";
 import { MetadataInputForm,type InputField,type UserInputMetadata } from "./MetadataInputForm";
 import { AttachmentChips,type PendingAttachment } from "./AttachmentChips";
 import { MessageAttachments } from "./MessageAttachments";
+import { RewindConfirmationDialog } from "./RewindConfirmationDialog";
 import { getFilteredCommands,SlashCommandMenu,type SlashCommand } from "./SlashCommandMenu";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import { useSlashCommands } from "./useSlashCommands";
@@ -135,6 +136,7 @@ export function ChatPanel({
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isRewindConfirmationOpen, setIsRewindConfirmationOpen] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   // Files staged in the composer for the next turn (multimodal input).
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -284,6 +286,12 @@ export function ChatPanel({
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
+  const editingMessageIndex = editingMessageId
+    ? (conversation?.messages.findIndex((message) => message.id === editingMessageId) ?? -1)
+    : -1;
+  const rewindMessageCount = editingMessageIndex >= 0
+    ? (conversation?.messages.length ?? 0) - editingMessageIndex
+    : 0;
 
   // Ref to track which conversations we've checked for HITL interrupt state
   const interruptCheckedRef = useRef<Set<string>>(new Set());
@@ -1162,15 +1170,47 @@ export function ChatPanel({
   }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
 
   const startEditingMessage = useCallback((message: ChatMessageType) => {
+    setIsRewindConfirmationOpen(false);
     setEditingMessageId(message.id);
     setEditDraft(message.content);
   }, []);
 
   const cancelEditingMessage = useCallback(() => {
     if (isSavingEdit) return;
+    setIsRewindConfirmationOpen(false);
     setEditingMessageId(null);
     setEditDraft("");
   }, [isSavingEdit]);
+
+  const requestEditedMessageSave = useCallback(() => {
+    if (!editingMessageId || !activeConversationId || isSavingEdit) return;
+    const targetMessage = getActiveConversation()?.messages.find(
+      (message) => message.id === editingMessageId,
+    );
+    if (!targetMessage) {
+      toast("The message is no longer available to edit.", "error", 6000);
+      cancelEditingMessage();
+      return;
+    }
+    if (targetMessage.attachments?.some((attachment) => !attachment.data)) {
+      toast(
+        "This message has an attachment that is no longer available. Re-upload it in a new message instead.",
+        "error",
+        8000,
+      );
+      return;
+    }
+    if (!editDraft.trim() && !targetMessage.attachments?.length) return;
+    setIsRewindConfirmationOpen(true);
+  }, [
+    activeConversationId,
+    cancelEditingMessage,
+    editDraft,
+    editingMessageId,
+    getActiveConversation,
+    isSavingEdit,
+    toast,
+  ]);
 
   const saveEditedMessage = useCallback(async () => {
     if (!editingMessageId || !activeConversationId || isSavingEdit) return;
@@ -1185,6 +1225,7 @@ export function ChatPanel({
 
     const targetAttachments = targetMessage.attachments ?? [];
     if (targetAttachments.some((attachment) => !attachment.data)) {
+      setIsRewindConfirmationOpen(false);
       toast(
         "This message has an attachment that is no longer available. Re-upload it in a new message instead.",
         "error",
@@ -1213,6 +1254,7 @@ export function ChatPanel({
       setPendingToolApproval(null);
       clearConversationInputRequired(activeConversationId);
       dismissedInputForMessageRef.current.clear();
+      setIsRewindConfirmationOpen(false);
       setEditingMessageId(null);
       setEditDraft("");
       await submitMessage(editDraft, files);
@@ -1266,12 +1308,6 @@ export function ChatPanel({
       }, 300);
     }
   }, [isThisConversationStreaming, queuedMessages, submitMessage]);
-
-  // Retry handler - re-sends the message content
-  const handleRetry = useCallback((content: string) => {
-    if (isThisConversationStreaming) return; // Don't retry while streaming
-    submitMessage(content);
-  }, [isThisConversationStreaming, submitMessage]);
 
   // Handle /skills chat command: show skills configured on this agent
   const handleSkillsCommand = useCallback(async () => {
@@ -1967,17 +2003,6 @@ export function ChatPanel({
                         !pendingUserInput &&
                         !pendingToolApproval;
 
-                      // For retry: if user message, use its content; if assistant, find preceding user message
-                      const getRetryContent = () => {
-                        if (msg.role === "user") return msg.content;
-                        for (let i = index - 1; i >= 0; i--) {
-                          if (arr[i].role === "user") {
-                            return arr[i].content;
-                          }
-                        }
-                        return null;
-                      };
-
                       // Check if this is the last assistant message (latest answer)
                       const isLastAssistantMessage = msg.role === "assistant" &&
                         index === arr.length - 1;
@@ -2019,11 +2044,10 @@ export function ChatPanel({
                           onStartEdit={() => startEditingMessage(msg)}
                           onEditDraftChange={setEditDraft}
                           onCancelEdit={cancelEditingMessage}
-                          onSaveEdit={saveEditedMessage}
+                          onSaveEdit={requestEditedMessageSave}
                           isCopied={copiedId === msg.id}
                           isStreaming={isAssistantStreaming}
                           isLatestAnswer={isLastAssistantMessage}
-                          onRetry={getRetryContent() ? () => handleRetry(getRetryContent()!) : undefined}
                           feedback={msg.feedback}
                           onFeedbackChange={(feedback) => handleFeedbackChange(msg.id, feedback)}
                           isRecovering={recoveringMessageId === msg.id}
@@ -2379,6 +2403,16 @@ export function ChatPanel({
         </div>
       </div>
       )}
+
+      <RewindConfirmationDialog
+        open={isRewindConfirmationOpen}
+        messageCount={rewindMessageCount}
+        isConfirming={isSavingEdit}
+        onCancel={() => setIsRewindConfirmationOpen(false)}
+        onConfirm={() => {
+          void saveEditedMessage();
+        }}
+      />
     </div>
   );
 }
@@ -2507,7 +2541,6 @@ interface ChatMessageProps {
   isCopied: boolean;
   isStreaming?: boolean;
   isLatestAnswer?: boolean;
-  onRetry?: () => void;
   feedback?: Feedback;
   onFeedbackChange?: (feedback: Feedback) => void;
   conversationId?: string;
@@ -2547,7 +2580,6 @@ const ChatMessage = React.memo(function ChatMessage({
   isCopied,
   isStreaming = false,
   isLatestAnswer = false,
-  onRetry,
   feedback,
   onFeedbackChange,
   conversationId,
@@ -2762,26 +2794,6 @@ const ChatMessage = React.memo(function ChatMessage({
                     </Tooltip>
                   </TooltipProvider>
                 )}
-                {onRetry && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                          onClick={onRetry}
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Retry this prompt
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -2834,17 +2846,6 @@ const ChatMessage = React.memo(function ChatMessage({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">Response was interrupted</p>
                     </div>
-                    {onRetry && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={onRetry}
-                        className="shrink-0 gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 hover:text-amber-300"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        Retry
-                      </Button>
-                    )}
                   </>
                 )}
               </motion.div>
@@ -2878,33 +2879,13 @@ const ChatMessage = React.memo(function ChatMessage({
               </div>
             ) : null}
 
-            {/* Action buttons (copy, retry, collapse) */}
+            {/* Assistant message actions */}
             {displayContent && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: isHovered ? 1 : 0.8 }}
                 className="flex items-center gap-1 mt-2"
               >
-                {onRetry && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                          onClick={onRetry}
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Regenerate response
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
