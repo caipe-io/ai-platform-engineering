@@ -669,6 +669,10 @@ class ChatRequest(BaseModel):
     )
     conversation_id: str = Field(..., description="Conversation/session ID")
     agent_id: str = Field(..., description="Dynamic agent config ID")
+    turn_id: str | None = Field(
+        None,
+        description="Client turn ID used to correlate persisted messages with LangGraph state",
+    )
     protocol: str = Field("custom", pattern=r"^(custom|agui)$", description="Wire protocol: 'custom' or 'agui'")
     trace_id: str | None = Field(None, description="Optional trace ID for Langfuse tracing")
     autonomous: bool = Field(

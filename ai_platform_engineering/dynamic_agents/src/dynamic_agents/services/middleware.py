@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
 from dynamic_agents.metrics import MetricsAgentMiddleware
 from dynamic_agents.models import FeaturesConfig, MiddlewareEntry
+from dynamic_agents.services.context_usage import ContextUsageMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -732,6 +733,10 @@ def build_middleware(
 
     # Repair tool-call history after configurable middleware edits and before the model.
     result.append(ToolResultInvariantMiddleware())
+
+    # This middleware runs inside Deep Agents' compaction layer, so clients see
+    # the effective prompt size that is actually sent to the model.
+    result.append(ContextUsageMiddleware())
 
     # Append MetricsAgentMiddleware at the end to capture total LLM/tool duration
     result.append(MetricsAgentMiddleware(agent_name=agent_name, model_id=model_id))

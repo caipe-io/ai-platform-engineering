@@ -1,6 +1,7 @@
 "use client";
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
+import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,7 @@ import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { AnimatePresence,motion } from "framer-motion";
-import { Activity,ArrowDown,ArrowLeft,Check,ChevronUp,Copy,Loader2,Paperclip,RotateCcw,Send,ShieldCheck,Sparkles,Square,User } from "lucide-react";
+import { Activity,ArrowDown,ArrowLeft,Check,ChevronUp,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
@@ -37,6 +38,7 @@ import { Feedback,FeedbackButton } from "./FeedbackButton";
 import { MetadataInputForm,type InputField,type UserInputMetadata } from "./MetadataInputForm";
 import { AttachmentChips,type PendingAttachment } from "./AttachmentChips";
 import { MessageAttachments } from "./MessageAttachments";
+import { RewindConfirmationDialog } from "./RewindConfirmationDialog";
 import { getFilteredCommands,SlashCommandMenu,type SlashCommand } from "./SlashCommandMenu";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import { useSlashCommands } from "./useSlashCommands";
@@ -83,8 +85,14 @@ export function ChatPanel({
   const agentSkills = agent?.skills;
   const { data: session } = useSession();
   const { toast } = useToast();
+  const initializeFeatureFlags = useFeatureFlagStore((s) => s.initialize);
   const autoScrollEnabled = useFeatureFlagStore((s) => s.flags.autoScroll ?? true);
   const showTimestamps = useFeatureFlagStore((s) => s.flags.showTimestamps ?? false);
+  const showContextUsage = useFeatureFlagStore((s) => s.flags.showContextUsage ?? true);
+
+  useEffect(() => {
+    initializeFeatureFlags();
+  }, [initializeFeatureFlags]);
 
   /**
    * Surface a structured auth-failure (from the Web UI backend or stream adapters) to
@@ -132,6 +140,10 @@ export function ChatPanel({
   const panelReadOnly = readOnly && !hasRelinkedAgent;
   const panelReadOnlyReason = hasRelinkedAgent ? undefined : readOnlyReason;
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isRewindConfirmationOpen, setIsRewindConfirmationOpen] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   // Files staged in the composer for the next turn (multimodal input).
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -195,7 +207,10 @@ export function ChatPanel({
     addMessage,
     updateMessage,
     appendToMessage,
+    truncateConversationFromMessage,
     addStreamEvent,
+    contextUsageByConversation,
+    setContextUsage,
     clearStreamEvents,
     setConversationStreaming,
     isConversationStreaming,
@@ -203,7 +218,9 @@ export function ChatPanel({
     updateMessageFeedback,
     consumePendingMessage,
     loadMessagesFromServer,
+    saveMessagesToServer,
     updateConversationTitle,
+    clearConversationInputRequired,
   } = useChatStore();
 
   // Re-link this deprecated/deleted-agent conversation to the platform default agent,
@@ -278,6 +295,16 @@ export function ChatPanel({
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
+  const editingMessageIndex = editingMessageId
+    ? (conversation?.messages.findIndex((message) => message.id === editingMessageId) ?? -1)
+    : -1;
+  const rewindMessageCount = editingMessageIndex >= 0
+    ? (conversation?.messages.length ?? 0) - editingMessageIndex
+    : 0;
+  const contextUsageId = conversationId ?? activeConversationId;
+  const contextUsage = contextUsageId
+    ? contextUsageByConversation[contextUsageId]
+    : undefined;
 
   // Ref to track which conversations we've checked for HITL interrupt state
   const interruptCheckedRef = useRef<Set<string>>(new Set());
@@ -955,6 +982,10 @@ export function ChatPanel({
       addStreamEvent(streamEvent, convId);
     },
 
+    onContextUsage(usage, namespace) {
+      if ((namespace?.length ?? 0) === 0) setContextUsage(convId,usage);
+    },
+
     onDone() {
       // Finalization handled after adapter.streamMessage resolves
     },
@@ -964,7 +995,7 @@ export function ChatPanel({
       loopState.hasError = true;
       loopState.errorMessage = message;
     },
-  }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks]);
+  }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks, setContextUsage]);
 
   /**
    * Finalize a stream loop — copies conversation-level streamEvents to the
@@ -1116,6 +1147,7 @@ export function ChatPanel({
           message: messageToSend,
           conversationId: convId,
           agentId,
+          turnId,
           clientContext,
           ...(filesToSend.length > 0 && { files: filesToSend }),
         },
@@ -1154,6 +1186,119 @@ export function ChatPanel({
     }
   }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
 
+  const startEditingMessage = useCallback((message: ChatMessageType) => {
+    setIsRewindConfirmationOpen(false);
+    setEditingMessageId(message.id);
+    setEditDraft(message.content);
+  }, []);
+
+  const cancelEditingMessage = useCallback(() => {
+    if (isSavingEdit) return;
+    setIsRewindConfirmationOpen(false);
+    setEditingMessageId(null);
+    setEditDraft("");
+  }, [isSavingEdit]);
+
+  const requestEditedMessageSave = useCallback(() => {
+    if (!editingMessageId || !activeConversationId || isSavingEdit) return;
+    const targetMessage = getActiveConversation()?.messages.find(
+      (message) => message.id === editingMessageId,
+    );
+    if (!targetMessage) {
+      toast("The message is no longer available to edit.", "error", 6000);
+      cancelEditingMessage();
+      return;
+    }
+    if (targetMessage.attachments?.some((attachment) => !attachment.data)) {
+      toast(
+        "This message has an attachment that is no longer available. Re-upload it in a new message instead.",
+        "error",
+        8000,
+      );
+      return;
+    }
+    if (!editDraft.trim() && !targetMessage.attachments?.length) return;
+    setIsRewindConfirmationOpen(true);
+  }, [
+    activeConversationId,
+    cancelEditingMessage,
+    editDraft,
+    editingMessageId,
+    getActiveConversation,
+    isSavingEdit,
+    toast,
+  ]);
+
+  const saveEditedMessage = useCallback(async () => {
+    if (!editingMessageId || !activeConversationId || isSavingEdit) return;
+    const targetMessage = getActiveConversation()?.messages.find(
+      (message) => message.id === editingMessageId,
+    );
+    if (!targetMessage) {
+      toast("The message is no longer available to edit.", "error", 6000);
+      cancelEditingMessage();
+      return;
+    }
+
+    const targetAttachments = targetMessage.attachments ?? [];
+    if (targetAttachments.some((attachment) => !attachment.data)) {
+      setIsRewindConfirmationOpen(false);
+      toast(
+        "This message has an attachment that is no longer available. Re-upload it in a new message instead.",
+        "error",
+        8000,
+      );
+      return;
+    }
+    if (!editDraft.trim() && targetAttachments.length === 0) return;
+
+    const files: InputFile[] = targetAttachments.map((attachment) => ({
+      mime_type: attachment.mime_type,
+      name: attachment.name,
+      data: attachment.data!,
+    }));
+
+    setIsSavingEdit(true);
+    try {
+      await saveMessagesToServer(activeConversationId);
+      await apiClient.rewindConversation(activeConversationId, {
+        agent_id: agentId,
+        message_id: editingMessageId,
+      });
+      truncateConversationFromMessage(activeConversationId, editingMessageId);
+      setQueuedMessages([]);
+      setPendingUserInput(null);
+      setPendingToolApproval(null);
+      clearConversationInputRequired(activeConversationId);
+      dismissedInputForMessageRef.current.clear();
+      setIsRewindConfirmationOpen(false);
+      setEditingMessageId(null);
+      setEditDraft("");
+      await submitMessage(editDraft, files);
+    } catch (error) {
+      toast(
+        `Could not edit message: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+        8000,
+      );
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [
+    activeConversationId,
+    agentId,
+    cancelEditingMessage,
+    clearConversationInputRequired,
+    editDraft,
+    editingMessageId,
+    getActiveConversation,
+    isSavingEdit,
+    saveMessagesToServer,
+    submitMessage,
+    toast,
+    truncateConversationFromMessage,
+  ]);
+
   // The Home page hero composer creates a conversation and navigates here
   // before a message can be sent (this panel only mounts once a conversation
   // id is in the URL) — pick up its stashed first message and send it once
@@ -1180,12 +1325,6 @@ export function ChatPanel({
       }, 300);
     }
   }, [isThisConversationStreaming, queuedMessages, submitMessage]);
-
-  // Retry handler - re-sends the message content
-  const handleRetry = useCallback((content: string) => {
-    if (isThisConversationStreaming) return; // Don't retry while streaming
-    submitMessage(content);
-  }, [isThisConversationStreaming, submitMessage]);
 
   // Handle /skills chat command: show skills configured on this agent
   const handleSkillsCommand = useCallback(async () => {
@@ -1865,17 +2004,21 @@ export function ChatPanel({
                     {renderMessages.map((msg, index, arr) => {
                       const isLastMessage = index === arr.length - 1;
                       const isAssistantStreaming = isThisConversationStreaming && msg.role === "assistant" && isLastMessage;
-
-                      // For retry: if user message, use its content; if assistant, find preceding user message
-                      const getRetryContent = () => {
-                        if (msg.role === "user") return msg.content;
-                        for (let i = index - 1; i >= 0; i--) {
-                          if (arr[i].role === "user") {
-                            return arr[i].content;
-                          }
-                        }
-                        return null;
-                      };
+                      const messageOwner = msg.senderEmail ?? conversation?.owner_id;
+                      const isOwnMessage = !messageOwner || !session?.user?.email ||
+                        messageOwner === session.user.email;
+                      const isConversationOwner = !conversation?.owner_id || !session?.user?.email ||
+                        conversation.owner_id === session.user.email;
+                      const isLocalCommand = msg.content.trim() === "/skills" ||
+                        msg.content.trim() === "/help";
+                      const canEditMessage = msg.role === "user" &&
+                        isOwnMessage &&
+                        isConversationOwner &&
+                        !isLocalCommand &&
+                        !panelReadOnly &&
+                        !isThisConversationStreaming &&
+                        !pendingUserInput &&
+                        !pendingToolApproval;
 
                       // Check if this is the last assistant message (latest answer)
                       const isLastAssistantMessage = msg.role === "assistant" &&
@@ -1911,10 +2054,17 @@ export function ChatPanel({
                           key={msg.id}
                           message={msg}
                           onCopy={handleCopy}
+                          canEdit={canEditMessage}
+                          isEditing={editingMessageId === msg.id}
+                          editDraft={editingMessageId === msg.id ? editDraft : undefined}
+                          isSavingEdit={isSavingEdit && editingMessageId === msg.id}
+                          onStartEdit={() => startEditingMessage(msg)}
+                          onEditDraftChange={setEditDraft}
+                          onCancelEdit={cancelEditingMessage}
+                          onSaveEdit={requestEditedMessageSave}
                           isCopied={copiedId === msg.id}
                           isStreaming={isAssistantStreaming}
                           isLatestAnswer={isLastAssistantMessage}
-                          onRetry={getRetryContent() ? () => handleRetry(getRetryContent()!) : undefined}
                           feedback={msg.feedback}
                           onFeedbackChange={(feedback) => handleFeedbackChange(msg.id, feedback)}
                           isRecovering={recoveringMessageId === msg.id}
@@ -2263,13 +2413,31 @@ export function ChatPanel({
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground text-center">
-            {getConfig('appName')} can make mistakes. Verify important info.
-            {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
-          </p>
+          <div className="relative flex min-h-6 items-center justify-center">
+            <p className="px-28 text-center text-xs text-muted-foreground max-sm:px-0 max-sm:pr-24">
+              {getConfig('appName')} can make mistakes. Verify important info.
+              {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
+            </p>
+            {showContextUsage && contextUsage && (
+              <ContextUsageIndicator
+                className="absolute right-0"
+                usage={contextUsage}
+              />
+            )}
+          </div>
         </div>
       </div>
       )}
+
+      <RewindConfirmationDialog
+        open={isRewindConfirmationOpen}
+        messageCount={rewindMessageCount}
+        isConfirming={isSavingEdit}
+        onCancel={() => setIsRewindConfirmationOpen(false)}
+        onConfirm={() => {
+          void saveEditedMessage();
+        }}
+      />
     </div>
   );
 }
@@ -2387,10 +2555,17 @@ const LoadEarlierDivider = React.memo(function LoadEarlierDivider({
 interface ChatMessageProps {
   message: ChatMessageType;
   onCopy: (content: string, id: string) => void;
+  canEdit?: boolean;
+  isEditing?: boolean;
+  editDraft?: string;
+  isSavingEdit?: boolean;
+  onStartEdit?: () => void;
+  onEditDraftChange?: (value: string) => void;
+  onCancelEdit?: () => void;
+  onSaveEdit?: () => void;
   isCopied: boolean;
   isStreaming?: boolean;
   isLatestAnswer?: boolean;
-  onRetry?: () => void;
   feedback?: Feedback;
   onFeedbackChange?: (feedback: Feedback) => void;
   conversationId?: string;
@@ -2419,10 +2594,17 @@ interface ChatMessageProps {
 const ChatMessage = React.memo(function ChatMessage({
   message,
   onCopy,
+  canEdit = false,
+  isEditing = false,
+  editDraft = "",
+  isSavingEdit = false,
+  onStartEdit,
+  onEditDraftChange,
+  onCancelEdit,
+  onSaveEdit,
   isCopied,
   isStreaming = false,
   isLatestAnswer = false,
-  onRetry,
   feedback,
   onFeedbackChange,
   conversationId,
@@ -2555,7 +2737,53 @@ const ChatMessage = React.memo(function ChatMessage({
                 <MessageAttachments attachments={message.attachments} align="end" />
               </div>
             )}
-            {message.content.trim() && (
+            {isEditing ? (
+              <div className="ml-auto w-full max-w-2xl rounded-xl border border-primary/40 bg-card p-3 text-left shadow-sm">
+                <TextareaAutosize
+                  autoFocus
+                  minRows={2}
+                  maxRows={12}
+                  value={editDraft}
+                  disabled={isSavingEdit}
+                  onChange={(event) => onEditDraftChange?.(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      onCancelEdit?.();
+                    }
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      onSaveEdit?.();
+                    }
+                  }}
+                  className="w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
+                  aria-label="Edit message"
+                />
+                <div className="mt-3 flex items-center justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isSavingEdit}
+                    onClick={onCancelEdit}
+                  >
+                    <X className="mr-1.5 h-3.5 w-3.5" />
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={isSavingEdit || (!editDraft.trim() && !message.attachments?.length)}
+                    onClick={onSaveEdit}
+                  >
+                    {isSavingEdit ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Send className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    Save and send
+                  </Button>
+                </div>
+              </div>
+            ) : message.content.trim() ? (
               <div
                 className="rounded-xl rounded-tr-sm relative overflow-hidden inline-block bg-primary text-primary-foreground px-4 py-3 max-w-full selection:bg-primary-foreground selection:text-primary"
               >
@@ -2563,14 +2791,34 @@ const ChatMessage = React.memo(function ChatMessage({
                   <MarkdownRenderer content={message.content} variant="user" />
                 </div>
               </div>
-            )}
+            ) : null}
 
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: isHovered ? 1 : 0.8 }}
-              className="flex items-center gap-1 mt-2 justify-end"
-            >
-              {onRetry && (
+            {!isEditing && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: isHovered ? 1 : 0.8 }}
+                className="flex items-center gap-1 mt-2 justify-end"
+              >
+                {canEdit && onStartEdit && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
+                          onClick={onStartEdit}
+                          aria-label="Edit message"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Edit message and rewind conversation
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -2578,40 +2826,22 @@ const ChatMessage = React.memo(function ChatMessage({
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                        onClick={onRetry}
+                        onClick={() => onCopy(message.content, message.id)}
                       >
-                        <RotateCcw className="h-3.5 w-3.5" />
+                        {isCopied ? (
+                          <Check className="h-3.5 w-3.5 text-green-400" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      Retry this prompt
+                      {isCopied ? "Copied!" : "Copy message"}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-              )}
-
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                      onClick={() => onCopy(message.content, message.id)}
-                    >
-                      {isCopied ? (
-                        <Check className="h-3.5 w-3.5 text-green-400" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {isCopied ? "Copied!" : "Copy message"}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </motion.div>
+              </motion.div>
+            )}
           </>
         ) : (
           // ── Assistant message ──
@@ -2641,17 +2871,6 @@ const ChatMessage = React.memo(function ChatMessage({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">Response was interrupted</p>
                     </div>
-                    {onRetry && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={onRetry}
-                        className="shrink-0 gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 hover:text-amber-300"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        Retry
-                      </Button>
-                    )}
                   </>
                 )}
               </motion.div>
@@ -2685,33 +2904,13 @@ const ChatMessage = React.memo(function ChatMessage({
               </div>
             ) : null}
 
-            {/* Action buttons (copy, retry, collapse) */}
+            {/* Assistant message actions */}
             {displayContent && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: isHovered ? 1 : 0.8 }}
                 className="flex items-center gap-1 mt-2"
               >
-                {onRetry && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                          onClick={onRetry}
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Regenerate response
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>

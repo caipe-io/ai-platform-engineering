@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pymongo.database import Database
 
 from dynamic_agents.auth.access import can_access_conversation
@@ -55,6 +55,15 @@ class InterruptStateResponse(BaseModel):
     agent_id: str
     has_pending_interrupt: bool = False
     interrupt_data: InterruptData | None = None
+
+
+class RewindConversationRequest(BaseModel):
+    """Request to fork a conversation before an existing user turn."""
+
+    agent_id: str
+    turn_id: str
+    message_content: str
+    content_occurrence: int = Field(ge=1)
 
 
 @router.get("/{conversation_id}/interrupt-state", response_model=InterruptStateResponse)
@@ -210,6 +219,70 @@ async def ensure_conversation_metadata(
         "conversation_id": conversation_id,
         "created": created,
     }
+
+
+@router.post("/{conversation_id}/rewind", response_model=ApiResponse)
+async def rewind_conversation(
+    conversation_id: str,
+    request: RewindConversationRequest,
+    user: UserContext = Depends(get_user_context),
+    mongo: MongoDBService = Depends(get_mongo_service),
+) -> ApiResponse:
+    """Fork LangGraph state from immediately before the selected user turn."""
+    agent = mongo.get_agent(request.agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if mongo._client is None or mongo._db is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+
+    conversation = mongo._db["conversations"].find_one({"_id": conversation_id})
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not can_access_conversation(conversation, user):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    configured_agent_id = conversation.get("agent_id")
+    if not configured_agent_id:
+        configured_agent_id = next(
+            (
+                participant.get("id")
+                for participant in conversation.get("participants", [])
+                if participant.get("type") == "agent"
+            ),
+            None,
+        )
+    if configured_agent_id and configured_agent_id != request.agent_id:
+        raise HTTPException(status_code=400, detail="Agent does not match conversation")
+
+    cache = get_runtime_cache()
+    cache.set_mongo_service(mongo)
+    runtime = await cache.get_or_create(
+        agent,
+        mongo.get_agent_mcp_servers(agent),
+        conversation_id,
+        user=user,
+    )
+
+    try:
+        checkpoint_id = await runtime.rewind_before_turn(
+            conversation_id,
+            request.turn_id,
+            request.message_content,
+            request.content_occurrence,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return ApiResponse(
+        success=True,
+        data={
+            "conversation_id": conversation_id,
+            "turn_id": request.turn_id,
+            "checkpoint_id": checkpoint_id,
+        },
+    )
 
 
 # =============================================================================

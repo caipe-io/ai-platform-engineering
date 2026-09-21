@@ -20,6 +20,7 @@ import json
 import logging
 from typing import Any
 
+from dynamic_agents.services.context_usage import CONTEXT_USAGE_EVENT
 from dynamic_agents.services.stream_encoders import StreamEncoder
 from dynamic_agents.services.stream_encoders.langgraph_helpers import (
     LangGraphStreamHelper,
@@ -88,7 +89,23 @@ class CustomStreamEncoder(StreamEncoder):
         if mode == "updates":
             return self._handle_updates(data, correlated_ns)
 
+        if mode == "custom":
+            return self._handle_custom(data, correlated_ns)
+
         return []
+
+    def _handle_custom(
+        self,
+        data: Any,
+        namespace: tuple[str, ...],
+    ) -> list[str]:
+        """Encode transport-neutral runtime signals in the custom protocol."""
+        if not isinstance(data, dict) or data.get("type") != CONTEXT_USAGE_EVENT:
+            return []
+
+        payload = {key: item for key, item in data.items() if key != "type"}
+        payload["namespace"] = list(namespace)
+        return [_sse_frame(CONTEXT_USAGE_EVENT, payload)]
 
     def on_stream_end(self) -> list[str]:
         return []  # No state to flush in custom format
