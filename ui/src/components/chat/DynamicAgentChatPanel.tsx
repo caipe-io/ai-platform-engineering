@@ -2321,7 +2321,7 @@ export function ChatPanel({
           {queuedMessages.length > 0 && (
             <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
               <AnimatePresence mode="popLayout">
-                {queuedMessages.map((queuedMsg, index) => (
+                {queuedMessages.map((queuedMsg) => (
                   <motion.div
                     key={queuedMsg.id}
                     initial={{ opacity: 0, y: 10 }}
@@ -2332,7 +2332,7 @@ export function ChatPanel({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-medium text-muted-foreground">
-                          Queued {queuedMessages.length > 1 ? `(${index + 1}/${queuedMessages.length})` : 'message'}:
+                          Queued message:
                         </span>
                         <button
                           onClick={() => {

@@ -148,16 +148,20 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     });
   }
   const tenantId = resolveTenant(session);
+  const integrations = getIntegrationAvailability();
+  const webexSettings = integrations.webex
+    ? buildOptionalWebexBotSettings(subject)
+    : Promise.resolve([]);
   const [preference, platformDefaultAgentId, webexBots] = await Promise.all([
     getUserPreference({ tenantId, userId: subject }),
     getResolvedPlatformDefaultAgentId(),
-    buildOptionalWebexBotSettings(subject),
+    webexSettings,
   ]);
   return successResponse({
     ...preference,
     webex_bots: webexBots,
     platform_default_agent_id: platformDefaultAgentId,
-    integrations: getIntegrationAvailability(),
+    integrations,
   });
 });
 
