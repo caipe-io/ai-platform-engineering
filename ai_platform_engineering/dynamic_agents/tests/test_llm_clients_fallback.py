@@ -219,25 +219,6 @@ def test_get_llm_passes_supported_reasoning_effort(monkeypatch):
     assert captured["kwargs"] == {"model": "gpt-5.5", "reasoning_effort": "max"}
 
 
-def test_get_llm_omits_effort_for_older_utility_release(monkeypatch):
-    captured = {}
-
-    class _Factory:
-        def __init__(self, provider):
-            captured["provider"] = provider
-
-        def get_llm(self, **kwargs):
-            captured["kwargs"] = kwargs
-            return "llm"
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
-
-    result = llm_clients.get_llm("openai", "gpt-5.5", "high")
-
-    assert result == "llm"
-    assert captured["kwargs"] == {"model": "gpt-5.5"}
-
-
 def test_get_llm_omits_effort_for_unsupported_model(monkeypatch):
     captured = {}
 

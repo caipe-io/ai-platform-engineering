@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import os
 from functools import lru_cache
-from inspect import signature
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -176,13 +175,7 @@ def get_llm(
     try:
         factory = LLMFactory(provider=resolved_provider)
         if model_supports_effort:
-            if "reasoning_effort" in signature(factory.get_llm).parameters:
-                kwargs["reasoning_effort"] = reasoning_effort
-            else:
-                logger.warning(
-                    "[llm] Installed cnoe-agent-utils does not support portable "
-                    "reasoning effort; using provider default"
-                )
+            kwargs["reasoning_effort"] = reasoning_effort
         llm = factory.get_llm(**kwargs)
     except ValueError as exc:
         # LLMFactory raises ValueError for unknown providers OR missing
