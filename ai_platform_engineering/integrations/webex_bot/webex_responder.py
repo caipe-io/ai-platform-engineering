@@ -353,6 +353,7 @@ class WebexThreadedStreamDispatcher:
         space_id = str(payload.get("space_id") or "")
         agent_id = str(payload.get("agent_id") or "")
         text = str(payload.get("text") or "")
+        person_id = str(payload.get("person_id") or "")
         obo_token = str(payload.get("obo_token") or "")
         is_direct = bool(payload.get("is_direct") or False)
         if not all((room_id, message_id, parent_id, space_id, agent_id, text, obo_token)):
@@ -381,6 +382,7 @@ class WebexThreadedStreamDispatcher:
                     "webex_message_id": parent_id,
                     "webex_room_id": room_id,
                     "webex_is_direct": is_direct,
+                    **({"owner_connector_id": person_id} if person_id else {}),
                 },
                 bearer_token=obo_token,
             )

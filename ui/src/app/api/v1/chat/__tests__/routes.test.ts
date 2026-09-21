@@ -441,8 +441,9 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
   it("mints an owner bearer and enforces agent#use as the owner for scheduler-token invoke runs", async () => {
     const findOne = jest.fn(async () => null);
     const updateOne = jest.fn(async () => ({ acknowledged: true }));
+    const updateMany = jest.fn(async () => ({ modifiedCount: 1 }));
     const countDocuments = jest.fn(async () => 1);
-    mockGetCollection.mockResolvedValue({ findOne, updateOne, countDocuments });
+    mockGetCollection.mockResolvedValue({ findOne, updateOne, updateMany, countDocuments });
 
     const response = await invokePost(
       jsonRequest(
@@ -511,6 +512,12 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
       }),
     );
     expect(updateOne).toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        $set: expect.objectContaining({ owner_subject: "owner-sub" }),
+      }),
+    );
     expect(countDocuments).toHaveBeenCalled();
   });
 
@@ -541,6 +548,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
 
   it("fails a scheduler-token invoke closed on a scheduled conversation owner mismatch", async () => {
     mockGetCollection.mockResolvedValue({
+      updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
       findOne: jest.fn().mockResolvedValue({
         _id: "existing-conversation",
         idempotency_key: "scheduler:scheduled-sched_123-run_456",

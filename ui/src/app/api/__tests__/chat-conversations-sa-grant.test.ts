@@ -99,6 +99,7 @@ function makeCollection(existingDoc: Record<string, unknown> | null = null) {
   return {
     findOne: jest.fn().mockResolvedValue(existingDoc),
     insertOne: jest.fn().mockResolvedValue({ insertedId: "conv-new" }),
+    updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
   };
 }
 
@@ -183,6 +184,60 @@ describe("POST /api/chat/conversations — SA auto-grant", () => {
       );
     });
 
+    it("uses a known email for analytics without granting an unlinked caller ownership", async () => {
+      mockGetAuthFromBearerOrSession.mockResolvedValue({
+        user: { email: "service-account-connector", name: "Connector" },
+        session: {
+          sub: SA_SUB,
+          role: "user",
+          isServiceAccount: true,
+          authMethod: "bearer",
+        },
+      });
+      const conversations = makeCollection(null);
+      const users = {
+        findOne: jest.fn().mockResolvedValue({ keycloak_sub: "person-subject" }),
+      };
+      mockGetCollection.mockImplementation(async (name: string) => (
+        name === "users" ? users : conversations
+      ));
+      const { POST } = await import("../chat/conversations/route");
+
+      const response = await POST(postRequest({
+        ...CONV_BODY,
+        owner_id: HUMAN_EMAIL,
+        metadata: { owner_connector_id: "U123EXAMPLE" },
+      }));
+
+      expect(response.status).toBe(201);
+      expect(conversations.insertOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          owner_id: HUMAN_EMAIL,
+          owner_canonical_subject: "person-subject",
+        }),
+      );
+      expect(conversations.insertOne).toHaveBeenCalledWith(
+        expect.not.objectContaining({ owner_subject: expect.anything() }),
+      );
+      expect(conversations.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          $and: expect.arrayContaining([
+            {
+              $or: expect.arrayContaining([
+                { owner_id: "U123EXAMPLE" },
+              ]),
+            },
+          ]),
+        }),
+        {
+          $set: {
+            owner_canonical_subject: "person-subject",
+            owner_identity_version: 2,
+          },
+        },
+      );
+    });
+
     it("returns 201 even when writeOpenFgaTuples throws (best-effort)", async () => {
       mockWriteOpenFgaTuples.mockRejectedValue(new Error("OpenFGA unavailable"));
       const col = makeCollection(null);
@@ -233,12 +288,27 @@ describe("POST /api/chat/conversations — SA auto-grant", () => {
         expect.objectContaining({
           owner_id: "alice@example.com",
           owner_subject: "alice-sub",
+          owner_canonical_subject: "alice-sub",
           owner_identity_version: 2,
         }),
       );
+      expect(col.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          $and: expect.arrayContaining([
+            expect.objectContaining({ $or: expect.any(Array) }),
+          ]),
+        }),
+        {
+          $set: {
+            owner_subject: "alice-sub",
+            owner_canonical_subject: "alice-sub",
+            owner_identity_version: 2,
+          },
+        },
+      );
     });
 
-    it("uses the linked user subject when Slack falls back to a connector user id", async () => {
+    it("reconciles the stable Slack id when a linked request supplies an email", async () => {
       mockGetAuthFromBearerOrSession.mockResolvedValue({
         user: { email: "alice@example.com", name: "Alice" },
         session: { sub: "alice-sub", role: "user", authMethod: "bearer" },
@@ -247,15 +317,46 @@ describe("POST /api/chat/conversations — SA auto-grant", () => {
       mockGetCollection.mockResolvedValue(col);
       const { POST } = await import("../chat/conversations/route");
 
-      await POST(postRequest({ ...CONV_BODY, owner_id: "U123EXAMPLE" }));
+      await POST(postRequest({
+        ...CONV_BODY,
+        owner_id: "alice@example.com",
+        metadata: { owner_connector_id: "U123EXAMPLE" },
+      }));
 
       expect(col.insertOne).toHaveBeenCalledWith(
         expect.objectContaining({
-          owner_id: "U123EXAMPLE",
+          owner_id: "alice@example.com",
           owner_subject: "alice-sub",
+          owner_canonical_subject: "alice-sub",
           owner_identity_version: 2,
         }),
       );
+      expect(col.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          $and: expect.arrayContaining([
+            {
+              $or: expect.arrayContaining([
+                { owner_id: "U123EXAMPLE" },
+              ]),
+            },
+          ]),
+        }),
+        expect.objectContaining({
+          $set: expect.objectContaining({ owner_subject: "alice-sub" }),
+        }),
+      );
+    });
+
+    it("does not create a linked conversation when identity reconciliation fails", async () => {
+      const col = makeCollection(null);
+      col.updateMany.mockRejectedValue(new Error("database unavailable"));
+      mockGetCollection.mockResolvedValue(col);
+      const { POST } = await import("../chat/conversations/route");
+
+      const response = await POST(postRequest(CONV_BODY));
+
+      expect(response.status).toBe(500);
+      expect(col.insertOne).not.toHaveBeenCalled();
     });
   });
 

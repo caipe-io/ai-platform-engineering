@@ -6,6 +6,7 @@
  */
 
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
+import { reconcileConversationOwnerIdentity } from "@/lib/conversation-owner-identity";
 import { createAuthzTraceContext, type AuthzTraceContext } from "@/lib/rbac/authz-tracing";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
 import {
@@ -90,6 +91,11 @@ async function ensureScheduledConversation(
   const now = new Date();
 
   const conversations = await getCollection<ScheduledConversation>("conversations");
+  await reconcileConversationOwnerIdentity(
+    conversations,
+    owner.sub,
+    [owner.email],
+  );
   const idempotencyKey = `scheduler:${requestedConversationId}`;
   const existing = await conversations.findOne({ idempotency_key: idempotencyKey });
   if (
@@ -124,6 +130,7 @@ async function ensureScheduledConversation(
       title,
       owner_id: owner.email,
       owner_subject: owner.sub,
+      owner_canonical_subject: owner.sub,
       owner_identity_version: 2,
       idempotency_key: idempotencyKey,
       participants: buildParticipants(agentId, owner.email),

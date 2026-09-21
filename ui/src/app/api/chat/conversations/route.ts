@@ -11,6 +11,10 @@ import {
   withErrorHandler,
 } from '@/lib/api-middleware';
 import type { ConversationAccessLevel } from '@/lib/api-middleware';
+import {
+  reconcileConversationAnalyticsIdentity,
+  reconcileConversationOwnerIdentity,
+} from '@/lib/conversation-owner-identity';
 import { getCollection, isMongoDBConfigured } from '@/lib/mongodb';
 import {
   annotateConversationsWithViewerSharing,
@@ -21,7 +25,7 @@ import {
 import { requireAgentUsePermission } from '@/lib/rbac/openfga-agent-authz';
 import { writeOpenFgaTuples } from '@/lib/rbac/openfga';
 import { buildParticipants } from '@/types/a2a';
-import type { ClientType, Conversation, CreateConversationRequest } from '@/types/mongodb';
+import type { ClientType, Conversation, CreateConversationRequest, User } from '@/types/mongodb';
 import { VALID_CLIENT_TYPES } from '@/types/mongodb';
 import type { Document } from 'mongodb';
 import { NextRequest, NextResponse } from 'next/server';
@@ -363,6 +367,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // implement a service account allowlist — only specific OAuth2 client IDs should be
   // permitted to set owner_id on behalf of users.
   const ownerId = body.owner_id || user.email;
+  const connectorOwnerId = (
+    session.authMethod === 'bearer'
+    && isFirstPartyBotBearer
+    && typeof body.metadata?.owner_connector_id === 'string'
+  )
+    ? body.metadata.owner_connector_id.trim()
+    : '';
   // Linked Slack/Webex calls carry the human OBO subject even when the
   // connector has to fall back to its immutable person id for owner_id. The
   // shared unlinked/service-account path must not stamp its subject or every
@@ -371,6 +382,48 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     ownerId === user.email
     || (session.authMethod === 'bearer' && isFirstPartyBotBearer)
   );
+  const ownerSubject = typeof session.sub === 'string' && session.sub.trim() && canBindOwnerSubject
+    ? session.sub.trim()
+    : null;
+  let analyticsOwnerSubject = ownerSubject;
+
+  // Slack can temporarily use the unlinked service account when identity
+  // exchange is unavailable. An email already present in the user directory
+  // still identifies the person for analytics without granting chat ownership.
+  if (
+    !analyticsOwnerSubject
+    && session.authMethod === 'bearer'
+    && isFirstPartyBotBearer
+    && body.metadata?.owner_is_bot !== true
+    && ownerId.includes('@')
+  ) {
+    const normalizedOwnerEmail = normalizeIdentity(ownerId);
+    const users = await getCollection<User>('users');
+    const knownOwner = await users.findOne(
+      { email: { $in: [...new Set([ownerId, normalizedOwnerEmail])] } },
+      { projection: { keycloak_sub: 1, 'metadata.keycloak_sub': 1 } },
+    );
+    analyticsOwnerSubject = knownOwner?.keycloak_sub?.trim()
+      || knownOwner?.metadata?.keycloak_sub?.trim()
+      || null;
+  }
+
+  // Reconcile provisional identities before an idempotent row is returned or a
+  // linked row is inserted so completed link transitions retain one immutable
+  // analytics key across earlier and later activity.
+  if (ownerSubject) {
+    await reconcileConversationOwnerIdentity(
+      conversations,
+      ownerSubject,
+      [user.email, ownerId, connectorOwnerId],
+    );
+  } else if (analyticsOwnerSubject) {
+    await reconcileConversationAnalyticsIdentity(
+      conversations,
+      analyticsOwnerSubject,
+      [ownerId, connectorOwnerId],
+    );
+  }
 
   // QUAL-8: extract once; reused in both idempotency and new-conversation paths.
   const isSaCaller = session.isServiceAccount === true && typeof session.sub === 'string' && session.sub.trim() !== '';
@@ -421,8 +474,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     title: body.title,
     client_type: effectiveClientType,
     owner_id: ownerId,
-    ...(typeof session.sub === 'string' && session.sub.trim() && canBindOwnerSubject
-      ? { owner_subject: session.sub.trim(), owner_identity_version: 2 }
+    ...(ownerSubject
+      ? { owner_subject: ownerSubject, owner_identity_version: 2 }
+      : {}),
+    ...(analyticsOwnerSubject
+      ? { owner_canonical_subject: analyticsOwnerSubject, owner_identity_version: 2 }
       : {}),
     ...(body.idempotency_key && { idempotency_key: body.idempotency_key }),
     // Provenance: stamp the SA sub so the audit/reconcile step can find SA-created

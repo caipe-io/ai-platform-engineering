@@ -371,6 +371,7 @@ def handle_mention(
           "thread_ts": thread_ts,
           "channel_id": channel_id,
           "channel_name": channel_config.name,
+          "owner_connector_id": user_id,
           # Flag threads owned by a Slack bot/app (e.g. GitLab, alert bots).
           # Their Slack user IDs are "U…"-prefixed like humans, so stats can't
           # tell them apart by ID — this lets the leaderboard exclude them when
@@ -694,6 +695,7 @@ def _route_to_agent(
         "thread_ts": thread_ts,
         "channel_id": channel_id,
         "channel_name": channel_config.name,
+        "owner_connector_id": user_id,
         # Flag bot/app-owned threads so stats can exclude them (see handle_mention).
         **({"owner_is_bot": True} if is_bot else {}),
         # Persist the bot/app display name so stats can label the "U…" owner_id

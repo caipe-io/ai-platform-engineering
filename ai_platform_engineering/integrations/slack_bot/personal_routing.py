@@ -404,6 +404,7 @@ def handle_dm_message(
           "thread_ts": thread_ts,
           "channel_id": channel_id,
           "channel_type": "dm",
+          "owner_connector_id": user_id,
           **({"workspace_url": SLACK_WORKSPACE_URL} if SLACK_WORKSPACE_URL else {}),
         },
       )

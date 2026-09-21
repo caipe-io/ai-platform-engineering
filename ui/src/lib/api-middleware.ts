@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions, isBootstrapAdmin } from '@/lib/auth-config';
 import { getConfig } from '@/lib/config';
+import { reconcileConversationOwnerIdentity } from '@/lib/conversation-owner-identity';
 import { getCollection } from '@/lib/mongodb';
 import type { Conversation, User } from '@/types/mongodb';
 import type { TeamMembershipSource } from '@/types/identity-group-sync';
@@ -321,6 +322,17 @@ async function persistKeycloakSubMapping(
     );
   } catch (error) {
     console.warn('[Auth] Could not persist Keycloak subject mapping:', error);
+  }
+
+  try {
+    const conversations = await getCollection<Conversation>('conversations');
+    await reconcileConversationOwnerIdentity(
+      conversations,
+      keycloakSub,
+      [user.email],
+    );
+  } catch (error) {
+    console.warn('[Auth] Could not reconcile conversation owner identity:', error);
   }
 }
 

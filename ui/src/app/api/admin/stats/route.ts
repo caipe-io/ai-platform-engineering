@@ -355,26 +355,27 @@ const HUMAN_CONVERSATION_OWNER_MATCH: Document = {
 
 /**
  * Stable person key shared by browser, Slack, Webex, and user-authenticated API
- * conversations. Email remains canonical across the pre-link and post-link
- * boundary; the immutable account subject unifies linked connector ids when an
- * email is unavailable.
+ * conversations. Linked identities use the immutable account subject after
+ * their provisional email or connector-id conversations have been reconciled.
+ * Truly unlinked rows retain their normalized provisional owner id.
  */
 function canonicalConversationOwner(
   ownerField = '$owner_id',
   subjectField = '$owner_subject',
+  canonicalSubjectField = '$owner_canonical_subject',
 ): Document {
-  const normalizedOwner = { $toLower: { $ifNull: [ownerField, ''] } };
+  const resolvedSubject = {
+    $cond: [
+      { $ne: [{ $ifNull: [canonicalSubjectField, ''] }, ''] },
+      canonicalSubjectField,
+      subjectField,
+    ],
+  };
   return {
     $cond: [
-      { $gt: [{ $indexOfBytes: [normalizedOwner, '@'] }, 0] },
-      normalizedOwner,
-      {
-        $cond: [
-          { $ne: [{ $ifNull: [subjectField, ''] }, ''] },
-          { $concat: ['subject:', subjectField] },
-          normalizedOwner,
-        ],
-      },
+      { $ne: [{ $ifNull: [resolvedSubject, ''] }, ''] },
+      { $concat: ['subject:', resolvedSubject] },
+      { $toLower: { $ifNull: [ownerField, ''] } },
     ],
   };
 }
@@ -1058,9 +1059,10 @@ async function getAdminStats(request: NextRequest) {
             { $addFields: {
               _owner: { $ifNull: ['$owner_id', { $arrayElemAt: ['$_conv.owner_id', 0] }] },
               _ownerSubject: { $arrayElemAt: ['$_conv.owner_subject', 0] },
+              _ownerCanonicalSubject: { $arrayElemAt: ['$_conv.owner_canonical_subject', 0] },
             } },
             { $match: { _owner: { $ne: null } } },
-            { $group: { _id: canonicalConversationOwner('$_owner', '$_ownerSubject'), owner_id: { $first: '$_owner' }, count: { $sum: 1 } } },
+            { $group: { _id: canonicalConversationOwner('$_owner', '$_ownerSubject', '$_ownerCanonicalSubject'), owner_id: { $first: '$_owner' }, count: { $sum: 1 } } },
             { $project: { _id: '$owner_id', count: 1 } },
             VALID_TOP_USER_OWNER_STAGE,
             ...topUserOwnerMatch,
@@ -1091,9 +1093,10 @@ async function getAdminStats(request: NextRequest) {
             { $addFields: {
               _owner: { $ifNull: ['$owner_id', { $arrayElemAt: ['$_conv.owner_id', 0] }] },
               _ownerSubject: { $arrayElemAt: ['$_conv.owner_subject', 0] },
+              _ownerCanonicalSubject: { $arrayElemAt: ['$_conv.owner_canonical_subject', 0] },
             } },
             { $match: { _owner: { $ne: null } } },
-            { $group: { _id: canonicalConversationOwner('$_owner', '$_ownerSubject'), owner_id: { $first: '$_owner' } } },
+            { $group: { _id: canonicalConversationOwner('$_owner', '$_ownerSubject', '$_ownerCanonicalSubject'), owner_id: { $first: '$_owner' } } },
             { $project: { _id: '$owner_id' } },
             VALID_TOP_USER_OWNER_STAGE,
             ...topUserOwnerMatch,

@@ -77,6 +77,7 @@ export interface Conversation {
   client_type: ClientType; // Top-level: 'webui' | 'slack' (promoted from metadata)
   owner_id: string; // User email
   owner_subject?: string; // Keycloak subject for schema-versioned ownership checks
+  owner_canonical_subject?: string; // Resolved person identity for cross-surface statistics
   owner_identity_version?: number; // 2 when owner_subject has been normalized
   idempotency_key?: string; // Maps integration-specific identity (e.g. Slack thread_ts) to conversation_id used by UI/checkpoints
   participants: Participant[]; // Agents and users involved in this conversation
