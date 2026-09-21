@@ -66,6 +66,7 @@ from common.models.rag import (
 from common.models.graph import Relation
 from common.models.rbac import Role, UserContext, UserInfoResponse
 from contextvars import ContextVar
+from server import audit
 from server.rbac import (
   require_authenticated_user,
   require_role,
@@ -305,6 +306,11 @@ async def periodic_cleanup_task():
       # Continue running despite errors
 
 
+def create_redis_client(url: str) -> redis.Redis:
+  """Create the Redis client used by ingestion preview and job operations."""
+  return redis.from_url(url, decode_responses=True, socket_timeout=None)
+
+
 # Application lifespan management - initalization and cleanup
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
@@ -322,7 +328,7 @@ async def app_lifespan(app: FastAPI):
   global vector_db_query_service
   global ingestor
 
-  redis_client = redis.from_url(redis_url, decode_responses=True)
+  redis_client = create_redis_client(redis_url)
   metadata_storage = MetadataStorage(redis_client=redis_client)
   jobmanager = JobManager(redis_client=redis_client)
 
@@ -392,10 +398,14 @@ async def app_lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(periodic_cleanup_task())
     logger.info("Periodic cleanup task started")
 
+  audit.start_allow_rollup_flusher()
+
   yield
 
   # Shutdown
   logging.info("Shutting down the app...")
+
+  await audit.stop_allow_rollup_flusher()
 
   # Cancel the cleanup task
   if cleanup_task:
@@ -405,6 +415,16 @@ async def app_lifespan(app: FastAPI):
     except asyncio.CancelledError:
       pass
     logger.info("Periodic cleanup task stopped")
+
+  try:
+    if data_graph_db is not None:
+      await data_graph_db.close()
+  finally:
+    try:
+      if ontology_graph_db is not None:
+        await ontology_graph_db.close()
+    finally:
+      await redis_client.aclose()
 
 
 if mcp_enabled:
@@ -2599,10 +2619,13 @@ async def preview_url_ingestion(
   user: UserContext = Depends(require_authenticated_user),
 ):
   """Crawl a bounded sample without creating a datasource, job, or documents."""
-  url_request.url = sanitize_url(
-    url_request.url,
-    url_request.settings.allow_non_public_urls,
-  )
+  try:
+    url_request.url = sanitize_url(
+      url_request.url,
+      url_request.settings.allow_non_public_urls,
+    )
+  except ValueError as e:
+    raise HTTPException(status_code=400, detail=str(e))
   datasource_id = utils.generate_datasource_id_from_url(url_request.url)
   existing_datasource = (
     await metadata_storage.get_datasource_info(datasource_id)
@@ -2753,7 +2776,10 @@ async def ingest_url(
   logger.info(f"Received URL ingestion request: {url_request.url}")
 
   # Sanitize URL
-  sanitized_url = sanitize_url(url_request.url, url_request.settings.allow_non_public_urls)
+  try:
+    sanitized_url = sanitize_url(url_request.url, url_request.settings.allow_non_public_urls)
+  except ValueError as e:
+    raise HTTPException(status_code=400, detail=str(e))
   url_request.url = sanitized_url
 
   # Generate datasource ID and create datasource

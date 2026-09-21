@@ -17,7 +17,7 @@ automation on the same package reference from prebuild through final release.
 ```mermaid
 flowchart LR
   SOURCE["1 · Source events<br/>prebuild PR · main · release/*"]
-  SELECTOR["2 · Lifecycle selector<br/>temporary · dev · rc · hotfix · final"]
+  SELECTOR["2 · Lifecycle selector<br/>temporary · canary · rc · hotfix · final"]
   PUBLISH["3 · Publish workflows<br/>prebuild-* · ci-* · ci-helm"]
   GHCR["4 · Canonical public GHCR<br/>images · charts"]
   CONSUMERS["5 · Consumers<br/>Compose · Helm · Argo CD"]
@@ -46,14 +46,19 @@ flowchart LR
 Examples:
 
 ```text
-ghcr.io/caipe-io/caipe-ui:0.6.0-dev.6
+ghcr.io/caipe-io/caipe-ui:canary
 ghcr.io/caipe-io/caipe-ui:0.6.0-rc.1
 ghcr.io/caipe-io/caipe-ui:0.6.0
 
-oci://ghcr.io/caipe-io/charts/ai-platform-engineering:0.6.0-dev.6
+oci://ghcr.io/caipe-io/charts/ai-platform-engineering:0.0.0-canary
 oci://ghcr.io/caipe-io/charts/ai-platform-engineering:0.6.0-rc.1
 oci://ghcr.io/caipe-io/charts/ai-platform-engineering:0.6.0
 ```
+
+The chart's canary selector is `0.0.0-canary`, not `canary` — Helm requires a
+chart's `version` field to be strict SemVer, and `canary` alone doesn't parse
+as one. Its `appVersion` still reads `canary`, so it still deploys the
+matching `canary` images by default.
 
 Do not create lifecycle-specific package paths such as:
 
@@ -71,11 +76,11 @@ version.
 
 | Lifecycle | Source | Example selector | Retention |
 | --- | --- | --- | --- |
-| PR prebuild | `prebuild/*` pull request | `feature-name-3` | Deleted when the PR closes |
-| Development | Merge to `main` | `0.6.0-dev.6` | Retained |
-| Release candidate | `release/x.y.z` | `0.6.0-rc.1` | Retained until release cleanup |
-| Hotfix candidate | Hotfix flow | `0.6.0-hotfix.1` | Retained until release cleanup |
-| Final release | Release finalization | `0.6.0` | Retained |
+| PR prebuild | `prebuild/*` pull request | `0.6.0-feature-name-3` | Deleted when the PR closes |
+| Canary (alpha) | Merge to `main` | `canary` | Floating — overwritten on every merge |
+| Release candidate (beta) | `release/x.y.z` | `0.6.0-rc.1` | Retained until release cleanup |
+| Hotfix candidate (beta) | Hotfix flow | `0.6.0-hotfix.1` | Retained until release cleanup |
+| Final release (stable) | Release finalization | `0.6.0` | Retained |
 
 `release/*` and hotfix branches remain supported. Their workflows select a
 different version; they do not select a different package tree.
@@ -84,11 +89,11 @@ different version; they do not select a different package tree.
 
 | Workflow or action | Responsibility |
 | --- | --- |
-| `pr-version-bump.yml` | Determines PR flow and version changes; dispatches prebuild work |
-| `auto-tag.yml` | Creates development, release-candidate, hotfix, and chart-only tags |
+| `pr-version-bump.yml` | PR flow labels, branch/mergeability checks, and release/*→main version preparation |
+| `auto-tag.yml` | Detects release-branch merges to main; creates release-candidate and hotfix tags |
 | `prebuild-*.yml` | Builds temporary PR images in canonical packages |
 | `prebuild-helm.yml` | Publishes temporary chart versions in canonical chart packages |
-| `ci-*.yml` | Builds or retags versioned images after a Git tag |
+| `ci-*.yml` | Builds versioned images after a Git tag |
 | `ci-helm.yml` | Publishes versioned charts after a Git tag |
 | `release-manual.yml` | Creates the final release tag and draft GitHub Release |
 | `release-finalize.yml` | Publishes the release after required artifact workflows complete |

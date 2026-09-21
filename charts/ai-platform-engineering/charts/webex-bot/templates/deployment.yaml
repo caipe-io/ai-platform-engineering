@@ -24,6 +24,7 @@ spec:
         {{- include "webex-bot.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "webex-bot.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}

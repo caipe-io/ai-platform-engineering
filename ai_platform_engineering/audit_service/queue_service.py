@@ -61,6 +61,16 @@ class AuditQueueService:
         self._task: asyncio.Task[None] | None = None
         self._stopping = False
 
+    @property
+    def is_stopping(self) -> bool:
+        """True from the moment shutdown begins, before the drain completes.
+
+        `/readyz` reads this so Kubernetes can pull the pod out of Service
+        endpoints as soon as SIGTERM starts a shutdown, rather than only once
+        `status()["running"]` goes False at the end of the drain.
+        """
+        return self._stopping
+
     async def start(self) -> None:
         if self._task is not None:
             return

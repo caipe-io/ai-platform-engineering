@@ -8,8 +8,8 @@ image:
 # Init container image used by post-install Jobs (init-idp + init-token-exchange).
 #
 # Default points at our project image — `build/Dockerfile.keycloak-init` —
-# which is wolfi-base + python-3.13 + curl + sed + grep + awk. We need
-# python-3.13 because init-idp.sh does richer JSON munging on the realm user
+# which is wolfi-base + python-3.14 + curl + sed + grep + awk. Python supports
+# the richer JSON munging that init-idp.sh performs on the realm user
 # profile (`alpine/curl` lacks python3 and the script exits 127).
 #
 # Override with --set initImage.repository=… for air-gapped registries.
@@ -23,8 +23,48 @@ fullnameOverride: ""
 
 serviceAccount:
   create: true
+  automount: false
   annotations: {}
   name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# initImage is wolfi-base, whose `nonroot` account is UID/GID 65532. kubelet
+# refuses to start a container with runAsNonRoot when the image declares a named
+# user it cannot resolve to a UID, so the UID has to be numeric here.
+jobPodSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+jobSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+jobResources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
 
 # ---------- Admin credentials ----------
 # Three ways to provide:

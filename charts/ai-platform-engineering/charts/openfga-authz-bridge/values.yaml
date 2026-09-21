@@ -10,6 +10,7 @@ fullnameOverride: ""
 
 serviceAccount:
   create: true
+  automount: false
   annotations: {}
   name: ""
 
@@ -61,6 +62,14 @@ audit:
   serviceUrl: "http://{{ .Release.Name }}-audit-service:8010"
   tenantId: default
   subjectSalt: caipe-098-audit
+  # Store one durable event per allowed decision instead of periodic aggregate
+  # counts. Denials and policy changes are always stored per-event. Turn on only
+  # for a bounded investigation or compliance window: a single MCP tools/call
+  # fans out into several checks, so audit volume tracks request count.
+  fullFidelityAllows: false
+  # How often accumulated allow counts are flushed as aggregate rows. A longer
+  # interval means fewer rows and a longer lag before allows appear.
+  allowRollupFlushSeconds: 60
 
 resources:
   requests:

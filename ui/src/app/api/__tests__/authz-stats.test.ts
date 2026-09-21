@@ -88,6 +88,45 @@ it("aggregates decision stats from audit-service and includes the live engine sn
   expect(mockAuditQuery).toHaveBeenCalledWith(expect.objectContaining({ type: "cas_decision", tenantId: "acme" }));
 });
 
+it("sums aggregated allow counts so the deny rate is not inflated", async () => {
+  // One aggregated allow row standing for 98 decisions, plus two per-decision
+  // denials. Counting rows would report a 67% deny rate instead of 2%.
+  mockAuditQuery.mockResolvedValue([
+    { outcome: "allow", reason_code: "OK", count: 98 },
+    { outcome: "deny", reason_code: "NO_CAPABILITY", resource_ref: "agent:pe" },
+    { outcome: "deny", reason_code: "NO_CAPABILITY", resource_ref: "agent:pe" },
+  ]);
+
+  const res = await GET(req("?window=24h"));
+  const body = await res.json();
+  expect(body.decisions).toMatchObject({
+    total: 100,
+    allow: 98,
+    deny: 2,
+    denyRate: 0.02,
+    byReason: [{ reason: "OK", count: 98 }, { reason: "NO_CAPABILITY", count: 2 }],
+  });
+});
+
+it("counts a row without an explicit count as one decision", async () => {
+  mockAuditQuery.mockResolvedValue([
+    { outcome: "allow", reason_code: "OK", count: 3 },
+    { outcome: "allow", reason_code: "OK" },
+    { outcome: "deny", reason_code: "AUTHZ_UNAVAILABLE", resource_ref: "resource:primary", count: 2 },
+  ]);
+
+  const res = await GET(req("?window=24h"));
+  const body = await res.json();
+  expect(body.decisions).toMatchObject({
+    total: 6,
+    allow: 4,
+    deny: 2,
+    // AUTHZ_UNAVAILABLE is infrastructure failure, not a policy denial.
+    policyDeny: 0,
+    unavailable: 2,
+  });
+});
+
 it("returns zero decision stats when audit-service has no rows", async () => {
   const res = await GET(req("?window=1h"));
   expect(res.status).toBe(200);

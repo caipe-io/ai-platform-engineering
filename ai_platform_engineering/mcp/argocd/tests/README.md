@@ -95,7 +95,7 @@ When adding new tests:
 ## Dependencies
 
 Tests require:
-- Python 3.7+
+- Python 3.14
 - `unittest.mock` (built-in)
 - `asyncio` (built-in)
 - `aiohttp` (for API client functionality)

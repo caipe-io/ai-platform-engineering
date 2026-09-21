@@ -42,7 +42,6 @@ import {
   getRagIngestorLimits,
 } from "@/lib/rag-ingestor-limits.server";
 import {
-  datasourceCollectionAudience,
   removeDatasourceFromAgentPins,
   removeDatasourceFromRagCollections,
 } from "@/lib/rag-collections.server";
@@ -841,17 +840,6 @@ export const PATCH = withErrorHandler(
 
     const gatedSourceUpdate = changedApprovalGatedSourceUpdate(source, updateData);
     const materialChange = ownerChanged || Object.keys(gatedSourceUpdate).length > 0;
-    const collectionAudience = materialChange
-      ? await datasourceCollectionAudience(sourceId, {
-          ownerTeamSlug: previousOwnerTeamSlug,
-          ownerSubject: previousOwnerSubject,
-        })
-      : {
-          collectionIds: [],
-          readerTeamSlugs: [],
-          hasExternalPrincipal: false,
-          organizationWide: false,
-        };
     const publicationSource = {
       ...source,
       ...gatedSourceUpdate,
@@ -871,9 +859,6 @@ export const PATCH = withErrorHandler(
           }
         : undefined,
       materialChange,
-      externalAudienceTeamSlugs: collectionAudience.readerTeamSlugs,
-      externalBroadAudience: collectionAudience.hasExternalPrincipal,
-      externalOrganizationWide: collectionAudience.organizationWide,
     });
     await invalidatePublicationRequests(
       publication.resource,

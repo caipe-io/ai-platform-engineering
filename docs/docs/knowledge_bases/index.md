@@ -8,6 +8,44 @@ reusable collections, and resource-level access control.
 [Architecture](architecture.md) · [Ingestors](ingestors.md) ·
 [MCP tools](mcp-tools.md) · [Authentication](authentication-overview.md)
 
+## What you can do
+
+- Bring files, web pages, and connected collaboration sources into one search
+  experience.
+- Search across the content you are allowed to read, using meaning and exact
+  terms together.
+- Group related sources into collections so agents can reuse a stable scope.
+- Attach a source or collection to an agent in Agent Builder.
+- Explore relationships between entities when Graph RAG is enabled.
+
+## A practical workflow
+
+1. Open **Knowledge Bases → Data Sources** and add a source, or ask an operator
+   to enable a deployment-managed ingestor.
+2. Wait for ingestion to finish, then use **Search** to confirm the content and
+   metadata look right.
+3. Create a **Collection** when several sources belong together or should be
+   reused by multiple agents.
+4. Share the source or collection with the people and teams who should search
+   it. Search access is separate from who manages ingestion.
+5. In [Agent Builder](../features/agent-builder.md), select the source or
+   collection in the **Knowledge** step and test the agent with a real question.
+
+If a result is missing, check ingestion status and your search access first.
+Selecting knowledge for an agent does not grant a person access to that data.
+
+## Watch the demo
+
+<a href="https://app.vidcast.io/share/e4c72165-7164-4dde-9e3d-7f0087b6bc13">
+  <img src="https://raw.githubusercontent.com/wiki/caipe-io/ai-platform-engineering/knowledge-bases-demo.gif" alt="Knowledge Bases demo showing data sources, search, and collections" loading="lazy" />
+</a>
+
+<div style={{paddingBottom: '56.25%', position: 'relative', display: 'block', width: '100%'}}>
+  <iframe src="https://app.vidcast.io/share/embed/e4c72165-7164-4dde-9e3d-7f0087b6bc13?disableAMA=1" width="100%" height="100%" title="CAIPE.io Knowledge Bases Demo" loading="lazy" allow="fullscreen *;autoplay *;clipboard-write *;" style={{position: 'absolute', top: 0, left: 0, border: 'solid', borderRadius: '12px'}}></iframe>
+</div>
+
+[Watch the full Knowledge Bases demo on Vidcast ↗](https://app.vidcast.io/share/e4c72165-7164-4dde-9e3d-7f0087b6bc13)
+
 ## How it works
 
 ```mermaid
@@ -115,7 +153,7 @@ independent subjects:
 | Subject | What they control | What sharing grants |
 |---------|-------------------|---------------------|
 | **Data source owner** | Connector configuration, ingestion, and direct Search sharing | Read access to that data source |
-| **Collection owner** | Collection metadata, member data sources, maintainers, and readers | Read access inherited by the collection's current members |
+| **Collection owner** | Collection metadata, member data sources, maintainers, and readers | Permission to use the collection as a search-time filter — no read access to its member data sources |
 | **Agent owner** | Agent configuration, including selected data sources and collections | Permission to use the agent |
 | **Agent user** | The request being run | Nothing automatically; this caller's existing permissions are evaluated at runtime |
 
@@ -152,8 +190,14 @@ flowchart LR
 
 A collection is a control-plane grouping. It references data source IDs without
 copying chunks or changing vector storage. A caller with `can_read` on a
-collection inherits `can_read` on its current member data sources. Collection
-publishing and management remain separate from content read access.
+collection may use it as a search-time filter (the `collection_id` parameter),
+but that grants no read access to its member data sources — each member
+remains independently governed, so a collection can only narrow a caller's
+results, never widen them. Publishing a data source into a collection
+therefore requires only that the publisher can already read that data source,
+not that they manage it: since membership grants no one new access, doing so
+can never let a search-only relationship escalate into access for someone
+else.
 
 ## Agent knowledge scope
 
@@ -163,8 +207,9 @@ Runtime access is evaluated in this order:
 
 1. The caller must have `can_use` on the agent.
 2. The caller must have the organization-level `can_search` capability.
-3. CAIPE resolves data sources the caller can read. Direct data source or
-   knowledge-base grants and collection-inherited grants are combined.
+3. CAIPE resolves data sources the caller can read directly (data source or
+   knowledge-base grants). Being able to read a collection does not add to
+   this set.
 4. CAIPE resolves the agent's configured scope from its directly selected data
    sources and the current members of its selected collections.
 5. Search receives only the intersection of the caller-readable set, the agent
@@ -184,11 +229,8 @@ flowchart TB
 
   subgraph CALLER["A · Caller-readable data sources"]
     DIRECT["Direct can_read<br/>on a data source or knowledge base"]
-    CR["Collections the caller<br/>can_read"]
-    MEMBERS["Those collections'<br/>current member data sources"]
     READABLE["Caller-readable set"]
     DIRECT --> READABLE
-    CR --> MEMBERS --> READABLE
   end
 
   subgraph AGENT["B · Agent-configured scope"]
@@ -218,18 +260,16 @@ flowchart TB
 
   class U,G1,G2 gate
   class DENY denied
-  class DIRECT,CR,MEMBERS,READABLE permission
+  class DIRECT,READABLE permission
   class ADS,AC,ACM,SCOPE,F scope
   class RESULT result
   class OWNER excluded
 ```
 
-The caller's readable set is therefore:
+The caller's readable set is therefore just:
 
 ```text
 direct data source or knowledge-base access
-UNION
-data sources inherited through readable collections
 ```
 
 The effective agent result is:

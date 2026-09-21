@@ -7,6 +7,14 @@ sriaradhyula:
     linkedin: aradhyula
     github: sriaradhyula
 
+artdroz:
+  name: Arthur Drozdov
+  url: https://github.com/artdroz
+  image_url: https://github.com/artdroz.png
+  page: true
+  socials:
+    github: artdroz
+
 suwhang-cisco:
   name: Sunny Whang
   url: https://github.com/suwhang-cisco

@@ -5,8 +5,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 let mockSearchParams = new URLSearchParams();
+const mockPush = jest.fn();
 
 jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
   useSearchParams: () => mockSearchParams,
 }));
 
@@ -14,11 +16,7 @@ import { AccessSettings } from "../AccessSettings";
 
 const BASE_POSTURE = {
   email: "person-1@example.com",
-  idp_source: "keycloak",
   name: "Person One",
-  per_agent_roles: [],
-  per_kb_roles: [],
-  realm_roles: ["user"],
   role: "user",
   slack_linked: false,
   teams: [],
@@ -63,6 +61,7 @@ describe("AccessSettings", () => {
     await screen.findByText("Identity and role");
     expect(screen.queryByText(/Webex account:/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Link Webex account|Relink/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Technical access details")).not.toBeInTheDocument();
   });
 
   it("shows a Link Webex account button when available and unlinked", async () => {
@@ -70,7 +69,8 @@ describe("AccessSettings", () => {
     render(<AccessSettings />);
 
     expect(await screen.findByText("Webex account: Not linked")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Link Webex account" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Link Webex account" }));
+    expect(mockPush).toHaveBeenCalledWith("/api/auth/webex-link/start");
   });
 
   it("shows a Relink button and Linked status when already linked", async () => {

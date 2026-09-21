@@ -19,7 +19,8 @@ ragServerUrl: "http://rag-server:9446"
 # Service account configuration
 serviceAccount:
   create: true
-  automount: true
+  # Set true only for in-cluster Kubernetes ingestors that use the generated RBAC.
+  automount: false
   annotations: {}
   name: ""
 

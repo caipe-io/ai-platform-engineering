@@ -37,12 +37,21 @@ Unit tests for the Jira MCP server field discovery and related functionality.
 5. **test_comments.py** - Comment management tests
    - Get all comments for an issue
    - Get specific comment
-   - Add comment (with read-only protection)
+   - Add plain-text and native ADF comments
+   - Preserve legacy plain-text payloads
+   - Validate ADF roots and body/format combinations
+   - Preserve role and group visibility restrictions
+   - Enforce read-only protection
    - Update comment (with read-only protection)
    - Delete comment (with read-only protection)
    - API error handling
 
-6. **test_sprints.py** - Sprint management tests
+6. **test_comments_mcp.py** - Comment MCP contract tests
+   - Expose `body_format` in the generated MCP input schema
+   - Invoke `add_comment` through an in-memory FastMCP client
+   - Preserve native ADF and visibility in the Jira API request
+
+7. **test_sprints.py** - Sprint management tests
    - Create sprint with/without dates
    - Get sprint details
    - Update sprint (name, state, dates)
@@ -52,7 +61,7 @@ Unit tests for the Jira MCP server field discovery and related functionality.
    - Swap sprint
    - Read-only and delete protection
 
-7. **test_boards.py** - Board management tests
+8. **test_boards.py** - Board management tests
    - Get all boards (with filters)
    - Create board
    - Get board details
@@ -62,7 +71,7 @@ Unit tests for the Jira MCP server field discovery and related functionality.
    - Get board versions and projects
    - Read-only and delete protection
 
-8. **test_backlogs.py** - Backlog management tests
+9. **test_backlogs.py** - Backlog management tests
    - Get backlog issues (with pagination)
    - Move issues to backlog
    - Move issues to backlog for specific board
@@ -71,7 +80,7 @@ Unit tests for the Jira MCP server field discovery and related functionality.
    - API error handling
    - Read-only protection
 
-9. **test_filters.py** - Filter management tests
+10. **test_filters.py** - Filter management tests
    - Create filter (with description, permissions)
    - Get filter details
    - Search filters (by name, owner)
@@ -79,6 +88,9 @@ Unit tests for the Jira MCP server field discovery and related functionality.
    - Delete filter
    - ORDER BY Rank validation for board filters
    - Read-only protection
+
+11. **test_issue_model.py** - Jira issue model tests
+   - Reject malformed ADF descriptions before text conversion
 
 ## Running Tests
 
@@ -296,4 +308,3 @@ ls tests/conftest.py
 ## Contact
 
 For questions about tests, contact: Sri Aradhyula <sraradhy@cisco.com>
-

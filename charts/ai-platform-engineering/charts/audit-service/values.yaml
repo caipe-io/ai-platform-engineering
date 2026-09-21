@@ -123,9 +123,8 @@ readinessProbe:
 
 serviceAccount:
   create: true
-  # Keep this true by default so IRSA and other projected-token identity flows
-  # work without extra values.
-  automount: true
+  # IRSA and other workload-identity webhooks inject their own projected token.
+  automount: false
   annotations: {}
   name: ""
 

@@ -208,7 +208,7 @@ async function fetchMcpActivityStats(rangeStart: Date, rangeEnd: Date): Promise<
       return { total_events: 0, unique_users: 0, daily: zeroDaily, unavailable: true, range_capped: rangeCapped };
     }
     const body = (await response.json()) as {
-      records?: Array<{ ts?: string; subject_ref?: string }>;
+      records?: Array<{ ts?: string; subject_ref?: string; count?: number }>;
       total?: number;
     };
     const records = body.records ?? [];
@@ -216,6 +216,11 @@ async function fetchMcpActivityStats(rangeStart: Date, rangeEnd: Date): Promise<
     // A record with no `subject_ref` (predates the bridge's identity fix, or
     // simply has none) contributes to the event count but never to the
     // unique-user tally — degrade gracefully rather than erroring.
+    //
+    // The bridge aggregates routine allows into periodic per-caller rollup
+    // rows instead of one row per decision (see openfga/bridge/audit.py), so
+    // each record's `count` (defaulting to 1 for un-aggregated rows) is the
+    // number of decisions it represents, not 1.
     const uniqueSubjects = new Set<string>();
     const dayCounts = new Map<string, number>();
     const daySubjects = new Map<string, Set<string>>();
@@ -224,7 +229,8 @@ async function fetchMcpActivityStats(rangeStart: Date, rangeEnd: Date): Promise<
       const ts = new Date(record.ts);
       if (Number.isNaN(ts.getTime())) continue;
       const key = bucketDateKey(floorToBucket(ts, 'day'), 'day');
-      dayCounts.set(key, (dayCounts.get(key) ?? 0) + 1);
+      const eventCount = typeof record.count === 'number' ? record.count : 1;
+      dayCounts.set(key, (dayCounts.get(key) ?? 0) + eventCount);
       if (typeof record.subject_ref === 'string' && record.subject_ref) {
         uniqueSubjects.add(record.subject_ref);
         if (!daySubjects.has(key)) daySubjects.set(key, new Set());
@@ -239,11 +245,10 @@ async function fetchMcpActivityStats(rangeStart: Date, rangeEnd: Date): Promise<
     }));
 
     return {
-      // `total` is the audit-service's full matching count, unaffected by the
-      // `records` array being capped at `limit` — the event total stays
-      // accurate even when the per-day/unique-user breakdown (below) is
-      // necessarily derived from only the returned page.
-      total_events: typeof body.total === 'number' ? body.total : records.length,
+      // Sum each record's `count` rather than trusting the audit-service's
+      // row-count `total` — a rollup row is one row but many decisions, so
+      // `total` (a row count) would undercount events post-aggregation.
+      total_events: records.reduce((sum, record) => sum + (typeof record.count === 'number' ? record.count : 1), 0),
       unique_users: uniqueSubjects.size,
       daily,
       range_capped: rangeCapped,

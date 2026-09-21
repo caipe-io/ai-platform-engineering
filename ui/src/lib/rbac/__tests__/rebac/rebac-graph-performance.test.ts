@@ -32,13 +32,15 @@ describe("ReBAC graph performance", () => {
 
   it("loads a filtered graph page without scanning beyond the requested page", async () => {
     const { queryRebacGraph } = await import("../../rebac-graph");
-    const started = performance.now();
     const result = await queryRebacGraph({ resourceType: "agent", resourceId: "agent-42", limit: 100 });
-    const elapsedMs = performance.now() - started;
 
     expect(result.edges).toHaveLength(1);
     expect(mockReadOpenFgaTuples).toHaveBeenCalledTimes(1);
-    expect(elapsedMs).toBeLessThan(250);
+    expect(mockReadOpenFgaTuples).toHaveBeenCalledWith({
+      tuple: { object: "agent:agent-42" },
+      pageSize: 100,
+      continuationToken: undefined,
+    });
   });
 
   it("loads a selected user's neighborhood and expands team membership", async () => {

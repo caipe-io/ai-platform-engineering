@@ -19,6 +19,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "openfga-authz-bridge.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -72,6 +73,12 @@ spec:
               value: {{ .Values.audit.tenantId | quote }}
             - name: AUDIT_SUBJECT_SALT
               value: {{ .Values.audit.subjectSalt | quote }}
+            {{- if .Values.audit.fullFidelityAllows }}
+            - name: AUDIT_FULL_FIDELITY_ALLOWS
+              value: "true"
+            {{- end }}
+            - name: AUDIT_ALLOW_ROLLUP_FLUSH_SECONDS
+              value: {{ .Values.audit.allowRollupFlushSeconds | quote }}
             {{- end }}
             {{- if .Values.callerToolCheck.enabled }}
             - name: CAIPE_CALLER_TOOL_CHECK_ENABLED

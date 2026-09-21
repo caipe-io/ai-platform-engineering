@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowUpRight, LayoutGrid, LoaderCircle, Search } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import type { PublicAgenticApp } from "@/types/agentic-app";
@@ -11,6 +12,7 @@ type LoadState =
   | { status: "error"; message: string };
 
 export function AgenticAppsHub(): React.ReactElement {
+  const router = useRouter();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [query, setQuery] = useState("");
 
@@ -19,7 +21,7 @@ export function AgenticAppsHub(): React.ReactElement {
     fetch("/api/agentic-apps", { cache: "no-store" })
       .then(async (response) => {
         if (response.status === 401) {
-          window.location.assign(
+          router.push(
             `/login?callbackUrl=${encodeURIComponent(window.location.pathname)}`,
           );
           return null;
@@ -41,7 +43,7 @@ export function AgenticAppsHub(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
   const visibleApps = useMemo(() => {
     if (state.status !== "ready") return [];

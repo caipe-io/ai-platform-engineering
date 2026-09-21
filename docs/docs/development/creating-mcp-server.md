@@ -126,7 +126,7 @@ touch mcp_example/tools/__init__.py
 name = "mcp-example"
 version = "0.1.0"
 description = "MCP server for Example API"
-requires-python = ">=3.11"
+requires-python = ">=3.14,<3.15"
 dependencies = [
     "fastmcp>=2.13.3",
     "mcp>=1.21.0",
@@ -149,7 +149,7 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py314"
 ```
 
 ### Step 3: Create API Client
@@ -877,11 +877,11 @@ async def test_real_api():
 
 ```dockerfile
 # build/mcp/Dockerfile
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.6 /uv /usr/local/bin/uv
 
 COPY ai_platform_engineering/mcp/example/pyproject.toml ./
 COPY ai_platform_engineering/mcp/example/mcp_example/ ./mcp_example/
@@ -954,7 +954,7 @@ spec:
 
 ## Next Steps
 
-- **[Connect Agent to MCP](./creating-an-agent#step-4-implement-the-agent-logic)** - Use your MCP server in an agent
+- **[Connect an agent to MCP](./creating-an-agent.md)** - Use your MCP server in an agent
 - **[Add Evaluations](../evaluations/index.md)** - Test MCP server quality
 - **[Deploy to Production](../installation/index.md)** - Deploy with Kubernetes
 

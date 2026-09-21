@@ -6,6 +6,7 @@ import {
   successResponse,
   withErrorHandler,
 } from "@/lib/api-middleware";
+import { getRequestOrigin } from "@/app/api/skills/_lib/request-origin";
 import { listInAppNotifications } from "@/lib/in-app-notifications.server";
 import { platformHealthNotificationsEnabled } from "@/lib/notification-preferences.server";
 import { runPlatformHealthNotificationAudit } from "@/lib/platform-health-notifications.server";
@@ -26,6 +27,6 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     pageSize: positiveInteger(params.get("page_size"), 10),
     includePlatformNotifications,
   });
-  after(() => runPlatformHealthNotificationAudit(request.nextUrl.origin));
+  after(() => runPlatformHealthNotificationAudit(getRequestOrigin(request)));
   return successResponse(page);
 });

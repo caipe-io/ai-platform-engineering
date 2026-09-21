@@ -123,6 +123,8 @@ securityContext:
   capabilities:
     drop:
       - ALL
+  seccompProfile:
+    type: RuntimeDefault
 
 # -- Node selector labels
 nodeSelector: {}

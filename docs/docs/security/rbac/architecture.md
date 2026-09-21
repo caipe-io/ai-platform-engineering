@@ -532,11 +532,58 @@ denies, and PDP-unavailable failures alongside admin ReBAC graph/check actions.
 The Admin UI's RBAC Audit type filter uses `All` as a literal unfiltered view
 over audit-service events; selecting a specific type narrows the result to
 `auth`, `openfga_rebac`, `tool_action`, or `agent_delegation`. The AgentGateway
-`openfga-authz-bridge` also posts each external `ext_authz` decision through the
+`openfga-authz-bridge` also posts external `ext_authz` decisions through the
 same audit-service write path with `source=openfga_authz_bridge`, so
 gateway-level OpenFGA allow/deny/error decisions appear without a trace backend.
-`audit-service` is the audit owner; UI, Dynamic Agents, and bridge processes are
-producers only.
+The RAG server's own datasource/tool/search/org-admin/publication-approve
+OpenFGA checks (`server/rbac.py::_openfga_check_object`) post through the same
+write path with `source=rag_server` and `component=rag_server`.
+`audit-service` is the audit owner; UI, Dynamic Agents, the bridge, and the RAG
+server are producers only.
+
+#### Allow aggregation
+
+Decision volume tracks request count, not policy activity: a single MCP
+`tools/call` fans out into several `ext_authz` checks (coarse gateway gate,
+per-server invoke, per-tool, caller-keyed), and the BFF authorizes on
+effectively every request. Storing one durable row per decision therefore costs
+storage and query time without adding review signal.
+
+| Event | Stored | Rationale |
+|---|---|---|
+| Denials (`outcome=deny`), including `DENY_PDP_UNAVAILABLE` | Per decision | Rare, and the signal reviewers act on |
+| Policy/admin changes (`cas_grant`, `cas_reconcile`, ReBAC edits) | Per event | Compliance record of who changed what |
+| Routine allows | Periodic aggregate | Counted in memory, flushed as one row per distinct subject/action/resource/reason |
+
+Aggregate rows carry `count` (decisions summarized), `window_start`, and
+`window_end`, and a `correlation_id` prefixed `rollup:` — they summarize many
+requests, so no single request id applies. **Consumers must sum `count` rather
+than count rows**; a row without `count` is one decision.
+
+Counts live in process memory, so a restart can drop an unflushed window. That
+undercounts an allow metric and never loses a denial or a policy change. The
+bridge flushes on `SIGTERM` to narrow the gap.
+
+Set `AUDIT_FULL_FIDELITY_ALLOWS=true` (bridge: `audit.fullFidelityAllows`) to
+store one row per allow for a bounded investigation or compliance window.
+Aggregation resumes when it is turned back off. `AUDIT_ALLOW_ROLLUP_FLUSH_SECONDS`
+(bridge) and `AUDIT_ALLOW_ROLLUP_FLUSH_MS` (BFF) tune the flush interval: longer
+means fewer rows and a longer lag before allows appear.
+
+**RAG server** (`ai_platform_engineering/knowledge_bases/rag/server/src/server/audit.py`)
+groups differently: one question can fan out into several RAG tool calls
+(search, then a handful of `get_full_doc` calls, etc.), each its own OpenFGA
+decision on a *different* resource. There is no session/turn id threaded
+through the MCP tool-call path to group by, and an MCP session — if used —
+would span an entire connection, not one question, so grouping by session id
+would over-group. Instead, allows are grouped **by subject** over a short
+time window (`AUDIT_RAG_ROLLUP_FLUSH_SECONDS`, default 10s): every distinct
+resource an allowed subject touches in the window lands in one event's
+`resources` list (each entry: `action`, `resource_ref`, `count`), rather than
+one row per decision. `resource_ref` on that row is a comma-joined summary
+for consumers that only read the single-string field; `resources` is
+authoritative. Denials and PDP-unavailable errors are still written
+per-decision, immediately, same as the bridge.
 
 ### Personal DM Experience — Phase 2 (spec 2026-05-24)
 
@@ -1077,6 +1124,9 @@ Legacy Keycloak realm roles may still appear in old local data, but they are not
 | `GITHUB_PERSONAL_ACCESS_TOKEN` / `GITLAB_PERSONAL_ACCESS_TOKEN` (on **Dynamic Agents**) | Static org-PAT fallback read via `MCPCredentialSource.fallback_env` when a caller has not connected their personal GitHub/GitLab account                            | Keeps GitHub/GitLab tools backward compatible for unconnected callers. The PAT now lives only on Dynamic Agents (no longer a gateway `backendAuth` key); connected users always get their own OAuth token instead. Source from runtime secrets.   |
 | `AUDIT_SERVICE_URL`                                           | Enables Python and TypeScript audit writers, including Dynamic Agents and `openfga-authz-bridge`, to emit durable `openfga_rebac` rows to audit-service             | Point services at the in-cluster or compose `audit-service`; configure local/S3 storage on audit-service itself.                                                                                                                                |
 | `AUDIT_SERVICE_BACKEND` / `AUDIT_SERVICE_LOCAL_RETENTION_DAYS` | Selects the audit-service storage backend (`local` or `s3`) and controls local-disk retention                                                                       | `local` is the default backend. Local storage keeps `1` day by default and purges expired files on startup and periodically; S3 retention should be managed with bucket lifecycle policy.                                                        |
+| `AUDIT_FULL_FIDELITY_ALLOWS`                                  | Stores one durable event per allowed decision instead of periodic aggregate counts. Denials and policy changes are always per-event                                  | Off by default. Turn on only for a bounded investigation or compliance window — a single MCP `tools/call` fans out into several checks, so volume tracks request count. See [Allow aggregation](#allow-aggregation).                              |
+| `AUDIT_ALLOW_ROLLUP_FLUSH_SECONDS` (bridge) / `AUDIT_ALLOW_ROLLUP_FLUSH_MS` (BFF) | How often accumulated allow counts are flushed as aggregate rows                                                                  | Defaults to 60s. Longer means fewer rows and a longer lag before allows appear; unflushed counts are lost on restart (denials are never affected).                                                                                              |
+| `AUDIT_RAG_ROLLUP_FLUSH_SECONDS`                              | How often the RAG server's per-subject allow rollup (grouping every resource one subject touched, not one row per decision) is flushed | Defaults to 10s — short enough that one question's search + follow-up calls land together, long enough to actually collapse a burst. See [Allow aggregation](#allow-aggregation).                                                             |
 | `SLACK_AGENT_ROUTES_MODE`                                     | Slack bot route source: `db_prefer` (default; prefer OpenFGA-backed UI-managed channel-agent routes, fall back to static config), `config`, or `db_only`             | `db_prefer` and `db_only` require OpenFGA access; MongoDB is used only to enrich tuple-backed routes with listen/priority metadata. Use `config` only for static-only environments that should ignore UI-managed channel routes.                  |
 | `SLACK_INTEGRATION_SILENCE_ENV`                               | Initial setup switch that makes the Slack bot ignore inbound payloads before handlers can send user-visible Slack responses                                           | Use only during bootstrap or broken-route setup windows. Admin/runtime diagnostics remain the place to inspect OpenFGA route health while end-user channel noise is suppressed.                                                                  |
 | `SLACK_WORKSPACE_ALIAS`                                       | Canonical Slack workspace namespace used by the Web UI backend, Slack bot, Mongo route/grant rows, and OpenFGA `slack_channel:<alias>--<channel_id>` subjects      | Configure per deployment (for example, `CAIPE` or `Splunk`). The Slack bot maps incoming Slack `team_id` values to this alias before route and ReBAC lookups.                                                                                       |
@@ -1155,11 +1205,12 @@ bridge also requires a signed `X-CAIPE-Agent-Context` header so it can enforce
 per-agent tool allowlists (`agent:<id> can_call tool:<server>/<tool>`). See
 [Agent context HMAC](./agent-context-hmac.md).
 
-For observability and compliance, the bridge also writes a best-effort
-`openfga_rebac` event to audit-service for every terminal
-authorization result: missing subject, OpenFGA allow, OpenFGA deny, and
-OpenFGA unavailable. These writes never affect the allow/deny response returned
-to AgentGateway.
+For observability and compliance, the bridge also writes best-effort
+`openfga_rebac` events to audit-service for terminal authorization results:
+missing subject, OpenFGA allow, OpenFGA deny, and OpenFGA unavailable. Denials
+are written per decision; routine allows are aggregated into periodic counts
+(see [Allow aggregation](#allow-aggregation)). These writes never affect the
+allow/deny response returned to AgentGateway.
 
 ### ext_authz Timeout
 
@@ -1404,7 +1455,7 @@ The dev PDP model keeps the coarse AgentGateway gate and adds admin-configured t
 | `tool:<server>/*`              | base `caller`; derived `can_call`                     | AgentGateway runtime grant for every tool on a concrete MCP server; Team Resources expands all-MCP-server access into one tuple per registered server |
 | `knowledge_base:<id>`          | base `reader`, `ingestor`, `manager`; derived `can_read`, `can_ingest`, `can_admin` | Datasource Search settings write `reader` relationships. The `ingestor` relation remains available only for trusted ingestion transports; it is not granted by the Search UI. KB pages, sharing, and KB-scoped routes check these relationships. |
 | `data_source:<id>`             | base `reader` (incl. `user:*` wildcard), `ingestor`, `manager`, `parent_kb`; derived `can_read`, `can_ingest`, `can_manage` | Indexed-content policy. A 1:1 `parent_kb knowledge_base:<id>` edge inherits query grants without mirrored per-team tuples; direct component grants remain possible. Search intersects this policy with the caller, while reload requires `ingestion_source` management. A `user:* reader data_source:<id>` tuple makes a datasource searchable by every authenticated user who also has the organization Search capability. |
-| `rag_collection:<id>`          | base `owner`, `reader`, `publisher`, `manager`; derived `can_discover`, `can_read`, `can_publish`, `can_manage` | Control-plane grouping of datasource IDs. `reader` grants read access through `knowledge_base#parent_collection`; `data_source` then inherits through its existing `parent_kb` edge. `publisher` changes membership and `manager` changes settings; neither relation implies read access. |
+| `rag_collection:<id>`          | base `owner`, `reader`, `publisher`, `manager`; derived `can_discover`, `can_read`, `can_publish`, `can_manage` | Control-plane grouping of datasource IDs — a saved search-time filter, not an access grant. `reader` only lets the caller use the collection as a `collection_id` query scope; it does **not** propagate to member `knowledge_base`/`data_source` objects, so a reader still needs independent read access to see any given member's content. `publisher` adds/removes membership and requires only `can_read` on the datasource being added (never `can_manage`) — since membership grants no one new access, search-only access to a source can never be amplified into access for someone else via a shared collection. `manager` changes settings; neither relation implies read access to members. |
 | `ingestion_source:<id>`        | base `owner`, `reader`, `manager`; derived `can_read`, `can_manage` | Independent connector-configuration policy. Source create/edit/transfer/reload/delete and config visibility check this object; it does not inherit Search access from `data_source` or `knowledge_base`. |
 | `skill:<id>`                   | base `reader`, `user`, `writer`, `manager`; derived `can_read`, `can_use`, `can_write`, `can_manage` | Team Resources skill selection writes `user` relationships for local and Skill Hub catalog ids; `/api/skills` filters by `can_read`/`can_use`. |
 | `conversation:<id>`            | base `owner`, `reader`, `writer`, `sharer`, `manager`; derived `can_read`, `can_write`, `can_share`, `can_delete` | Chat list/read/write/share and Dynamic Agent stream/invoke/resume/cancel paths check implicit Mongo ownership first, then explicit OpenFGA conversation access. |
@@ -1442,14 +1493,19 @@ removing stale pages when a source shrinks.
   expands collection membership live for every RAG tool call, unions it with
   direct pins, and the RAG server intersects the result with the caller's live
   OpenFGA access.
-- Missing pin fields are a temporary pre-migration legacy state. Explicit empty
-  arrays are a deny/opt-out. The migration attaches otherwise-unscoped
-  RAG-enabled agents to `platform-rag`; new RAG-enabled agents default to that
-  collection when their owner can read it, and may remove it.
-- A personal collection writes separate owner and reader relationships. Its
-  owner can publish only datasources they both manage and read. Organization
-  admins may delegate Owner and Search teams for centrally managed
-  collections.
+- Missing pin fields (`datasource_ids`/`rag_collection_ids` both unset, not
+  sent as `[]`) are the intentional default for a new RAG-enabled agent: it is
+  unrestricted, searching whatever the calling user can already access with
+  no additional agent-level narrowing — safe because `tools.py` always
+  independently intersects with the caller's own OpenFGA-accessible set
+  regardless of agent config. There is no special default collection; an
+  editor opts into a narrower scope explicitly. Explicit empty arrays remain
+  a deliberate deny/opt-out, distinct from unset fields.
+- A personal collection writes separate owner and reader relationships. Any
+  editor can publish any datasource they can search — publishing never
+  extends read access to that datasource for anyone else, including the
+  collection's own readers. Organization admins may delegate Owner and Search
+  teams for centrally managed collections.
 - Service-account scope editing writes explicit `data_source#reader` grants for
   selected datasources. It uses the same grantable-resource rule as agents and
   tools: a creator cannot delegate a datasource they cannot access. There is no
@@ -1459,12 +1515,13 @@ removing stale pages when a source shrinks.
   from reviving an old agent selection. Collection deletion removes its agent
   references but never deletes indexed source data.
 
-This separation keeps collection Owners from reading content merely
-because they can curate it. When an organization admin delegates collection
-Search to a team, the BFF also adds the coarse organization `can_search`
-capability. That capability is additive-only because another collection or an
-explicit Team setting may still depend on it; datasource relationships remain
-the authoritative content boundary.
+This separation keeps collection membership from ever widening who can read a
+datasource's content: a collection's `reader` relation only controls who may
+use it as a query scope, and datasource relationships remain the sole
+authoritative content boundary. When an organization admin delegates
+collection Search to a team, the BFF also adds the coarse organization
+`can_search` capability. That capability is additive-only because another
+collection or an explicit Team setting may still depend on it.
 
 > **Team membership semantic:** On the `team` type, `member` is now defined as `[user, external_group#member] or admin` — i.e. anyone with the `admin` relation on a team automatically satisfies `team#member` checks (and, by extension, `team#member` userset references such as the `team:<slug>#member can_use agent:<id>` Slack/Webex resource paths). This means an admin no longer needs a separate `member` tuple to use the team's agents, and bots can ask `check(user, "member", team:<slug>)` as a single question. `admin` continues to be a directly-written relation; only `member` gains the derived branch. Callers that legacy-listed both `team#member` and `team#admin` as subject sets still work but are now redundant.
 

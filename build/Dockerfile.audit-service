@@ -1,18 +1,17 @@
 # syntax=docker/dockerfile:1.7
-# assisted-by Codex Codex-sonnet-4-6
 
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     AUDIT_SERVICE_LOCAL_PATH=/var/lib/caipe-audit-service
 
 RUN pip install --no-cache-dir \
-      fastapi==0.135.3 \
-      "uvicorn[standard]==0.34.3" \
-      pydantic==2.12.5 \
-      boto3==1.42.7 \
-      pyarrow==23.0.1 \
+      fastapi==0.141.1 \
+      "uvicorn[standard]==0.52.4" \
+      pydantic==2.13.4 \
+      boto3==1.43.80 \
+      pyarrow==25.0.1 \
     && groupadd -r appuser \
     && useradd -r -g appuser -u 1001 -m appuser
 

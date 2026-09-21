@@ -46,7 +46,7 @@ const customJestConfig = {
   ],
   // Transform ESM packages
   transformIgnorePatterns: [
-    'node_modules/(?!(uuid|@a2a-js|jose|marked|marked-shiki|morphdom|shiki|remend|dompurify|@shikijs)/)',
+    'node_modules/(?!(uuid|@a2a-js|jose|marked|marked-shiki|morphdom|shiki|remend|dompurify|@shikijs|@aws-sdk|@smithy|bson|mongodb)/)',
   ],
   // Prevent CI failure when workers do not exit gracefully (e.g. SkillsBuilderEditor async state)
   forceExit: true,
@@ -60,7 +60,7 @@ module.exports = async () => {
   const config = await baseConfig()
   // Replace next/jest's transformIgnorePatterns with ours so ESM packages (jose, uuid, etc.) are transformed
   config.transformIgnorePatterns = [
-    'node_modules/(?!(uuid|@a2a-js|jose|marked|marked-shiki|morphdom|shiki|remend|dompurify|@shikijs)/)',
+    'node_modules/(?!(uuid|@a2a-js|jose|marked|marked-shiki|morphdom|shiki|remend|dompurify|@shikijs|@aws-sdk|@smithy|bson|mongodb)/)',
     '^.+\\.module\\.(css|sass|scss)$',
   ]
   return config

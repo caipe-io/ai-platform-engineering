@@ -317,6 +317,8 @@ const config: Config = {
   } satisfies Preset.ThemeConfig,
 
   markdown: {
+    // Parse .md as CommonMark and reserve MDX syntax for .mdx files.
+    format: 'detect',
     mermaid: true,
     hooks: {
       onBrokenMarkdownLinks: 'warn',

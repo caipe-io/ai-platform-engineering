@@ -1,10 +1,10 @@
 # ---------- Stage 1: Build dependencies into a venv ----------
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         gcc \
-    && pip install --no-cache-dir uv \
+    && pip install --no-cache-dir uv==0.12.6 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -24,18 +24,18 @@ FROM cgr.dev/chainguard/wolfi-base
 # Override APK repo to public Wolfi OS packages (no auth required).
 RUN echo "https://packages.wolfi.dev/os" > /etc/apk/repositories
 
-# Install runtime: python 3.13 + shadow (groupadd/useradd).
+# Install runtime: python 3.14 + shadow (groupadd/useradd).
 RUN for i in 1 2 3; do \
-        apk add --no-cache python-3.13 shadow && break; \
+        apk add --no-cache python-3.14 shadow && break; \
         [ $i -lt 3 ] && sleep $((i * 5)); \
     done && \
     apk upgrade --no-cache
 
-# Wolfi puts Python at /usr/bin/python3.13; keep venv symlinks consistent.
+# Wolfi puts Python at /usr/bin/python3.14; keep venv symlinks consistent.
 RUN mkdir -p /usr/local/bin \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python3.13 \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python3 \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python3.14 \
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python3 \
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python
 
 # Non-root runtime user (UID/GID 1001).
 RUN groupadd -r -g 1001 appuser && useradd -r -g appuser -u 1001 -M -s /sbin/nologin appuser

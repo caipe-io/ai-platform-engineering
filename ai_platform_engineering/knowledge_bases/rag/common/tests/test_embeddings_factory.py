@@ -55,7 +55,7 @@ class TestEmbeddingsFactory:
   def test_bedrock_provider(self):
     """Test AWS Bedrock provider"""
     with patch.dict(os.environ, {"EMBEDDINGS_PROVIDER": "aws-bedrock", "AWS_REGION": "us-west-2"}):
-      with patch("common.embeddings_factory.BedrockEmbeddings") as mock_bedrock:
+      with patch("langchain_aws.BedrockEmbeddings") as mock_bedrock:
         mock_instance = MagicMock()
         mock_bedrock.return_value = mock_instance
 

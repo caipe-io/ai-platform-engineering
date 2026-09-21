@@ -1,9 +1,11 @@
 name: "[Release] Auto-tag on Push"
-# Automatically tag commits on main or branches with release/** prefix
-# (release or hotfix branches) based on version changes.
+# On main: only detects a release/* branch merge and hands off to
+# release-manual.yml — main itself is never auto-tagged, canary covers it.
+# On release/** branches: auto-tags every push with the next rc/hotfix
+# version, unchanged from before.
 run-name: >-
   Auto-tag ${{
-    github.ref == 'refs/heads/main' && 'dev (or new release)' ||
+    github.ref == 'refs/heads/main' && 'release merge check' ||
     contains(github.ref, '-hotfix') && 'hotfix' ||
     'rc'
   }} [${{ github.ref_name }}]
@@ -192,38 +194,67 @@ jobs:
           No dev tag was created because this commit already represents a release.
           EOF
 
-      # ── Normal auto-tag flow (skip if release merge) ───────────────────
+      # ── release/** auto-tag flow (main never reaches here) ──────────────
       - name: 🐍 Set up Python
-        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' }}
+        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' && github.ref != 'refs/heads/main' }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: 📦 Install uv
-        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' }}
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' && github.ref != 'refs/heads/main' }}
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
 
-      # ── Shared Logic 1: determine version ──────────────────────────────
-      - name: 🏷️ Determine version
-        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' }}
+      - name: 🏷️ Determine next rc/hotfix tag
+        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' && github.ref != 'refs/heads/main' }}
         id: version
-        uses: ./.github/actions/determine-version
-        with:
-          token: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
 
-      # ── Shared Logic 2: update version files ───────────────────────────
+          BRANCH="${GITHUB_REF#refs/heads/}"
+
+          if [[ "$BRANCH" == release/*-hotfix ]]; then
+            BASE_VERSION="${BRANCH#release/}"
+            BASE_VERSION="${BASE_VERSION%-hotfix}"
+            SUFFIX="hotfix"
+          elif [[ "$BRANCH" == release/* ]]; then
+            BASE_VERSION="${BRANCH#release/}"
+            SUFFIX="rc"
+          else
+            echo "❌ Unsupported branch for auto-tag: $BRANCH"
+            exit 1
+          fi
+
+          git fetch --tags --force --quiet || true
+          LATEST_NUM=$(git tag --list "${BASE_VERSION}-${SUFFIX}.*" \
+            | grep -oP "(?<=${SUFFIX}\.)[0-9]+$" | sort -n | tail -1)
+          NEXT_NUM=$(( ${LATEST_NUM:-0} + 1 ))
+          TAG="${BASE_VERSION}-${SUFFIX}.${NEXT_NUM}"
+
+          echo "base_version=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "suffix=${SUFFIX}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "🏷️ Next tag: ${TAG}"
+
+      - name: ✅ Validate tag
+        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' && github.ref != 'refs/heads/main' }}
+        uses: ./.github/actions/validate-release-tag
+        with:
+          version: ${{ steps.version.outputs.tag }}
+          base_version: ${{ steps.version.outputs.base_version }}
+          suffix_type: ${{ steps.version.outputs.suffix }}
+
       - name: 📝 Update version files
-        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' }}
+        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' && github.ref != 'refs/heads/main' }}
         id: update
         uses: ./.github/actions/update-version-files
         with:
           version: ${{ steps.version.outputs.tag }}
-          diff_target: ${{ steps.version.outputs.diff_target }}
       # ── Commit + tag + push ────────────────────────────────────────────
       - name: 📤 Commit, tag, and push
-        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' }}
+        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' && github.ref != 'refs/heads/main' }}
         id: push-tag
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -267,13 +298,10 @@ jobs:
           echo "✅ Pushed tag: $TAG"
 
       - name: 📊 Summary
-        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' && steps.push-tag.outputs.pushed == 'true' }}
+        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' && github.ref != 'refs/heads/main' && steps.push-tag.outputs.pushed == 'true' }}
         env:
           TAG: ${{ steps.update.outputs.final_version }}
         run: |
-          IS_CHART_ONLY=false
-          [[ "$TAG" =~ -chart\.[0-9]+$ ]] && IS_CHART_ONLY=true
-
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           # 🏷️ Auto-tag Created
 
@@ -282,22 +310,15 @@ jobs:
           | **Tag** | \`${TAG}\` |
           | **Branch** | \`${GITHUB_REF#refs/heads/}\` |
           | **Commit** | \`${GITHUB_SHA}\` |
-          | **Chart-only** | \`${IS_CHART_ONLY}\` |
 
           ## What happens next
 
-          - Tag push event triggers CI workflows
+          - Tag push event triggers CI workflows (all components rebuilt fresh)
           - CI workflows read tag from \`github.ref_name\`
           EOF
 
-          if [[ "$IS_CHART_ONLY" == "true" ]]; then
-            echo "- ⏭️ Image builds **skipped** (chart-only change)" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "- 🔄 Image builds triggered (changed images rebuilt, unchanged retagged)" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
       - name: 📊 Existing auto-tag summary
-        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' && steps.push-tag.outputs.skip_reason == 'tag_exists' }}
+        if: ${{ steps.release-merge.outputs.is_release_merge != 'true' && steps.existing-release-tag.outputs.skip != 'true' && github.ref != 'refs/heads/main' && steps.push-tag.outputs.skip_reason == 'tag_exists' }}
         env:
           TAG: ${{ steps.update.outputs.final_version }}
         run: |

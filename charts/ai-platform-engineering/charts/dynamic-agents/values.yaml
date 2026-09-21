@@ -18,7 +18,7 @@ imagePullSecrets: []
 # Service account configuration
 serviceAccount:
   create: true
-  automount: true
+  automount: false
   annotations: {}
   name: ""
 
