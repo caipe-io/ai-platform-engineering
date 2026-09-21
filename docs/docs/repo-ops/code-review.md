@@ -22,13 +22,11 @@ Reviewers do not spend time on the mechanical layer. If a machine can catch it, 
 catches it — a missing check is a CI gap, not a review comment.
 
 ```mermaid
-flowchart LR
-    A[PR opened] --> B[CI: mechanical checks]
-    B --> C[Automated first pass]
-    C --> D[Author resolves or replies]
-    D --> E[Maintainer: structural review]
-    E --> F[Approval + merge]
-    E -->|changes requested| D
+flowchart TD
+    PR[PR opened] --> CI[CI checks]
+    CI -->|Pass| HUMAN[Maintainer review]
+    PR -.-> AI[AI feedback: advisory]
+    HUMAN -->|Approve| MERGE[Merge]
 ```
 
 ## Pull request size
@@ -78,12 +76,15 @@ one.
 
 ## Automated first pass
 
-An AI reviewer comments on non-draft pull requests before a maintainer picks them up.
+Maintainer review starts only after CI checks complete successfully. An AI reviewer
+provides advisory feedback on non-draft pull requests and may run in parallel with
+maintainer review.
 
 - It is advisory. It never approves, never blocks a merge, and its review never counts
   as the maintainer approval.
-- Authors resolve or reply to its comments before requesting maintainer review.
-- Maintainers may dismiss its comments. Dismissals are recorded as evaluation data.
+- Authors should address relevant bot findings; maintainers may dismiss them.
+- An unavailable or incomplete automated review does not delay human review or merge.
+- Dismissals are recorded as evaluation data.
 - Its configuration lives in this repository: low-noise profile, `AGENTS.md` as its rule
   source, generated files excluded, drafts and `WIP` titles skipped.
 
