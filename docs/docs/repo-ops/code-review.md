@@ -84,7 +84,8 @@ maintainer review.
   as the maintainer approval.
 - Authors should address relevant bot findings; maintainers may dismiss them.
 - An unavailable or incomplete automated review does not delay human review or merge.
-- Dismissals are recorded as evaluation data.
+- Existing PR discussions about dismissed findings may inform the evaluation; no
+  separate record is required.
 - Its configuration lives in this repository: low-noise profile, `AGENTS.md` as its rule
   source, generated files excluded, drafts and `WIP` titles skipped.
 
@@ -94,7 +95,13 @@ Governance, before any such tool is enabled:
 2. A recorded assessment of its permissions, data handling, models, retention, and
    security certification.
 3. A 90-day pilot, scoped to this repository.
-4. An evaluation at the end of the pilot: continue, modify, or remove.
+4. After 90 days, maintainers decide whether to continue, adjust, or remove the tool using
+   available vendor reports and existing PR discussions. Before starting the pilot,
+   confirm which reports are included in the free OSS offering. Reviewers are not
+   required to submit feedback or maintain additional records. Reported acceptance
+   rates and estimated time savings are supporting indicators, not proof of improved
+   review quality. If the available evidence is insufficient, record that limitation
+   in the evaluation.
 
 ## Approval
 
