@@ -298,42 +298,47 @@ async function persistKeycloakSubMapping(
   if (!keycloakSub) return;
 
   const now = new Date();
-  try {
-    const users = await getCollection<User>('users');
-    await users.updateOne(
-      { email: user.email },
-      {
-        $set: {
-          keycloak_sub: keycloakSub,
-          'metadata.keycloak_sub': keycloakSub,
-          updated_at: now,
-        },
-        $setOnInsert: {
-          email: user.email,
-          name: user.name,
-          created_at: now,
-          last_login: now,
-          'metadata.sso_provider': 'keycloak',
-          'metadata.sso_id': keycloakSub,
-          'metadata.role': user.role === 'admin' ? 'admin' : 'user',
-        },
-      },
-      { upsert: true }
-    );
-  } catch (error) {
-    console.warn('[Auth] Could not persist Keycloak subject mapping:', error);
-  }
-
-  try {
-    const conversations = await getCollection<Conversation>('conversations');
-    await reconcileConversationOwnerIdentity(
-      conversations,
-      keycloakSub,
-      [user.email],
-    );
-  } catch (error) {
-    console.warn('[Auth] Could not reconcile conversation owner identity:', error);
-  }
+  await Promise.all([
+    (async () => {
+      try {
+        const users = await getCollection<User>('users');
+        await users.updateOne(
+          { email: user.email },
+          {
+            $set: {
+              keycloak_sub: keycloakSub,
+              'metadata.keycloak_sub': keycloakSub,
+              updated_at: now,
+            },
+            $setOnInsert: {
+              email: user.email,
+              name: user.name,
+              created_at: now,
+              last_login: now,
+              'metadata.sso_provider': 'keycloak',
+              'metadata.sso_id': keycloakSub,
+              'metadata.role': user.role === 'admin' ? 'admin' : 'user',
+            },
+          },
+          { upsert: true }
+        );
+      } catch (error) {
+        console.warn('[Auth] Could not persist Keycloak subject mapping:', error);
+      }
+    })(),
+    (async () => {
+      try {
+        const conversations = await getCollection<Conversation>('conversations');
+        await reconcileConversationOwnerIdentity(
+          conversations,
+          keycloakSub,
+          [user.email],
+        );
+      } catch (error) {
+        console.warn('[Auth] Could not reconcile conversation owner identity:', error);
+      }
+    })(),
+  ]);
 }
 
 /**

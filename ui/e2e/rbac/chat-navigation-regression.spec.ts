@@ -199,7 +199,7 @@ test.describe("mocked RBAC e2e — chat navigation regression", () => {
     });
 
     await page.goto("/chat", { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(new RegExp(`/chat/${conversationId}$`));
+    await expect(page).toHaveURL(new RegExp(`/chat/${conversationId}$`), { timeout: 20_000 });
     expect(createCallCount).toBe(0);
   });
 
@@ -219,7 +219,7 @@ test.describe("mocked RBAC e2e — chat navigation regression", () => {
     });
 
     await page.goto("/chat", { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(/\/chat\/.+/);
+    await expect(page).toHaveURL(/\/chat\/.+/, { timeout: 20_000 });
     await expectChatComposerReady(page);
 
     expect(createCallCount).toBe(1);

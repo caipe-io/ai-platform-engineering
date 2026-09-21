@@ -1080,6 +1080,32 @@ describe('getAuthenticatedUser', () => {
     );
   });
 
+  it('reconciles conversations without waiting for the profile write', async () => {
+    let finishProfileWrite: (() => void) | undefined;
+    const updateOne = jest.fn(() => new Promise((resolve) => {
+      finishProfileWrite = () => resolve({ matchedCount: 1 });
+    }));
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'user@example.com', name: 'Test User' },
+      role: 'user',
+      sub: 'test-keycloak-sub',
+    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users' ? { updateOne } : { updateMany }
+    ));
+
+    const req = new Request('http://example.test') as unknown as NextRequest;
+    const authPromise = getAuthenticatedUser(req);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(updateOne).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+
+    finishProfileWrite?.();
+    await authPromise;
+  });
+
   it('does not promote MongoDB metadata.role to product admin', async () => {
     mockGetServerSession.mockResolvedValue({
       user: { email: 'admin@test.com', name: 'Admin' },
