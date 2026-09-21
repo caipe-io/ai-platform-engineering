@@ -355,18 +355,26 @@ const HUMAN_CONVERSATION_OWNER_MATCH: Document = {
 
 /**
  * Stable person key shared by browser, Slack, Webex, and user-authenticated API
- * conversations. Connector ids and email are fallbacks for legacy/unlinked
- * rows that have no resolved Keycloak subject.
+ * conversations. Email remains canonical across the pre-link and post-link
+ * boundary; the immutable account subject unifies linked connector ids when an
+ * email is unavailable.
  */
 function canonicalConversationOwner(
   ownerField = '$owner_id',
   subjectField = '$owner_subject',
 ): Document {
+  const normalizedOwner = { $toLower: { $ifNull: [ownerField, ''] } };
   return {
     $cond: [
-      { $ne: [{ $ifNull: [subjectField, ''] }, ''] },
-      { $concat: ['subject:', subjectField] },
-      { $toLower: { $ifNull: [ownerField, ''] } },
+      { $gt: [{ $indexOfBytes: [normalizedOwner, '@'] }, 0] },
+      normalizedOwner,
+      {
+        $cond: [
+          { $ne: [{ $ifNull: [subjectField, ''] }, ''] },
+          { $concat: ['subject:', subjectField] },
+          normalizedOwner,
+        ],
+      },
     ],
   };
 }

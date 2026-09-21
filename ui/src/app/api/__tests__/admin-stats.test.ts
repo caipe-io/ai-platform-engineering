@@ -437,7 +437,21 @@ describe('GET /api/admin/stats — Overview', () => {
     expect(activeIdentityPipelines[0][0].$match).toEqual(
       expect.objectContaining({ updated_at: { $gte: expect.any(Date), $lte: expect.any(Date) } }),
     );
-    expect(JSON.stringify(convCol.aggregate.mock.calls[0][0])).toContain('owner_subject');
+    const totalUsersGroup = convCol.aggregate.mock.calls[0][0][1].$group._id;
+    const normalizedOwner = { $toLower: { $ifNull: ['$owner_id', ''] } };
+    expect(totalUsersGroup).toEqual({
+      $cond: [
+        { $gt: [{ $indexOfBytes: [normalizedOwner, '@'] }, 0] },
+        normalizedOwner,
+        {
+          $cond: [
+            { $ne: [{ $ifNull: ['$owner_subject', ''] }, ''] },
+            { $concat: ['subject:', '$owner_subject'] },
+            normalizedOwner,
+          ],
+        },
+      ],
+    });
   });
 
   it('excludes human messages from overview and activity metrics', async () => {
