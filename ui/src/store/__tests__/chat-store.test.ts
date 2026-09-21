@@ -87,7 +87,7 @@ function resetStore() {
     streamingConversations: new Map(),
     pendingMessage: null,
     contextUsageByConversation: {},
-    conversationFilter: 'web',
+    conversationFilter: 'all',
     conversationPage: 0,
     conversationHasMore: false,
     isLoadingMoreConversations: false,
@@ -1102,13 +1102,13 @@ describe('chat-store', () => {
         page: 1,
         page_size: 30,
         source: 'api',
-        client_type: 'api',
+        client_type: null,
       });
       expect(mockApiClient.getConversations).toHaveBeenNthCalledWith(2, {
         page: 2,
         page_size: 30,
         source: 'api',
-        client_type: 'api',
+        client_type: null,
       });
       expect(useChatStore.getState().conversations).toEqual(
         expect.arrayContaining([

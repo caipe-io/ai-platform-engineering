@@ -24,7 +24,7 @@ import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { AnimatePresence,motion } from "framer-motion";
-import { Activity,ArrowDown,ArrowLeft,Check,ChevronUp,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
+import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
@@ -70,6 +70,8 @@ interface ChatPanelProps {
   conversationId?: string; // MongoDB conversation UUID
   readOnly?: boolean;
   readOnlyReason?: ReadOnlyReason;
+  /** Whether this conversation is also used by an API client. */
+  apiConversation?: boolean;
   agentId: string; // Mandatory for Dynamic Agents
   agent?: DynamicAgentConfig | null; // Full agent config object
   isLoadingMessages?: boolean; // Whether messages are still loading (show skeleton)
@@ -83,6 +85,7 @@ export function ChatPanel({
   conversationId,
   readOnly,
   readOnlyReason,
+  apiConversation,
   agentId,
   agent,
   isLoadingMessages,
@@ -148,7 +151,10 @@ export function ChatPanel({
 
   const [input, setInput] = useState("");
   const [hasRelinkedAgent, setHasRelinkedAgent] = useState(false);
-  const panelReadOnly = readOnly && !hasRelinkedAgent;
+  const relinkRestoresWriteAccess = hasRelinkedAgent && (
+    readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled'
+  );
+  const panelReadOnly = readOnly && !relinkRestoresWriteAccess;
   const panelReadOnlyReason = hasRelinkedAgent ? undefined : readOnlyReason;
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -2209,6 +2215,21 @@ export function ChatPanel({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {apiConversation && (
+        <div
+          role="note"
+          className="shrink-0 border-t border-amber-500/30 bg-amber-500/10 px-6 py-2.5 text-amber-800 dark:text-amber-300"
+        >
+          <div className="mx-auto flex max-w-7xl items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-xs">
+              <span className="font-medium">API-linked chat.</span>{" "}
+              Messages sent here update the same conversation used by the API. Continuing here may interfere with that API chat, especially if both clients send at the same time.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Input Area - Fixed bottom, doesn't scroll */}
       {panelReadOnly ? (

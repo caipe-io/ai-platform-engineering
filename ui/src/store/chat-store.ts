@@ -301,7 +301,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       streamingConversations: new Map<string, StreamingState>(),
       pendingMessage: null,
       contextUsageByConversation: {},
-      conversationFilter: 'web',
+      conversationFilter: 'all',
       conversationPage: 0,
       conversationHasMore: false,
       isLoadingMoreConversations: false,
@@ -346,7 +346,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           conversations: [newConversation, ...state.conversations],
           ...(state.conversationFilter === 'web' || state.conversationFilter === 'all'
             ? {}
-            : { conversationFilter: 'web' as const, conversationPage: 1 }),
+            : { conversationFilter: 'all' as const, conversationPage: 1 }),
           activeConversationId: id,
         }));
         persistLastActiveConversationId(id);
@@ -893,7 +893,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 page,
                 page_size: CONVERSATION_PAGE_SIZE,
                 source: filter,
-                client_type: filter === 'api' ? 'api' : filter === 'all' ? null : 'webui',
+                client_type: filter === 'api' || filter === 'all' ? null : 'webui',
               });
             } catch (apiError) {
             // Check if it's an auth error (expected when not logged in)
