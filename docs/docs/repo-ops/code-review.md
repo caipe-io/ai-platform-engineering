@@ -103,6 +103,24 @@ Governance, before any such tool is enabled:
    review quality. If the available evidence is insufficient, record that limitation
    in the evaluation.
 
+### CodeRabbit assessment
+
+Published documentation checked on 2026-09-21. Confirm these details again before
+installation; service terms and limits can change.
+
+| Topic | Published facts and implications for CAIPE |
+|---|---|
+| Installation | An org owner can install the managed GitHub App for this repository only. Contributors do not need their own installation. [Source](https://docs.coderabbit.ai/platforms/github-com) |
+| Permissions | Read access to Actions, discussions, members, metadata, and merge queues; read/write access to checks, code, commit statuses, issues, and PRs. Code-write access is broader than advisory review needs. Disabling automated edits does not remove that permission. [Source](https://docs.coderabbit.ai/platforms/github-com) |
+| Code processing | CodeRabbit says code is shared with OpenAI and/or Anthropic for review and is not used for model training. These are vendor statements. [Source](https://docs.coderabbit.ai/faq) |
+| Retention | Review caches expire within seven days; the documentation excludes OSS caches from its encryption guarantee. Caching can be disabled through `reviews.disable_cache` in repository configuration. Other stored review context and logs need separate assessment; seven days is not a universal retention limit. [Source](https://docs.coderabbit.ai/reference/caching) |
+| Cost and limits | Current documentation offers Team features free for OSS, without a paid contributor subscription. Published OSS limits range from 1–10 PR reviews per developer/hour and 100–300 files per review, depending on the project, with fair-use adjustments. Confirm CAIPE's assigned limits before installation. [Source](https://docs.coderabbit.ai/management/plans) |
+| Fit for CAIPE's volume | The epic records 136 merges in 30 days. That does not establish review demand: repeated pushes consume reviews, and large PRs may exceed file limits. The pilot should remain within the free offering. [Epic measurement](https://github.com/caipe-io/ai-platform-engineering/issues/2790) |
+
+Before installation, the org owner confirms the requested permissions, applicable
+data-retention terms, assigned OSS limits, and available reports. Any unresolved
+limitations are recorded in the installation request.
+
 ## Approval
 
 - One maintainer approval is required to merge.
