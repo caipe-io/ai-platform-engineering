@@ -587,6 +587,16 @@ function AgentInfoContent({
         </div>
       )}
 
+      {/* Context Section */}
+      {contextUsage && (
+        <div className="space-y-2 pt-2 border-t border-border/50">
+          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            Context
+          </h4>
+          <ContextUsageDetails usage={contextUsage} />
+        </div>
+      )}
+
       {/* Advanced Section */}
       {agentId && sessionId && onRestartRuntime && (
         <div className="space-y-2 pt-2 border-t border-border/50">
@@ -594,7 +604,6 @@ function AgentInfoContent({
             Advanced
           </h4>
           <div className="space-y-2">
-            {contextUsage && <ContextUsageDetails usage={contextUsage} />}
             <Button
               variant="outline"
               size="sm"

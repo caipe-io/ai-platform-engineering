@@ -536,21 +536,16 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
       clearStreamEvents: (conversationId?: string) => {
         if (conversationId) {
-          set((prev: ChatState) => {
-            const contextUsageByConversation = { ...prev.contextUsageByConversation };
-            delete contextUsageByConversation[conversationId];
-            return {
-              conversations: prev.conversations.map((conv: Conversation) =>
-                conv.id === conversationId
-                  ? {
-                      ...conv,
-                      streamEvents: [],
-                    }
-                  : conv
-              ),
-              contextUsageByConversation,
-            };
-          });
+          set((prev: ChatState) => ({
+            conversations: prev.conversations.map((conv: Conversation) =>
+              conv.id === conversationId
+                ? {
+                    ...conv,
+                    streamEvents: [],
+                  }
+                : conv
+            ),
+          }));
         }
       },
 

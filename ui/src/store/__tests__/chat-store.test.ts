@@ -117,7 +117,7 @@ describe('chat-store', () => {
       remaining_percent: 29,
     };
 
-    it('keeps usage in memory outside the conversation transcript', () => {
+    it('keeps usage in memory when turn stream events are cleared', () => {
       const conv = makeConversation({ id: 'usage-conv' });
       useChatStore.setState({ conversations: [conv] });
 
@@ -127,7 +127,7 @@ describe('chat-store', () => {
       expect(useChatStore.getState().conversations[0].streamEvents).toEqual([]);
 
       useChatStore.getState().clearStreamEvents('usage-conv');
-      expect(useChatStore.getState().contextUsageByConversation['usage-conv']).toBeUndefined();
+      expect(useChatStore.getState().contextUsageByConversation['usage-conv']).toEqual(usage);
     });
 
     it('excludes context usage events from MongoDB persistence', async () => {
