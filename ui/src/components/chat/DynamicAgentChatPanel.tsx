@@ -2549,6 +2549,7 @@ export function ChatPanel({
               <div className="flex items-center gap-3">
                 <TextareaAutosize
                   ref={inputRef}
+                  aria-label="Message"
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}

@@ -138,6 +138,16 @@ def test_reasoning_model_supports_portable_efforts(monkeypatch):
     assert supports_reasoning_effort("global.anthropic.claude-sonnet-4-6", "low") is True
 
 
+def test_model_specific_reasoning_limits_override_broad_families(monkeypatch):
+    monkeypatch.delenv("MODEL_CAPABILITIES_JSON", raising=False)
+    _reset_settings_cache()
+
+    assert supports_reasoning_effort("gpt-5-pro", "low") is False
+    assert supports_reasoning_effort("gpt-5-pro", "high") is True
+    assert supports_reasoning_effort("gpt-5-pro", "max") is True
+    assert supports_reasoning_effort("o1-mini", "medium") is False
+
+
 def test_unknown_model_does_not_claim_reasoning_support(monkeypatch):
     monkeypatch.delenv("MODEL_CAPABILITIES_JSON", raising=False)
     _reset_settings_cache()

@@ -76,6 +76,7 @@ _ALL_REASONING_EFFORTS: list[ReasoningEffort] = [
     "high",
     "max",
 ]
+_HIGH_ONLY_REASONING_EFFORTS: list[ReasoningEffort] = ["high", "max"]
 
 
 def _reasoning_capabilities() -> ModelCapabilities:
@@ -122,8 +123,19 @@ DEFAULT_MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
     "claude-fable-5": _reasoning_capabilities(),
     "claude-mythos-5": _reasoning_capabilities(),
     # OpenAI / Gemini families deployed for routing — multimodal.
+    # Portable max maps to native high for GPT-5 Pro, its only accepted value.
+    "gpt-5-pro": ModelCapabilities(
+        accepts_images=True,
+        accepts_documents=True,
+        reasoning_efforts=_HIGH_ONLY_REASONING_EFFORTS,
+    ),
     "gpt-5": _reasoning_capabilities(),
     "gpt-6": _reasoning_capabilities(),
+    # The broad o1 family supports effort, but o1-mini does not.
+    "o1-mini": ModelCapabilities(
+        accepts_images=True,
+        accepts_documents=True,
+    ),
     "o1": _reasoning_capabilities(),
     "o3": _reasoning_capabilities(),
     "o4": _reasoning_capabilities(),

@@ -212,7 +212,7 @@ test.describe("RBAC e2e — caller-scoped MCP credentials", () => {
       await dismissReleaseUpgradeDialog(page);
       await expectChatComposerReady(page);
 
-      const composer = page.locator("textarea").first();
+      const composer = page.getByRole("textbox", { name: "Message" });
       await composer.fill("List my Jira issues");
       await composer.press("Enter");
 
