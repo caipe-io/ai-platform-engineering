@@ -215,6 +215,16 @@ class APIClient {
     });
   }
 
+  async patchConversationMetadata(
+    id: string,
+    metadata: Record<string, unknown>,
+  ): Promise<Conversation> {
+    return this.request(`/api/chat/conversations/${id}/metadata`, {
+      method: 'PATCH',
+      body: JSON.stringify({ metadata }),
+    });
+  }
+
   async deleteConversation(id: string): Promise<{ deleted: boolean; permanent: boolean }> {
     return this.request(`/api/chat/conversations/${id}`, {
       method: 'DELETE',

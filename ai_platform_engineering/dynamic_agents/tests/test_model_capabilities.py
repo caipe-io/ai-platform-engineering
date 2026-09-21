@@ -17,6 +17,7 @@ import dynamic_agents.services.model_capabilities as mc
 from dynamic_agents.services.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
+    supports_reasoning_effort,
 )
 
 
@@ -38,6 +39,7 @@ def test_unknown_model_is_permissive(monkeypatch):
 
     assert caps.accepts_images is True
     assert caps.accepts_documents is True
+    assert caps.reasoning_efforts == []
 
 
 def test_none_and_empty_model_id_are_permissive(monkeypatch):
@@ -126,3 +128,19 @@ def test_default_model_capabilities_are_immutable_singletons():
         isinstance(v, ModelCapabilities)
         for v in mc.DEFAULT_MODEL_CAPABILITIES.values()
     )
+
+
+def test_reasoning_model_supports_portable_efforts(monkeypatch):
+    monkeypatch.delenv("MODEL_CAPABILITIES_JSON", raising=False)
+    _reset_settings_cache()
+
+    assert supports_reasoning_effort("gpt-5.5", "max") is True
+    assert supports_reasoning_effort("global.anthropic.claude-sonnet-4-6", "low") is True
+
+
+def test_unknown_model_does_not_claim_reasoning_support(monkeypatch):
+    monkeypatch.delenv("MODEL_CAPABILITIES_JSON", raising=False)
+    _reset_settings_cache()
+
+    assert supports_reasoning_effort("example-chat-model", "medium") is False
+    assert supports_reasoning_effort("claude-3-5-sonnet-latest", "medium") is False

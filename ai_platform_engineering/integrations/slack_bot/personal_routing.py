@@ -38,10 +38,12 @@ from utils.slash_commands import (
   SlashCommandResult,
   _cmd_prefix,
   handle_help_command,
+  handle_effort_command,
   handle_list_command,
   handle_use_command,
 )
 from utils.user_preferences_client import UserPreferencesClient
+from utils.reasoning_effort import PendingEffortKey, get_default_pending_effort_store
 
 
 app: Any = None
@@ -182,7 +184,7 @@ def _ack_ephemeral(ack: Any, result: SlashCommandResult) -> None:
 
 
 def _register_slash_commands(bolt_app: Any) -> None:
-  """Register /{cmd}-help, /{cmd}-list, /{cmd}-use with the Bolt app.
+  """Register the DM routing and effort slash commands with the Bolt app.
 
   The command prefix is derived from APP_NAME at startup time so that
   ``APP_NAME=Forge`` registers ``/forge-help`` etc.
@@ -229,6 +231,29 @@ def _register_slash_commands(bolt_app: Any) -> None:
         accessible_agents_client=_accessible_agents_client(),
         is_dm=is_dm,
         rate_limiter=_command_rate_limiter(),
+    )
+    _ack_ephemeral(ack, result)
+
+  @bolt_app.command(f"/{cmd}-effort")
+  def slash_effort(
+    ack: Any, body: dict[str, Any], context: Any = None
+  ) -> None:
+    channel_id = body.get("channel_id") or ""
+    user_id = body.get("user_id") or ""
+    workspace_id = (context or {}).get("slack_workspace_id") or body.get("team_id") or ""
+    is_dm = bool(channel_id) and channel_id.startswith("D")
+    pending_key = (
+      PendingEffortKey(workspace_id, channel_id, user_id)
+      if is_dm and workspace_id and user_id
+      else None
+    )
+    result = handle_effort_command(
+      user_key=user_id,
+      raw_text=body.get("text") or "",
+      is_dm=is_dm,
+      pending_key=pending_key,
+      pending_store=get_default_pending_effort_store(),
+      rate_limiter=_command_rate_limiter(),
     )
     _ack_ephemeral(ack, result)
 
@@ -418,6 +443,32 @@ def handle_dm_message(
     conversation_id = conv_result["conversation_id"]
     conv_created = conv_result["created"]
     conv_metadata = conv_result.get("metadata", {})
+    pending_effort_key = (
+      PendingEffortKey(workspace_id_for_override, channel_id, user_id)
+      if workspace_id_for_override and channel_id and user_id
+      else None
+    )
+    pending_effort_store = get_default_pending_effort_store()
+    staged_effort = (
+      pending_effort_store.consume(pending_effort_key)
+      if pending_effort_key is not None
+      else None
+    )
+    reasoning_effort = staged_effort or conv_metadata.get("reasoning_effort")
+    if staged_effort:
+      try:
+        sse_client.update_conversation_metadata(
+          conversation_id,
+          {"reasoning_effort": staged_effort},
+        )
+      except Exception as exc:
+        if pending_effort_key is not None:
+          pending_effort_store.set(pending_effort_key, staged_effort)
+        logger.warning(
+          "[{}] Could not persist reasoning effort: {}",
+          thread_ts,
+          exc,
+        )
 
     # Build thread context: full on first interaction, delta on follow-ups
     context_message = message_text
@@ -465,6 +516,7 @@ def handle_dm_message(
       conversation_id=conversation_id,
       client_context=client_context,
       files=input_files,
+      reasoning_effort=reasoning_effort,
     )
 
     if isinstance(result, dict) and result.get("retry_needed"):

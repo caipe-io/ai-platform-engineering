@@ -201,6 +201,7 @@ class WebexSSEClient:
         trace_id: Optional[str] = None,
         client_context: Optional[Dict[str, Any]] = None,
         bearer_token: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Iterator[SSEEvent]:
         payload: Dict[str, Any] = {
             "message": message,
@@ -211,6 +212,8 @@ class WebexSSEClient:
         }
         if client_context:
             payload["client_context"] = client_context
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
 
         url = f"{self.base_url}/api/v1/chat/stream/start"
         yield from self._stream_sse(url, payload, bearer_token=bearer_token)

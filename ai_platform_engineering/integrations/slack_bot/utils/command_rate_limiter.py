@@ -8,7 +8,7 @@ user, with timestamps stored in a ``deque``. We expire timestamps on
 read so memory cost is proportional to the active set of users
 in the last ``window_seconds``.
 
-Used by the ``/{cmd}-list``, ``/{cmd}-use``, and ``/{cmd}-help``
+Used by the ``/{cmd}-list``, ``/{cmd}-use``, ``/{cmd}-effort``, and ``/{cmd}-help``
 slash command handlers in Slack (and corresponding text commands in
 Webex via a separate, identical-shaped twin).
 """

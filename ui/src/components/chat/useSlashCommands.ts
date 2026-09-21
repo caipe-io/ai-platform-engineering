@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect,useMemo,useState } from "react";
-import { DEFAULT_AGENTS } from "./CustomCallButtons";
+import type { SubAgentRef } from "@/types/dynamic-agent";
 import type { SlashCommand } from "./SlashCommandMenu";
 
 /**
@@ -15,6 +15,14 @@ const BUILTIN_COMMANDS: SlashCommand[] = [
     category: "command",
     action: "execute",
     value: "skills",
+  },
+  {
+    id: "effort",
+    label: "effort",
+    description: "Set this chat's reasoning effort",
+    category: "command",
+    action: "insert",
+    value: "/effort ",
   },
   {
     id: "help",
@@ -90,14 +98,18 @@ function isFlaggedSkill(skill: CatalogSkillLite): boolean {
  * Hook that assembles the full slash command list from:
  * 1. Built-in commands (static)
  * 2. Skills (dynamic, scoped to agent when agentSkillIds is provided)
- * 3. Agents from DEFAULT_AGENTS (static)
+ * 3. Enabled MCP servers and configured subagents for the current agent
  *
  * @param agentSkillIds - Skill IDs configured on the current dynamic agent.
  *   When provided with items: fetches GET /api/skills (merged catalog), filters to those IDs.
  *   When provided as empty array: no skills shown.
  *   When undefined: fetches full global catalog from /api/skills.
  */
-export function useSlashCommands(agentSkillIds?: string[]): SlashCommand[] {
+export function useSlashCommands(
+  agentSkillIds?: string[],
+  allowedTools?: Record<string, string[] | boolean>,
+  subagents?: SubAgentRef[],
+): SlashCommand[] {
   const [skillCommands, setSkillCommands] = useState<SlashCommand[]>([]);
 
   // Stable key for the dependency array — avoids re-fetching on every render
@@ -164,22 +176,34 @@ export function useSlashCommands(agentSkillIds?: string[]): SlashCommand[] {
     };
   }, [skillIdsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Convert DEFAULT_AGENTS to slash commands
-  const agentCommands: SlashCommand[] = useMemo(
-    () =>
-      DEFAULT_AGENTS.map((agent) => ({
-        id: agent.id,
-        label: agent.label,
-        description: `${agent.label} agent`,
-        category: "agent" as const,
+  const mcpCommands: SlashCommand[] = useMemo(
+    () => Object.entries(allowedTools ?? {})
+      .filter(([, selection]) => selection !== false)
+      .map(([serverId]) => ({
+        id: `mcp-${serverId}`,
+        label: serverId,
+        description: `${serverId} MCP server`,
+        category: "mcp" as const,
         action: "insert" as const,
-        value: agent.prompt,
+        value: `@${serverId}`,
       })),
-    [],
+    [allowedTools],
+  );
+
+  const subagentCommands: SlashCommand[] = useMemo(
+    () => (subagents ?? []).map((subagent) => ({
+      id: `subagent-${subagent.agent_id}`,
+      label: subagent.name || subagent.agent_id,
+      description: subagent.description || "Configured subagent",
+      category: "subagent" as const,
+      action: "insert" as const,
+      value: `@${subagent.name || subagent.agent_id}`,
+    })),
+    [subagents],
   );
 
   return useMemo(
-    () => [...BUILTIN_COMMANDS, ...skillCommands, ...agentCommands],
-    [skillCommands, agentCommands],
+    () => [...BUILTIN_COMMANDS, ...skillCommands, ...mcpCommands, ...subagentCommands],
+    [skillCommands, mcpCommands, subagentCommands],
   );
 }

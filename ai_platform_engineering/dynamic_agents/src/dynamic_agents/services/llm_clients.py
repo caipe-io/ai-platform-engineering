@@ -11,9 +11,13 @@ from __future__ import annotations
 import logging
 import os
 from functools import lru_cache
+from inspect import signature
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+
+from dynamic_agents.models import ReasoningEffort
+from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +124,11 @@ def _resolve_llm_defaults(provider: str | None, model_id: str | None) -> tuple[s
     return resolved_provider, resolved_model
 
 
-def get_llm(provider: str, model_id: str) -> BaseChatModel:
+def get_llm(
+    provider: str,
+    model_id: str,
+    reasoning_effort: ReasoningEffort | None = None,
+) -> BaseChatModel:
     """Get a LangChain chat model for the given provider and model.
 
     Injects shared transport clients (boto3/httpx) when LLM_CLIENT_SHARING=true,
@@ -141,6 +149,15 @@ def get_llm(provider: str, model_id: str) -> BaseChatModel:
     kwargs: dict[str, Any] = {}
     if resolved_model is not None:
         kwargs["model"] = resolved_model
+    model_supports_effort = (
+        reasoning_effort is not None
+        and supports_reasoning_effort(resolved_model, reasoning_effort)
+    )
+    if reasoning_effort is not None and not model_supports_effort:
+        logger.warning(
+            "[llm] Model %s does not advertise configurable reasoning; using provider default",
+            resolved_model or "<from env>",
+        )
 
     if SHARE_CLIENTS:
         p = resolved_provider.lower().replace("-", "_")
@@ -157,7 +174,16 @@ def get_llm(provider: str, model_id: str) -> BaseChatModel:
         # google-gemini / google-vertex-ai: no shared client needed
 
     try:
-        llm = LLMFactory(provider=resolved_provider).get_llm(**kwargs)
+        factory = LLMFactory(provider=resolved_provider)
+        if model_supports_effort:
+            if "reasoning_effort" in signature(factory.get_llm).parameters:
+                kwargs["reasoning_effort"] = reasoning_effort
+            else:
+                logger.warning(
+                    "[llm] Installed cnoe-agent-utils does not support portable "
+                    "reasoning effort; using provider default"
+                )
+        llm = factory.get_llm(**kwargs)
     except ValueError as exc:
         # LLMFactory raises ValueError for unknown providers OR missing
         # provider-specific env vars. Re-raise as LLMConfigError so the

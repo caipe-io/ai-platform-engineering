@@ -6,6 +6,7 @@ import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { useAgentTimeline } from "@/hooks/useDynamicAgentTimeline";
@@ -15,6 +16,7 @@ import { getConfig } from "@/lib/config";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
 import { ACCEPT_ATTRIBUTE,fileToInputFile,type InputFile,validateFiles } from "@/lib/file-attachments";
 import { takePendingFirstMessage } from "@/lib/pending-first-message";
+import { getStorageMode } from "@/lib/storage-config";
 import { createSubagentResumeSeedEvents } from "@/lib/resume-subagent-context";
 import { createStreamAdapter,StreamError,type StreamCallbacks } from "@/lib/streaming";
 import { createStreamEvent,FILE_TOOL_NAMES,TODO_TOOL_NAME,type StreamEvent } from "@/lib/streaming/types";
@@ -22,7 +24,7 @@ import { cn,deduplicateByKey,generateId } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
-import type { DynamicAgentConfig } from "@/types/dynamic-agent";
+import type { DynamicAgentConfig,ReasoningEffort } from "@/types/dynamic-agent";
 import { AnimatePresence,motion } from "framer-motion";
 import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
@@ -32,7 +34,6 @@ import { NavigationProgressLink } from "@/components/layout/NavigationProgressLi
 import Image from "next/image";
 import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
 import TextareaAutosize from "react-textarea-autosize";
-import { DEFAULT_AGENTS } from "./CustomCallButtons";
 import { AgentTimeline,type SubagentLookupInfo } from "./DynamicAgentTimeline";
 import { Feedback,FeedbackButton } from "./FeedbackButton";
 import { MetadataInputForm,type InputField,type UserInputMetadata } from "./MetadataInputForm";
@@ -169,6 +170,10 @@ export function ChatPanel({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
+    agent?.model.reasoning_effort ?? "medium",
+  );
+  const [supportedReasoningEfforts, setSupportedReasoningEfforts] = useState<ReasoningEffort[] | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -303,13 +308,87 @@ export function ChatPanel({
   }, [conversationId, chosenAgentId, onAgentRelinked, toast]);
 
   // Slash command registry
-  const slashCommands = useSlashCommands(agentSkills);
+  const slashCommands = useSlashCommands(agentSkills, agent?.allowed_tools, agent?.subagents);
 
   // Get access token from session (if SSO is enabled and user is authenticated)
   const ssoEnabled = getConfig('ssoEnabled');
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
+  const configuredReasoningEffort = agent?.model.reasoning_effort ?? "medium";
+  const requestReasoningEffort = supportedReasoningEfforts?.includes(reasoningEffort)
+    ? reasoningEffort
+    : undefined;
+
+  useEffect(() => {
+    const stored = conversation?.metadata?.reasoning_effort;
+    const next = typeof stored === "string" && ["low", "medium", "high", "max"].includes(stored)
+      ? stored as ReasoningEffort
+      : configuredReasoningEffort;
+    setReasoningEffort(next);
+  }, [conversation?.id, conversation?.metadata?.reasoning_effort, configuredReasoningEffort]);
+
+  useEffect(() => {
+    if (!agent?.model.id || !agent.model.provider) {
+      setSupportedReasoningEfforts([]);
+      return;
+    }
+    let cancelled = false;
+    setSupportedReasoningEfforts(null);
+    const params = new URLSearchParams({
+      model_id: agent.model.id,
+      provider: agent.model.provider,
+    });
+    fetch(`/api/dynamic-agents/model-capabilities?${params}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled) setSupportedReasoningEfforts(data?.reasoning_efforts ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setSupportedReasoningEfforts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent?.model]);
+
+  const persistReasoningEffort = useCallback(async (
+    effort: ReasoningEffort,
+    source: "selector" | "command" = "selector",
+    conversationIdOverride?: string,
+  ): Promise<"changed" | "unsupported" | "error"> => {
+    if (!supportedReasoningEfforts?.includes(effort)) {
+      toast(
+        `The selected model does not support changing reasoning effort. It will keep the provider default.`,
+        "warning",
+        6000,
+      );
+      return "unsupported";
+    }
+
+    try {
+      let convId = conversationIdOverride ?? activeConversationId;
+      if (!convId) convId = await createConversation(agentId);
+      if (getStorageMode() === "mongodb") {
+        await apiClient.patchConversationMetadata(convId, { reasoning_effort: effort });
+      }
+      useChatStore.setState((state) => ({
+        conversations: state.conversations.map((item) =>
+          item.id === convId
+            ? { ...item, metadata: { ...item.metadata, reasoning_effort: effort } }
+            : item,
+        ),
+      }));
+      setReasoningEffort(effort);
+      if (source === "selector") {
+        toast(`Reasoning effort changed to ${effort} for this chat.`, "success", 3500);
+      }
+      return "changed";
+    } catch {
+      toast("Could not save the reasoning effort. Try again.", "error", 5000);
+      return "error";
+    }
+  }, [activeConversationId, agentId, createConversation, supportedReasoningEfforts, toast]);
   const editingMessageIndex = editingMessageId
     ? (conversation?.messages.findIndex((message) => message.id === editingMessageId) ?? -1)
     : -1;
@@ -1205,6 +1284,7 @@ export function ChatPanel({
           conversationId: convId,
           agentId,
           turnId,
+          reasoningEffort: requestReasoningEffort,
           clientContext,
           ...(filesToSend.length > 0 && { files: filesToSend }),
         },
@@ -1241,7 +1321,7 @@ export function ChatPanel({
       });
       setConversationStreaming(convId, null);
     }
-  }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
+  }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
 
   const submitMessage = useCallback(
     (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
@@ -1457,6 +1537,39 @@ export function ChatPanel({
     }
   }, [activeConversationId, createConversation, addMessage, updateMessage, updateConversationTitle, agentId, agentSkills]);
 
+  const handleEffortCommand = useCallback(async (argument: string) => {
+    let convId = activeConversationId;
+    if (!convId) convId = await createConversation(agentId);
+    const turnId = `turn-${Date.now()}`;
+    const command = `/effort${argument ? ` ${argument}` : ""}`;
+    addMessage(convId, { role: "user", content: command }, turnId);
+
+    const normalized = argument.trim().toLowerCase();
+    if (!["low", "medium", "high", "max"].includes(normalized)) {
+      addMessage(convId, {
+        role: "assistant",
+        content: `Usage: \`/effort <low|medium|high|max>\`. Current effort: **${reasoningEffort}**.`,
+        isFinal: true,
+      }, turnId);
+      return;
+    }
+
+    const result = await persistReasoningEffort(
+      normalized as ReasoningEffort,
+      "command",
+      convId,
+    );
+    addMessage(convId, {
+      role: "assistant",
+      content: result === "changed"
+        ? `Reasoning effort changed to **${normalized}** for this chat.`
+        : result === "unsupported"
+          ? "This model does not support changing reasoning effort. The provider default is unchanged."
+          : "I couldn't save the reasoning effort. Try again.",
+      isFinal: true,
+    }, turnId);
+  }, [activeConversationId, addMessage, agentId, createConversation, persistReasoningEffort, reasoningEffort]);
+
   // Handle /help command: show available commands in chat
   const handleHelpCommand = useCallback(async () => {
     let convId = activeConversationId;
@@ -1469,21 +1582,26 @@ export function ChatPanel({
     // Set a descriptive title instead of "/help"
     updateConversationTitle(convId, "Help & Commands");
 
-    const agentLines = DEFAULT_AGENTS.map(a => `  \`/@${a.id}\` — ${a.label} agent`).join("\n");
+    const mcpLines = Object.entries(agent?.allowed_tools ?? {})
+      .filter(([, selection]) => selection !== false)
+      .map(([serverId]) => `- \`/@${serverId}\` — MCP server`);
+    const subagentLines = (agent?.subagents ?? []).map(
+      (subagent) => `- \`/@${subagent.name || subagent.agent_id}\` — ${subagent.description || "Configured subagent"}`,
+    );
     const helpText = [
-      "**Available Commands**\n",
-      "  `/skills` — List all available skills",
-      "  `/help` — Show this help message",
-      "  `/clear` — Clear the current conversation",
+      "**Available Commands**",
       "",
-      "**Agents** (inserts @mention, then keep typing your question)\n",
-      agentLines,
+      "- `/skills` — List available skills",
+      "- `/effort <low|medium|high|max>` — Set reasoning effort for this chat",
+      "- `/help` — Show this help message",
+      "- `/clear` — Start a new conversation and reset context",
       "",
-      "*Type `/` to see the autocomplete menu. Use Arrow keys + Tab to select.*",
+      ...(mcpLines.length ? ["**MCP Servers**", "", ...mcpLines, ""] : []),
+      ...(subagentLines.length ? ["**Subagents**", "", ...subagentLines] : []),
     ].join("\n");
 
     addMessage(convId, { role: "assistant", content: helpText, isFinal: true }, turnId);
-  }, [activeConversationId, agentId, createConversation, addMessage, updateConversationTitle]);
+  }, [activeConversationId, agent, agentId, createConversation, addMessage, updateConversationTitle]);
 
   // Handle /clear command
   const handleClearCommand = useCallback(async () => {
@@ -1584,6 +1702,12 @@ export function ChatPanel({
 
     // Check for slash commands via the registry
     const trimmed = input.trim();
+    const effortMatch = trimmed.match(/^\/effort(?:\s+(.*))?$/i);
+    if (effortMatch) {
+      setInput("");
+      await handleEffortCommand(effortMatch[1] ?? "");
+      return;
+    }
     if (trimmed.startsWith("/")) {
       const cmdName = trimmed.slice(1).toLowerCase();
       const cmd = slashCommands.find(
@@ -1636,7 +1760,7 @@ export function ChatPanel({
     setAttachments([]);
 
     await submitMessage(message, encodedFiles);
-  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, slashCommands, executeSlashCommand, handleStop]);
+  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
 
   // Auto-submit pending message from use case selection
   useEffect(() => {
@@ -1716,7 +1840,7 @@ export function ChatPanel({
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
 
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, reasoningEffort: requestReasoningEffort, clientContext },
         callbacks,
       );
 
@@ -1733,7 +1857,7 @@ export function ChatPanel({
   }, [pendingUserInput, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       appendToMessage, addStreamEvent, setConversationStreaming,
       clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop,
-      suppliedClientContext]);
+      suppliedClientContext, requestReasoningEffort]);
 
   // Handle tool approval decisions (approve/reject/edit)
   // Shows cards sequentially; only resumes after all tools are decided.
@@ -1838,7 +1962,7 @@ export function ChatPanel({
     try {
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, reasoningEffort: requestReasoningEffort, clientContext },
         callbacks,
       );
       finalizeStreamLoop(activeConversationId, assistantMsgId, loopState);
@@ -1852,7 +1976,7 @@ export function ChatPanel({
     }
   }, [pendingToolApproval, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       addStreamEvent, setConversationStreaming, clearStreamEvents, getActiveConversation,
-      buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext]);
+      buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext, requestReasoningEffort]);
 
   // Handle slash command detection in input
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -1893,7 +2017,7 @@ export function ChatPanel({
     }
 
     // Insert commands
-    if (cmd.category === "agent") {
+    if (cmd.category === "mcp" || cmd.category === "subagent") {
       // Agent: replace /text with @agentname + trailing space
       const cursorPos = inputRef.current?.selectionStart ?? input.length;
       const textBeforeCursor = input.slice(0, cursorPos);
@@ -1921,6 +2045,9 @@ export function ChatPanel({
           updateConversationTitle(convId, `Skill: ${cmd.label}`);
         }
       });
+    } else if (cmd.category === "command") {
+      setInput(cmd.value);
+      setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [input, executeSlashCommand, submitMessage, activeConversationId, updateConversationTitle]);
 
@@ -2147,6 +2274,7 @@ export function ChatPanel({
                           conversationId: activeConversationId,
                           agentId: pendingUserInput.agentId,
                           resumeData: dismissalPayload,
+                          reasoningEffort: requestReasoningEffort,
                         },
                         {}, // No callbacks — we don't render the response
                       ).catch((err) => {
@@ -2393,6 +2521,30 @@ export function ChatPanel({
 
               {/* Staged attachment previews (above the input row). */}
               <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
+
+              <div className="flex items-center justify-end gap-2 px-3">
+                <label htmlFor="chatReasoningEffort" className="text-xs text-muted-foreground">
+                  Effort
+                </label>
+                <Select
+                  id="chatReasoningEffort"
+                  value={reasoningEffort}
+                  onChange={(event) => void persistReasoningEffort(event.target.value as ReasoningEffort)}
+                  disabled={supportedReasoningEfforts === null || supportedReasoningEfforts.length === 0 || isThisConversationStreaming}
+                  className="h-8 w-28 py-1 capitalize"
+                  title={supportedReasoningEfforts?.length === 0 ? "This model does not support configurable reasoning effort" : "Reasoning effort for this chat"}
+                >
+                  {(["low", "medium", "high", "max"] as ReasoningEffort[]).map((effort) => (
+                    <option
+                      key={effort}
+                      value={effort}
+                      disabled={supportedReasoningEfforts !== null && !supportedReasoningEfforts.includes(effort)}
+                    >
+                      {effort}
+                    </option>
+                  ))}
+                </Select>
+              </div>
 
               <div className="flex items-center gap-3">
                 <TextareaAutosize

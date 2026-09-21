@@ -14,13 +14,6 @@
 
 import { renderHook, waitFor } from "@testing-library/react";
 
-jest.mock("../CustomCallButtons", () => ({
-  // ``useSlashCommands`` imports ``DEFAULT_AGENTS`` purely to expose the
-  // built-in agents as slash commands; an empty list keeps assertions
-  // about ``skillCommands`` cleanly isolated from agent entries.
-  DEFAULT_AGENTS: [] as Array<{ id: string; label: string; prompt: string }>,
-}));
-
 import { useSlashCommands } from "../useSlashCommands";
 
 function mockSkillsResponse(skills: Array<Record<string, unknown>>) {
@@ -116,7 +109,7 @@ describe("useSlashCommands flagged-skill gate", () => {
 
   it("includes built-in commands regardless of catalog filtering", async () => {
     // Defensive sanity: filtering should never strip ``/skills``,
-    // ``/help``, ``/clear`` -- they are static and not part of the
+    // ``/effort``, ``/help``, ``/clear`` -- they are static and not part of the
     // catalog response.
     mockSkillsResponse([
       { id: "evil", name: "evil-skill", scan_status: "flagged" },
@@ -129,7 +122,24 @@ describe("useSlashCommands flagged-skill gate", () => {
     });
 
     const labels = result.current.map((c) => c.label);
-    expect(labels).toEqual(expect.arrayContaining(["skills", "help", "clear"]));
+    expect(labels).toEqual(expect.arrayContaining(["skills", "effort", "help", "clear"]));
     expect(labels).not.toContain("evil-skill");
+  });
+
+  it("uses enabled MCP servers and configured subagents for mentions", () => {
+    const { result } = renderHook(() => useSlashCommands(
+      [],
+      { github: true, jira: false, rag: ["search"] },
+      [{ agent_id: "reviewer-id", name: "reviewer", description: "Reviews changes" }],
+    ));
+
+    expect(result.current).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "github", category: "mcp", value: "@github" }),
+      expect.objectContaining({ label: "rag", category: "mcp", value: "@rag" }),
+      expect.objectContaining({ label: "reviewer", category: "subagent", value: "@reviewer" }),
+    ]));
+    expect(result.current).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "jira" }),
+    ]));
   });
 });
