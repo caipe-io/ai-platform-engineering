@@ -11,6 +11,7 @@ interface ApiEnvelope<T> {
 export interface ResolvedChatAgent {
   id: string;
   name: string;
+  execution_harness_id?: string;
   source: "user-default" | "platform-default" | "first-available";
 }
 
@@ -80,6 +81,7 @@ export async function resolveUsableChatAgent(): Promise<ResolvedChatAgent> {
       return {
         id: userAgent._id,
         name: userAgent.name,
+        execution_harness_id: userAgent.execution_harness_id,
         source: "user-default",
       };
     }
@@ -91,6 +93,7 @@ export async function resolveUsableChatAgent(): Promise<ResolvedChatAgent> {
       return {
         id: defaultAgent._id,
         name: defaultAgent.name,
+        execution_harness_id: defaultAgent.execution_harness_id,
         source: "platform-default",
       };
     }

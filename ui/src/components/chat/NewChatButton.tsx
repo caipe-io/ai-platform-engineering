@@ -1,7 +1,9 @@
 "use client";
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
+import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { Button } from "@/components/ui/button";
+import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
 import { cn } from "@/lib/utils";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
@@ -23,6 +25,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [defaultAgentId, setDefaultAgentId] = useState<string | null>(null);
   const [defaultAgentName, setDefaultAgentName] = useState<string>("New Chat");
+  const [defaultAgentHarnessId, setDefaultAgentHarnessId] = useState<string | undefined>();
   const [defaultAgentResolved, setDefaultAgentResolved] = useState(false);
 
   // Resolve the same usable agent as the Home composer: personal Web default,
@@ -38,6 +41,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
         if (cancelled) return;
         setDefaultAgentId(agent.id);
         setDefaultAgentName(agent.name);
+        setDefaultAgentHarnessId(agent.execution_harness_id);
       } catch {
         if (!cancelled) {
           setDefaultAgentId(null);
@@ -74,7 +78,10 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
         // Update default agent display name now that we have the full list
         if (defaultAgentId) {
           const found = fetched.find((a) => a._id === defaultAgentId);
-          if (found) setDefaultAgentName(found.name);
+          if (found) {
+            setDefaultAgentName(found.name);
+            setDefaultAgentHarnessId(found.execution_harness_id);
+          }
         }
       } catch (err) {
         console.error("Error fetching dynamic agents:", err);
@@ -150,15 +157,31 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
   // Collapsed mode: simple button without dropdown
   if (collapsed) {
     return (
-      <Button
-        onClick={handleMainClick}
-        disabled={!defaultAgentResolved}
-        className="w-full px-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow"
-        variant="ghost"
-        size="icon"
-      >
-        <Plus className="h-4 w-4 shrink-0" />
-      </Button>
+      <TooltipProvider delayDuration={150}>
+        <Tooltip className="block w-full">
+          <TooltipTrigger asChild>
+            <Button
+              aria-label={`New chat with ${defaultAgentName}`}
+              onClick={handleMainClick}
+              disabled={!defaultAgentResolved}
+              className="w-full px-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow"
+              variant="ghost"
+              size="icon"
+            >
+              <Plus className="h-4 w-4 shrink-0" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={10} className="px-3 py-2">
+            <p className="font-semibold">New chat</p>
+            <div className="mt-1 flex items-center gap-2 text-[11px] font-normal text-muted-foreground">
+              <span>{defaultAgentName}</span>
+              {defaultAgentHarnessId ? (
+                <AgentHarnessBadge harnessId={defaultAgentHarnessId} compact />
+              ) : null}
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     );
   }
 

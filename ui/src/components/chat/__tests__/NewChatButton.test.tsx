@@ -18,6 +18,7 @@ jest.mock("lucide-react", () => ({
   Bot: () => <span data-testid="bot-icon" />,
   Loader2: () => <span data-testid="loader-icon" />,
   Search: () => <span data-testid="search-icon" />,
+  Cpu: () => <span data-testid="cpu-icon" />,
 }));
 
 const mockFetch = jest.fn();
@@ -100,5 +101,27 @@ describe("NewChatButton", () => {
     fireEvent.click(mainButton);
 
     expect(onNewChat).toHaveBeenCalledWith("agent-first");
+  });
+
+  it("labels the collapsed action and reveals its default agent on hover", async () => {
+    mockResolveUsableChatAgent.mockResolvedValue({
+      id: "agent-default",
+      name: "Platform Helper",
+      execution_harness_id: "agentcore",
+      source: "platform-default",
+    });
+
+    render(<NewChatButton collapsed={true} onNewChat={jest.fn()} />);
+
+    const button = await screen.findByRole("button", {
+      name: "New chat with Platform Helper",
+    });
+    fireEvent.mouseEnter(button);
+
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("New chat");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Platform Helper");
+    expect(
+      screen.getByLabelText("Execution harness: Amazon Bedrock AgentCore"),
+    ).toBeInTheDocument();
   });
 });

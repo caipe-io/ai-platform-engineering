@@ -344,6 +344,9 @@ jobs:
           # This public setting is compiled into the client bundle, so set it
           # while building as well as when serving the app below.
           NEXT_PUBLIC_SSO_ENABLED: 'true'
+          # NextAuth requires a secret when the production server starts.
+          # This value is only used by the mocked Playwright job.
+          NEXTAUTH_SECRET: 'caipe-ui-playwright-test-secret'
           # The specs mock every API, so no real database is contacted. But the
           # home page gates shared-conversation / insights UI on server-side
           # storage mode (getStorageMode reads MONGODB_URI + MONGODB_DATABASE at
@@ -362,6 +365,7 @@ jobs:
         env:
           WORKFLOWS_ENABLED: 'true'
           NEXT_PUBLIC_SSO_ENABLED: 'true'
+          NEXTAUTH_SECRET: 'caipe-ui-playwright-test-secret'
           MONGODB_URI: 'mongodb://mock:27017'
           MONGODB_DATABASE: 'mock'
           NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'

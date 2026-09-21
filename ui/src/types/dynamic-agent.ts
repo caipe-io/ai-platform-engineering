@@ -407,6 +407,8 @@ export type ResumeData =
 
 export interface DynamicAgentConfig {
   _id: string;
+  /** Runtime selected by Harness Gateway. Missing legacy values mean Dynamic Agents. */
+  execution_harness_id?: string;
   name: string;
   description?: string;
   system_prompt: string;

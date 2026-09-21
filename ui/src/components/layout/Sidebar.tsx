@@ -3,6 +3,7 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import { NewChatButton } from "@/components/chat/NewChatButton";
+import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { ConversationListSkeleton } from "@/components/chat/ConversationListSkeleton";
 import { RecycleBinDialog } from "@/components/chat/RecycleBinDialog";
 import { ShareButton } from "@/components/chat/ShareButton";
@@ -21,6 +22,7 @@ import { cn,formatDate,truncateText } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import type { Conversation } from "@/types/a2a";
 import { getAgentId } from "@/types/a2a";
+import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { AnimatePresence,motion } from "framer-motion";
 import {
 Archive,
@@ -60,6 +62,8 @@ interface SidebarProps {
   onCollapse: (collapsed: boolean) => void;
   onUseCaseSaved?: () => void;
 }
+
+type SidebarAgent = Pick<DynamicAgentConfig, "_id" | "name" | "execution_harness_id">;
 
 interface ConversationTitleBadge {
   kind: "autonomous" | "scheduled";
@@ -179,7 +183,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   const { toast } = useToast();
 
   // Agent name lookup for dynamic agent conversations
-  const [agentNameMap, setAgentNameMap] = useState<Record<string, string>>({});
+  const [agentMap, setAgentMap] = useState<Record<string, SidebarAgent>>({});
   const [agentNamesLoading, setAgentNamesLoading] = useState(true);
 
   // Load conversations from server when sidebar mounts (MongoDB mode only)
@@ -227,11 +231,11 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
         const response = await fetch("/api/dynamic-agents/available");
         const data = await response.json();
         if (!cancelled && data.success && Array.isArray(data.data)) {
-          const map: Record<string, string> = {};
-          data.data.forEach((agent: { _id: string; name: string }) => {
-            map[agent._id] = agent.name;
+          const map: Record<string, SidebarAgent> = {};
+          data.data.forEach((agent: SidebarAgent) => {
+            map[agent._id] = agent;
           });
-          setAgentNameMap(map);
+          setAgentMap(map);
         }
       } catch (err) {
         console.error('[Sidebar] Failed to fetch agents for name lookup:', err);
@@ -504,18 +508,30 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
       )}
       {/* Collapse Toggle */}
       <div className="flex items-center justify-end p-2 h-12 shrink-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => onCollapse(!collapsed)}
-          className="h-8 w-8 hover:bg-muted shrink-0"
-        >
-          {collapsed ? (
-            <ChevronRight className="h-4 w-4" />
-          ) : (
-            <ChevronLeft className="h-4 w-4" />
-          )}
-        </Button>
+        <TooltipProvider delayDuration={150}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label={collapsed ? "Expand conversation history" : "Collapse conversation history"}
+                variant="ghost"
+                size="icon"
+                onClick={() => onCollapse(!collapsed)}
+                className="h-8 w-8 hover:bg-muted shrink-0"
+              >
+                {collapsed ? (
+                  <ChevronRight className="h-4 w-4" />
+                ) : (
+                  <ChevronLeft className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side={collapsed ? "right" : "left"} sideOffset={8}>
+              <p className="text-xs">
+                {collapsed ? "Expand conversation history" : "Collapse conversation history"}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
 
       {/* New Chat Button */}
@@ -728,12 +744,34 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                   const titleBadge = getAutonomousBadge(conv) ?? getScheduleBadge(conv);
                   const isEditingTitle = editingConversationId === conv.id;
                   const isSavingTitle = renameSavingId === conv.id;
+                  const conversationAgentId = getAgentId(conv);
+                  const conversationAgent = conversationAgentId
+                    ? agentMap[conversationAgentId]
+                    : undefined;
+                  const conversationStatus = isLive
+                    ? "Live response"
+                    : isInputRequired
+                      ? "Input required"
+                      : isUnviewed
+                        ? "New response"
+                        : formatDate(conv.updatedAt);
+                  const conversationAgentName = conversationAgent?.name
+                    ?? (agentNamesLoading ? "Loading agent…" : "Unknown agent");
+                  const openConversation = () => {
+                    setActiveConversation(conv.id);
+                    startTransition(() => {
+                      router.push(`/chat/${conv.id}`);
+                    });
+                  };
 
                   return (
                   <div
                     key={conv.id}
                     className="group/conv"
                   >
+                    <TooltipProvider delayDuration={150}>
+                    <Tooltip className="block w-full">
+                    <TooltipTrigger asChild>
                     <motion.div
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
@@ -753,12 +791,18 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                   ? "hover:bg-muted/50 border border-blue-500/20"
                                   : "hover:bg-muted/50 border border-transparent"
                       )}
-                      onClick={() => {
-                        setActiveConversation(conv.id);
-                        startTransition(() => {
-                          router.push(`/chat/${conv.id}`);
-                        });
-                      }}
+                      aria-label={collapsed
+                        ? `${conv.title}. ${conversationAgentName}. ${conversationStatus}`
+                        : undefined}
+                      role={collapsed ? "button" : undefined}
+                      tabIndex={collapsed ? 0 : undefined}
+                      onClick={openConversation}
+                      onKeyDown={collapsed ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openConversation();
+                        }
+                      } : undefined}
                     >
                     <div className={cn(
                       "shrink-0 w-8 h-8 rounded-md flex items-center justify-center relative",
@@ -866,10 +910,8 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                             </span>
                             {/* Dynamic Agent indicator */}
                             {(() => {
-                              const agId = getAgentId(conv);
-                              if (!agId) return null;
-                              const agentName = agentNameMap[agId];
-                              if (!agentName && agentNamesLoading) {
+                              if (!conversationAgentId) return null;
+                              if (!conversationAgent && agentNamesLoading) {
                                 return (
                                   <>
                                     <span className="ml-1.5 text-[10px] text-purple-500 dark:text-purple-400">•</span>
@@ -881,8 +923,8 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                 );
                               }
                               return (
-                                <span className="ml-1.5 truncate text-[10px] text-purple-500 dark:text-purple-400" title={agentName || 'Unknown Agent'}>
-                                  • {truncateText(agentName || 'Unknown', 20)}
+                                <span className="ml-1.5 truncate text-[10px] text-purple-500 dark:text-purple-400" title={conversationAgent?.name || 'Unknown Agent'}>
+                                  • {truncateText(conversationAgent?.name || 'Unknown', 20)}
                                 </span>
                               );
                             })()}
@@ -1057,6 +1099,52 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                       </>
                     )}
                   </motion.div>
+                  </TooltipTrigger>
+                  {collapsed ? (
+                    <TooltipContent
+                      side="right"
+                      sideOffset={10}
+                      className="w-64 whitespace-normal px-3 py-2.5"
+                    >
+                      <div className="space-y-2">
+                        <div>
+                          <p className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
+                            {conv.title}
+                          </p>
+                          <p className={cn(
+                            "mt-1 text-[11px] font-normal",
+                            isLive
+                              ? "text-emerald-500"
+                              : isInputRequired
+                                ? "text-amber-500"
+                                : isUnviewed
+                                  ? "text-blue-500"
+                                  : "text-muted-foreground",
+                          )}>
+                            {conversationStatus}
+                          </p>
+                        </div>
+                        <div className="flex min-w-0 items-center gap-2 border-t border-border/50 pt-2">
+                          <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/85">
+                            {conversationAgentName}
+                          </span>
+                          {conversationAgent?.execution_harness_id ? (
+                            <AgentHarnessBadge
+                              harnessId={conversationAgent.execution_harness_id}
+                              compact
+                            />
+                          ) : null}
+                        </div>
+                        {scheduleBadge ? (
+                          <p className="truncate text-[10px] font-normal text-cyan-600 dark:text-cyan-300">
+                            {scheduleBadge.title}
+                          </p>
+                        ) : null}
+                      </div>
+                    </TooltipContent>
+                  ) : null}
+                  </Tooltip>
+                  </TooltipProvider>
                   </div>
                     );
                   })}
