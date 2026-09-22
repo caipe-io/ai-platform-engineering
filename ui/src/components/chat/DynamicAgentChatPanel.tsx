@@ -2531,7 +2531,7 @@ export function ChatPanel({
                   onPaste={handlePaste}
                   placeholder={
                     isThisConversationStreaming
-                      ? `Type to queue another message (${queuedMessages.length} queued), or Cmd+Enter to send now...`
+                      ? `Type to queue another message${queuedMessages.length > 0 ? ` (${queuedMessages.length} queued)` : ""}, or Cmd+Enter to send now...`
                       : `Ask anything, or type / to see commands, skills, and agents...`
                   }
                   className="flex-1 bg-transparent resize-none outline-none px-3 py-2.5 text-sm"

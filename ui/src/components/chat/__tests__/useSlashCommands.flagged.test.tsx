@@ -123,6 +123,12 @@ describe("useSlashCommands flagged-skill gate", () => {
 
     const labels = result.current.map((c) => c.label);
     expect(labels).toEqual(expect.arrayContaining(["skills", "effort", "help", "clear"]));
+    expect(result.current.find((c) => c.label === "effort")).toEqual(
+      expect.objectContaining({
+        description: "Set this chat's reasoning effort (low|medium|high|max)",
+        value: "/effort ",
+      }),
+    );
     expect(labels).not.toContain("evil-skill");
   });
 

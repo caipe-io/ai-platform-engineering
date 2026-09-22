@@ -19,7 +19,7 @@ const BUILTIN_COMMANDS: SlashCommand[] = [
   {
     id: "effort",
     label: "effort",
-    description: "Set this chat's reasoning effort",
+    description: "Set this chat's reasoning effort (low|medium|high|max)",
     category: "command",
     action: "insert",
     value: "/effort ",
