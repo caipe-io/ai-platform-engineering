@@ -73,7 +73,7 @@ async function mockMessages(
     `**/api/chat/conversations/${conversationId}/messages**`,
     async (route) => {
       if (route.request().method() !== "GET") {
-        await route.continue();
+        await route.fallback();
         return;
       }
       await route.fulfill({
@@ -369,7 +369,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
@@ -396,7 +396,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.goto(`/chat/${CONV_UNLINKED_ID}`, { waitUntil: "domcontentloaded" });
@@ -426,7 +426,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });

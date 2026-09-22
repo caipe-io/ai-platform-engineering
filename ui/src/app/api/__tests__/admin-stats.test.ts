@@ -391,15 +391,16 @@ describe('GET /api/admin/stats — Overview', () => {
   it('returns overview with correct counts', async () => {
     const { usersCol, convCol, msgCol } = setupAdminWithCollections();
 
-    // Promise.all order (no filters):
-    // users: totalUsers, dau, mau
+    // Promise.all order:
+    // conversations aggregates: totalUsers, dau, mau
     // conversations: totalConversations, conversationsToday, sharedConversations
     // messages: totalMessages, messagesToday — assistant rows across every
     // metadata.source (not just 'web'/'slack').
-    usersCol.countDocuments
-      .mockResolvedValueOnce(15)   // totalUsers
-      .mockResolvedValueOnce(3)    // dau
-      .mockResolvedValueOnce(10);  // mau
+    for (const total of [15, 3, 10]) {
+      convCol.aggregate.mockReturnValueOnce({
+        toArray: jest.fn().mockResolvedValue([{ total }]),
+      });
+    }
 
     convCol.countDocuments
       .mockResolvedValueOnce(50)   // totalConversations
@@ -410,7 +411,7 @@ describe('GET /api/admin/stats — Overview', () => {
       .mockResolvedValueOnce(200)  // totalMessages
       .mockResolvedValueOnce(20);  // messagesToday
 
-    const req = makeRequest('/api/admin/stats');
+    const req = makeRequest('/api/admin/stats?section=overview');
     const res = await GET(req);
     expect(res.status).toBe(200);
 
@@ -428,8 +429,28 @@ describe('GET /api/admin/stats — Overview', () => {
         shared_conversations: 2,
       })
     );
-    expect(usersCol.countDocuments).toHaveBeenNthCalledWith(1, {
-      last_login: { $gte: expect.any(Date), $lte: expect.any(Date) },
+    expect(usersCol.countDocuments).not.toHaveBeenCalled();
+    const activeIdentityPipelines = convCol.aggregate.mock.calls.map(
+      (call: unknown[]) => call[0] as Array<{ $match?: Record<string, unknown> }>,
+    );
+    expect(activeIdentityPipelines).toHaveLength(3);
+    expect(activeIdentityPipelines[0][0].$match).toEqual(
+      expect.objectContaining({ updated_at: { $gte: expect.any(Date), $lte: expect.any(Date) } }),
+    );
+    const totalUsersGroup = convCol.aggregate.mock.calls[0][0][1].$group._id;
+    const resolvedSubject = {
+      $cond: [
+        { $ne: [{ $ifNull: ['$owner_canonical_subject', ''] }, ''] },
+        '$owner_canonical_subject',
+        '$owner_subject',
+      ],
+    };
+    expect(totalUsersGroup).toEqual({
+      $cond: [
+        { $ne: [{ $ifNull: [resolvedSubject, ''] }, ''] },
+        { $concat: ['subject:', resolvedSubject] },
+        { $toLower: { $ifNull: ['$owner_id', ''] } },
+      ],
     });
   });
 
@@ -521,21 +542,19 @@ describe('GET /api/admin/stats — Rolling DAU/MAU windows', () => {
     jest.useFakeTimers();
     jest.setSystemTime(frozenNow);
 
-    const { usersCol } = setupAdminWithCollections();
+    const { convCol } = setupAdminWithCollections();
 
-    const req = makeRequest('/api/admin/stats');
+    const req = makeRequest('/api/admin/stats?section=overview');
     await GET(req);
 
-    const [, dauCall, mauCall] = usersCol.countDocuments.mock.calls as [
-      unknown,
-      [{ last_login: { $gte: Date } }],
-      [{ last_login: { $gte: Date } }],
-    ];
-    const dauStart = dauCall[0].last_login.$gte;
-    const mauStart = mauCall[0].last_login.$gte;
+    const activeIdentityMatches = convCol.aggregate.mock.calls.map(
+      (call: unknown[]) => (call[0] as Array<{ $match?: { updated_at?: { $gte?: Date } } }>)[0].$match,
+    );
+    const dauStart = activeIdentityMatches[1]?.updated_at?.$gte;
+    const mauStart = activeIdentityMatches[2]?.updated_at?.$gte;
 
-    expect(dauStart.getTime()).toBe(frozenNow.getTime() - DAY_MS);
-    expect(mauStart.getTime()).toBe(frozenNow.getTime() - 30 * DAY_MS);
+    expect(dauStart?.getTime()).toBe(frozenNow.getTime() - DAY_MS);
+    expect(mauStart?.getTime()).toBe(frozenNow.getTime() - 30 * DAY_MS);
   });
 });
 
@@ -597,8 +616,9 @@ describe('GET /api/admin/stats — Daily Activity', () => {
     const req = makeRequest('/api/admin/stats');
     await GET(req);
 
-    // Each collection should have aggregate called (for daily activity)
-    expect(usersCol.aggregate).toHaveBeenCalled();
+    // User activity comes from conversations so integration users that never
+    // sign into the browser remain visible.
+    expect(usersCol.aggregate).not.toHaveBeenCalled();
     expect(convCol.aggregate).toHaveBeenCalled();
     expect(msgCol.aggregate).toHaveBeenCalled();
   });
@@ -629,7 +649,7 @@ describe('GET /api/admin/stats — Top Users', () => {
 
     convCol.aggregate.mockImplementation((pipeline: Record<string, unknown>[]) => ({
       toArray: async () => {
-        if (!pipeline.some((stage) => stage.$group?._id === '$owner_id')) return [];
+        if (!pipeline.some((stage) => stage.$project?._id === '$owner_id')) return [];
         if (pipeline.some((stage) => stage.$count === 'total')) {
           return [{ total: 23 }];
         }
@@ -638,7 +658,7 @@ describe('GET /api/admin/stats — Top Users', () => {
     }));
     msgCol.aggregate.mockImplementation((pipeline: Record<string, unknown>[]) => ({
       toArray: async () => {
-        if (!pipeline.some((stage) => stage.$group?._id === '$_owner')) return [];
+        if (!pipeline.some((stage) => stage.$project?._id === '$owner_id')) return [];
         if (pipeline.some((stage) => stage.$count === 'total')) {
           return [{ total: 31 }];
         }
@@ -647,7 +667,7 @@ describe('GET /api/admin/stats — Top Users', () => {
     }));
 
     const response = await GET(makeRequest(
-      '/api/admin/stats?section=top_users&include_bots=true&top_conversations_page=2&top_messages_page=3',
+      '/api/admin/stats?section=top_users&include_bots=true&include_service_accounts=true&top_conversations_page=2&top_messages_page=3',
     ));
     const body = await response.json();
 
@@ -679,7 +699,7 @@ describe('GET /api/admin/stats — Top Users', () => {
     const messagePagePipeline = msgCol.aggregate.mock.calls
       .map((call: unknown[]) => call[0] as Record<string, unknown>[])
       .find((pipeline) =>
-        pipeline.some((stage) => stage.$group?._id === '$_owner') &&
+        pipeline.some((stage) => stage.$project?._id === '$owner_id') &&
         pipeline.some((stage) => stage.$limit === 10)
       );
     expect(messagePagePipeline).toEqual(expect.arrayContaining([
@@ -693,7 +713,7 @@ describe('GET /api/admin/stats — Top Users', () => {
     const { convCol } = setupAdminWithCollections();
     convCol.aggregate.mockImplementation((pipeline: Record<string, unknown>[]) => ({
       toArray: async () =>
-        pipeline.some((stage) => stage.$group?._id === '$owner_id')
+        pipeline.some((stage) => stage.$project?._id === '$owner_id')
           ? [
               { _id: null, count: 4 },
               { _id: 'test-user@example.com', count: 2 },
@@ -701,7 +721,7 @@ describe('GET /api/admin/stats — Top Users', () => {
           : [],
     }));
 
-    const response = await GET(makeRequest('/api/admin/stats?range=90d'));
+    const response = await GET(makeRequest('/api/admin/stats?section=top_users&range=90d'));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -716,7 +736,7 @@ describe('GET /api/admin/stats — Top Users', () => {
     // Leaderboard (group on $owner_id) returns the GitLab app's "U…" owner id.
     convCol.aggregate.mockImplementation((pipeline: Record<string, unknown>[]) => ({
       toArray: async () =>
-        pipeline.some((s) => s.$group?._id === '$owner_id')
+        pipeline.some((s) => s.$project?._id === '$owner_id')
           ? [{ _id: 'U05LC2AV99N', count: 5 }]
           : [],
     }));
@@ -749,7 +769,7 @@ describe('GET /api/admin/stats — Top Users', () => {
     // platform service account (service-account-* id — an API caller, not a bot).
     convCol.aggregate.mockImplementation((pipeline: Record<string, unknown>[]) => ({
       toArray: async () =>
-        pipeline.some((s) => s.$group?._id === '$owner_id')
+        pipeline.some((s) => s.$project?._id === '$owner_id')
           ? [
               { _id: 'alice@example.com', count: 9 },
               { _id: 'U01HUMANXYZ', count: 7 },
@@ -767,7 +787,9 @@ describe('GET /api/admin/stats — Top Users', () => {
       ],
     });
 
-    const res = await GET(makeRequest('/api/admin/stats?include_bots=true'));
+    const res = await GET(makeRequest(
+      '/api/admin/stats?include_bots=true&include_service_accounts=true',
+    ));
     const body = await res.json();
 
     const byId = Object.fromEntries(
@@ -832,9 +854,7 @@ describe('GET /api/admin/stats — Top Users', () => {
     expect(body.data.top_users.by_messages).toEqual([]);
   });
 
-  // Detects a post-$group $match that strips bot/service-account ids
-  // (unknown/USLACKBOT literals, B-prefixed bot ids, service-account-*).
-  const hasHumanOwnerFilter = (calls: unknown[]) =>
+  const hasGroupedOwnerExclusion = (calls: unknown[], kind: 'bot' | 'service_account') =>
     calls.some((call: unknown[]) => {
       const pipeline = call[0];
       if (!Array.isArray(pipeline)) return false;
@@ -843,31 +863,48 @@ describe('GET /api/admin/stats — Top Users', () => {
       return pipeline.slice(groupIdx + 1).some((stage: Record<string, unknown>) => {
         const and = stage.$match?.$and;
         if (!Array.isArray(and)) return false;
-        const hasNin = and.some((c: Record<string, unknown>) => Array.isArray(c._id?.$nin));
-        const hasBotRegex = and.some(
-          (c: Record<string, unknown>) => c._id?.$not instanceof RegExp
-        );
-        return hasNin && hasBotRegex;
+        return and.some((c: Record<string, unknown>) => {
+          const regex = c._id?.$not;
+          if (kind === 'service_account') {
+            return regex instanceof RegExp && regex.source === '^service-account-';
+          }
+          return (Array.isArray(c._id?.$nin) && c._id.$nin.includes('USLACKBOT'))
+            || (regex instanceof RegExp && regex.source === '^B[A-Z0-9]{6,}$');
+        });
       });
     });
 
-  it('filters bots out of both top-user rankings by default', async () => {
+  it('filters bots and service accounts out of both top-user rankings by default', async () => {
     const { convCol, msgCol } = setupAdminWithCollections();
 
-    await GET(makeRequest('/api/admin/stats'));
+    await GET(makeRequest('/api/admin/stats?section=top_users'));
 
-    expect(hasHumanOwnerFilter(convCol.aggregate.mock.calls)).toBe(true);
-    expect(hasHumanOwnerFilter(msgCol.aggregate.mock.calls)).toBe(true);
+    for (const calls of [convCol.aggregate.mock.calls, msgCol.aggregate.mock.calls]) {
+      expect(hasGroupedOwnerExclusion(calls, 'bot')).toBe(true);
+      expect(hasGroupedOwnerExclusion(calls, 'service_account')).toBe(true);
+    }
   });
 
-  it('keeps bots in both rankings when include_bots=true', async () => {
+  it('includes bots independently from service accounts', async () => {
     const { convCol, msgCol } = setupAdminWithCollections();
 
-    await GET(makeRequest('/api/admin/stats?include_bots=true'));
+    await GET(makeRequest('/api/admin/stats?section=top_users&include_bots=true'));
 
-    // With the toggle on, no bot-stripping $match is appended.
-    expect(hasHumanOwnerFilter(convCol.aggregate.mock.calls)).toBe(false);
-    expect(hasHumanOwnerFilter(msgCol.aggregate.mock.calls)).toBe(false);
+    for (const calls of [convCol.aggregate.mock.calls, msgCol.aggregate.mock.calls]) {
+      expect(hasGroupedOwnerExclusion(calls, 'bot')).toBe(false);
+      expect(hasGroupedOwnerExclusion(calls, 'service_account')).toBe(true);
+    }
+  });
+
+  it('includes service accounts independently from bots', async () => {
+    const { convCol, msgCol } = setupAdminWithCollections();
+
+    await GET(makeRequest('/api/admin/stats?section=top_users&include_service_accounts=true'));
+
+    for (const calls of [convCol.aggregate.mock.calls, msgCol.aggregate.mock.calls]) {
+      expect(hasGroupedOwnerExclusion(calls, 'bot')).toBe(true);
+      expect(hasGroupedOwnerExclusion(calls, 'service_account')).toBe(false);
+    }
   });
 
   // Detects the extra `_id: { $nin: [...botOwnerIds] }` exclusion folded in
@@ -895,7 +932,7 @@ describe('GET /api/admin/stats — Top Users', () => {
     // flagged its conversations owner_is_bot, so distinct() surfaces the id.
     convCol.distinct.mockResolvedValue(['U05LC2AV99N']);
 
-    await GET(makeRequest('/api/admin/stats'));
+    await GET(makeRequest('/api/admin/stats?section=top_users'));
 
     expect(convCol.distinct).toHaveBeenCalledWith('owner_id', { 'metadata.owner_is_bot': true });
     expect(excludesOwnerIds(convCol.aggregate.mock.calls, ['U05LC2AV99N'])).toBe(true);
@@ -905,7 +942,7 @@ describe('GET /api/admin/stats — Top Users', () => {
   it('does not query owner_is_bot when include_bots=true', async () => {
     const { convCol } = setupAdminWithCollections();
 
-    await GET(makeRequest('/api/admin/stats?include_bots=true'));
+    await GET(makeRequest('/api/admin/stats?section=top_users&include_bots=true'));
 
     const flaggedBotQuery = convCol.distinct.mock.calls.some(
       (c: unknown[]) => (c[1] as Record<string, unknown>)?.['metadata.owner_is_bot'] === true,
@@ -918,7 +955,7 @@ describe('GET /api/admin/stats — Top Users', () => {
   // carry so the "Show bot users" toggle governs the whole Top Users section,
   // not just the two leaderboards. Matches an owner_id-keyed $nin/$not clause
   // in the FIRST $match stage (before any $group).
-  const hasRowLevelOwnerExclusion = (calls: unknown[]) =>
+  const hasRowLevelOwnerExclusion = (calls: unknown[], kind: 'bot' | 'service_account') =>
     calls.some((call: unknown[]) => {
       const pipeline = call[0];
       if (!Array.isArray(pipeline)) return false;
@@ -927,29 +964,39 @@ describe('GET /api/admin/stats — Top Users', () => {
         | undefined;
       const and = (first?.$match as Record<string, unknown> | undefined)?.$and;
       if (!Array.isArray(and)) return false;
-      return and.some((c: Record<string, unknown>) =>
-        Array.isArray(c.owner_id?.$nin) || c.owner_id?.$not instanceof RegExp
-      );
+      return and.some((c: Record<string, unknown>) => {
+        const regex = c.owner_id?.$not;
+        if (kind === 'service_account') {
+          return regex instanceof RegExp && regex.source === '^service-account-';
+        }
+        return (Array.isArray(c.owner_id?.$nin) && c.owner_id.$nin.includes('USLACKBOT'))
+          || (regex instanceof RegExp && regex.source === '^B[A-Z0-9]{6,}$');
+      });
     });
 
-  it('excludes bot owners from the non-leaderboard section stats by default', async () => {
+  it('excludes bot and service-account owners from lower activity sections by default', async () => {
     const { convCol, msgCol } = setupAdminWithCollections();
     convCol.distinct.mockResolvedValue(['U05LC2AV99N']);
 
-    await GET(makeRequest('/api/admin/stats'));
+    await GET(makeRequest('/api/admin/stats?section=top_agents'));
 
-    // Top Agents (conversations side), Response Time + Activity by Hour (messages).
-    expect(hasRowLevelOwnerExclusion(convCol.aggregate.mock.calls)).toBe(true);
-    expect(hasRowLevelOwnerExclusion(msgCol.aggregate.mock.calls)).toBe(true);
+    for (const calls of [convCol.aggregate.mock.calls, msgCol.aggregate.mock.calls]) {
+      expect(hasRowLevelOwnerExclusion(calls, 'bot')).toBe(true);
+      expect(hasRowLevelOwnerExclusion(calls, 'service_account')).toBe(true);
+    }
   });
 
-  it('does not row-level exclude section stats when include_bots=true', async () => {
+  it('does not row-level exclude automated owners when both filters are enabled', async () => {
     const { convCol, msgCol } = setupAdminWithCollections();
 
-    await GET(makeRequest('/api/admin/stats?include_bots=true'));
+    await GET(makeRequest(
+      '/api/admin/stats?section=top_agents&include_bots=true&include_service_accounts=true',
+    ));
 
-    expect(hasRowLevelOwnerExclusion(convCol.aggregate.mock.calls)).toBe(false);
-    expect(hasRowLevelOwnerExclusion(msgCol.aggregate.mock.calls)).toBe(false);
+    for (const calls of [convCol.aggregate.mock.calls, msgCol.aggregate.mock.calls]) {
+      expect(hasRowLevelOwnerExclusion(calls, 'bot')).toBe(false);
+      expect(hasRowLevelOwnerExclusion(calls, 'service_account')).toBe(false);
+    }
   });
 });
 
@@ -1534,7 +1581,7 @@ describe('GET /api/admin/stats — Source & User Filters', () => {
     expect(hasWebexMsgFilter).toBe(true);
   });
 
-  it('source=web excludes both Slack and Webex conversations', async () => {
+  it('source=web excludes Slack, Webex, API, and autonomous conversations', async () => {
     const { convCol } = setupAdminWithCollections();
 
     await GET(makeRequest('/api/admin/stats?source=web'));
@@ -1546,6 +1593,9 @@ describe('GET /api/admin/stats — Source & User Filters', () => {
         Array.isArray(filter?.client_type?.$nin)
         && filter.client_type!.$nin!.includes('webex')
         && filter.client_type!.$nin!.includes('slack')
+        && filter.client_type!.$nin!.includes('api')
+        && Array.isArray(filter?.source?.$nin)
+        && filter.source!.$nin!.includes('autonomous')
       );
     });
     expect(hasWebOnlyFilter).toBe(true);
@@ -2386,12 +2436,13 @@ describe('GET /api/admin/stats — Direct MCP Activity', () => {
     const body = await res.json();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [url] = mockFetch.mock.calls[0] as [string];
+    const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
     const parsed = new URL(url);
     expect(parsed.pathname).toBe('/v1/audit/events');
     expect(parsed.searchParams.get('reason_code')).toBe('OK_LOCAL_AGENT_CONTEXT');
     expect(parsed.searchParams.has('since')).toBe(true);
     expect(parsed.searchParams.has('until')).toBe(true);
+    expect(options.signal).toBeInstanceOf(AbortSignal);
 
     expect(body.data.api.mcp_activity.total_events).toBe(2);
     expect(body.data.api.mcp_activity.unique_users).toBe(2);

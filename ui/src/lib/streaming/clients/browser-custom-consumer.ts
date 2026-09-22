@@ -2,8 +2,8 @@
  * Custom SSE protocol adapter.
  *
  * Consumes the legacy custom SSE format (event types: content, tool_start,
- * tool_end, input_required, warning, error, done) and translates them into
- * protocol-agnostic StreamCallbacks.
+ * tool_end, input_required, context_usage, warning, error, done) and
+ * translates them into protocol-agnostic StreamCallbacks.
  *
  * Routes (flat, conversation_id + protocol in body):
  *   POST /api/v1/chat/stream/start
@@ -11,7 +11,7 @@
  *   POST /api/v1/chat/stream/cancel
  */
 
-import type { InputFieldDefinition } from "@/lib/streaming/types";
+import { parseContextUsageData,type InputFieldDefinition } from "@/lib/streaming/types";
 import type { StreamAdapter } from "../adapter";
 import type { RawStreamEvent,StreamCallbacks,StreamParams } from "../callbacks";
 import { parseSSEStream,type RawSSEEvent } from "../parse-sse";
@@ -77,6 +77,7 @@ export class CustomStreamAdapter implements StreamAdapter {
       message: params.message,
       conversation_id: params.conversationId,
       agent_id: params.agentId,
+      ...(params.turnId && { turn_id: params.turnId }),
       protocol: "custom",
       ...(params.clientContext && { client_context: params.clientContext }),
       ...(params.files?.length && { files: params.files }),
@@ -211,6 +212,18 @@ export class CustomStreamAdapter implements StreamAdapter {
         case "warning": {
           const parsed = JSON.parse(data);
           callbacks.onWarning?.(parsed.message, parsed.namespace ?? []);
+          return false;
+        }
+
+        case "context_usage": {
+          const parsed = JSON.parse(data) as Record<string, unknown>;
+          const usage = parseContextUsageData(parsed);
+          if (usage) {
+            callbacks.onContextUsage?.(
+              usage,
+              (parsed.namespace as string[]) ?? [],
+            );
+          }
           return false;
         }
 

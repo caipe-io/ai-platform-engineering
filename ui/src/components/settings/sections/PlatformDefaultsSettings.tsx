@@ -224,19 +224,20 @@ export function PlatformDefaultsSettings({
 
             <div className="space-y-2">
               <label className="text-sm font-medium" htmlFor="platform-default-agent">Agent for new chats</label>
-              <AgentPicker
-                ariaLabel="Platform default agent for new chats"
-                disabled={readOnly}
-                emptyLabel="No agents match"
-                hideIdSuffix
-                id="platform-default-agent"
-                onChange={selectAgent}
-                options={options}
-                placeholder="Select the platform default agent..."
-                searchPlaceholder="Search agents..."
-                triggerClassName="max-w-sm"
-                value={selectedAgentId ?? ""}
-              />
+              <div className="w-96 max-w-full">
+                <AgentPicker
+                  ariaLabel="Platform default agent for new chats"
+                  disabled={readOnly}
+                  emptyLabel="No agents match"
+                  hideIdSuffix
+                  id="platform-default-agent"
+                  onChange={selectAgent}
+                  options={options}
+                  placeholder="Select the platform default agent..."
+                  searchPlaceholder="Search agents..."
+                  value={selectedAgentId ?? ""}
+                />
+              </div>
               {selectedAgent ? (
                 <p className="text-xs text-muted-foreground">Agent description: {selectedAgent.description}</p>
               ) : null}
@@ -274,19 +275,20 @@ export function PlatformDefaultsSettings({
               <label className="text-sm font-medium" htmlFor="schedule-editor-agent">
                 Agent for schedule editing
               </label>
-              <AgentPicker
-                ariaLabel="Scheduler editor agent"
-                disabled={readOnly || scheduleEditorSaveState.status === "saving"}
-                emptyLabel="No agents match"
-                hideIdSuffix
-                id="schedule-editor-agent"
-                onChange={(value) => void selectScheduleEditorAgent(value)}
-                options={scheduleEditorOptions}
-                placeholder="Select the scheduler editor agent..."
-                searchPlaceholder="Search agents..."
-                triggerClassName="max-w-sm"
-                value={selectedScheduleEditorAgentId ?? ""}
-              />
+              <div className="w-96 max-w-full">
+                <AgentPicker
+                  ariaLabel="Scheduler editor agent"
+                  disabled={readOnly || scheduleEditorSaveState.status === "saving"}
+                  emptyLabel="No agents match"
+                  hideIdSuffix
+                  id="schedule-editor-agent"
+                  onChange={(value) => void selectScheduleEditorAgent(value)}
+                  options={scheduleEditorOptions}
+                  placeholder="Select the scheduler editor agent..."
+                  searchPlaceholder="Search agents..."
+                  value={selectedScheduleEditorAgentId ?? ""}
+                />
+              </div>
               {selectedScheduleEditorAgent ? (
                 <p className="text-xs text-muted-foreground">
                   Agent description: {selectedScheduleEditorAgent.description}

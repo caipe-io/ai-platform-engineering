@@ -215,14 +215,15 @@ describe('GET /api/chat/conversations/[id]/messages', () => {
     ];
 
     msgCol.countDocuments.mockResolvedValue(2);
-    msgCol.find.mockReturnValue({
-      sort: jest.fn().mockReturnValue({
+    const sortMessages = jest.fn().mockReturnValue({
         skip: jest.fn().mockReturnValue({
           limit: jest.fn().mockReturnValue({
-            toArray: jest.fn().mockResolvedValue(testMessages),
+            toArray: jest.fn().mockResolvedValue([...testMessages].reverse()),
           }),
         }),
-      }),
+      });
+    msgCol.find.mockReturnValue({
+      sort: sortMessages,
     });
     mockCollections['messages'] = msgCol;
 
@@ -230,14 +231,19 @@ describe('GET /api/chat/conversations/[id]/messages', () => {
     const sharingCol = createMockCollection();
     mockCollections['sharing_access'] = sharingCol;
 
-    const req = makeRequest(`/api/chat/conversations/${testConversationId}/messages?page=1&page_size=20`);
+    const req = makeRequest(`/api/chat/conversations/${testConversationId}/messages?page=1&page_size=20&order=latest`);
     const res = await GET(req, { params: Promise.resolve({ id: testConversationId }) });
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.data.items).toHaveLength(2);
+    expect(body.data.items.map((message: { message_id: string }) => message.message_id)).toEqual([
+      'msg-1',
+      'msg-2',
+    ]);
     expect(body.data.total).toBe(2);
+    expect(sortMessages).toHaveBeenCalledWith({ created_at: -1, _id: -1 });
   });
 });
 
@@ -537,6 +543,59 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
     expect(updateDoc.$set.metadata.source).toBe('slack');
     expect(updateDoc.$set.metadata.agent_name).toBe('Hello Agent');
     expect(updateDoc.$set.metadata.latency_ms).toBe(1200);
+  });
+
+  it('persists Webex space metadata used by scoped Insights queries', async () => {
+    mockGetServerSession.mockResolvedValue(authenticatedSession());
+
+    const convCol = createMockCollection();
+    convCol.findOne.mockResolvedValue({
+      _id: testConversationId,
+      owner_id: 'user@example.com',
+      participants: [{ type: 'agent', id: 'agent-primary' }],
+    });
+    mockCollections['conversations'] = convCol;
+
+    const agentsCol = createMockCollection();
+    agentsCol.findOne.mockResolvedValue({ _id: 'agent-primary', name: 'Primary Agent' });
+    mockCollections['dynamic_agents'] = agentsCol;
+
+    const msgCol = createMockCollection();
+    msgCol.findOne.mockResolvedValue({
+      _id: new ObjectId(),
+      role: 'assistant',
+      conversation_id: testConversationId,
+    });
+    mockCollections['messages'] = msgCol;
+
+    const req = makeRequest(`/api/chat/conversations/${testConversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        message_id: 'webex-turn-assistant',
+        role: 'assistant',
+        metadata: {
+          source: 'webex',
+          webex_space_id: 'space-primary',
+          webex_room_id: 'room-primary',
+          webex_thread_parent_id: 'thread-primary',
+          webex_message_id: 'message-primary',
+          webex_is_direct: false,
+        },
+      }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: testConversationId }) });
+    expect(res.status).toBe(201);
+    expect(msgCol.updateOne.mock.calls[0][1].$set.metadata).toEqual(
+      expect.objectContaining({
+        source: 'webex',
+        webex_space_id: 'space-primary',
+        webex_room_id: 'room-primary',
+        webex_thread_parent_id: 'thread-primary',
+        webex_message_id: 'message-primary',
+        webex_is_direct: false,
+      }),
+    );
   });
 
   it('returns 403 when user does not have access to conversation', async () => {

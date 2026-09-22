@@ -2,10 +2,12 @@
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { Button } from "@/components/ui/button";
-import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
+import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/components/ui/toast";
+import { resolveUsableChatAgent,updateWebDefaultAgentId } from "@/lib/chat-agent-selection";
 import { cn } from "@/lib/utils";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
-import { ChevronDown,Loader2,Plus,Search } from "lucide-react";
+import { ChevronDown,Loader2,Plus,Search,Star } from "lucide-react";
 import React,{ useEffect,useRef,useState } from "react";
 
 interface NewChatButtonProps {
@@ -24,6 +26,9 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
   const [defaultAgentId, setDefaultAgentId] = useState<string | null>(null);
   const [defaultAgentName, setDefaultAgentName] = useState<string>("New Chat");
   const [defaultAgentResolved, setDefaultAgentResolved] = useState(false);
+  const [userDefaultAgentId, setUserDefaultAgentId] = useState<string | null>(null);
+  const [savingDefaultAgentId, setSavingDefaultAgentId] = useState<string | null>(null);
+  const { toast } = useToast();
 
   // Resolve the same usable agent as the Home composer: personal Web default,
   // platform default, then the first accessible agent. Keeping this selection
@@ -38,6 +43,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
         if (cancelled) return;
         setDefaultAgentId(agent.id);
         setDefaultAgentName(agent.name);
+        setUserDefaultAgentId(agent.source === "user-default" ? agent.id : null);
       } catch {
         if (!cancelled) {
           setDefaultAgentId(null);
@@ -133,6 +139,29 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
     onNewChat(agentId);
   };
 
+  const handleSetDefaultAgent = async (
+    event: React.MouseEvent,
+    agent: DynamicAgentConfig,
+  ) => {
+    event.stopPropagation();
+    if (savingDefaultAgentId || userDefaultAgentId === agent._id) return;
+    setSavingDefaultAgentId(agent._id);
+    try {
+      await updateWebDefaultAgentId(agent._id);
+      setUserDefaultAgentId(agent._id);
+      setDefaultAgentId(agent._id);
+      setDefaultAgentName(agent.name);
+      toast(`${agent.name} is now your Web default agent.`, "success");
+    } catch (reason) {
+      toast(
+        reason instanceof Error ? reason.message : "Failed to save the default agent",
+        "error",
+      );
+    } finally {
+      setSavingDefaultAgentId(null);
+    }
+  };
+
   // Auto-focus search input when dropdown opens
   useEffect(() => {
     if (dropdownOpen && searchInputRef.current) {
@@ -184,6 +213,8 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
         {/* Dropdown trigger */}
         <Button
           onClick={handleDropdownToggle}
+          aria-label="Choose an agent"
+          aria-expanded={dropdownOpen}
           className={cn(
             "px-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow",
             "rounded-l-none",
@@ -239,27 +270,67 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
 
             {/* Dynamic agents list */}
             {!loading && !error && filteredAgents.map((agent) => {
+              const isUserDefault = userDefaultAgentId === agent._id;
+              const isSavingDefault = savingDefaultAgentId === agent._id;
               return (
-                <button
+                <div
                   key={agent._id}
-                  onClick={() => handleSelectAgent(agent._id)}
-                  className="w-full flex items-center gap-3 px-3 py-2 text-sm hover:bg-accent transition-colors text-left"
+                  className="group flex w-full items-center gap-1 px-2 py-1 text-sm transition-colors hover:bg-accent"
                 >
-                  <AgentAvatar
-                    agent={agent}
-                    rounded="rounded-full"
-                    size="w-8 h-8"
-                    iconSize="h-4 w-4"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{agent.name}</div>
+                  <TooltipProvider delayDuration={250}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={isUserDefault
+                            ? `${agent.name} is your Web default agent`
+                            : `Set ${agent.name} as Web default agent`}
+                          aria-pressed={isUserDefault}
+                          disabled={savingDefaultAgentId !== null}
+                          onClick={(event) => void handleSetDefaultAgent(event, agent)}
+                          className="group/default relative h-10 w-10 shrink-0 rounded-full p-1"
+                        >
+                          <AgentAvatar
+                            agent={agent}
+                            rounded="rounded-full"
+                            size="w-8 h-8"
+                            iconSize="h-4 w-4"
+                          />
+                          <span className={cn(
+                            "absolute inset-1 flex items-center justify-center rounded-full bg-background/90 text-primary opacity-0 transition-opacity",
+                            "group-hover/default:opacity-100 group-focus-visible/default:opacity-100",
+                            isUserDefault && "opacity-100",
+                          )}>
+                            {isSavingDefault ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Star className={cn("h-4 w-4", isUserDefault && "fill-current")} />
+                            )}
+                          </span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" sideOffset={6}>
+                        <p className="text-xs">
+                          {isUserDefault ? "Current Web default" : "Set as Web default"}
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectAgent(agent._id)}
+                    className="min-w-0 flex-1 px-1 py-1 text-left"
+                  >
+                    <span className="block truncate font-medium">{agent.name}</span>
                     {agent.description && (
-                      <div className="text-xs text-muted-foreground truncate">
+                      <span className="block truncate text-xs text-muted-foreground">
                         {agent.description}
-                      </div>
+                      </span>
                     )}
-                  </div>
-                </button>
+                  </button>
+                </div>
               );
             })}
 

@@ -108,6 +108,12 @@ The Admin → Security & Policy → OpenFGA policy graph is a visibility surface
 
 Conversations use a hybrid ownership model to avoid creating high-cardinality owner tuples for every private chat. Private ownership is implicit from MongoDB (`owner_subject` for normalized records, legacy `owner_id` email fallback for old records). Explicit OpenFGA relationships remain the enforcement store for cross-boundary sharing and admin surfaces. The Web UI backend now fetches non-deleted conversation candidates without MongoDB team-sharing prefilters, then applies the same implicit-or-explicit conversation check on chat list/detail routes, Dynamic Agent v1 stream/invoke/resume/cancel proxy routes, and conversation metadata updates. This lets Slack OBO requests write their own thread conversations and bookkeeping metadata without requiring explicit owner tuples while still allowing OpenFGA-only conversation grants to appear in the UI. The Admin → System → Migrations tab seeds a DB-managed `migration_manifest` from the runtime bundle, shows the active runtime migration release beside per-collection `data_schema_versions`, hides completed migrations by default, and runs the release migration handlers, including `conversation_owner_identity_v1` for `owner_subject`/`owner_identity_version=2`, `organization_membership_backfill_v1` for direct baseline organization membership, universal team-resource OpenFGA backfill, Dynamic Agent tool tuple reconciliation, Dynamic Agent organization-admin inheritance backfill, Dynamic Agent shared-team grants backfill (`agent_shared_team_grants_backfill_v1`, writes the missing `team:<slug>#member can_use agent:<id>` tuples for every existing agent's `shared_with_teams`), Slack channel and Webex space ReBAC grant backfills, messaging team mapping reconciliation, RBAC index creation, and Webex messaging ReBAC index creation. Migration runs are recorded in `schema_migrations`; blocking required migrations and the migration status API are admin-only surfaces.
 
+Runtime conversation identity reconciliation keeps authorization ownership separate from analytics attribution:
+
+- An authenticated human subject binds matching provisional email or stable connector-ID conversations to `owner_subject`, without overwriting a different existing subject.
+- A connector service-account fallback may set `owner_canonical_subject` when its human email already resolves to a known subject. This field is analytics-only and is never accepted by conversation authorization checks.
+- A later verified human request reconciles the provisional rows before creating or returning the linked conversation, so authorization continues to use `owner_subject` while cross-surface statistics use one canonical person key.
+
 Conversation secondary views and mutations now use the same model: shared, search, and trash routes fetch candidates and filter through the implicit-or-explicit OpenFGA helper; pin, archive, restore, and share actions require the concrete conversation relationship instead of raw `owner_id` equality. Skill nested routes and import overwrite paths also load candidates by id and require `skill#read`, `skill#write`, or `skill#admin` as appropriate; legacy skill visibility fields remain metadata only. Workflow run list/start/poll/update/delete/resume/cancel operations authorize against the parent workflow config through the temporary `task` namespace mapping. MCP server list/probe/update/delete and team RAG tool list/read/write/delete use concrete `mcp_server` and `tool` OpenFGA resource checks without a legacy session role bypass; MCP server create requires a stable Keycloak `sub`, writes `mcp_server` owner/team tuples before Mongo persistence, and delete removes associated OpenFGA tuples before deleting the Mongo row. Credential management adds `admin_surface:credentials` for connector administration and global secret metadata management, plus concrete `secret_ref` authorization for user metadata, use, share, manage, and audit decisions. The user-facing page separates `My Secrets` and `My Connections`, while the Admin Credentials tab owns OAuth provider configuration and all-user secret metadata actions. Browser API routes may create or rotate secret material, but raw credential retrieval is restricted to bearer-authenticated service callers using the credential-service audience.
 
 Knowledge Base UI routes are enforced at the Web UI backend before proxying to the RAG server. `caipe-ui` authenticates the browser session, applies the coarse `rag` route gate, checks concrete `ingestion_source:<id>` operations for connector management, filters datasource list responses by `data_source#can_read`, constrains search/MCP invocations to the caller's readable datasource IDs, and then forwards the Keycloak bearer token to RAG. RAG validates the token signature, issuer, audience, and expiry against Keycloak, then repeats OpenFGA checks for direct API/MCP requests using the caller's Keycloak `sub`. Human Keycloak realm roles and per-KB realm roles do not grant RAG access. **Owner** controls configuration, reload, transfer, and deletion through `ingestion_source`; **Search** writes query-only `reader` relationships on `knowledge_base`, inherited by `data_source`. The separate organization capabilities govern whether a user may create a datasource or invoke Search at all.
@@ -541,6 +547,16 @@ write path with `source=rag_server` and `component=rag_server`.
 `audit-service` is the audit owner; UI, Dynamic Agents, the bridge, and the RAG
 server are producers only.
 
+:::warning Adding a field to an audit event
+`audit-service` stores unknown fields (`extra="allow"`, plus the full record in
+the Parquet `record_json` column), but the read path does **not** pass them
+through automatically: `documentToEvent` in
+`ui/src/app/api/admin/audit-events/route.ts` is an explicit whitelist, and
+`UnifiedAuditEvent` in `ui/src/lib/rbac/types.ts` types it. A field missing from
+both is written and stored but silently absent from the Admin UI and from
+downloaded evidence. Add new fields to both.
+:::
+
 #### Allow aggregation
 
 Decision volume tracks request count, not policy activity: a single MCP
@@ -554,11 +570,45 @@ storage and query time without adding review signal.
 | Denials (`outcome=deny`), including `DENY_PDP_UNAVAILABLE` | Per decision | Rare, and the signal reviewers act on |
 | Policy/admin changes (`cas_grant`, `cas_reconcile`, ReBAC edits) | Per event | Compliance record of who changed what |
 | Routine allows | Periodic aggregate | Counted in memory, flushed as one row per distinct subject/action/resource/reason |
+| Bulk evaluation (`authorizeMany`) | One row per call | A list filter, not an access attempt — see below |
 
 Aggregate rows carry `count` (decisions summarized), `window_start`, and
 `window_end`, and a `correlation_id` prefixed `rollup:` — they summarize many
 requests, so no single request id applies. **Consumers must sum `count` rather
 than count rows**; a row without `count` is one decision.
+
+#### Bulk evaluation vs. access attempt
+
+`authorizeMany` answers "which of these N resources may the subject touch" —
+how every resource list in the UI is rendered. Auditing that per-resource made
+volume scale with catalog size, not with activity: one agents-list render
+evaluates `manage`+`write`+`discover` across the whole catalog, so N agents
+produced **3N** rows, and the denials in them only ever said "this user does
+not have that agent".
+
+It is audited as one row carrying `batch: true`:
+
+| Field | Meaning |
+|---|---|
+| `evaluated_count` | Resources the filter evaluated |
+| `allowed_count` / `denied_count` | How many resolved each way |
+| `allowed_ids` | The accessible ids (capped; `allowed_truncated` marks a capped list) |
+| `denied_reasons` | Denial reason → count, so `AUTHZ_UNAVAILABLE` stays visible |
+| `resource_ref` | The evaluated collection (`agent:*`) — no single resource applies |
+
+`outcome` describes the filter, not any one resource: `deny` only when nothing
+was accessible. **Consumers must read `allowed_count`/`denied_count` rather
+than attributing the row to `outcome`** — counting a filter over 500 resources
+as one decision undercounts, and the old per-id rows overcounted it as 498
+policy denials, which is what made the deny-rate metric meaningless.
+
+A single access decision is never folded into this: those go through
+`authorize`/`authorizeOrThrow` and keep their own row. That is the line the
+split rests on — bulk evaluation summarizes, a real attempt does not.
+
+Bulk-evaluation denials are deliberately excluded from `topDenied` in
+`/api/admin/authz/stats`: a filter's `resource_ref` is the collection, so they
+would crowd out the per-resource denials that indicate an actual access problem.
 
 Counts live in process memory, so a restart can drop an unflushed window. That
 undercounts an allow metric and never loses a denial or a policy change. The

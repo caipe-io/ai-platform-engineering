@@ -181,6 +181,7 @@ def test_bot_mention_flags_conversation_owner_is_bot(monkeypatch: pytest.MonkeyP
     create_conversation.assert_called_once()
     metadata = create_conversation.call_args.kwargs["metadata"]
     assert metadata["owner_is_bot"] is True
+    assert metadata["owner_connector_id"] == "U05LC2AV99N"
     # The app's display name is persisted so stats can label the "U…" owner_id.
     assert metadata["owner_display_name"] == "GitLab"
 
@@ -199,6 +200,7 @@ def test_human_mention_does_not_flag_owner_is_bot(monkeypatch: pytest.MonkeyPatc
 
     create_conversation.assert_called_once()
     metadata = create_conversation.call_args.kwargs["metadata"]
+    assert metadata["owner_connector_id"] == "U555"
     assert "owner_is_bot" not in metadata
     assert "owner_display_name" not in metadata
 

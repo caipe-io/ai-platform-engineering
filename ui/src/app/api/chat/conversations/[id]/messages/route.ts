@@ -46,6 +46,7 @@ export const GET = withErrorHandler(async (
   await requireConversationResourcePermission(session, user.email, conversation, 'read');
 
   const { page, pageSize, skip } = getPaginationParams(request);
+  const latestFirst = new URL(request.url).searchParams.get('order') === 'latest';
 
   const messages = await getCollection<Message>('messages');
 
@@ -53,12 +54,15 @@ export const GET = withErrorHandler(async (
 
   const items = await messages
     .find({ conversation_id: conversationId })
-    .sort({ created_at: 1 })
+    .sort({
+      created_at: latestFirst ? -1 : 1,
+      _id: latestFirst ? -1 : 1,
+    })
     .skip(skip)
     .limit(pageSize)
     .toArray();
 
-  return paginatedResponse(items, total, page, pageSize);
+  return paginatedResponse(latestFirst ? items.reverse() : items, total, page, pageSize);
 });
 
 // POST /api/chat/conversations/[id]/messages
@@ -181,11 +185,17 @@ export const POST = withErrorHandler(async (
           ...(body.metadata?.is_interrupted && { is_interrupted: body.metadata.is_interrupted }),
           ...(body.metadata?.task_id && { task_id: body.metadata.task_id }),
           ...(body.metadata?.timeline_segments && { timeline_segments: body.metadata.timeline_segments }),
-          // Slack linking metadata (deep-link back to the source thread)
+          // Integration linking metadata keeps scoped Insights queries and
+          // deep links attributable to the originating channel or space.
           ...(body.metadata?.channel_id && { channel_id: body.metadata.channel_id }),
           ...(body.metadata?.channel_name && { channel_name: body.metadata.channel_name }),
           ...(body.metadata?.thread_ts && { thread_ts: body.metadata.thread_ts }),
           ...(body.metadata?.slack_permalink && { slack_permalink: body.metadata.slack_permalink }),
+          ...(body.metadata?.webex_space_id && { webex_space_id: body.metadata.webex_space_id }),
+          ...(body.metadata?.webex_room_id && { webex_room_id: body.metadata.webex_room_id }),
+          ...(body.metadata?.webex_thread_parent_id && { webex_thread_parent_id: body.metadata.webex_thread_parent_id }),
+          ...(body.metadata?.webex_message_id && { webex_message_id: body.metadata.webex_message_id }),
+          ...(typeof body.metadata?.webex_is_direct === 'boolean' && { webex_is_direct: body.metadata.webex_is_direct }),
         },
         ...(body.stream_events !== undefined && { stream_events: body.stream_events }),
         ...(body.artifacts !== undefined && { artifacts: body.artifacts }),

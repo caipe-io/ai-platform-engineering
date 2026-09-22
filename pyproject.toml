@@ -1,6 +1,6 @@
 [project]
 name = "ai-platform-engineering"
-version = "1.1.1-dev.2"
+version = "1.2.0-rc.4"
 description = "Multi-Agent Collaboration & Workflow Automation - AI agents collaborating across tools and teams to deliver high quality results"
 authors = [
   {name = "CAIPE Contributors"}
@@ -16,19 +16,19 @@ dependencies = [
     # `ai_platform_engineering/agents/*/uv.lock` so the platform image
     # cannot drift from sub-agents.
     "cachetools==7.1.7",
-    "cnoe-agent-utils==0.4.1",
+    "cnoe-agent-utils==0.4.2",
     "cryptography==50.0.1",
     "fastapi==0.141.1",
     "httpx==0.28.1",
-    "langchain==1.3.17",
-    "langchain-core==1.6.0",
+    "langchain==1.4.1",
+    "langchain-core==1.6.3",
     "langchain-mcp-adapters==0.3.2",
     "langfuse==3.15.0",
     "langgraph==1.2.11",
     "langmem==0.0.30",
     "prometheus-client==0.26.0",
     "pydantic==2.13.4",
-    "pyjwt==2.13.0",
+    "pyjwt==2.14.0",
     "requests==2.34.2",
     # Dynamic agents are built on the upstream deepagents library.
     "deepagents==0.6.8",

@@ -1031,15 +1031,17 @@ describe('getAuthenticatedUser', () => {
 
   it('persists keycloak_sub on the MongoDB user profile', async () => {
     const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 2 });
     mockGetServerSession.mockResolvedValue({
       user: { email: 'user@test.com', name: 'Test User' },
       role: 'user',
       sub: 'test-keycloak-sub',
     });
-    mockGetCollection.mockResolvedValue({
-      findOne: jest.fn().mockResolvedValue(null),
-      updateOne,
-    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users'
+        ? { findOne: jest.fn().mockResolvedValue(null), updateOne }
+        : { updateMany }
+    ));
 
     const req = new Request('http://test.com') as unknown as NextRequest;
     await getAuthenticatedUser(req);
@@ -1054,6 +1056,54 @@ describe('getAuthenticatedUser', () => {
       }),
       { upsert: true }
     );
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        $and: expect.arrayContaining([
+          expect.objectContaining({ $or: expect.any(Array) }),
+          {
+            $or: [
+              { owner_subject: { $exists: false } },
+              { owner_subject: null },
+              { owner_subject: '' },
+              { owner_subject: 'test-keycloak-sub' },
+            ],
+          },
+        ]),
+      }),
+      {
+        $set: {
+          owner_subject: 'test-keycloak-sub',
+          owner_canonical_subject: 'test-keycloak-sub',
+          owner_identity_version: 2,
+        },
+      },
+    );
+  });
+
+  it('reconciles conversations without waiting for the profile write', async () => {
+    let finishProfileWrite: (() => void) | undefined;
+    const updateOne = jest.fn(() => new Promise((resolve) => {
+      finishProfileWrite = () => resolve({ matchedCount: 1 });
+    }));
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'user@example.com', name: 'Test User' },
+      role: 'user',
+      sub: 'test-keycloak-sub',
+    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users' ? { updateOne } : { updateMany }
+    ));
+
+    const req = new Request('http://example.test') as unknown as NextRequest;
+    const authPromise = getAuthenticatedUser(req);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(updateOne).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+
+    finishProfileWrite?.();
+    await authPromise;
   });
 
   it('does not promote MongoDB metadata.role to product admin', async () => {

@@ -173,4 +173,17 @@ describe("SearchablePicker", () => {
     expect(screen.getByRole("option", { name: "Primary" })).toBeInTheDocument();
     expect(onSearchChange).toHaveBeenLastCalledWith("missing");
   });
+
+  it("can preserve canonical option order when an option is selected", async () => {
+    const user = userEvent.setup();
+    render(
+      <ExamplePicker selected={OPTIONS[2]} prioritizeSelected={false} />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Example picker" }));
+
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Primary", "Disabled", "Secondary"]);
+  });
 });

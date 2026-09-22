@@ -18,7 +18,7 @@ import {
   type FeatureFlagCategory,
   type FeatureFlagIcon,
 } from "@/store/feature-flag-store";
-import { ArrowDownToLine,Brain,Bug,Clock,Eye,Info } from "lucide-react";
+import { ArrowDownToLine,Brain,Bug,Clock,Eye,Gauge,Info } from "lucide-react";
 import { useEffect,useRef } from "react";
 
 const FLAG_ICONS: Record<FeatureFlagIcon,React.ReactNode> = {
@@ -27,6 +27,7 @@ const FLAG_ICONS: Record<FeatureFlagIcon,React.ReactNode> = {
   Eye: <Eye className="h-4 w-4" />,
   ArrowDownToLine: <ArrowDownToLine className="h-4 w-4" />,
   Clock: <Clock className="h-4 w-4" />,
+  Gauge: <Gauge className="h-4 w-4" />,
 };
 
 interface FeaturePreferencesProps {

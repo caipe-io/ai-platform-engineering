@@ -23,11 +23,14 @@ jest.mock("../engines/openfga", () => {
 jest.mock("@/lib/mongodb", () => ({ getCollection: jest.fn(), isMongoDBConfigured: false }));
 
 const mockEmitGrantAudit = jest.fn();
+const mockEmitDecisionAudit = jest.fn();
+const mockEmitBatchDecisionAudit = jest.fn();
 jest.mock("../audit", () => {
   const actual = jest.requireActual("../audit");
   return {
     ...actual,
-    emitDecisionAudit: jest.fn(),
+    emitDecisionAudit: (...args: unknown[]) => mockEmitDecisionAudit(...args),
+    emitBatchDecisionAudit: (...args: unknown[]) => mockEmitBatchDecisionAudit(...args),
     emitGrantAudit: (...args: unknown[]) => mockEmitGrantAudit(...args),
   };
 });
@@ -92,11 +95,45 @@ describe("filterAccessible", () => {
 });
 
 describe("authorizeMany", () => {
+  beforeEach(() => {
+    mockEmitDecisionAudit.mockClear();
+    mockEmitBatchDecisionAudit.mockClear();
+  });
+
   it("delegates to the engine batch", async () => {
     mockBatch.mockResolvedValue(new Map([["a", ALLOW]]));
     const r = await authorizeMany({ type: "user", id: "u" }, "read", "task", ["a"]);
     expect(r.get("a")?.decision).toBe("ALLOW");
     expect(mockBatch).toHaveBeenCalledWith({ type: "user", id: "u" }, "read", "task", ["a"]);
+  });
+
+  it("audits the whole filter as one event, not one per id", async () => {
+    const ids = Array.from({ length: 50 }, (_, i) => `agent-${i}`);
+    mockBatch.mockResolvedValue(new Map(ids.map((id) => [id, DENY])));
+
+    await authorizeMany({ type: "user", id: "u" }, "discover", "agent", ids);
+
+    // The regression this guards: 50 ids used to mean 50 audit rows.
+    expect(mockEmitBatchDecisionAudit).toHaveBeenCalledTimes(1);
+    expect(mockEmitDecisionAudit).not.toHaveBeenCalled();
+    const [, action, resourceType, results] = mockEmitBatchDecisionAudit.mock.calls[0];
+    expect(action).toBe("discover");
+    expect(resourceType).toBe("agent");
+    expect((results as Map<string, unknown>).size).toBe(50);
+  });
+
+  it("filterAccessible inherits the single-event audit", async () => {
+    mockBatch.mockResolvedValue(
+      new Map([
+        ["a", ALLOW],
+        ["b", DENY],
+      ]),
+    );
+
+    const out = await filterAccessible({ type: "user", id: "u" }, "discover", "agent", ["a", "b"]);
+
+    expect(out).toEqual(["a"]);
+    expect(mockEmitBatchDecisionAudit).toHaveBeenCalledTimes(1);
   });
 });
 

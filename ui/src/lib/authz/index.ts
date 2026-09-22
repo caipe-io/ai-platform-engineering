@@ -14,7 +14,7 @@ import type {
   Subject,
 } from "./contract";
 import { compose } from "./compose";
-import { emitDecisionAudit, emitGrantAudit } from "./audit";
+import { emitBatchDecisionAudit, emitDecisionAudit, emitGrantAudit } from "./audit";
 import { createOpenFgaEngine, createOpenFgaAdmin } from "./engines/openfga";
 import { workflowDelegationPreCheck } from "./domains/workflow";
 
@@ -43,7 +43,11 @@ export async function authorize(
 
 /**
  * Batch evaluation: same subject + action across multiple resource ids.
- * Uses bounded-parallel checks internally. Each decision is audited.
+ * Uses bounded-parallel checks internally.
+ *
+ * Audited as ONE row summarizing the filter, not one row per id — see
+ * `CasBatchDecisionEvent`. A single access decision still gets its own row
+ * via `authorize`/`authorizeOrThrow`.
  */
 export async function authorizeMany(
   subject: Subject,
@@ -53,9 +57,7 @@ export async function authorizeMany(
   ctx: DecisionContext = {},
 ): Promise<Map<string, AuthorizeResult>> {
   const results = await engine.batchCheck(subject, action, resourceType, ids);
-  for (const [id, result] of results) {
-    emitDecisionAudit(subject, { type: resourceType, id }, action, result, ctx);
-  }
+  emitBatchDecisionAudit(subject, action, resourceType, results, ctx);
   return results;
 }
 

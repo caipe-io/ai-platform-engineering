@@ -1,6 +1,7 @@
 "use client";
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
+import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
 import { Button } from "@/components/ui/button";
@@ -17,13 +18,13 @@ import { takePendingFirstMessage } from "@/lib/pending-first-message";
 import { createSubagentResumeSeedEvents } from "@/lib/resume-subagent-context";
 import { createStreamAdapter,StreamError,type StreamCallbacks } from "@/lib/streaming";
 import { createStreamEvent,FILE_TOOL_NAMES,TODO_TOOL_NAME,type StreamEvent } from "@/lib/streaming/types";
-import { cn,deduplicateByKey } from "@/lib/utils";
+import { cn,deduplicateByKey,generateId } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { AnimatePresence,motion } from "framer-motion";
-import { Activity,ArrowDown,ArrowLeft,Check,ChevronUp,Copy,Loader2,Paperclip,RotateCcw,Send,ShieldCheck,Sparkles,Square,User } from "lucide-react";
+import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
@@ -37,6 +38,7 @@ import { Feedback,FeedbackButton } from "./FeedbackButton";
 import { MetadataInputForm,type InputField,type UserInputMetadata } from "./MetadataInputForm";
 import { AttachmentChips,type PendingAttachment } from "./AttachmentChips";
 import { MessageAttachments } from "./MessageAttachments";
+import { RewindConfirmationDialog } from "./RewindConfirmationDialog";
 import { getFilteredCommands,SlashCommandMenu,type SlashCommand } from "./SlashCommandMenu";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import { useSlashCommands } from "./useSlashCommands";
@@ -51,14 +53,27 @@ type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'age
  * too, not just the words.
  */
 interface QueuedMessage {
+  id: string;
   text: string;
   files: InputFile[];
+}
+
+function buildQueuedBatchPrompt(messages: QueuedMessage[]): string {
+  if (messages.length === 1) return messages[0].text;
+  return messages
+    .map((message, index) => {
+      const content = message.text.trim() || '(attachments only)';
+      return `[Queued message ${index + 1}]\n${content}`;
+    })
+    .join('\n\n');
 }
 
 interface ChatPanelProps {
   conversationId?: string; // MongoDB conversation UUID
   readOnly?: boolean;
   readOnlyReason?: ReadOnlyReason;
+  /** Whether this conversation is also used by an API client. */
+  apiConversation?: boolean;
   agentId: string; // Mandatory for Dynamic Agents
   agent?: DynamicAgentConfig | null; // Full agent config object
   isLoadingMessages?: boolean; // Whether messages are still loading (show skeleton)
@@ -72,6 +87,7 @@ export function ChatPanel({
   conversationId,
   readOnly,
   readOnlyReason,
+  apiConversation,
   agentId,
   agent,
   isLoadingMessages,
@@ -85,8 +101,14 @@ export function ChatPanel({
   const agentSkills = agent?.skills;
   const { data: session } = useSession();
   const { toast } = useToast();
+  const initializeFeatureFlags = useFeatureFlagStore((s) => s.initialize);
   const autoScrollEnabled = useFeatureFlagStore((s) => s.flags.autoScroll ?? true);
   const showTimestamps = useFeatureFlagStore((s) => s.flags.showTimestamps ?? false);
+  const showContextUsage = useFeatureFlagStore((s) => s.flags.showContextUsage ?? true);
+
+  useEffect(() => {
+    initializeFeatureFlags();
+  }, [initializeFeatureFlags]);
 
   /**
    * Surface a structured auth-failure (from the Web UI backend or stream adapters) to
@@ -131,9 +153,16 @@ export function ChatPanel({
 
   const [input, setInput] = useState("");
   const [hasRelinkedAgent, setHasRelinkedAgent] = useState(false);
-  const panelReadOnly = readOnly && !hasRelinkedAgent;
+  const relinkRestoresWriteAccess = hasRelinkedAgent && (
+    readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled'
+  );
+  const panelReadOnly = readOnly && !relinkRestoresWriteAccess;
   const panelReadOnlyReason = hasRelinkedAgent ? undefined : readOnlyReason;
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isRewindConfirmationOpen, setIsRewindConfirmationOpen] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   // Files staged in the composer for the next turn (multimodal input).
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -184,11 +213,8 @@ export function ChatPanel({
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const isAutoScrollingRef = useRef(false);
-
-  // Message window: progressive loading of older turns
-  const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
-  // Ref to preserve scroll position when loading more turns
-  const scrollDistanceFromBottomRef = useRef<number | null>(null);
+  const loadingOlderRef = useRef(false);
+  const queueFlushInProgressRef = useRef(false);
 
   const {
     activeConversationId,
@@ -197,15 +223,21 @@ export function ChatPanel({
     addMessage,
     updateMessage,
     appendToMessage,
+    truncateConversationFromMessage,
     addStreamEvent,
+    contextUsageByConversation,
+    setContextUsage,
     clearStreamEvents,
     setConversationStreaming,
     isConversationStreaming,
     cancelConversationRequest,
     updateMessageFeedback,
     consumePendingMessage,
-    loadMessagesFromServer,
+    saveMessagesToServer,
+    loadOlderMessagesFromServer,
+    messageHistory,
     updateConversationTitle,
+    clearConversationInputRequired,
   } = useChatStore();
 
   // Re-link this deprecated/deleted-agent conversation to the platform default agent,
@@ -284,6 +316,16 @@ export function ChatPanel({
   const autonomousFollowUps = useAutonomousFollowUps(
     isAutonomousHistory && !panelReadOnly ? conversation?.task_id : undefined,
   );
+  const editingMessageIndex = editingMessageId
+    ? (conversation?.messages.findIndex((message) => message.id === editingMessageId) ?? -1)
+    : -1;
+  const rewindMessageCount = editingMessageIndex >= 0
+    ? (conversation?.messages.length ?? 0) - editingMessageIndex
+    : 0;
+  const contextUsageId = conversationId ?? activeConversationId;
+  const contextUsage = contextUsageId
+    ? contextUsageByConversation[contextUsageId]
+    : undefined;
 
   // Ref to track which conversations we've checked for HITL interrupt state
   const interruptCheckedRef = useRef<Set<string>>(new Set());
@@ -372,6 +414,28 @@ export function ChatPanel({
     }
   }, []);
 
+  const loadOlderMessages = useCallback(() => {
+    if (!activeConversationId || loadingOlderRef.current) return;
+    const history = messageHistory[activeConversationId];
+    if (!history?.hasMore || history.isLoadingOlder) return;
+
+    const viewport = scrollViewportRef.current;
+    if (!viewport) return;
+    const previousScrollHeight = viewport.scrollHeight;
+    const previousScrollTop = viewport.scrollTop;
+    loadingOlderRef.current = true;
+    void loadOlderMessagesFromServer(activeConversationId).finally(() => {
+      requestAnimationFrame(() => {
+        const currentViewport = scrollViewportRef.current;
+        if (currentViewport) {
+          currentViewport.scrollTop =
+            currentViewport.scrollHeight - previousScrollHeight + previousScrollTop;
+        }
+        loadingOlderRef.current = false;
+      });
+    });
+  }, [activeConversationId, loadOlderMessagesFromServer, messageHistory]);
+
   // Handle scroll events to detect user scrolling
   const handleScroll = useCallback(() => {
     // Ignore scroll events caused by auto-scrolling
@@ -380,7 +444,16 @@ export function ChatPanel({
     const nearBottom = isNearBottom();
     setIsUserScrolledUp(!nearBottom);
     setShowScrollButton(!nearBottom);
-  }, [isNearBottom]);
+    if ((scrollViewportRef.current?.scrollTop ?? Number.POSITIVE_INFINITY) < 80) {
+      loadOlderMessages();
+    }
+  }, [isNearBottom, loadOlderMessages]);
+
+  const handleWheel = useCallback((event: WheelEvent) => {
+    if (event.deltaY < 0 && (scrollViewportRef.current?.scrollTop ?? 0) < 80) {
+      loadOlderMessages();
+    }
+  }, [loadOlderMessages]);
 
   // Set up scroll listener
   useEffect(() => {
@@ -388,8 +461,12 @@ export function ChatPanel({
     if (!viewport) return;
 
     viewport.addEventListener("scroll", handleScroll, { passive: true });
-    return () => viewport.removeEventListener("scroll", handleScroll);
-  }, [handleScroll]);
+    viewport.addEventListener("wheel", handleWheel, { passive: true });
+    return () => {
+      viewport.removeEventListener("scroll", handleScroll);
+      viewport.removeEventListener("wheel", handleWheel);
+    };
+  }, [handleScroll, handleWheel]);
 
   // Auto-scroll when new messages arrive (only if user hasn't scrolled up)
   useEffect(() => {
@@ -431,11 +508,11 @@ export function ChatPanel({
     return () => observer.disconnect();
   }, [isThisConversationStreaming, isUserScrolledUp, autoScrollEnabled]);
 
-  // Reset scroll state and visible turns when conversation changes
+  // Reset scroll state when conversation changes.
   useEffect(() => {
     setIsUserScrolledUp(false);
     setShowScrollButton(false);
-    setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
+    loadingOlderRef.current = false;
     // Scroll to bottom when switching conversations. Use rAF to wait for
     // the browser to lay out the newly rendered messages, then scroll.
     const raf = requestAnimationFrame(() => {
@@ -961,6 +1038,10 @@ export function ChatPanel({
       addStreamEvent(streamEvent, convId);
     },
 
+    onContextUsage(usage, namespace) {
+      if ((namespace?.length ?? 0) === 0) setContextUsage(convId,usage);
+    },
+
     onDone() {
       // Finalization handled after adapter.streamMessage resolves
     },
@@ -970,7 +1051,7 @@ export function ChatPanel({
       loopState.hasError = true;
       loopState.errorMessage = message;
     },
-  }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks]);
+  }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks, setContextUsage]);
 
   /**
    * Finalize a stream loop — copies conversation-level streamEvents to the
@@ -1029,11 +1110,16 @@ export function ChatPanel({
     // Store's setConversationStreaming(null) hook auto-saves after 500ms.
   }, [updateMessage, setConversationStreaming, agentName]);
 
-  // Core submit function that accepts a message directly
-  const submitMessage = useCallback(async (messageToSend: string, filesToSend: InputFile[] = []) => {
-    // A turn is valid if it has text OR at least one attachment.
+  // A queued batch renders as separate user bubbles but is sent as one prompt,
+  // producing one coherent assistant response for the whole batch.
+  const submitMessageBatch = useCallback(async (messagesToSend: QueuedMessage[]) => {
     if (isAutonomousHistory) return;
-    if ((!messageToSend.trim() && filesToSend.length === 0) || isThisConversationStreaming) return;
+    const validMessages = messagesToSend.filter(
+      (message) => message.text.trim() || message.files.length > 0,
+    );
+    if (validMessages.length === 0 || isThisConversationStreaming) return;
+    const messageToSend = buildQueuedBatchPrompt(validMessages);
+    const filesToSend = validMessages.flatMap((message) => message.files);
 
     // Create conversation if needed. This hits POST /api/chat/conversations
     // which is gated by the Web UI backend auth middleware, so we have to handle the
@@ -1080,20 +1166,22 @@ export function ChatPanel({
     // transcript (base64 size ≈ 3/4 of the string length, close enough for the
     // size label). Persistence caps large images in saveMessagesToServer.
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const attachments: MessageAttachment[] = filesToSend.map((f) => ({
-      mime_type: f.mime_type,
-      name: f.name,
-      data: f.data,
-      size: Math.floor((f.data.length * 3) / 4),
-    }));
-    addMessage(convId, {
-      role: "user",
-      content: messageToSend,
-      senderEmail: session?.user?.email ?? undefined,
-      senderName: session?.user?.name ?? undefined,
-      senderImage: session?.user?.image ?? undefined,
-      ...(attachments.length > 0 && { attachments }),
-    }, turnId);
+    validMessages.forEach((queuedMessage) => {
+      const attachments: MessageAttachment[] = queuedMessage.files.map((file) => ({
+        mime_type: file.mime_type,
+        name: file.name,
+        data: file.data,
+        size: Math.floor((file.data.length * 3) / 4),
+      }));
+      addMessage(convId, {
+        role: "user",
+        content: queuedMessage.text,
+        senderEmail: session?.user?.email ?? undefined,
+        senderName: session?.user?.name ?? undefined,
+        senderImage: session?.user?.image ?? undefined,
+        ...(attachments.length > 0 && { attachments }),
+      }, turnId);
+    });
 
     // Add assistant message placeholder with same turnId
     const assistantMsgId = addMessage(convId, { role: "assistant", content: "" }, turnId);
@@ -1129,6 +1217,7 @@ export function ChatPanel({
           message: messageToSend,
           conversationId: convId,
           agentId,
+          turnId,
           clientContext,
           ...(filesToSend.length > 0 && { files: filesToSend }),
         },
@@ -1167,6 +1256,128 @@ export function ChatPanel({
     }
   }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
 
+  const submitMessage = useCallback(
+    (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
+      id: generateId(),
+      text: messageToSend,
+      files: filesToSend,
+    }]),
+    [submitMessageBatch],
+  );
+
+  const startEditingMessage = useCallback((message: ChatMessageType) => {
+    setIsRewindConfirmationOpen(false);
+    setEditingMessageId(message.id);
+    setEditDraft(message.content);
+  }, []);
+
+  const cancelEditingMessage = useCallback(() => {
+    if (isSavingEdit) return;
+    setIsRewindConfirmationOpen(false);
+    setEditingMessageId(null);
+    setEditDraft("");
+  }, [isSavingEdit]);
+
+  const requestEditedMessageSave = useCallback(() => {
+    if (!editingMessageId || !activeConversationId || isSavingEdit) return;
+    const targetMessage = getActiveConversation()?.messages.find(
+      (message) => message.id === editingMessageId,
+    );
+    if (!targetMessage) {
+      toast("The message is no longer available to edit.", "error", 6000);
+      cancelEditingMessage();
+      return;
+    }
+    if (targetMessage.attachments?.some((attachment) => !attachment.data)) {
+      toast(
+        "This message has an attachment that is no longer available. Re-upload it in a new message instead.",
+        "error",
+        8000,
+      );
+      return;
+    }
+    if (!editDraft.trim() && !targetMessage.attachments?.length) return;
+    setIsRewindConfirmationOpen(true);
+  }, [
+    activeConversationId,
+    cancelEditingMessage,
+    editDraft,
+    editingMessageId,
+    getActiveConversation,
+    isSavingEdit,
+    toast,
+  ]);
+
+  const saveEditedMessage = useCallback(async () => {
+    if (!editingMessageId || !activeConversationId || isSavingEdit) return;
+    const targetMessage = getActiveConversation()?.messages.find(
+      (message) => message.id === editingMessageId,
+    );
+    if (!targetMessage) {
+      toast("The message is no longer available to edit.", "error", 6000);
+      cancelEditingMessage();
+      return;
+    }
+
+    const targetAttachments = targetMessage.attachments ?? [];
+    if (targetAttachments.some((attachment) => !attachment.data)) {
+      setIsRewindConfirmationOpen(false);
+      toast(
+        "This message has an attachment that is no longer available. Re-upload it in a new message instead.",
+        "error",
+        8000,
+      );
+      return;
+    }
+    if (!editDraft.trim() && targetAttachments.length === 0) return;
+
+    const files: InputFile[] = targetAttachments.map((attachment) => ({
+      mime_type: attachment.mime_type,
+      name: attachment.name,
+      data: attachment.data!,
+    }));
+
+    setIsSavingEdit(true);
+    try {
+      await saveMessagesToServer(activeConversationId);
+      await apiClient.rewindConversation(activeConversationId, {
+        agent_id: agentId,
+        message_id: editingMessageId,
+      });
+      truncateConversationFromMessage(activeConversationId, editingMessageId);
+      setQueuedMessages([]);
+      setPendingUserInput(null);
+      setPendingToolApproval(null);
+      clearConversationInputRequired(activeConversationId);
+      dismissedInputForMessageRef.current.clear();
+      setIsRewindConfirmationOpen(false);
+      setEditingMessageId(null);
+      setEditDraft("");
+      await submitMessage(editDraft, files);
+    } catch (error) {
+      toast(
+        `Could not edit message: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+        8000,
+      );
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [
+    activeConversationId,
+    agentId,
+    cancelEditingMessage,
+    clearConversationInputRequired,
+    editDraft,
+    editingMessageId,
+    getActiveConversation,
+    isSavingEdit,
+    saveMessagesToServer,
+    submitMessage,
+    toast,
+    truncateConversationFromMessage,
+  ]);
+
   // The Home page hero composer creates a conversation and navigates here
   // before a message can be sent (this panel only mounts once a conversation
   // id is in the URL) — pick up its stashed first message and send it once
@@ -1181,24 +1392,29 @@ export function ChatPanel({
     }
   }, [conversationId, panelReadOnly, submitMessage]);
 
-  // Handle queued messages after streaming completes
+  // Flush the entire queue atomically so it creates one assistant turn.
   useEffect(() => {
-    if (!isThisConversationStreaming && queuedMessages.length > 0) {
-      // Process first queued message
-      const [firstMessage, ...remaining] = queuedMessages;
-      setQueuedMessages(remaining);
-      // Small delay to ensure previous message is fully processed
-      setTimeout(() => {
-        submitMessage(firstMessage.text, firstMessage.files);
-      }, 300);
-    }
-  }, [isThisConversationStreaming, queuedMessages, submitMessage]);
+    if (
+      isThisConversationStreaming ||
+      queuedMessages.length === 0 ||
+      queueFlushInProgressRef.current ||
+      pendingUserInput ||
+      pendingToolApproval
+    ) return;
 
-  // Retry handler - re-sends the message content
-  const handleRetry = useCallback((content: string) => {
-    if (isThisConversationStreaming) return; // Don't retry while streaming
-    submitMessage(content);
-  }, [isThisConversationStreaming, submitMessage]);
+    const batch = queuedMessages;
+    queueFlushInProgressRef.current = true;
+    setQueuedMessages([]);
+    void submitMessageBatch(batch).finally(() => {
+      queueFlushInProgressRef.current = false;
+    });
+  }, [
+    isThisConversationStreaming,
+    pendingToolApproval,
+    pendingUserInput,
+    queuedMessages,
+    submitMessageBatch,
+  ]);
 
   // Handle /skills chat command: show skills configured on this agent
   const handleSkillsCommand = useCallback(async () => {
@@ -1399,19 +1615,16 @@ export function ChatPanel({
       ? await Promise.all(attachments.map((a) => fileToInputFile(a.file)))
       : [];
 
-    // If streaming and not force sending, queue the message (up to 3)
+    // While a response streams, retain each prompt as a distinct queued bubble.
     if (isThisConversationStreaming && !forceSend) {
       const message = input.trim();
-
-      // Add to queue if under limit
-      if (queuedMessages.length < 3) {
-        setQueuedMessages(prev => [...prev, { text: message, files: encodedFiles }]);
-        setInput("");
-        setAttachments([]);
-      } else {
-        // Queue is full
-        console.log("Queue is full (3/3). Send or cancel messages to queue more.");
-      }
+      setQueuedMessages(prev => [...prev, {
+        id: generateId(),
+        text: message,
+        files: encodedFiles,
+      }]);
+      setInput("");
+      setAttachments([]);
       return;
     }
 
@@ -1436,7 +1649,7 @@ export function ChatPanel({
     setAttachments([]);
 
     await submitMessage(message, encodedFiles);
-  }, [input, attachments, submitMessage, isThisConversationStreaming, queuedMessages, pendingUserInput, slashCommands, executeSlashCommand, handleStop]);
+  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, slashCommands, executeSlashCommand, handleStop]);
 
   // Auto-submit pending message from use case selection
   useEffect(() => {
@@ -1827,76 +2040,34 @@ export function ChatPanel({
             <AnimatePresence mode="popLayout">
               {(() => {
                 const allMessages = deduplicateByKey(conversation?.messages ?? [], (msg) => msg.id);
-                const turns = groupMessagesIntoTurns(allMessages);
-                
-                // Progressive loading: show only the most recent N turns
-                const totalTurns = turns.length;
-                const effectiveVisibleCount = Math.min(visibleTurnCount, totalTurns);
-                const hiddenTurnCount = Math.max(0, totalTurns - effectiveVisibleCount);
-                const visibleTurns = turns.slice(-effectiveVisibleCount);
-                
-                // Flatten visible turns to messages for rendering
-                const visibleMessages = visibleTurns.flatMap(t =>
-                  [t.userMsg, t.assistantMsg].filter(Boolean) as ChatMessageType[]
-                );
-
-                // Build a Set of visible message IDs for quick lookup
-                const visibleMsgIds = new Set(visibleMessages.map(m => m.id));
-                const renderMessages = allMessages.filter(m => visibleMsgIds.has(m.id));
-
-                // Handle loading more turns
-                const handleLoadMore = async () => {
-                  // Capture scroll position before loading
-                  if (scrollViewportRef.current) {
-                    const viewport = scrollViewportRef.current;
-                    scrollDistanceFromBottomRef.current = viewport.scrollHeight - viewport.scrollTop;
-                  }
-                  
-                  // Increase visible turn count
-                  const newVisibleCount = Math.min(visibleTurnCount + LOAD_MORE_BATCH_SIZE, totalTurns);
-                  setVisibleTurnCount(newVisibleCount);
-                  
-                  // Re-load messages from MongoDB to restore evicted content
-                  if (activeConversationId) {
-                    await loadMessagesFromServer(activeConversationId, { force: true });
-                  }
-                  
-                  // Restore scroll position after render (use rAF to wait for layout)
-                  requestAnimationFrame(() => {
-                    if (scrollViewportRef.current && scrollDistanceFromBottomRef.current !== null) {
-                      const viewport = scrollViewportRef.current;
-                      viewport.scrollTop = viewport.scrollHeight - scrollDistanceFromBottomRef.current;
-                      scrollDistanceFromBottomRef.current = null;
-                    }
-                  });
-                };
 
                 return (
                   <>
-                    {/* Load earlier turns divider */}
-                    {hiddenTurnCount > 0 && (
-                      <LoadEarlierDivider
-                        key="load-earlier"
-                        count={hiddenTurnCount}
-                        onLoad={handleLoadMore}
-                      />
+                    {activeConversationId && messageHistory[activeConversationId]?.isLoadingOlder && (
+                      <div className="flex justify-center py-3" aria-label="Loading earlier messages">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
                     )}
 
-                    {/* Rendered messages (visible turns only) */}
-                    {renderMessages.map((msg, index, arr) => {
+                    {allMessages.map((msg, index, arr) => {
                       const isLastMessage = index === arr.length - 1;
                       const isAssistantStreaming = isThisConversationStreaming && msg.role === "assistant" && isLastMessage;
-
-                      // For retry: if user message, use its content; if assistant, find preceding user message
-                      const getRetryContent = () => {
-                        if (msg.role === "user") return msg.content;
-                        for (let i = index - 1; i >= 0; i--) {
-                          if (arr[i].role === "user") {
-                            return arr[i].content;
-                          }
-                        }
-                        return null;
-                      };
+                      const messageOwner = msg.senderEmail ?? conversation?.owner_id;
+                      const isOwnMessage = !messageOwner || !session?.user?.email ||
+                        messageOwner === session.user.email;
+                      const isConversationOwner = !conversation?.owner_id || !session?.user?.email ||
+                        conversation.owner_id === session.user.email;
+                      const isLocalCommand = msg.content.trim() === "/skills" ||
+                        msg.content.trim() === "/help";
+                      const canEditMessage = msg.role === "user" &&
+                        isOwnMessage &&
+                        isConversationOwner &&
+                        !isLocalCommand &&
+                        !panelReadOnly &&
+                        !isAutonomousHistory &&
+                        !isThisConversationStreaming &&
+                        !pendingUserInput &&
+                        !pendingToolApproval;
 
                       // Check if this is the last assistant message (latest answer)
                       const isLastAssistantMessage = msg.role === "assistant" &&
@@ -1932,14 +2103,17 @@ export function ChatPanel({
                           key={msg.id}
                           message={msg}
                           onCopy={handleCopy}
+                          canEdit={canEditMessage}
+                          isEditing={editingMessageId === msg.id}
+                          editDraft={editingMessageId === msg.id ? editDraft : undefined}
+                          isSavingEdit={isSavingEdit && editingMessageId === msg.id}
+                          onStartEdit={() => startEditingMessage(msg)}
+                          onEditDraftChange={setEditDraft}
+                          onCancelEdit={cancelEditingMessage}
+                          onSaveEdit={requestEditedMessageSave}
                           isCopied={copiedId === msg.id}
                           isStreaming={isAssistantStreaming}
                           isLatestAnswer={isLastAssistantMessage}
-                          onRetry={
-                            getRetryContent() && !isAutonomousHistory && !msg.autonomousRunId
-                              ? () => handleRetry(getRetryContent()!)
-                              : undefined
-                          }
                           feedback={msg.feedback}
                           onFeedbackChange={(feedback) => handleFeedbackChange(msg.id, feedback)}
                           isRecovering={recoveringMessageId === msg.id}
@@ -2075,6 +2249,21 @@ export function ChatPanel({
         )}
       </AnimatePresence>
 
+      {apiConversation && (
+        <div
+          role="note"
+          className="shrink-0 border-t border-amber-500/30 bg-amber-500/10 px-6 py-2.5 text-amber-800 dark:text-amber-300"
+        >
+          <div className="mx-auto flex max-w-7xl items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-xs">
+              <span className="font-medium">API-linked chat.</span>{" "}
+              Messages sent here update the same conversation used by the API. Continuing here may interfere with that API chat, especially if both clients send at the same time.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Input Area - Fixed bottom, doesn't scroll */}
       {panelReadOnly ? (
         <div className={`border-t border-border shrink-0 ${panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
@@ -2163,11 +2352,11 @@ export function ChatPanel({
         <div className="max-w-7xl mx-auto px-6 py-3 space-y-2">
           {/* Queued Messages Display */}
           {queuedMessages.length > 0 && (
-            <div className="space-y-2">
+            <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
               <AnimatePresence mode="popLayout">
-                {queuedMessages.map((queuedMsg, index) => (
+                {queuedMessages.map((queuedMsg) => (
                   <motion.div
-                    key={`${index}-${queuedMsg.text.slice(0, 20)}`}
+                    key={queuedMsg.id}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
@@ -2176,11 +2365,11 @@ export function ChatPanel({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-medium text-muted-foreground">
-                          Queued {queuedMessages.length > 1 ? `(${index + 1}/${queuedMessages.length})` : 'message'}:
+                          Queued message:
                         </span>
                         <button
                           onClick={() => {
-                            setQueuedMessages(prev => prev.filter((_, i) => i !== index));
+                            setQueuedMessages(prev => prev.filter((message) => message.id !== queuedMsg.id));
                           }}
                           className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                           title="Remove this queued message"
@@ -2201,11 +2390,6 @@ export function ChatPanel({
                   </motion.div>
                 ))}
               </AnimatePresence>
-              {queuedMessages.length >= 3 && (
-                <div className="text-xs text-muted-foreground px-3">
-                  Maximum of 3 queued messages. Send or cancel messages to queue more.
-                </div>
-              )}
             </div>
           )}
 
@@ -2252,9 +2436,7 @@ export function ChatPanel({
                   onPaste={handlePaste}
                   placeholder={
                     isThisConversationStreaming
-                      ? queuedMessages.length >= 3
-                        ? "Queue full (3/3). Send or cancel messages to queue more, or Cmd+Enter to force send..."
-                        : `Type to queue message (${queuedMessages.length}/3), or Cmd+Enter to force send...`
+                      ? `Type to queue another message (${queuedMessages.length} queued), or Cmd+Enter to send now...`
                       : `Ask anything, or type / to see commands, skills, and agents...`
                   }
                   className="flex-1 bg-transparent resize-none outline-none px-3 py-2.5 text-sm"
@@ -2299,13 +2481,31 @@ export function ChatPanel({
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground text-center">
-            {getConfig('appName')} can make mistakes. Verify important info.
-            {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
-          </p>
+          <div className="relative flex min-h-6 items-center justify-center">
+            <p className="px-28 text-center text-xs text-muted-foreground max-sm:px-0 max-sm:pr-24">
+              {getConfig('appName')} can make mistakes. Verify important info.
+              {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
+            </p>
+            {showContextUsage && contextUsage && (
+              <ContextUsageIndicator
+                className="absolute right-0"
+                usage={contextUsage}
+              />
+            )}
+          </div>
         </div>
       </div>
       )}
+
+      <RewindConfirmationDialog
+        open={isRewindConfirmationOpen}
+        messageCount={rewindMessageCount}
+        isConfirming={isSavingEdit}
+        onCancel={() => setIsRewindConfirmationOpen(false)}
+        onConfirm={() => {
+          void saveEditedMessage();
+        }}
+      />
     </div>
   );
 }
@@ -2349,84 +2549,20 @@ function filterEventsForTurn(
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Message Window: Progressive loading of older turns
-// ─────────────────────────────────────────────────────────────────────────────
-
-const INITIAL_VISIBLE_TURNS = 3;
-const LOAD_MORE_BATCH_SIZE = 3;
-
-interface Turn {
-  userMsg?: ChatMessageType;
-  assistantMsg?: ChatMessageType;
-  preview: string;
-  timestamp: Date;
-}
-
-function groupMessagesIntoTurns(messages: ChatMessageType[]): Turn[] {
-  const turns: Turn[] = [];
-  let i = 0;
-  while (i < messages.length) {
-    const msg = messages[i];
-    if (msg.role === "user" && i + 1 < messages.length && messages[i + 1].role === "assistant") {
-      const assistantMsg = messages[i + 1];
-      turns.push({
-        userMsg: msg,
-        assistantMsg,
-        preview: msg.content.slice(0, 80).trim() + (msg.content.length > 80 ? "..." : ""),
-        timestamp: msg.timestamp,
-      });
-      i += 2;
-    } else {
-      turns.push({
-        ...(msg.role === "user" ? { userMsg: msg } : { assistantMsg: msg }),
-        preview: msg.content.slice(0, 80).trim() + (msg.content.length > 80 ? "..." : ""),
-        timestamp: msg.timestamp,
-      });
-      i += 1;
-    }
-  }
-  return turns;
-}
-
-/**
- * Subtle divider that shows how many earlier turns are available to load.
- * Clicking loads the next batch progressively.
- */
-const LoadEarlierDivider = React.memo(function LoadEarlierDivider({
-  count,
-  onLoad,
-}: {
-  count: number;
-  onLoad: () => void;
-}) {
-  return (
-    <motion.button
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      onClick={onLoad}
-      className={cn(
-        "w-full flex items-center justify-center gap-2 py-3 my-2",
-        "text-xs text-muted-foreground hover:text-foreground transition-colors group cursor-pointer"
-      )}
-    >
-      <span className="flex-1 h-px bg-border/40 group-hover:bg-border/60 transition-colors" />
-      <span className="flex items-center gap-1.5 px-3">
-        <ChevronUp className="h-3 w-3" />
-        {count} earlier
-      </span>
-      <span className="flex-1 h-px bg-border/40 group-hover:bg-border/60 transition-colors" />
-    </motion.button>
-  );
-});
-
 interface ChatMessageProps {
   message: ChatMessageType;
   onCopy: (content: string, id: string) => void;
+  canEdit?: boolean;
+  isEditing?: boolean;
+  editDraft?: string;
+  isSavingEdit?: boolean;
+  onStartEdit?: () => void;
+  onEditDraftChange?: (value: string) => void;
+  onCancelEdit?: () => void;
+  onSaveEdit?: () => void;
   isCopied: boolean;
   isStreaming?: boolean;
   isLatestAnswer?: boolean;
-  onRetry?: () => void;
   feedback?: Feedback;
   onFeedbackChange?: (feedback: Feedback) => void;
   conversationId?: string;
@@ -2457,10 +2593,17 @@ interface ChatMessageProps {
 const ChatMessage = React.memo(function ChatMessage({
   message,
   onCopy,
+  canEdit = false,
+  isEditing = false,
+  editDraft = "",
+  isSavingEdit = false,
+  onStartEdit,
+  onEditDraftChange,
+  onCancelEdit,
+  onSaveEdit,
   isCopied,
   isStreaming = false,
   isLatestAnswer = false,
-  onRetry,
   feedback,
   onFeedbackChange,
   conversationId,
@@ -2593,7 +2736,53 @@ const ChatMessage = React.memo(function ChatMessage({
                 <MessageAttachments attachments={message.attachments} align="end" />
               </div>
             )}
-            {message.content.trim() && (
+            {isEditing ? (
+              <div className="ml-auto w-full max-w-2xl rounded-xl border border-primary/40 bg-card p-3 text-left shadow-sm">
+                <TextareaAutosize
+                  autoFocus
+                  minRows={2}
+                  maxRows={12}
+                  value={editDraft}
+                  disabled={isSavingEdit}
+                  onChange={(event) => onEditDraftChange?.(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      onCancelEdit?.();
+                    }
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      onSaveEdit?.();
+                    }
+                  }}
+                  className="w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
+                  aria-label="Edit message"
+                />
+                <div className="mt-3 flex items-center justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isSavingEdit}
+                    onClick={onCancelEdit}
+                  >
+                    <X className="mr-1.5 h-3.5 w-3.5" />
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={isSavingEdit || (!editDraft.trim() && !message.attachments?.length)}
+                    onClick={onSaveEdit}
+                  >
+                    {isSavingEdit ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Send className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    Save and send
+                  </Button>
+                </div>
+              </div>
+            ) : message.content.trim() ? (
               <div
                 className="rounded-xl rounded-tr-sm relative overflow-hidden inline-block bg-primary text-primary-foreground px-4 py-3 max-w-full selection:bg-primary-foreground selection:text-primary"
               >
@@ -2601,14 +2790,34 @@ const ChatMessage = React.memo(function ChatMessage({
                   <MarkdownRenderer content={message.content} variant="user" />
                 </div>
               </div>
-            )}
+            ) : null}
 
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: isHovered ? 1 : 0.8 }}
-              className="flex items-center gap-1 mt-2 justify-end"
-            >
-              {onRetry && (
+            {!isEditing && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: isHovered ? 1 : 0.8 }}
+                className="flex items-center gap-1 mt-2 justify-end"
+              >
+                {canEdit && onStartEdit && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
+                          onClick={onStartEdit}
+                          aria-label="Edit message"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Edit message and rewind conversation
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -2616,40 +2825,22 @@ const ChatMessage = React.memo(function ChatMessage({
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                        onClick={onRetry}
+                        onClick={() => onCopy(message.content, message.id)}
                       >
-                        <RotateCcw className="h-3.5 w-3.5" />
+                        {isCopied ? (
+                          <Check className="h-3.5 w-3.5 text-green-400" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      Retry this prompt
+                      {isCopied ? "Copied!" : "Copy message"}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-              )}
-
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                      onClick={() => onCopy(message.content, message.id)}
-                    >
-                      {isCopied ? (
-                        <Check className="h-3.5 w-3.5 text-green-400" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {isCopied ? "Copied!" : "Copy message"}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </motion.div>
+              </motion.div>
+            )}
           </>
         ) : (
           // ── Assistant message ──
@@ -2679,17 +2870,6 @@ const ChatMessage = React.memo(function ChatMessage({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">Response was interrupted</p>
                     </div>
-                    {onRetry && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={onRetry}
-                        className="shrink-0 gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 hover:text-amber-300"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        Retry
-                      </Button>
-                    )}
                   </>
                 )}
               </motion.div>
@@ -2723,33 +2903,13 @@ const ChatMessage = React.memo(function ChatMessage({
               </div>
             ) : null}
 
-            {/* Action buttons (copy, retry, collapse) */}
+            {/* Assistant message actions */}
             {displayContent && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: isHovered ? 1 : 0.8 }}
                 className="flex items-center gap-1 mt-2"
               >
-                {onRetry && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                          onClick={onRetry}
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Regenerate response
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>

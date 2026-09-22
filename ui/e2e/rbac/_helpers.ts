@@ -171,6 +171,24 @@ export async function installChatBootMocks(
     });
   });
 
+  await page.route("**/api/user/preferences", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        data: {
+          web_default_agent_id: null,
+          platform_default_agent_id: options.agentId ?? null,
+        },
+      }),
+    });
+  });
+
   await page.route("**/api/users/search**", async (route) => {
     const requestUrl = new URL(route.request().url());
     const query = (requestUrl.searchParams.get("q") ?? "").trim().toLowerCase();

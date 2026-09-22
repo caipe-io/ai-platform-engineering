@@ -20,6 +20,8 @@ interface ChatViewProps {
   readOnly?: boolean;
   /** Reason for read-only mode */
   readOnlyReason?: "admin_audit" | "shared_readonly";
+  /** Whether this conversation is also used by an API client. */
+  apiConversation?: boolean;
   /** Whether messages are still loading (show skeleton) */
   isLoadingMessages?: boolean;
   /** Called after a deprecated conversation is linked to a usable agent. */
@@ -37,6 +39,7 @@ export function ChatView({
   agentNotFound,
   readOnly,
   readOnlyReason,
+  apiConversation,
   isLoadingMessages,
   onAgentRelinked,
 }: ChatViewProps) {
@@ -71,6 +74,7 @@ export function ChatView({
             conversationId={conversationId}
             readOnly={readOnly || isDisabled}
             readOnlyReason={agentNotFound ? 'agent_deleted' : agent?.enabled === false ? 'agent_disabled' : readOnlyReason}
+            apiConversation={apiConversation}
             agentId={selectedAgentId}
             agent={agent}
             isLoadingMessages={isLoadingMessages}

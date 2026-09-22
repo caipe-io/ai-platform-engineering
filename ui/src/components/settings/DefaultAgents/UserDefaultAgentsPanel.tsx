@@ -117,19 +117,20 @@ function DefaultAgentSetting({
         <p className="text-sm font-medium">{title}</p>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
-      <AgentPicker
-        ariaLabel={ariaLabel}
-        clearValue={PLATFORM_DEFAULT_KEY}
-        disabled={disabled}
-        emptyLabel="No agents match"
-        hideIdSuffix
-        onChange={onChange}
-        options={options}
-        placeholder="Select your default agent..."
-        searchPlaceholder="Search agents..."
-        triggerClassName="max-w-sm"
-        value={value}
-      />
+      <div className="w-96 max-w-full">
+        <AgentPicker
+          ariaLabel={ariaLabel}
+          clearValue={PLATFORM_DEFAULT_KEY}
+          disabled={disabled}
+          emptyLabel="No agents match"
+          hideIdSuffix
+          onChange={onChange}
+          options={options}
+          placeholder="Select your default agent..."
+          searchPlaceholder="Search agents..."
+          value={value}
+        />
+      </div>
       {agentDescription ? (
         <p className="text-xs text-muted-foreground">
           {`Agent description: ${agentDescription}`}
@@ -205,7 +206,8 @@ export function UserDefaultAgentsPanel({
     void fetchSavedPreferences()
       .then((data) => {
         if (cancelled) return;
-        const bots = data.webex_bots ?? [];
+        const webexEnabled = data.integrations?.webex === true;
+        const bots = webexEnabled ? data.webex_bots ?? [] : [];
         const loaded: Partial<Record<RowKey,string>> = {
           web: data.web_default_agent_id ?? PLATFORM_DEFAULT_KEY,
           slack: data.slack_default_agent_id ?? PLATFORM_DEFAULT_KEY,
@@ -219,7 +221,7 @@ export function UserDefaultAgentsPanel({
         setSelected(loaded);
         setIntegrations({
           slack: data.integrations?.slack === true,
-          webex: data.integrations?.webex === true,
+          webex: webexEnabled,
         });
         setWebexBots(bots);
         setPlatformDefaultId(data.platform_default_agent_id ?? null);

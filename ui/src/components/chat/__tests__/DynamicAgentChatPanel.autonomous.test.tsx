@@ -8,6 +8,7 @@ const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 const mockToast = jest.fn();
 const mockStreamMessage = jest.fn().mockResolvedValue(undefined);
+const mockInitializeFeatureFlags = jest.fn();
 const mockChatState = {
   activeConversationId: "task-chat",
   getActiveConversation: () => mockConversation,
@@ -20,13 +21,19 @@ const mockChatState = {
   clearStreamEvents: jest.fn(),
   setConversationStreaming: jest.fn(),
   loadMessagesFromServer: jest.fn(),
+  contextUsageByConversation: {},
+  messageHistory: {},
+  setContextUsage: jest.fn(),
+  loadOlderMessagesFromServer: jest.fn().mockResolvedValue(undefined),
 };
 
 jest.mock("@/store/chat-store", () => ({
   useChatStore: Object.assign(() => mockChatState, { getState: () => mockChatState }),
 }));
 jest.mock("@/store/feature-flag-store", () => ({
-  useFeatureFlagStore: (selector: (state: unknown) => unknown) => selector({ flags: { autoScroll: false } }),
+  useFeatureFlagStore: (selector: (state: unknown) => unknown) => selector({
+    flags: { autoScroll: false }, initialize: mockInitializeFeatureFlags,
+  }),
 }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: null }) }));
 jest.mock("@/components/ui/toast", () => ({ useToast: () => ({ toast: mockToast }) }));
@@ -83,6 +90,7 @@ it("offers a separate follow-up for every run, including the latest, with no nor
   const buttons = screen.getAllByRole("button", { name: "Continue this run" });
   expect(buttons).toHaveLength(2);
   expect(screen.queryByPlaceholderText(/Ask anything/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Edit message" })).toBeNull();
   fireEvent.click(buttons[1]);
   await waitFor(() => expect(mockOpenChat).toHaveBeenCalledWith("example-task", "latest"));
   expect(mockPush).toHaveBeenCalledWith("/chat/manual-chat");

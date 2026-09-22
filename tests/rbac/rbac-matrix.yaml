@@ -103,6 +103,35 @@ routes:
         status: 403
         reason: pdp_denied
 
+  - id: ui-bff-post-api-chat-conversations-id-rewind-openfga-agent-use
+    surface: ui_bff
+    method: POST
+    path: /api/chat/conversations/[id]/rewind
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: OpenFGA user:<sub> can_use agent:<agent_id> plus conversation owner and write gates before checkpoint rewind.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
   # Spec 2026-05-16 Dynamic Agent PDP Gate: per-agent data-plane checks use
   # OpenFGA ReBAC, not Keycloak realm resources. Expectations assume the test
   # fixture grants alice_admin and eve_dynamic_agent_user can_use on the selected

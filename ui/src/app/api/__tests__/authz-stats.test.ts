@@ -127,6 +127,78 @@ it("counts a row without an explicit count as one decision", async () => {
   });
 });
 
+it("reads a bulk-evaluation row from its own counts, not from outcome", async () => {
+  // One list filter over 500 agents: 12 accessible, 488 not. Attributing the
+  // whole row to `outcome` would count this as a single decision; the old
+  // per-id rows counted it as 488 policy denials.
+  mockAuditQuery.mockResolvedValue([
+    {
+      outcome: "allow",
+      reason_code: "OK",
+      batch: true,
+      resource_ref: "agent:*",
+      evaluated_count: 500,
+      allowed_count: 12,
+      denied_count: 488,
+      denied_reasons: { NO_CAPABILITY: 488 },
+    },
+  ]);
+
+  const res = await GET(req("?window=24h"));
+  const body = await res.json();
+  expect(body.decisions).toMatchObject({
+    total: 500,
+    allow: 12,
+    deny: 488,
+    byReason: [{ reason: "NO_CAPABILITY", count: 488 }, { reason: "OK", count: 12 }],
+  });
+  // A filter's resource_ref is the collection, so it must not crowd out real
+  // per-resource denials in topDenied.
+  expect(body.decisions.topDenied).toEqual([]);
+});
+
+it("counts a PDP outage inside a bulk evaluation as unavailable, not policy denial", async () => {
+  mockAuditQuery.mockResolvedValue([
+    {
+      outcome: "deny",
+      reason_code: "AUTHZ_UNAVAILABLE",
+      batch: true,
+      resource_ref: "agent:*",
+      evaluated_count: 10,
+      allowed_count: 0,
+      denied_count: 10,
+      denied_reasons: { AUTHZ_UNAVAILABLE: 10 },
+    },
+  ]);
+
+  const res = await GET(req("?window=24h"));
+  const body = await res.json();
+  expect(body.decisions).toMatchObject({
+    total: 10,
+    deny: 10,
+    unavailable: 10,
+    policyDeny: 0,
+  });
+});
+
+it("falls back to reason_code when a bulk row has no denied_reasons breakdown", async () => {
+  mockAuditQuery.mockResolvedValue([
+    {
+      outcome: "deny",
+      reason_code: "NO_CAPABILITY",
+      batch: true,
+      resource_ref: "agent:*",
+      evaluated_count: 4,
+      allowed_count: 0,
+      denied_count: 4,
+    },
+  ]);
+
+  const res = await GET(req("?window=24h"));
+  const body = await res.json();
+  expect(body.decisions).toMatchObject({ deny: 4, byReason: [{ reason: "NO_CAPABILITY", count: 4 }] });
+});
+
 it("returns zero decision stats when audit-service has no rows", async () => {
   const res = await GET(req("?window=1h"));
   expect(res.status).toBe(200);

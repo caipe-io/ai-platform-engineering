@@ -89,6 +89,8 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
         owner_id: "alice@example.com",
         owner_subject: "alice-sub",
       })),
+      updateOne: jest.fn(async () => ({ acknowledged: true })),
+      countDocuments: jest.fn(async () => 2),
     });
     mockProxySSEStream.mockResolvedValue(new Response("event: done\n\n", { status: 200 }));
     mockProxyJSONRequest.mockResolvedValue(NextResponse.json({ success: true }));
@@ -151,6 +153,102 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
         traceparent: expect.stringMatching(/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/),
       }),
     );
+  });
+
+  it("persists direct API invoke turns for history and Insights message counts", async () => {
+    const conversations = {
+      findOne: jest.fn(async () => ({
+        _id: "conv-1",
+        owner_id: "api-user@example.com",
+        owner_subject: "alice-sub",
+        client_type: "api",
+      })),
+      updateOne: jest.fn(async () => ({ acknowledged: true })),
+    };
+    const messages = {
+      updateOne: jest.fn(async () => ({ acknowledged: true, upsertedId: "message-id" })),
+      countDocuments: jest.fn(async () => 2),
+    };
+    const agents = {
+      findOne: jest.fn(async () => ({ _id: "agent-1", name: "Primary Agent" })),
+    };
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "conversations") return conversations;
+      if (name === "messages") return messages;
+      if (name === "dynamic_agents") return agents;
+      throw new Error(`Unexpected collection: ${name}`);
+    });
+    mockProxyJSONRequest.mockResolvedValue(NextResponse.json({
+      success: true,
+      content: "response",
+      trace_id: "trace-primary",
+    }));
+
+    const response = await invokePost(
+      jsonRequest("/api/v1/chat/invoke", {
+        message: "hello",
+        conversation_id: "conv-1",
+        agent_id: "agent-1",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(messages.updateOne).toHaveBeenCalledTimes(2);
+    expect(messages.updateOne.mock.calls.map((call) => call[1].$setOnInsert.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(messages.updateOne.mock.calls.map((call) => call[1].$set.content)).toEqual([
+      "hello",
+      "response",
+    ]);
+    for (const call of messages.updateOne.mock.calls) {
+      expect(call[1].$set.metadata).toEqual(expect.objectContaining({
+        source: "api",
+        trace_id: "trace-primary",
+        agent_id: "agent-1",
+        agent_name: "Primary Agent",
+      }));
+    }
+    expect(conversations.updateOne).toHaveBeenCalledWith(
+      { _id: "conv-1" },
+      { $set: expect.objectContaining({ "metadata.total_messages": 2 }) },
+    );
+  });
+
+  it("does not count a failed direct API invoke as an assistant message", async () => {
+    const messages = {
+      updateOne: jest.fn(),
+      countDocuments: jest.fn(),
+    };
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "conversations") {
+        return {
+          findOne: jest.fn(async () => ({
+            _id: "conv-1",
+            owner_id: "api-user@example.com",
+            client_type: "api",
+          })),
+        };
+      }
+      if (name === "messages") return messages;
+      throw new Error(`Unexpected collection: ${name}`);
+    });
+    mockProxyJSONRequest.mockResolvedValue(NextResponse.json(
+      { success: false, error: "upstream unavailable" },
+      { status: 503 },
+    ));
+
+    const response = await invokePost(
+      jsonRequest("/api/v1/chat/invoke", {
+        message: "hello",
+        conversation_id: "conv-1",
+        agent_id: "agent-1",
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(messages.updateOne).not.toHaveBeenCalled();
   });
 
   it("threads isServiceAccount into the conversation write check so SA callers graph as service_account:<sub>", async () => {
@@ -444,8 +542,9 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
   it("mints an owner bearer and enforces agent#use as the owner for scheduler-token invoke runs", async () => {
     const findOne = jest.fn(async () => null);
     const updateOne = jest.fn(async () => ({ acknowledged: true }));
+    const updateMany = jest.fn(async () => ({ modifiedCount: 1 }));
     const countDocuments = jest.fn(async () => 1);
-    mockGetCollection.mockResolvedValue({ findOne, updateOne, countDocuments });
+    mockGetCollection.mockResolvedValue({ findOne, updateOne, updateMany, countDocuments });
 
     const response = await invokePost(
       jsonRequest(
@@ -514,6 +613,12 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
       }),
     );
     expect(updateOne).toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        $set: expect.objectContaining({ owner_subject: "owner-sub" }),
+      }),
+    );
     expect(countDocuments).toHaveBeenCalled();
   });
 
@@ -544,6 +649,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
 
   it("fails a scheduler-token invoke closed on a scheduled conversation owner mismatch", async () => {
     mockGetCollection.mockResolvedValue({
+      updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
       findOne: jest.fn().mockResolvedValue({
         _id: "existing-conversation",
         idempotency_key: "scheduler:scheduled-sched_123-run_456",

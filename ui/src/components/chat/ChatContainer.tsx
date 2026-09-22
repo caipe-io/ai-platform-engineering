@@ -179,6 +179,7 @@ export function ChatContainer() {
               owner_id: conv.owner_id,
               accessLevel: conv.access_level,
               sharing: conv.sharing,
+              source: conv.source ?? (conv.client_type === 'api' ? 'api' : undefined),
             };
 
             useChatStore.setState((state) => ({
@@ -366,8 +367,13 @@ export function ChatContainer() {
     );
   }
 
+  const isApiConversation = conversation?.source === 'api';
   const isReadOnly = accessLevel === 'admin_audit' || accessLevel === 'shared_readonly';
-  const readOnlyReason = accessLevel === 'admin_audit' ? 'admin_audit' : accessLevel === 'shared_readonly' ? 'shared_readonly' : undefined;
+  const readOnlyReason = accessLevel === 'admin_audit'
+    ? 'admin_audit'
+    : accessLevel === 'shared_readonly'
+      ? 'shared_readonly'
+      : undefined;
 
   // Only show loading if we haven't finished fetching yet. After fetchDone=true,
   // having no messages is legitimate (e.g., messages were deleted) — not a loading state.
@@ -394,6 +400,7 @@ export function ChatContainer() {
       agentNotFound={isAgentGone}
       readOnly={isReadOnly}
       readOnlyReason={readOnlyReason}
+      apiConversation={isApiConversation}
       isLoadingMessages={isLoadingMessages}
       onAgentRelinked={handleAgentRelinked}
     />
