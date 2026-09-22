@@ -9,14 +9,13 @@ import { ShareButton } from "@/components/chat/ShareButton";
 import { UseCaseBuilderDialog } from "@/components/gallery/UseCaseBuilder";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SearchablePicker } from "@/components/ui/searchable-picker";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { autonomousApi } from "@/components/autonomous/api";
 import type { AutonomousTask } from "@/components/autonomous/types";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
-import type { ConversationListFilter } from "@/lib/api-client";
 import { getConfig } from "@/lib/config";
 import { getErrorMessage } from "@/lib/error-utils";
 import { getStorageMode } from "@/lib/storage-config";
@@ -24,19 +23,20 @@ import { cn,formatDate,truncateText } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import type { Conversation } from "@/types/a2a";
 import { getAgentId } from "@/types/a2a";
-import { AnimatePresence,motion } from "framer-motion";
+import { motion } from "framer-motion";
 import {
 Archive,
 ArchiveRestore,
 CalendarClock,
 Check,
+ChevronDown,
 ChevronLeft,
 ChevronRight,
 Code2,
 Database,
 HardDrive,
+History,
 Loader2,
-ListFilter,
 MessageCircleQuestion,
 MessageSquare,
 Pencil,
@@ -75,27 +75,22 @@ interface ConversationTitleBadge {
   title: string;
 }
 
-type ConversationHistoryFilter = ConversationListFilter | "webhook";
+type ConversationHistoryFilter = "web" | "scheduled" | "autonomous";
 
 const CONVERSATION_HISTORY_FILTERS: ReadonlyArray<{
-  icon: typeof MessageSquare;
-  iconClassName: string;
   label: string;
   value: ConversationHistoryFilter;
 }> = [
-  { icon: ListFilter, iconClassName: "text-muted-foreground", label: "All chats", value: "all" },
-  { icon: MessageSquare, iconClassName: "text-muted-foreground", label: "Web chats", value: "web" },
-  { icon: Code2, iconClassName: "text-sky-500", label: "API chats", value: "api" },
-  { icon: Sparkles, iconClassName: "text-violet-500", label: "Autonomous runs", value: "autonomous" },
-  { icon: CalendarClock, iconClassName: "text-cyan-500", label: "Scheduled runs", value: "scheduled" },
-  { icon: Webhook, iconClassName: "text-orange-500", label: "Webhook runs", value: "webhook" },
+  { label: "Chat", value: "web" },
+  { label: "Scheduled", value: "scheduled" },
+  { label: "Autonomous", value: "autonomous" },
 ];
 
 const DEFAULT_SIDEBAR_WIDTH = 320;
 const MIN_SIDEBAR_WIDTH = 320;
 const MAX_SIDEBAR_WIDTH = 500;
 const SIDEBAR_WIDTH_STORAGE_KEY = "caipe-chat-sidebar-width";
-const HISTORY_FILTER_STORAGE_KEY = "caipe-chat-history-filter";
+const HISTORY_FILTER_STORAGE_KEY = "caipe-chat-history-tab";
 
 function clampSidebarWidth(width: number): number {
   return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
@@ -126,9 +121,9 @@ function readStoredHistoryFilter(): ConversationHistoryFilter {
     const isSupported = CONVERSATION_HISTORY_FILTERS.some(
       (filter) => filter.value === stored,
     );
-    return isSupported ? stored as ConversationHistoryFilter : "all";
+    return isSupported ? stored as ConversationHistoryFilter : "web";
   } catch {
-    return "all";
+    return "web";
   }
 }
 
@@ -141,6 +136,7 @@ function persistHistoryFilter(filter: ConversationHistoryFilter): void {
 }
 
 type ConversationListItem =
+  | { kind: "webhook-section" }
   | {
       kind: "conversation";
       conversation: Conversation;
@@ -247,15 +243,16 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [renameSavingId, setRenameSavingId] = useState<string | null>(null);
-  const [historyFilter, setHistoryFilter] = useState<ConversationHistoryFilter>('all');
+  const [historyFilter, setHistoryFilter] = useState<ConversationHistoryFilter>('web');
   const [historyFilterHydrated, setHistoryFilterHydrated] = useState(false);
+  const [webhooksExpanded, setWebhooksExpanded] = useState(false);
   const [webhookTasks, setWebhookTasks] = useState<AutonomousTask[]>([]);
   const schedulerEnabled = getConfig("schedulerEnabled");
   const autonomousEnabled = getConfig("autonomousAgentsEnabled");
   const availableHistoryFilters = CONVERSATION_HISTORY_FILTERS.filter(
     (filter) =>
       (filter.value !== "scheduled" || schedulerEnabled) &&
-      (!["autonomous", "webhook"].includes(filter.value) || autonomousEnabled),
+      (filter.value !== "autonomous" || autonomousEnabled),
   );
   const conversationScrollViewportRef = useRef<HTMLDivElement>(null);
   const resizeStateRef = useRef<{
@@ -273,8 +270,8 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     const storedFilter = readStoredHistoryFilter();
     const unavailable =
       (storedFilter === "scheduled" && !schedulerEnabled) ||
-      (["autonomous", "webhook"].includes(storedFilter) && !autonomousEnabled);
-    setHistoryFilter(unavailable ? "all" : storedFilter);
+      (storedFilter === "autonomous" && !autonomousEnabled);
+    setHistoryFilter(unavailable ? "web" : storedFilter);
     setHistoryFilterHydrated(true);
   }, [schedulerEnabled, autonomousEnabled]);
 
@@ -289,8 +286,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     let cancelled = false;
     if (
       activeTab === "chat" &&
-      storageMode === 'mongodb' &&
-      historyFilter !== 'webhook'
+      storageMode === 'mongodb'
     ) {
       // Always load from server - the loadConversationsFromServer function
       // will merge server data with local cache intelligently
@@ -311,8 +307,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
       if (
         document.visibilityState === 'visible' &&
         activeTab === "chat" &&
-        storageMode === 'mongodb' &&
-        historyFilter !== 'webhook'
+        storageMode === 'mongodb'
       ) {
         console.log('[Sidebar] Tab became visible, re-syncing conversations');
         loadConversationsFromServer({ filter: historyFilter }).catch((error) => {
@@ -330,6 +325,9 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   }, [activeTab, historyFilter, historyFilterHydrated, storageMode]);
 
   const handleHistoryFilterChange = useCallback((nextFilter: ConversationHistoryFilter) => {
+    if (conversationScrollViewportRef.current) {
+      conversationScrollViewportRef.current.scrollTop = 0;
+    }
     setHistoryFilter(nextFilter);
     persistHistoryFilter(nextFilter);
   }, []);
@@ -338,7 +336,8 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     const viewport = conversationScrollViewportRef.current;
     if (
       !viewport ||
-      historyFilter === 'webhook' ||
+      conversationFilter !== historyFilter ||
+      isLoadingConversations ||
       !conversationHasMore ||
       isLoadingMoreConversations
     ) {
@@ -351,6 +350,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     conversationFilter,
     conversationHasMore,
     historyFilter,
+    isLoadingConversations,
     isLoadingMoreConversations,
     loadConversationsFromServer,
   ]);
@@ -360,7 +360,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     if (!viewport) return;
     viewport.addEventListener('scroll', handleConversationListScroll, { passive: true });
     return () => viewport.removeEventListener('scroll', handleConversationListScroll);
-  }, [handleConversationListScroll]);
+  }, [activeTab, handleConversationListScroll]);
 
   // Fetch dynamic agents for name lookup in conversation list
   useEffect(() => {
@@ -478,8 +478,8 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     let resolvedAgentId: string | null = null;
     try {
       resolvedAgentId = agentId?.trim() || await resolveUsableChatAgentId();
-      setHistoryFilter('all');
-      persistHistoryFilter('all');
+      setHistoryFilter('web');
+      persistHistoryFilter('web');
 
       if (storageMode === 'mongodb') {
         // MongoDB mode: Create conversation on server
@@ -507,7 +507,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
         useChatStore.setState((state) => ({
           conversations: [newConversation, ...state.conversations],
           activeConversationId: conversation._id,
-          conversationFilter: 'all',
+          conversationFilter: 'web',
           conversationPage: Math.max(state.conversationPage, 1),
         }));
 
@@ -580,19 +580,22 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
 
   const visibleConversations = conversations.filter((conversation) => {
     const runKind = getConversationRunKind(conversation);
-    if (historyFilter === 'all') return true;
-    if (historyFilter === 'api') return conversation.source === 'api';
     if (historyFilter === 'autonomous') return runKind === 'autonomous';
     if (historyFilter === 'scheduled') return runKind === 'scheduled';
     if (historyFilter === 'web') return runKind === null && conversation.source !== 'api';
     return false;
   });
-  const conversationListItems: ConversationListItem[] = historyFilter === 'webhook'
-    ? webhookTasks.map((task) => ({ kind: 'webhook-task', task }))
-    : visibleConversations.map((conversation) => ({ kind: 'conversation', conversation }));
-  const selectedHistoryFilter = CONVERSATION_HISTORY_FILTERS.find(
-    (filter) => filter.value === historyFilter,
-  ) ?? CONVERSATION_HISTORY_FILTERS[0];
+  const conversationListItems: ConversationListItem[] = visibleConversations.map(
+    (conversation) => ({ kind: 'conversation', conversation }),
+  );
+  if (historyFilter === 'autonomous' && webhookTasks.length > 0) {
+    conversationListItems.push({ kind: 'webhook-section' });
+    if (webhooksExpanded) {
+      conversationListItems.push(...webhookTasks.map(
+        (task): ConversationListItem => ({ kind: 'webhook-task', task }),
+      ));
+    }
+  }
 
   return (
     <motion.div
@@ -705,55 +708,67 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
 
       {/* Chat History */}
       {activeTab === "chat" && (
-        <div className="flex-1 overflow-hidden flex flex-col min-w-0">
-          {!collapsed && (
-            <div className="px-2 pb-2">
-              <SearchablePicker
-                options={availableHistoryFilters}
-                selected={selectedHistoryFilter}
-                onSelect={(filter) => handleHistoryFilterChange(filter.value)}
-                getOptionKey={(filter) => filter.value}
-                getOptionLabel={(filter) => filter.label}
-                renderValue={(filter) => {
-                  const FilterIcon = filter.icon;
-                  return (
-                    <>
-                      <FilterIcon className={cn("h-3.5 w-3.5", filter.iconClassName)} />
-                      <span className="truncate">{filter.label}</span>
-                    </>
-                  );
-                }}
-                renderOption={(filter) => {
-                  const FilterIcon = filter.icon;
-                  return (
-                    <>
-                      <FilterIcon className={cn("h-3.5 w-3.5", filter.iconClassName)} />
-                      <span className="truncate">{filter.label}</span>
-                    </>
-                  );
-                }}
-                placeholder="Filter chats"
-                searchPlaceholder="Search chat types..."
-                emptyLabel="No chat types match"
-                ariaLabel="Filter chat history"
-                required
-                prioritizeSelected={false}
-                triggerClassName="h-8 py-1 text-xs"
-                contentClassName="w-[280px]"
-              />
-            </div>
-          )}
+        <Tabs
+          value={historyFilter}
+          onValueChange={(value) => handleHistoryFilterChange(value as ConversationHistoryFilter)}
+          className="flex-1 overflow-hidden flex flex-col min-w-0 min-h-0"
+        >
+          <TabsList
+            aria-label="Conversation views"
+            indicator="none"
+            className={cn(
+              "mx-2 mb-2 flex h-auto shrink-0 border border-border/60 bg-muted/30",
+              collapsed && "sr-only",
+            )}
+          >
+            {availableHistoryFilters.map((tab) => (
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                className="min-w-0 flex-1 px-2 py-1.5 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm"
+              >
+                {tab.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <TabsContent value={historyFilter} className="mt-0 flex flex-1 flex-col min-h-0 min-w-0">
           <ScrollArea
             className="flex-1 min-w-0"
             viewportRef={conversationScrollViewportRef}
             data-testid="conversation-history-scroll"
           >
-            <div className="px-2 space-y-1 pb-4">
+            {/* Replace tab contents synchronously: exiting headers/rows must not
+                linger over the newly selected history. */}
+            <div key={historyFilter} className="px-2 space-y-1 pb-4">
+              {historyFilter === 'web' && !collapsed && (
+                <div className="flex items-center gap-1.5 px-2 py-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  <History className="h-3.5 w-3.5" />
+                  History
+                </div>
+              )}
               {isLoadingConversations && conversationListItems.length === 0 ? (
                 <ConversationListSkeleton collapsed={collapsed} />
               ) : (
-                <AnimatePresence mode="popLayout">
-                  {conversationListItems.map((item, index) => {
+                <>
+                  {conversationListItems.map((item) => {
+                  if (item.kind === "webhook-section") {
+                    return (
+                      <button
+                        key="webhook-section"
+                        type="button"
+                        aria-expanded={webhooksExpanded}
+                        onClick={() => setWebhooksExpanded((expanded) => !expanded)}
+                        className="flex w-full items-center gap-1.5 px-2 py-2 text-xs font-medium text-muted-foreground"
+                      >
+                        {webhooksExpanded
+                          ? <ChevronDown className="h-3.5 w-3.5" />
+                          : <ChevronRight className="h-3.5 w-3.5" />}
+                        <Webhook className="h-3.5 w-3.5" />
+                        <span>Webhook Runs</span>
+                        <span className="ml-auto tabular-nums">{webhookTasks.length}</span>
+                      </button>
+                    );
+                  }
                   if (item.kind === "webhook-task") {
                     const provider =
                       item.task.trigger.type === "webhook"
@@ -835,11 +850,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                     key={conv.id}
                     className="group/conv"
                   >
-                    <motion.div
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -10 }}
-                      transition={{ delay: index * 0.02 }}
+                    <div
                       className={cn(
                         "group relative flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-all min-w-0",
                         isLive
@@ -1163,14 +1174,14 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                         </div>
                       </>
                     )}
-                  </motion.div>
+                  </div>
                   </div>
                     );
                   })}
-                </AnimatePresence>
+                </>
               )}
 
-              {isLoadingMoreConversations && historyFilter !== 'webhook' && (
+              {isLoadingMoreConversations && conversationFilter === historyFilter && (
                 <div className="flex justify-center py-3" aria-label="Loading more chats">
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 </div>
@@ -1182,20 +1193,21 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                     <Sparkles className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <p className="text-sm font-medium text-muted-foreground">
-                    {historyFilter === 'all' || historyFilter === 'web'
+                    {historyFilter === 'web'
                       ? 'No conversations yet'
-                      : `No ${historyFilter === 'webhook' ? 'webhook runs' : 'chats'} found`}
+                      : `No ${historyFilter} runs yet`}
                   </p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
-                    {historyFilter === 'all' || historyFilter === 'web'
+                    {historyFilter === 'web'
                       ? 'Start a new chat to begin'
-                      : 'Choose another history filter'}
+                      : 'Runs will appear here when they are available'}
                   </p>
                 </div>
               )}
             </div>
           </ScrollArea>
-        </div>
+          </TabsContent>
+        </Tabs>
       )}
 
       {/* Gallery mode - Use Cases info */}

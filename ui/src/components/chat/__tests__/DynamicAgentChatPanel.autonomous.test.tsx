@@ -85,18 +85,21 @@ beforeEach(() => {
   mockOpenChat.mockResolvedValue({ conversation_id: "manual-chat" });
 });
 
-it("offers a separate follow-up for every run, including the latest, with no normal composer", async () => {
-  render(<ChatPanel agentId="example-agent" conversationId="task-chat" />);
-  const buttons = screen.getAllByRole("button", { name: "Continue this run" });
-  expect(buttons).toHaveLength(2);
-  expect(screen.queryByPlaceholderText(/Ask anything/)).toBeNull();
-  expect(screen.queryByRole("button", { name: "Edit message" })).toBeNull();
-  fireEvent.click(buttons[1]);
-  await waitFor(() => expect(mockOpenChat).toHaveBeenCalledWith("example-task", "latest"));
-  expect(mockPush).toHaveBeenCalledWith("/chat/manual-chat");
-  expect(await screen.findByRole("link", { name: "Open manual follow-up" })).toHaveAttribute("href", "/chat/manual-chat");
-  expect(mockStreamMessage).not.toHaveBeenCalled();
-});
+it.each([{ runId: "older", index: 0 }, { runId: "latest", index: 1 }])(
+  "opens an independent chat for the $runId run without a normal composer",
+  async ({ runId, index }) => {
+    render(<ChatPanel agentId="example-agent" conversationId="task-chat" />);
+    const buttons = screen.getAllByRole("button", { name: "Continue this run" });
+    expect(buttons).toHaveLength(2);
+    expect(screen.queryByPlaceholderText(/Ask anything/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit message" })).toBeNull();
+    fireEvent.click(buttons[index]);
+    await waitFor(() => expect(mockOpenChat).toHaveBeenCalledWith("example-task", runId));
+    expect(mockPush).toHaveBeenCalledWith("/chat/manual-chat");
+    expect(await screen.findByRole("link", { name: "Open manual follow-up" })).toHaveAttribute("href", "/chat/manual-chat");
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+  },
+);
 
 it("keeps normal streaming available in the independent manual chat", async () => {
   mockConversation = { ...mockConversation, source: "web", task_id: undefined, messages: [] };

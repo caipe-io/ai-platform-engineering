@@ -57,7 +57,7 @@ const mockDeleteConversation = jest.fn()
 const mockUpdateConversationTitle = jest.fn().mockResolvedValue(undefined)
 const mockLoadConversationsFromServer = jest.fn().mockResolvedValue(undefined)
 const mockLoadMessagesFromServer = jest.fn().mockResolvedValue(undefined)
-let mockConversationFilter = 'all'
+let mockConversationFilter = 'web'
 let mockConversationHasMore = false
 let mockIsLoadingMoreConversations = false
 const mockIsConversationStreaming = jest.fn(() => false)
@@ -260,9 +260,8 @@ const defaultProps = {
   onCollapse: jest.fn(),
 }
 
-function selectHistoryFilter(label: string) {
-  fireEvent.click(screen.getByRole('combobox', { name: 'Filter chat history' }))
-  fireEvent.click(screen.getByRole('option', { name: label }))
+function selectConversationTab(label: string) {
+  fireEvent.mouseDown(screen.getByRole('tab', { name: label }), { button: 0, ctrlKey: false })
 }
 
 // ============================================================================
@@ -282,7 +281,7 @@ describe('Sidebar — Live Status Indicator', () => {
     mockActiveConversationId = null
     mockSchedulerEnabled = true
     mockAutonomousAgentsEnabled = true
-    mockConversationFilter = 'all'
+    mockConversationFilter = 'web'
     mockConversationHasMore = false
     mockIsLoadingMoreConversations = false
     mockIsConversationStreaming.mockImplementation(() => false)
@@ -542,7 +541,7 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} />)
 
-      selectHistoryFilter('Scheduled runs')
+      selectConversationTab('Scheduled')
       expect(screen.getByText('Important Team 2 Meeting Prep')).toBeInTheDocument()
       expect(screen.queryByText('sched_ec7107dfab744ddd')).not.toBeInTheDocument()
     })
@@ -557,7 +556,7 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} />)
 
-      selectHistoryFilter('Scheduled runs')
+      selectConversationTab('Scheduled')
       expect(screen.getByText('sched_ec7107dfab744ddd')).toBeInTheDocument()
     })
 
@@ -573,7 +572,7 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} />)
 
-      selectHistoryFilter('Autonomous runs')
+      selectConversationTab('Autonomous')
       const badge = screen.getByText('Review open pull requests')
       expect(badge).toHaveClass(
         'border-violet-500/30',
@@ -597,42 +596,40 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} />)
 
-      selectHistoryFilter('Autonomous runs')
+      selectConversationTab('Autonomous')
       expect(screen.getByText('Legacy task title')).toHaveClass('border-violet-500/30')
     })
 
     it.each([
       { metadata: { task_id: 'legacy-task', task_name: 'Legacy task' } },
       {},
-    ])('keeps legacy autonomous runs out of the Web chats filter', (markers) => {
+    ])('keeps legacy autonomous runs out of the Chat tab', (markers) => {
       mockConversations = [
         makeConv('legacy-autonomous', '[Autonomous] Legacy task', markers),
         makeConv('normal', 'Normal Chat'),
       ]
       render(<Sidebar {...defaultProps} />)
-      selectHistoryFilter('Web chats')
+      selectConversationTab('Chat')
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
       expect(screen.queryByText('Legacy task')).not.toBeInTheDocument()
-      selectHistoryFilter('Autonomous runs')
+      selectConversationTab('Autonomous')
       expect(screen.getByText('Legacy task')).toBeInTheDocument()
       expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
     })
 
-    it('omits disabled automation filters and does not fetch webhook tasks', () => {
+    it('omits disabled automation tabs and does not fetch webhook tasks', () => {
       mockSchedulerEnabled = false
       mockAutonomousAgentsEnabled = false
-      window.localStorage.setItem('caipe-chat-history-filter', 'webhook')
+      window.localStorage.setItem('caipe-chat-history-tab', 'autonomous')
       render(<Sidebar {...defaultProps} />)
-      expect(screen.getByRole('combobox', { name: 'Filter chat history' })).toHaveTextContent('All chats')
-      fireEvent.click(screen.getByRole('combobox', { name: 'Filter chat history' }))
-      expect(screen.queryByRole('option', { name: 'Autonomous runs' })).not.toBeInTheDocument()
-      expect(screen.queryByRole('option', { name: 'Webhook runs' })).not.toBeInTheDocument()
-      expect(screen.queryByRole('option', { name: 'Scheduled runs' })).not.toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true')
+      expect(screen.queryByRole('tab', { name: 'Autonomous' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('tab', { name: 'Scheduled' })).not.toBeInTheDocument()
       expect(mockListAutonomousTasks).not.toHaveBeenCalled()
+      expect(mockLoadConversationsFromServer).toHaveBeenCalledWith({ filter: 'web' })
     })
 
-    it('defaults to all chats and filters the unified list with the shared picker', () => {
-      mockLoadConversationsFromServer.mockResolvedValue(undefined)
+    it('separates Chat, Scheduled, and Autonomous without leaving the History heading behind', () => {
       mockConversations = [
         makeConv('conv-normal', 'Normal Chat'),
         makeConv('conv-scheduled', 'Scheduled Chat', {
@@ -644,78 +641,68 @@ describe('Sidebar — Live Status Indicator', () => {
           metadata: { task_name: 'Review alerts' },
         }),
       ]
-
+      // An old dropdown preference must not restore an unfiltered list.
+      window.localStorage.setItem('caipe-chat-history-filter', 'all')
       render(<Sidebar {...defaultProps} />)
 
+      expect(screen.getByRole('tablist', { name: 'Conversation views' })).toBeInTheDocument()
+      expect(screen.queryByRole('combobox', { name: 'Filter chat history' })).not.toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByRole('tabpanel', { name: 'Chat' })).toHaveTextContent('History')
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
-      expect(screen.getByText('Review alerts')).toBeInTheDocument()
-      expect(screen.getByText('Nightly report')).toBeInTheDocument()
-      expect(screen.getByRole('combobox', { name: 'Filter chat history' })).toHaveTextContent('All chats')
-      expect(screen.queryByTestId('icon-history')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('icon-refresh')).not.toBeInTheDocument()
+      expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
+      expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
 
-      selectHistoryFilter('Autonomous runs')
+      // These assertions are synchronous: there must be no outgoing title or
+      // conversation retained by an exit animation during tab switches.
+      selectConversationTab('Autonomous')
+      expect(screen.getByRole('tabpanel', { name: 'Autonomous' })).toBeInTheDocument()
+      expect(screen.queryByText('History')).not.toBeInTheDocument()
       expect(screen.getByText('Review alerts')).toBeInTheDocument()
       expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
       expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
+      expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'autonomous' })
 
-      selectHistoryFilter('All chats')
-      expect(screen.getByText('Normal Chat')).toBeInTheDocument()
-      expect(screen.getByText('Review alerts')).toBeInTheDocument()
+      selectConversationTab('Scheduled')
       expect(screen.getByText('Nightly report')).toBeInTheDocument()
-    })
+      expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
+      expect(screen.queryByText('History')).not.toBeInTheDocument()
+      expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'scheduled' })
 
-    it('shows API chats through the unified history filter with a distinct icon', () => {
-      mockLoadConversationsFromServer.mockResolvedValue(undefined)
-      mockConversations = [
-        makeConv('conv-normal', 'Normal Chat'),
-        makeConv('conv-api', 'CLI investigation', { source: 'api' }),
-      ]
-
-      render(<Sidebar {...defaultProps} />)
-
-      expect(screen.getByText('CLI investigation')).toBeInTheDocument()
+      selectConversationTab('Chat')
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
-
-      selectHistoryFilter('API chats')
-      expect(screen.getByText('CLI investigation')).toBeInTheDocument()
-      expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
-      expect(screen.getAllByTestId('icon-code')).toHaveLength(2)
-      expect(mockLoadConversationsFromServer).toHaveBeenCalledWith({ filter: 'api' })
-
-      fireEvent.click(screen.getByText('CLI investigation'))
-      expect(mockPush).toHaveBeenCalledWith('/chat/conv-api')
+      expect(screen.getAllByText('History')).toHaveLength(1)
+      expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
+      expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
+      expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'web' })
     })
 
-    it('restores the selected history filter from browser storage', async () => {
+    it('restores the selected conversation tab from browser storage', () => {
       mockConversations = [
         makeConv('conv-normal', 'Normal Chat'),
-        makeConv('conv-api', 'CLI investigation', { source: 'api' }),
+        makeConv('conv-autonomous', '[Autonomous] Review alerts', { source: 'autonomous' }),
       ]
       const { unmount } = render(<Sidebar {...defaultProps} />)
 
-      selectHistoryFilter('API chats')
-      expect(window.localStorage.getItem('caipe-chat-history-filter')).toBe('api')
+      selectConversationTab('Autonomous')
+      expect(window.localStorage.getItem('caipe-chat-history-tab')).toBe('autonomous')
       unmount()
       mockLoadConversationsFromServer.mockClear()
-
       render(<Sidebar {...defaultProps} />)
 
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: 'Filter chat history' }))
-          .toHaveTextContent('API chats')
-      })
-      expect(screen.getByText('CLI investigation')).toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: 'Autonomous' })).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByText('Review alerts')).toBeInTheDocument()
       expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
-      expect(mockLoadConversationsFromServer).toHaveBeenCalledWith({ filter: 'api' })
+      expect(mockLoadConversationsFromServer).toHaveBeenCalledWith({ filter: 'autonomous' })
     })
 
-    it('loads the next 30 chats when the history list reaches the bottom', () => {
+    it.each(['web', 'scheduled', 'autonomous'])('loads the next page for the %s tab', async (filter) => {
+      window.localStorage.setItem('caipe-chat-history-tab', filter)
+      mockConversationFilter = filter
       mockConversationHasMore = true
       mockLoadConversationsFromServer.mockResolvedValue(undefined)
       mockConversations = [makeConv('conv-normal', 'Normal Chat')]
-
-      render(<Sidebar {...defaultProps} />)
+      await act(async () => { render(<Sidebar {...defaultProps} />) })
 
       const viewport = screen.getByTestId('conversation-history-scroll')
       Object.defineProperties(viewport, {
@@ -726,9 +713,24 @@ describe('Sidebar — Live Status Indicator', () => {
       fireEvent.scroll(viewport)
 
       expect(mockLoadConversationsFromServer).toHaveBeenCalledWith({
-        filter: 'all',
+        filter,
         append: true,
       })
+    })
+
+    it('does not append the previous tab while the newly selected tab is loading', async () => {
+      mockConversationHasMore = true
+      mockLoadConversationsFromServer.mockResolvedValue(undefined)
+      await act(async () => { render(<Sidebar {...defaultProps} />) })
+      mockLoadConversationsFromServer.mockReturnValue(new Promise<void>(() => {}))
+
+      selectConversationTab('Autonomous')
+      const viewport = screen.getByTestId('conversation-history-scroll')
+      fireEvent.scroll(viewport)
+      expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'autonomous' })
+      expect(mockLoadConversationsFromServer).not.toHaveBeenCalledWith(
+        expect.objectContaining({ append: true }),
+      )
     })
 
     it('filters to webhook tasks owned by the current user', async () => {
@@ -761,7 +763,12 @@ describe('Sidebar — Live Status Indicator', () => {
       expect(mockListAutonomousTasks).toHaveBeenCalledTimes(1)
       expect(screen.queryByText('Daily branch summary')).not.toBeInTheDocument()
 
-      selectHistoryFilter('Webhook runs')
+      selectConversationTab('Autonomous')
+      const webhookSection = await screen.findByRole('button', { name: /Webhook Runs/ })
+      expect(webhookSection).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByText('Daily branch summary')).not.toBeInTheDocument()
+      fireEvent.click(webhookSection)
+      expect(webhookSection).toHaveAttribute('aria-expanded', 'true')
       expect(await screen.findByText('Daily branch summary')).toBeInTheDocument()
       expect(screen.queryByText('Other owner hook')).not.toBeInTheDocument()
 
