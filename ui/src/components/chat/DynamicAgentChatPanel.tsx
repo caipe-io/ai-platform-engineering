@@ -210,7 +210,7 @@ export function ChatPanel({
   const [commandPanelSelectedIndex, setCommandPanelSelectedIndex] = useState(0);
   const prefersReducedMotion = useReducedMotion();
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
-    agent?.model.reasoning_effort ?? "medium",
+    agent?.model?.reasoning_effort ?? "medium",
   );
   const [supportedReasoningEfforts, setSupportedReasoningEfforts] = useState<ReasoningEffort[] | null>(null);
   const effortStatusSequenceRef = useRef(0);
@@ -357,7 +357,7 @@ export function ChatPanel({
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
-  const configuredReasoningEffort = agent?.model.reasoning_effort ?? "medium";
+  const configuredReasoningEffort = agent?.model?.reasoning_effort ?? "medium";
   const requestReasoningEffort = supportedReasoningEfforts?.includes(reasoningEffort)
     ? reasoningEffort
     : undefined;
@@ -371,7 +371,7 @@ export function ChatPanel({
   }, [conversation?.id, conversation?.metadata?.reasoning_effort, configuredReasoningEffort]);
 
   useEffect(() => {
-    if (!agent?.model.id || !agent.model.provider) {
+    if (!agent?.model?.id || !agent.model.provider) {
       setSupportedReasoningEfforts([]);
       return;
     }
@@ -2838,10 +2838,10 @@ export function ChatPanel({
                 <div className="relative flex shrink-0 items-center gap-2 pt-5">
                   <span
                     className="absolute right-0 top-0 flex max-w-56 items-center gap-1 whitespace-nowrap text-[10px] font-medium text-muted-foreground max-sm:max-w-40"
-                    title={`${agent?.model.id || "Model"} · ${reasoningEffort}`}
+                    title={`${agent?.model?.id || "Model"} · ${reasoningEffort}`}
                     data-testid="composer-model-effort"
                   >
-                    <span className="truncate">{agent?.model.id || "Model"}</span>
+                    <span className="truncate">{agent?.model?.id || "Model"}</span>
                     <span aria-hidden="true">·</span>
                     <span
                       className={cn("text-foreground/80", reasoningEffort === "max" && "font-bold")}
