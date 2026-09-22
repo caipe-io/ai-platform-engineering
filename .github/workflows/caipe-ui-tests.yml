@@ -396,6 +396,9 @@ jobs:
         shell: bash
         env:
           RUN_RBAC_REGRESSION: '1'
+          # Mocked specs isolate browser state and route handlers per file, so
+          # this lane can parallelize without sharing live RBAC infrastructure.
+          PLAYWRIGHT_WORKERS: '4'
           CAIPE_UI_BASE_URL: http://localhost:3000
           WORKFLOWS_ENABLED: 'true'
           NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
@@ -419,7 +422,7 @@ jobs:
             exit 1
           fi
           echo "Running ${#specs[@]} mocked-RBAC spec files."
-          npx playwright test "${specs[@]}" --config=playwright.rbac.config.ts
+          npx playwright test "${specs[@]}" --config=playwright.rbac.config.ts --workers="${PLAYWRIGHT_WORKERS}"
 
       - name: Upload Playwright artifacts
         if: failure() && steps.playwright.outcome == 'failure'
