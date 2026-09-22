@@ -6,7 +6,6 @@ import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { useAgentTimeline } from "@/hooks/useDynamicAgentTimeline";
@@ -2521,30 +2520,6 @@ export function ChatPanel({
 
               {/* Staged attachment previews (above the input row). */}
               <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
-
-              <div className="flex items-center justify-end gap-2 px-3">
-                <label htmlFor="chatReasoningEffort" className="text-xs text-muted-foreground">
-                  Effort
-                </label>
-                <Select
-                  id="chatReasoningEffort"
-                  value={reasoningEffort}
-                  onChange={(event) => void persistReasoningEffort(event.target.value as ReasoningEffort)}
-                  disabled={supportedReasoningEfforts === null || supportedReasoningEfforts.length === 0 || isThisConversationStreaming}
-                  className="h-8 w-28 py-1 capitalize"
-                  title={supportedReasoningEfforts?.length === 0 ? "This model does not support configurable reasoning effort" : "Reasoning effort for this chat"}
-                >
-                  {(["low", "medium", "high", "max"] as ReasoningEffort[]).map((effort) => (
-                    <option
-                      key={effort}
-                      value={effort}
-                      disabled={supportedReasoningEfforts !== null && !supportedReasoningEfforts.includes(effort)}
-                    >
-                      {effort}
-                    </option>
-                  ))}
-                </Select>
-              </div>
 
               <div className="flex items-center gap-3">
                 <TextareaAutosize
