@@ -167,11 +167,14 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
     const outcome = row.outcome;
     const reason = typeof row.reason_code === "string" ? row.reason_code : undefined;
 
-    // A bulk evaluation carries both sides of one list filter, so read its own
-    // tallies instead of attributing the whole row to `outcome`. Counting a
-    // filter over N resources as a single decision — or worse, as N policy
-    // denials — is what made the deny rate meaningless.
-    if (row.batch === true) {
+    // A bulk evaluation or a list-objects lookup carries both sides of one
+    // filter/lookup, so read its own tallies instead of attributing the whole
+    // row to `outcome`. Counting a filter over N resources as a single
+    // decision — or worse, as N policy denials — is what made the deny rate
+    // meaningless. Both row shapes use the same evaluated/allowed/denied
+    // fields; only how they were computed (per-candidate check vs. one
+    // reverse lookup) differs.
+    if (row.batch === true || row.list_objects === true) {
       const allowedCount = numericField(row.allowed_count);
       const deniedCount = numericField(row.denied_count);
       allow += allowedCount;

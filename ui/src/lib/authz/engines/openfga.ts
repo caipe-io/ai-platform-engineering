@@ -15,11 +15,11 @@ import type {
   ResourceType,
   Subject,
 } from "../contract";
-import type { PolicyAdmin, PolicyEngine } from "../engine";
+import type { ListObjectsResult, PolicyAdmin, PolicyEngine } from "../engine";
 import { BoundedTtlCache } from "../cache";
 import { getReasonMeta } from "../reasons";
 import { openFgaRelation, openFgaCheckRelation } from "@/lib/rbac/tuple-builders";
-import { openFgaResourceObject } from "@/lib/rbac/openfga-resource-ids";
+import { openFgaResourceObject, parseOpenFgaObject } from "@/lib/rbac/openfga-resource-ids";
 
 // ─── Transport ────────────────────────────────────────────────────────────────
 
@@ -69,6 +69,26 @@ async function fgaCheck(storeId: string, user: string, relation: string, object:
   return Boolean(body.allowed);
 }
 
+async function fgaListObjects(
+  storeId: string,
+  user: string,
+  relation: string,
+  type: string,
+): Promise<string[]> {
+  const res = await fetch(`${baseUrl()}/stores/${storeId}/list-objects`, {
+    method: "POST",
+    headers: fgaHeaders(),
+    body: JSON.stringify({ user, relation, type }),
+  });
+  if (res.status === 404) {
+    cachedStoreId = null; // invalidate; next call re-resolves
+    throw new Error("OpenFGA store not found (404)");
+  }
+  if (!res.ok) throw new Error(`OpenFGA list-objects failed: ${res.status}`);
+  const body = (await res.json()) as { objects?: string[] };
+  return body.objects ?? [];
+}
+
 // ─── Circuit breaker (per replica) ───────────────────────────────────────────
 
 type CircuitState = "closed" | "open" | "half_open";
@@ -114,9 +134,16 @@ function recordFailure(): void {
   }
 }
 
-/** Drop cached authorization decisions after relationship graph mutations. */
+/**
+ * Drop cached authorization decisions after relationship graph mutations —
+ * both the per-decision cache and the list-objects (reverse lookup) cache.
+ * This is the ONLY place that should ever clear either cache after a
+ * mutation; a caller reaching for `decisionCache.clear()` directly is
+ * exactly how the two caches drift out of sync with each other.
+ */
 export function invalidateDecisionCache(): void {
   decisionCache.clear();
+  listObjectsCache.clear();
 }
 
 /** Test-only reset of breaker + store-id state. */
@@ -129,6 +156,7 @@ export function __resetAdapterStateForTests(): void {
   cacheHits = 0;
   cacheMisses = 0;
   decisionCache.clear();
+  listObjectsCache.clear();
 }
 
 // ─── Decision cache ───────────────────────────────────────────────────────────
@@ -138,6 +166,9 @@ const WRITE_TTL_MS = Number(process.env.AUTHZ_DECISION_CACHE_WRITE_TTL_MS ?? 2_0
 const WRITE_ACTIONS = new Set<Action>(["write", "create", "manage", "delete", "ingest"]);
 
 const decisionCache = new BoundedTtlCache<AuthorizeResult>(10_000, READ_TTL_MS);
+// Separate from decisionCache: a listObjects result is a whole accessible set
+// per (subject, action, resourceType), not one subject/resource/action outcome.
+const listObjectsCache = new BoundedTtlCache<Set<string>>(1_000, READ_TTL_MS);
 
 let cacheHits = 0;
 let cacheMisses = 0;
@@ -171,7 +202,7 @@ export function getEngineStats(): EngineStats {
   const total = cacheHits + cacheMisses;
   return {
     circuitState,
-    cacheSize: decisionCache.size,
+    cacheSize: decisionCache.size + listObjectsCache.size,
     cacheHits,
     cacheMisses,
     cacheHitRatio: total > 0 ? cacheHits / total : 0,
@@ -226,6 +257,45 @@ async function runCheck(req: AuthorizeRequest): Promise<AuthorizeResult> {
   }
 }
 
+async function runListObjects(subject: Subject, action: Action, resourceType: ResourceType): Promise<ListObjectsResult> {
+  if (!circuitAllows()) return { ids: new Set(), reason: "AUTHZ_UNAVAILABLE" };
+
+  const relation = openFgaCheckRelation(action);
+  const user = `${subject.type}:${subject.id}`;
+
+  try {
+    const storeId = await resolveStoreId();
+    const objects = await fgaListObjects(storeId, user, relation, resourceType);
+    recordSuccess();
+    return { ids: new Set(objects.map(parseOpenFgaObject)), reason: "OK" };
+  } catch (err) {
+    recordFailure();
+    console.warn("[cas/openfga] list-objects error:", err instanceof Error ? err.message : String(err));
+    return { ids: new Set(), reason: "AUTHZ_UNAVAILABLE" };
+  }
+}
+
+async function listObjectsWithCache(
+  subject: Subject,
+  action: Action,
+  resourceType: ResourceType,
+): Promise<ListObjectsResult> {
+  const key = `${subject.type}:${subject.id}|${resourceType}|${action}`;
+  const cached = listObjectsCache.get(key);
+  if (cached) {
+    cacheHits++;
+    return { ids: cached, reason: "OK" };
+  }
+  cacheMisses++;
+
+  const result = await runListObjects(subject, action, resourceType);
+  // Only cache a definitive result — never cache a PDP outage as "no access".
+  if (result.reason !== "AUTHZ_UNAVAILABLE") {
+    listObjectsCache.set(key, result.ids, ttlForAction(action));
+  }
+  return result;
+}
+
 async function checkWithCache(req: AuthorizeRequest): Promise<AuthorizeResult> {
   const key = cacheKey(req.subject, req.resource, req.action, req.context);
   const cached = decisionCache.get(key);
@@ -263,6 +333,10 @@ export function createOpenFgaEngine(): PolicyEngine {
         results.set(id, result);
       });
       return results;
+    },
+
+    listObjects(subject: Subject, action: Action, resourceType: ResourceType): Promise<ListObjectsResult> {
+      return listObjectsWithCache(subject, action, resourceType);
     },
   };
 }
@@ -328,12 +402,12 @@ export function createOpenFgaAdmin(): PolicyAdmin {
     async grant(intent: GrantIntent): Promise<void> {
       const storeId = await resolveStoreId();
       await fgaWrite(storeId, [grantTuple(intent)], []);
-      decisionCache.clear(); // the graph changed — drop cached decisions
+      invalidateDecisionCache(); // the graph changed — drop cached decisions
     },
     async revoke(intent: GrantIntent): Promise<void> {
       const storeId = await resolveStoreId();
       await fgaWrite(storeId, [], [grantTuple(intent)]);
-      decisionCache.clear();
+      invalidateDecisionCache();
     },
   };
 }

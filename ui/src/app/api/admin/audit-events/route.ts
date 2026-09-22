@@ -80,6 +80,8 @@ interface AuditEventDocument {
   window_end?: Date | string;
   resources?: Array<{ action?: string; resource_ref?: string; count?: number }>;
   batch?: boolean;
+  /** Marks a list-objects reverse-lookup row — see `batch` for the per-candidate-check equivalent. */
+  list_objects?: boolean;
   evaluated_count?: number;
   allowed_count?: number;
   denied_count?: number;
@@ -420,6 +422,7 @@ function documentToEvent(doc: AuditEventDocument): UnifiedAuditEvent {
     window_end: toIsoOrUndefined(doc.window_end),
     resources: doc.resources,
     batch: doc.batch,
+    list_objects: doc.list_objects,
     evaluated_count: doc.evaluated_count,
     allowed_count: doc.allowed_count,
     denied_count: doc.denied_count,

@@ -551,6 +551,15 @@ function reasonPhrase(evt: UnifiedAuditEvent): string {
       const kind = evt.resource_type ? humanizeToken(evt.resource_type) : "resources";
       return `${service} evaluated ${evaluated} ${kind} for this subject; ${allowed} accessible.`;
     }
+    // A list-objects row is a reverse lookup (the PDP's accessible set,
+    // intersected with a candidate list) — no per-candidate check happened,
+    // so this is worded distinctly from a batch evaluation.
+    if (evt.list_objects) {
+      const evaluated = (evt.evaluated_count ?? 0).toLocaleString();
+      const allowed = (evt.allowed_count ?? 0).toLocaleString();
+      const kind = evt.resource_type ? humanizeToken(evt.resource_type) : "resources";
+      return `${service} looked up this subject's accessible ${kind} (one PDP call); ${allowed} of ${evaluated} candidates were in it.`;
+    }
     if (typeof evt.count === "number" && evt.count > 1) {
       return `${service} ${decision} ${evt.count.toLocaleString()} matching requests because ${pdp} returned ${reason}${via}.`;
     }

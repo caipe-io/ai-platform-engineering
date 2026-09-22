@@ -5,7 +5,7 @@
 // Returns a PolicyEngine — callers see no seam.
 
 import type { Action, AuthorizeRequest, AuthorizeResult, ResourceType, Subject } from "./contract";
-import type { PolicyEngine } from "./engine";
+import type { ListObjectsResult, PolicyEngine } from "./engine";
 
 export interface ProductPolicyOptions {
   /**
@@ -56,6 +56,19 @@ export function compose(engine: PolicyEngine, opts: ProductPolicyOptions = {}): 
         : new Map<string, AuthorizeResult>();
 
       return new Map([...overrides, ...engineResults]);
+    },
+
+    // listObjects computes a set from the relationship graph directly — there
+    // is no per-candidate AuthorizeRequest for preCheck to intercept, so a
+    // product-policy override (e.g. workflow delegation) cannot participate.
+    // Safe today: no current preCheck implementation is reachable through the
+    // batch path either (compose's own batchCheck builds requests with no
+    // trustedContext, and workflowDelegationPreCheck requires one) — see
+    // ui/src/lib/authz/domains/workflow.ts. If that ever changes for a
+    // resource/action this is used for, this engine's listObjects must not be
+    // called for that pair without a corresponding preCheck-equivalent here.
+    listObjects(subject: Subject, action: Action, resourceType: ResourceType): Promise<ListObjectsResult> {
+      return engine.listObjects(subject, action, resourceType);
     },
   };
 }

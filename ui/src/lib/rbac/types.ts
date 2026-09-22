@@ -220,6 +220,13 @@ export interface UnifiedAuditEvent {
    * below, not in `outcome`.
    */
   batch?: boolean;
+  /**
+   * True when this row is a list-objects reverse lookup rather than N
+   * per-candidate checks (`batch`) or a single decision. No per-candidate
+   * decision was made at all — the counts below describe an intersection
+   * with the PDP's returned accessible set, not N evaluated outcomes.
+   */
+  list_objects?: boolean;
   /** Bulk evaluation: resources evaluated by the filter. */
   evaluated_count?: number;
   /** Bulk evaluation: how many were accessible. */

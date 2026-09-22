@@ -610,6 +610,75 @@ Bulk-evaluation denials are deliberately excluded from `topDenied` in
 `/api/admin/authz/stats`: a filter's `resource_ref` is the collection, so they
 would crowd out the per-resource denials that indicate an actual access problem.
 
+#### Reverse lookup: `listAccessible` vs. `authorizeMany`
+
+`authorizeMany` still checks every candidate — one PDP round-trip per id
+(bounded-parallel, so cheap for a small set), collapsed into a single audit
+row. For `filterResourcesByPermission`'s and `filterAccessibleWorkflowConfigs`'s
+own core use — filtering the **whole catalog** (agents, MCP servers, workflow
+configs) down to what one subject can see, before pagination — that meant
+OpenFGA load scaled with catalog size on every page load, not just audit
+volume: rendering the agents list checked every agent in the org, every time,
+regardless of how many the subject could actually see.
+
+`listAccessible` asks the PDP once for the subject's *whole* accessible set of
+a type (`PolicyEngine.listObjects`, OpenFGA's `list-objects`) and intersects it
+with the candidate list in memory — one PDP call regardless of catalog size.
+Audited as one row carrying `list_objects: true` (same `evaluated_count` /
+`allowed_count` / `denied_count` / `allowed_ids` shape as a `batch` row, so
+`/api/admin/authz/stats` reads both identically); `denied_reasons` is always a
+single `NO_CAPABILITY` (or `AUTHZ_UNAVAILABLE`) bucket, since a reverse lookup
+has no per-candidate reason to report.
+
+**Only correct where the relation is a pure relationship-graph computation** —
+no `condition`s, no contextual tuples the caller would need to pass, and no
+product-policy `preCheck` (see `PolicyEngine.listObjects`'s doc comment and
+`compose()`'s `listObjects` passthrough). Verified against `deploy/openfga/model.fga`
+for `agent`, `mcp_server`, and `task` before this was wired in. **Org admins are
+unaffected either way**: both functions check the `organization#manage`
+org-admin bypass *before* reaching either `authorizeMany` or `listAccessible`,
+so admins always see the full catalog regardless of which one is used.
+
+**`listAccessible` self-selects the strategy — callers don't have to.**
+`filterResourcesByPermission` is shared by both true pre-pagination catalog
+scans (agents, MCP servers) *and* callers with an already-small candidate list
+(a single-id lookup by `?id=`, or a page already sliced before the filter
+runs, e.g. `llm-models`). A reverse expansion of the subject's whole accessible
+set is not guaranteed to be cheaper than a few direct checks — for a
+broadly-authorized subject it can cost more. Below
+`LIST_OBJECTS_MIN_CANDIDATES` (default 100 — the API's own hard cap on
+`page_size`, so every already-paginated or single-item caller stays under it
+by construction), `listAccessible` delegates to `authorizeMany`'s per-candidate
+batch instead of calling `listObjects` at all; only a candidate list larger
+than one page — an actual catalog scan — crosses the threshold. This is a
+runtime decision inside `listAccessible` itself, not something each call site
+has to opt into.
+
+**Not migrated — never routed through `listAccessible`, structurally:**
+
+- `resolveAgentListPermissions` / `resolveMcpServerListPermissions` — call
+  `authorizeMany` directly, not through `filterResourcesByPermission`. Already
+  bounded to a page (~20–50 ids) by the caller; no reason to route them
+  through the threshold check at all.
+- `POST /api/authz/v1/decisions/batch` — an external caller supplies up to
+  200 arbitrary ids per call (`MAX_IDS`). Unlike the catalog-scan case, there
+  is no guarantee the accessible set is small relative to the candidate list,
+  so the efficiency trade is unclear without production measurement. Left on
+  `authorizeMany`.
+
+:::warning listObjectsCache must stay invalidated alongside decisionCache
+Both caches must be cleared together on every relationship-graph mutation, or
+a revoked catalog permission can be served stale (or a newly-granted one
+withheld) for up to the read-cache TTL — a real regression, not just a
+missed optimization, since `filterResourcesByPermission` used to reflect a
+grant/revoke immediately via `decisionCache`. `invalidateDecisionCache()` in
+`engines/openfga.ts` is the **only** place that should ever clear either
+cache; `grant`/`revoke` and `reconcile.ts`'s tuple-diff writes all route
+through it precisely so the two caches can't drift apart again. Reaching for
+`decisionCache.clear()` directly anywhere else is how this regression
+happened the first time.
+:::
+
 Counts live in process memory, so a restart can drop an unflushed window. That
 undercounts an allow metric and never loses a denial or a policy change. The
 bridge flushes on `SIGTERM` to narrow the gap.
