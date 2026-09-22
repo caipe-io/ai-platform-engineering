@@ -14,7 +14,7 @@
 // one shared decision core + cache + audit.
 
 import { ApiError } from "@/lib/api-error";
-import { authorize, authorizeMany, type AuthorizeResult, type DecisionContext, type Subject } from "@/lib/authz";
+import { authorize, listAccessible, type AuthorizeResult, type DecisionContext, type Subject } from "@/lib/authz";
 import { emitDecisionAudit } from "@/lib/authz/audit";
 
 const ORG_KEY = process.env.CAIPE_ORG_KEY ?? "caipe";
@@ -253,12 +253,16 @@ export async function filterAccessibleWorkflowConfigs<T>(
     throw unavailableError();
   }
 
+  // `configs` here is the whole visible catalog (pre-pagination) — a reverse
+  // lookup of the subject's accessible set, not a batch of per-config
+  // decisions. Unlike the old authorizeMany call, a PDP outage must still
+  // throw rather than silently render an empty list, so check `reason`
+  // explicitly instead of relying on fail-closed-empty.
   const ids = configs.map(getId);
-  const results = await authorizeMany(subject, action, "task", ids, ctx);
-  for (const result of results.values()) {
-    if (result.reason === "AUTHZ_UNAVAILABLE" || result.retriable) {
-      throw unavailableError();
-    }
+  const { accessible, reason } = await listAccessible(subject, action, "task", ids, ctx);
+  if (reason === "AUTHZ_UNAVAILABLE") {
+    throw unavailableError();
   }
-  return configs.filter((config) => results.get(getId(config))?.decision === "ALLOW");
+  const accessibleSet = new Set(accessible);
+  return configs.filter((config) => accessibleSet.has(getId(config)));
 }

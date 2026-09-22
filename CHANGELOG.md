@@ -1,3 +1,18 @@
+## 1.2.0 (2026-09-22)
+
+### Feat
+
+- **rbac**: let owner-team members manage KBs, RAG collections, MCP tools, Webex spaces (#2773)
+- **authz**: reverse-lookup accessible sets instead of checking every catalog candidate (#2793)
+- **chat**: unify conversation history and queued turns (#2778)
+- **chat**: edit messages and rewind conversations (#2781)
+- **chat**: show context remaining before compaction (#2779)
+
+### Fix
+
+- **audit**: audit bulk authorization as one event instead of one per resource (#2777)
+- **insights**: scope conversations across chat surfaces (#2780)
+
 ## 1.2.0-rc.4 (2026-09-21)
 
 ### Fix

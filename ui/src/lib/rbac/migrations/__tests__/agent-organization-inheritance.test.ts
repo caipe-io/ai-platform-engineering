@@ -13,6 +13,10 @@ jest.mock("@/lib/rbac/openfga", () => ({
 import {
   CREATOR_FROM_OWNER_BACKFILL_MIGRATION_ID,
   DATA_SOURCE_GRANTS_BACKFILL_MIGRATION_ID,
+  KNOWLEDGE_BASE_OWNER_TEAM_MEMBER_MANAGER_MIGRATION_ID,
+  KNOWLEDGE_BASE_SHARED_TEAM_GRANTS_MIGRATION_ID,
+  MCP_TOOL_GRANTS_BACKFILL_MIGRATION_ID,
+  MCP_TOOL_OWNER_TEAM_MEMBER_MANAGER_MIGRATION_ID,
   PARENT_KB_INHERITANCE_BACKFILL_MIGRATION_ID,
   deriveAdminSurfaceRagDatasourcesAdminGrantPlan,
   deriveAdminSurfaceSlackAdminGrantPlan,
@@ -25,6 +29,7 @@ import {
   deriveOrganizationMembershipPlan,
   deriveParentKbInheritanceBackfillPlan,
   deriveSkillHubTeamGrantPlan,
+  getMigrationDefinition,
   planMigration,
 } from "../registry";
 
@@ -420,13 +425,13 @@ describe("knowledge_base shared-team grants migration", () => {
       expect.arrayContaining([
         { user: "team:platform#member", relation: "reader", object: "knowledge_base:kb-alpha" },
         { user: "team:platform#member", relation: "ingestor", object: "knowledge_base:kb-alpha" },
-        { user: "team:platform#admin", relation: "manager", object: "knowledge_base:kb-alpha" },
+        { user: "team:platform#member", relation: "manager", object: "knowledge_base:kb-alpha" },
         { user: "team:platform#member", relation: "reader", object: "knowledge_base:kb-beta" },
         { user: "team:platform#member", relation: "ingestor", object: "knowledge_base:kb-beta" },
-        { user: "team:platform#admin", relation: "manager", object: "knowledge_base:kb-beta" },
+        { user: "team:platform#member", relation: "manager", object: "knowledge_base:kb-beta" },
         { user: "team:data-eng#member", relation: "reader", object: "knowledge_base:kb-alpha" },
         { user: "team:data-eng#member", relation: "ingestor", object: "knowledge_base:kb-alpha" },
-        { user: "team:data-eng#admin", relation: "manager", object: "knowledge_base:kb-alpha" },
+        { user: "team:data-eng#member", relation: "manager", object: "knowledge_base:kb-alpha" },
       ]),
     );
   });
@@ -477,6 +482,21 @@ describe("knowledge_base shared-team grants migration", () => {
     const plan = deriveKnowledgeBaseSharedTeamGrantsPlan([], new Map());
     expect(plan.tuple_writes_planned).toBe(0);
     expect(plan.tuples).toEqual([]);
+  });
+});
+
+describe("knowledge_base owner-team-manager-via-member follow-up migration (v2)", () => {
+  it("is registered as v2->v3 on team_kb_ownership, depending on the v1 backfill", () => {
+    const definition = getMigrationDefinition(
+      KNOWLEDGE_BASE_OWNER_TEAM_MEMBER_MANAGER_MIGRATION_ID,
+    );
+    expect(definition).toMatchObject({
+      schema_area: "team_kb_ownership",
+      from_version: 2,
+      to_version: 3,
+      implemented: true,
+      dependencies: [KNOWLEDGE_BASE_SHARED_TEAM_GRANTS_MIGRATION_ID],
+    });
   });
 });
 
@@ -593,7 +613,7 @@ describe("mcp_tool grants backfill migration", () => {
         { user: "team:platform#member", relation: "reader", object: "mcp_tool:search" },
         { user: "team:platform#member", relation: "user", object: "mcp_tool:search" },
         { user: "team:platform#member", relation: "caller", object: "mcp_tool:search" },
-        { user: "team:platform#admin", relation: "manager", object: "mcp_tool:search" },
+        { user: "team:platform#member", relation: "manager", object: "mcp_tool:search" },
         { user: "team:platform#member", relation: "reader", object: "mcp_tool:infra-search" },
         { user: "team:data-eng#member", relation: "caller", object: "mcp_tool:custom-tool" },
       ]),
@@ -631,6 +651,19 @@ describe("mcp_tool grants backfill migration", () => {
     const plan = deriveMcpToolGrantsBackfillPlan([], new Map());
     expect(plan.tuple_writes_planned).toBe(0);
     expect(plan.tuples).toEqual([]);
+  });
+});
+
+describe("mcp_tool owner-team-manager-via-member follow-up migration (v2)", () => {
+  it("is registered as v2->v3 on team_rag_tools, depending on the v1 backfill", () => {
+    const definition = getMigrationDefinition(MCP_TOOL_OWNER_TEAM_MEMBER_MANAGER_MIGRATION_ID);
+    expect(definition).toMatchObject({
+      schema_area: "team_rag_tools",
+      from_version: 2,
+      to_version: 3,
+      implemented: true,
+      dependencies: [MCP_TOOL_GRANTS_BACKFILL_MIGRATION_ID],
+    });
   });
 });
 

@@ -4,10 +4,12 @@
 
 const mockAuthorize = jest.fn();
 const mockAuthorizeMany = jest.fn();
+const mockListAccessible = jest.fn();
 
 jest.mock("@/lib/authz", () => ({
   authorize: (...args: unknown[]) => mockAuthorize(...args),
   authorizeMany: (...args: unknown[]) => mockAuthorizeMany(...args),
+  listAccessible: (...args: unknown[]) => mockListAccessible(...args),
 }));
 
 import { ApiError } from "@/lib/api-error";
@@ -337,18 +339,13 @@ describe("resource-authz", () => {
       ).rejects.toMatchObject({ statusCode: 503, code: "AUTHZ_UNAVAILABLE" });
     });
 
-    it("filters resources via authorizeMany", async () => {
+    it("filters resources via listAccessible (a reverse lookup, not one authorizeMany check per candidate)", async () => {
       mockAuthorize.mockResolvedValueOnce({
         decision: "DENY",
         reason: "NO_CAPABILITY",
         retriable: false,
       });
-      mockAuthorizeMany.mockResolvedValueOnce(
-        new Map([
-          ["visible", { decision: "ALLOW", reason: "OK", retriable: false }],
-          ["hidden", { decision: "DENY", reason: "NO_CAPABILITY", retriable: false }],
-        ]),
-      );
+      mockListAccessible.mockResolvedValueOnce({ accessible: ["visible"], reason: "OK" });
 
       const resources = [{ id: "visible" }, { id: "hidden" }];
       const visible = await filterResourcesByPermission(
@@ -358,12 +355,31 @@ describe("resource-authz", () => {
       );
 
       expect(visible).toEqual([{ id: "visible" }]);
-      expect(mockAuthorizeMany).toHaveBeenCalledWith(
+      expect(mockAuthorizeMany).not.toHaveBeenCalled();
+      expect(mockListAccessible).toHaveBeenCalledWith(
         { type: "user", id: "alice-sub" },
         "read",
         "mcp_server",
         ["visible", "hidden"],
       );
+    });
+
+    it("fails closed (empty) rather than open when the PDP is unavailable", async () => {
+      mockAuthorize.mockResolvedValueOnce({
+        decision: "DENY",
+        reason: "NO_CAPABILITY",
+        retriable: false,
+      });
+      mockListAccessible.mockResolvedValueOnce({ accessible: [], reason: "AUTHZ_UNAVAILABLE" });
+
+      const resources = [{ id: "visible" }, { id: "hidden" }];
+      const visible = await filterResourcesByPermission(
+        { sub: "alice-sub" },
+        resources,
+        { type: "mcp_server", action: "read", id: (resource) => resource.id },
+      );
+
+      expect(visible).toEqual([]);
     });
 
     it("batch-resolves MCP list row permissions and repair capability", async () => {

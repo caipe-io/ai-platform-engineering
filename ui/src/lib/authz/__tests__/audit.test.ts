@@ -13,9 +13,11 @@ import {
   buildBatchDecisionEvent,
   buildDecisionEvent,
   buildGrantEvent,
+  buildListObjectsDecisionEvent,
   emitBatchDecisionAudit,
   emitDecisionAudit,
   emitGrantAudit,
+  emitListObjectsDecisionAudit,
   emitReconcileAudit,
   flushAllowRollups,
 } from "../audit";
@@ -453,6 +455,96 @@ describe("buildBatchDecisionEvent / emitBatchDecisionAudit — bulk evaluation",
 
   it("is not fed into the allow rollup — a batch row is already an aggregate", () => {
     emitBatchDecisionAudit(subject, "discover", "agent", results([["a", "ALLOW"]]));
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+    flushAllowRollups();
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("buildListObjectsDecisionEvent / emitListObjectsDecisionAudit — reverse lookup", () => {
+  it("summarizes a reverse lookup as ONE row, marked list_objects not batch", () => {
+    emitListObjectsDecisionAudit(
+      subject,
+      "discover",
+      "agent",
+      ["a", "b", "c", "d"],
+      new Set(["a"]),
+      "OK",
+    );
+
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+    expect(mockWrite.mock.calls[0][0]).toMatchObject({
+      type: "cas_decision",
+      list_objects: true,
+      action: "discover",
+      resource_type: "agent",
+      resource_ref: "agent:*",
+      evaluated_count: 4,
+      allowed_count: 1,
+      denied_count: 3,
+      allowed_ids: ["a"],
+      denied_reasons: { NO_CAPABILITY: 3 },
+    });
+    expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("batch");
+  });
+
+  it("writes nothing for an empty candidate list", () => {
+    emitListObjectsDecisionAudit(subject, "discover", "agent", [], new Set(), "OK");
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("reports outcome deny only when none of the candidates were in the accessible set", () => {
+    expect(
+      buildListObjectsDecisionEvent(subject, "use", "agent", ["a", "b"], new Set(), "OK"),
+    ).toMatchObject({ outcome: "deny", reason_code: "NO_CAPABILITY", allowed_count: 0 });
+
+    expect(
+      buildListObjectsDecisionEvent(subject, "use", "agent", ["a", "b"], new Set(["b"]), "OK"),
+    ).toMatchObject({ outcome: "allow", reason_code: "OK", allowed_count: 1 });
+  });
+
+  it("never buckets partial-access denials under reason_code OK", () => {
+    // allowed_count > 0 (reason_code "OK") but denied_count > 0 too — the
+    // denials must land in their own bucket, not fall through to "OK".
+    const event = buildListObjectsDecisionEvent(subject, "discover", "agent", ["a", "b"], new Set(["a"]), "OK");
+
+    expect(event.reason_code).toBe("OK");
+    expect(event.denied_reasons).toEqual({ NO_CAPABILITY: 1 });
+  });
+
+  it("fails closed on a PDP outage: empty allowed_ids, not the (irrelevant) accessible set", () => {
+    // A real caller would pass an empty Set on AUTHZ_UNAVAILABLE (see
+    // listAccessible), but the builder must fail closed even if it didn't.
+    const event = buildListObjectsDecisionEvent(
+      subject,
+      "read",
+      "agent",
+      ["a", "b"],
+      new Set(["a", "b"]),
+      "AUTHZ_UNAVAILABLE",
+    );
+
+    expect(event.outcome).toBe("deny");
+    expect(event.reason_code).toBe("AUTHZ_UNAVAILABLE");
+    expect(event.allowed_count).toBe(0);
+    expect(event.allowed_ids).toEqual([]);
+    expect(event.denied_count).toBe(2);
+    expect(event.denied_reasons).toEqual({ AUTHZ_UNAVAILABLE: 2 });
+  });
+
+  it("caps allowed_ids while keeping the counts exact", () => {
+    const ids = Array.from({ length: 150 }, (_, i) => `agent-${i}`);
+    const event = buildListObjectsDecisionEvent(subject, "discover", "agent", ids, new Set(ids), "OK");
+
+    expect(event.allowed_count).toBe(150);
+    expect(event.allowed_ids).toHaveLength(100);
+    expect(event.allowed_truncated).toBe(true);
+    expect(event.denied_count).toBe(0);
+    expect(event.denied_reasons).toBeUndefined();
+  });
+
+  it("is not fed into the allow rollup — a list-objects row is already an aggregate", () => {
+    emitListObjectsDecisionAudit(subject, "discover", "agent", ["a"], new Set(["a"]), "OK");
     expect(mockWrite).toHaveBeenCalledTimes(1);
     flushAllowRollups();
     expect(mockWrite).toHaveBeenCalledTimes(1);

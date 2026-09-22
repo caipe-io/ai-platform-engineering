@@ -316,6 +316,109 @@ export function emitBatchDecisionAudit(
   writeAuditEvent(event as unknown as Record<string, unknown>);
 }
 
+/**
+ * One reverse lookup (`listAccessible`) against a known candidate list —
+ * "which of these N ids can the subject access", computed by the PDP in one
+ * call rather than N per-candidate checks.
+ *
+ * Unlike `CasBatchDecisionEvent`, no per-candidate decision was ever made, so
+ * there is no per-reason denial breakdown to report: anything not in the
+ * PDP's returned set is DENY/NO_CAPABILITY by construction, in one bucket. A
+ * PDP outage (`AUTHZ_UNAVAILABLE`) is the one case with a real reason,
+ * because the whole lookup failed as a single unit, not per-candidate.
+ */
+export interface CasListObjectsEvent {
+  audit_event_id: string;
+  ts: Date;
+  type: "cas_decision";
+  tenant_id: string;
+  subject_hash: string;
+  subject_ref: string;
+  action: Action;
+  /** The lookup itself; per-candidate results are in the counts below. */
+  outcome: "allow" | "deny";
+  reason_code: AuthorizeResult["reason"];
+  correlation_id: string;
+  component: "cas";
+  resource_ref: string;
+  resource_type: string;
+  pdp: "openfga";
+  source: "cas";
+  /** Marks this row as a list-objects lookup so consumers don't read it as one decision. */
+  list_objects: true;
+  evaluated_count: number;
+  allowed_count: number;
+  denied_count: number;
+  allowed_ids: string[];
+  allowed_truncated?: boolean;
+  /**
+   * Always a single bucket — list-objects has no per-candidate reason to
+   * report. Present explicitly (rather than left to a `reason_code`
+   * fallback) so a partial-access row's denials are never mis-bucketed
+   * under `reason_code: "OK"`, which describes the lookup, not the denials.
+   */
+  denied_reasons?: Record<string, number>;
+  trace_id?: string;
+  span_id?: string;
+}
+
+export function buildListObjectsDecisionEvent(
+  subject: Subject,
+  action: Action,
+  resourceType: string,
+  candidateIds: string[],
+  accessibleIds: Set<string>,
+  reason: AuthorizeResult["reason"],
+  ctx: DecisionContext = {},
+): CasListObjectsEvent {
+  const pdpUnavailable = reason === "AUTHZ_UNAVAILABLE";
+  const allowedIds = pdpUnavailable ? [] : candidateIds.filter((id) => accessibleIds.has(id));
+  const deniedCount = candidateIds.length - allowedIds.length;
+
+  return {
+    audit_event_id: randomUUID(),
+    ts: new Date(),
+    type: "cas_decision",
+    tenant_id: ctx.tenantId ?? process.env.TENANT_ID ?? "default",
+    subject_hash: hashSubject(subject.id),
+    subject_ref: principalRef(subject.type, subject.id),
+    action,
+    outcome: pdpUnavailable || allowedIds.length === 0 ? "deny" : "allow",
+    reason_code: pdpUnavailable ? "AUTHZ_UNAVAILABLE" : allowedIds.length > 0 ? "OK" : "NO_CAPABILITY",
+    correlation_id: ctx.correlationId ?? `list:${randomUUID()}`,
+    component: "cas",
+    // No single resource id applies, so the ref names the looked-up collection.
+    resource_ref: `${resourceType}:*`,
+    resource_type: resourceType,
+    pdp: "openfga",
+    source: "cas",
+    list_objects: true,
+    evaluated_count: candidateIds.length,
+    allowed_count: allowedIds.length,
+    denied_count: deniedCount,
+    allowed_ids: allowedIds.slice(0, BATCH_ALLOWED_IDS_CAP),
+    ...(allowedIds.length > BATCH_ALLOWED_IDS_CAP ? { allowed_truncated: true } : {}),
+    ...(deniedCount > 0 ? { denied_reasons: { [pdpUnavailable ? "AUTHZ_UNAVAILABLE" : "NO_CAPABILITY"]: deniedCount } } : {}),
+    ...(ctx.traceId ? { trace_id: ctx.traceId } : {}),
+    ...(ctx.spanId ? { span_id: ctx.spanId } : {}),
+  };
+}
+
+/** Audit one list-objects lookup as a single row. Empty candidate lists write nothing. */
+export function emitListObjectsDecisionAudit(
+  subject: Subject,
+  action: Action,
+  resourceType: string,
+  candidateIds: string[],
+  accessibleIds: Set<string>,
+  reason: AuthorizeResult["reason"],
+  ctx: DecisionContext = {},
+): void {
+  if (candidateIds.length === 0) return;
+  const event = buildListObjectsDecisionEvent(subject, action, resourceType, candidateIds, accessibleIds, reason, ctx);
+  writeAuditEvent(event as unknown as Record<string, unknown>);
+}
+
 export type GrantOperation = "grant" | "revoke";
 export type GrantAuditOutcome = "success" | "error";
 

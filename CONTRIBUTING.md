@@ -105,18 +105,23 @@ Run the relevant checks before opening a PR. These are the same commands CI runs
 `make help` lists the full set of targets, including the per-component
 `make test-mcp-*` suites.
 
-## Pull Request (PR) Policy
+## Pull Requests and Code Review
 
 1. **Fork the Repository**: Start by forking the repository and creating a new branch for your changes.
 2. **Write Clear Commit Messages**: Follow the [Commit Requirements](#commit-requirements) above — sign-off and Conventional Commits are both enforced.
 3. **Follow Coding Standards**: Adhere to the project's coding standards and guidelines.
 4. **Testing**: Test your changes thoroughly before submitting a PR. See [Local Checks](#local-checks).
-5. **PR Submission**:
-    - Provide a clear description of the changes in the PR.
+5. **Keep It Reviewable**: Aim for under 500 changed lines of hand-written code, keep refactors separate from behaviour changes, and say which part of a large diff is generated.
+6. **PR Submission**:
+    - Provide a clear description of the changes in the PR: why the change exists and how you verified it.
     - Reference any related issues or tickets.
-6. **Approval Process**:
-    - All PRs must be reviewed and approved by at least one maintainer.
-    - Address any feedback promptly to ensure smooth progress.
+    - Disclose any AI assistance you used.
+7. **Approval Process**:
+    - All PRs must be reviewed and approved by at least one maintainer. A bot review is never an approval.
+    - Address any feedback promptly, or reply explaining why a change is not being made.
+    - Apply review suggestions locally. Do not use GitHub's "Commit suggestion" button — the commit it creates names the suggestion's author as a co-author who has not signed off, which fails the DCO check.
+
+What reviewers look at, and the full checklist: [Code Review](docs/docs/repo-ops/code-review.md).
 
 ## Code of Conduct
 

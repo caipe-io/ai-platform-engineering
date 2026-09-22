@@ -58,14 +58,14 @@ async function reconcileWebexSpaceOwnership(
       const object = `webex_space:${webexSpaceSubjectId(space.webex_workspace_id ?? "", space.webex_space_id)}`;
       return [
         { user: `team:${slug}#member`, relation: "user", object },
-        { user: `team:${slug}#admin`, relation: "manager", object },
+        { user: `team:${slug}#member`, relation: "manager", object },
       ];
     }),
     deletes: removed.flatMap((space) => {
       const object = `webex_space:${webexSpaceSubjectId(space.webex_workspace_id ?? "", space.webex_space_id)}`;
       return [
         { user: `team:${slug}#member`, relation: "user", object },
-        { user: `team:${slug}#admin`, relation: "manager", object },
+        { user: `team:${slug}#member`, relation: "manager", object },
       ];
     }),
   });

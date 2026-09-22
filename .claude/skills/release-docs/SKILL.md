@@ -14,8 +14,7 @@ Produce one combined blog post for an `ai-platform-engineering` release:
 
 **`docs/releases/YYYY-MM-DD-release-X-Y-Z.md`** — release notes narrative
 (highlights, what's new, bug fixes, breaking changes) followed by the full
-upgrade guide (Helm values diff, step-by-step runbook, personal impact
-analysis) as an embedded section.
+upgrade guide (Helm values diff, step-by-step runbook) as an embedded section.
 
 The file is picked up by the Docusaurus `releases` blog plugin and published at
 `/blog/releases/release-X.Y.Z`.
@@ -43,7 +42,7 @@ Ask the user for:
 | ------------------------ | --------------------------------- | ------------------------------------- |
 | **To version**           | `0.4.9`                           | Yes                                   |
 | **From version**         | `0.4.8`                           | Yes (defaults to previous tag)        |
-| **User's `values.yaml`** | paste or path                     | No — enables personal impact analysis |
+| **User's `values.yaml`** | paste or path                     | No — lets the runbook call out exactly which of their keys are affected |
 | **Environment**          | `dev` / `preview` / `prod` / `vm` | No — enables env-specific notes       |
 
 If from/to are not provided, detect from the repo:
@@ -247,29 +246,16 @@ helm upgrade ai-platform-engineering \
 
 #### 2. Apply values.yaml changes
 
-<Paste exact diffs for each breaking change.>
+<Paste exact diffs for each breaking change. If the user supplied their `values.yaml`, call
+out exactly which of their keys are affected by each breaking/deprecated change, or state
+that none of their keys are affected. If there are no breaking changes, state that no
+values.yaml edits are required.>
 
 #### 3. Verify
 
 ```bash
 kubectl get pods -n <namespace>
 ```
-
-### Personal Impact Analysis
-
-<If user provided values.yaml: cross-reference against breaking-changes list.>
-<If not: prompt them to provide it for a personalised checklist.>
-
-### Full Values Diff
-
-<details>
-<summary>Raw diff (<from> → <to>)</summary>
-
-```diff
-<paste diff output>
-```
-
-</details>
 ````
 
 ---
@@ -351,3 +337,7 @@ git commit -s -m "docs: release <to> — blog post, docs snapshot, version prune
 - Omit `chore`, `ci`, `test`, and `refactor` commits from user-facing notes
 - If there are zero helm value changes, say so explicitly and reassure it is a drop-in upgrade
 - Do NOT create separate migration guide files — the upgrade guide lives inside the release post
+- Do NOT add a "Personal Impact Analysis" heading or a raw "Full Values Diff" dump. Any
+  values.yaml-specific guidance belongs in the runbook's "Apply values.yaml changes" step;
+  the categorized tables (Breaking/New Optional/Deprecated) already document the diff, so
+  don't also paste the raw diff

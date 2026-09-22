@@ -140,7 +140,7 @@ type mcp_tool        # RAG custom MCP tools (PUT /v1/mcp/custom-tools/<id>),
                      # distinct from the existing tool:<id> used by AgentGateway
 ```
 
-Both expose `manager: [user, service_account, team#admin, organization#admin]` so org admins are an explicit edge on the model — not just a runtime bypass. `buildDataSourceRelationshipTupleDiff` and `buildMcpToolRelationshipTupleDiff` (in `ui/src/lib/rbac/openfga-owned-resources.ts`) emit the same shared-teams diff that PR 3 introduced for `knowledge_base`. `mcp_tool` additionally emits the `user` relation on member tuples so team members get `can_call` (mirrors how `mcp_server` invokers are modelled).
+Both expose `manager: [user, service_account, team#member, team#admin, organization#admin]` so org admins are an explicit edge on the model — not just a runtime bypass. `buildDataSourceRelationshipTupleDiff` and `buildMcpToolRelationshipTupleDiff` (in `ui/src/lib/rbac/openfga-owned-resources.ts`) emit the same shared-teams diff that PR 3 introduced for `knowledge_base`, with the owner team's `manager` grant written to `team#member` (not `team#admin`) via the `ownerTeamManagerViaMember` opt-in — any owner-team member can manage, not just its admins. `mcp_tool` additionally emits the `user` relation on member tuples so team members get `can_call` (mirrors how `mcp_server` invokers are modelled).
 
 The BFF (`ui/src/app/api/rag/[...path]/route.ts`) now writes `mcp_tool:<tool_id>` tuples on a successful `PUT /v1/mcp/custom-tools/<tool_id>` (sourcing the owner team slug from the request body) and filters the `GET /v1/mcp/custom-tools` response by `mcp_tool:<id>#can_read`. Org admins bypass via the PR 1 super-grant; non-admins only see tools they have a tuple on.
 
@@ -501,7 +501,18 @@ email claim. New relationship writers should prefer Keycloak `sub` values.
 The UI auth middleware also persists the verified Keycloak subject into
 MongoDB `users.keycloak_sub` and `users.metadata.keycloak_sub` during session or
 bearer authentication. This gives migrations and admin tooling a durable
-email-to-sub mapping without depending on transient session cookies.
+email-to-sub mapping without depending on transient session cookies. It also
+reconciles conversation owner identity (see above) as part of the same write.
+Because Bearer/service-account callers re-authenticate the same static token
+on every request — with no cookie-based session cache to skip the call
+outright — this persistence is debounced per Keycloak subject + email:
+concurrent or repeated calls for the same identity within a short window
+(10s) share one in-flight write instead of each re-issuing the
+`users.updateOne` and conversation-owner-identity `updateMany`. Without this,
+a burst of concurrent requests from one service-account identity (e.g. a
+smoke-test suite opening several conversations in parallel) can trigger
+MongoDB write contention (`Concurrent operations on the same resource`) that
+starves the event loop long enough to time out unrelated PDP decision calls.
 
 For browser sessions, the Web UI backend forwards the Keycloak access token to
 Dynamic Agents when it is present so the runtime can bind
@@ -609,6 +620,75 @@ split rests on — bulk evaluation summarizes, a real attempt does not.
 Bulk-evaluation denials are deliberately excluded from `topDenied` in
 `/api/admin/authz/stats`: a filter's `resource_ref` is the collection, so they
 would crowd out the per-resource denials that indicate an actual access problem.
+
+#### Reverse lookup: `listAccessible` vs. `authorizeMany`
+
+`authorizeMany` still checks every candidate — one PDP round-trip per id
+(bounded-parallel, so cheap for a small set), collapsed into a single audit
+row. For `filterResourcesByPermission`'s and `filterAccessibleWorkflowConfigs`'s
+own core use — filtering the **whole catalog** (agents, MCP servers, workflow
+configs) down to what one subject can see, before pagination — that meant
+OpenFGA load scaled with catalog size on every page load, not just audit
+volume: rendering the agents list checked every agent in the org, every time,
+regardless of how many the subject could actually see.
+
+`listAccessible` asks the PDP once for the subject's *whole* accessible set of
+a type (`PolicyEngine.listObjects`, OpenFGA's `list-objects`) and intersects it
+with the candidate list in memory — one PDP call regardless of catalog size.
+Audited as one row carrying `list_objects: true` (same `evaluated_count` /
+`allowed_count` / `denied_count` / `allowed_ids` shape as a `batch` row, so
+`/api/admin/authz/stats` reads both identically); `denied_reasons` is always a
+single `NO_CAPABILITY` (or `AUTHZ_UNAVAILABLE`) bucket, since a reverse lookup
+has no per-candidate reason to report.
+
+**Only correct where the relation is a pure relationship-graph computation** —
+no `condition`s, no contextual tuples the caller would need to pass, and no
+product-policy `preCheck` (see `PolicyEngine.listObjects`'s doc comment and
+`compose()`'s `listObjects` passthrough). Verified against `deploy/openfga/model.fga`
+for `agent`, `mcp_server`, and `task` before this was wired in. **Org admins are
+unaffected either way**: both functions check the `organization#manage`
+org-admin bypass *before* reaching either `authorizeMany` or `listAccessible`,
+so admins always see the full catalog regardless of which one is used.
+
+**`listAccessible` self-selects the strategy — callers don't have to.**
+`filterResourcesByPermission` is shared by both true pre-pagination catalog
+scans (agents, MCP servers) *and* callers with an already-small candidate list
+(a single-id lookup by `?id=`, or a page already sliced before the filter
+runs, e.g. `llm-models`). A reverse expansion of the subject's whole accessible
+set is not guaranteed to be cheaper than a few direct checks — for a
+broadly-authorized subject it can cost more. Below
+`LIST_OBJECTS_MIN_CANDIDATES` (default 100 — the API's own hard cap on
+`page_size`, so every already-paginated or single-item caller stays under it
+by construction), `listAccessible` delegates to `authorizeMany`'s per-candidate
+batch instead of calling `listObjects` at all; only a candidate list larger
+than one page — an actual catalog scan — crosses the threshold. This is a
+runtime decision inside `listAccessible` itself, not something each call site
+has to opt into.
+
+**Not migrated — never routed through `listAccessible`, structurally:**
+
+- `resolveAgentListPermissions` / `resolveMcpServerListPermissions` — call
+  `authorizeMany` directly, not through `filterResourcesByPermission`. Already
+  bounded to a page (~20–50 ids) by the caller; no reason to route them
+  through the threshold check at all.
+- `POST /api/authz/v1/decisions/batch` — an external caller supplies up to
+  200 arbitrary ids per call (`MAX_IDS`). Unlike the catalog-scan case, there
+  is no guarantee the accessible set is small relative to the candidate list,
+  so the efficiency trade is unclear without production measurement. Left on
+  `authorizeMany`.
+
+:::warning listObjectsCache must stay invalidated alongside decisionCache
+Both caches must be cleared together on every relationship-graph mutation, or
+a revoked catalog permission can be served stale (or a newly-granted one
+withheld) for up to the read-cache TTL — a real regression, not just a
+missed optimization, since `filterResourcesByPermission` used to reflect a
+grant/revoke immediately via `decisionCache`. `invalidateDecisionCache()` in
+`engines/openfga.ts` is the **only** place that should ever clear either
+cache; `grant`/`revoke` and `reconcile.ts`'s tuple-diff writes all route
+through it precisely so the two caches can't drift apart again. Reaching for
+`decisionCache.clear()` directly anywhere else is how this regression
+happened the first time.
+:::
 
 Counts live in process memory, so a restart can drop an unflushed window. That
 undercounts an allow metric and never loses a denial or a policy change. The
@@ -1100,7 +1180,8 @@ Webex space ReBAC follows the same team-ownership shape with Webex-specific type
 of truth, while `webex_space_agent_routes` stores dependent dispatch metadata
 such as listen mode, priority, and enabled state. Team-space assignment writes
 `team:<slug>#member user webex_space:<workspace>--<space>` and
-`team:<slug>#admin manager webex_space:<workspace>--<space>`, and per-space
+`team:<slug>#member manager webex_space:<workspace>--<space>` (any owner-team
+member can manage, not just its admins), and per-space
 grant/route/diagnostic APIs check the derived Webex space permissions. The top-level
 Webex space list is also resource-scoped, and the Integrations → Webex tab appears
 for non-admin users who can manage at least one concrete `webex_space`. The Webex bot never trusts
@@ -1140,7 +1221,7 @@ grants, rolls back on failure, and never overwrites an existing active space
 mapping. The onboarding writer
 (`webex-space-onboarding.ts`) also emits the inbound
 `team:<slug>#member user webex_space:<workspace>--<space>` and
-`team:<slug>#admin manager webex_space:<workspace>--<space>` visibility tuples
+`team:<slug>#member manager webex_space:<workspace>--<space>` visibility tuples
 so the space surfaces in `/api/admin/webex/spaces` (which filters each row by
 `can_read`). Previously-onboarded spaces are backfilled by the same
 `messaging_team_visibility_v1` migration that handles Slack channels — both
