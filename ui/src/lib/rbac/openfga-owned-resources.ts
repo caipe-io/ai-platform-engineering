@@ -753,6 +753,7 @@ export function buildIngestionSourceRelationshipTupleDiff(
     nextSharedTeamSlugs: input.nextSharedTeamSlugs,
     previousSharedTeamSlugs: input.previousSharedTeamSlugs,
     previousOwnerTeamSlug: input.previousOwnerTeamSlug,
+    ownerTeamManagerViaMember: true,
   });
 
   const object = `ingestion_source:${input.sourceId}`;

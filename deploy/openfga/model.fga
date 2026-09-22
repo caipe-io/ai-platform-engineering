@@ -15,6 +15,7 @@
 #   team:<slug>#member can_manage rag_collection:<collection_id>
 #   team:<slug>#member can_manage mcp_tool:<tool_id>
 #   team:<slug>#member can_manage webex_space:<workspace_id>--<space_id>
+#   team:<slug>#member can_manage ingestion_source:<source_id>
 #
 # Team relation semantics:
 #   - `admin` is a raw relation written when a user is granted team admin.
@@ -382,7 +383,7 @@ type ingestion_source
     define creator: [user]
     define owner: [user, service_account]
     define reader: [user, user:*, service_account, team#member, team#admin, external_group#member]
-    define manager: [user, service_account, team#admin, organization#admin]
+    define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read
     define can_read: reader or can_manage or owner
