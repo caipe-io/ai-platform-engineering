@@ -16,7 +16,7 @@ dependencies = [
     # `ai_platform_engineering/agents/*/uv.lock` so the platform image
     # cannot drift from sub-agents.
     "cachetools==7.1.7",
-    "cnoe-agent-utils==0.4.2",
+    "cnoe-agent-utils==0.5.0",
     "cryptography==50.0.1",
     "fastapi==0.141.1",
     "httpx==0.28.1",

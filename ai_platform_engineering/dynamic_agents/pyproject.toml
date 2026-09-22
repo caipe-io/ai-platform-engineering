@@ -9,7 +9,7 @@ dependencies = [
     "deepagents==0.6.8",
     "langchain-mcp-adapters==0.3.2",
     "langgraph-checkpoint-mongodb==0.4.0",
-    "cnoe-agent-utils==0.4.2",
+    "cnoe-agent-utils==0.5.0",
     "pymongo==4.16.0",
     "pydantic==2.13.4",
     "pydantic-settings==2.15.0",
@@ -62,5 +62,5 @@ dev = [
 
 [tool.uv]
 constraint-dependencies = ["click==8.5.0", "starlette==1.6.0", "langchain-aws==1.5.0"]
-# cnoe-agent-utils 0.4.2 still pins 1.4.3, which is affected by GHSA-gr75-jv2w-4656.
+# cnoe-agent-utils 0.5.0 still pins 1.4.3, which is affected by GHSA-gr75-jv2w-4656.
 override-dependencies = ["langchain-anthropic==1.4.6"]
