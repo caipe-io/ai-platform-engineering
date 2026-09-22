@@ -2,13 +2,19 @@
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from deepagents import create_deep_agent
+from deepagents.graph import DeepAgentState
+from deepagents.middleware.filesystem import FilesystemState
 from fastapi import HTTPException
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.serde.types import _DeltaSnapshot
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pymongo.errors import DuplicateKeyError
@@ -21,6 +27,99 @@ from dynamic_agents.services import autonomous_follow_up as service
 
 class ChatState(TypedDict):
     messages: Annotated[list, add_messages]
+
+
+class DeltaChatState(FilesystemState, DeepAgentState):
+    """Use the same message/file channels as the production Deep Agents graph."""
+
+
+class MongoHistoryMemorySaver(MemorySaver):
+    """Exercise the parent-chain replay implementation used by MongoDBSaver."""
+
+    get_delta_channel_history = BaseCheckpointSaver.get_delta_channel_history
+
+
+class ToolBindingFakeModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "ToolBindingFakeModel":
+        return self
+
+
+@pytest.mark.parametrize("saver_class", [MemorySaver, MongoHistoryMemorySaver])
+@pytest.mark.parametrize("snapshot_frequency", [1, 50])
+def test_branch_reconstructs_delta_messages_and_files_without_later_replies(
+    saver_class: type[MemorySaver], snapshot_frequency: int,
+) -> None:
+    saver = saver_class()
+    builder = StateGraph(DeltaChatState)
+    for name in ("messages", "files"):
+        builder.channels[name] = builder.channels[name].copy()
+        builder.channels[name].snapshot_frequency = snapshot_frequency
+    builder.add_node("answer", lambda state: {
+        "messages": [AIMessage(id=f"answer:{state['messages'][-1].id}", content=f"Answer: {state['messages'][-1].content}")],
+        "files": {"/result.txt": {"content": [state["messages"][-1].content]}},
+    })
+    builder.add_edge(START, "answer")
+    builder.add_edge("answer", END)
+    graph = builder.compile(checkpointer=saver)
+    source = {"configurable": {"thread_id": "automated", "checkpoint_ns": ""}}
+    branch = {"configurable": {"thread_id": "manual", "checkpoint_ns": ""}}
+    graph.invoke({"messages": [HumanMessage(id="original", content="original run")]}, source)
+    original = saver.get_tuple(source)
+    if snapshot_frequency == 50:
+        assert "messages" not in original.checkpoint["channel_values"]
+        assert "files" not in original.checkpoint["channel_values"]
+    else:
+        assert isinstance(original.checkpoint["channel_values"]["messages"], _DeltaSnapshot)
+        assert isinstance(original.checkpoint["channel_values"]["files"], _DeltaSnapshot)
+    graph.invoke({"messages": [HumanMessage(id="later", content="later reply")]}, source)
+    source_before = graph.get_state(source).values
+
+    checkpoint_id = service.copy_run_checkpoint(saver, "automated", "manual", original.checkpoint["ts"])
+
+    assert checkpoint_id == original.checkpoint["id"]
+    copied = graph.get_state(branch).values
+    assert [message.content for message in copied["messages"]] == ["original run", "Answer: original run"]
+    assert copied["files"]["/result.txt"]["content"] == ["original run"]
+    assert saver.get_tuple(branch).parent_config is None
+    # The fork must remain readable even after the source history expires.
+    saver.delete_thread("automated")
+    graph.invoke({"messages": [HumanMessage(id="manual", content="manual reply")]}, branch)
+    assert [message.content for message in graph.get_state(branch).values["messages"]] == [
+        "original run", "Answer: original run", "manual reply", "Answer: manual reply",
+    ]
+    assert [message.content for message in source_before["messages"]][-2:] == [
+        "later reply", "Answer: later reply",
+    ]
+
+
+def test_real_deep_agent_can_continue_a_copied_run_with_tool_history_and_files() -> None:
+    saver = MongoHistoryMemorySaver()
+    model = ToolBindingFakeModel(responses=[
+        AIMessage(content="", tool_calls=[{
+            "id": "write-result", "name": "write_file",
+            "args": {"file_path": "/result.txt", "content": "Saved result"},
+        }]),
+        AIMessage(content="Original result"),
+        AIMessage(content="Follow-up result"),
+    ])
+    graph = create_deep_agent(model=model, checkpointer=saver)
+    source = {"configurable": {"thread_id": "automated", "checkpoint_ns": ""}}
+    branch = {"configurable": {"thread_id": "manual", "checkpoint_ns": ""}}
+    graph.invoke({"messages": [HumanMessage(content="Write the result to a file")]}, source)
+    original = saver.get_tuple(source)
+    source_before = graph.get_state(source).values
+    assert "messages" not in original.checkpoint["channel_values"]
+
+    service.copy_run_checkpoint(saver, "automated", "manual", original.checkpoint["ts"])
+    assert graph.get_state(branch).values["files"]["/result.txt"]["content"] == "Saved result"
+    graph.invoke({"messages": [HumanMessage(content="Explain that result")]}, branch)
+
+    messages = graph.get_state(branch).values["messages"]
+    assert [message.type for message in messages] == ["human", "ai", "tool", "ai", "human", "ai"]
+    assert [message.content for message in messages][-3:] == [
+        "Original result", "Explain that result", "Follow-up result",
+    ]
+    assert graph.get_state(source).values == source_before
 
 
 def test_branch_copies_completed_run_and_excludes_later_replies() -> None:
@@ -39,11 +138,17 @@ def test_branch_copies_completed_run_and_excludes_later_replies() -> None:
     source_before = graph.get_state(source).values
 
     checkpoint_id = service.copy_run_checkpoint(saver, "automated", "manual", cutoff)
+    # An older inline-message checkpoint is continued by today's delta runtime.
+    branch_builder = StateGraph(DeepAgentState)
+    branch_builder.add_node("answer", lambda state: {"messages": [AIMessage(content=f"Answer: {state['messages'][-1].content}")]})
+    branch_builder.add_edge(START, "answer")
+    branch_builder.add_edge("answer", END)
+    branch_graph = branch_builder.compile(checkpointer=saver)
     assert checkpoint_id == original.checkpoint["id"]
-    assert [m.content for m in graph.get_state(branch).values["messages"]] == ["original run", "Answer: original run"]
-    graph.invoke({"messages": [HumanMessage(content="manual reply")]}, branch)
+    assert [m.content for m in branch_graph.get_state(branch).values["messages"]] == ["original run", "Answer: original run"]
+    branch_graph.invoke({"messages": [HumanMessage(content="manual reply")]}, branch)
     assert graph.get_state(source).values == source_before
-    assert [m.content for m in graph.get_state(branch).values["messages"]][-2:] == ["manual reply", "Answer: manual reply"]
+    assert [m.content for m in branch_graph.get_state(branch).values["messages"]][-2:] == ["manual reply", "Answer: manual reply"]
     assert saver.get_tuple(branch).config["configurable"]["thread_id"] != "automated"
 
 
@@ -65,6 +170,26 @@ def test_pending_tool_calls_are_not_replayed() -> None:
     with pytest.raises(HTTPException, match="tool execution"):
         service.copy_run_checkpoint(saver, "source", "manual", "2026-09-01T10:01:00Z")
     saver.put.assert_not_called()
+
+
+def test_delta_backed_unfinished_tool_call_cannot_be_continued() -> None:
+    saver = MongoHistoryMemorySaver()
+    builder = StateGraph(DeepAgentState)
+    builder.add_node("call_tool", lambda state: {"messages": [
+        AIMessage(content="", tool_calls=[{"id": "call", "name": "write", "args": {}}]),
+    ]})
+    builder.add_edge(START, "call_tool")
+    builder.add_edge("call_tool", END)
+    graph = builder.compile(checkpointer=saver)
+    source = {"configurable": {"thread_id": "source", "checkpoint_ns": ""}}
+    graph.invoke({"messages": [HumanMessage(content="Write a result")]}, source)
+    checkpoint = saver.get_tuple(source).checkpoint
+    assert "messages" not in checkpoint["channel_values"]
+
+    with pytest.raises(HTTPException, match="tool execution"):
+        service.copy_run_checkpoint(saver, "source", "manual", checkpoint["ts"])
+
+    assert saver.get_tuple({"configurable": {"thread_id": "manual", "checkpoint_ns": ""}}) is None
 
 
 def test_millisecond_precision_of_run_finish_keeps_final_snapshot() -> None:

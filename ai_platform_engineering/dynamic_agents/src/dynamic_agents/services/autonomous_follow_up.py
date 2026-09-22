@@ -6,9 +6,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from deepagents.graph import DeepAgentState
+from deepagents.middleware.filesystem import FilesystemState
 from fastapi import HTTPException
-from langgraph.checkpoint.base import BaseCheckpointSaver, empty_checkpoint
+from langgraph.channels.delta import DeltaChannel
+from langgraph.checkpoint.base import BaseCheckpointSaver, CheckpointTuple, empty_checkpoint
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
+from langgraph.checkpoint.serde.types import _DeltaSnapshot
+from langgraph.graph import StateGraph
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
@@ -18,6 +23,38 @@ from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
 from dynamic_agents.services.mongo import MongoDBService
 
 logger = logging.getLogger(__name__)
+
+# Read the runtime's channel definitions without initializing a model or MCP
+# clients. Their reducers handle message removal, overwrites, and file deletion.
+_RUN_DELTA_CHANNELS = {
+    name: channel
+    for schema in (FilesystemState, DeepAgentState)
+    for name, channel in StateGraph(schema).channels.items()
+    if isinstance(channel, DeltaChannel)
+}
+
+
+def _materialize_run_state(saver: BaseCheckpointSaver, entry: CheckpointTuple) -> dict[str, Any]:
+    """Produce standalone values, not deltas that depend on the source thread."""
+    values = deepcopy(entry.checkpoint.get("channel_values", {}))
+    channels = {
+        name: channel for name, channel in _RUN_DELTA_CHANNELS.items()
+        if name in values or name in entry.checkpoint.get("channel_versions", {})
+    }
+    missing = [name for name in channels if name not in values]
+    histories = saver.get_delta_channel_history(config=entry.config, channels=missing) if missing else {}
+    for name, spec in channels.items():
+        if name in values:
+            # Handles both periodic delta snapshots and legacy inline values.
+            channel = spec.from_checkpoint(values[name])
+        else:
+            history = histories[name]
+            channel = spec.from_checkpoint(deepcopy(history.get("seed", spec.typ())))
+            # The saver follows this checkpoint's parents only and excludes
+            # its own pending writes, which belong to subsequent execution.
+            channel.replay_writes(deepcopy(history["writes"]))
+        values[name] = channel.get()
+    return values
 
 
 def _utc(value: datetime | str) -> datetime:
@@ -44,11 +81,18 @@ def copy_run_checkpoint(
     for entry in saver.list({"configurable": {"thread_id": source_id, "checkpoint_ns": ""}}):
         if _utc(entry.checkpoint["ts"]) <= cutoff:
             checkpoint = deepcopy(entry.checkpoint)
+            checkpoint["channel_values"] = _materialize_run_state(saver, entry)
             messages = checkpoint.get("channel_values", {}).get("messages", [])
             if not messages:
                 raise HTTPException(409, "This run has no saved conversation context.")
             if checkpoint.get("pending_sends") or getattr(messages[-1], "tool_calls", None):
                 raise HTTPException(409, "This run stopped during tool execution and cannot be continued safely.")
+            # Snapshot envelopes mark these as current delta-channel state,
+            # not legacy values that may already subsume the next step's writes.
+            # The destination must not depend on any source-thread ancestors.
+            for name in _RUN_DELTA_CHANNELS:
+                if name in checkpoint["channel_values"]:
+                    checkpoint["channel_values"][name] = _DeltaSnapshot(checkpoint["channel_values"][name])
             # LangGraph sorts checkpoint IDs chronologically; use its generator.
             fresh = empty_checkpoint()
             checkpoint["id"] = fresh["id"]

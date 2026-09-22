@@ -228,7 +228,7 @@ models:
 | `/api/v1/autonomous/tasks/{task_id}/runs/{run_id}/follow-up-chat` | POST | Create or reopen a private chat from the selected run's completed checkpoint |
 
 - Requires Autonomous eligibility and task ownership (or admin); creation also requires agent-use permission.
-- Copies the completed root checkpoint and available files into an independent context. No model execution occurs until the user sends a message in the new chat.
+- Reconstructs the completed run's checkpoint deltas (messages and in-checkpoint files) into a standalone snapshot, and copies available stored files into the independent context. No model execution occurs until the user sends a message in the new chat.
 - Repeated clicks reuse the caller's chat for that run; they never overwrite its context.
 - Requires the UI, Dynamic Agents, and Autonomous Agents to use the same MongoDB database for chat, task, and run records. Deploy both the UI and Dynamic Agents changes together.
 - Missing snapshots, unfinished tool calls, and custom shared filesystem namespaces return `409`; they never fall back to an empty or shared context.
