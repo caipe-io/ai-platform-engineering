@@ -501,7 +501,18 @@ email claim. New relationship writers should prefer Keycloak `sub` values.
 The UI auth middleware also persists the verified Keycloak subject into
 MongoDB `users.keycloak_sub` and `users.metadata.keycloak_sub` during session or
 bearer authentication. This gives migrations and admin tooling a durable
-email-to-sub mapping without depending on transient session cookies.
+email-to-sub mapping without depending on transient session cookies. It also
+reconciles conversation owner identity (see above) as part of the same write.
+Because Bearer/service-account callers re-authenticate the same static token
+on every request — with no cookie-based session cache to skip the call
+outright — this persistence is debounced per Keycloak subject + email:
+concurrent or repeated calls for the same identity within a short window
+(10s) share one in-flight write instead of each re-issuing the
+`users.updateOne` and conversation-owner-identity `updateMany`. Without this,
+a burst of concurrent requests from one service-account identity (e.g. a
+smoke-test suite opening several conversations in parallel) can trigger
+MongoDB write contention (`Concurrent operations on the same resource`) that
+starves the event loop long enough to time out unrelated PDP decision calls.
 
 For browser sessions, the Web UI backend forwards the Keycloak access token to
 Dynamic Agents when it is present so the runtime can bind
