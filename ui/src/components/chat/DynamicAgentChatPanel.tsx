@@ -11,9 +11,11 @@ import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/compone
 import { useAgentTimeline } from "@/hooks/useDynamicAgentTimeline";
 import { apiClient,APIClientError } from "@/lib/api-client";
 import { authErrorToastTitle,type AuthError } from "@/lib/auth-error";
+import { getDeterministicAgentThemeId } from "@/lib/agent-theme";
 import { getConfig } from "@/lib/config";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
 import { ACCEPT_ATTRIBUTE,fileToInputFile,type InputFile,validateFiles } from "@/lib/file-attachments";
+import { getGradientColors } from "@/lib/gradient-themes";
 import { takePendingFirstMessage } from "@/lib/pending-first-message";
 import { getStorageMode } from "@/lib/storage-config";
 import { createSubagentResumeSeedEvents } from "@/lib/resume-subagent-context";
@@ -24,7 +26,7 @@ import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig,ReasoningEffort } from "@/types/dynamic-agent";
-import { AnimatePresence,motion } from "framer-motion";
+import { AnimatePresence,motion,useReducedMotion } from "framer-motion";
 import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
@@ -54,6 +56,31 @@ interface QueuedMessage {
   id: string;
   text: string;
   files: InputFile[];
+}
+
+interface EffortStatus {
+  id: number;
+  text: string;
+  tone: "success" | "warning" | "error";
+}
+
+interface CommandPanelItem {
+  label: string;
+  description: string;
+  insertText: string;
+}
+
+interface CommandPanelSection {
+  title?: string;
+  items: CommandPanelItem[];
+}
+
+interface CommandPanelState {
+  id: number;
+  title: string;
+  message?: string;
+  loading?: boolean;
+  sections?: CommandPanelSection[];
 }
 
 function buildQueuedBatchPrompt(messages: QueuedMessage[]): string {
@@ -149,6 +176,14 @@ export function ChatPanel({
     return firstName || "You";
   }, [session?.user?.name]);
 
+  const maxEffortTheme = useMemo(
+    () => getGradientColors(
+      agentGradient || getDeterministicAgentThemeId(agentId),
+      agentCustomTheme,
+    ),
+    [agentCustomTheme, agentGradient, agentId],
+  );
+
   const [input, setInput] = useState("");
   const [hasRelinkedAgent, setHasRelinkedAgent] = useState(false);
   const relinkRestoresWriteAccess = hasRelinkedAgent && (
@@ -169,10 +204,18 @@ export function ChatPanel({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [maxEffortAnimationKey, setMaxEffortAnimationKey] = useState(0);
+  const [effortStatus, setEffortStatus] = useState<EffortStatus | null>(null);
+  const [commandPanel, setCommandPanel] = useState<CommandPanelState | null>(null);
+  const [commandPanelSelectedIndex, setCommandPanelSelectedIndex] = useState(0);
+  const prefersReducedMotion = useReducedMotion();
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
     agent?.model.reasoning_effort ?? "medium",
   );
   const [supportedReasoningEfforts, setSupportedReasoningEfforts] = useState<ReasoningEffort[] | null>(null);
+  const effortStatusSequenceRef = useRef(0);
+  const commandPanelSequenceRef = useRef(0);
+  const commandPanelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -357,11 +400,13 @@ export function ChatPanel({
     conversationIdOverride?: string,
   ): Promise<"changed" | "unsupported" | "error"> => {
     if (!supportedReasoningEfforts?.includes(effort)) {
-      toast(
-        `The selected model does not support changing reasoning effort. It will keep the provider default.`,
-        "warning",
-        6000,
-      );
+      if (source === "selector") {
+        toast(
+          `The selected model does not support changing reasoning effort. It will keep the provider default.`,
+          "warning",
+          6000,
+        );
+      }
       return "unsupported";
     }
 
@@ -384,10 +429,61 @@ export function ChatPanel({
       }
       return "changed";
     } catch {
-      toast("Could not save the reasoning effort. Try again.", "error", 5000);
+      if (source === "selector") {
+        toast("Could not save the reasoning effort. Try again.", "error", 5000);
+      }
       return "error";
     }
   }, [activeConversationId, agentId, createConversation, supportedReasoningEfforts, toast]);
+
+  const showEffortStatus = useCallback((
+    text: string,
+    tone: EffortStatus["tone"],
+  ) => {
+    effortStatusSequenceRef.current += 1;
+    setEffortStatus({
+      id: effortStatusSequenceRef.current,
+      text,
+      tone,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!effortStatus) return;
+    const timeout = window.setTimeout(() => setEffortStatus(null), 3600);
+    return () => window.clearTimeout(timeout);
+  }, [effortStatus]);
+
+  const showCommandPanel = useCallback((panel: Omit<CommandPanelState, "id">) => {
+    commandPanelSequenceRef.current += 1;
+    setCommandPanelSelectedIndex(0);
+    setCommandPanel({ id: commandPanelSequenceRef.current, ...panel });
+  }, []);
+
+  const selectCommandPanelItem = useCallback((item: CommandPanelItem) => {
+    setCommandPanel(null);
+    setInput(item.insertText);
+    window.setTimeout(() => {
+      const textarea = inputRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.selectionStart = item.insertText.length;
+      textarea.selectionEnd = item.insertText.length;
+    }, 0);
+  }, []);
+
+  const commandPanelItems = useMemo(
+    () => commandPanel?.sections?.flatMap((section) => section.items) ?? [],
+    [commandPanel],
+  );
+
+  useEffect(() => {
+    const selected = commandPanelRef.current?.querySelector<HTMLElement>(
+      `[data-command-panel-index="${commandPanelSelectedIndex}"]`,
+    );
+    selected?.scrollIntoView({ block: "nearest" });
+  }, [commandPanelSelectedIndex]);
+
   const editingMessageIndex = editingMessageId
     ? (conversation?.messages.findIndex((message) => message.id === editingMessageId) ?? -1)
     : -1;
@@ -1482,125 +1578,121 @@ export function ChatPanel({
     submitMessageBatch,
   ]);
 
-  // Handle /skills chat command: show skills configured on this agent
+  // Handle /skills locally so command output stays out of conversation context.
   const handleSkillsCommand = useCallback(async () => {
-    let convId = activeConversationId;
-    if (!convId) {
-      convId = await createConversation(agentId);
-    }
-
-    const turnId = `turn-${Date.now()}`;
-    addMessage(convId, { role: "user", content: "/skills" }, turnId);
-
-    updateConversationTitle(convId, "Agent Skills");
-
-    const msgId = addMessage(convId, { role: "assistant", content: "Loading skills..." }, turnId);
-
     if (!agentSkills || agentSkills.length === 0) {
-      updateMessage(convId, msgId, {
-        content: "This agent has no skills configured. You can add skills in the agent editor.",
-        isFinal: true,
+      showCommandPanel({
+        title: "Agent skills",
+        message: "This agent has no skills configured. You can add skills in the agent editor.",
       });
       return;
     }
 
+    showCommandPanel({ title: "Agent skills", message: "Loading skills…", loading: true });
     try {
       const res = await fetch("/api/skills", { credentials: "include" });
       if (!res.ok) {
-        updateMessage(convId, msgId, { content: "Skills are temporarily unavailable. Please try again later.", isFinal: true });
+        showCommandPanel({
+          title: "Agent skills",
+          message: "Skills are temporarily unavailable. Please try again later.",
+        });
         return;
       }
       const data = await res.json();
       const allSkills = data?.skills || [];
       const skillIdSet = new Set(agentSkills);
-      const filtered = allSkills.filter((s: { id: string }) => skillIdSet.has(s.id));
+      const filtered = allSkills.filter((skill: { id: string }) => skillIdSet.has(skill.id));
 
       if (filtered.length === 0) {
-        updateMessage(convId, msgId, {
-          content: `This agent has ${agentSkills.length} skill(s) configured but none could be resolved. They may have been deleted.`,
-          isFinal: true,
+        showCommandPanel({
+          title: "Agent skills",
+          message: `This agent has ${agentSkills.length} configured skill(s), but none could be resolved.`,
         });
         return;
       }
 
-      const lines = [
-        `**Agent Skills** (${filtered.length})\n`,
-        ...filtered.map((s: { title?: string; name?: string; description?: string; category?: string }) =>
-          `- **${s.title || s.name || "Untitled"}**: ${s.description || "No description"}${s.category ? ` *(${s.category})*` : ""}`
-        ),
-        "\n*These are the skills configured on this agent. Edit in the agent settings.*",
-      ];
-      updateMessage(convId, msgId, { content: lines.join("\n"), isFinal: true });
+      showCommandPanel({
+        title: `Agent skills (${filtered.length})`,
+        sections: [{
+          items: filtered.map((skill: { title?: string; name?: string; description?: string; category?: string }) => ({
+            label: skill.title || skill.name || "Untitled",
+            description: `${skill.description || "No description"}${skill.category ? ` · ${skill.category}` : ""}`,
+            insertText: `Use the ${skill.title || skill.name || "selected"} skill to `,
+          })),
+        }],
+      });
     } catch {
-      updateMessage(convId, msgId, { content: "Skills are temporarily unavailable. Please try again later.", isFinal: true });
+      showCommandPanel({
+        title: "Agent skills",
+        message: "Skills are temporarily unavailable. Please try again later.",
+      });
     }
-  }, [activeConversationId, createConversation, addMessage, updateMessage, updateConversationTitle, agentId, agentSkills]);
+  }, [agentSkills, showCommandPanel]);
 
   const handleEffortCommand = useCallback(async (argument: string) => {
-    let convId = activeConversationId;
-    if (!convId) convId = await createConversation(agentId);
-    const turnId = `turn-${Date.now()}`;
-    const command = `/effort${argument ? ` ${argument}` : ""}`;
-    addMessage(convId, { role: "user", content: command }, turnId);
-
     const normalized = argument.trim().toLowerCase();
     if (!["low", "medium", "high", "max"].includes(normalized)) {
-      addMessage(convId, {
-        role: "assistant",
-        content: `Usage: \`/effort <low|medium|high|max>\`. Current effort: **${reasoningEffort}**.`,
-        isFinal: true,
-      }, turnId);
+      showEffortStatus(
+        `Use /effort <low|medium|high|max>. Current effort: ${reasoningEffort}.`,
+        "warning",
+      );
       return;
     }
 
+    let convId = activeConversationId;
+    if (!convId) convId = await createConversation(agentId);
     const result = await persistReasoningEffort(
       normalized as ReasoningEffort,
       "command",
       convId,
     );
-    addMessage(convId, {
-      role: "assistant",
-      content: result === "changed"
-        ? `Reasoning effort changed to **${normalized}** for this chat.`
-        : result === "unsupported"
-          ? "This model does not support changing reasoning effort. The provider default is unchanged."
-          : "I couldn't save the reasoning effort. Try again.",
-      isFinal: true,
-    }, turnId);
-  }, [activeConversationId, addMessage, agentId, createConversation, persistReasoningEffort, reasoningEffort]);
-
-  // Handle /help command: show available commands in chat
-  const handleHelpCommand = useCallback(async () => {
-    let convId = activeConversationId;
-    if (!convId) {
-      convId = await createConversation(agentId);
+    if (result === "changed") {
+      if (normalized === "max") {
+        setMaxEffortAnimationKey((current) => current + 1);
+      } else {
+        showEffortStatus(`Reasoning effort changed to ${normalized} for this chat.`, "success");
+      }
+      return;
     }
-    const turnId = `turn-${Date.now()}`;
-    addMessage(convId, { role: "user", content: "/help" }, turnId);
-
-    // Set a descriptive title instead of "/help"
-    updateConversationTitle(convId, "Help & Commands");
-
-    const mcpLines = Object.entries(agent?.allowed_tools ?? {})
-      .filter(([, selection]) => selection !== false)
-      .map(([serverId]) => `- \`/@${serverId}\` — MCP server`);
-    const subagentLines = (agent?.subagents ?? []).map(
-      (subagent) => `- \`/@${subagent.name || subagent.agent_id}\` — ${subagent.description || "Configured subagent"}`,
+    showEffortStatus(
+      result === "unsupported"
+        ? "This model does not support changing reasoning effort."
+        : "Could not save the reasoning effort. Try again.",
+      result === "unsupported" ? "warning" : "error",
     );
-    const helpText = [
-      "**Available Commands**",
-      "",
-      "- `/skills` — List available skills",
-      "- `/effort <low|medium|high|max>` — Set reasoning effort for this chat",
-      "- `/help` — Show this help message",
-      "- `/clear` — Start a new conversation and reset context",
-      "",
-      ...(mcpLines.length ? ["**MCP Servers**", "", ...mcpLines, ""] : []),
-      ...(subagentLines.length ? ["**Subagents**", "", ...subagentLines] : []),
-    ].join("\n");
+  }, [activeConversationId, agentId, createConversation, persistReasoningEffort, reasoningEffort, showEffortStatus]);
 
-    addMessage(convId, { role: "assistant", content: helpText, isFinal: true }, turnId);
-  }, [activeConversationId, agent, agentId, createConversation, addMessage, updateConversationTitle]);
+  // Handle /help locally so its reference list does not become model context.
+  const handleHelpCommand = useCallback(() => {
+    const mcpItems = Object.entries(agent?.allowed_tools ?? {})
+      .filter(([, selection]) => selection !== false)
+      .map(([serverId]) => ({
+        label: `/@${serverId}`,
+        description: "MCP server",
+        insertText: `@${serverId} `,
+      }));
+    const subagentItems = (agent?.subagents ?? []).map((subagent) => ({
+      label: `/@${subagent.name || subagent.agent_id}`,
+      description: subagent.description || "Configured subagent",
+      insertText: `@${subagent.name || subagent.agent_id} `,
+    }));
+
+    showCommandPanel({
+      title: "Available commands",
+      sections: [
+        {
+          items: [
+            { label: "/skills", description: "List available skills", insertText: "/skills" },
+            { label: "/effort <low|medium|high|max>", description: "Set reasoning effort for this chat", insertText: "/effort " },
+            { label: "/help", description: "Show this help panel", insertText: "/help" },
+            { label: "/clear", description: "Start a new conversation and reset context", insertText: "/clear" },
+          ],
+        },
+        ...(mcpItems.length ? [{ title: "MCP servers", items: mcpItems }] : []),
+        ...(subagentItems.length ? [{ title: "Subagents", items: subagentItems }] : []),
+      ],
+    });
+  }, [agent, showCommandPanel]);
 
   // Handle /clear command
   const handleClearCommand = useCallback(async () => {
@@ -1980,6 +2072,7 @@ export function ChatPanel({
   // Handle slash command detection in input
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
+    setCommandPanel(null);
     setInput(newValue);
 
     const cursorPos = e.target.selectionStart;
@@ -2051,6 +2144,31 @@ export function ChatPanel({
   }, [input, executeSlashCommand, submitMessage, activeConversationId, updateConversationTitle]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (commandPanel) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setCommandPanel(null);
+        return;
+      }
+      if (commandPanelItems.length > 0 && e.key === "ArrowDown") {
+        e.preventDefault();
+        setCommandPanelSelectedIndex((current) => (current + 1) % commandPanelItems.length);
+        return;
+      }
+      if (commandPanelItems.length > 0 && e.key === "ArrowUp") {
+        e.preventDefault();
+        setCommandPanelSelectedIndex(
+          (current) => (current - 1 + commandPanelItems.length) % commandPanelItems.length,
+        );
+        return;
+      }
+      if (commandPanelItems.length > 0 && e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        selectCommandPanelItem(commandPanelItems[commandPanelSelectedIndex]);
+        return;
+      }
+    }
+
     // Slash menu keyboard navigation
     if (showSlashMenu) {
       const filtered = getFilteredCommands(slashCommands, slashFilter);
@@ -2488,6 +2606,80 @@ export function ChatPanel({
           )}
 
           <div className="relative">
+            <AnimatePresence initial={false} mode="wait">
+              {commandPanel && (
+                <motion.div
+                  ref={commandPanelRef}
+                  key={commandPanel.id}
+                  role="status"
+                  aria-live="polite"
+                  className="absolute bottom-[calc(100%+0.5rem)] left-0 z-50 w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-popover/95 text-popover-foreground shadow-2xl backdrop-blur"
+                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 5, scale: 0.99 }}
+                  transition={{ duration: 0.18 }}
+                >
+                  <div className="flex items-center justify-between border-b border-border/70 px-4 py-2.5">
+                    <span className="text-sm font-semibold">{commandPanel.title}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCommandPanel(null)}
+                      className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      aria-label="Close command panel"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto px-4 py-3">
+                    {commandPanel.loading ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        {commandPanel.message}
+                      </div>
+                    ) : commandPanel.message ? (
+                      <p className="text-sm text-muted-foreground">{commandPanel.message}</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {commandPanel.sections?.map((section, sectionIndex) => (
+                          <section key={`${section.title ?? "items"}-${sectionIndex}`}>
+                            {section.title && (
+                              <h4 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                {section.title}
+                              </h4>
+                            )}
+                            <div className="space-y-1">
+                              {section.items.map((item) => {
+                                const flatIndex = commandPanelItems.indexOf(item);
+                                const isSelected = flatIndex === commandPanelSelectedIndex;
+                                return (
+                                  <button
+                                    key={`${item.label}-${item.description}`}
+                                    type="button"
+                                    data-command-panel-index={flatIndex}
+                                    aria-current={isSelected ? "true" : undefined}
+                                    onMouseEnter={() => setCommandPanelSelectedIndex(flatIndex)}
+                                    onClick={() => selectCommandPanelItem(item)}
+                                    className={cn(
+                                      "flex w-full gap-3 rounded-md px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                      isSelected ? "bg-primary/10" : "hover:bg-muted/60",
+                                    )}
+                                    title={`Insert ${item.label}`}
+                                  >
+                                    <code className="shrink-0 text-xs font-semibold text-foreground">{item.label}</code>
+                                    <span className="min-w-0 text-xs text-muted-foreground">{item.description}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Slash command autocomplete menu */}
             <SlashCommandMenu
               filter={slashFilter}
@@ -2508,6 +2700,88 @@ export function ChatPanel({
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
+              {maxEffortAnimationKey > 0 && (
+                <div
+                  key={`max-effort-armor-${maxEffortAnimationKey}`}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-xl"
+                  data-testid="max-effort-animation"
+                >
+                  {!prefersReducedMotion && (
+                    <>
+                      <motion.span
+                        className="absolute inset-y-1 left-0 w-[calc(50%+4rem)] rounded-r-xl border-y border-l border-white/20"
+                        style={{
+                          background: `linear-gradient(115deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
+                          boxShadow: `inset 0 0 18px rgb(255 255 255 / 0.24), 0 0 14px ${maxEffortTheme.to}`,
+                        }}
+                        initial={{ opacity: 0, x: "-105%" }}
+                        animate={{
+                          opacity: [0, 0.46, 0.38, 0.28, 0],
+                          x: ["-105%", "0%", "0%", "105%", "205%"],
+                        }}
+                        transition={{ duration: 2.4, times: [0, 0.2, 0.4, 0.78, 1], ease: "easeInOut" }}
+                      />
+                      <motion.span
+                        className="absolute inset-y-1 right-0 w-[calc(50%+4rem)] rounded-l-xl border-y border-r border-white/20"
+                        style={{
+                          background: `linear-gradient(245deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
+                          boxShadow: `inset 0 0 18px rgb(255 255 255 / 0.24), 0 0 14px ${maxEffortTheme.to}`,
+                        }}
+                        initial={{ opacity: 0, x: "105%" }}
+                        animate={{
+                          opacity: [0, 0.46, 0.38, 0.28, 0],
+                          x: ["105%", "0%", "0%", "-105%", "-205%"],
+                        }}
+                        transition={{ duration: 2.4, times: [0, 0.2, 0.4, 0.78, 1], ease: "easeInOut" }}
+                      />
+
+                      <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center text-sm font-black tracking-tight">
+                        {[
+                          { letter: "M", x: [0, 0, -24, -52] },
+                          { letter: "A", x: [0, 0, 0, 0] },
+                          { letter: "X", x: [0, 0, 24, 52] },
+                        ].map(({ letter, x }) => (
+                          <motion.span
+                            key={letter}
+                            style={{
+                              color: maxEffortTheme.to,
+                              textShadow: `0 0 10px ${maxEffortTheme.from}, 0 1px 0 rgb(255 255 255 / 0.65)`,
+                            }}
+                            initial={{ opacity: 0, scale: 0.7, x: 0 }}
+                            animate={{
+                              opacity: [0, 1, 1, 0],
+                              scale: [0.7, 1.12, 1, 0.94],
+                              x,
+                            }}
+                            transition={{
+                              delay: 0.4,
+                              duration: 1.55,
+                              times: [0, 0.16, 0.62, 1],
+                              ease: "easeInOut",
+                            }}
+                          >
+                            {letter}
+                          </motion.span>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <motion.span
+                    className="absolute inset-0 rounded-xl border-2"
+                    style={{ borderColor: maxEffortTheme.to }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: prefersReducedMotion ? [0, 0.75, 0] : [0, 1, 0.55, 0] }}
+                    transition={{
+                      delay: prefersReducedMotion ? 0 : 0.42,
+                      duration: prefersReducedMotion ? 0.55 : 1.65,
+                      times: prefersReducedMotion ? [0, 0.5, 1] : [0, 0.22, 0.7, 1],
+                      ease: "easeInOut",
+                    }}
+                  />
+                </div>
+              )}
+
               {/* Hidden native picker driven by the paperclip button. */}
               <input
                 ref={fileInputRef}
@@ -2521,7 +2795,30 @@ export function ChatPanel({
               {/* Staged attachment previews (above the input row). */}
               <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
 
-              <div className="flex items-center gap-3">
+              <div className="relative z-20 flex items-end gap-3">
+                <AnimatePresence initial={false} mode="wait">
+                  {effortStatus && (
+                    <motion.span
+                      key={effortStatus.id}
+                      role="status"
+                      aria-live="polite"
+                      className={cn(
+                        "absolute left-3 right-64 top-0 truncate text-[11px] font-medium max-sm:right-44",
+                        effortStatus.tone === "error"
+                          ? "text-destructive"
+                          : effortStatus.tone === "warning"
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-muted-foreground",
+                      )}
+                      initial={{ opacity: 0, y: 3 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -3 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      {effortStatus.text}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
                 <TextareaAutosize
                   ref={inputRef}
                   aria-label="Message"
@@ -2538,40 +2835,67 @@ export function ChatPanel({
                   minRows={1}
                   maxRows={10}
                 />
-                {/* Attach files */}
-                <Button
-                  size="icon"
-                  onClick={() => fileInputRef.current?.click()}
-                  variant="ghost"
-                  className="shrink-0"
-                  title="Attach files"
-                  aria-label="Attach files"
-                >
-                  <Paperclip className="h-4 w-4" />
-                </Button>
-                {/* Send/Stop button - toggles based on streaming state */}
-                {isThisConversationStreaming ? (
-                  <Button
-                    size="icon"
-                    onClick={handleStop}
-                    variant="destructive"
-                    className="shrink-0"
-                    title="Stop generating"
+                <div className="relative flex shrink-0 items-center gap-2 pt-5">
+                  <span
+                    className="absolute right-0 top-0 flex max-w-56 items-center gap-1 whitespace-nowrap text-[10px] font-medium text-muted-foreground max-sm:max-w-40"
+                    title={`${agent?.model.id || "Model"} · ${reasoningEffort}`}
+                    data-testid="composer-model-effort"
                   >
-                    <Square className="h-4 w-4" />
-                  </Button>
-                ) : (
-                  <Button
-                    size="icon"
-                    onClick={() => handleSubmit(false)}
-                    disabled={!input.trim() && attachments.length === 0}
-                    variant="default"
-                    className="shrink-0"
-                    title="Send message"
-                  >
-                    <Send className="h-4 w-4" />
-                  </Button>
-                )}
+                    <span className="truncate">{agent?.model.id || "Model"}</span>
+                    <span aria-hidden="true">·</span>
+                    <span
+                      className={cn("text-foreground/80", reasoningEffort === "max" && "font-bold")}
+                      style={reasoningEffort === "max"
+                        ? {
+                            background: `linear-gradient(90deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
+                            backgroundClip: "text",
+                            color: "transparent",
+                            WebkitBackgroundClip: "text",
+                            WebkitTextFillColor: "transparent",
+                          }
+                        : undefined}
+                    >
+                      {reasoningEffort}
+                    </span>
+                  </span>
+
+                  {/* Attach files */}
+                  <div className="shrink-0">
+                    <Button
+                      size="icon"
+                      onClick={() => fileInputRef.current?.click()}
+                      variant="ghost"
+                      title="Attach files"
+                      aria-label="Attach files"
+                    >
+                      <Paperclip className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {/* Send/Stop button - toggles based on streaming state */}
+                  <div className="shrink-0">
+                    {isThisConversationStreaming ? (
+                      <Button
+                        size="icon"
+                        onClick={handleStop}
+                        variant="destructive"
+                        title="Stop generating"
+                      >
+                        <Square className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button
+                        size="icon"
+                        onClick={() => handleSubmit(false)}
+                        disabled={!input.trim() && attachments.length === 0}
+                        variant="default"
+                        title="Send message"
+                      >
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -2582,10 +2906,9 @@ export function ChatPanel({
               {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
             </p>
             {showContextUsage && contextUsage && (
-              <ContextUsageIndicator
-                className="absolute right-0"
-                usage={contextUsage}
-              />
+              <div className="absolute right-0">
+                <ContextUsageIndicator usage={contextUsage} />
+              </div>
             )}
           </div>
         </div>
@@ -2747,8 +3070,8 @@ const ChatMessage = React.memo(function ChatMessage({
       onMouseLeave={() => setIsHovered(false)}
     >
       {isUser ? (
-        <div
-          className={cn(
+            <div
+              className={cn(
             "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm overflow-hidden bg-primary",
           )}
         >
