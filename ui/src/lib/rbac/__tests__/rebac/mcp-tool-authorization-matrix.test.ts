@@ -82,8 +82,16 @@ function directRelations(subject: string, scenario: Scenario = {}): Set<string> 
     nextSharedTeamSlugs: scenario.sharedTeamSlugs ?? [],
     sharedWithOrg: scenario.sharedWithOrg ?? false,
   });
+  // `team.member` is `[direct members] or admin` (deploy/openfga/model.fga),
+  // so a team-admin subject also satisfies any `#member` tuple written for
+  // that same team — mirror that union here instead of a literal string match.
+  const relevantUsers = new Set([subject]);
+  const adminMatch = /^team:(.+)#admin$/.exec(subject);
+  if (adminMatch) {
+    relevantUsers.add(`team:${adminMatch[1]}#member`);
+  }
   return new Set(
-    diff.writes.filter((t) => t.user === subject).map((t) => t.relation),
+    diff.writes.filter((t) => relevantUsers.has(t.user)).map((t) => t.relation),
   );
 }
 
@@ -141,10 +149,10 @@ interface MatrixCase {
 
 const MATRIX: MatrixCase[] = [
   {
-    name: "owner-team member can use+call, not manage",
+    name: "owner-team member can manage (and therefore use+call)",
     subject: `team:${OWNER_TEAM}#member`,
-    allow: ["use", "call"],
-    deny: ["manage"],
+    allow: ["use", "call", "manage"],
+    deny: [],
   },
   {
     name: "owner-team admin can manage (and therefore use+call)",
