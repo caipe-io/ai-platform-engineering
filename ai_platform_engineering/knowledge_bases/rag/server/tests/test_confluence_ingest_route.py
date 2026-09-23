@@ -39,7 +39,7 @@ def client() -> TestClient:
 
 @pytest.fixture(autouse=True)
 def _wire(monkeypatch: pytest.MonkeyPatch):
-  restapi.app.dependency_overrides[require_authenticated_user] = lambda: _user()
+  restapi.app.dependency_overrides[require_authenticated_user] = _user
   ms = AsyncMock()
   ms.get_datasource_info.return_value = None
   jm = AsyncMock()
