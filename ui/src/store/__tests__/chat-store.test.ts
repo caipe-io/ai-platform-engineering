@@ -217,6 +217,57 @@ describe('chat-store', () => {
 
       expect(getLastActiveConversationId()).toBeNull();
     });
+
+    it('clears all identity-owned and streaming state', () => {
+      const abort = jest.fn();
+      useChatStore.setState({
+        conversations: [makeConversation({ id: 'other-user-conversation' })],
+        activeConversationId: 'other-user-conversation',
+        isStreaming: true,
+        streamingConversations: new Map([
+          ['other-user-conversation', {
+            conversationId: 'other-user-conversation',
+            messageId: 'assistant-message',
+            client: { abort },
+          }],
+        ]),
+        pendingMessage: 'send after navigation',
+        contextUsageByConversation: {
+          'other-user-conversation': { usedTokens: 1 } as never,
+        },
+        conversationFilter: 'api',
+        conversationPage: 2,
+        conversationHasMore: true,
+        isLoadingMoreConversations: true,
+        messageHistory: {
+          'other-user-conversation': {
+            nextPage: 2,
+            hasMore: true,
+            isLoadingOlder: true,
+          },
+        },
+        unviewedConversations: new Set(['other-user-conversation']),
+        inputRequiredConversations: new Set(['other-user-conversation']),
+      });
+
+      useChatStore.getState().clearAllConversations();
+
+      const state = useChatStore.getState();
+      expect(abort).toHaveBeenCalledTimes(1);
+      expect(state.conversations).toEqual([]);
+      expect(state.activeConversationId).toBeNull();
+      expect(state.streamingConversations.size).toBe(0);
+      expect(state.isStreaming).toBe(false);
+      expect(state.pendingMessage).toBeNull();
+      expect(state.contextUsageByConversation).toEqual({});
+      expect(state.conversationFilter).toBe('all');
+      expect(state.conversationPage).toBe(0);
+      expect(state.conversationHasMore).toBe(false);
+      expect(state.isLoadingMoreConversations).toBe(false);
+      expect(state.messageHistory).toEqual({});
+      expect(state.unviewedConversations.size).toBe(0);
+      expect(state.inputRequiredConversations.size).toBe(0);
+    });
   });
 
   describe('resolveChatNavigationPath', () => {

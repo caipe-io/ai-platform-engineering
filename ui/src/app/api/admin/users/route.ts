@@ -9,6 +9,7 @@ import {
 countRealmUsers,
 findRealmUsersByExactEmail,
 getRealmUserById,
+getUserFederatedIdentities,
 listRealmRoleMappingsForUser,
 listUsersWithRole,
 searchRealmUsers,
@@ -36,6 +37,7 @@ type AdminUsersListBase = {
   attributes: Record<string, string[]>;
   slack_link_status: "linked" | "unlinked";
   webex_link_status: "linked" | "unlinked";
+  web_sso_status?: "linked" | "unlinked" | "unknown";
 };
 
 type AdminUsersListWithRoles = AdminUsersListBase & {
@@ -146,23 +148,58 @@ function mapBaseRow(u: Record<string, unknown>): AdminUsersListBase {
   };
 }
 
-// Per-user role enrichment is opt-in via `?includeRoles=true`. Each call adds
-// one Keycloak Admin REST round-trip (`/users/{id}/role-mappings/realm`), so
-// with default pageSize=20 we previously fanned out to 20 extra calls per
-// list request. The UI list table does not render role fields; callers that
-// need them (detail panel) use `/api/admin/users/[id]/roles` instead.
+async function getWebSsoStatus(
+  userId: string,
+): Promise<NonNullable<AdminUsersListBase["web_sso_status"]>> {
+  try {
+    const identities = await getUserFederatedIdentities(userId);
+    return identities.length > 0 ? "linked" : "unlinked";
+  } catch (error) {
+    console.warn(`[admin/users] Could not load Web SSO status for ${userId}:`, error);
+    return "unknown";
+  }
+}
+
+// Per-user Keycloak enrichments are opt-in. The table requests Web SSO status,
+// while role consumers use `?includeRoles=true` or the per-user roles route.
+// Bounded batches below prevent a page from flooding the Keycloak admin API.
 async function enrichListRow(
   u: Record<string, unknown>,
-  includeRoles: boolean
+  includeRoles: boolean,
+  includeWebSso: boolean,
 ): Promise<AdminUsersListItem> {
   const base = mapBaseRow(u);
-  if (!includeRoles) return base;
-  const roleRows = await listRealmRoleMappingsForUser(base.id);
+  const [roleRows, webSsoStatus] = await Promise.all([
+    includeRoles ? listRealmRoleMappingsForUser(base.id) : Promise.resolve(null),
+    includeWebSso ? getWebSsoStatus(base.id) : Promise.resolve(null),
+  ]);
+  const webSso = webSsoStatus
+    ? { web_sso_status: webSsoStatus }
+    : {};
+  if (!roleRows) return { ...base, ...webSso };
   const curatedRoles = curateRealmRolesForUser(roleRows.map((r) => r.name));
   return {
     ...base,
+    ...webSso,
     ...curatedRoles,
   };
+}
+
+async function enrichListRows(
+  rows: Record<string, unknown>[],
+  includeRoles: boolean,
+  includeWebSso: boolean,
+): Promise<AdminUsersListItem[]> {
+  const enriched: AdminUsersListItem[] = [];
+  const maxConcurrentKeycloakRequests = 5;
+  for (let offset = 0; offset < rows.length; offset += maxConcurrentKeycloakRequests) {
+    enriched.push(...await Promise.all(
+      rows
+        .slice(offset, offset + maxConcurrentKeycloakRequests)
+        .map((row) => enrichListRow(row, includeRoles, includeWebSso)),
+    ));
+  }
+  return enriched;
 }
 
 function userMatchesFilters(
@@ -202,6 +239,8 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   // or use the per-user `/api/admin/users/[id]/roles` endpoint.
   const includeRolesRaw = (url.searchParams.get("includeRoles") ?? "").trim().toLowerCase();
   const includeRoles = includeRolesRaw === "true" || includeRolesRaw === "1";
+  const includeWebSsoRaw = (url.searchParams.get("includeWebSso") ?? "").trim().toLowerCase();
+  const includeWebSso = includeWebSsoRaw === "true" || includeWebSsoRaw === "1";
 
   // Parsed once up front so both the plain-member (team-scoped) branch below
   // and the admin/team-admin branch can page their Keycloak round-trips
@@ -280,7 +319,8 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       }
       const self = await enrichListRow(
         await getRealmUserById(selfSubjectId),
-        true
+        true,
+        includeWebSso,
       );
       return NextResponse.json({
         users: [{ ...self, can_edit: self.id === selfSubjectId }],
@@ -328,7 +368,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
     }
 
     const seenIds = new Set<string>();
-    const teamUsers: AdminUsersListItem[] = [];
+    const teamUserRows: Record<string, unknown>[] = [];
     await Promise.all(
       pageEmails.map(async (email) => {
         try {
@@ -337,7 +377,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
             const id = String(u.id ?? "");
             if (!id || seenIds.has(id)) continue;
             seenIds.add(id);
-            teamUsers.push(await enrichListRow(u, false));
+            teamUserRows.push(u);
           }
         } catch {
           // skip this email on error
@@ -346,6 +386,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
     );
 
     // Plain members can only edit their own profile.
+    const teamUsers = await enrichListRows(teamUserRows, false, includeWebSso);
     return NextResponse.json({
       users: teamUsers.map((u) => ({ ...u, can_edit: u.id === selfSubjectId })),
       total: teamMemberTotal,
@@ -427,9 +468,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
         max: pageSize,
       });
       const total = await countRealmUsers({ search, enabled });
-      const users = await Promise.all(
-        raw.map((row) => enrichListRow(row, includeRoles))
-      );
+      const users = await enrichListRows(raw, includeRoles, includeWebSso);
       return NextResponse.json({
         users: stampCanEdit(users),
         total,
@@ -462,7 +501,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       for (const row of batch) {
         if (!userMatchesFilters(row, filterOpts)) continue;
         if (matchCount >= skip && pageRows.length < pageSize) {
-          pageRows.push(await enrichListRow(row, includeRoles));
+          pageRows.push(await enrichListRow(row, includeRoles, includeWebSso));
         }
         matchCount += 1;
       }

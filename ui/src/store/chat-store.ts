@@ -758,10 +758,27 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       },
 
       clearAllConversations: () => {
+        for (const stream of get().streamingConversations.values()) {
+          stream.client.abort();
+        }
+        conversationLoadsInFlight.clear();
+        messageLoadState.clear();
+        eventCountSinceLastSave.clear();
+        pendingSaveTimestamps.clear();
         set({
           conversations: [],
           activeConversationId: null,
+          isStreaming: false,
+          streamingConversations: new Map<string, StreamingState>(),
+          pendingMessage: null,
           contextUsageByConversation: {},
+          conversationFilter: 'all',
+          conversationPage: 0,
+          conversationHasMore: false,
+          isLoadingMoreConversations: false,
+          messageHistory: {},
+          unviewedConversations: new Set<string>(),
+          inputRequiredConversations: new Set<string>(),
         });
         persistLastActiveConversationId(null);
       },

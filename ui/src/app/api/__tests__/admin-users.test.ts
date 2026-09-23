@@ -209,9 +209,45 @@ describe('GET /api/admin/users — Keycloak list', () => {
     expect(body.users[0]).not.toHaveProperty('role_classifications');
     expect(body.users[0]).not.toHaveProperty('hidden_role_count');
     expect(mockListRealmRoleMappingsForUser).not.toHaveBeenCalled();
+    expect(mockGetUserFederatedIdentities).not.toHaveBeenCalled();
     expect(body.total).toBe(1);
     expect(body.page).toBe(1);
     expect(body.pageSize).toBe(20);
+  });
+
+  it('includes browser SSO link status when includeWebSso=true', async () => {
+    mockGetServerSession.mockResolvedValue(adminSession());
+    mockSearchRealmUsers.mockResolvedValue([
+      {
+        id: 'linked-user',
+        username: 'linked-user',
+        email: 'linked-user@example.com',
+        enabled: true,
+        attributes: {},
+      },
+      {
+        id: 'shell-user',
+        username: 'shell-user',
+        email: 'shell-user@example.com',
+        enabled: true,
+        attributes: { slack_user_id: ['U123'] },
+      },
+    ]);
+    mockCountRealmUsers.mockResolvedValue(2);
+    mockGetUserFederatedIdentities.mockImplementation(async (id: string) => (
+      id === 'linked-user'
+        ? [{ identityProvider: 'example-idp', userId: 'external-user', userName: 'linked-user@example.com' }]
+        : []
+    ));
+
+    const res = await GET(makeRequest('/api/admin/users?includeWebSso=true'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.users).toEqual([
+      expect.objectContaining({ id: 'linked-user', web_sso_status: 'linked' }),
+      expect.objectContaining({ id: 'shell-user', web_sso_status: 'unlinked' }),
+    ]);
+    expect(mockGetUserFederatedIdentities).toHaveBeenCalledTimes(2);
   });
 
   it('includes curated role fields when includeRoles=true', async () => {

@@ -37,6 +37,7 @@ interface AdminUserRow {
   attributes: Record<string, string[]>;
   slack_link_status?: "linked" | "unlinked";
   webex_link_status?: "linked" | "unlinked";
+  web_sso_status?: "linked" | "unlinked" | "unknown";
 }
 
 interface TeamListItem {
@@ -235,6 +236,7 @@ export function UserManagementTab({
         const qs = new URLSearchParams();
         qs.set("page", String(page));
         qs.set("pageSize", String(PAGE_SIZE));
+        qs.set("includeWebSso", "true");
         const q = searchFromUrl.trim();
         if (q) qs.set("search", q);
         if (teamsFilter.length >= 1) qs.set("team", teamsFilter[0]);
@@ -384,13 +386,14 @@ export function UserManagementTab({
                 <th className="px-4 py-3">Email</th>
                 <th className="px-4 py-3">Slack</th>
                 <th className="px-4 py-3">Webex</th>
+                <th className="px-4 py-3">Web SSO</th>
                 <th className="px-4 py-3 w-20">Enabled</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-16 text-center">
+                  <td colSpan={6} className="px-4 py-16 text-center">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <Loader2 className="h-8 w-8 animate-spin" />
                       <span>Loading…</span>
@@ -400,7 +403,7 @@ export function UserManagementTab({
               ) : users.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="px-4 py-12 text-center text-muted-foreground"
                   >
                     No users match the current filters.
@@ -445,6 +448,30 @@ export function UserManagementTab({
                         ) : (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border">
                             Unlinked
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {u.web_sso_status === "linked" ? (
+                          <span
+                            className="inline-flex items-center rounded-full border border-emerald-500/25 bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"
+                            title="Linked through a browser identity provider and eligible for impersonation subject to sign-in policy"
+                          >
+                            Linked
+                          </span>
+                        ) : u.web_sso_status === "unlinked" ? (
+                          <span
+                            className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                            title="This account has not linked a browser identity provider"
+                          >
+                            Not linked
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex items-center rounded-full border border-amber-500/25 bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400"
+                            title="Web SSO link status could not be loaded"
+                          >
+                            Unknown
                           </span>
                         )}
                       </td>

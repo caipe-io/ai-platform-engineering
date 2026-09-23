@@ -11,8 +11,19 @@ jest.mock('next-auth/react', () => {
     ;(SessionProvider as unknown).__lastProps = props
     return children
   })
-  return { SessionProvider }
+  return {
+    SessionProvider,
+    useSession: () => ({ status: 'loading', data: null }),
+  }
 })
+
+jest.mock('@/store/chat-store', () => ({
+  useChatStore: { getState: () => ({ clearAllConversations: jest.fn() }) },
+}))
+
+jest.mock('@/lib/storage-config', () => ({
+  getStorageMode: () => 'mongodb',
+}))
 
 import { SessionProvider } from 'next-auth/react'
 import { AuthProvider } from '../auth-provider'
