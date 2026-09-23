@@ -45,6 +45,7 @@ import {
   visibleRagCollectionsByDatasource,
 } from "@/lib/rag-collections.server";
 import { prepareRagPublication } from "@/lib/rag-publication-approval.server";
+import { authorizeIngestPreviewCredentials } from "@/lib/rag-source-credentials.server";
 import { resolveShareableOwnershipWrite } from "@/lib/rbac/shareable-resource";
 import { resolveUserIdentitiesBySubject } from "@/lib/rbac/user-identity-directory";
 import type { RbacScope } from "@/lib/rbac/types";
@@ -1775,6 +1776,20 @@ export async function POST(
     await requireMcpToolCallPermission(session, headers, path, body);
 
     body = await constrainSearchBody(session, headers, path, body);
+
+    // A preview runs before any source exists, so the ingestor cannot yet derive
+    // access from one. Authorize the caller and note the credential briefly.
+    if (
+      INGEST_PATH_SOURCE_TYPES[targetPath] &&
+      body &&
+      typeof body === "object" &&
+      !Array.isArray(body)
+    ) {
+      await authorizeIngestPreviewCredentials({
+        session,
+        settings: (body as { settings?: unknown }).settings,
+      });
+    }
 
     if (isMultipart) {
       multipartBody = await request.formData();

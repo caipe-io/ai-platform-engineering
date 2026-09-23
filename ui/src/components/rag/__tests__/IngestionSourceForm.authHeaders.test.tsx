@@ -102,15 +102,17 @@ async function addHeaderWithCredential(user: ReturnType<typeof userEvent.setup>)
 }
 
 /**
- * A resolved template renders as a button showing the highlighted credential
- * token; clicking it exposes the raw text input.
+ * Replaces the template editor's content. The editor is contenteditable, so an
+ * edit is a DOM mutation plus an input event rather than keyboard typing, which
+ * jsdom does not model for atomic nodes. Passing text without `{{secret}}` is
+ * how a test drops the credential chip.
  */
-async function focusTemplateInput(
-  user: ReturnType<typeof userEvent.setup>,
-): Promise<HTMLElement> {
-  const field = screen.getByLabelText(/header value template/i);
-  if (field.tagName === "BUTTON") await user.click(field);
-  return screen.getByLabelText(/header value template/i);
+async function setTemplateText(text: string): Promise<void> {
+  const editor = screen.getByLabelText(/header value template/i);
+  await act(async () => {
+    editor.textContent = text;
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 beforeEach(() => {
@@ -151,11 +153,7 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     const headerName = screen.getByLabelText("Header name");
     await user.clear(headerName);
     await user.type(headerName, "X-Docs-Token");
-    const template = await focusTemplateInput(user);
-    await user.clear(template);
-    // `type` reads `{{` as an escaped brace, so paste the placeholder verbatim.
-    await user.click(template);
-    await user.paste("Token {{secret}}");
+    await setTemplateText("Token {{secret}}");
 
     await act(async () => {
       await user.click(screen.getByRole("button", { name: /create source/i }));
@@ -172,13 +170,11 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     ]);
   });
 
-  it("previews the request only once a header is complete, keeping the template editable", async () => {
+  it("previews the request, resolving a credential to its trailing hint", async () => {
     const { user } = await renderWebForm();
-    await user.click(screen.getByRole("button", { name: /add header/i }));
-
-    // An incomplete row is not sent, so there is nothing to preview yet.
     expect(screen.queryByTestId("auth-header-request-preview")).not.toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: /add header/i }));
     await user.click(await screen.findByRole("combobox", { name: /^credential$/i }));
     await user.click(await screen.findByRole("option", { name: SECRET_NAME }));
 
@@ -186,12 +182,35 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     expect(preview).toHaveTextContent("curl");
     expect(preview).toHaveTextContent("-H 'Authorization: Bearer ...xRZ'");
 
-    // The resolved field names the credential; the raw placeholder is still what
-    // gets stored, and is revealed for editing on click.
+    // Selecting a credential appends it to the scheme-only default and renders it
+    // as a chip, while the stored template keeps the canonical placeholder.
     expect(screen.getByLabelText(/header value template/i)).toHaveTextContent(
       "Bearer $DOCS_SITE_TOKEN",
     );
-    expect(await focusTemplateInput(user)).toHaveValue("Bearer {{secret}}");
+  });
+
+  it("sends a static header with no credential attached", async () => {
+    const { user, onSave } = await renderWebForm();
+    await user.click(screen.getByRole("button", { name: /add header/i }));
+
+    const headerName = screen.getByLabelText("Header name");
+    await user.clear(headerName);
+    await user.type(headerName, "X-Environment");
+    await setTemplateText("staging");
+
+    expect(screen.getByTestId("auth-header-request-preview")).toHaveTextContent(
+      "-H 'X-Environment: staging'",
+    );
+
+    await act(async () => {
+      await user.click(screen.getByRole("button", { name: /create source/i }));
+    });
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    const payload = onSave.mock.calls[0][0] as { settings: { auth_headers: unknown } };
+    expect(payload.settings.auth_headers).toEqual([
+      { header_name: "X-Environment", value_template: "staging" },
+    ]);
   });
 
   it("states the ingestor's standing credential access up front", async () => {
@@ -200,7 +219,7 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     // Always visible, so the access implication is stated before a credential
     // is ever attached rather than appearing after the fact.
     expect(
-      screen.getByText(/the ingestion service reads it on every crawl/i),
+      screen.getByText(/the ingestion service reads it on each crawl/i),
     ).toBeInTheDocument();
 
     await addHeaderWithCredential(user);
@@ -218,11 +237,9 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     const { user, onSave } = await renderWebForm();
     await addHeaderWithCredential(user);
 
-    const template = await focusTemplateInput(user);
-    await user.clear(template);
-    await user.type(template, "Bearer ");
-    expect(screen.getByText(/add \{\{secret\}\} where the credential value belongs/i))
-      .toBeInTheDocument();
+    // Deleting the credential chip leaves a template with nothing to substitute.
+    await setTemplateText("Bearer ");
+    expect(screen.getByText(/type \$ to put the credential back/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /test headers/i })).toBeDisabled();
 
     await act(async () => {
@@ -241,7 +258,10 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
 
     expect(await screen.findByText(/Fetched 1 page and found content/i)).toBeInTheDocument();
     const body = previewBody() as { settings: Record<string, unknown> };
-    expect(body.settings.max_pages).toBe(1);
+    // Bounded by crawl mode, not by a page limit of 1, which would end the crawl
+    // on its first response and report that as the reason it stopped.
+    expect(body.settings.crawl_mode).toBe("single");
+    expect(body.settings.max_pages).toBe(2);
     expect(body.settings.auth_headers).toEqual([
       {
         header_name: "Authorization",
@@ -252,15 +272,33 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
   });
 
   it("explains that a bad credential often returns 404 or a sign-in page", async () => {
-    mockFetch({ ok: false, body: { detail: "Crawl returned no documents" } });
+    // A page that fetched but yielded nothing is the ambiguous case the hint is for.
+    mockFetch({ ok: true, body: { items: [] } });
     const { user } = await renderWebForm();
     await addHeaderWithCredential(user);
     await user.click(screen.getByRole("button", { name: /test headers/i }));
 
-    expect(await screen.findByText(/Crawl returned no documents/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no page content was returned/i)).toBeInTheDocument();
     expect(
       screen.getByText(/returns a 404 or a sign-in page instead of a 401/i),
     ).toBeInTheDocument();
+  });
+
+  it("does not blame the credential when the server reported a specific reason", async () => {
+    // A configuration fault would otherwise be dressed up as a credential problem
+    // and send the reader looking in the wrong place.
+    mockFetch({
+      ok: false,
+      body: { detail: "CREDENTIAL_API_URL must be configured" },
+    });
+    const { user } = await renderWebForm();
+    await addHeaderWithCredential(user);
+    await user.click(screen.getByRole("button", { name: /test headers/i }));
+
+    expect(await screen.findByText(/CREDENTIAL_API_URL must be configured/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/returns a 404 or a sign-in page instead of a 401/i),
+    ).not.toBeInTheDocument();
   });
 
   it("reports a repeated header name inline and blocks save until it is resolved", async () => {

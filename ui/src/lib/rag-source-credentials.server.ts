@@ -1,62 +1,50 @@
 /**
- * Authorization and grant reconciliation for credentials attached to RAG
- * ingestion sources.
+ * Caller-side authorization for credentials attached to RAG ingestion sources.
  *
- * Ingestors resolve stored credentials under their own service-account identity,
- * never the end user's, so two separate things have to hold: the caller must be
- * allowed to use a credential before attaching it, and the ingestor must be
- * granted `use` on it afterwards.
+ * The ingestor's own read access is derived from the source that references a
+ * credential — see `credentials/ingest-credential-usage.server.ts`. What has to
+ * happen here is the other half: proving the caller is allowed to point the
+ * ingestor at a credential in the first place.
  */
 
 import { ApiError } from "@/lib/api-error";
-import {
-  deleteSecretRefServiceAccountUse,
-  reconcileSecretRefServiceAccountUse,
-} from "@/lib/credentials/secret-openfga";
-import { getCollection } from "@/lib/mongodb";
-import { ingestorServiceAccountSubjectsForSourceType } from "@/lib/rbac/ingestor-service-accounts";
+import { recordIngestPreviewGrant } from "@/lib/credentials/ingest-credential-usage.server";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
-import type {
-  IngestionSourceConfig,
-  IngestionSourceType,
-  WebAuthHeader,
-} from "@/types/ingestion-source";
-
-const COLLECTION_NAME = "rag_ingestion_sources";
+import type { WebAuthHeader } from "@/types/ingestion-source";
 
 type AuthzSession = Parameters<typeof requireResourcePermission>[0];
 
-/** The distinct credential references a source's settings depend on. */
+/**
+ * The distinct credential references a source's settings depend on.
+ *
+ * Static headers carry no reference, so they are filtered out rather than
+ * producing an empty subject for the authorization check below.
+ */
 export function secretRefsFromSettings(settings: unknown): string[] {
   const authHeaders =
     (settings as { auth_headers?: WebAuthHeader[] } | null | undefined)?.auth_headers ?? [];
-  return Array.from(new Set(authHeaders.map((header) => header.secret_ref)));
+  return Array.from(
+    new Set(
+      authHeaders
+        .map((header) => header.secret_ref?.trim())
+        .filter((secretRef): secretRef is string => Boolean(secretRef)),
+    ),
+  );
 }
 
 /**
  * Collect a source's credential references after proving the caller may use each.
  *
- * This is the security boundary for authenticated ingestion: without it, any
- * caller able to create or edit a source could reference a credential they cannot
- * read and have the ingestor replay it, turning ingestion into an exfiltration
- * path.
+ * This is the security boundary for authenticated ingestion: the ingestor will
+ * send a resolved credential to whatever URL the source names, so without this
+ * check any caller able to create or edit a source could reference a credential
+ * they cannot read and have it replayed to a host they control.
  */
 export async function authorizedSourceSecretRefs(
   session: AuthzSession,
   settings: unknown,
-  sourceType: IngestionSourceType,
 ): Promise<string[]> {
   const secretRefs = secretRefsFromSettings(settings);
-
-  // Checked before the source is persisted: the grant is written afterwards, and
-  // failing here avoids leaving a source that can never authenticate.
-  if (secretRefs.length > 0 && ingestorServiceAccountSubjectsForSourceType(sourceType).length === 0) {
-    throw new ApiError(
-      `This deployment has no ${sourceType} ingestor identity registered, so a credential cannot be attached. Set RAG_INGESTOR_SERVICE_ACCOUNTS for the ingestor before using authenticated sources.`,
-      503,
-      "INGESTOR_IDENTITY_NOT_CONFIGURED",
-    );
-  }
 
   for (const secretRef of secretRefs) {
     try {
@@ -77,45 +65,22 @@ export async function authorizedSourceSecretRefs(
   return secretRefs;
 }
 
-async function secretIsUsedByAnotherSource(
-  secretRef: string,
-  excludeSourceId: string,
-): Promise<boolean> {
-  const collection = await getCollection<IngestionSourceConfig>(COLLECTION_NAME);
-  const match = await collection.findOne({
-    source_id: { $ne: excludeSourceId },
-    "settings.auth_headers.secret_ref": secretRef,
-  } as never);
-  return match !== null;
-}
-
 /**
- * Align the ingestor's credential grants with what a source now references.
+ * Authorizes a test or preview, which runs before a source exists.
  *
- * A removed credential is only revoked when no other source still depends on it,
- * since the grant is per-credential rather than per-source.
+ * Once a source is saved its credentials are reachable because the source
+ * references them, so only this earlier window needs recording.
  */
-export async function reconcileIngestorSecretAccess(input: {
-  sourceId: string;
-  sourceType: IngestionSourceType;
-  previousSecretRefs: string[];
-  nextSecretRefs: string[];
-}): Promise<void> {
-  const ingestorSubjects = ingestorServiceAccountSubjectsForSourceType(input.sourceType);
-  if (ingestorSubjects.length === 0) return;
+export async function authorizeIngestPreviewCredentials(input: {
+  session: AuthzSession;
+  settings: unknown;
+}): Promise<string[]> {
+  const secretRefs = await authorizedSourceSecretRefs(input.session, input.settings);
+  if (secretRefs.length === 0) return secretRefs;
 
-  const next = new Set(input.nextSecretRefs);
-  const previous = new Set(input.previousSecretRefs);
-
-  const added = input.nextSecretRefs.filter((ref) => !previous.has(ref));
-  const removed = input.previousSecretRefs.filter((ref) => !next.has(ref));
-
+  const subject = typeof input.session.sub === "string" ? input.session.sub : "unknown";
   await Promise.all(
-    added.map((ref) => reconcileSecretRefServiceAccountUse(ref, ingestorSubjects)),
+    secretRefs.map((secretRef) => recordIngestPreviewGrant({ secretRef, subject })),
   );
-
-  for (const ref of removed) {
-    if (await secretIsUsedByAnotherSource(ref, input.sourceId)) continue;
-    await deleteSecretRefServiceAccountUse(ref, ingestorSubjects);
-  }
+  return secretRefs;
 }

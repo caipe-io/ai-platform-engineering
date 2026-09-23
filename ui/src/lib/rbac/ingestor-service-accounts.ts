@@ -65,22 +65,6 @@ export function allowedSourceTypesForIngestorServiceAccount(
   return getIngestorServiceAccountsMap().get(session.sub.trim()) ?? null;
 }
 
-/**
- * Subjects of the ingestor service accounts that handle `sourceType`.
- *
- * Ingestors resolve stored credentials under their own identity, so these are
- * the subjects that must be granted `use` on a secret a source depends on.
- */
-export function ingestorServiceAccountSubjectsForSourceType(
-  sourceType: IngestionSourceType,
-): string[] {
-  const subjects: string[] = [];
-  for (const [sub, types] of getIngestorServiceAccountsMap()) {
-    if (types.has(sourceType)) subjects.push(sub);
-  }
-  return subjects;
-}
-
 /** True when `session` is a recognized ingestor service account scoped to `sourceType`. */
 export function isRecognizedIngestorServiceAccount(
   session: ResourceAuthzSession,

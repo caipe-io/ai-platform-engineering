@@ -215,18 +215,35 @@ export function optionalAuthHeaders(value: unknown): WebAuthHeader[] | undefined
     if (valueTemplate.length > 2000 || /[\r\n]/.test(valueTemplate)) {
       throw invalidAuthHeaders("entries require a value_template without line breaks");
     }
-    if (!valueTemplate.includes(SECRET_PLACEHOLDER)) {
-      throw invalidAuthHeaders(`entries require a value_template containing ${SECRET_PLACEHOLDER}`);
+    if (!valueTemplate.trim()) {
+      throw invalidAuthHeaders("entries require a value_template");
     }
-    if (!SECRET_REF_PATTERN.test(secretRef)) {
+    if (secretRef && !SECRET_REF_PATTERN.test(secretRef)) {
       throw invalidAuthHeaders("entries require a valid secret_ref");
+    }
+    // The placeholder and the reference only make sense together: one without the
+    // other would either substitute nothing or leave a literal marker in the header.
+    const hasPlaceholder = valueTemplate.includes(SECRET_PLACEHOLDER);
+    if (secretRef && !hasPlaceholder) {
+      throw invalidAuthHeaders(
+        `entries with a secret_ref require a value_template containing ${SECRET_PLACEHOLDER}`,
+      );
+    }
+    if (!secretRef && hasPlaceholder) {
+      throw invalidAuthHeaders(
+        `entries containing ${SECRET_PLACEHOLDER} require a secret_ref`,
+      );
     }
     const key = headerName.toLowerCase();
     if (seen.has(key)) {
       throw invalidAuthHeaders(`must not repeat header ${headerName}`);
     }
     seen.add(key);
-    headers.push({ header_name: headerName, value_template: valueTemplate, secret_ref: secretRef });
+    headers.push({
+      header_name: headerName,
+      value_template: valueTemplate,
+      ...(secretRef ? { secret_ref: secretRef } : {}),
+    });
   }
   return headers;
 }

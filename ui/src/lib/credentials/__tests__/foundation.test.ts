@@ -16,6 +16,7 @@ describe("credential foundation constants", () => {
       oauthConnectors: "oauth_connectors",
       providerConnections: "provider_connections",
       migrationPreviews: "credential_migration_previews",
+      ingestPreviewGrants: "credential_ingest_preview_grants",
     });
   });
 

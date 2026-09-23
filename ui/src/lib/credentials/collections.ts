@@ -4,6 +4,7 @@ export const CREDENTIAL_COLLECTIONS = {
   oauthConnectors: "oauth_connectors",
   providerConnections: "provider_connections",
   migrationPreviews: "credential_migration_previews",
+  ingestPreviewGrants: "credential_ingest_preview_grants",
 } as const;
 
 export type CredentialCollectionName =

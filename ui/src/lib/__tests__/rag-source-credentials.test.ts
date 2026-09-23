@@ -46,13 +46,34 @@ describe("optionalAuthHeaders", () => {
     },
   );
 
-  it("rejects a missing or malformed secret_ref", () => {
-    expect(() => optionalAuthHeaders([{ ...valid, secret_ref: "" }])).toThrow(
-      /valid secret_ref/,
-    );
+  it("rejects a malformed secret_ref", () => {
     expect(() => optionalAuthHeaders([{ ...valid, secret_ref: "has spaces" }])).toThrow(
       /valid secret_ref/,
     );
+  });
+
+  it("accepts a static header with no credential", () => {
+    expect(
+      optionalAuthHeaders([{ header_name: "X-Environment", value_template: "staging" }]),
+    ).toEqual([{ header_name: "X-Environment", value_template: "staging" }]);
+  });
+
+  it("rejects a placeholder with no credential to substitute", () => {
+    expect(() => optionalAuthHeaders([{ ...valid, secret_ref: "" }])).toThrow(
+      /require a secret_ref/,
+    );
+  });
+
+  it("rejects a credential with no placeholder marking where it belongs", () => {
+    expect(() =>
+      optionalAuthHeaders([{ ...valid, value_template: "Bearer static" }]),
+    ).toThrow(/containing \{\{secret\}\}/);
+  });
+
+  it("rejects an empty value", () => {
+    expect(() =>
+      optionalAuthHeaders([{ header_name: "X-Environment", value_template: "   " }]),
+    ).toThrow(/require a value_template/);
   });
 
   it("rejects a repeated header name regardless of case", () => {

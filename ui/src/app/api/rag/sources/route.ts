@@ -45,10 +45,7 @@ import {
   prepareRagPublication,
   ragPublicationRevision,
 } from "@/lib/rag-publication-approval.server";
-import {
-  authorizedSourceSecretRefs,
-  reconcileIngestorSecretAccess,
-} from "@/lib/rag-source-credentials.server";
+import { authorizedSourceSecretRefs } from "@/lib/rag-source-credentials.server";
 import { allowedSourceTypesForIngestorServiceAccount } from "@/lib/rbac/ingestor-service-accounts";
 import { checkOpenFgaTuple } from "@/lib/rbac/openfga";
 import {
@@ -619,11 +616,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
   }
 
-  const sourceSecretRefs = await authorizedSourceSecretRefs(
-    session,
-    body.settings,
-    extracted.identity.source_type,
-  );
+  await authorizedSourceSecretRefs(session, body.settings);
 
   if (body.search_team_slugs !== undefined && !Array.isArray(body.search_team_slugs)) {
     throw new ApiError(
@@ -781,15 +774,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     defaultChunkOverlap,
     reloadInterval,
   });
-
-  if (sourceSecretRefs.length > 0) {
-    await reconcileIngestorSecretAccess({
-      sourceId,
-      sourceType: extracted.identity.source_type,
-      previousSecretRefs: [],
-      nextSecretRefs: sourceSecretRefs,
-    });
-  }
 
   let publicationRequest: Awaited<ReturnType<typeof createPublicationRequest>> | null = null;
   if (publication.plan.requires_approval) {

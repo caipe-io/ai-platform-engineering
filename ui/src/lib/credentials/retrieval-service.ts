@@ -17,6 +17,12 @@ export interface CredentialRetrievalServiceOptions {
   expectedAudience: string;
   payloadStore: PayloadStore;
   authorize: AuthorizeSecretUse;
+  /**
+   * Consulted only for `internal_service` callers that the relationship check
+   * already refused, letting a backend service read a credential that the work
+   * it has been handed genuinely depends on.
+   */
+  authorizeByUsage?: (secretRef: string) => Promise<boolean>;
 }
 
 export interface RetrieveCredentialInput {
@@ -65,11 +71,13 @@ export class CredentialRetrievalService {
   private readonly expectedAudience: string;
   private readonly payloadStore: PayloadStore;
   private readonly authorize: AuthorizeSecretUse;
+  private readonly authorizeByUsage?: (secretRef: string) => Promise<boolean>;
 
   constructor(options: CredentialRetrievalServiceOptions) {
     this.expectedAudience = options.expectedAudience;
     this.payloadStore = options.payloadStore;
     this.authorize = options.authorize;
+    this.authorizeByUsage = options.authorizeByUsage;
   }
 
   async retrieve(input: RetrieveCredentialInput): Promise<RetrieveCredentialResult> {
@@ -83,14 +91,21 @@ export class CredentialRetrievalService {
     try {
       await this.authorize(input.session, { type: "secret_ref", id: secretRef, action: "use" });
     } catch (error) {
-      writeCredentialAuditEvent({
-        action: "credential.retrieve",
-        actor,
-        resource: { type: "secret_ref", id: secretRef },
-        result: "denied",
-        details: { intended_use: intendedUse, caller: callerLabel(input.headers) },
-      });
-      throw error;
+      const allowedByUsage =
+        intendedUse === "internal_service" &&
+        this.authorizeByUsage !== undefined &&
+        (await this.authorizeByUsage(secretRef));
+
+      if (!allowedByUsage) {
+        writeCredentialAuditEvent({
+          action: "credential.retrieve",
+          actor,
+          resource: { type: "secret_ref", id: secretRef },
+          result: "denied",
+          details: { intended_use: intendedUse, caller: callerLabel(input.headers) },
+        });
+        throw error;
+      }
     }
 
     const credential = await this.payloadStore.getSecret(secretRef);

@@ -22,6 +22,7 @@ DialogFooter,
 DialogHeader,
 DialogTitle,
 } from "@/components/ui/dialog";
+import { InlineTokenEditor } from "@/components/ui/inline-token-editor";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchablePicker } from "@/components/ui/searchable-picker";
@@ -60,7 +61,7 @@ WebCrawlMode,
 } from "@/types/ingestion-source";
 import type { PendingPublicationRequestView } from "@/types/publication-approval";
 import { Eye, Loader2, Plus, X } from "lucide-react";
-import { Fragment, useEffect,useState, type ReactNode } from "react";
+import { useEffect,useState } from "react";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { DatasourceAccessFields } from "./DatasourceAccessFields";
 import { PendingPublicationRequestNotice } from "./PendingPublicationRequestNotice";
@@ -80,7 +81,8 @@ const SOURCE_TYPE_OPTIONS: Array<{ value: IngestionSourceType; label: string }> 
 
 /** Substituted with the resolved secret by the ingestor, never by the browser. */
 const SECRET_PLACEHOLDER = "{{secret}}";
-const DEFAULT_AUTH_HEADER_TEMPLATE = `Bearer ${SECRET_PLACEHOLDER}`;
+/** Scheme prefix only; the credential is appended when one is selected. */
+const DEFAULT_AUTH_HEADER_TEMPLATE = "Bearer ";
 const DEFAULT_AUTH_HEADER_NAME = "Authorization";
 /** Mirrors MAX_AUTH_HEADERS in lib/ingestion-source-config.ts. */
 const MAX_AUTH_HEADERS = 10;
@@ -106,6 +108,12 @@ interface SecretReferenceOption {
 interface AuthHeaderTestResult {
   ok: boolean;
   message: string;
+  /**
+   * Set only where the credential is genuinely the likely cause. A server that
+   * reported a specific reason, such as missing configuration, is not second
+   * guessed with credential advice that would send the reader somewhere else.
+   */
+  credentialHint?: boolean;
 }
 
 export interface IngestionSourceFormValues {
@@ -531,19 +539,28 @@ function parseCustomFields(value: string): Record<string, string> {
  * Drops rows the ingestor could not resolve: a row needs a header name, a
  * secret, and a template with somewhere to substitute the resolved value.
  */
+/**
+ * Drops rows the API would reject, so an unfinished row never blocks a save.
+ * A row is sendable once it has a name and a value, and — when it references a
+ * credential — a placeholder marking where that credential belongs.
+ */
 function normalizedAuthHeaders(rows: WebAuthHeader[]): WebAuthHeader[] {
   return rows
-    .map((row) => ({
-      header_name: row.header_name.trim(),
-      value_template: row.value_template.trim() || SECRET_PLACEHOLDER,
-      secret_ref: row.secret_ref.trim(),
-    }))
-    .filter(
-      (row) =>
-        row.header_name.length > 0 &&
-        row.secret_ref.length > 0 &&
-        row.value_template.includes(SECRET_PLACEHOLDER),
-    );
+    .map((row) => {
+      const secretRef = row.secret_ref?.trim() ?? "";
+      const valueTemplate = row.value_template.trim();
+      return {
+        header_name: row.header_name.trim(),
+        value_template: valueTemplate,
+        ...(secretRef ? { secret_ref: secretRef } : {}),
+      };
+    })
+    .filter((row) => {
+      if (!row.header_name || !row.value_template) return false;
+      return row.secret_ref
+        ? row.value_template.includes(SECRET_PLACEHOLDER)
+        : !row.value_template.includes(SECRET_PLACEHOLDER);
+    });
 }
 
 /**
@@ -583,21 +600,6 @@ function secretTokenLabel(secret: SecretReferenceOption | undefined): string {
   return token ? `$${token}` : SECRET_PLACEHOLDER;
 }
 
-/** Renders a template with the placeholder shown as a highlighted credential token. */
-function renderAuthHeaderTemplate(template: string, token: string): ReactNode {
-  const segments = template.split(SECRET_PLACEHOLDER);
-  return segments.map((segment, index) => (
-    <Fragment key={index}>
-      {segment}
-      {index < segments.length - 1 && (
-        <span className="mx-0.5 rounded bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
-          {token}
-        </span>
-      )}
-    </Fragment>
-  ));
-}
-
 /**
  * The request the crawler will actually send, rendered as curl. Credential values
  * collapse to their trailing hint, so the preview stays safe to leave on screen.
@@ -613,6 +615,10 @@ function authHeaderRequestPreview(input: {
   if (userAgent) sent.push(`User-Agent: ${userAgent}`);
 
   for (const header of input.headers) {
+    if (!header.secret_ref) {
+      sent.push(`${header.header_name}: ${header.value_template}`);
+      continue;
+    }
     const secret = input.secrets.find((option) => option.id === header.secret_ref);
     const hint = shortSecretPreview(secret?.maskedPreview) ?? SECRET_PLACEHOLDER;
     const value = header.value_template.split(SECRET_PLACEHOLDER).join(hint);
@@ -787,6 +793,9 @@ export function IngestionSourceForm({
   const [saving, setSaving] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [previewResult, setPreviewResult] = useState<IngestionPreviewResult | null>(null);
+  // Kept apart from the form-level error so the outcome reads beside the button
+  // that produced it rather than at the foot of the dialog.
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const credentialsEnabled = config.credentialsEnabled;
   const [secretOptions, setSecretOptions] = useState<SecretReferenceOption[]>([]);
@@ -809,6 +818,7 @@ export function IngestionSourceForm({
     setSaving(false);
     setPreviewing(false);
     setPreviewResult(null);
+    setPreviewError(null);
     setError(null);
     setAuthHeaderTestResult(null);
     setTransferRequested(false);
@@ -903,10 +913,6 @@ export function IngestionSourceForm({
     values.source_type === "web_url" &&
     duplicateAuthHeaders.size > 0;
 
-  // A resolved template renders its credential as a highlighted token; the raw
-  // text with the placeholder is shown only while the field is being edited.
-  const [editingTemplateIndex, setEditingTemplateIndex] = useState<number | null>(null);
-
   const sentAuthHeaders = normalizedAuthHeaders(values.auth_headers);
   const authHeaderPreviewLines = authHeaderRequestPreview({
     url: values.url,
@@ -986,6 +992,7 @@ export function IngestionSourceForm({
     if (!path) return;
     setPreviewing(true);
     setPreviewResult(null);
+    setPreviewError(null);
     setError(null);
     try {
       const response = await fetch(path, {
@@ -1020,11 +1027,9 @@ export function IngestionSourceForm({
         summary:
           result.summary && typeof result.summary === "object" ? result.summary : undefined,
       });
-    } catch (previewError) {
-      setError(
-        previewError instanceof Error
-          ? previewError.message
-          : "Could not preview this ingestion.",
+    } catch (caught) {
+      setPreviewError(
+        caught instanceof Error ? caught.message : "Could not preview this ingestion.",
       );
     } finally {
       setPreviewing(false);
@@ -1052,9 +1057,22 @@ export function IngestionSourceForm({
     setAuthHeaderTestResult(null);
     setValues((v) => ({
       ...v,
-      auth_headers: v.auth_headers.map((header, position) =>
-        position === index ? { ...header, ...patch } : header,
-      ),
+      auth_headers: v.auth_headers.map((header, position) => {
+        if (position !== index) return header;
+        const next = { ...header, ...patch };
+        // The placeholder and the credential only make sense together, so
+        // selecting one adds it and clearing one takes it away. Otherwise the
+        // scheme-only default would be a dead end, or a cleared row would keep a
+        // marker with nothing to substitute.
+        if (patch.secret_ref && !next.value_template.includes(SECRET_PLACEHOLDER)) {
+          const prefix = next.value_template;
+          next.value_template = `${prefix}${prefix.endsWith(" ") || prefix === "" ? "" : " "}${SECRET_PLACEHOLDER}`;
+        }
+        if ("secret_ref" in patch && !patch.secret_ref) {
+          next.value_template = next.value_template.split(SECRET_PLACEHOLDER).join("").trimEnd();
+        }
+        return next;
+      }),
     }));
   };
 
@@ -1077,7 +1095,10 @@ export function IngestionSourceForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...preview,
-          settings: { ...settings, max_pages: 1 },
+          // Fetch only the start URL. `crawl_mode` bounds the crawl instead of
+          // `max_pages`, whose limit of 1 stops the spider on its first response
+          // and reports that stop as the reason the crawl ended.
+          settings: { ...settings, crawl_mode: "single", max_pages: 2 },
         }),
       });
       const result = await response.json().catch(() => ({}));
@@ -1096,6 +1117,7 @@ export function IngestionSourceForm({
         setAuthHeaderTestResult({
           ok: false,
           message: "The request succeeded but no page content was returned.",
+          credentialHint: true,
         });
         return;
       }
@@ -1648,16 +1670,16 @@ export function IngestionSourceForm({
                     />
                   </div>
                   {credentialsEnabled && (
-                    <div className="space-y-3 rounded-lg border border-border/60 p-3">
+                    <div className="space-y-3 pt-1">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
-                          <p className="text-sm font-medium">Request headers with a credential</p>
+                          <p className="text-sm font-medium">Request headers</p>
                           <p className="mt-0.5 text-xs text-muted-foreground">
-                            Send a saved credential as a request header when the site
-                            requires sign-in. The secret is never stored with this
-                            source — the ingestion service reads it on every crawl,
-                            including scheduled refreshes. Revoke access any time under
-                            Credentials → Sharing.
+                            Most sites need none of these. Add one to send a fixed value,
+                            or attach a saved credential when the site requires sign-in.
+                            A credential value is never stored with this source: the
+                            ingestion service reads it on each crawl, and loses access
+                            when you remove the header or delete the source.
                           </p>
                         </div>
                         <Button
@@ -1696,10 +1718,6 @@ export function IngestionSourceForm({
                               (secret) => secret.id === header.secret_ref,
                             );
                             const isDuplicate = duplicateAuthHeaders.has(index);
-                            const showResolvedTemplate =
-                              editingTemplateIndex !== index &&
-                              Boolean(selectedSecret) &&
-                              header.value_template.includes(SECRET_PLACEHOLDER);
                             return (
                               <div
                                 key={index}
@@ -1725,41 +1743,32 @@ export function IngestionSourceForm({
                                   )}
                                 </div>
                                 <div className="space-y-1">
-                                  {showResolvedTemplate ? (
-                                    <button
-                                      type="button"
-                                      aria-label="Header value template"
-                                      disabled={saving}
-                                      onClick={() => setEditingTemplateIndex(index)}
-                                      className="flex h-9 w-full items-center overflow-hidden rounded-md border border-input bg-background px-3 text-left font-mono text-sm"
-                                    >
-                                      <span className="truncate">
-                                        {renderAuthHeaderTemplate(
-                                          header.value_template,
-                                          secretTokenLabel(selectedSecret),
-                                        )}
-                                      </span>
-                                    </button>
-                                  ) : (
-                                    <Input
-                                      aria-label="Header value template"
-                                      autoFocus={editingTemplateIndex === index}
-                                      value={header.value_template}
-                                      onChange={(e) =>
-                                        handleUpdateAuthHeader(index, {
-                                          value_template: e.target.value,
-                                        })
-                                      }
-                                      onBlur={() => setEditingTemplateIndex(null)}
-                                      placeholder={DEFAULT_AUTH_HEADER_TEMPLATE}
-                                    />
-                                  )}
-                                  {!header.value_template.includes(SECRET_PLACEHOLDER) && (
-                                    <p className="text-xs text-amber-700 dark:text-amber-400">
-                                      Add {SECRET_PLACEHOLDER} where the credential
-                                      value belongs.
-                                    </p>
-                                  )}
+                                  <InlineTokenEditor
+                                    ariaLabel="Header value template"
+                                    value={header.value_template}
+                                    onChange={(value_template) =>
+                                      handleUpdateAuthHeader(index, { value_template })
+                                    }
+                                    token={SECRET_PLACEHOLDER}
+                                    tokenLabel={secretTokenLabel(selectedSecret)}
+                                    suggestion={
+                                      selectedSecret
+                                        ? { label: secretTokenLabel(selectedSecret), description: selectedSecret.name }
+                                        : undefined
+                                    }
+                                    placeholder={DEFAULT_AUTH_HEADER_TEMPLATE}
+                                    disabled={saving}
+                                    invalid={
+                                      Boolean(selectedSecret) &&
+                                      !header.value_template.includes(SECRET_PLACEHOLDER)
+                                    }
+                                  />
+                                  {selectedSecret &&
+                                    !header.value_template.includes(SECRET_PLACEHOLDER) && (
+                                      <p className="text-xs text-amber-700 dark:text-amber-400">
+                                        Type $ to put the credential back.
+                                      </p>
+                                    )}
                                 </div>
                                 <div className="space-y-1">
                                   <SearchablePicker
@@ -1771,16 +1780,17 @@ export function IngestionSourceForm({
                                     getOptionKey={(secret) => secret.id}
                                     getOptionLabel={(secret) => secret.name}
                                     getSearchText={(secret) => [secret.id, secret.name]}
+                                    onClear={() =>
+                                      handleUpdateAuthHeader(index, { secret_ref: undefined })
+                                    }
+                                    clearLabel="Clear credential"
                                     placeholder={
-                                      secretOptions.length === 0
-                                        ? "No saved credentials"
-                                        : "Select a credential"
+                                      secretOptions.length === 0 ? "No saved credentials" : "None"
                                     }
                                     searchPlaceholder="Search credentials..."
                                     emptyLabel="No credentials match"
                                     ariaLabel="Credential"
                                     loading={secretsLoading}
-                                    required
                                     disabled={saving || secretOptions.length === 0}
                                     triggerClassName="h-9 text-sm"
                                   />
@@ -1872,7 +1882,9 @@ export function IngestionSourceForm({
                               )}
                             >
                               <p>{authHeaderTestResult.message}</p>
-                              {!authHeaderTestResult.ok && <p>{CREDENTIAL_FAILURE_HINT}</p>}
+                              {authHeaderTestResult.credentialHint && (
+                                <p>{CREDENTIAL_FAILURE_HINT}</p>
+                              )}
                             </div>
                           )}
                         </>
@@ -1935,6 +1947,15 @@ export function IngestionSourceForm({
                   {previewing ? "Running preview…" : "Preview ingestion"}
                 </Button>
               </div>
+
+              {previewError && (
+                <p
+                  aria-live="polite"
+                  className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive"
+                >
+                  {previewError}
+                </p>
+              )}
 
               {previewResult && (
                 <div className="space-y-2" aria-live="polite">
