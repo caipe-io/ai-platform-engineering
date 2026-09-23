@@ -56,7 +56,7 @@ def test_model_retry_does_not_retry_terminal_client_errors():
     middleware = TransientModelRetryMiddleware(
         max_retries=5,
         initial_delay=0,
-        on_failure=lambda exc: str(exc),
+        on_failure=str,
     )
     calls = 0
 
