@@ -1,5 +1,6 @@
+import re
 from enum import Enum
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, Dict, Any, List
 from langchain_core.documents import Document
 
@@ -15,6 +16,56 @@ class CrawlMode(str, Enum):
   SINGLE_URL = "single"  # Only the specified URL
   SITEMAP = "sitemap"  # Discover and crawl sitemap
   RECURSIVE = "recursive"  # Follow links from starting URL
+
+
+SECRET_PLACEHOLDER = "{{secret}}"
+
+# RFC 7230 token; excludes the separators that would let a name break framing.
+_HEADER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$")
+
+
+class AuthHeader(BaseModel):
+  """An authentication header applied to web fetches for a single datasource.
+
+  Only `secret_ref` is persisted. The referenced value is resolved at crawl time
+  so that rotation propagates and no credential is written to datasource metadata.
+  """
+
+  header_name: str = Field(..., description="HTTP header name, e.g. 'Authorization'")
+  value_template: str = Field(
+    SECRET_PLACEHOLDER,
+    description=f"Header value where {SECRET_PLACEHOLDER} is replaced by the resolved credential, e.g. 'Bearer {SECRET_PLACEHOLDER}'",
+  )
+  secret_ref: str = Field(..., description="Credential store reference resolved at crawl time")
+
+  @field_validator("header_name")
+  @classmethod
+  def validate_header_name(cls, value: str) -> str:
+    name = value.strip()
+    if not _HEADER_NAME_PATTERN.match(name):
+      raise ValueError(f"header_name must be a valid HTTP header name, got {value!r}")
+    return name
+
+  @field_validator("value_template")
+  @classmethod
+  def validate_value_template(cls, value: str) -> str:
+    if "\r" in value or "\n" in value:
+      raise ValueError("value_template must not contain carriage returns or newlines")
+    if SECRET_PLACEHOLDER not in value:
+      raise ValueError(f"value_template must contain {SECRET_PLACEHOLDER}")
+    return value
+
+  @field_validator("secret_ref")
+  @classmethod
+  def validate_secret_ref(cls, value: str) -> str:
+    ref = value.strip()
+    if not ref:
+      raise ValueError("secret_ref must not be empty")
+    return ref
+
+  def render(self, secret: str) -> str:
+    """Substitute the resolved credential into the template."""
+    return self.value_template.replace(SECRET_PLACEHOLDER, secret)
 
 
 class ScrapySettings(BaseModel):
@@ -44,6 +95,11 @@ class ScrapySettings(BaseModel):
   chunk_size: int = Field(10000, description="Maximum size of each text chunk in characters", ge=100, le=100000)
   chunk_overlap: int = Field(2000, description="Overlap between chunks in characters", ge=0, le=10000)
 
+  # Authentication
+  auth_headers: Optional[List[AuthHeader]] = Field(
+    None,
+    description="Headers attached to requests for this datasource's origin host only, with values resolved from the credential store at crawl time",
+  )
   # Misc
   user_agent: Optional[str] = Field(None, description="Custom user agent string (defaults to Chrome-like UA)")
   allow_non_public_urls: bool = Field(False, description="Allow crawling URLs that resolve to private/internal IP addresses. Disabled by default (SSRF protection). Only enable for datasources on internal networks.")
@@ -52,6 +108,18 @@ class ScrapySettings(BaseModel):
   def validate_chunk_overlap(self) -> "ScrapySettings":
     if self.chunk_overlap >= self.chunk_size:
       raise ValueError("chunk_overlap must be smaller than chunk_size")
+    return self
+
+  @model_validator(mode="after")
+  def validate_auth_headers(self) -> "ScrapySettings":
+    if not self.auth_headers:
+      return self
+    seen: set[str] = set()
+    for header in self.auth_headers:
+      key = header.header_name.lower()
+      if key in seen:
+        raise ValueError(f"duplicate auth header name: {header.header_name}")
+      seen.add(key)
     return self
 
 

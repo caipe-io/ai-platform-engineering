@@ -62,6 +62,7 @@ spec:
             {{- $oidc := $rag.ingestorOidc | default dict }}
             {{- $secretRef := $oidc.clientSecretRef | default dict }}
             {{- $customEnv := $ingestor.env | default dict }}
+            {{- $credentialService := $rag.credentialService | default dict }}
             {{- $initDelaySeconds := 60 }}
             {{- if hasKey $ingestor "initDelaySeconds" }}
             {{- $initDelaySeconds = $ingestor.initDelaySeconds }}
@@ -120,6 +121,17 @@ spec:
                 secretKeyRef:
                   name: {{ tpl $secretRef.name $ | quote }}
                   key: {{ $secretRef.key | default "INGESTOR_OIDC_CLIENT_SECRET" | quote }}
+            {{- end }}
+
+            # Credential service, used to resolve credentials referenced by
+            # authenticated ingestion sources.
+            {{- if and $credentialService.apiUrl (not (hasKey $customEnv "CREDENTIAL_API_URL")) }}
+            - name: CREDENTIAL_API_URL
+              value: {{ tpl $credentialService.apiUrl $ | quote }}
+            {{- end }}
+            {{- if and $credentialService.audience (not (hasKey $customEnv "CREDENTIAL_SERVICE_AUDIENCE")) }}
+            - name: CREDENTIAL_SERVICE_AUDIENCE
+              value: {{ $credentialService.audience | quote }}
             {{- end }}
 
             # Custom environment variables from ingestor config

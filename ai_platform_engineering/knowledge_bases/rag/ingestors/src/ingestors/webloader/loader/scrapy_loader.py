@@ -101,6 +101,8 @@ class ScrapyLoader:
       # Calculate fresh_until for document ingestion
       fresh_until = get_fresh_until(reload_interval)
 
+      auth_headers, auth_credential_labels = await self.client.resolve_auth_headers(settings.auth_headers)
+
       # Build crawl request
       request = CrawlRequest(
         job_id=job_id,
@@ -120,6 +122,8 @@ class ScrapyLoader:
         respect_robots_txt=settings.respect_robots_txt,
         user_agent=settings.user_agent,
         allow_non_public_urls=settings.allow_non_public_urls,
+        resolved_auth_headers=auth_headers or None,
+        auth_credential_labels=auth_credential_labels,
         ingestor_id=self.client.ingestor_id or "",
         datasource_name=getattr(self.datasource_info, "name", "") or "",
         reload_interval=reload_interval,
