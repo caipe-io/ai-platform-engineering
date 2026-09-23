@@ -50,6 +50,33 @@ describe("parseConfluenceLocator", () => {
     ).toMatchObject({ kind: "space", spaceKey: "ENG" });
   });
 
+  it("treats a space overview URL with a homepageId as a page", () => {
+    // Confluence's own UI links to exactly this shape when viewing a space's
+    // home page - it has no /pages/{id} segment, but homepageId genuinely
+    // identifies one page. Regression case: without this, pasting a space's
+    // home page URL silently created a whole-space source instead of a
+    // page-scoped one.
+    expect(
+      parseConfluenceLocator(
+        "https://example.atlassian.net/wiki/spaces/ENG/overview?homepageId=131942220914",
+      ),
+    ).toMatchObject({ kind: "page", spaceKey: "ENG", contentId: "131942220914" });
+  });
+
+  it("treats a bare space root URL with a homepageId as a page", () => {
+    expect(
+      parseConfluenceLocator("https://example.atlassian.net/wiki/spaces/ENG?homepageId=123"),
+    ).toMatchObject({ kind: "page", contentId: "123" });
+  });
+
+  it("ignores a non-numeric homepageId", () => {
+    const locator = parseConfluenceLocator(
+      "https://example.atlassian.net/wiki/spaces/ENG/overview?homepageId=not-a-number",
+    );
+    expect(locator?.kind).toBe("space");
+    expect(locator?.contentId).toBeUndefined();
+  });
+
   it("decodes a URL-encoded space key", () => {
     expect(
       parseConfluenceLocator("https://example.atlassian.net/wiki/spaces/MY%20SPACE"),

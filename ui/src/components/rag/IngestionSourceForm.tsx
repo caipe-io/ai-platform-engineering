@@ -519,11 +519,7 @@ function identityFieldsValid(values: IngestionSourceFormValues): boolean {
     case "slack_channel":
       return values.channel_id.trim().length > 0;
     case "confluence_space":
-      return Boolean(
-        values.space_key.trim() &&
-          parseConfluenceLocator(values.start_page_url)?.spaceKey ===
-            values.space_key.trim(),
-      );
+      return Boolean(parseConfluenceLocator(values.start_page_url)?.spaceKey);
     case "jira_project":
       return values.project_key.trim().length > 0 && values.source_slug.trim().length > 0;
     case "web_url":
@@ -1024,6 +1020,7 @@ export function IngestionSourceForm({
                       ...current,
                       start_page_url: startPageUrl,
                       confluence_url: parsed?.baseUrl ?? "",
+                      space_key: parsed?.spaceKey ?? "",
                     }));
                   }}
                   disabled={isEdit}
@@ -1036,22 +1033,11 @@ export function IngestionSourceForm({
                   </p>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    Paste a page, folder, or space URL. Its space key and
-                    scope are detected automatically.
+                    {confluenceLocator
+                      ? `Space: ${confluenceLocator.spaceKey}`
+                      : "Paste a page, folder, or space URL. Its space key and scope are detected automatically."}
                   </p>
                 )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="space-key">
-                  Space Key {!isEdit && <span className="text-destructive">*</span>}
-                </Label>
-                <Input
-                  id="space-key"
-                  value={values.space_key}
-                  onChange={(e) => setValues((v) => ({ ...v, space_key: e.target.value }))}
-                  disabled={isEdit}
-                  placeholder="e.g. ENG"
-                />
               </div>
               {confluenceKind === "page" ? (
                 <BoolToggle

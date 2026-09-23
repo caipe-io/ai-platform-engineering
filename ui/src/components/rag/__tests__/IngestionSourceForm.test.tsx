@@ -194,7 +194,7 @@ describe("<IngestionSourceForm /> — create", () => {
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/source type/i)).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/space key/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/space key/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/^url/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/starting page url/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/confluence url/i)).not.toBeInTheDocument();
@@ -221,7 +221,6 @@ describe("<IngestionSourceForm /> — create", () => {
       screen.getByLabelText(/^url/i),
       "https://example.atlassian.net/wiki/spaces/ENG/pages/123/Overview",
     );
-    await user.type(screen.getByLabelText(/space key/i), "ENG");
     await user.click(screen.getByRole("button", { name: /ingest source/i }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
@@ -256,7 +255,6 @@ describe("<IngestionSourceForm /> — create", () => {
       screen.getByLabelText(/^url/i),
       "https://example.atlassian.net/wiki/spaces/ENG/folder/456",
     );
-    await user.type(screen.getByLabelText(/space key/i), "ENG");
 
     expect(screen.queryByText(/include child pages/i)).not.toBeInTheDocument();
 
@@ -292,7 +290,6 @@ describe("<IngestionSourceForm /> — create", () => {
       screen.getByLabelText(/^url/i),
       "https://example.atlassian.net/wiki/spaces/ENG/folder/456",
     );
-    await user.type(screen.getByLabelText(/space key/i), "ENG");
     await user.click(screen.getByRole("button", { name: /preview ingestion/i }));
 
     await waitFor(() => {
@@ -328,7 +325,6 @@ describe("<IngestionSourceForm /> — create", () => {
       screen.getByLabelText(/^url/i),
       "https://example.atlassian.net/wiki/spaces/ENG",
     );
-    await user.type(screen.getByLabelText(/space key/i), "ENG");
     await user.click(screen.getByRole("button", { name: /ingest source/i }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
@@ -608,7 +604,6 @@ describe("<IngestionSourceForm /> — Confluence URL validation", () => {
 
     await user.type(screen.getByLabelText(/^name/i), "Example");
     await user.type(screen.getByLabelText(/^url/i), "https://example.atlassian.net/wiki/display/ENG");
-    await user.type(screen.getByLabelText(/space key/i), "ENG");
 
     expect(
       screen.getByText(/couldn.t recognize this as a confluence page, folder, or space url/i),

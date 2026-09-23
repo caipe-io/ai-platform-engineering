@@ -58,10 +58,24 @@ export function parseConfluenceLocator(value: string): ConfluenceLocator | null 
   const spaceMatch = SPACE_ROOT_PATH.exec(parsed.pathname);
   if (spaceMatch && spaceMatch.index !== undefined) {
     const basePath = parsed.pathname.slice(0, spaceMatch.index).replace(/\/$/, "");
+    const spaceKey = decodeURIComponent(spaceMatch[1]);
+    // Confluence's own UI sends users to /spaces/{key}/overview?homepageId={id}
+    // when viewing a space's home page - it has no /pages/{id} segment, but
+    // homepageId genuinely identifies one page, not the whole space.
+    const homepageId = parsed.searchParams.get("homepageId");
+    if (homepageId && /^\d+$/.test(homepageId)) {
+      return {
+        pageUrl: trimmed,
+        baseUrl: `${parsed.origin}${basePath}`,
+        spaceKey,
+        kind: "page",
+        contentId: homepageId,
+      };
+    }
     return {
       pageUrl: trimmed,
       baseUrl: `${parsed.origin}${basePath}`,
-      spaceKey: decodeURIComponent(spaceMatch[1]),
+      spaceKey,
       kind: "space",
     };
   }

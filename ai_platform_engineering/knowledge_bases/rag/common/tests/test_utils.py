@@ -150,6 +150,36 @@ def test_parse_confluence_locator_space_overview():
   assert locator.space_key == "ENG"
 
 
+def test_parse_confluence_locator_space_overview_with_homepage_id_is_a_page():
+  # Confluence's own UI links to exactly this shape when viewing a space's
+  # home page - it has no /pages/{id} segment, but homepageId genuinely
+  # identifies one page. Regression case: without this, pasting a space's
+  # home page URL silently created a whole-space source instead of a
+  # page-scoped one, which then collided with a later real whole-space ingest.
+  locator = parse_confluence_locator(
+    "https://wiki.example.com/wiki/spaces/ENG/overview?homepageId=131942220914",
+  )
+  assert locator.kind == "page"
+  assert locator.space_key == "ENG"
+  assert locator.content_id == "131942220914"
+
+
+def test_parse_confluence_locator_space_root_with_homepage_id_is_a_page():
+  locator = parse_confluence_locator(
+    "https://wiki.example.com/wiki/spaces/ENG?homepageId=123",
+  )
+  assert locator.kind == "page"
+  assert locator.content_id == "123"
+
+
+def test_parse_confluence_locator_ignores_a_non_numeric_homepage_id():
+  locator = parse_confluence_locator(
+    "https://wiki.example.com/wiki/spaces/ENG/overview?homepageId=not-a-number",
+  )
+  assert locator.kind == "space"
+  assert locator.content_id is None
+
+
 def test_parse_confluence_locator_decodes_space_key():
   locator = parse_confluence_locator("https://wiki.example.com/wiki/spaces/MY%20SPACE")
   assert locator.space_key == "MY SPACE"

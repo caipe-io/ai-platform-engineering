@@ -11,7 +11,7 @@ import hashlib
 import time
 import uuid
 from typing import Any, Dict, NamedTuple, Optional
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, parse_qs
 from common.models.rag import StructuredEntity
 
 DURATION_DAY = 60 * 60 * 24
@@ -225,7 +225,8 @@ def parse_confluence_locator(url: str) -> Optional[ConfluenceLocator]:
   shapes (``/spaces/{key}/pages/{id}``, ``/spaces/{key}/folder/{id}``, or a
   bare ``/spaces/{key}`` root).
   """
-  path = urlparse(url).path
+  parsed = urlparse(url)
+  path = parsed.path
 
   match = _CONFLUENCE_PAGE_PATH.search(path)
   if match:
@@ -237,7 +238,14 @@ def parse_confluence_locator(url: str) -> Optional[ConfluenceLocator]:
 
   match = _CONFLUENCE_SPACE_ROOT_PATH.search(path)
   if match:
-    return ConfluenceLocator(kind="space", space_key=unquote(match.group(1)))
+    space_key = unquote(match.group(1))
+    # Confluence's own UI sends users to /spaces/{key}/overview?homepageId={id}
+    # when viewing a space's home page - it has no /pages/{id} segment, but
+    # homepageId genuinely identifies one page, not the whole space.
+    homepage_id = parse_qs(parsed.query).get("homepageId", [None])[0]
+    if homepage_id and homepage_id.isdigit():
+      return ConfluenceLocator(kind="page", space_key=space_key, content_id=homepage_id)
+    return ConfluenceLocator(kind="space", space_key=space_key)
 
   return None
 
