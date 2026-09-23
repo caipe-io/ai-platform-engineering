@@ -433,6 +433,11 @@ class TestChatHistory:
         msgs = [doc async for doc in service._messages().find({})]
         assert len(convs) == 1
         assert len(msgs) == 2
+        assert {message["metadata"]["run_id"] for message in msgs} == {"run-001"}
+        assert {message["metadata"]["kind"] for message in msgs} == {
+            "run_request",
+            "run_response",
+        }
 
     async def test_conversation_id_matches_ui_uuid_shape(self, service: MongoService):
         """Derived conversation id matches the UI's ``validateUUID`` regex."""
@@ -448,6 +453,7 @@ class TestChatHistory:
             status=TaskStatus.SUCCESS,
             started_at=_spaced(0),
             finished_at=_spaced(1),
+            execution_context_id="run-context-r1",
         )
         await service.publish_run(
             run,
@@ -462,6 +468,7 @@ class TestChatHistory:
         assert conv["owner_id"] == "autonomous@system"
         assert conv["agent_id"] == "github"
         assert conv["task_id"] == "weekly-prs"
+        assert conv["execution_context_id"] == "run-context-r1"
         assert conv["metadata"]["task_name"] == "Weekly PR Review"
         assert "autonomous" in conv["tags"]
         assert "weekly-prs" in conv["tags"]
@@ -471,6 +478,41 @@ class TestChatHistory:
             {"type": "user", "id": "autonomous@system"},
             {"type": "agent", "id": "github"},
         ]
+
+    async def test_existing_task_conversation_self_heals_autonomous_provenance(
+        self, service: MongoService
+    ):
+        """Legacy task chats without top-level provenance leave normal Chat history."""
+        task_id = "legacy-task"
+        conv_id = conversation_id_for_task(task_id)
+        await service._conversations().insert_one(
+            {
+                "_id": conv_id,
+                "title": "[Autonomous] Legacy Task",
+                "owner_id": "alice@example.com",
+                "created_at": _spaced(0),
+                "updated_at": _spaced(0),
+            }
+        )
+
+        await service.publish_run(
+            TaskRun(
+                run_id="legacy-run",
+                task_id=task_id,
+                task_name="Legacy Task",
+                status=TaskStatus.SUCCESS,
+                started_at=_spaced(1),
+                finished_at=_spaced(2),
+            ),
+            prompt="hello",
+            response="world",
+            error=None,
+            agent="github",
+        )
+
+        conv = await service._conversations().find_one({"_id": conv_id})
+        assert conv["source"] == "autonomous"
+        assert conv["task_id"] == task_id
 
     async def test_publish_run_is_idempotent_across_status_transitions(self, service: MongoService):
         """RUNNING => SUCCESS overwrites the existing message slots; no duplicates."""

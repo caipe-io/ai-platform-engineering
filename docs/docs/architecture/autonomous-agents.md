@@ -73,18 +73,28 @@ The user-facing **Autonomous** page:
   inspection.
 - Does not contain an admin configuration tab or task-oversight view.
 
-Every run is authorized again by Dynamic Agents as the task owner. If the
-owner loses Autonomous eligibility or access to the target agent, the run
-fails and the task is automatically disabled. Restoring access does not
-automatically re-enable the task.
+Every run uses a short-lived bearer obtained through RFC 8693
+`requested_subject` token exchange for the server-stamped task owner. Tokens
+are cached per owner only until shortly before expiry. Dynamic Agents uses that
+bearer for agent authorization, Autonomous eligibility, AgentGateway, and
+caller-scoped MCP credential exchange. This lets an unattended run use the
+owner's connected providers without storing a Keycloak access token on the
+task.
+
+If owner token exchange fails, or the owner loses Autonomous eligibility or
+access to the target agent, the run fails closed. Authorization revocation also
+automatically disables the task; restoring access does not automatically
+re-enable it. Tasks created before `owner_sub` was persisted must be recreated.
 
 ## Scheduling
 
 Cron and interval tasks are registered directly with APScheduler and execute
 in the service process; they do not use the webhook FIFO.
 
-- Cron uses a standard five-field expression in UTC.
-- Interval supports seconds, minutes, and hours.
+- Cron uses a standard five-field expression. Its IANA timezone defaults to
+  `UTC`; zones such as `Europe/London` automatically follow GMT/BST changes.
+- Interval supports seconds, minutes, and hours. It represents elapsed time,
+  so timezone and daylight-saving changes do not apply.
 - The default minimum gap is 1,800 seconds (30 minutes).
 - `MINIMUM_SCHEDULE_INTERVAL_SECONDS` changes that floor for both trigger
   types.
@@ -119,6 +129,14 @@ The modal includes provider-specific instructions and copy controls for the
 URL and secret. A generated secret is never returned again after the creation
 response. Normal task reads expose only `has_secret: true|false`.
 
+Every supported provider can optionally filter deliveries with structured
+header or payload-field conditions. Payload fields use bounded dot paths; all
+conditions must match and any value within one condition may match. Filter code
+is never accepted or executed. GitHub tasks can, for example, filter by the
+`X-GitHub-Event` header and top-level payload `action`; Jira can use
+`webhookEvent`; Slack can use `event.type`; and PagerDuty can use
+`event.event_type`.
+
 ### Secret storage
 
 Per-task webhook secrets are never stored as plaintext in MongoDB. Each write
@@ -148,9 +166,11 @@ The receiver performs the following work before returning:
 2. Enforce the request-body limit.
 3. Verify the provider-specific HMAC and timestamp policy.
 4. Ignore recognized configuration pings, such as GitHub `ping` events.
-5. Reserve queue capacity.
-6. Claim the delivery's deduplication key in MongoDB.
-7. Append the run to the task's process-local FIFO and return `202 Accepted`
+5. Apply the task's provider-aware filter, when configured. A mismatch returns
+   `200 OK` without creating a deduplication row, run, or agent invocation.
+6. Reserve queue capacity.
+7. Claim the delivery's deduplication key in MongoDB.
+8. Append the run to the task's process-local FIFO and return `202 Accepted`
    with its preallocated run ID.
 
 Duplicate deliveries return `200 OK` with the original run ID and do not run
@@ -194,7 +214,24 @@ The Autonomous page polls active run history every five seconds.
 - Webhook **Run history** renders the full final response as Markdown.
 - Cron and interval Run history show the response preview and can link to the
   corresponding Chat thread when Chat publishing is enabled.
-- Webhook runs are never published into Chat history.
+- Webhook runs have a grouped task history under **Autonomous Runs → Webhook
+  Runs** in the Chat sidebar; they are not published as ordinary conversations.
+- Cron, interval, and webhook task histories are read-only. **Continue this
+  run** opens a private **[Manual Follow-up]** chat for any completed run,
+  including the latest. The original result retains a link to that chat.
+- The manual chat copies the selected run's saved checkpoint as of completion,
+  plus its available files, into a new execution context. Later replies cannot
+  change the automated context. Subsequent clicks reopen the existing chat.
+- Each caller has their own follow-up chat per run. Task ownership, Autonomous
+  eligibility, and agent-use permission are checked before creating it. Missing
+  snapshots and unfinished tool execution are rejected instead of starting with
+  an empty or shared context.
+
+The UI and Dynamic Agents services must both be updated for manual follow-up
+chats. Dynamic Agents reads the same task/run database as Autonomous Agents;
+`AUTONOMOUS_TASKS_COLLECTION` and `AUTONOMOUS_RUNS_COLLECTION` default to
+`autonomous_tasks` and `autonomous_runs`. Agents with a custom shared file
+namespace cannot branch into an isolated manual chat.
 
 `CHAT_HISTORY_PUBLISH_ENABLED` defaults to `false`. When enabled, cron and
 interval activity is published as one stable Chat conversation per task, with
@@ -238,10 +275,12 @@ autonomous-agents:
     CHAT_HISTORY_PUBLISH_ENABLED: "false"
   dynamicAgentsAuth:
     enabled: true
-    clientId: caipe-platform
+    clientId: caipe-scheduler-runner
+    audience: caipe-platform
     clientSecretRef:
-      name: caipe-platform-secret
-      key: OIDC_CLIENT_SECRET
+      # Empty defaults to <release>-keycloak-scheduler-runner.
+      name: ""
+      key: KC_SCHEDULER_CLIENT_SECRET
 ```
 
 `autonomous-agents-secret` must provide `MONGODB_URI`. Add

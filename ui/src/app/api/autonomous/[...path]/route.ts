@@ -10,6 +10,7 @@ import {
   resolveKeycloakSubFromSession,
 } from '@/lib/api-middleware';
 import { getConfig } from '@/lib/config';
+import { authenticateRequest, getDynamicAgentsConfig, proxyRequest } from '@/lib/da-proxy';
 import { checkOpenFgaTuple } from '@/lib/rbac/openfga';
 import { organizationObjectId } from '@/lib/rbac/organization';
 import { subjectFromSession } from '@/lib/rbac/resource-authz';
@@ -112,9 +113,25 @@ async function forward(
   request: NextRequest,
   pathSegments: string[],
   method: SupportedMethod,
-): Promise<NextResponse> {
+): Promise<Response> {
   if (!getConfig('autonomousAgentsEnabled')) {
     throw new ApiError('Autonomous agents are disabled', 404);
+  }
+
+  // Manual chats are created by the service that owns the checkpoints. It
+  // authorizes task ownership, Autonomous entitlement, and agent use itself.
+  const isFollowUpList = pathSegments.length === 3 && pathSegments[0] === 'tasks' && pathSegments[2] === 'follow-up-chats';
+  const isFollowUpChat = pathSegments.length === 5 && pathSegments[0] === 'tasks' && pathSegments[2] === 'runs' && pathSegments[4] === 'follow-up-chat';
+  if (isFollowUpList || isFollowUpChat) {
+    if (method !== (isFollowUpList ? 'GET' : 'POST')) throw new ApiError('Method not allowed', 405);
+    const auth = await authenticateRequest(request);
+    if (auth instanceof NextResponse) return auth;
+    const config = getDynamicAgentsConfig();
+    if (config instanceof NextResponse) return config;
+    return await proxyRequest(
+      `${config.dynamicAgentsUrl}/api/v1/autonomous/${pathSegments.map(encodeURIComponent).join('/')}`,
+      method, auth, '[autonomous/follow-up-chat]',
+    );
   }
 
   return await withAuth(request, async (_req, user, session) => {
@@ -129,6 +146,9 @@ async function forward(
     });
     if (!entitlement.allowed) {
       throw new ApiError('Your team is not enabled for Autonomous', 403);
+    }
+    if (method === 'POST' && pathSegments.length === 5 && pathSegments[0] === 'tasks' && pathSegments[2] === 'runs' && pathSegments[4] === 'follow-up') {
+      throw new ApiError('Automated history is read-only. Open a manual follow-up chat to continue this run.', 409);
     }
 
     // Entitled callers reach the per-user backend, which enforces task ownership.

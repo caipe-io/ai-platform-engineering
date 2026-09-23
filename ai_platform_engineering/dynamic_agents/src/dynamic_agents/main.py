@@ -35,6 +35,7 @@ from dynamic_agents.metrics import PrometheusHTTPMiddleware
 from dynamic_agents.routes import (
     agents,
     assistant,
+    autonomous_follow_up,
     builtin_tools,
     chat,
     conversations,
@@ -167,6 +168,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp_servers.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1")
     app.include_router(conversations.router, prefix="/api/v1")
+    app.include_router(autonomous_follow_up.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
     app.include_router(assistant.router, prefix="/api/v1")
     app.include_router(middleware.router, prefix="/api/v1")

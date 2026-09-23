@@ -180,6 +180,9 @@ export function ChatContainer() {
               accessLevel: conv.access_level,
               sharing: conv.sharing,
               source: conv.source ?? (conv.client_type === 'api' ? 'api' : undefined),
+              task_id: conv.task_id,
+              run_id: conv.run_id,
+              metadata: conv.metadata,
             };
 
             useChatStore.setState((state) => ({

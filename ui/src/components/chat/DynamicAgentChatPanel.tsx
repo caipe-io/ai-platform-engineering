@@ -42,6 +42,8 @@ import { RewindConfirmationDialog } from "./RewindConfirmationDialog";
 import { getFilteredCommands,SlashCommandMenu,type SlashCommand } from "./SlashCommandMenu";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import { useSlashCommands } from "./useSlashCommands";
+import { RunFollowUpButton } from "@/components/autonomous/RunFollowUpButton";
+import { useAutonomousFollowUps } from "@/hooks/use-autonomous-follow-ups";
 
 type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'agent_disabled';
 
@@ -310,6 +312,10 @@ export function ChatPanel({
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
+  const isAutonomousHistory = conversation?.source === "autonomous";
+  const autonomousFollowUps = useAutonomousFollowUps(
+    isAutonomousHistory && !panelReadOnly ? conversation?.task_id : undefined,
+  );
   const editingMessageIndex = editingMessageId
     ? (conversation?.messages.findIndex((message) => message.id === editingMessageId) ?? -1)
     : -1;
@@ -522,7 +528,7 @@ export function ChatPanel({
   // ═══════════════════════════════════════════════════════════════
   useEffect(() => {
     // Skip if no conversationId (new conversation) or agentId
-    if (!conversationId || !agentId) return;
+    if (!conversationId || !agentId || isAutonomousHistory) return;
     
     // Wait for messages to be loaded (race condition on page refresh:
     // this effect can fire before ChatContainer finishes loading messages
@@ -623,7 +629,7 @@ export function ChatPanel({
     };
 
     checkInterruptState();
-  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck]);
+  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory]);
 
   // ═══════════════════════════════════════════════════════════════
   // FILES & TASKS FETCH (for timeline display in latest message)
@@ -760,7 +766,7 @@ export function ChatPanel({
   const lastMsgEventsLen = conversation?.messages?.[conversation.messages.length - 1]?.streamEvents?.length ?? 0;
 
   useEffect(() => {
-    if (pendingUserInput || isThisConversationStreaming) return;
+    if (pendingUserInput || isThisConversationStreaming || isAutonomousHistory) return;
     if (!conversation || conversation.messages.length === 0) return;
 
     const messages = conversation.messages;
@@ -823,7 +829,7 @@ export function ChatPanel({
     }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConversationId, conversation?.messages?.length, conversation?.streamEvents?.length, lastMsgEventsLen, isThisConversationStreaming, agentId]);
+  }, [activeConversationId, conversation?.messages?.length, conversation?.streamEvents?.length, lastMsgEventsLen, isThisConversationStreaming, agentId, isAutonomousHistory]);
 
   const handleCopy = async (content: string, id: string) => {
     await navigator.clipboard.writeText(content);
@@ -1083,8 +1089,14 @@ export function ChatPanel({
         ? Date.now() - state.startedAt
         : undefined;
 
+    const finalContent = state.accumulatedText || (
+      state.hasError && state.errorMessage
+        ? `**Error:** ${state.errorMessage}`
+        : ""
+    );
+
     updateMessage(conversationId, assistantMsgId, {
-      content: state.accumulatedText,
+      content: finalContent,
       rawStreamContent: state.rawStreamContent,
       isFinal,
       turnStatus,
@@ -1101,6 +1113,7 @@ export function ChatPanel({
   // A queued batch renders as separate user bubbles but is sent as one prompt,
   // producing one coherent assistant response for the whole batch.
   const submitMessageBatch = useCallback(async (messagesToSend: QueuedMessage[]) => {
+    if (isAutonomousHistory) return;
     const validMessages = messagesToSend.filter(
       (message) => message.text.trim() || message.files.length > 0,
     );
@@ -1241,7 +1254,7 @@ export function ChatPanel({
       });
       setConversationStreaming(convId, null);
     }
-  }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
+  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
 
   const submitMessage = useCallback(
     (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
@@ -1971,6 +1984,14 @@ export function ChatPanel({
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
           <div className="max-w-7xl mx-auto pl-1 pr-1 py-4 space-y-6">
+            {conversation?.source === "autonomous" && (
+              <div className="mx-3 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-foreground">
+                This chat contains automated runs and is read-only. Select
+                <span className="font-medium"> Continue this run</span> to discuss any result
+                in a separate manual follow-up chat. Each follow-up has its own copy of
+                that run&apos;s context.
+              </div>
+            )}
             {!conversation?.messages.length && (
               <div className="text-center py-20">
                 {isLoadingMessages ? (
@@ -2043,6 +2064,7 @@ export function ChatPanel({
                         isConversationOwner &&
                         !isLocalCommand &&
                         !panelReadOnly &&
+                        !isAutonomousHistory &&
                         !isThisConversationStreaming &&
                         !pendingUserInput &&
                         !pendingToolApproval;
@@ -2115,6 +2137,17 @@ export function ChatPanel({
                           deletingFilePath={deletingFilePath}
                           getSubagentInfo={getSubagentInfo}
                           pendingHitl={!!(pendingUserInput || pendingToolApproval)}
+                          autonomousFollowUp={
+                            isAutonomousHistory && !panelReadOnly &&
+                            msg.autonomousRunId && msg.autonomousExecutionContextId &&
+                            ["run_response", "run_error"].includes(msg.autonomousMessageKind ?? "")
+                              ? <RunFollowUpButton
+                                  runId={msg.autonomousRunId}
+                                  conversationId={autonomousFollowUps.links[msg.autonomousRunId]}
+                                  openChat={autonomousFollowUps.openChat}
+                                />
+                              : undefined
+                          }
                         />
                       );
                     })}
@@ -2314,7 +2347,7 @@ export function ChatPanel({
             ) : null}
           </div>
         </div>
-      ) : (
+      ) : !isAutonomousHistory && (
       <div className="border-t border-border bg-background shrink-0">
         <div className="max-w-7xl mx-auto px-6 py-3 space-y-2">
           {/* Queued Messages Display */}
@@ -2553,6 +2586,8 @@ interface ChatMessageProps {
   deletingFilePath?: string;
   getSubagentInfo?: (agentId: string) => SubagentLookupInfo | undefined;
   pendingHitl?: boolean;
+  /** Open an independent manual chat for this autonomous result. */
+  autonomousFollowUp?: React.ReactNode;
 }
 
 const ChatMessage = React.memo(function ChatMessage({
@@ -2592,10 +2627,10 @@ const ChatMessage = React.memo(function ChatMessage({
   deletingFilePath,
   getSubagentInfo,
   pendingHitl = false,
+  autonomousFollowUp,
 }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [isHovered, setIsHovered] = useState(false);
-
   const displayContent = message.content;
 
   // Transform SSE events into grouped timeline data for assistant messages
@@ -2863,8 +2898,8 @@ const ChatMessage = React.memo(function ChatMessage({
                 <MarkdownRenderer content={displayContent} />
               </div>
             ) : message.turnStatus === "interrupted" ? (
-              <div className="text-xs text-muted-foreground italic px-1">
-                This response failed to complete. No content was generated.
+              <div className="text-xs text-destructive px-1">
+                {message.error || "This response failed to complete. No content was generated."}
               </div>
             ) : null}
 
@@ -2907,6 +2942,8 @@ const ChatMessage = React.memo(function ChatMessage({
                 />
               </motion.div>
             )}
+
+            {autonomousFollowUp}
 
           </>
         )}

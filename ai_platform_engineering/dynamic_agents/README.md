@@ -153,6 +153,8 @@ The API documentation is available at:
 | `MONGODB_DATABASE` | Database name | `caipe` |
 | `DYNAMIC_AGENTS_COLLECTION` | Agents collection name | `dynamic_agents` |
 | `MCP_SERVERS_COLLECTION` | MCP servers collection name | `mcp_servers` |
+| `AUTONOMOUS_TASKS_COLLECTION` | Shared Autonomous task collection, used to authorize manual follow-up chats | `autonomous_tasks` |
+| `AUTONOMOUS_RUNS_COLLECTION` | Shared Autonomous run collection, used to select the completed run context | `autonomous_runs` |
 | `AGENT_RUNTIME_TTL_SECONDS` | Cache TTL for agent runtimes | `3600` |
 | `CORS_ORIGINS` | Allowed CORS origins | `["*"]` |
 
@@ -217,6 +219,19 @@ models:
 | `/api/v1/chat/stream` | POST | User | Stream chat response (SSE) |
 | `/api/v1/chat/invoke` | POST | User | Non-streaming chat (simple integrations) |
 | `/api/v1/chat/restart-runtime` | POST | User | Restart agent runtime (reconnect MCP servers) |
+
+### Autonomous Manual Follow-ups
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/autonomous/tasks/{task_id}/follow-up-chats` | GET | List the caller's existing manual follow-up links |
+| `/api/v1/autonomous/tasks/{task_id}/runs/{run_id}/follow-up-chat` | POST | Create or reopen a private chat from the selected run's completed checkpoint |
+
+- Requires Autonomous eligibility and task ownership (or admin); creation also requires agent-use permission.
+- Reconstructs the completed run's checkpoint deltas (messages and in-checkpoint files) into a standalone snapshot, and copies available stored files into the independent context. No model execution occurs until the user sends a message in the new chat.
+- Repeated clicks reuse the caller's chat for that run; they never overwrite its context.
+- Requires the UI, Dynamic Agents, and Autonomous Agents to use the same MongoDB database for chat, task, and run records. Deploy both the UI and Dynamic Agents changes together.
+- Missing snapshots, unfinished tool calls, and custom shared filesystem namespaces return `409`; they never fall back to an empty or shared context.
 
 ### Request/Response Examples
 

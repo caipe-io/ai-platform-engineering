@@ -865,7 +865,14 @@ describe('chat-store', () => {
             role: 'assistant',
             content: 'Here is the summary.',
             created_at: '2025-01-01T00:00:01Z',
-            metadata: { turn_id: 'turn-1', is_final: true },
+            metadata: {
+              turn_id: 'turn-1',
+              is_final: true,
+              task_id: 'task-1',
+              run_id: 'run-1',
+              kind: 'run_response',
+              execution_context_id: 'isolated-run-context',
+            },
           },
         ],
         total: 2,
@@ -886,6 +893,11 @@ describe('chat-store', () => {
       );
       expect(updatedConv!.messages).toHaveLength(2);
       expect(updatedConv!.messages[1].content).toBe('Here is the summary.');
+      expect(updatedConv!.messages[1].autonomousRunId).toBe('run-1');
+      expect(updatedConv!.messages[1].autonomousMessageKind).toBe('run_response');
+      expect(updatedConv!.messages[1].autonomousExecutionContextId).toBe(
+        'isolated-run-context',
+      );
     });
 
     it('prepends the next 10-message page when older history is requested', async () => {
@@ -907,7 +919,10 @@ describe('chat-store', () => {
             {
               message_id: 'older', conversation_id: 'paged-history', role: 'user',
               content: 'Older question', created_at: '2025-01-01T00:00:00Z',
-              metadata: { turn_id: 'turn-1', is_final: true },
+              metadata: {
+                turn_id: 'turn-1', is_final: true, run_id: 'older-run',
+                kind: 'run_request', execution_context_id: 'older-context',
+              },
             },
           ],
           total: 2, page: 2, page_size: 10, has_more: false,
@@ -923,6 +938,10 @@ describe('chat-store', () => {
       });
       const messages = useChatStore.getState().conversations[0].messages;
       expect(messages.map((message) => message.id)).toEqual(['older', 'newer']);
+      expect(messages[0]).toMatchObject({
+        autonomousRunId: 'older-run', autonomousMessageKind: 'run_request',
+        autonomousExecutionContextId: 'older-context',
+      });
       expect(useChatStore.getState().messageHistory['paged-history']).toMatchObject({
         nextPage: 3,
         hasMore: false,

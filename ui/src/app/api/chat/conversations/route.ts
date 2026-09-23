@@ -239,12 +239,19 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   // Source is a content filter, not an authz primitive — push into $and
   // to narrow results without touching the ownership $or. The previous
   // `delete query.$or` for source=autonomous was an IDOR.
+  // Preserve legacy run classification when filtering server-side, including
+  // conversations written before autonomous provenance became top-level.
+  const autonomousMarkers = [
+    { source: 'autonomous' },
+    { 'metadata.source': 'autonomous' },
+    { title: { $regex: '^\\[Autonomous\\](\\s|$)', $options: 'i' } },
+  ];
   if (sourceFilter === 'autonomous') {
-    query.$and.push({ source: 'autonomous' });
+    query.$and.push({ $or: autonomousMarkers });
   } else if (sourceFilter === 'api') {
     query.$and.push({ source: 'api' });
   } else if (sourceFilter === 'scheduled') {
-    query.$and.push({ source: { $ne: 'autonomous' } });
+    query.$and.push({ $nor: autonomousMarkers });
     query.$and.push({
       $or: [
         { 'metadata.schedule_id': { $exists: true, $ne: '' } },
@@ -257,6 +264,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     });
     query.$and.push({
       $nor: [
+        ...autonomousMarkers,
         { 'metadata.schedule_id': { $exists: true } },
         { _id: { $regex: 'sched_[a-z0-9]+', $options: 'i' } },
       ],

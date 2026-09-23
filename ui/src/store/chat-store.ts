@@ -251,6 +251,9 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       isFinal,
       turnId: msg.metadata?.turn_id,
       taskId: msg.metadata?.task_id,
+      autonomousRunId: msg.metadata?.run_id,
+      autonomousMessageKind: msg.metadata?.kind,
+      autonomousExecutionContextId: msg.metadata?.execution_context_id,
       turnStatus: msg.metadata?.turn_status as TurnStatus | undefined,
       isInterrupted: hasHitlForm
         ? false

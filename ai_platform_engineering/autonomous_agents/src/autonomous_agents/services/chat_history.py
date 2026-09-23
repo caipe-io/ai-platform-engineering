@@ -77,13 +77,12 @@ MessageKind = Literal[
 
 
 def conversation_id_for_task(task_id: str) -> str:
-    """Derive a stable UUIDv4-shaped conversation id from ``task_id``.
+    """Derive the stable UI chat-history conversation id for ``task_id``.
 
     Spec #099 FR-006 / AD-002. Every autonomous task owns exactly one
-    chat conversation. The deterministic UUIDv5 derivation matches the
-    contextId derivation used by ``services/a2a_client.py`` so the chat
-    conversation, the LangGraph checkpointer thread, and the
-    supervisor's run history all key off the same identifier.
+    visible chat conversation. Execution contexts are deliberately derived
+    per run so an old run's model/checkpointer state is never sent again just
+    because its result is displayed in this shared task history.
 
     The UI's chat routes ``validateUUID`` the path segment, so the id
     must match the canonical 8-4-4-4-12 hex pattern. ``uuid5`` returns
@@ -91,6 +90,16 @@ def conversation_id_for_task(task_id: str) -> str:
     version bits, only shape, so this is safe.
     """
     return str(uuid.uuid5(_AUTONOMOUS_NS, f"task:{task_id}"))
+
+
+def execution_context_id_for_task_run(task_id: str, run_id: str) -> str:
+    """Derive an isolated Dynamic Agents context for one task execution.
+
+    Cron, interval, and manual executions all use this id. The same ``run_id``
+    deterministically maps to the same context for safe retries, while every
+    newly created run starts without another run's checkpointer history.
+    """
+    return str(uuid.uuid5(_AUTONOMOUS_NS, f"run:{task_id}:{run_id}"))
 
 
 def conversation_id_for_webhook_run(task_id: str, root_run_id: str) -> str:
@@ -105,12 +114,12 @@ def conversation_id_for_webhook_run(task_id: str, root_run_id: str) -> str:
 
 
 def _conversation_id_for_run(run_id: str) -> str:
-    """Deprecated per-run conversation id; prefer :func:`conversation_id_for_task`.
+    """Deprecated legacy per-run conversation-id derivation.
 
     Retained for backwards compatibility with integration harnesses
-    that were built against the pre-spec-#099 per-run namespace. New
-    callers MUST use :func:`conversation_id_for_task` so the
-    conversation, checkpointer, and run history all share a key.
+    that were built against the pre-spec-#099 per-run namespace. New callers
+    should use :func:`execution_context_id_for_task_run` for execution state or
+    :func:`conversation_id_for_task` for the visible task history.
     """
     return str(uuid.uuid5(_AUTONOMOUS_NS, run_id))
 
