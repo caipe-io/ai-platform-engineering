@@ -169,20 +169,6 @@ const IconRenderer = ({
   );
 };
 
-/** Chunks fetched per page while scrolling a datasource's documents. */
-const DOCUMENT_PAGE_SIZE = 25;
-
-/** Distance from the bottom of a list at which the next page is requested. */
-const DOCUMENT_PREFETCH_MARGIN_PX = 120;
-
-/** True when a scroll container has reached the point of needing another page. */
-function isNearBottom(element: HTMLElement): boolean {
-  return (
-    element.scrollHeight - element.scrollTop - element.clientHeight <=
-    DOCUMENT_PREFETCH_MARGIN_PX
-  );
-}
-
 // Status badge component with consistent styling
 const StatusBadge = ({ status }: { status: string }) => {
   const getStatusConfig = (status: string) => {
@@ -1327,11 +1313,7 @@ export default function IngestView() {
     setLoadingDocuments((prev) => new Set(prev).add(datasourceId));
 
     try {
-      const response = await getDatasourceDocuments(
-        datasourceId,
-        offset,
-        DOCUMENT_PAGE_SIZE,
-      );
+      const response = await getDatasourceDocuments(datasourceId, offset, 100);
 
       if (offset === 0) {
         // First page - replace
@@ -3898,31 +3880,7 @@ export default function IngestView() {
                                                   No documents found
                                                 </p>
                                               ) : (
-                                                // Height is fixed while more pages are coming, so appending one
-                                                // cannot grow this panel and move the page under the cursor.
-                                                <div
-                                                  onScroll={(event) => {
-                                                    if (
-                                                      !documentsPagination[ds.datasource_id]?.hasMore ||
-                                                      loadingDocuments.has(ds.datasource_id) ||
-                                                      !isNearBottom(event.currentTarget)
-                                                    ) {
-                                                      return;
-                                                    }
-                                                    fetchDocumentsPage(
-                                                      ds.datasource_id,
-                                                      documentsPagination[ds.datasource_id].offset,
-                                                    );
-                                                  }}
-                                                  className={cn(
-                                                    "space-y-1 overflow-y-auto overscroll-contain pr-2 [overflow-anchor:none]",
-                                                    documentsPagination[ds.datasource_id]?.hasMore ||
-                                                      (datasourceDocuments[ds.datasource_id]?.documents.length ??
-                                                        0) > DOCUMENT_PAGE_SIZE
-                                                      ? "h-[32rem]"
-                                                      : "max-h-[32rem]",
-                                                  )}
-                                                >
+                                                <div className="space-y-1 max-h-[32rem] overflow-y-auto pr-2">
                                                   {datasourceDocuments[
                                                     ds.datasource_id
                                                   ]?.documents.map(
@@ -4269,17 +4227,6 @@ export default function IngestView() {
                                                       );
                                                     },
                                                   )}
-                                                  {loadingDocuments.has(
-                                                    ds.datasource_id,
-                                                  ) && (
-                                                    <div
-                                                      aria-live="polite"
-                                                      className="flex items-center justify-center gap-1 py-2 text-xs text-muted-foreground"
-                                                    >
-                                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                                      Loading more chunks…
-                                                    </div>
-                                                  )}
                                                 </div>
                                               )}
 
@@ -4300,6 +4247,46 @@ export default function IngestView() {
                                                     </p>
                                                   </div>
                                                 )}
+
+                                              {/* Load More button */}
+                                              {documentsPagination[
+                                                ds.datasource_id
+                                              ]?.hasMore && (
+                                                <div className="pt-2 text-center border-t border-border/50 mt-2">
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      const pagination =
+                                                        documentsPagination[
+                                                          ds.datasource_id
+                                                        ];
+                                                      if (pagination) {
+                                                        fetchDocumentsPage(
+                                                          ds.datasource_id,
+                                                          pagination.offset,
+                                                        );
+                                                      }
+                                                    }}
+                                                    disabled={loadingDocuments.has(
+                                                      ds.datasource_id,
+                                                    )}
+                                                    className="text-xs"
+                                                  >
+                                                    {loadingDocuments.has(
+                                                      ds.datasource_id,
+                                                    ) ? (
+                                                      <>
+                                                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                                        Loading...
+                                                      </>
+                                                    ) : (
+                                                      <>Load More Chunks</>
+                                                    )}
+                                                  </Button>
+                                                </div>
+                                              )}
 
                                             </div>
                                           </motion.div>
