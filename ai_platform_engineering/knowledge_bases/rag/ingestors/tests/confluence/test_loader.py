@@ -501,6 +501,18 @@ class TestGenerateDatasourceId:
     assert r1 == "src_confluence___example_com__SRE__123"
     assert r1 != r2
 
+  def test_folder_id_produces_a_distinct_id_from_a_page_id(self):
+    page_id = generate_datasource_id("https://example.com/wiki", "SRE", "123")
+    folder_id = generate_datasource_id("https://example.com/wiki", "SRE", "123", "folder")
+
+    assert folder_id == "src_confluence___example_com__SRE__folder__123"
+    assert folder_id != page_id
+
+  def test_no_content_id_produces_the_whole_space_id_regardless_of_kind(self):
+    assert generate_datasource_id("https://example.com/wiki", "SRE") == generate_datasource_id(
+      "https://example.com/wiki", "SRE", None, "folder",
+    )
+
   def test_space_key_appended_correctly(self):
     result = generate_datasource_id("https://example.com", "MY_SPACE")
     assert result.endswith("__MY_SPACE")
@@ -1341,3 +1353,177 @@ class TestLoadPagesTitleFiltering:
     assert len(pages) == 1
     assert pages[0]["id"] == "1"
     assert len(failed) == 0
+
+
+# ===========================================================================
+# 6. fetch_folder_pages and the load_pages() folder_id branch
+# ===========================================================================
+
+
+def _make_response(payload: dict, status: int = 200) -> MagicMock:
+  resp = MagicMock()
+  resp.status = status
+  resp.json = AsyncMock(return_value=payload)
+  resp.text = AsyncMock(return_value=str(payload))
+  resp.__aenter__ = AsyncMock(return_value=resp)
+  resp.__aexit__ = AsyncMock(return_value=False)
+  return resp
+
+
+class TestFetchFolderPages:
+  """Verify fetch_folder_pages recursively walks nested folders via the v2 API."""
+
+  @pytest.mark.asyncio
+  async def test_recurses_into_nested_folders_and_collects_all_pages(self):
+    loader = make_loader()
+
+    responses = {
+      "folders/F1/direct-children": _make_response(
+        {"results": [{"id": "P1", "type": "page"}, {"id": "F2", "type": "folder"}]},
+      ),
+      "folders/F2/direct-children": _make_response(
+        {"results": [{"id": "P2", "type": "page"}]},
+      ),
+    }
+
+    def fake_get(url, params=None):
+      for key, resp in responses.items():
+        if key in url:
+          return resp
+      raise AssertionError(f"Unexpected URL: {url}")
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=fake_get)
+    loader.session = mock_session
+
+    page_ids, failed, truncated = await loader.fetch_folder_pages("F1")
+
+    assert set(page_ids) == {"P1", "P2"}
+    assert failed == []
+    assert truncated is False
+
+  @pytest.mark.asyncio
+  async def test_follows_cursor_pagination_within_one_folder(self):
+    loader = make_loader()
+
+    first_page = _make_response(
+      {
+        "results": [{"id": "P1", "type": "page"}],
+        "_links": {"next": "/wiki/api/v2/folders/F1/direct-children?cursor=abc"},
+      },
+    )
+    second_page = _make_response({"results": [{"id": "P2", "type": "page"}]})
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=[first_page, second_page])
+    loader.session = mock_session
+
+    page_ids, failed, truncated = await loader.fetch_folder_pages("F1")
+
+    assert page_ids == ["P1", "P2"]
+    assert failed == []
+    assert mock_session.get.call_count == 2
+
+  @pytest.mark.asyncio
+  async def test_bounds_results_with_max_results_and_reports_truncation(self):
+    loader = make_loader()
+
+    resp = _make_response(
+      {
+        "results": [
+          {"id": "P1", "type": "page"},
+          {"id": "P2", "type": "page"},
+          {"id": "P3", "type": "page"},
+        ],
+      },
+    )
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=resp)
+    loader.session = mock_session
+
+    page_ids, failed, truncated = await loader.fetch_folder_pages("F1", max_results=2)
+
+    assert len(page_ids) == 2
+    assert truncated is True
+
+  @pytest.mark.asyncio
+  async def test_records_failure_on_non_200_response(self):
+    loader = make_loader()
+    resp = _make_response({}, status=500)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=resp)
+    loader.session = mock_session
+
+    page_ids, failed, truncated = await loader.fetch_folder_pages("F1")
+
+    assert page_ids == []
+    assert len(failed) == 1
+
+  @pytest.mark.asyncio
+  async def test_continues_to_a_sibling_folder_after_one_fails(self):
+    """A failed subfolder shouldn't abort the BFS walk of its still-queued siblings."""
+    loader = make_loader()
+
+    responses = {
+      "folders/F1/direct-children": _make_response(
+        {
+          "results": [
+            {"id": "F2", "type": "folder"},
+            {"id": "F3", "type": "folder"},
+          ],
+        },
+      ),
+      "folders/F2/direct-children": _make_response({}, status=500),
+      "folders/F3/direct-children": _make_response(
+        {"results": [{"id": "P1", "type": "page"}]},
+      ),
+    }
+
+    def fake_get(url, params=None):
+      for key, resp in responses.items():
+        if key in url:
+          return resp
+      raise AssertionError(f"Unexpected URL: {url}")
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=fake_get)
+    loader.session = mock_session
+
+    page_ids, failed, truncated = await loader.fetch_folder_pages("F1")
+
+    assert page_ids == ["P1"]
+    assert len(failed) == 1
+    assert failed[0][0] == "F2"
+
+
+class TestLoadPagesFolderConfig:
+  """Verify load_pages() expands a folder_id config entry into its nested pages."""
+
+  @pytest.mark.asyncio
+  async def test_folder_config_ingests_every_nested_page(self):
+    loader = make_loader()
+
+    folder_children = _make_response(
+      {"results": [{"id": "1", "type": "page"}, {"id": "2", "type": "page"}]},
+    )
+    page_1 = _make_response(make_page(page_id="1", title="Page One"))
+    page_2 = _make_response(make_page(page_id="2", title="Page Two"))
+
+    def fake_get(url, params=None):
+      if "direct-children" in url:
+        return folder_children
+      if url.endswith("/content/1"):
+        return page_1
+      if url.endswith("/content/2"):
+        return page_2
+      raise AssertionError(f"Unexpected URL: {url}")
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=fake_get)
+    loader.session = mock_session
+
+    pages, failed = await loader.load_pages("SRE", [{"folder_id": "F1"}])
+
+    assert {p["id"] for p in pages} == {"1", "2"}
+    assert failed == []

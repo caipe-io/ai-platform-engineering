@@ -6,7 +6,7 @@ import json
 import re
 import traceback
 import uuid
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 from common import utils
 from fastapi import FastAPI, status, HTTPException, Query, Depends, Response, UploadFile, File, Form
 from fastapi.responses import JSONResponse
@@ -2650,17 +2650,19 @@ async def preview_url_ingestion(
 def resolve_confluence_datasource_id(
   confluence_request: ConfluenceIngestRequest,
   space_key: str,
-  page_id: str,
+  content_id: Optional[str],
+  content_kind: str,
 ) -> str:
-  """Resolve page-scoped identity while accepting an existing legacy ID."""
-  page_datasource_id = utils.generate_confluence_datasource_id(
+  """Resolve page/folder-scoped identity while accepting an existing legacy ID."""
+  scoped_datasource_id = utils.generate_confluence_datasource_id(
     confluence_request.url,
     space_key,
-    page_id,
+    content_id,
+    content_kind,
   )
   supplied_id = (confluence_request.preprovisioned_datasource_id or "").strip()
   if not supplied_id:
-    return page_datasource_id
+    return scoped_datasource_id
   if not confluence_request.ownership_preprovisioned:
     raise HTTPException(
       status_code=400,
@@ -2670,18 +2672,23 @@ def resolve_confluence_datasource_id(
     confluence_request.url,
     space_key,
   )
-  if supplied_id not in {page_datasource_id, legacy_space_id}:
+  if supplied_id not in {scoped_datasource_id, legacy_space_id}:
     raise HTTPException(
       status_code=400,
-      detail="Preprovisioned datasource ID does not match the Confluence page",
+      detail="Preprovisioned datasource ID does not match the Confluence source",
     )
   return supplied_id
 
 
 def confluence_scope_description(
   confluence_request: ConfluenceIngestRequest,
+  content_kind: str,
 ) -> str:
   """Describe the concrete URL scope represented by a Confluence source."""
+  if content_kind == "folder":
+    return f"Confluence folder (all nested pages) at {confluence_request.url}"
+  if content_kind == "space":
+    return f"Entire Confluence space at {confluence_request.url}"
   if confluence_request.get_child_pages:
     return f"Confluence page and child pages starting at {confluence_request.url}"
   return f"Confluence page {confluence_request.url}"
@@ -2694,11 +2701,11 @@ async def preview_confluence_ingestion(
   user: UserContext = Depends(require_authenticated_user),
 ):
   """Resolve the configured Confluence root and filters without ingesting."""
-  confluence_match = re.search(r"/spaces/([^/]+)/pages/(\d+)", confluence_request.url)
-  if not confluence_match:
+  locator = utils.parse_confluence_locator(confluence_request.url)
+  if not locator:
     raise HTTPException(
       status_code=400,
-      detail="Invalid Confluence URL format. Expected a /spaces/SPACE/pages/PAGE_ID URL",
+      detail="Invalid Confluence URL format. Expected a page, folder, or space URL under /spaces/SPACE/...",
     )
   if confluence_url:
     submitted = urlparse(confluence_request.url)
@@ -2708,12 +2715,12 @@ async def preview_confluence_ingestion(
         status_code=400,
         detail=f"URL must be from configured Confluence instance: {configured.scheme}://{configured.netloc}",
       )
-  space_key = unquote(confluence_match.group(1))
-  page_id = confluence_match.group(2)
+  space_key = locator.space_key
   datasource_id = resolve_confluence_datasource_id(
     confluence_request,
     space_key,
-    page_id,
+    locator.content_id,
+    locator.kind,
   )
   existing_datasource = (
     await metadata_storage.get_datasource_info(datasource_id)
@@ -2924,13 +2931,12 @@ async def ingest_confluence_page(
   logger.info(f"Received Confluence page ingestion request: {confluence_request.url}")
   logger.info(f"  get_child_pages: {confluence_request.get_child_pages}")
 
-  # Parse Confluence URL to extract space_key and page_id
-  confluence_match = re.search(r"/spaces/([^/]+)/pages/(\d+)", confluence_request.url)
-  if not confluence_match:
-    raise HTTPException(status_code=400, detail="Invalid Confluence URL format. Expected: https://domain.atlassian.net/wiki/spaces/SPACE/pages/PAGE_ID/Title")
+  # Parse Confluence URL to extract space_key and the page/folder/space locator
+  locator = utils.parse_confluence_locator(confluence_request.url)
+  if not locator:
+    raise HTTPException(status_code=400, detail="Invalid Confluence URL format. Expected a page, folder, or space URL under /spaces/SPACE/...")
 
-  space_key = unquote(confluence_match.group(1))
-  page_id = confluence_match.group(2)
+  space_key = locator.space_key
 
   # Validate that submitted URL matches configured Confluence instance
   if confluence_url:
@@ -2941,16 +2947,23 @@ async def ingest_confluence_page(
     if submitted_parsed.scheme != configured_parsed.scheme or submitted_parsed.netloc != configured_parsed.netloc:
       raise HTTPException(status_code=400, detail=f"URL must be from configured Confluence instance: {configured_parsed.scheme}://{configured_parsed.netloc}")
 
-  # Page-scoped identity allows multiple independent roots in one Confluence
-  # space. Existing BFF records may explicitly retain the legacy space ID.
+  # Page/folder-scoped identity allows multiple independent roots in one
+  # Confluence space. Existing BFF records may explicitly retain the legacy
+  # whole-space ID.
   datasource_id = resolve_confluence_datasource_id(
     confluence_request,
     space_key,
-    page_id,
+    locator.content_id,
+    locator.kind,
   )
 
-  # Build page config for this ingestion
-  page_config = {"page_id": page_id, "source": confluence_request.url, "get_child_pages": confluence_request.get_child_pages}
+  # Build the config entry for this ingestion. A whole-space locator has no
+  # entry — load_pages() enumerates the space directly instead.
+  content_config = utils.build_confluence_content_config(
+    locator,
+    get_child_pages=confluence_request.get_child_pages,
+    source_url=confluence_request.url,
+  )
 
   # Check if the datasource already exists. Replacing or extending stored
   # connector configuration requires Owner access; a dedicated reload reuses
@@ -2990,20 +3003,18 @@ async def ingest_confluence_page(
       existing_datasource.metadata = {}
     page_configs = existing_datasource.metadata.get("page_configs", [])
 
-    # Check if page already exists in configs
-    existing_page_config = next((c for c in page_configs if c.get("page_id") == page_id), None)
+    if content_config:
+      dedup_key = "folder_id" if locator.kind == "folder" else "page_id"
+      existing_entry = next((c for c in page_configs if c.get(dedup_key) == locator.content_id), None)
 
-    if existing_page_config:
-      # Update the get_child_pages flag
-      existing_page_config["get_child_pages"] = confluence_request.get_child_pages
-      existing_page_config["source"] = confluence_request.url
-      logger.info(f"Updated page {page_id} config in {datasource_id}")
-    else:
-      # Add new page config
-      page_configs.append(page_config)
-      logger.info(f"Added page {page_id} to {datasource_id}")
+      if existing_entry:
+        existing_entry.update(content_config)
+        logger.info(f"Updated {dedup_key} {locator.content_id} config in {datasource_id}")
+      else:
+        page_configs.append(content_config)
+        logger.info(f"Added {dedup_key} {locator.content_id} to {datasource_id}")
 
-    existing_datasource.metadata["page_configs"] = page_configs
+      existing_datasource.metadata["page_configs"] = page_configs
     configured_name = (confluence_request.name or "").strip()
     if configured_name:
       existing_datasource.name = configured_name
@@ -3011,7 +3022,7 @@ async def ingest_confluence_page(
     if configured_description:
       existing_datasource.description = configured_description
     elif not existing_datasource.description or existing_datasource.description == f"Confluence space {space_key}":
-      existing_datasource.description = confluence_scope_description(confluence_request)
+      existing_datasource.description = confluence_scope_description(confluence_request, locator.kind)
     # Update title filter patterns if provided
     if confluence_request.allowed_title_patterns is not None:
       existing_datasource.metadata["allowed_title_patterns"] = confluence_request.allowed_title_patterns
@@ -3022,7 +3033,7 @@ async def ingest_confluence_page(
   else:
     # Create new datasource
     if not confluence_request.description:
-      confluence_request.description = confluence_scope_description(confluence_request)
+      confluence_request.description = confluence_scope_description(confluence_request, locator.kind)
 
     confluence_url_base = confluence_request.url.split("/wiki/")[0] + "/wiki" if "/wiki/" in confluence_request.url else confluence_request.url
 
@@ -3048,9 +3059,10 @@ async def ingest_confluence_page(
       metadata={
         "confluence_ingest_request": confluence_request.model_dump(),
         "space_key": space_key,
-        "page_configs": [page_config],
-        "root_page_id": page_id,
-        "root_page_url": confluence_request.url,
+        "page_configs": [content_config] if content_config else [],
+        "content_kind": locator.kind,
+        "root_content_id": locator.content_id,
+        "root_content_url": confluence_request.url,
         "confluence_url": confluence_url_base,
         "config_managed": confluence_request.config_managed,
         **({"allowed_title_patterns": confluence_request.allowed_title_patterns} if confluence_request.allowed_title_patterns else {}),

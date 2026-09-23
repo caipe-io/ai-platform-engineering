@@ -21,8 +21,10 @@ export type IngestionSourceIdentity =
       source_type: "confluence_space";
       confluence_url: string;
       space_key: string;
-      /** Omitted only by legacy whole-space configuration. */
-      page_id?: string;
+      /** Omitted for a whole-space source (legacy or newly created). */
+      content_id?: string;
+      /** Disambiguates `content_id` when present. Defaults to "page". */
+      content_kind?: "page" | "folder";
     }
   | { source_type: "jira_project"; project_key: string; source_slug: string }
   | { source_type: "web_url"; url: string }
@@ -52,13 +54,16 @@ function managedSourceId(rawId: string): string {
 export function confluenceSpaceSourceId(
   confluenceUrl: string,
   spaceKey: string,
-  pageId?: string,
+  contentId?: string,
+  contentKind: "page" | "folder" = "page",
 ): string {
   const domain = netloc(confluenceUrl).replace(/[.-]/g, "_");
   const spaceId = `src_confluence___${domain}__${spaceKey}`;
-  // Preserve imported whole-space datasource IDs. New
-  // page-scoped sources must also be valid authorization resource IDs.
-  return pageId ? managedSourceId(`${spaceId}__${pageId}`) : spaceId;
+  // Preserve imported and newly-created whole-space datasource IDs. New
+  // page/folder-scoped sources must also be valid authorization resource IDs.
+  if (!contentId) return spaceId;
+  const infix = contentKind === "folder" ? "folder__" : "";
+  return managedSourceId(`${spaceId}__${infix}${contentId}`);
 }
 
 export function webUrlSourceId(url: string): string {
@@ -87,7 +92,8 @@ export function computeIngestionSourceId(source: IngestionSourceIdentity): strin
       return confluenceSpaceSourceId(
         source.confluence_url,
         source.space_key,
-        source.page_id,
+        source.content_id,
+        source.content_kind ?? "page",
       );
     case "web_url":
       return webUrlSourceId(source.url);

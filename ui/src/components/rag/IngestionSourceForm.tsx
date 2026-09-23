@@ -37,7 +37,7 @@ TeamPicker,
 type TeamPickerOption,
 } from "@/components/ui/team-picker";
 import { RagApiError } from "@/lib/rag-api";
-import { parseConfluencePageUrl } from "@/lib/confluence-url";
+import { parseConfluenceLocator } from "@/lib/confluence-url";
 import {
 DEFAULT_RAG_INGESTOR_LIMITS,
 normalizeRagIngestorLimits,
@@ -365,6 +365,18 @@ function valuesFromSourceWithPendingSearch(
 }
 
 /**
+ * Folder and whole-space sources always ingest every nested page, so the
+ * toggle is hidden for them (see the "confluence_space" identity fields
+ * below) and this always returns `true` regardless of its stored value.
+ * Shared by the create/edit and preview payload builders so a source is
+ * never previewed with a narrower scope than it will actually be saved with.
+ */
+function confluenceGetChildPages(values: IngestionSourceFormValues): boolean {
+  const locator = parseConfluenceLocator(values.start_page_url);
+  return locator?.kind === "page" ? values.get_child_pages : true;
+}
+
+/**
  * Payload sent to POST/PATCH — only fields relevant to the action + type.
  * `owner_team_slug`/`confirm_not_member` are added separately by the caller
  * only when a transfer is actually pending, so a plain metadata edit never
@@ -401,7 +413,7 @@ function buildPayload(values: IngestionSourceFormValues, isEdit: boolean): Recor
       case "confluence_space":
         return {
           ...shared,
-          get_child_pages: values.get_child_pages,
+          get_child_pages: confluenceGetChildPages(values),
           allowed_title_patterns: lineList(values.allowed_title_patterns),
           denied_title_patterns: lineList(values.denied_title_patterns),
         };
@@ -425,17 +437,17 @@ function buildPayload(values: IngestionSourceFormValues, isEdit: boolean): Recor
       create.lookback_days = numberOrUndefined(values.lookback_days);
       create.include_bots = values.include_bots;
       break;
-    case "confluence_space":
+    case "confluence_space": {
+      const locator = parseConfluenceLocator(values.start_page_url);
       create.url = values.start_page_url.trim();
-      create.confluence_url =
-        parseConfluencePageUrl(values.start_page_url)?.baseUrl ??
-        values.confluence_url.trim();
+      create.confluence_url = locator?.baseUrl ?? values.confluence_url.trim();
       create.space_key = values.space_key.trim();
       create.start_page_url = values.start_page_url.trim();
-      create.get_child_pages = values.get_child_pages;
+      create.get_child_pages = confluenceGetChildPages(values);
       create.allowed_title_patterns = lineList(values.allowed_title_patterns);
       create.denied_title_patterns = lineList(values.denied_title_patterns);
       break;
+    }
     case "jira_project":
       create.project_key = values.project_key.trim();
       create.source_slug = values.source_slug.trim();
@@ -507,11 +519,7 @@ function identityFieldsValid(values: IngestionSourceFormValues): boolean {
     case "slack_channel":
       return values.channel_id.trim().length > 0;
     case "confluence_space":
-      return Boolean(
-        values.space_key.trim() &&
-          parseConfluencePageUrl(values.start_page_url)?.spaceKey ===
-            values.space_key.trim(),
-      );
+      return Boolean(parseConfluenceLocator(values.start_page_url)?.spaceKey);
     case "jira_project":
       return values.project_key.trim().length > 0 && values.source_slug.trim().length > 0;
     case "web_url":
@@ -576,7 +584,7 @@ function buildPreviewPayload(
         ...(isEdit && sourceId
           ? { preprovisioned_datasource_id: sourceId }
           : {}),
-        get_child_pages: values.get_child_pages,
+        get_child_pages: confluenceGetChildPages(values),
         allowed_title_patterns: lineList(values.allowed_title_patterns),
         denied_title_patterns: lineList(values.denied_title_patterns),
       };
@@ -871,6 +879,16 @@ export function IngestionSourceForm({
   const implicitSearchAccess =
     ownerAccessRef?.kind === "user" ? [ownerAccessRef] : [];
 
+  // In edit mode, an adopted whole-space source may carry no start_page_url
+  // at all (spec 2026-07-21-rag-source-config-db) — fall back to the stored
+  // content_kind/whole_space so its scope still renders correctly.
+  const confluenceInitial = initial?.source_type === "confluence_space" ? initial : null;
+  const confluenceLocator = parseConfluenceLocator(values.start_page_url);
+  const confluenceKind: "page" | "folder" | "space" =
+    confluenceLocator?.kind ??
+    confluenceInitial?.content_kind ??
+    (confluenceInitial?.whole_space ? "space" : "page");
+
   const handleOwnerTeamChange = (slug: string) => {
     setValues((current) => ({ ...current, owner_team_slug: slug, owner_subject: "" }));
     if (isEdit) {
@@ -997,40 +1015,46 @@ export function IngestionSourceForm({
                   value={values.start_page_url}
                   onChange={(e) => {
                     const startPageUrl = e.target.value;
-                    const parsed = parseConfluencePageUrl(startPageUrl);
+                    const parsed = parseConfluenceLocator(startPageUrl);
                     setValues((current) => ({
                       ...current,
                       start_page_url: startPageUrl,
                       confluence_url: parsed?.baseUrl ?? "",
+                      space_key: parsed?.spaceKey ?? "",
                     }));
                   }}
                   disabled={isEdit}
                   placeholder="https://example.atlassian.net/wiki/spaces/ENG/pages/123/Overview"
                 />
-                <p className="text-xs text-muted-foreground">
-                  Paste the page URL. Its page ID is detected automatically.
-                </p>
+                {!isEdit && values.start_page_url.trim() && !confluenceLocator ? (
+                  <p className="text-xs text-destructive">
+                    Couldn&apos;t recognize this as a Confluence page, folder,
+                    or space URL.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {confluenceLocator
+                      ? `Space: ${confluenceLocator.spaceKey}`
+                      : "Paste a page, folder, or space URL. Its space key and scope are detected automatically."}
+                  </p>
+                )}
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="space-key">
-                  Space Key {!isEdit && <span className="text-destructive">*</span>}
-                </Label>
-                <Input
-                  id="space-key"
-                  value={values.space_key}
-                  onChange={(e) => setValues((v) => ({ ...v, space_key: e.target.value }))}
-                  disabled={isEdit}
-                  placeholder="e.g. ENG"
+              {confluenceKind === "page" ? (
+                <BoolToggle
+                  label="Include child pages"
+                  checked={values.get_child_pages}
+                  disabled={saving || !ingestorLimits.confluence.allow_child_pages}
+                  onChange={(checked) =>
+                    setValues((v) => ({ ...v, get_child_pages: checked }))
+                  }
                 />
-              </div>
-              <BoolToggle
-                label="Include child pages"
-                checked={values.get_child_pages}
-                disabled={saving || !ingestorLimits.confluence.allow_child_pages}
-                onChange={(checked) =>
-                  setValues((v) => ({ ...v, get_child_pages: checked }))
-                }
-              />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {confluenceKind === "folder"
+                    ? "Every page nested under this folder, including subfolders, will be ingested."
+                    : "Every page in this space will be ingested."}
+                </p>
+              )}
               <details className="rounded-lg border border-border/50 p-3">
                 <summary className="cursor-pointer text-sm font-medium">
                   Title filters
