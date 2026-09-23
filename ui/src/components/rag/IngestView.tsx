@@ -172,9 +172,25 @@ const IconRenderer = ({
 /** Chunks fetched per page while scrolling a datasource's documents. */
 const DOCUMENT_PAGE_SIZE = 25;
 
+/** The scrollable ancestor an anchor lives in, or null for the viewport. */
+function nearestScrollParent(node: HTMLElement): HTMLElement | null {
+  let current = node.parentElement;
+  while (current) {
+    const overflowY = window.getComputedStyle(current).overflowY;
+    if (overflowY === "auto" || overflowY === "scroll") return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+
 /**
  * Requests the next page once it scrolls into view, so a long document list
  * extends by scrolling rather than by repeatedly pressing a button.
+ *
+ * Must render inside the list's own scroll container: observed against the page
+ * viewport instead, an anchor below a bounded list stays permanently visible and
+ * requests page after page. Observation also stops while a page is in flight, so
+ * one fetch cannot queue several more before the first arrives.
  */
 const InfiniteScrollSentinel = ({
   onVisible,
@@ -188,23 +204,23 @@ const InfiniteScrollSentinel = ({
 
   useEffect(() => {
     const anchor = anchorRef.current;
-    if (!anchor || typeof IntersectionObserver === "undefined") return;
+    if (!anchor || loading || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) handleVisible();
       },
       // Start fetching slightly before the anchor is reached.
-      { rootMargin: "120px" },
+      { root: nearestScrollParent(anchor), rootMargin: "120px" },
     );
     observer.observe(anchor);
     return () => observer.disconnect();
-  }, []);
+  }, [loading]);
 
   return (
     <div
       ref={anchorRef}
       aria-live="polite"
-      className="mt-2 flex items-center justify-center gap-1 border-t border-border/50 py-2 text-xs text-muted-foreground"
+      className="flex items-center justify-center gap-1 py-2 text-xs text-muted-foreground"
     >
       {loading && (
         <>
@@ -4278,6 +4294,27 @@ export default function IngestView() {
                                                       );
                                                     },
                                                   )}
+                                                  {documentsPagination[
+                                                    ds.datasource_id
+                                                  ]?.hasMore && (
+                                                    <InfiniteScrollSentinel
+                                                      loading={loadingDocuments.has(
+                                                        ds.datasource_id,
+                                                      )}
+                                                      onVisible={() => {
+                                                        const pagination =
+                                                          documentsPagination[
+                                                            ds.datasource_id
+                                                          ];
+                                                        if (pagination) {
+                                                          fetchDocumentsPage(
+                                                            ds.datasource_id,
+                                                            pagination.offset,
+                                                          );
+                                                        }
+                                                      }}
+                                                    />
+                                                  )}
                                                 </div>
                                               )}
 
@@ -4299,34 +4336,6 @@ export default function IngestView() {
                                                   </div>
                                                 )}
 
-                                              {documentsPagination[
-                                                ds.datasource_id
-                                              ]?.hasMore && (
-                                                <InfiniteScrollSentinel
-                                                  loading={loadingDocuments.has(
-                                                    ds.datasource_id,
-                                                  )}
-                                                  onVisible={() => {
-                                                    if (
-                                                      loadingDocuments.has(
-                                                        ds.datasource_id,
-                                                      )
-                                                    ) {
-                                                      return;
-                                                    }
-                                                    const pagination =
-                                                      documentsPagination[
-                                                        ds.datasource_id
-                                                      ];
-                                                    if (pagination) {
-                                                      fetchDocumentsPage(
-                                                        ds.datasource_id,
-                                                        pagination.offset,
-                                                      );
-                                                    }
-                                                  }}
-                                                />
-                                              )}
                                             </div>
                                           </motion.div>
                                         )}
