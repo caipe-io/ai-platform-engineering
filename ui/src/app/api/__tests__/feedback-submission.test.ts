@@ -27,6 +27,13 @@ jest.mock('@/lib/auth-config', () => ({
   authOptions: {},
 }));
 
+const mockValidateBearerJWT = jest.fn();
+jest.mock('@/lib/jwt-validation', () => ({
+  LocalSkillsJWTValidationError: class LocalSkillsJWTValidationError extends Error {},
+  validateLocalSkillsJWT: jest.fn().mockResolvedValue(null),
+  validateBearerJWT: (...args: unknown[]) => mockValidateBearerJWT(...args),
+}));
+
 // Langfuse mock — the route creates a singleton Langfuse client.
 // We mock the constructor to return our spy object.
 const mockScore = jest.fn();
@@ -79,11 +86,14 @@ beforeAll(async () => {
 // Helpers
 // ============================================================================
 
-function makePostRequest(body: Record<string, unknown>): NextRequest {
+function makePostRequest(body: Record<string, unknown>, bearerToken?: string): NextRequest {
   return new NextRequest('http://localhost:3000/api/feedback', {
     method: 'POST',
     body: JSON.stringify(body),
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
+    },
   });
 }
 
@@ -97,6 +107,14 @@ function resetMocks() {
   mockFlushAsync.mockClear();
   mockInsertOne.mockClear();
   mockUpdateOne.mockClear();
+  mockValidateBearerJWT.mockReset();
+  mockValidateBearerJWT.mockResolvedValue({
+    sub: 'slack-human-subject',
+    email: 'linked-user@example.com',
+    name: 'Linked User',
+    org: 'default',
+    isServiceAccount: false,
+  });
 }
 
 // ============================================================================
@@ -200,7 +218,7 @@ describe('POST /api/feedback — Slack with channel: 3 Langfuse scores + upsert'
         threadTs: 'thread-123',
         userId: 'U99',
         userEmail: 'bob@example.com',
-      }),
+      }, 'slack-human-token'),
     );
     expect(res.status).toBe(200);
 
@@ -230,7 +248,7 @@ describe('POST /api/feedback — Slack with channel: 3 Langfuse scores + upsert'
         threadTs: 'thread-123',
         userId: 'U99',
         userEmail: 'bob@example.com',
-      }),
+      }, 'slack-human-token'),
     );
 
     expect(mockUpdateOne).toHaveBeenCalledTimes(1);
@@ -247,6 +265,7 @@ describe('POST /api/feedback — Slack with channel: 3 Langfuse scores + upsert'
     expect(update.$set.channel_name).toBe('ask-platform');
     expect(update.$set.rating).toBe('negative');
     expect(update.$set.conversation_id).toBe('slack-thread-123');
+    expect(update.$set.user_email).toBe('linked-user@example.com');
     // $setOnInsert has created_at for first insert only
     expect(update.$setOnInsert).toHaveProperty('created_at');
     expect(options.upsert).toBe(true);
@@ -267,7 +286,7 @@ describe('POST /api/feedback — Slack without channel: 2 Langfuse scores', () =
         threadTs: 'thread-456',
         userId: 'U99',
         userEmail: 'carol@example.com',
-      }),
+      }, 'slack-human-token'),
     );
 
     // sourceScopeName = "all slack channels" (no channelName)

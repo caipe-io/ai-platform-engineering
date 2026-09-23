@@ -10,8 +10,10 @@ import pytest
 from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage
 
+from dynamic_agents.auth.token_context import current_initiator_subject
 from dynamic_agents.metrics import metrics
 from dynamic_agents.metrics.agent_middleware import MetricsAgentMiddleware, _extract_token_usage
+from dynamic_agents.models import UserContext
 from dynamic_agents.services.agent_runtime import AgentRuntime, _TurnObservation
 from dynamic_agents.services.runtime_cache import AgentRuntimeCache, RuntimeCapacityError
 
@@ -191,6 +193,27 @@ def test_runtime_cache_publishes_entries_capacity_and_pending_initializations() 
         metrics.runtime_cache_entries.set(entries_before)
         metrics.runtime_cache_capacity.set(capacity_before)
         metrics.runtime_cache_pending_initializations.set(pending_before)
+
+
+def test_runtime_cache_separates_human_initiators_for_service_execution() -> None:
+    cache = AgentRuntimeCache(ttl_seconds=60, max_size=7)
+    service_user = UserContext(email="automation@example.com", sub="service-subject")
+
+    first_token = current_initiator_subject.set("human-one")
+    try:
+        first = cache._make_key("agent-example", "conversation-example", service_user)
+    finally:
+        current_initiator_subject.reset(first_token)
+
+    second_token = current_initiator_subject.set("human-two")
+    try:
+        second = cache._make_key("agent-example", "conversation-example", service_user)
+    finally:
+        current_initiator_subject.reset(second_token)
+
+    assert first != second
+    assert "human-one" not in first
+    assert "human-two" not in second
 
 
 @pytest.mark.asyncio

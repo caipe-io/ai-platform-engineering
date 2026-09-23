@@ -1868,6 +1868,17 @@ export function ChatPanel({
     }
   }, [activeConversationId, updateMessageFeedback]);
 
+  const handleActOnFeedback = useCallback(async (feedback: Feedback) => {
+    const details = feedback.additionalFeedback?.trim();
+    const prompt = [
+      "Act on my feedback about your previous response.",
+      feedback.reason ? `Reason: ${feedback.reason}` : null,
+      details ? `Details: ${details}` : null,
+      "If I explicitly requested a platform configuration edit, inspect the current resource, create a narrow proposal, show the exact diff, and wait for my approval before applying it.",
+    ].filter(Boolean).join("\n");
+    await submitMessage(prompt);
+  }, [submitMessage]);
+
   // Handle user input form submission via SSE/Dynamic Agents resume
   const handleUserInputSubmitSSE = useCallback(async (formData: Record<string, string>) => {
     if (!pendingUserInput || !activeConversationId || !pendingUserInput.agentId) return;
@@ -2338,6 +2349,7 @@ export function ChatPanel({
                           isLatestAnswer={isLastAssistantMessage}
                           feedback={msg.feedback}
                           onFeedbackChange={(feedback) => handleFeedbackChange(msg.id, feedback)}
+                          onActOnFeedback={handleActOnFeedback}
                           isRecovering={recoveringMessageId === msg.id}
                           conversationId={conversationId}
                           userDisplayName={userDisplayName}
@@ -2983,6 +2995,7 @@ interface ChatMessageProps {
   isLatestAnswer?: boolean;
   feedback?: Feedback;
   onFeedbackChange?: (feedback: Feedback) => void;
+  onActOnFeedback?: (feedback: Feedback) => void | Promise<void>;
   conversationId?: string;
   isRecovering?: boolean;
   userDisplayName?: string;
@@ -3022,6 +3035,7 @@ const ChatMessage = React.memo(function ChatMessage({
   isLatestAnswer = false,
   feedback,
   onFeedbackChange,
+  onActOnFeedback,
   conversationId,
   isRecovering = false,
   userDisplayName = "You",
@@ -3355,6 +3369,7 @@ const ChatMessage = React.memo(function ChatMessage({
                   conversationId={conversationId}
                   feedback={feedback}
                   onFeedbackChange={onFeedbackChange}
+                  onActOnFeedback={onActOnFeedback}
                 />
               </motion.div>
             )}

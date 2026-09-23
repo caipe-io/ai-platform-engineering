@@ -36,6 +36,7 @@ from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 from pymongo import MongoClient
 
+from dynamic_agents.auth.token_context import current_initiator_token, current_user_token
 from dynamic_agents.config import Settings, get_settings
 from dynamic_agents.metrics import metrics as prom_metrics
 from dynamic_agents.models import (
@@ -603,11 +604,10 @@ class AgentRuntime:
         # the BFF authenticated us with is forwarded to MCP servers.
         # Fall back to UserContext-attached fields for backward compat
         # with the X-User-Context legacy path.
-        from dynamic_agents.auth.token_context import current_user_token as _ctx_tok
-
-        ctx_token = _ctx_tok.get()
+        ctx_token = current_user_token.get()
         legacy_token = (user.obo_jwt or user.access_token) if user else None
         self._auth_bearer: str | None = ctx_token or legacy_token
+        self._initiator_bearer: str | None = current_initiator_token.get() or self._auth_bearer
         # Spec 104: never silently substitute the dynamic-agents service
         # account token here — the runtime must run with the user's OBO
         # token so AgentGateway/OpenFGA can evaluate the signed active-team
@@ -863,7 +863,10 @@ class AgentRuntime:
         # ─────────────────────────────────────────────────────────────────
 
         # 1. Attach MCP servers and tools
-        server_ids = [sid for sid, val in self.config.allowed_tools.items() if val is not False]
+        effective_allowed_tools = dict(self.config.allowed_tools)
+        if any(server.id == "platform" and server.enabled for server in self.mcp_servers):
+            effective_allowed_tools["platform"] = True
+        server_ids = [sid for sid, val in effective_allowed_tools.items() if val is not False]
         if not server_ids:
             logger.info(f"Agent '{self.config.name}' has no MCP tools configured")
             tools = []
@@ -880,6 +883,7 @@ class AgentRuntime:
                 connections,
                 credential_client=self._credential_exchange_client(),
                 caller_token=self._auth_bearer,
+                initiator_token=self._initiator_bearer,
             )
             connections = cred_result.connections
             self._record_mcp_credential_failures(cred_result.failures)
@@ -920,7 +924,7 @@ class AgentRuntime:
                     )
 
                 # 1b. Filter MCP tools by allowlist
-                tools, missing = filter_tools_by_allowed(all_tools, self.config.allowed_tools)
+                tools, missing = filter_tools_by_allowed(all_tools, effective_allowed_tools)
 
                 # 1c. Pin RAG search-style tools to the agent's configured datasources.
                 #     The server independently intersects with the caller's RBAC-accessible
@@ -975,6 +979,14 @@ class AgentRuntime:
         except SystemPromptRenderError as exc:
             logger.error(f"Agent '{self.config.name}' failed to initialize: {exc}")
             raise RuntimeError(f"Agent '{self.config.name}' failed to initialize: {exc}") from exc
+        if any(tool.name.startswith("platform_") for tool in tools):
+            system_prompt += (
+                "\n\n## Platform configuration changes\n"
+                "Use platform tools only when the user asks to inspect or change platform configuration. "
+                "Check access first, create one narrowly scoped proposal, and show its exact diff. "
+                "Never call apply_platform_change until the human explicitly approves that proposal. "
+                "A denial means the current human cannot make the edit; explain it without asking a service account to bypass access."
+            )
 
         # 5. Instantiate LLM
         logger.info(
@@ -1162,6 +1174,10 @@ class AgentRuntime:
 
         # 10. Interrupt config
         interrupt_config = self._build_interrupt_config(tools, builtin_tool_names)
+        if any(tool.name == "platform_apply_platform_change" for tool in tools):
+            interrupt_config["platform_apply_platform_change"] = {
+                "allowed_decisions": ["approve", "reject"]
+            }
 
         # 10b. Append workflow details to system prompt (after section 8 validates workflows)
         if self._workflow_prompt_addendum:
@@ -1436,6 +1452,10 @@ class AgentRuntime:
                 builtin_tool_names,
                 agent_config=subagent_config,
             )
+            if any(tool.name == "platform_apply_platform_change" for tool in subagent_tools):
+                interrupt_config["platform_apply_platform_change"] = {
+                    "allowed_decisions": ["approve", "reject"]
+                }
 
             # System prompt from subagent config
             subagent_prompt = subagent_config.system_prompt
@@ -1496,7 +1516,10 @@ class AgentRuntime:
 
         # 1. Build MCP tools from subagent's allowed_tools config
         #    Inherit parent's AG routing and auth (FR-038f)
-        server_ids = list(subagent_config.allowed_tools.keys())
+        effective_allowed_tools = dict(subagent_config.allowed_tools)
+        if any(server.id == "platform" and server.enabled for server in self.mcp_servers):
+            effective_allowed_tools["platform"] = True
+        server_ids = list(effective_allowed_tools.keys())
         if server_ids:
             connections = build_mcp_connections(
                 self.mcp_servers,
@@ -1510,6 +1533,7 @@ class AgentRuntime:
                 connections,
                 credential_client=self._credential_exchange_client(),
                 caller_token=self._auth_bearer,
+                initiator_token=self._initiator_bearer,
             )
             connections = cred_result.connections
             if cred_result.failures:
@@ -1531,7 +1555,7 @@ class AgentRuntime:
                         for s in failed
                     ]
                     logger.warning(f"Subagent '{subagent_config.name}': failed MCP servers: {'; '.join(error_parts)}")
-                mcp_tools, _ = filter_tools_by_allowed(all_tools, subagent_config.allowed_tools)
+                mcp_tools, _ = filter_tools_by_allowed(all_tools, effective_allowed_tools)
                 datasource_provider = self._rag_datasource_provider(subagent_config)
                 static_datasource_ids = subagent_config.datasource_ids
                 if static_datasource_ids is None and subagent_config.rag_collection_ids is not None:

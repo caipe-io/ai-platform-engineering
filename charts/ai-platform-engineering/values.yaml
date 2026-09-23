@@ -19,6 +19,7 @@ tags:
   mcp-webex: false
   mcp-webex-meetings: false
   mcp-netutils: false
+  mcp-platform: false
   rag-stack: false
   slack-bot: false
   webex-bot: false
@@ -715,6 +716,23 @@ mcp-netutils:
     port: 8000
     agentgateway:
       enabled: false
+      protocol: StreamableHTTP
+
+mcp-platform:
+  nameOverride: "mcp-platform"
+  agentSecrets:
+    requiresSecret: false
+  mcp:
+    image:
+      repository: "ghcr.io/caipe-io/mcp-platform"
+      tag: ""
+      pullPolicy: "IfNotPresent"
+    mode: "http"
+    port: 8000
+    env:
+      CAIPE_API_URL: 'http://{{ .Release.Name }}-caipe-ui:3000'
+    agentgateway:
+      enabled: true
       protocol: StreamableHTTP
 
 ######### CAIPE UI configuration #########

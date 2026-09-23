@@ -306,6 +306,13 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'feedback', { channel_name: 1, created_at: -1 }),
     safeCreateIndex(db, 'feedback', { trace_id: 1 }),
 
+    // Actor-bound platform change proposals expire automatically and retain
+    // their terminal state for review after apply or cancellation.
+    safeCreateIndex(db, 'platform_changes', { 'actor.subject': 1, created_at: -1 }),
+    safeCreateIndex(db, 'platform_changes', { status: 1, expires_at: 1 }),
+    safeCreateIndex(db, 'platform_changes', { kind: 1, resource_id: 1, created_at: -1 }),
+    safeCreateIndex(db, 'platform_changes', { expires_at: 1 }, { expireAfterSeconds: 7 * 24 * 60 * 60 }),
+
     // Turns collection (per-turn persistence decoupled from messages)
     safeCreateIndex(db, 'turns', { conversation_id: 1, client_type: 1, turn_id: 1 }, { unique: true }),
     safeCreateIndex(db, 'turns', { conversation_id: 1, client_type: 1, created_at: 1 }),

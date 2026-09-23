@@ -32,6 +32,9 @@ from loguru import logger
 _obo_token_cv: ContextVar[Optional[str]] = ContextVar(
   "caipe_slack_obo_token", default=None
 )
+_initiator_token_cv: ContextVar[Optional[str]] = ContextVar(
+  "caipe_slack_initiator_token", default=None
+)
 
 
 def set_obo_token(token: Optional[str]) -> object:
@@ -49,6 +52,16 @@ def set_obo_token(token: Optional[str]) -> object:
 def get_obo_token() -> Optional[str]:
   """Read the currently-bound OBO token (None when unbound)."""
   return _obo_token_cv.get()
+
+
+def set_initiator_token(token: Optional[str]) -> object:
+  """Bind the human initiator independently of the route execution identity."""
+  return _initiator_token_cv.set(token)
+
+
+def get_initiator_token() -> Optional[str]:
+  """Read the human initiator token for initiator-aware control-plane tools."""
+  return _initiator_token_cv.get()
 
 # Deterministic namespace for Slack conversation IDs.
 # uuid5(NAMESPACE_URL, "slack.caipe.io") — fixed constant.
@@ -227,6 +240,9 @@ class SSEClient:
     elif self.auth_client:
       token = self.auth_client.get_access_token()
       headers["Authorization"] = f"Bearer {token}"
+    initiator = get_initiator_token()
+    if initiator:
+      headers["X-CAIPE-Initiator-Token"] = initiator
     return headers
 
   def create_conversation(

@@ -61,6 +61,23 @@ def _error_event(message="Something failed"):
   return SSEEvent(type=SSEEventType.RUN_ERROR, message=message)
 
 
+def _platform_approval_event():
+  return SSEEvent(
+    type=SSEEventType.RUN_FINISHED,
+    outcome="interrupt",
+    interrupt={
+      "id": "approval-example",
+      "reason": "tool_approval",
+      "payload": {
+        "tool_name": "platform_apply_platform_change",
+        "tool_args": {"change_id": "chg-example", "confirmed": True},
+        "allowed_decisions": ["approve", "reject"],
+        "agent": "agent-example",
+      },
+    },
+  )
+
+
 def _mock_slack():
   """Create a mock Slack client with streaming API stubs."""
   mock = Mock()
@@ -127,7 +144,6 @@ class TestLazyStreamAndSetStatus:
       agent_id="test-agent",
       conversation_id="conv-1",
     )
-
     # setStatus should be called at least once (the initial status call)
     assert mock_slack.assistant_threads_setStatus.call_count >= 1
     first_set_status = mock_slack.assistant_threads_setStatus.call_args_list[0]
@@ -169,6 +185,28 @@ class TestLazyStreamAndSetStatus:
     mock_slack.chat_startStream.assert_called_once()
     # stopStream should be called to finalize
     mock_slack.chat_stopStream.assert_called_once()
+
+
+class TestPlatformApprovalPrivacy:
+  def test_channel_tool_approval_is_ephemeral_to_the_requesting_human(self):
+    mock_slack = _mock_slack()
+
+    result = stream_response(
+      sse_client=_mock_sse_client([_platform_approval_event()]),
+      slack_client=mock_slack,
+      channel_id="C123",
+      thread_ts="t1",
+      message_text="update the agent prompt",
+      team_id="T1",
+      user_id="U123",
+      agent_id="agent-example",
+      conversation_id="conv-1",
+    )
+
+    assert isinstance(result, list)
+    mock_slack.chat_postEphemeral.assert_called_once()
+    assert mock_slack.chat_postEphemeral.call_args.kwargs["user"] == "U123"
+    mock_slack.chat_postMessage.assert_not_called()
 
 
 class TestStopStreamCarriesFinalAnswer:

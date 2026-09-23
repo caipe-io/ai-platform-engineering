@@ -25,6 +25,14 @@ current_user_token: ContextVar[Optional[str]] = ContextVar(
     "current_user_token", default=None
 )
 
+current_initiator_token: ContextVar[Optional[str]] = ContextVar(
+    "current_initiator_token", default=None
+)
+
+current_initiator_subject: ContextVar[Optional[str]] = ContextVar(
+    "current_initiator_subject", default=None
+)
+
 current_traceparent: ContextVar[Optional[str]] = ContextVar(
     "current_traceparent", default=None
 )

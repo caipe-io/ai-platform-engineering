@@ -1,0 +1,47 @@
+[project]
+name = "mcp_platform"
+description = "CAIPE control-plane MCP for authorized, reviewable platform configuration changes."
+authors = [{ name = "CAIPE Contributors" }]
+dynamic = ["version"]
+readme = "README.md"
+keywords = ["platform", "agents", "skills", "workflows", "mcp"]
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "click==8.5.0",
+    "fastmcp==3.4.7",
+    "httpx==0.28.1",
+    "mcp==1.29.1",
+    "mcp-agent-auth",
+    "pydantic==2.13.4",
+]
+
+[tool.uv]
+constraint-dependencies = ["uv==0.12.6"]
+
+[tool.uv.sources]
+mcp-agent-auth = { path = "../common/mcp-auth", editable = true }
+
+[dependency-groups]
+dev = [
+    "hatch==1.18.0",
+    "pyright==1.1.411",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.16.4",
+]
+
+[tool.hatch.version]
+path = "mcp_platform/__about__.py"
+
+[project.scripts]
+mcp-server-platform = "mcp_platform:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_platform"]

@@ -287,6 +287,37 @@ describe("FeedbackButton", () => {
     });
   });
 
+  it("submits negative feedback before asking the agent to act", async () => {
+    const onActOnFeedback = jest.fn().mockResolvedValue(undefined);
+    render(
+      <FeedbackButton
+        messageId="msg-1"
+        conversationId="conv-1"
+        feedback={{ type: "dislike", reason: "Inaccurate", showFeedbackOptions: true }}
+        onActOnFeedback={onActOnFeedback}
+      />
+    );
+
+    fireEvent.click(screen.getByText("Submit & Ask Agent to Fix"));
+
+    await waitFor(() => {
+      expect(mockSubmitFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          feedbackType: "dislike",
+          reason: "Inaccurate",
+          conversationId: "conv-1",
+        })
+      );
+      expect(onActOnFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "dislike",
+          reason: "Inaccurate",
+          submitted: true,
+        })
+      );
+    });
+  });
+
   it("includes traceId (falls back to messageId)", async () => {
     render(
       <FeedbackButton

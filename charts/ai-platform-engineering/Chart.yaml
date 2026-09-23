@@ -147,6 +147,16 @@ dependencies:
     import-values:
       - child: agentExports.data
         parent: global.enabledSubAgents.netutils
+  - name: mcp-server
+    version: 1.2.0 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    alias: mcp-platform
+    tags:
+      - mcp-platform
+      - basic
+      - complete
+    import-values:
+      - child: agentExports.data
+        parent: global.enabledSubAgents.platform
   - name: rag-stack
     version: 1.2.0 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     repository: file://../rag-stack # TODO: might be changed to be separate

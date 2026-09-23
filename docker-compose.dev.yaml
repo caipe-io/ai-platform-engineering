@@ -142,6 +142,34 @@ services:
       - all-agents
       - mcp-servers
 
+  mcp-platform:
+    build:
+      context: .
+      dockerfile: build/agents/Dockerfile.mcp
+      args:
+        - AGENT_NAME=platform
+    image: ghcr.io/caipe-io/mcp-platform:${IMAGE_TAG:-localtag}
+    container_name: mcp-platform
+    env_file: [.env]
+    ports: ["18014:8000"]
+    volumes:
+      - ./ai_platform_engineering/mcp/platform:/app/ai_platform_engineering/mcp/platform
+    environment:
+      - MCP_MODE=http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); result=s.connect_ex(('localhost', 8000)); s.close(); exit(0 if result == 0 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    profiles:
+      - platform
+      - all-agents
+      - mcp-servers
+
   mcp-backstage:
     build:
       context: .

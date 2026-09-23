@@ -133,6 +133,17 @@ mcp_servers:
         target: header
         fallback_client_credentials: true
 
+  - description: Reviewable platform configuration changes
+    enabled: true
+    endpoint: ${PLATFORM_MCP_URL:-http://localhost:18014/mcp}
+    id: platform
+    name: Platform
+    transport: http
+    credential_sources:
+      - kind: initiator_token
+        name: X-CAIPE-Initiator-Token
+        target: header
+
 # =============================================================================
 # Seed Agents
 # =============================================================================

@@ -8,10 +8,9 @@
  * @see https://langfuse.com/docs/observability/features/user-feedback
  */
 
-import { authOptions } from "@/lib/auth-config";
+import { ApiError,getAuthFromBearerOrSession } from "@/lib/api-middleware";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
 import { Langfuse } from "langfuse";
-import { getServerSession } from "next-auth";
 import { NextRequest,NextResponse } from "next/server";
 
 // Langfuse configuration from environment variables (server-side only)
@@ -84,12 +83,9 @@ interface FeedbackResponse {
  */
 export async function POST(request: NextRequest): Promise<NextResponse<FeedbackResponse>> {
   try {
-    // Get user session for logging/attribution
-    const session = await getServerSession(authOptions);
-    // Parse body first so we can use body.userEmail as fallback (Slack callers
-    // resolve the email from the Slack user profile and pass it explicitly).
+    const { user } = await getAuthFromBearerOrSession(request);
     const body: FeedbackRequest = await request.json();
-    const userEmail = session?.user?.email || body.userEmail || "anonymous";
+    const userEmail = user.email;
 
     // Validate required fields
     if (!body.conversationId && !body.traceId && !body.messageId) {
@@ -269,7 +265,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<FeedbackR
         success: false,
         message: error instanceof Error ? error.message : "Failed to submit feedback",
       },
-      { status: 500 }
+      { status: error instanceof ApiError ? error.statusCode : 500 }
     );
   }
 }

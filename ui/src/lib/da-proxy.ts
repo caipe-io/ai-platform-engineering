@@ -19,6 +19,7 @@ import {
   getAuthFromBearerOrSession,
   requireRbacPermission,
 } from "@/lib/api-middleware";
+import { validateBearerJWT } from "@/lib/jwt-validation";
 import type { RbacResource, RbacScope } from "@/lib/rbac/types";
 
 // ═══════════════════════════════════════════════════════════════
@@ -45,6 +46,12 @@ export interface AuthResult {
    * to ``X-User-Context`` when the server-side token cache is lost.
    */
   bearerToken?: string;
+  /**
+   * Human identity that initiated an integration request when execution uses
+   * a service account. The BFF validates this token independently before it is
+   * forwarded; Dynamic Agents only exposes it to initiator-aware MCP targets.
+   */
+  initiatorToken?: string;
   /** W3C trace context propagated from the Web UI backend authz span. */
   traceparent?: string;
   /**
@@ -100,7 +107,9 @@ export async function authenticateRequest(
     // DA doesn't parse these — they pass through via extra="allow"
     // on UserContext and are available to the user_info tool.
     const s = session as Record<string, unknown>;
+    const subject = (s?.sub as string | undefined) || user.email;
     const userContext = {
+      sub: subject,
       email: user.email,
       name: user.name ?? null,
       is_admin: user.role === "admin",
@@ -111,10 +120,33 @@ export async function authenticateRequest(
 
     const encoded = Buffer.from(JSON.stringify(userContext)).toString("base64");
     const bearerToken = (s?.accessToken as string | undefined) || undefined;
-    const subject = (s?.sub as string | undefined) || user.email;
+    const rawInitiatorHeader = request.headers.get("X-CAIPE-Initiator-Token")?.trim() || "";
+    const initiatorToken = rawInitiatorHeader.toLowerCase().startsWith("bearer ")
+      ? rawInitiatorHeader.slice(7).trim()
+      : rawInitiatorHeader;
+    if (initiatorToken) {
+      try {
+        const initiator = await validateBearerJWT(initiatorToken);
+        if (initiator.isServiceAccount) {
+          throw new ApiError("The initiating identity must be a human user", 403);
+        }
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError("The initiating user token could not be verified", 401);
+      }
+    }
     const tenantId = (s?.org as string | undefined) || "default";
     const isServiceAccount = (s?.isServiceAccount as boolean | undefined) === true;
-    return { subject, email: user.email, role: user.role, tenantId, userContextHeader: encoded, bearerToken, isServiceAccount };
+    return {
+      subject,
+      email: user.email,
+      role: user.role,
+      tenantId,
+      userContextHeader: encoded,
+      bearerToken,
+      initiatorToken: initiatorToken || undefined,
+      isServiceAccount,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
@@ -206,6 +238,9 @@ export function buildBackendHeaders(
   }
   if (authResult.bearerToken) {
     headers["Authorization"] = `Bearer ${authResult.bearerToken}`;
+  }
+  if (authResult.initiatorToken) {
+    headers["X-CAIPE-Initiator-Token"] = authResult.initiatorToken;
   }
   if (authResult.traceparent) {
     headers.traceparent = authResult.traceparent;

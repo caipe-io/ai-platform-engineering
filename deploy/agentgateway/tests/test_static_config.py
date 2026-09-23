@@ -75,6 +75,17 @@ def test_knowledge_base_route_rewrites_provider_token_to_authorization() -> None
     assert "authorization" in route["policies"]
 
 
+@pytest.mark.parametrize("config_path", [CONFIG_PATH, RBAC_CONFIG_PATH], ids=["config", "caipe-rbac"])
+def test_platform_route_uses_standard_authz_and_preserves_initiator_header(config_path: Path) -> None:
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    route = _mcp_route(config, "platform")
+    target = _mcp_target(config, "platform")
+
+    assert target["mcp"]["host"] == "http://mcp-platform:8000/mcp"
+    assert "extAuthz" in route["policies"]
+    assert "transformations" not in route["policies"]
+
+
 # #36 (FR-012/SC-010): every MCP route's extAuthz MUST forward the HTTP request
 # body to the OpenFGA bridge, or the caller-keyed per-tool check never runs (the
 # bridge can't see the JSON-RPC tools/call name) and every MCP call silently

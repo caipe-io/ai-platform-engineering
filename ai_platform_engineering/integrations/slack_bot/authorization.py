@@ -11,7 +11,7 @@ from typing import Any
 from loguru import logger
 
 from handler_dependencies import AuthorizationDependencies
-from sse_client import set_obo_token
+from sse_client import set_initiator_token, set_obo_token
 from utils import utils
 from utils.channel_team_resolver import is_dm_channel, resolve_channel_team
 from utils.identity_linker import auto_bootstrap_slack_user, resolve_slack_user
@@ -206,6 +206,7 @@ async def _rbac_enrich_context(
         try:
             obo = await impersonate_user(keycloak_user_id)
             context["obo_token"] = obo.access_token
+            context["initiator_obo_token"] = obo.access_token
             logger.info(
                 "OBO impersonation succeeded for user={}", keycloak_user_id,
             )
@@ -381,11 +382,19 @@ def _bind_obo_for_handler(context: Any) -> None:
     in a finally block; it disappears when the Bolt handler task exits.
     """
     obo = _obo_token_from_context(context)
+    initiator = None
+    if context is not None:
+        try:
+            candidate = context.get("initiator_obo_token")
+            initiator = candidate if isinstance(candidate, str) and candidate else None
+        except AttributeError:
+            initiator = None
     if obo:
         set_obo_token(obo)
     else:
         # Clear tokens that could remain on a reused thread or event-loop slot.
         set_obo_token(None)
+    set_initiator_token(initiator or obo)
 
 
 _seen_events: dict[str, float] = {}

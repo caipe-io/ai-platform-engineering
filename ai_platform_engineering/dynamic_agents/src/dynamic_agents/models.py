@@ -86,7 +86,7 @@ class MCPServerConfigBase(BaseModel):
 class MCPCredentialSource(BaseModel):
     """Credential source metadata for MCP server connection setup."""
 
-    kind: Literal["secret_ref", "provider_connection", "caller_token"] = Field(
+    kind: Literal["secret_ref", "provider_connection", "caller_token", "initiator_token"] = Field(
         ..., description="Credential source type"
     )
     target: Literal["env", "header"] = Field(..., description="Where to inject the resolved credential")

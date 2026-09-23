@@ -29,6 +29,7 @@ interface FeedbackButtonProps {
   feedback?: Feedback;
   onFeedbackChange?: (feedback: Feedback) => void;
   onFeedbackSubmit?: (feedback: Feedback) => void;
+  onActOnFeedback?: (feedback: Feedback) => void | Promise<void>;
   disabled?: boolean;
 }
 
@@ -43,6 +44,7 @@ export function FeedbackButton({
   feedback,
   onFeedbackChange,
   onFeedbackSubmit,
+  onActOnFeedback,
   disabled = false,
 }: FeedbackButtonProps) {
   const [additionalFeedback, setAdditionalFeedback] = useState("");
@@ -50,6 +52,7 @@ export function FeedbackButton({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [isSubmittingCombo, setIsSubmittingCombo] = useState(false);
+  const [isActingOnFeedback, setIsActingOnFeedback] = useState(false);
 
   const reportProblemEnabled = getConfig("reportProblemEnabled");
   const ticketEnabled = getConfig("ticketEnabled");
@@ -157,6 +160,36 @@ export function FeedbackButton({
     setReportDialogOpen(true);
   };
 
+  const handleSubmitAndAct = async () => {
+    if (!feedback?.reason || feedback.type !== "dislike" || !onActOnFeedback) return;
+
+    setIsActingOnFeedback(true);
+    const finalFeedback: Feedback = {
+      ...feedback,
+      additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
+      submitted: true,
+      showFeedbackOptions: false,
+    };
+
+    try {
+      await submitFeedback({
+        traceId: traceId || messageId,
+        messageId,
+        feedbackType: feedback.type,
+        reason: feedback.reason,
+        additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
+        conversationId,
+      });
+      onFeedbackChange?.(finalFeedback);
+      await onFeedbackSubmit?.(finalFeedback);
+      await onActOnFeedback(finalFeedback);
+      setAdditionalFeedback("");
+      setDialogOpen(false);
+    } finally {
+      setIsActingOnFeedback(false);
+    }
+  };
+
   const isLiked = feedback?.type === "like";
   const isDisliked = feedback?.type === "dislike";
   const reasons = isLiked ? LIKE_REASONS : DISLIKE_REASONS;
@@ -257,19 +290,32 @@ export function FeedbackButton({
           <Button
             size="sm"
             onClick={handleSubmitFeedback}
-            disabled={!feedback?.reason || isSubmitting || isSubmittingCombo}
+            disabled={!feedback?.reason || isSubmitting || isSubmittingCombo || isActingOnFeedback}
             className="w-full gap-2"
           >
             {isSubmitting && <Loader2 className="h-3 w-3 animate-spin" />}
             Submit Feedback
           </Button>
 
+          {isDisliked && onActOnFeedback && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handleSubmitAndAct}
+              disabled={!feedback?.reason || isSubmitting || isSubmittingCombo || isActingOnFeedback}
+              className="w-full gap-2"
+            >
+              {isActingOnFeedback && <Loader2 className="h-3 w-3 animate-spin" />}
+              Submit &amp; Ask Agent to Fix
+            </Button>
+          )}
+
           {ticketEnabled && isDisliked && (
             <Button
               size="sm"
               variant="outline"
               onClick={handleSubmitAndReport}
-              disabled={!feedback?.reason || isSubmitting || isSubmittingCombo}
+              disabled={!feedback?.reason || isSubmitting || isSubmittingCombo || isActingOnFeedback}
               className="w-full gap-2"
             >
               {isSubmittingCombo && <Loader2 className="h-3 w-3 animate-spin" />}

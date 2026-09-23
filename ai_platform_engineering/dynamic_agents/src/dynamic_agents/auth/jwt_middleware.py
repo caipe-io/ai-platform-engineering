@@ -37,7 +37,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from dynamic_agents.auth.token_context import current_traceparent, current_user_token
+from dynamic_agents.auth.token_context import (
+    current_initiator_subject,
+    current_initiator_token,
+    current_traceparent,
+    current_user_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,10 +141,31 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
             )
 
         traceparent = request.headers.get("traceparent")
+        initiator_token = request.headers.get("x-caipe-initiator-token", "").strip()
+        initiator_subject: str | None = None
+        if initiator_token:
+            if initiator_token.lower().startswith("bearer "):
+                initiator_token = initiator_token[7:].strip()
+            initiator_claims = _validate_bearer_or_none(initiator_token)
+            if initiator_claims is None:
+                body = json.dumps(
+                    {
+                        "error": "Invalid or expired initiator token",
+                        "code": "initiator_bearer_invalid",
+                        "reason": "bearer_invalid",
+                        "action": "sign_in",
+                    }
+                ).encode("utf-8")
+                return Response(content=body, status_code=401, media_type="application/json")
+            initiator_subject = str(initiator_claims.get("sub") or "").strip() or None
         trace_ctx_token = current_traceparent.set(traceparent if traceparent else None)
         ctx_token = current_user_token.set(token)
+        initiator_ctx_token = current_initiator_token.set(initiator_token or token)
+        initiator_subject_ctx_token = current_initiator_subject.set(initiator_subject)
         try:
             return await call_next(request)
         finally:
             current_user_token.reset(ctx_token)
+            current_initiator_token.reset(initiator_ctx_token)
+            current_initiator_subject.reset(initiator_subject_ctx_token)
             current_traceparent.reset(trace_ctx_token)

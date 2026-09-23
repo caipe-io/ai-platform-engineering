@@ -77,6 +77,7 @@ class TestFeedbackFamilyBindsOboToken:
     @pytest.mark.parametrize(
         "action_id,handler_name",
         [
+            ("hitl_example_approve", "handle_hitl_action"),
             ("caipe_feedback", "handle_caipe_feedback"),
             ("caipe_retry", "handle_caipe_retry"),
             ("caipe_escalation_get_help", "handle_escalation_get_help"),

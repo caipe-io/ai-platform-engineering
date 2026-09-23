@@ -263,6 +263,7 @@ class TestDecisionTableServiceAccount:
         assert result is True
         # SA token must OVERRIDE the user OBO token.
         assert context["obo_token"] == _SA_TOKEN
+        assert context["initiator_obo_token"] == _USER_TOKEN
 
     def test_sa_route_overrides_anon_token_for_bot(self) -> None:
         """service_account bot message → SA token replaces whatever was in context."""
@@ -281,6 +282,7 @@ class TestDecisionTableServiceAccount:
         )
         assert result is True
         assert context["obo_token"] == _SA_TOKEN
+        assert "initiator_obo_token" not in context
 
     def test_sa_route_impersonate_called_with_correct_sub(self) -> None:
         """impersonate_fn is called exactly once with the configured sa_sub."""

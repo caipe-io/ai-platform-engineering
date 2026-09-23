@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import hashlib
 import logging
 import os
 import resource
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from pymongo import MongoClient
 
+from dynamic_agents.auth.token_context import current_initiator_subject
 from dynamic_agents.config import get_settings
 from dynamic_agents.metrics import metrics as prom_metrics
 from dynamic_agents.models import (
@@ -142,9 +144,19 @@ class AgentRuntimeCache:
             except Exception:
                 logger.exception("Error during runtime cache sweep")
 
-    def _make_key(self, agent_id: str, session_id: str) -> str:
-        """Create cache key from agent and session IDs."""
-        return f"{agent_id}:{session_id}"
+    def _make_key(
+        self,
+        agent_id: str,
+        session_id: str,
+        user: UserContext | None = None,
+    ) -> str:
+        """Create a cache key that cannot cross execution or initiator identities."""
+        execution_subject = user.sub if user and user.sub else user.email if user else "anonymous"
+        initiator_subject = current_initiator_subject.get() or execution_subject
+        identity = hashlib.sha256(
+            f"{execution_subject}\n{initiator_subject}".encode("utf-8")
+        ).hexdigest()[:16]
+        return f"{agent_id}:{session_id}:{identity}"
 
     async def get_or_create(
         self,
@@ -164,7 +176,7 @@ class AgentRuntimeCache:
             RuntimeCapacityError: If the cache is full and all runtimes are streaming.
             RuntimeInitError: If the new runtime fails to initialize.
         """
-        key = self._make_key(agent_config.id, session_id)
+        key = self._make_key(agent_config.id, session_id, user)
 
         # Fast path: cached and valid
         if key in self._cache:
@@ -402,10 +414,15 @@ class AgentRuntimeCache:
         Returns:
             True if a runtime was invalidated, False if not found.
         """
-        key = self._make_key(agent_id, session_id)
-        runtime = self._cache.pop(key, None)
-        if runtime:
-            await runtime.cleanup()
+        matching = [
+            key
+            for key, runtime in self._cache.items()
+            if runtime.config.id == agent_id and runtime._session_id == session_id
+        ]
+        if matching:
+            runtimes = [self._cache.pop(key) for key in matching]
+            for runtime in runtimes:
+                await runtime.cleanup()
             self._update_metrics()
             logger.info(f"Runtime cache invalidated for agent={agent_id}")
             return True
@@ -417,10 +434,13 @@ class AgentRuntimeCache:
         Returns:
             True if cancellation was requested, False if no runtime or already cancelled.
         """
-        key = self._make_key(agent_id, session_id)
-        runtime = self._cache.get(key)
-        if runtime:
-            cancelled = runtime.cancel()
+        runtimes = [
+            runtime
+            for runtime in self._cache.values()
+            if runtime.config.id == agent_id and runtime._session_id == session_id
+        ]
+        if runtimes:
+            cancelled = any(runtime.cancel() for runtime in runtimes)
             logger.info(
                 f"[cancel_stream] Cancel requested for agent={agent_id}, session={session_id}: cancelled={cancelled}"
             )
@@ -431,8 +451,9 @@ class AgentRuntimeCache:
     def stats(self) -> dict:
         """Return cache statistics with per-runtime memory proxy metrics."""
         runtimes = []
-        for key, runtime in self._cache.items():
-            agent_id, session_id = key.split(":", 1)
+        for _key, runtime in self._cache.items():
+            agent_id = runtime.config.id
+            session_id = runtime._session_id or ""
 
             tool_count = (
                 sum(len(tools) for tools in runtime.config.allowed_tools.values())

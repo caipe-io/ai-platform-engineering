@@ -2,7 +2,7 @@
 
 import pytest
 
-from dynamic_agents.auth.token_context import current_user_token
+from dynamic_agents.auth.token_context import current_initiator_token, current_user_token
 from dynamic_agents.models import MCPCredentialSource, MCPServerConfig, TransportType
 from dynamic_agents.services import mcp_client
 from dynamic_agents.services.mcp_client import (
@@ -294,6 +294,37 @@ async def test_caller_token_no_jwt_no_mint_skips_injection(monkeypatch):
     )
 
     assert "X-CAIPE-Provider-Token" not in resolved.get("headers", {})
+
+
+@pytest.mark.asyncio
+async def test_initiator_token_forwards_human_independently_of_execution_identity(monkeypatch):
+    monkeypatch.setenv("USE_IMPERSONATION_TOKENS", "true")
+    server = MCPServerConfig(
+        _id="platform",
+        name="Platform",
+        transport=TransportType.HTTP,
+        endpoint="http://agentgateway:4000/mcp/platform",
+        credential_sources=[
+            MCPCredentialSource(
+                kind="initiator_token",
+                target="header",
+                name="X-CAIPE-Initiator-Token",
+            )
+        ],
+    )
+    config = build_mcp_connection_config(server)
+    token_ref = current_initiator_token.set("human-keycloak-jwt")
+    try:
+        resolved = await resolve_mcp_credential_refs(
+            server,
+            config,
+            credential_client=None,
+            caller_token="service-account-keycloak-jwt",
+        )
+    finally:
+        current_initiator_token.reset(token_ref)
+
+    assert resolved["headers"]["X-CAIPE-Initiator-Token"] == "human-keycloak-jwt"
 
 
 @pytest.mark.asyncio

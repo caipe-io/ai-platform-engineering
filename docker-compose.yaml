@@ -26,6 +26,27 @@ services:
       - github
       - mcp-servers
 
+  mcp-platform:
+    image: ghcr.io/caipe-io/mcp-platform:${IMAGE_TAG:-0.5.66}
+    container_name: mcp-platform
+    env_file: [.env]
+    ports: ["18014:8000"]
+    environment:
+      - MCP_MODE=http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); result=s.connect_ex(('localhost', 8000)); s.close(); exit(0 if result == 0 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    profiles:
+      - platform
+      - all-agents
+      - mcp-servers
+
   mcp-backstage:
     image: ghcr.io/cnoe-io/mcp-backstage:${IMAGE_TAG:-0.5.66}
     container_name: mcp-backstage
