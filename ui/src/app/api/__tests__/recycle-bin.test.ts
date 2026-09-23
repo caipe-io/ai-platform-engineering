@@ -498,6 +498,14 @@ describe('Archive API', () => {
   // --------------------------------------------------------------------------
 
   describe('GET /api/chat/conversations — excludes soft-deleted', () => {
+    // Both current and legacy task histories belong in the Autonomous tab,
+    // without changing the separate ownership and soft-delete constraints.
+    const autonomousMarkers = [
+      { source: 'autonomous' },
+      { 'metadata.source': 'autonomous' },
+      { title: { $regex: '^\\[Autonomous\\](\\s|$)', $options: 'i' } },
+    ];
+
     it('does not include soft-deleted conversations in normal listing', async () => {
       const activeConv = makeConversation({ title: 'Active conv', deleted_at: null });
       const convCollection = createMockCollection();
@@ -556,7 +564,7 @@ describe('Archive API', () => {
       );
     });
 
-    it('?source=autonomous still narrows to autonomous-only', async () => {
+    it('?source=autonomous narrows to current and legacy autonomous conversations', async () => {
       const convCollection = createMockCollection();
       convCollection.find.mockReturnValue({
         sort: jest.fn().mockReturnValue({
@@ -574,7 +582,7 @@ describe('Archive API', () => {
 
       const findCall = convCollection.find.mock.calls[0][0];
       expect(findCall.$and).toEqual(
-        expect.arrayContaining([{ source: 'autonomous' }]),
+        expect.arrayContaining([{ $or: autonomousMarkers }]),
       );
     });
 
@@ -615,7 +623,7 @@ describe('Archive API', () => {
       ]));
     });
 
-    it('?source=web excludes scheduled runs from normal chat history', async () => {
+    it('?source=web excludes scheduled and current or legacy autonomous runs from normal chat history', async () => {
       const convCollection = createMockCollection();
       mockCollections['conversations'] = convCollection;
 
@@ -628,6 +636,7 @@ describe('Archive API', () => {
         { source: { $in: ['web', null] } },
         {
           $nor: [
+            ...autonomousMarkers,
             { 'metadata.schedule_id': { $exists: true } },
             { _id: { $regex: 'sched_[a-z0-9]+', $options: 'i' } },
           ],
@@ -635,7 +644,7 @@ describe('Archive API', () => {
       ]));
     });
 
-    it('?source=scheduled matches metadata and legacy scheduled conversation IDs', async () => {
+    it('?source=scheduled matches scheduled metadata and IDs while excluding current and legacy autonomous runs', async () => {
       const convCollection = createMockCollection();
       mockCollections['conversations'] = convCollection;
 
@@ -645,7 +654,7 @@ describe('Archive API', () => {
 
       const findCall = convCollection.find.mock.calls[0][0];
       expect(findCall.$and).toEqual(expect.arrayContaining([
-        { source: { $ne: 'autonomous' } },
+        { $nor: autonomousMarkers },
         {
           $or: [
             { 'metadata.schedule_id': { $exists: true, $ne: '' } },
@@ -691,7 +700,7 @@ describe('Archive API', () => {
       // would also work but is structurally easier to regress).
       expect(findCall.source).toBeUndefined();
       expect(findCall.$and).toEqual(
-        expect.arrayContaining([{ source: 'autonomous' }]),
+        expect.arrayContaining([{ $or: autonomousMarkers }]),
       );
     });
   });
