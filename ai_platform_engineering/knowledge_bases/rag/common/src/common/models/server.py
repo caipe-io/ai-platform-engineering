@@ -187,10 +187,10 @@ class WebIngestorCommand(str, Enum):
 
 
 class ConfluenceIngestRequest(IngestionTuning):
-  url: str = Field(..., description="Confluence page URL (e.g., 'https://domain.atlassian.net/wiki/spaces/SPACE/pages/PAGE_ID/Title')")
+  url: str = Field(..., description="Confluence page, folder, or space URL (e.g., 'https://domain.atlassian.net/wiki/spaces/SPACE/pages/PAGE_ID/Title', '.../spaces/SPACE/folder/FOLDER_ID', or '.../spaces/SPACE')")
   name: Optional[str] = Field(None, max_length=120, description="Human-readable name for this data source")
   description: str = Field("", description="Description for this data source")
-  get_child_pages: bool = Field(False, description="Whether to ingest direct child pages of this page")
+  get_child_pages: bool = Field(False, description="Whether to ingest direct child pages of this page. Ignored for folder and whole-space URLs, which always ingest every nested page.")
   allowed_title_patterns: Optional[List[str]] = Field(None, description="Regex patterns for page titles to include (whitelist). If set, only pages whose title matches at least one pattern are ingested.")
   denied_title_patterns: Optional[List[str]] = Field(None, description="Regex patterns for page titles to exclude (blacklist). Pages whose title matches any pattern are skipped. Checked after allowed_title_patterns.")
   # Optional management owner for a new Confluence datasource. None creates a

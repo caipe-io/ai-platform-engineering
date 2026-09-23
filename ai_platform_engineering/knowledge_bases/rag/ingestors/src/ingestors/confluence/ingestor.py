@@ -1,7 +1,6 @@
 """Confluence ingestor for persisted and on-demand RAG datasources."""
 
 import os
-import re
 import time
 import traceback
 from typing import List, Dict, Optional, Any
@@ -16,7 +15,12 @@ from common.models.server import (
 )
 from common.job_manager import JobStatus, JobManager
 from common.constants import CONFLUENCE_INGESTOR_NAME, CONFLUENCE_INGESTOR_TYPE
-from common.utils import get_logger
+from common.utils import (
+  ConfluenceLocator,
+  build_confluence_content_config,
+  get_logger,
+  parse_confluence_locator,
+)
 from loader import ConfluenceLoader, generate_datasource_id
 
 logger = get_logger(__name__)
@@ -68,6 +72,12 @@ def _get_title_patterns(metadata: Optional[Dict[str, Any]]) -> Dict[str, List[st
   return {"allowed_title_patterns": allowed, "denied_title_patterns": denied}
 
 
+def _build_page_configs(locator: ConfluenceLocator, get_child_pages: bool) -> Optional[List[Dict[str, Any]]]:
+  """Wrap ``build_confluence_content_config``'s single entry in the list ``load_pages()`` expects."""
+  config = build_confluence_content_config(locator, get_child_pages=get_child_pages)
+  return [config] if config else None
+
+
 async def track_fetch_failures(job_manager: JobManager, job_id: str, failed_pages: List[tuple[str, str]]) -> None:
   """Track fetch failures in job manager without incrementing progress.
 
@@ -90,23 +100,22 @@ async def process_page_ingestion(
 ) -> None:
   """Process on-demand page ingestion from Redis (server already created datasource)."""
   try:
-    # Parse URL to extract space_key and page_id
-    confluence_match = re.search(r"/spaces/([^/]+)/pages/(\d+)", ingest_request.url)
-    if not confluence_match:
+    # Parse URL to extract space_key and the page/folder/space locator
+    locator = parse_confluence_locator(ingest_request.url)
+    if not locator:
       raise ValueError(f"Invalid Confluence URL format: {ingest_request.url}")
 
-    space_key = confluence_match.group(1)
-    page_id = confluence_match.group(2)
+    space_key = locator.space_key
 
-    # UI-created sources are page-scoped. The explicit ID keeps retrying an
-    # existing legacy space-level source compatible after page-scoped IDs were
-    # introduced.
+    # UI-created sources are page- or folder-scoped. The explicit ID keeps
+    # retrying an existing legacy space-level source compatible after
+    # page-scoped IDs were introduced.
     datasource_id = (
       ingest_request.preprovisioned_datasource_id
-      or generate_datasource_id(CONFLUENCE_URL, space_key, page_id)
+      or generate_datasource_id(CONFLUENCE_URL, space_key, locator.content_id, locator.kind)
     )
 
-    # Fetch the exact page-scoped or legacy space-level datasource.
+    # Fetch the exact page/folder-scoped or legacy space-level datasource.
     datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
     datasource_info = next((ds for ds in datasources if ds.datasource_id == datasource_id), None)
 
@@ -152,7 +161,7 @@ async def process_page_ingestion(
       denied_title_patterns=denied,
     ) as loader:
       # Build page config for this ingestion
-      page_configs = [{"page_id": page_id, "get_child_pages": ingest_request.get_child_pages}]
+      page_configs = _build_page_configs(locator, ingest_request.get_child_pages)
       pages, failed_pages = await loader.load_pages(space_key, page_configs)
 
       # Update job with total count (successful + failed)
@@ -208,15 +217,14 @@ async def preview_page_ingestion(
   ingest_request: ConfluenceIngestRequest,
 ) -> dict[str, object]:
   """Resolve the real page selection and title filters without ingesting."""
-  confluence_match = re.search(r"/spaces/([^/]+)/pages/(\d+)", ingest_request.url)
-  if not confluence_match:
+  locator = parse_confluence_locator(ingest_request.url)
+  if not locator:
     raise ValueError(f"Invalid Confluence URL format: {ingest_request.url}")
-  space_key = confluence_match.group(1)
-  page_id = confluence_match.group(2)
+  space_key = locator.space_key
   datasource_info = DataSourceInfo(
     datasource_id=(
       ingest_request.preprovisioned_datasource_id
-      or generate_datasource_id(CONFLUENCE_URL, space_key, page_id)
+      or generate_datasource_id(CONFLUENCE_URL, space_key, locator.content_id, locator.kind)
     ),
     ingestor_id=client.ingestor_id or "",
     source_type="confluence",
@@ -239,7 +247,7 @@ async def preview_page_ingestion(
   ) as loader:
     pages, failed_pages = await loader.load_pages(
       space_key,
-      [{"page_id": page_id, "get_child_pages": ingest_request.get_child_pages}],
+      _build_page_configs(locator, ingest_request.get_child_pages),
       # Fetch one visible item beyond the UI limit. ``load_pages`` also peeks
       # one child beyond this bound, so a large page tree remains bounded while
       # the response can accurately report that more candidates exist.
@@ -266,8 +274,9 @@ async def preview_page_ingestion(
     "warnings": [message for _, message in failed_pages[:10]],
     "summary": {
       "space_key": space_key,
-      "root_page_id": page_id,
-      "include_child_pages": ingest_request.get_child_pages,
+      "content_kind": locator.kind,
+      "root_content_id": locator.content_id,
+      "include_child_pages": ingest_request.get_child_pages if locator.kind == "page" else None,
       "failed_pages": len(failed_pages),
       "preview_limit": PREVIEW_MAX_ITEMS,
     },

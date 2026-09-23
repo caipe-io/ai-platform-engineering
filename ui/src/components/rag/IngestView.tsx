@@ -2837,9 +2837,13 @@ export default function IngestView() {
                       const confluenceScopeDescription =
                         sourceConfig?.source_type === "confluence_space" &&
                         sourceConfig.start_page_url
-                          ? sourceConfig.get_child_pages
-                            ? `Confluence page and child pages starting at ${sourceConfig.start_page_url}`
-                            : `Confluence page ${sourceConfig.start_page_url}`
+                          ? sourceConfig.content_kind === "folder"
+                            ? `Confluence folder (all nested pages) at ${sourceConfig.start_page_url}`
+                            : sourceConfig.content_kind === "space"
+                              ? `Entire Confluence space at ${sourceConfig.start_page_url}`
+                              : sourceConfig.get_child_pages
+                                ? `Confluence page and child pages starting at ${sourceConfig.start_page_url}`
+                                : `Confluence page ${sourceConfig.start_page_url}`
                           : "";
                       const displayDescription =
                         configuredDescription ||

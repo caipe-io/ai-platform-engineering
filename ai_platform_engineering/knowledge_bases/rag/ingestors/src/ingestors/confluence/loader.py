@@ -9,6 +9,7 @@ import time
 import hashlib
 import traceback
 from typing import Dict, List, Any, Tuple, Optional
+from urllib.parse import parse_qs, urlparse
 import aiohttp
 from aiohttp_retry import RetryClient, ExponentialRetry
 from aiohttp import ClientTimeout
@@ -33,21 +34,23 @@ CONFLUENCE_API_PAGE_LIMIT = 100  # Pages per API call for pagination
 def generate_datasource_id(
   confluence_url: str,
   space_key: str,
-  page_id: Optional[str] = None,
+  content_id: Optional[str] = None,
+  content_kind: str = "page",
 ) -> str:
-  """Generate datasource ID for a Confluence space or page.
+  """Generate datasource ID for a Confluence space, page, or folder.
 
-  Format: src_confluence___{domain_normalized}__{space_key}[__{page_id}]
+  Format: src_confluence___{domain_normalized}__{space_key}[__folder__{content_id}|__{content_id}]
 
   Args:
       confluence_url: Base URL of the Confluence instance
       space_key: Confluence space key
-      page_id: Root page ID for a page-scoped datasource. Omit for a legacy
+      content_id: Root page or folder ID for a scoped datasource. Omit for a
           whole-space datasource.
+      content_kind: "page" or "folder", disambiguating ``content_id``.
   Returns:
       Datasource ID string
   """
-  return generate_confluence_datasource_id(confluence_url, space_key, page_id)
+  return generate_confluence_datasource_id(confluence_url, space_key, content_id, content_kind)
 
 
 class ConfluenceLoader:
@@ -224,6 +227,72 @@ class ConfluenceLoader:
 
     return child_ids, failed_fetches, False
 
+  async def fetch_folder_pages(
+    self,
+    folder_id: str,
+    max_results: Optional[int] = None,
+  ) -> Tuple[List[str], List[Tuple[str, str]], bool]:
+    """Recursively collect page IDs under a Confluence folder (v2 API).
+
+    Folders can nest other folders, so this walks the whole subtree
+    breadth-first via ``GET /api/v2/folders/{id}/direct-children``, which the
+    v1 content API used elsewhere in this loader does not expose.
+
+    Returns:
+        Tuple of (page_ids, failed_fetches, truncated)
+    """
+    page_ids: List[str] = []
+    failed_fetches: List[Tuple[str, str]] = []
+    queue: List[str] = [folder_id]
+
+    while queue:
+      current_folder_id = queue.pop(0)
+      cursor: Optional[str] = None
+
+      while True:
+        if max_results is not None and len(page_ids) > max_results:
+          return page_ids[:max_results], failed_fetches, True
+
+        url = f"{self.confluence_url}/api/v2/folders/{current_folder_id}/direct-children"
+        params: Dict[str, Any] = {"limit": CONFLUENCE_API_PAGE_LIMIT}
+        if cursor:
+          params["cursor"] = cursor
+
+        try:
+          async with self.session.get(url, params=params) as resp:
+            if resp.status != 200:
+              text = await resp.text()
+              error_msg = f"Failed to fetch children of folder {current_folder_id}: {resp.status} - {text}"
+              self.logger.warning(error_msg)
+              failed_fetches.append((current_folder_id, error_msg))
+              break
+            data = await resp.json()
+        except Exception as e:
+          error_msg = f"Error fetching children of folder {current_folder_id}: {e}"
+          self.logger.error(error_msg)
+          failed_fetches.append((current_folder_id, error_msg))
+          break
+
+        for item in data.get("results", []):
+          item_id = item.get("id")
+          if not item_id:
+            continue
+          if item.get("type") == "folder":
+            queue.append(item_id)
+          else:
+            page_ids.append(item_id)
+
+        next_link = data.get("_links", {}).get("next")
+        if not next_link:
+          break
+        cursor = parse_qs(urlparse(next_link).query).get("cursor", [None])[0]
+        if not cursor:
+          break
+
+    if max_results is not None and len(page_ids) > max_results:
+      return page_ids[:max_results], failed_fetches, True
+    return page_ids, failed_fetches, False
+
   def extract_text_from_html(self, html_content: str) -> str:
     """Extract text from Confluence HTML storage format.
 
@@ -264,9 +333,11 @@ class ConfluenceLoader:
 
     Args:
         space_key: Confluence space key
-        page_configs: List of page config dicts, each with:
-            - page_id (required): Page ID to fetch
-            - get_child_pages (optional, default False): Include direct children
+        page_configs: List of config dicts, each either:
+            - {"page_id": ..., "get_child_pages": bool} - a page, optionally
+              with its direct children
+            - {"folder_id": ...} - a folder; all pages nested anywhere under
+              it (including in subfolders) are fetched
         page_limit: Number of pages per API call for enumeration
         max_pages: Optional hard cap used by non-persisting previews
 
@@ -284,9 +355,27 @@ class ConfluenceLoader:
         if max_pages is not None and len(pages) >= max_pages:
           self.last_load_truncated = True
           break
+        folder_id = config.get("folder_id")
+        if folder_id:
+          remaining = None if max_pages is None else max(0, max_pages - len(pages))
+          folder_page_ids, folder_failures, folder_truncated = await self.fetch_folder_pages(
+            folder_id,
+            max_results=remaining,
+          )
+          self.last_load_truncated = self.last_load_truncated or folder_truncated
+          failed_pages.extend(folder_failures)
+
+          for folder_page_id in folder_page_ids:
+            folder_page, folder_page_failure = await self.fetch_page_content(folder_page_id)
+            if folder_page:
+              pages.append(folder_page)
+            if folder_page_failure:
+              failed_pages.append(folder_page_failure)
+          continue
+
         page_id = config.get("page_id")
         if not page_id:
-          self.logger.warning(f"Page config missing page_id: {config}")
+          self.logger.warning(f"Page config missing page_id or folder_id: {config}")
           continue
 
         # Fetch parent page

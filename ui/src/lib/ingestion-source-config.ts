@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api-middleware";
-import { parseConfluencePageUrl } from "@/lib/confluence-url";
+import { parseConfluenceLocator } from "@/lib/confluence-url";
 import type { IngestionSourceIdentity } from "@/lib/ingestion-source-id";
 import type {
   IngestionSourceType,
@@ -345,7 +345,7 @@ export function extractIngestionSourceTypeFields(
       const spaceKey = normalizeString(body.space_key);
       const startPageUrl =
         normalizeString(body.url) ?? normalizeString(body.start_page_url);
-      const parsed = startPageUrl ? parseConfluencePageUrl(startPageUrl) : null;
+      const parsed = startPageUrl ? parseConfluenceLocator(startPageUrl) : null;
       if (!spaceKey || !parsed || parsed.spaceKey !== spaceKey) return null;
       const suppliedBaseUrl = normalizeString(body.confluence_url);
       if (suppliedBaseUrl) {
@@ -363,13 +363,15 @@ export function extractIngestionSourceTypeFields(
           source_type: "confluence_space",
           confluence_url: parsed.baseUrl,
           space_key: spaceKey,
-          page_id: parsed.pageId,
+          content_id: parsed.contentId,
+          content_kind: parsed.kind === "space" ? undefined : parsed.kind,
         },
         fields: {
           source_type: sourceType,
           confluence_url: parsed.baseUrl,
           space_key: spaceKey,
           start_page_url: startPageUrl,
+          content_kind: parsed.kind,
           get_child_pages: optionalBoolean(
             body.get_child_pages,
             "get_child_pages",
