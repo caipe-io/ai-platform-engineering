@@ -27,12 +27,8 @@ global:
       clientSecretRef:
         name: ""
         key: "INGESTOR_OIDC_CLIENT_SECRET"
-    # Ingestors resolve credentials attached to authenticated sources through
-    # the UI credential API, authenticating with their own ingestorOidc
-    # identity. Leave apiUrl empty to disable authenticated ingestion.
-    credentialService:
-      apiUrl: ""
-      audience: "caipe-credential-service"
+    caipeApi:
+      url: ""
     ragServer:
       host: "rag-server"
       port: 9446

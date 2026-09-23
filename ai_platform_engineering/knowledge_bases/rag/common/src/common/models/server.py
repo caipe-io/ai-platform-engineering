@@ -25,18 +25,22 @@ _HEADER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$")
 
 
 class AuthHeader(BaseModel):
-  """An authentication header applied to web fetches for a single datasource.
+  """A request header applied to web fetches for a single datasource.
 
-  Only `secret_ref` is persisted. The referenced value is resolved at crawl time
-  so that rotation propagates and no credential is written to datasource metadata.
+  The value may be static, or may reference a stored credential. Only
+  `secret_ref` is ever persisted for the latter; the credential is resolved at
+  crawl time so rotation propagates and no secret reaches datasource metadata.
   """
 
   header_name: str = Field(..., description="HTTP header name, e.g. 'Authorization'")
   value_template: str = Field(
-    SECRET_PLACEHOLDER,
-    description=f"Header value where {SECRET_PLACEHOLDER} is replaced by the resolved credential, e.g. 'Bearer {SECRET_PLACEHOLDER}'",
+    ...,
+    description=f"Header value. When a credential is referenced, {SECRET_PLACEHOLDER} marks where its value belongs, e.g. 'Bearer {SECRET_PLACEHOLDER}'",
   )
-  secret_ref: str = Field(..., description="Credential store reference resolved at crawl time")
+  secret_ref: Optional[str] = Field(
+    None,
+    description="Credential store reference resolved at crawl time. Omit for a static header.",
+  )
 
   @field_validator("header_name")
   @classmethod
@@ -51,20 +55,32 @@ class AuthHeader(BaseModel):
   def validate_value_template(cls, value: str) -> str:
     if "\r" in value or "\n" in value:
       raise ValueError("value_template must not contain carriage returns or newlines")
-    if SECRET_PLACEHOLDER not in value:
-      raise ValueError(f"value_template must contain {SECRET_PLACEHOLDER}")
+    if not value.strip():
+      raise ValueError("value_template must not be empty")
     return value
 
   @field_validator("secret_ref")
   @classmethod
-  def validate_secret_ref(cls, value: str) -> str:
-    ref = value.strip()
-    if not ref:
-      raise ValueError("secret_ref must not be empty")
-    return ref
+  def validate_secret_ref(cls, value: Optional[str]) -> Optional[str]:
+    if value is None:
+      return None
+    return value.strip() or None
 
-  def render(self, secret: str) -> str:
-    """Substitute the resolved credential into the template."""
+  @model_validator(mode="after")
+  def validate_placeholder_matches_reference(self) -> "AuthHeader":
+    has_placeholder = SECRET_PLACEHOLDER in self.value_template
+    if self.secret_ref and not has_placeholder:
+      raise ValueError(f"value_template must contain {SECRET_PLACEHOLDER} when secret_ref is set")
+    if not self.secret_ref and has_placeholder:
+      raise ValueError(f"value_template contains {SECRET_PLACEHOLDER} but no secret_ref is set")
+    return self
+
+  def render(self, secret: Optional[str] = None) -> str:
+    """Resolve the value, substituting the credential when one is referenced."""
+    if not self.secret_ref:
+      return self.value_template
+    if secret is None:
+      raise ValueError(f"header {self.header_name} references {self.secret_ref} but no secret was provided")
     return self.value_template.replace(SECRET_PLACEHOLDER, secret)
 
 

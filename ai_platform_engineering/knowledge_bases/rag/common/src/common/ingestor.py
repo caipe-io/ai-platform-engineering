@@ -53,8 +53,11 @@ class Client:
     # Scope is optional - if not set, don't send any scope (many providers don't need it for client credentials)
     self.oidc_scope = os.getenv("INGESTOR_OIDC_SCOPE", "")
 
-    # Credential service, used to resolve datasource auth headers at crawl time
-    self.credential_api_url = os.getenv("CREDENTIAL_API_URL", "")
+    # Credential service, used to resolve request headers that reference a stored
+    # credential. Derived from the platform API base so a deployment only has to
+    # say where CAIPE is; CREDENTIAL_API_URL overrides it for a split deployment.
+    caipe_api_url = os.getenv("CAIPE_API_URL", "").rstrip("/")
+    self.credential_api_url = os.getenv("CREDENTIAL_API_URL", "") or (f"{caipe_api_url}/api/credentials" if caipe_api_url else "")
     self.credential_service_audience = os.getenv("CREDENTIAL_SERVICE_AUDIENCE", "caipe-credential-service")
 
     # Token cache
@@ -319,11 +322,12 @@ class Client:
 
   async def resolve_auth_headers(self, auth_headers: Optional[List[AuthHeader]]) -> tuple[Dict[str, str], List[str]]:
     """
-    Render configured auth headers into concrete request headers.
+    Render configured request headers into concrete values.
 
-    Returns the header map alongside the credential references used. The
-    references are safe to log, letting a failed crawl name the credential
-    without exposing its value.
+    Static headers pass through untouched; only those referencing a credential
+    reach the credential service. Returns the header map alongside the credential
+    references used, which are safe to log and let a failed crawl name the
+    credential without exposing its value.
     """
     if not auth_headers:
       return {}, []
@@ -331,11 +335,15 @@ class Client:
     rendered: Dict[str, str] = {}
     labels: List[str] = []
     for header in auth_headers:
-      secret = await self.retrieve_secret(header.secret_ref)
-      rendered[header.header_name] = header.render(secret)
-      labels.append(header.secret_ref)
+      if header.secret_ref:
+        rendered[header.header_name] = header.render(await self.retrieve_secret(header.secret_ref))
+        labels.append(header.secret_ref)
+      else:
+        rendered[header.header_name] = header.render()
 
-    logger.info(f"Resolved {len(rendered)} auth header(s) from credential(s): {', '.join(labels)}")
+    if labels:
+      logger.info(f"Resolved {len(labels)} header(s) from credential(s): {', '.join(labels)}")
+    logger.info(f"Applying {len(rendered)} request header(s) to this crawl")
     return rendered, labels
 
   async def _get_auth_headers(self) -> Dict[str, str]:

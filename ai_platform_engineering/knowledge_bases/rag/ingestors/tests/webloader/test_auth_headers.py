@@ -60,9 +60,41 @@ def test_invalid_header_names_are_rejected(name):
     AuthHeader(header_name=name, value_template="{{secret}}", secret_ref="ref")
 
 
-def test_empty_secret_ref_is_rejected():
+def test_placeholder_without_a_credential_is_rejected():
   with pytest.raises(ValidationError):
     AuthHeader(header_name="Authorization", value_template="{{secret}}", secret_ref="   ")
+
+
+def test_static_header_needs_no_credential():
+  header = AuthHeader(header_name="X-Environment", value_template="staging")
+  assert header.secret_ref is None
+  assert header.render() == "staging"
+
+
+def test_static_header_ignores_a_supplied_secret():
+  header = AuthHeader(header_name="X-Environment", value_template="staging")
+  assert header.render("unused") == "staging"
+
+
+def test_empty_value_is_rejected():
+  with pytest.raises(ValidationError):
+    AuthHeader(header_name="X-Environment", value_template="   ")
+
+
+def test_credential_header_without_a_secret_raises_at_render():
+  header = AuthHeader(header_name="Authorization", value_template="Bearer {{secret}}", secret_ref="ref")
+  with pytest.raises(ValueError):
+    header.render()
+
+
+def test_static_and_credential_headers_coexist():
+  settings = ScrapySettings(
+    auth_headers=[
+      AuthHeader(header_name="Authorization", value_template="Bearer {{secret}}", secret_ref="a"),
+      AuthHeader(header_name="X-Environment", value_template="staging"),
+    ]
+  )
+  assert [header.secret_ref for header in settings.auth_headers] == ["a", None]
 
 
 def test_duplicate_header_names_are_rejected():
