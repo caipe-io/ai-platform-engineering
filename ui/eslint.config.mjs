@@ -29,11 +29,8 @@ const eslintConfig = [
       "react-hooks/set-state-in-effect": "error",
     },
   },
-  // CAS silo boundary: the OpenFGA transport adapters are private. The CAS
-  // core (lib/authz/**) and the legacy RBAC layer (lib/rbac/**) must never
-  // import each other's OpenFGA transport — each owns its own. App code must
-  // consume CAS only through its public entrypoint (@/lib/authz), never the
-  // engine directly.
+  // Engines are private to CAS. The existing RBAC relationship helper is the
+  // only outside consumer allowed to use the shared transport during migration.
   {
     files: ["**/*.ts", "**/*.tsx"],
     ignores: ["src/lib/authz/**"],
@@ -48,6 +45,24 @@ const eslintConfig = [
                 "Import CAS through its public API (@/lib/authz), not the engine adapter directly.",
             },
           ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/lib/rbac/openfga.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [{
+            group: [
+              "@/lib/authz/engines/*",
+              "**/lib/authz/engines/*",
+              "!@/lib/authz/engines/openfga-client",
+            ],
+            message: "The RBAC helper may use the shared transport, not the CAS policy engine.",
+          }],
         },
       ],
     },
