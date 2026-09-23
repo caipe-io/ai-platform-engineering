@@ -9,7 +9,7 @@ import {
 countRealmUsers,
 findRealmUsersByExactEmail,
 getRealmUserById,
-getUserFederatedIdentities,
+getUserSessions,
 listRealmRoleMappingsForUser,
 listUsersWithRole,
 searchRealmUsers,
@@ -37,7 +37,7 @@ type AdminUsersListBase = {
   attributes: Record<string, string[]>;
   slack_link_status: "linked" | "unlinked";
   webex_link_status: "linked" | "unlinked";
-  web_sso_status?: "linked" | "unlinked" | "unknown";
+  last_sign_in?: number | null;
 };
 
 type AdminUsersListWithRoles = AdminUsersListBase & {
@@ -148,39 +148,43 @@ function mapBaseRow(u: Record<string, unknown>): AdminUsersListBase {
   };
 }
 
-async function getWebSsoStatus(
+async function getLastSignIn(
   userId: string,
-): Promise<NonNullable<AdminUsersListBase["web_sso_status"]>> {
+): Promise<number | null | undefined> {
   try {
-    const identities = await getUserFederatedIdentities(userId);
-    return identities.length > 0 ? "linked" : "unlinked";
+    const sessions = await getUserSessions(userId);
+    const lastAccess = sessions.reduce((latest, session) => {
+      const timestamp = session.lastAccess ?? session.start ?? 0;
+      return Math.max(latest, timestamp);
+    }, 0);
+    return lastAccess > 0 ? lastAccess : null;
   } catch (error) {
-    console.warn(`[admin/users] Could not load Web SSO status for ${userId}:`, error);
-    return "unknown";
+    console.warn(`[admin/users] Could not load last sign-in for ${userId}:`, error);
+    return undefined;
   }
 }
 
-// Per-user Keycloak enrichments are opt-in. The table requests Web SSO status,
+// Per-user Keycloak enrichments are opt-in. The table requests last sign-in,
 // while role consumers use `?includeRoles=true` or the per-user roles route.
 // Bounded batches below prevent a page from flooding the Keycloak admin API.
 async function enrichListRow(
   u: Record<string, unknown>,
   includeRoles: boolean,
-  includeWebSso: boolean,
+  includeLastSignIn: boolean,
 ): Promise<AdminUsersListItem> {
   const base = mapBaseRow(u);
-  const [roleRows, webSsoStatus] = await Promise.all([
+  const [roleRows, lastSignIn] = await Promise.all([
     includeRoles ? listRealmRoleMappingsForUser(base.id) : Promise.resolve(null),
-    includeWebSso ? getWebSsoStatus(base.id) : Promise.resolve(null),
+    includeLastSignIn ? getLastSignIn(base.id) : Promise.resolve(undefined),
   ]);
-  const webSso = webSsoStatus
-    ? { web_sso_status: webSsoStatus }
+  const signIn = includeLastSignIn
+    ? { last_sign_in: lastSignIn }
     : {};
-  if (!roleRows) return { ...base, ...webSso };
+  if (!roleRows) return { ...base, ...signIn };
   const curatedRoles = curateRealmRolesForUser(roleRows.map((r) => r.name));
   return {
     ...base,
-    ...webSso,
+    ...signIn,
     ...curatedRoles,
   };
 }
@@ -188,7 +192,7 @@ async function enrichListRow(
 async function enrichListRows(
   rows: Record<string, unknown>[],
   includeRoles: boolean,
-  includeWebSso: boolean,
+  includeLastSignIn: boolean,
 ): Promise<AdminUsersListItem[]> {
   const enriched: AdminUsersListItem[] = [];
   const maxConcurrentKeycloakRequests = 5;
@@ -196,7 +200,7 @@ async function enrichListRows(
     enriched.push(...await Promise.all(
       rows
         .slice(offset, offset + maxConcurrentKeycloakRequests)
-        .map((row) => enrichListRow(row, includeRoles, includeWebSso)),
+        .map((row) => enrichListRow(row, includeRoles, includeLastSignIn)),
     ));
   }
   return enriched;
@@ -239,8 +243,8 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   // or use the per-user `/api/admin/users/[id]/roles` endpoint.
   const includeRolesRaw = (url.searchParams.get("includeRoles") ?? "").trim().toLowerCase();
   const includeRoles = includeRolesRaw === "true" || includeRolesRaw === "1";
-  const includeWebSsoRaw = (url.searchParams.get("includeWebSso") ?? "").trim().toLowerCase();
-  const includeWebSso = includeWebSsoRaw === "true" || includeWebSsoRaw === "1";
+  const includeLastSignInRaw = (url.searchParams.get("includeLastSignIn") ?? "").trim().toLowerCase();
+  const includeLastSignIn = includeLastSignInRaw === "true" || includeLastSignInRaw === "1";
 
   // Parsed once up front so both the plain-member (team-scoped) branch below
   // and the admin/team-admin branch can page their Keycloak round-trips
@@ -320,7 +324,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       const self = await enrichListRow(
         await getRealmUserById(selfSubjectId),
         true,
-        includeWebSso,
+        includeLastSignIn,
       );
       return NextResponse.json({
         users: [{ ...self, can_edit: self.id === selfSubjectId }],
@@ -386,7 +390,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
     );
 
     // Plain members can only edit their own profile.
-    const teamUsers = await enrichListRows(teamUserRows, false, includeWebSso);
+    const teamUsers = await enrichListRows(teamUserRows, false, includeLastSignIn);
     return NextResponse.json({
       users: teamUsers.map((u) => ({ ...u, can_edit: u.id === selfSubjectId })),
       total: teamMemberTotal,
@@ -468,7 +472,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
         max: pageSize,
       });
       const total = await countRealmUsers({ search, enabled });
-      const users = await enrichListRows(raw, includeRoles, includeWebSso);
+      const users = await enrichListRows(raw, includeRoles, includeLastSignIn);
       return NextResponse.json({
         users: stampCanEdit(users),
         total,
@@ -501,7 +505,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       for (const row of batch) {
         if (!userMatchesFilters(row, filterOpts)) continue;
         if (matchCount >= skip && pageRows.length < pageSize) {
-          pageRows.push(await enrichListRow(row, includeRoles, includeWebSso));
+          pageRows.push(await enrichListRow(row, includeRoles, includeLastSignIn));
         }
         matchCount += 1;
       }

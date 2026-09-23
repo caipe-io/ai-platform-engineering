@@ -290,6 +290,7 @@ const mockUsersListResponse = {
       firstName: 'Regular',
       lastName: 'User',
       enabled: true,
+      last_sign_in: null,
       attributes: {} as Record<string, string[]>,
       roles: ['user'],
     },
@@ -722,7 +723,9 @@ describe('Admin Dashboard Page', () => {
       const table = screen.getByRole('table');
       expect(within(table).getByText('Name')).toBeInTheDocument();
       expect(within(table).getByText('Email')).toBeInTheDocument();
-      expect(within(table).getByText('Web SSO')).toBeInTheDocument();
+      expect(within(table).getByText('Last sign in')).toBeInTheDocument();
+      expect(within(table).getByText('Unknown')).toHaveClass('text-muted-foreground');
+      expect(within(table).getByText('Never')).toHaveClass('text-muted-foreground');
       expect(within(table).queryByText('Roles')).not.toBeInTheDocument();
     });
 
@@ -745,7 +748,7 @@ describe('Admin Dashboard Page', () => {
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
           expect.stringContaining(
-            '/api/admin/users?page=1&pageSize=20&includeWebSso=true&slackStatus=linked'
+            '/api/admin/users?page=1&pageSize=20&includeLastSignIn=true&slackStatus=linked'
           )
         );
       });
@@ -776,7 +779,7 @@ describe('Admin Dashboard Page', () => {
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
           expect.stringContaining(
-            '/api/admin/users?page=1&pageSize=20&includeWebSso=true&webexStatus=linked'
+            '/api/admin/users?page=1&pageSize=20&includeLastSignIn=true&webexStatus=linked'
           )
         );
       });

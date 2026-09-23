@@ -61,7 +61,7 @@ const mockSearchRealmUsers = jest.fn();
 const mockCountRealmUsers = jest.fn();
 const mockListUsersWithRole = jest.fn();
 const mockListRealmRoleMappingsForUser = jest.fn();
-const mockGetUserFederatedIdentities = jest.fn();
+const mockGetUserSessions = jest.fn();
 const mockGetRealmUserById = jest.fn();
 const mockIsValidTeamSlug = jest.fn();
 const mockFindRealmUsersByExactEmail = jest.fn();
@@ -72,8 +72,7 @@ jest.mock('@/lib/rbac/keycloak-admin', () => ({
   listUsersWithRole: (...args: unknown[]) => mockListUsersWithRole(...args),
   listRealmRoleMappingsForUser: (...args: unknown[]) =>
     mockListRealmRoleMappingsForUser(...args),
-  getUserFederatedIdentities: (...args: unknown[]) =>
-    mockGetUserFederatedIdentities(...args),
+  getUserSessions: (...args: unknown[]) => mockGetUserSessions(...args),
   getRealmUserById: (...args: unknown[]) => mockGetRealmUserById(...args),
   isValidTeamSlug: (...args: unknown[]) => mockIsValidTeamSlug(...args),
   findRealmUsersByExactEmail: (...args: unknown[]) =>
@@ -120,7 +119,7 @@ function resetMocks() {
   mockCountRealmUsers.mockReset();
   mockListUsersWithRole.mockReset();
   mockListRealmRoleMappingsForUser.mockReset();
-  mockGetUserFederatedIdentities.mockReset();
+  mockGetUserSessions.mockReset();
   mockGetRealmUserById.mockReset();
   mockIsValidTeamSlug.mockReset();
   mockFindRealmUsersByExactEmail.mockReset();
@@ -132,7 +131,7 @@ function resetMocks() {
   mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true, reason: 'OK' });
   mockListOpenFgaObjects.mockResolvedValue({ objects: [] });
   mockListRealmRoleMappingsForUser.mockResolvedValue([{ name: 'user' }]);
-  mockGetUserFederatedIdentities.mockResolvedValue([]);
+  mockGetUserSessions.mockResolvedValue([]);
   mockIsValidTeamSlug.mockReturnValue(true);
 }
 
@@ -209,13 +208,13 @@ describe('GET /api/admin/users — Keycloak list', () => {
     expect(body.users[0]).not.toHaveProperty('role_classifications');
     expect(body.users[0]).not.toHaveProperty('hidden_role_count');
     expect(mockListRealmRoleMappingsForUser).not.toHaveBeenCalled();
-    expect(mockGetUserFederatedIdentities).not.toHaveBeenCalled();
+    expect(mockGetUserSessions).not.toHaveBeenCalled();
     expect(body.total).toBe(1);
     expect(body.page).toBe(1);
     expect(body.pageSize).toBe(20);
   });
 
-  it('includes browser SSO link status when includeWebSso=true', async () => {
+  it('includes the latest Keycloak session activity when includeLastSignIn=true', async () => {
     mockGetServerSession.mockResolvedValue(adminSession());
     mockSearchRealmUsers.mockResolvedValue([
       {
@@ -234,20 +233,20 @@ describe('GET /api/admin/users — Keycloak list', () => {
       },
     ]);
     mockCountRealmUsers.mockResolvedValue(2);
-    mockGetUserFederatedIdentities.mockImplementation(async (id: string) => (
+    mockGetUserSessions.mockImplementation(async (id: string) => (
       id === 'linked-user'
-        ? [{ identityProvider: 'example-idp', userId: 'external-user', userName: 'linked-user@example.com' }]
+        ? [{ id: 'session-1', start: 1_700_000_000_000, lastAccess: 1_700_000_100_000 }]
         : []
     ));
 
-    const res = await GET(makeRequest('/api/admin/users?includeWebSso=true'));
+    const res = await GET(makeRequest('/api/admin/users?includeLastSignIn=true'));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.users).toEqual([
-      expect.objectContaining({ id: 'linked-user', web_sso_status: 'linked' }),
-      expect.objectContaining({ id: 'shell-user', web_sso_status: 'unlinked' }),
+      expect.objectContaining({ id: 'linked-user', last_sign_in: 1_700_000_100_000 }),
+      expect.objectContaining({ id: 'shell-user', last_sign_in: null }),
     ]);
-    expect(mockGetUserFederatedIdentities).toHaveBeenCalledTimes(2);
+    expect(mockGetUserSessions).toHaveBeenCalledTimes(2);
   });
 
   it('includes curated role fields when includeRoles=true', async () => {

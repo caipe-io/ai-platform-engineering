@@ -37,7 +37,7 @@ interface AdminUserRow {
   attributes: Record<string, string[]>;
   slack_link_status?: "linked" | "unlinked";
   webex_link_status?: "linked" | "unlinked";
-  web_sso_status?: "linked" | "unlinked" | "unknown";
+  last_sign_in?: number | null;
 }
 
 interface TeamListItem {
@@ -78,6 +78,15 @@ function webexStatusForUser(u: AdminUserRow): "linked" | "unlinked" {
   const wid = u.attributes?.webex_user_id;
   const v = Array.isArray(wid) ? wid[0] : wid;
   return v != null && String(v).trim() !== "" ? "linked" : "unlinked";
+}
+
+function formatLastSignIn(timestamp: number | null | undefined): string {
+  if (timestamp === null) return "Never";
+  if (timestamp === undefined || timestamp <= 0) return "Unknown";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
 }
 
 export function UserManagementTab({
@@ -236,7 +245,7 @@ export function UserManagementTab({
         const qs = new URLSearchParams();
         qs.set("page", String(page));
         qs.set("pageSize", String(PAGE_SIZE));
-        qs.set("includeWebSso", "true");
+        qs.set("includeLastSignIn", "true");
         const q = searchFromUrl.trim();
         if (q) qs.set("search", q);
         if (teamsFilter.length >= 1) qs.set("team", teamsFilter[0]);
@@ -386,7 +395,7 @@ export function UserManagementTab({
                 <th className="px-4 py-3">Email</th>
                 <th className="px-4 py-3">Slack</th>
                 <th className="px-4 py-3">Webex</th>
-                <th className="px-4 py-3">Web SSO</th>
+                <th className="px-4 py-3">Last sign in</th>
                 <th className="px-4 py-3 w-20">Enabled</th>
               </tr>
             </thead>
@@ -451,29 +460,8 @@ export function UserManagementTab({
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-2.5">
-                        {u.web_sso_status === "linked" ? (
-                          <span
-                            className="inline-flex items-center rounded-full border border-emerald-500/25 bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"
-                            title="Linked through a browser identity provider and eligible for impersonation subject to sign-in policy"
-                          >
-                            Linked
-                          </span>
-                        ) : u.web_sso_status === "unlinked" ? (
-                          <span
-                            className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
-                            title="This account has not linked a browser identity provider"
-                          >
-                            Not linked
-                          </span>
-                        ) : (
-                          <span
-                            className="inline-flex items-center rounded-full border border-amber-500/25 bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400"
-                            title="Web SSO link status could not be loaded"
-                          >
-                            Unknown
-                          </span>
-                        )}
+                      <td className="whitespace-nowrap px-4 py-2.5 text-muted-foreground">
+                        {formatLastSignIn(u.last_sign_in)}
                       </td>
                       <td className="px-4 py-2.5">
                         <span className="flex items-center gap-1.5">
