@@ -43,7 +43,6 @@ import { AccessExplorerTab } from "@/components/admin/security/AccessExplorerTab
 import { RbacSelfCheckTab } from "@/components/admin/security/RbacSelfCheckTab";
 import { SecurityWorkspaceTabs } from "@/components/admin/security/SecurityWorkspaceTabs";
 import { UnifiedAuditTab } from "@/components/admin/security/UnifiedAuditTab";
-import { UserImpersonationPanel } from "@/components/admin/security/UserImpersonationPanel";
 import { ImportAgentsFromConfigCard } from "@/components/admin/settings/ImportAgentsFromConfigCard";
 import { MCPCatalogSettingsCard } from "@/components/admin/settings/MCPCatalogSettingsCard";
 import { RagSettingsTab } from "@/components/admin/settings/RagSettingsTab";
@@ -2868,12 +2867,6 @@ function AdminPage() {
                     ]}
                     queryKey="auditTab"
                   />
-                </TabsContent>
-              )}
-
-              {tabGateValues.platform_settings && (
-                <TabsContent value="impersonation" className="space-y-4">
-                  <UserImpersonationPanel />
                 </TabsContent>
               )}
 

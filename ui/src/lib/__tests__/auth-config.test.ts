@@ -32,9 +32,9 @@ jest.mock('@/lib/rbac/oidc-claim-reconciler', () => ({
   reconcileOidcClaimGroupsForUser: (...args: unknown[]) => mockReconcileOidcClaimGroupsForUser(...args),
 }))
 
-const mockHasOrganizationAdmin = jest.fn()
-jest.mock('@/lib/rbac/platform-admin', () => ({
-  hasOrganizationAdmin: (...args: unknown[]) => mockHasOrganizationAdmin(...args),
+const mockCanStartUserImpersonation = jest.fn()
+jest.mock('@/lib/auth/impersonation-policy', () => ({
+  canStartUserImpersonation: (...args: unknown[]) => mockCanStartUserImpersonation(...args),
 }))
 
 const mockMintImpersonatedUserToken = jest.fn()
@@ -142,7 +142,7 @@ function makeRefreshFetchMock(opts: {
 describe('auth-config', () => {
   beforeEach(() => {
     mockReconcileOidcClaimGroupsForUser.mockReset()
-    mockHasOrganizationAdmin.mockReset().mockResolvedValue(true)
+    mockCanStartUserImpersonation.mockReset().mockResolvedValue(true)
     mockMintImpersonatedUserToken.mockReset().mockResolvedValue({
       accessToken: 'impersonated-access-token',
       expiresAt: 8_888_888_888,
@@ -1031,7 +1031,7 @@ describe('auth-config', () => {
         session: { impersonation: { action: 'start', targetSub: 'target-sub' } },
       })
 
-      expect(mockHasOrganizationAdmin).toHaveBeenCalledWith({
+      expect(mockCanStartUserImpersonation).toHaveBeenCalledWith({
         sub: 'actor-sub',
         user: { email: 'admin@example.com' },
       })
@@ -1071,8 +1071,8 @@ describe('auth-config', () => {
       }))
     })
 
-    it('refuses to start when the actor is no longer an organization admin', async () => {
-      mockHasOrganizationAdmin.mockResolvedValue(false)
+    it('refuses to start when the actor is not an allowlisted superadmin', async () => {
+      mockCanStartUserImpersonation.mockResolvedValue(false)
 
       const token = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
         token: { ...actorToken },
@@ -1081,7 +1081,7 @@ describe('auth-config', () => {
       })
 
       expect(token.impersonation).toBeUndefined()
-      expect(token.impersonationNotice).toBe('Only organization administrators can impersonate users')
+      expect(token.impersonationNotice).toBe('User impersonation is not enabled for this administrator')
       expect(mockMintImpersonatedUserToken).not.toHaveBeenCalled()
     })
 

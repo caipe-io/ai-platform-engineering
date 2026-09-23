@@ -703,13 +703,13 @@ export const authOptions: NextAuthOptions = {
           if (!token.sub || targetSub === token.sub) {
             throw new Error("You cannot impersonate your own account");
           }
-          const { hasOrganizationAdmin } = await import("@/lib/rbac/platform-admin");
-          const actorIsAdmin = await hasOrganizationAdmin({
+          const { canStartUserImpersonation } = await import("@/lib/auth/impersonation-policy");
+          const actorCanImpersonate = await canStartUserImpersonation({
             sub: token.sub,
             user: { email: typeof token.email === "string" ? token.email : undefined },
           });
-          if (!actorIsAdmin) {
-            throw new Error("Only organization administrators can impersonate users");
+          if (!actorCanImpersonate) {
+            throw new Error("User impersonation is not enabled for this administrator");
           }
 
           const { mintImpersonatedUserToken } = await import("@/lib/auth/user-impersonation");

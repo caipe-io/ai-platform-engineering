@@ -976,6 +976,52 @@ describe('getAuthenticatedUser', () => {
     });
   });
 
+  it('blocks mutations from an impersonated session', async () => {
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'target@example.com', name: 'Target User' },
+      impersonation: { startedAt: '2026-09-23T12:00:00.000Z' },
+      impersonatedBySub: 'admin-sub',
+    });
+
+    const req = new Request('http://test.com/api/chat/conversations', {
+      method: 'POST',
+    }) as unknown as NextRequest;
+
+    await expect(getAuthenticatedUser(req)).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'IMPERSONATION_READ_ONLY',
+    });
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
+
+  it('blocks connected credential reads from an impersonated session', async () => {
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'target@example.com', name: 'Target User' },
+      impersonation: { startedAt: '2026-09-23T12:00:00.000Z' },
+      impersonatedBySub: 'admin-sub',
+    });
+
+    const req = new Request('http://test.com/api/credentials/connections') as unknown as NextRequest;
+
+    await expect(getAuthenticatedUser(req)).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'IMPERSONATION_READ_ONLY',
+    });
+  });
+
+  it('allows ordinary reads from an impersonated session', async () => {
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'target@example.com', name: 'Target User' },
+      impersonation: { startedAt: '2026-09-23T12:00:00.000Z' },
+      impersonatedBySub: 'admin-sub',
+    });
+
+    const req = new Request('http://test.com/api/chat/conversations') as unknown as NextRequest;
+    const result = await getAuthenticatedUser(req);
+
+    expect(result.user.email).toBe('target@example.com');
+  });
+
   it('does not persist or inspect profile data for sessions denied by the admission gate', async () => {
     mockGetServerSession.mockResolvedValue({
       user: { email: 'blocked@test.com', name: 'Blocked User' },

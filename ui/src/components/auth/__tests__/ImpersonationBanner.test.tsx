@@ -42,7 +42,7 @@ describe("ImpersonationBanner", () => {
     render(<ImpersonationBanner />);
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "You are logged in as Target User (target@example.com).",
+      "Read-only troubleshooting: You are viewing as Target User (target@example.com).",
     );
     const exitButton = screen.getByRole("button", { name: "Exit & sign out" });
     expect(exitButton).toHaveClass("bg-amber-950", "text-white");
@@ -53,7 +53,7 @@ describe("ImpersonationBanner", () => {
         impersonation: { action: "stop" },
       });
       expect(mockSignOut).toHaveBeenCalledWith({
-        callbackUrl: "/login?callbackUrl=%2Fadmin%2Fsecurity%2Fimpersonation",
+        callbackUrl: "/login?callbackUrl=%2Fadmin%2Fpeople%2Fusers",
       });
     });
   });
@@ -78,7 +78,7 @@ describe("ImpersonationBanner", () => {
 
     await waitFor(() => {
       expect(mockSignOut).toHaveBeenCalledWith({
-        callbackUrl: "/login?callbackUrl=%2Fadmin%2Fsecurity%2Fimpersonation",
+        callbackUrl: "/login?callbackUrl=%2Fadmin%2Fpeople%2Fusers",
       });
     });
   });

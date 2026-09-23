@@ -1114,20 +1114,24 @@ Admin tab visibility is now a deterministic Web UI backend gate (`/api/rbac/admi
 based on session role plus feature flags; resource authorization is modeled in
 OpenFGA relationships.
 
-The Admin UI includes real user impersonation under **Security & Policy → User
-Impersonation**. An organization admin selects an enabled human account, and the
-Web UI backend uses Keycloak token exchange to mint a short-lived bearer for that
-subject. The original admin identity stays sealed in the server-managed session
-as the actor, while application requests, writes, tool calls, and OpenFGA checks
-use the target user as the subject. A non-dismissible warning bar identifies the
-target and restores the actor session on exit. Authorization decisions and
-impersonation transitions record the target as subject, the administrator as
-actor, and an explicit impersonation marker. The same attribution is applied to
-Web UI backend auth, CAS, credential, and policy-change audit events, including
-delayed CAS allow rollups. Disabled users and service accounts are never eligible
-targets. When the realm has an enabled IdP broker, users without a federated
-identity link are also excluded; `OIDC_REQUIRED_GROUP` remains an admission gate
-for the exchanged user token.
+The Admin UI includes read-only user impersonation in **Teams & Users → Users**.
+An administrator opens a user, clicks **Impersonate user**, and confirms the
+troubleshooting session. Starting a session requires both an email in
+`ADMIN_ALLOW_IMPERSONATION` and bootstrap or OpenFGA `super-admins` membership;
+an empty allowlist disables the feature. The Web UI backend uses Keycloak token
+exchange to mint a short-lived bearer for the selected subject, while retaining
+the original administrator as the audit actor. Application-enforced read-only
+guards deny mutations, starting chats, tool runs, connected-credential access,
+and connector linking while allowing the administrator to inspect the target's
+views and OpenFGA-filtered resources. A non-dismissible warning bar identifies
+the target, and exit signs out so the administrator must authenticate again.
+Authorization decisions and impersonation transitions record the target as
+subject, the administrator as actor, and an explicit impersonation marker. The
+same attribution is applied to Web UI backend auth, CAS, credential, and
+policy-change audit events, including delayed CAS allow rollups. Disabled users
+and service accounts are never eligible targets. When the realm has an enabled
+IdP broker, users without a federated identity link are also excluded;
+`OIDC_REQUIRED_GROUP` remains an admission gate for the exchanged user token.
 
 The UI is intentionally Web UI backend first:
 

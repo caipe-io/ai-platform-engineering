@@ -25,6 +25,7 @@ jest.mock("@/store/chat-store", () => ({
 const userResponse = {
   success: true,
   data: {
+    canImpersonate: true,
     user: {
       id: "user-1",
       username: "test-user",
@@ -450,10 +451,14 @@ describe("UserDetailModal", () => {
     expect(await screen.findByText("Test User")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /impersonate user/i }));
 
+    expect(screen.getByRole("dialog", { name: "Impersonate Test User?" })).toBeInTheDocument();
+    expect(screen.getByText("Read-only troubleshooting session")).toBeInTheDocument();
+    expect(screen.getByText(/cannot make changes, start chats, run tools/i)).toBeInTheDocument();
+    expect(updateSession).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /start impersonation/i }));
+
     await waitFor(() => {
-      expect(window.confirm).toHaveBeenCalledWith(
-        "Impersonate Test User? You will have the same permissions as test-user@example.com.",
-      );
       expect(updateSession).toHaveBeenCalledWith({
         impersonation: { action: "start", targetSub: "user-1" },
       });
@@ -462,6 +467,48 @@ describe("UserDetailModal", () => {
       expect(replaceRoute).toHaveBeenCalledWith("/");
       expect(refreshRoute).toHaveBeenCalled();
     });
+  });
+
+  it("does not start impersonation when the confirmation is cancelled", async () => {
+    render(
+      <UserDetailModal userId="user-1" onClose={jest.fn()} onSaved={jest.fn()} />
+    );
+
+    expect(await screen.findByText("Test User")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /impersonate user/i }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(screen.queryByText("Read-only troubleshooting session")).not.toBeInTheDocument();
+  });
+
+  it("hides impersonation when the administrator is not explicitly allowed", async () => {
+    const deniedResponse = {
+      ...userResponse,
+      data: { ...userResponse.data, canImpersonate: false },
+    };
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (url.includes("/api/admin/users/user-1/access")) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(accessResponse) });
+      }
+      if (url.includes("/api/admin/users/user-1/identity")) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(identityResponse) });
+      }
+      if (url.includes("/api/admin/users/user-1")) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(deniedResponse) });
+      }
+      if (url.includes("/api/admin/teams")) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(teamsResponse) });
+      }
+      return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({ success: false }) });
+    });
+
+    render(
+      <UserDetailModal userId="user-1" onClose={jest.fn()} onSaved={jest.fn()} />
+    );
+
+    expect(await screen.findByText("Test User")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /impersonate user/i })).not.toBeInTheDocument();
   });
 
   it("can unlink Webex identity from the user detail modal", async () => {

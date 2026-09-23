@@ -7,7 +7,7 @@ import { signOut, useSession } from "next-auth/react";
 import React from "react";
 
 const POST_IMPERSONATION_LOGIN_URL =
-  "/login?callbackUrl=%2Fadmin%2Fsecurity%2Fimpersonation";
+  "/login?callbackUrl=%2Fadmin%2Fpeople%2Fusers";
 
 export function ImpersonationBanner(): React.ReactElement | null {
   const { data: session, update } = useSession();
@@ -45,7 +45,8 @@ export function ImpersonationBanner(): React.ReactElement | null {
       >
         <AlertTriangle className="h-4 w-4 shrink-0" />
         <span>
-          You are logged in as <strong>{session.impersonation.target.name}</strong> ({session.impersonation.target.email}).
+          <strong>Read-only troubleshooting:</strong> You are viewing as{" "}
+          <strong>{session.impersonation.target.name}</strong> ({session.impersonation.target.email}).
         </span>
         <Button
           className="border-amber-950 bg-amber-950 text-white hover:bg-amber-900 hover:text-white dark:border-amber-100 dark:bg-amber-100 dark:text-amber-950 dark:hover:bg-amber-200 dark:hover:text-amber-950"

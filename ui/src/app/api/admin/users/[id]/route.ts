@@ -18,6 +18,7 @@ deleteExactOpenFgaTuples,
 readOpenFgaTuples,
 type OpenFgaTupleKey,
 } from "@/lib/rbac/openfga";
+import { canStartUserImpersonation } from "@/lib/auth/impersonation-policy";
 import type { TeamMembershipSource } from "@/types/identity-group-sync";
 import type { UserMembershipSourceInfo } from "@/types/admin-user-identity";
 import { type NextRequest } from "next/server";
@@ -102,12 +103,14 @@ export const GET = withErrorHandler(
     }
 
     const attributes = normalizeAttributes(kcUser.attributes);
+    const canImpersonate = await canStartUserImpersonation(session);
 
     const createdRaw = kcUser.createdTimestamp;
     const createdAt =
       typeof createdRaw === "number" && createdRaw > 0 ? createdRaw : null;
 
     return successResponse({
+      canImpersonate,
       user: {
         id: String(kcUser.id ?? id),
         principalType: kcUser.serviceAccountClientId ? "service_account" : "user",

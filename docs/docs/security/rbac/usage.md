@@ -411,19 +411,21 @@ should match the member baseline for `organization:<org>#can_use`,
 checks such as `organization:<org>#can_manage` should drift from the member
 baseline but match the admin baseline.
 
-Use **Admin → Security & Policy → User Impersonation** to reproduce an enabled
-human user's complete application experience. In realms with an enabled IdP
-broker, the target must have a federated identity link; Keycloak shells created
-from Slack/Webex activity are not eligible until linked. The target must also
-meet `OIDC_REQUIRED_GROUP` when that sign-in gate is configured. Confirming the
-selection switches
-the effective session to a real Keycloak bearer for that user, so reads, writes,
-tool calls, and OpenFGA decisions use the same identity they would use after a
-normal login. The warning bar at the top of every application page shows the
-active target and is the canonical way to exit. The original administrator is
-retained as the audit actor and is restored without a second login. Audit rows
-created by the Web UI backend carry `impersonation=true`, the administrator as
-the actor, the selected user as the subject, and the impersonation start time.
+Use **Admin → Teams & Users → Users**, open a user, and click **Impersonate
+user** to inspect an enabled human user's application experience. The signed-in
+administrator must be listed in `ADMIN_ALLOW_IMPERSONATION` and must be a
+bootstrap or OpenFGA Super Admin; leaving the variable empty disables the
+button. In realms with an enabled IdP broker, the target must have a federated
+identity link; Keycloak shells created from Slack/Webex activity are not
+eligible until linked. The target must also meet `OIDC_REQUIRED_GROUP` when that
+sign-in gate is configured. The session is application-enforced read-only:
+views and OpenFGA-filtered reads use the target identity, while mutations,
+starting chats, tool runs, connected credentials, and connector linking are
+denied. The warning bar at the top of every application page shows the active
+target and exits by signing out, requiring a fresh administrator login. Audit
+rows created by the Web UI backend carry `impersonation=true`, the
+administrator as the actor, the selected user as the subject, and the
+impersonation start time.
 
 Use **Admin → Security & Policy → OpenFGA ReBAC → Policy Graph** to inspect the
 same relationships visually without starting from the full tuple blast radius.

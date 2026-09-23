@@ -185,6 +185,30 @@ function bindAuditImpersonationContext(session: SessionAuthSession): void {
   );
 }
 
+function enforceImpersonationReadOnly(
+  request: NextRequest,
+  session: SessionAuthSession,
+): void {
+  if (!session.impersonation) return;
+
+  const pathname = new URL(request.url).pathname;
+  const method = request.method.toUpperCase();
+  const accessesConnectedCredentials =
+    pathname.startsWith('/api/credentials')
+    || pathname.startsWith('/api/auth/webex-link');
+  const isReadOnlyMethod = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+
+  if (accessesConnectedCredentials || !isReadOnlyMethod) {
+    throw new ApiError(
+      'Impersonation is read-only. Exit impersonation and sign in as yourself to perform this action.',
+      403,
+      'IMPERSONATION_READ_ONLY',
+      'forbidden',
+      'sign_in'
+    );
+  }
+}
+
 type SessionAuthPayload = {
   user: {
     email: string;
@@ -430,6 +454,7 @@ export async function getAuthenticatedUser(
   const cached = readCachedSessionAuth(request);
   if (cached) {
     bindAuditImpersonationContext(cached.session);
+    enforceImpersonationReadOnly(request, cached.session);
     return cached;
   }
 
@@ -454,6 +479,7 @@ export async function getAuthenticatedUser(
   }
 
   bindAuditImpersonationContext(session);
+  enforceImpersonationReadOnly(request, session);
 
   if (getConfig('ssoEnabled') && session.isAuthorized === false) {
     throw new ApiError(

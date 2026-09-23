@@ -614,32 +614,6 @@ routes:
       frank_service_account:
         status: 403
         reason: DENY_NO_CAPABILITY
-  - id: ui-bff-get-api-admin-impersonation-users
-    surface: ui_bff
-    method: GET
-    path: /api/admin/impersonation/users
-    resource: admin_ui
-    scope: admin
-    migration_status: migrated
-    notes: Organization-admin gate for searching eligible user impersonation targets.
-    expectations:
-      alice_admin:
-        status: 200
-      bob_chat_user:
-        status: 403
-        reason: DENY_NO_CAPABILITY
-      carol_kb_ingestor:
-        status: 403
-        reason: DENY_NO_CAPABILITY
-      dave_no_role:
-        status: 403
-        reason: DENY_NO_CAPABILITY
-      eve_dynamic_agent_user:
-        status: 403
-        reason: DENY_NO_CAPABILITY
-      frank_service_account:
-        status: 403
-        reason: DENY_NO_CAPABILITY
   - id: ui-bff-get-api-admin-users-id
     surface: ui_bff
     method: GET

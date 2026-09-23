@@ -379,6 +379,7 @@ services:
       - OIDC_REQUIRED_GROUP=${OIDC_REQUIRED_GROUP:-}
       - OIDC_REQUIRED_ADMIN_GROUP=${OIDC_REQUIRED_ADMIN_GROUP:-}
       - BOOTSTRAP_ADMIN_EMAILS=${BOOTSTRAP_ADMIN_EMAILS:-}
+      - ADMIN_ALLOW_IMPERSONATION=${ADMIN_ALLOW_IMPERSONATION:-}
       - OIDC_ENABLE_REFRESH_TOKEN=${OIDC_ENABLE_REFRESH_TOKEN:-true}
       # Local Docker Keycloak admin client. The rbac profile seeds this
       # confidential client in realm-config.json; Kubernetes should inject
