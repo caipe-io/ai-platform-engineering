@@ -178,6 +178,20 @@ models:
     description: GPT-4o via Azure OpenAI
 ```
 
+### Reasoning effort
+
+Each agent stores a portable default of `low`, `medium`, `high`, or `max`.
+Chats can override that value without changing the agent. The runtime only
+sends the translated provider parameter for model families that advertise
+support; other models retain their provider default.
+
+For a private deployment alias, configure both sides of discovery:
+
+- `MODEL_CAPABILITIES_JSON` advertises the alias and its supported
+  `reasoning_efforts` to the Dynamic Agents API and UI.
+- `LLM_REASONING_EFFORT_MAP_JSON` maps each portable level to the provider's
+  native string or thinking-token budget in `cnoe-agent-utils`.
+
 ## API Reference
 
 ### Health Endpoints
@@ -198,6 +212,7 @@ models:
 | `/api/v1/agents/{id}` | DELETE | Admin | Delete agent |
 | `/api/v1/agents/{id}/available-subagents` | GET | Admin | List available subagents |
 | `/api/v1/agents/models` | GET | User | List available LLM models |
+| `/api/v1/model-capabilities` | POST | User | Resolve input and reasoning capabilities for a model |
 
 ### MCP Server Endpoints
 

@@ -244,7 +244,7 @@ async function submitPrompt(page: Page, prompt: string): Promise<void> {
   await dismissReleaseUpgradeDialog(page);
   await expectChatComposerReady(page);
 
-  const composer = page.locator("textarea").first();
+  const composer = page.getByRole("textbox", { name: "Message" });
   await composer.fill(prompt);
   await composer.press("Enter");
 }
@@ -305,7 +305,7 @@ test.describe("mocked RBAC e2e — chat stream regression", () => {
     await expect(page.getByText(/Expected toolResult blocks/i)).toBeVisible({ timeout: 15_000 });
 
     await expectChatComposerReady(page);
-    const composer = page.locator("textarea").first();
+    const composer = page.getByRole("textbox", { name: "Message" });
     await composer.fill("try again");
     await composer.press("Enter");
 

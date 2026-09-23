@@ -196,3 +196,42 @@ def test_resolve_helper_returns_none_for_empty_model_id():
 
     provider, model = llm_clients._resolve_llm_defaults("aws-bedrock", "claude-x")
     assert model == "claude-x"
+
+
+def test_get_llm_passes_supported_reasoning_effort(monkeypatch):
+    captured = {}
+
+    class _Factory:
+        def __init__(self, provider):
+            captured["provider"] = provider
+
+        def get_llm(self, reasoning_effort=None, **kwargs):
+            if reasoning_effort is not None:
+                kwargs["reasoning_effort"] = reasoning_effort
+            captured["kwargs"] = kwargs
+            return "llm"
+
+    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+
+    result = llm_clients.get_llm("openai", "gpt-5.5", "max")
+
+    assert result == "llm"
+    assert captured["kwargs"] == {"model": "gpt-5.5", "reasoning_effort": "max"}
+
+
+def test_get_llm_omits_effort_for_unsupported_model(monkeypatch):
+    captured = {}
+
+    class _Factory:
+        def __init__(self, provider):
+            captured["provider"] = provider
+
+        def get_llm(self, **kwargs):
+            captured["kwargs"] = kwargs
+            return "llm"
+
+    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+
+    llm_clients.get_llm("openai", "gpt-4.1", "medium")
+
+    assert captured["kwargs"] == {"model": "gpt-4.1"}

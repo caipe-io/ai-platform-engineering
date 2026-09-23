@@ -21,6 +21,7 @@ from .a2a_client import (
 )
 from .app import WebexMessageResult
 from .utils.chat_envelope import augment_webex_client_context
+from .utils.reasoning_effort import get_default_pending_effort_store
 from .utils.thread_ownership import ThreadOwnerCache, get_default_thread_owner_cache
 from .utils.user_messages import FRIENDLY_REASON_MESSAGES, GENERIC_REQUEST_DENIED_MESSAGE
 from .utils.webex_runtime_policy import should_post_denial_notice
@@ -356,6 +357,7 @@ class WebexThreadedStreamDispatcher:
         person_id = str(payload.get("person_id") or "")
         obo_token = str(payload.get("obo_token") or "")
         is_direct = bool(payload.get("is_direct") or False)
+        person_id = str(payload.get("person_id") or "")
         if not all((room_id, message_id, parent_id, space_id, agent_id, text, obo_token)):
             raise ValueError("Webex threaded stream dispatch payload is missing required fields")
 
@@ -400,6 +402,27 @@ class WebexThreadedStreamDispatcher:
             # first thing users see already shows the pinned/owner agent,
             # instead of flashing the reconfigured route and self-correcting.
             conv_metadata = conversation.get("metadata") or {}
+            pending_effort_store = get_default_pending_effort_store()
+            staged_effort = (
+                pending_effort_store.consume(person_id, space_id)
+                if is_direct and person_id
+                else None
+            )
+            reasoning_effort = staged_effort or conv_metadata.get("reasoning_effort")
+            if staged_effort:
+                try:
+                    self._sse_client.update_conversation_metadata(
+                        conversation_id,
+                        {"reasoning_effort": staged_effort},
+                        bearer_token=obo_token,
+                    )
+                except Exception as exc:
+                    pending_effort_store.set(person_id, space_id, staged_effort)
+                    logger.warning(
+                        "Could not persist reasoning effort for conversation %s: %s",
+                        conversation_id,
+                        exc,
+                    )
             thread_key = f"{space_id}:{parent_id}"
             if thread_parent_id:
                 owner_id = self._thread_owner_cache.get(thread_key) or conv_metadata.get(
@@ -458,6 +481,7 @@ class WebexThreadedStreamDispatcher:
                 agent_id=agent_id,
                 bearer_token=obo_token,
                 client_context=client_context,
+                reasoning_effort=reasoning_effort,
             ):
                 if event.type == SSEEventType.TEXT_MESSAGE_CONTENT and event.delta:
                     accumulated += event.delta

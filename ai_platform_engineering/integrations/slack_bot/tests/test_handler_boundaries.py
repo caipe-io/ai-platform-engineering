@@ -130,7 +130,7 @@ def test_registration_boundary_attaches_each_handler_family(monkeypatch) -> None
 
   kinds = [kind for kind, _selector in bolt_app.registrations]
   assert kinds.count("middleware") == 1
-  assert kinds.count("command") == 3
+  assert kinds.count("command") == 4
   assert kinds.count("event") == 7
   assert kinds.count("action") == 9
   assert kinds.count("view") == 1

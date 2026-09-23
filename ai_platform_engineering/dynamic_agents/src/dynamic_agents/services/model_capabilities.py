@@ -1,6 +1,6 @@
 # Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
-"""Per-model input-capability declarations.
+"""Per-model input and reasoning-capability declarations.
 
 Different LLMs accept different input modalities: most current Claude models on
 Bedrock read images *and* documents, while some smaller/older models are
@@ -17,9 +17,8 @@ Resolution order for ``get_model_capabilities(model_id)``:
 1. Exact match in the merged registry.
 2. Longest matching *prefix* (so ``global.anthropic.claude-sonnet-4-5-…-v1:0``
    resolves via the ``global.anthropic.claude-`` family entry).
-3. A permissive default (**accepts everything**) for anything undeclared, so a
-   model we simply haven't catalogued behaves exactly as it does today —
-   degradation only ever fires for a model *explicitly* declared limited.
+3. A fallback that preserves permissive input handling but does not assume an
+   unknown model accepts provider-specific reasoning parameters.
 
 The registry is seeded with the deployed defaults below and can be extended or
 overridden at deploy time via the ``MODEL_CAPABILITIES_JSON`` env var (see
@@ -36,17 +35,18 @@ import logging
 from pydantic import BaseModel, Field
 
 from dynamic_agents.config import get_settings
+from dynamic_agents.models import ReasoningEffort
 
 logger = logging.getLogger("caipe.dynamic_agents.model_capabilities")
 
 
 class ModelCapabilities(BaseModel):
-    """What input modalities a model accepts.
+    """What input modalities and reasoning controls a model accepts.
 
     Both default to ``True`` so an undeclared or partially-declared model is
-    treated as fully capable — the conservative choice that preserves today's
-    behavior. Set a flag to ``False`` only to declare a genuine limitation
-    (e.g. a text-only model that cannot read images).
+    treated as fully input-capable — the choice that preserves existing file
+    behavior. Reasoning support defaults to empty because sending an unknown
+    provider parameter can fail the entire request.
     """
 
     accepts_images: bool = Field(
@@ -56,6 +56,10 @@ class ModelCapabilities(BaseModel):
         True,
         description="Model can ingest document input (pdf/csv/office/text/…).",
     )
+    reasoning_efforts: list[ReasoningEffort] = Field(
+        default_factory=list,
+        description="Portable reasoning-effort levels accepted by this model family.",
+    )
 
 
 # Permissive fallback for any model id not present in the registry. Shared
@@ -64,20 +68,86 @@ _PERMISSIVE = ModelCapabilities(accepts_images=True, accepts_documents=True)
 
 
 # Seed registry. Keyed by exact model id or a family prefix. Every model we
-# deploy today is fully multimodal; the prefix entries cover the versioned
-# Bedrock ids (…-v1:0 suffixes) so new point releases inherit automatically.
+# deploy today is fully multimodal; more-specific reasoning entries win through
+# longest-prefix matching without claiming support for older Claude models.
+_ALL_REASONING_EFFORTS: list[ReasoningEffort] = [
+    "low",
+    "medium",
+    "high",
+    "max",
+]
+_HIGH_ONLY_REASONING_EFFORTS: list[ReasoningEffort] = ["high", "max"]
+
+
+def _reasoning_capabilities() -> ModelCapabilities:
+    return ModelCapabilities(
+        accepts_images=True,
+        accepts_documents=True,
+        reasoning_efforts=_ALL_REASONING_EFFORTS,
+    )
+
+
 DEFAULT_MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
-    # Claude on Bedrock — all current families read images and documents.
+    # Claude models are multimodal. Configurable thinking begins at 3.7;
+    # family-specific entries below override these broad input declarations.
     "global.anthropic.claude-": ModelCapabilities(
-        accepts_images=True, accepts_documents=True
+        accepts_images=True,
+        accepts_documents=True,
     ),
     "anthropic.claude-": ModelCapabilities(
-        accepts_images=True, accepts_documents=True
+        accepts_images=True,
+        accepts_documents=True,
     ),
+    "global.anthropic.claude-3-7": _reasoning_capabilities(),
+    "anthropic.claude-3-7": _reasoning_capabilities(),
+    "global.anthropic.claude-sonnet-4": _reasoning_capabilities(),
+    "anthropic.claude-sonnet-4": _reasoning_capabilities(),
+    "global.anthropic.claude-opus-4": _reasoning_capabilities(),
+    "anthropic.claude-opus-4": _reasoning_capabilities(),
+    "global.anthropic.claude-haiku-4": _reasoning_capabilities(),
+    "anthropic.claude-haiku-4": _reasoning_capabilities(),
+    "global.anthropic.claude-sonnet-5": _reasoning_capabilities(),
+    "anthropic.claude-sonnet-5": _reasoning_capabilities(),
+    "global.anthropic.claude-opus-5": _reasoning_capabilities(),
+    "anthropic.claude-opus-5": _reasoning_capabilities(),
+    "global.anthropic.claude-fable-5": _reasoning_capabilities(),
+    "anthropic.claude-fable-5": _reasoning_capabilities(),
+    "global.anthropic.claude-mythos-5": _reasoning_capabilities(),
+    "anthropic.claude-mythos-5": _reasoning_capabilities(),
+    "claude-3-7": _reasoning_capabilities(),
+    "claude-sonnet-4": _reasoning_capabilities(),
+    "claude-opus-4": _reasoning_capabilities(),
+    "claude-haiku-4": _reasoning_capabilities(),
+    "claude-sonnet-5": _reasoning_capabilities(),
+    "claude-opus-5": _reasoning_capabilities(),
+    "claude-fable-5": _reasoning_capabilities(),
+    "claude-mythos-5": _reasoning_capabilities(),
     # OpenAI / Gemini families deployed for routing — multimodal.
-    "gpt-5": ModelCapabilities(accepts_images=True, accepts_documents=True),
-    "gemini-": ModelCapabilities(accepts_images=True, accepts_documents=True),
+    # Portable max maps to native high for GPT-5 Pro, its only accepted value.
+    "gpt-5-pro": ModelCapabilities(
+        accepts_images=True,
+        accepts_documents=True,
+        reasoning_efforts=_HIGH_ONLY_REASONING_EFFORTS,
+    ),
+    "gpt-5": _reasoning_capabilities(),
+    "gpt-6": _reasoning_capabilities(),
+    # The broad o1 family supports effort, but o1-mini does not.
+    "o1-mini": ModelCapabilities(
+        accepts_images=True,
+        accepts_documents=True,
+    ),
+    "o1": _reasoning_capabilities(),
+    "o3": _reasoning_capabilities(),
+    "o4": _reasoning_capabilities(),
+    "gemini-2.5": _reasoning_capabilities(),
+    "gemini-3": _reasoning_capabilities(),
+    "openai/gpt-oss": _reasoning_capabilities(),
 }
+
+
+def supports_reasoning_effort(model_id: str | None, effort: ReasoningEffort) -> bool:
+    """Return whether a model advertises the portable effort level."""
+    return effort in get_model_capabilities(model_id).reasoning_efforts
 
 
 def _parse_override(raw: str) -> dict[str, ModelCapabilities]:

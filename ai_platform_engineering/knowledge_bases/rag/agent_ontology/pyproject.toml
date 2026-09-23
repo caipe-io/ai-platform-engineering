@@ -12,7 +12,7 @@ dependencies = [
     "common",
     "langgraph==1.2.11",
     "python-dotenv==1.2.2",
-    "cnoe-agent-utils==0.4.2",
+    "cnoe-agent-utils==0.5.0",
     "fastapi[standard]==0.141.1",
     "apscheduler==3.11.3",
     "bm25s==0.3.11",

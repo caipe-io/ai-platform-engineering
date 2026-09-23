@@ -160,7 +160,7 @@ async function fillBasicInfoAndGoToInstructions(page: Page): Promise<void> {
   await page.getByLabel(/agent name/i).fill("Playwright Test Agent");
 
   // Select model — click the combobox and pick the first option
-  const modelSelect = page.getByRole("combobox").first();
+  const modelSelect = page.getByRole("combobox", { name: "LLM Model" });
   // assisted-by Codex Codex-sonnet-4-6
   // The editor may render this as a native <select>; native <option> elements
   // are not visible/clickable in Chromium, so use selectOption when possible.
@@ -168,7 +168,7 @@ async function fillBasicInfoAndGoToInstructions(page: Page): Promise<void> {
     await modelSelect.selectOption({ index: 0 });
   } else {
     await modelSelect.click();
-    await page.getByRole("option").first().click();
+    await page.getByRole("listbox").getByRole("option").first().click();
   }
 
   // Pick an ownable owner team through the real TeamPicker; new agents cannot

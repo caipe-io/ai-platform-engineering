@@ -43,6 +43,8 @@ export interface StreamParams {
   conversationId: string;
   /** Agent config ID (determines routing in unified gateway) */
   agentId: string;
+  /** Portable reasoning effort for this conversation. */
+  reasoningEffort?: "low" | "medium" | "high" | "max";
   /** JSON-stringified resume data (for HITL resume — form input or tool approval) */
   resumeData?: string;
   /** Turn ID for request/response pairing */

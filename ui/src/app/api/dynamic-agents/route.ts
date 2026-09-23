@@ -235,9 +235,15 @@ function normalizeAgentDoc(
 ): Record<string, unknown> {
   // Migrate legacy model_id/model_provider → model
   if (doc.model_id && !doc.model) {
-    doc.model = { id: doc.model_id, provider: doc.model_provider || "unknown" };
+    doc.model = { id: doc.model_id, provider: doc.model_provider || "unknown", reasoning_effort: "medium" };
     delete doc.model_id;
     delete doc.model_provider;
+  }
+  if (doc.model && typeof doc.model === "object") {
+    const model = doc.model as Record<string, unknown>;
+    if (!["low", "medium", "high", "max"].includes(String(model.reasoning_effort))) {
+      model.reasoning_effort = "medium";
+    }
   }
   // A configured knowledge hand is always represented by two arrays. Older
   // rows could store the unselected half as null, which the editor must not
@@ -658,6 +664,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!body.model?.provider || typeof body.model.provider !== "string") {
     throw new ApiError("Model provider is required (model.provider)", 400);
   }
+  body.model.reasoning_effort ??= "medium";
+  if (!["low", "medium", "high", "max"].includes(body.model.reasoning_effort)) {
+    throw new ApiError("Invalid model.reasoning_effort", 400);
+  }
   const requestedOwnerTeamSlug = normalizeString(body.owner_team_slug);
   const requestedOwnerTeamId = normalizeString(body.owner_team_id);
   // Coerce any legacy 'private' on the wire to 'team' (private visibility was
@@ -878,6 +888,15 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   const { session } = await getAuthFromBearerOrSession(request);
 
   const body = await request.json();
+  if (body.model !== undefined) {
+    if (!body.model || typeof body.model !== "object" || Array.isArray(body.model)) {
+      throw new ApiError("model must be an object", 400);
+    }
+    body.model.reasoning_effort ??= "medium";
+    if (!["low", "medium", "high", "max"].includes(body.model.reasoning_effort)) {
+      throw new ApiError("Invalid model.reasoning_effort", 400);
+    }
+  }
   const collection = await getCollection<DynamicAgentConfig>(COLLECTION_NAME);
 
   // Verify agent exists

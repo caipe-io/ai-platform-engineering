@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn[standard]==0.52.4",
     "apscheduler==3.11.3",
     "boto3==1.43.16",
-    "cnoe-agent-utils==0.4.2",
+    "cnoe-agent-utils==0.5.0",
     "cryptography==50.0.1",
     "httpx==0.28.1",
     "motor==3.7.1",
@@ -52,6 +52,6 @@ dev = [
 ]
 
 [tool.uv]
-# cnoe-agent-utils 0.4.2 still pins 1.4.3, which is affected by GHSA-gr75-jv2w-4656.
+# cnoe-agent-utils 0.5.0 still pins 1.4.3, which is affected by GHSA-gr75-jv2w-4656.
 override-dependencies = ["langchain-anthropic==1.4.6"]
 constraint-dependencies = ["click==8.5.0"]
