@@ -212,6 +212,52 @@ conversation write check, so a Slack OBO token for the conversation owner can
 update thread metadata such as `last_processed_ts` without a separate
 `conversation:<id>#writer` tuple.
 
+### Human initiator during service-account execution
+
+Some integration routes execute an agent with a service-account token while a
+specific human remains responsible for a control-plane request. These requests
+carry two independently validated identities:
+
+1. `Authorization` identifies the runtime execution subject. AgentGateway and
+   OpenFGA use this token for the normal agent and tool-call checks.
+2. `X-CAIPE-Initiator-Token` carries the current human's OBO token. The UI BFF
+   validates it separately, rejects service accounts as initiators, and forwards
+   it to Dynamic Agents.
+3. Dynamic Agents validates both tokens and binds them to separate request
+   contexts. Initiator-aware MCP credential sources may forward the human token;
+   other MCP servers continue to receive only their configured caller or
+   provider credential.
+4. The Platform MCP uses the human token for its BFF calls, so resource reads and
+   mutations run through the same OpenFGA checks as that person in the Web UI.
+
+```mermaid
+sequenceDiagram
+    actor User as Slack user
+    participant Bot as Slack bot
+    participant BFF as UI BFF
+    participant DA as Dynamic Agents
+    participant AG as AgentGateway
+    participant PM as Platform MCP
+    participant FGA as OpenFGA
+
+    User->>Bot: Request a platform edit
+    Bot->>BFF: Bearer service-account JWT<br/>X-CAIPE-Initiator-Token: human OBO JWT
+    BFF->>BFF: Validate execution and initiator JWTs independently
+    BFF->>DA: Forward both validated identities
+    DA->>AG: tools/call with service-account JWT<br/>+ signed agent context + human initiator header
+    AG->>FGA: Authorize service account and agent for Platform tool
+    AG->>PM: Authorized MCP call with both identities
+    PM->>BFF: Platform API call with human JWT
+    BFF->>FGA: Authorize human against target resource
+```
+
+The initiator is bound per Slack interaction, not per channel. A participant who
+can invoke an agent but cannot edit the target resource is denied by the BFF. If
+an authorized owner or owning-team member makes a later request in the same
+thread, that interaction carries their identity and is evaluated independently.
+Runtime cache keys include both execution and initiator subjects so a cached
+service-account runtime cannot cross human authorization contexts.
+
 ## Service Account Create & External Call
 
 Service accounts (spec `2026-06-05-service-accounts`) are self-service, team-owned
