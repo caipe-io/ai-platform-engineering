@@ -12,6 +12,7 @@ contract and the actionable-error behaviour when no default is configured.
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 import types
 
@@ -217,6 +218,58 @@ def test_get_llm_passes_supported_reasoning_effort(monkeypatch):
 
     assert result == "llm"
     assert captured["kwargs"] == {"model": "gpt-5.5", "reasoning_effort": "max"}
+
+
+def test_get_llm_uses_supported_api_version_for_azure_gpt5_reasoning(monkeypatch):
+    captured = {}
+
+    class _Factory:
+        def __init__(self, provider):
+            captured["provider"] = provider
+
+        def get_llm(self, **kwargs):
+            captured["kwargs"] = kwargs
+            captured["responses"] = os.environ["AZURE_OPENAI_USE_RESPONSES"]
+            captured["api_version"] = os.environ["AZURE_OPENAI_API_VERSION"]
+            return "llm"
+
+    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_USE_RESPONSES", "false")
+    monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2024-11-01-preview")
+
+    result = llm_clients.get_llm("azure-openai", "gpt-5.5", "high")
+
+    assert result == "llm"
+    assert captured["responses"] == "true"
+    assert captured["api_version"] == "2025-03-01-preview"
+    assert captured["kwargs"] == {"model": "gpt-5.5", "reasoning_effort": "high"}
+    assert os.environ["AZURE_OPENAI_USE_RESPONSES"] == "false"
+    assert os.environ["AZURE_OPENAI_API_VERSION"] == "2024-11-01-preview"
+
+
+def test_get_llm_uses_valid_temperature_for_bedrock_reasoning(monkeypatch):
+    captured = {}
+
+    class _Factory:
+        def __init__(self, provider):
+            captured["provider"] = provider
+
+        def get_llm(self, **kwargs):
+            captured["kwargs"] = kwargs
+            return "llm"
+
+    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+
+    result = llm_clients.get_llm(
+        "aws-bedrock", "global.anthropic.claude-haiku-4-5-20251001-v1:0", "medium"
+    )
+
+    assert result == "llm"
+    assert captured["kwargs"] == {
+        "model": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "reasoning_effort": "medium",
+        "temperature": 1.0,
+    }
 
 
 def test_get_llm_omits_effort_for_unsupported_model(monkeypatch):
