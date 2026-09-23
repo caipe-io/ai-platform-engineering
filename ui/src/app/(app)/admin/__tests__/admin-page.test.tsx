@@ -722,6 +722,7 @@ describe('Admin Dashboard Page', () => {
       const table = screen.getByRole('table');
       expect(within(table).getByText('Name')).toBeInTheDocument();
       expect(within(table).getByText('Email')).toBeInTheDocument();
+      expect(within(table).getByText('Web SSO')).toBeInTheDocument();
       expect(within(table).queryByText('Roles')).not.toBeInTheDocument();
     });
 
@@ -743,7 +744,9 @@ describe('Admin Dashboard Page', () => {
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringContaining('/api/admin/users?page=1&pageSize=20&slackStatus=linked')
+          expect.stringContaining(
+            '/api/admin/users?page=1&pageSize=20&includeWebSso=true&slackStatus=linked'
+          )
         );
       });
 
@@ -772,7 +775,9 @@ describe('Admin Dashboard Page', () => {
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringContaining('/api/admin/users?page=1&pageSize=20&webexStatus=linked')
+          expect.stringContaining(
+            '/api/admin/users?page=1&pageSize=20&includeWebSso=true&webexStatus=linked'
+          )
         );
       });
 
