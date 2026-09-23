@@ -2,15 +2,15 @@
 
 import { Button } from "@/components/ui/button";
 import { getErrorMessage } from "@/lib/error-utils";
-import { useChatStore } from "@/store/chat-store";
 import { AlertTriangle, LogOut, X } from "lucide-react";
-import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { signOut, useSession } from "next-auth/react";
 import React from "react";
+
+const POST_IMPERSONATION_LOGIN_URL =
+  "/login?callbackUrl=%2Fadmin%2Fsecurity%2Fimpersonation";
 
 export function ImpersonationBanner(): React.ReactElement | null {
   const { data: session, update } = useSession();
-  const router = useRouter();
   const [exiting, setExiting] = React.useState(false);
   const [exitError, setExitError] = React.useState<string | null>(null);
 
@@ -20,12 +20,14 @@ export function ImpersonationBanner(): React.ReactElement | null {
     setExiting(true);
     setExitError(null);
     try {
-      await update({ impersonation: { action: "stop" } });
-      useChatStore.getState().clearAllConversations();
-      router.replace("/admin/security/impersonation");
-      router.refresh();
+      try {
+        await update({ impersonation: { action: "stop" } });
+      } catch (error) {
+        console.error("[Impersonation] Failed to stop impersonation before sign-out:", error);
+      }
+      await signOut({ callbackUrl: POST_IMPERSONATION_LOGIN_URL });
     } catch (error) {
-      setExitError(getErrorMessage(error, "Unable to exit impersonation"));
+      setExitError(getErrorMessage(error, "Unable to sign out safely"));
     } finally {
       setExiting(false);
     }
@@ -53,7 +55,7 @@ export function ImpersonationBanner(): React.ReactElement | null {
           disabled={exiting}
         >
           <LogOut className="mr-1.5 h-4 w-4" />
-          {exiting ? "Exiting…" : "Exit impersonation"}
+          {exiting ? "Signing out…" : "Exit & sign out"}
         </Button>
         {exitError ? <span className="text-xs font-medium" role="status">{exitError}</span> : null}
       </div>

@@ -1103,6 +1103,27 @@ describe('auth-config', () => {
       expect(stopped.impersonation).toBeUndefined()
       expect(_mockTokenStore.has(storeKey)).toBe(false)
     })
+
+    it('cleans up and audits an active impersonation during sign-out', async () => {
+      const started = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+        token: { ...actorToken },
+        trigger: 'update',
+        session: { impersonation: { action: 'start', targetSub: 'target-sub' } },
+      })
+      const storeKey = (started.impersonation as { storeKey: string }).storeKey
+      mockLogAuthzDecision.mockReset()
+
+      await (authOptions.events!.signOut! as (...args: unknown[]) => Promise<void>)({ token: started })
+      await Promise.resolve()
+
+      expect(started.impersonation).toBeUndefined()
+      expect(_mockTokenStore.has(storeKey)).toBe(false)
+      expect(mockLogAuthzDecision).toHaveBeenCalledWith(expect.objectContaining({
+        sub: 'target-sub',
+        actorSub: 'actor-sub',
+        resourceRef: 'impersonation:stop:user:target-sub',
+      }))
+    })
   })
 
   describe('extractGroups helper', () => {

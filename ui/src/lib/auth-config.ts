@@ -1109,9 +1109,16 @@ export const authOptions: NextAuthOptions = {
   events: {
     async signOut({ token }) {
       const impersonation = token?.impersonation as ImpersonationJwtState | undefined;
-      if (impersonation?.storeKey) {
-        await deleteStoredTokens(impersonation.storeKey);
-      }
+      if (!impersonation) return;
+      auditImpersonation(
+        token as Record<string, unknown>,
+        impersonation.targetSub,
+        impersonation.targetEmail,
+        "stop",
+        "allow",
+        impersonation.startedAt,
+      );
+      await clearImpersonation(token as Record<string, unknown>);
     },
   },
   pages: {
