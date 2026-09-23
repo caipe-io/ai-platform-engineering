@@ -24,6 +24,7 @@ DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -36,6 +37,7 @@ import {
 TeamPicker,
 type TeamPickerOption,
 } from "@/components/ui/team-picker";
+import { config } from "@/lib/config";
 import { RagApiError } from "@/lib/rag-api";
 import { parseConfluenceLocator } from "@/lib/confluence-url";
 import {
@@ -47,11 +49,12 @@ import { cn } from "@/lib/utils";
 import type {
 IngestionSourceConfig,
 IngestionSourceType,
+WebAuthHeader,
 WebCrawlMode,
 } from "@/types/ingestion-source";
 import type { PendingPublicationRequestView } from "@/types/publication-approval";
-import { Eye, Loader2 } from "lucide-react";
-import { useEffect,useState } from "react";
+import { Eye, Info, Loader2, Plus, X } from "lucide-react";
+import { Fragment, useEffect,useState, type ReactNode } from "react";
 import { DatasourceAccessFields } from "./DatasourceAccessFields";
 import { PendingPublicationRequestNotice } from "./PendingPublicationRequestNotice";
 import { CollectionSearchAccessNotice } from "./CollectionSearchAccess";
@@ -68,10 +71,35 @@ const SOURCE_TYPE_OPTIONS: Array<{ value: IngestionSourceType; label: string }> 
   { value: "webex_space", label: "Webex Space" },
 ];
 
+/** Substituted with the resolved secret by the ingestor, never by the browser. */
+const SECRET_PLACEHOLDER = "{{secret}}";
+const DEFAULT_AUTH_HEADER_TEMPLATE = `Bearer ${SECRET_PLACEHOLDER}`;
+const AUTH_HEADER_NAME_OPTIONS = ["Authorization", "Cookie", "X-Api-Key"] as const;
+const CUSTOM_HEADER_VALUE = "__custom__";
+/** Mirrors MAX_AUTH_HEADERS in lib/ingestion-source-config.ts. */
+const MAX_AUTH_HEADERS = 10;
+
+const CREDENTIAL_FAILURE_HINT =
+  "An invalid, expired, or insufficiently scoped credential usually returns a 404 " +
+  "or a sign-in page instead of a 401, so check the credential and its access to " +
+  "this site before changing crawl settings.";
+
 interface TeamRow {
   _id?: string;
   slug?: string;
   name?: string;
+}
+
+interface SecretReferenceOption {
+  id: string;
+  name: string;
+  type?: string;
+  maskedPreview?: string;
+}
+
+interface AuthHeaderTestResult {
+  ok: boolean;
+  message: string;
 }
 
 export interface IngestionSourceFormValues {
@@ -109,6 +137,7 @@ export interface IngestionSourceFormValues {
   respect_robots_txt: boolean;
   user_agent: string;
   allow_non_public_urls: boolean;
+  auth_headers: WebAuthHeader[];
   space_id: string;
   // Shared mutable fields.
   default_chunk_size: number;
@@ -155,6 +184,7 @@ function emptyValues(sourceType: IngestionSourceType = "slack_channel"): Ingesti
     respect_robots_txt: true,
     user_agent: "",
     allow_non_public_urls: false,
+    auth_headers: [],
     space_id: "",
     default_chunk_size: DEFAULT_CHUNK_SIZE,
     default_chunk_overlap: DEFAULT_CHUNK_OVERLAP,
@@ -332,6 +362,10 @@ function valuesFromSource(source: IngestionSourceConfig): IngestionSourceFormVal
     user_agent: "settings" in source ? source.settings?.user_agent ?? "" : "",
     allow_non_public_urls:
       "settings" in source ? source.settings?.allow_non_public_urls ?? false : false,
+    auth_headers:
+      "settings" in source
+        ? (source.settings?.auth_headers ?? []).map((header) => ({ ...header }))
+        : [],
     space_id: "space_id" in source ? source.space_id : "",
     default_chunk_size: source.default_chunk_size,
     default_chunk_overlap: source.default_chunk_overlap,
@@ -487,8 +521,69 @@ function parseCustomFields(value: string): Record<string, string> {
   );
 }
 
+/**
+ * Drops rows the ingestor could not resolve: a row needs a header name, a
+ * secret, and a template with somewhere to substitute the resolved value.
+ */
+function normalizedAuthHeaders(rows: WebAuthHeader[]): WebAuthHeader[] {
+  return rows
+    .map((row) => ({
+      header_name: row.header_name.trim(),
+      value_template: row.value_template.trim() || SECRET_PLACEHOLDER,
+      secret_ref: row.secret_ref.trim(),
+    }))
+    .filter(
+      (row) =>
+        row.header_name.length > 0 &&
+        row.secret_ref.length > 0 &&
+        row.value_template.includes(SECRET_PLACEHOLDER),
+    );
+}
+
+/**
+ * Rows repeating an earlier row's header name, compared the way the API
+ * compares them. A conflicting row is complete but unusable, so it is reported
+ * on the row instead of being dropped from the payload.
+ */
+function duplicateAuthHeaderIndexes(rows: WebAuthHeader[]): Set<number> {
+  const seen = new Set<string>();
+  const duplicates = new Set<number>();
+  rows.forEach((row, index) => {
+    const key = row.header_name.trim().toLowerCase();
+    if (!key) return;
+    if (seen.has(key)) duplicates.add(index);
+    else seen.add(key);
+  });
+  return duplicates;
+}
+
+function secretTokenLabel(secret: SecretReferenceOption | undefined): string {
+  if (!secret) return SECRET_PLACEHOLDER;
+  const token = secret.name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return token ? `$${token}` : SECRET_PLACEHOLDER;
+}
+
+function renderAuthHeaderTemplate(template: string, token: string): ReactNode {
+  const segments = template.split(SECRET_PLACEHOLDER);
+  return segments.map((segment, index) => (
+    <Fragment key={index}>
+      {segment}
+      {index < segments.length - 1 && (
+        <span className="mx-0.5 rounded bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+          {token}
+        </span>
+      )}
+    </Fragment>
+  ));
+}
+
 function webSettingsPayload(values: IngestionSourceFormValues): Record<string, unknown> {
   return {
+    auth_headers: normalizedAuthHeaders(values.auth_headers),
     crawl_mode: values.crawl_mode,
     max_depth: values.max_depth,
     max_pages: values.max_pages,
@@ -547,8 +642,10 @@ interface IngestionPreviewResult {
   summary?: Record<string, unknown>;
 }
 
+const WEB_PREVIEW_PATH = "/api/rag/v1/ingest/webloader/preview";
+
 const PREVIEW_PATHS: Partial<Record<IngestionSourceType, string>> = {
-  web_url: "/api/rag/v1/ingest/webloader/preview",
+  web_url: WEB_PREVIEW_PATH,
   confluence_space: "/api/rag/v1/ingest/confluence/preview",
   jira_project: "/api/rag/v1/ingest/jira/preview",
 };
@@ -644,6 +741,12 @@ export function IngestionSourceForm({
   const [previewing, setPreviewing] = useState(false);
   const [previewResult, setPreviewResult] = useState<IngestionPreviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const credentialsEnabled = config.credentialsEnabled;
+  const [secretOptions, setSecretOptions] = useState<SecretReferenceOption[]>([]);
+  const [secretsLoading, setSecretsLoading] = useState(false);
+  const [testingAuthHeaders, setTestingAuthHeaders] = useState(false);
+  const [authHeaderTestResult, setAuthHeaderTestResult] =
+    useState<AuthHeaderTestResult | null>(null);
   // Ownership transfer (edit only): changing the owner picker marks a pending
   // transfer, sent as owner_team_slug/confirm_not_member alongside the rest
   // of the PATCH body. Mirrors KbSharingPanel's transfer flow.
@@ -660,6 +763,7 @@ export function IngestionSourceForm({
     setPreviewing(false);
     setPreviewResult(null);
     setError(null);
+    setAuthHeaderTestResult(null);
     setTransferRequested(false);
     setTransferConfirmedNotMember(false);
     setTransferNeedsServerConfirm(false);
@@ -721,9 +825,41 @@ export function IngestionSourceForm({
       });
   }, [open, initial, pendingPublicationRequest, defaultSourceType, isEdit]);
 
+  useEffect(() => {
+    if (!open || !credentialsEnabled) return;
+    let cancelled = false;
+    setSecretsLoading(true);
+    fetch("/api/credentials/secrets")
+      .then((response) => (response.ok ? response.json() : { data: [] }))
+      .then((payload: { data?: unknown }) => {
+        if (cancelled) return;
+        setSecretOptions(
+          Array.isArray(payload?.data) ? (payload.data as SecretReferenceOption[]) : [],
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setSecretOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSecretsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, credentialsEnabled]);
+
+  const duplicateAuthHeaders = duplicateAuthHeaderIndexes(values.auth_headers);
+  // Only blocks save where the rows are reachable and actually sent, so a
+  // hidden section can never wedge an unrelated edit.
+  const hasAuthHeaderConflict =
+    credentialsEnabled &&
+    values.source_type === "web_url" &&
+    duplicateAuthHeaders.size > 0;
+
   const canSave =
     !isReadOnly &&
     values.name.trim().length > 0 &&
+    !hasAuthHeaderConflict &&
     (isEdit || identityFieldsValid(values));
 
   const handleSave = async (opts?: { forceConfirmNotMember?: boolean }) => {
@@ -832,6 +968,95 @@ export function IngestionSourceForm({
       );
     } finally {
       setPreviewing(false);
+    }
+  };
+
+  const handleAddAuthHeader = () => {
+    setAuthHeaderTestResult(null);
+    setValues((v) => {
+      const used = new Set(
+        v.auth_headers.map((header) => header.header_name.trim().toLowerCase()),
+      );
+      return {
+        ...v,
+        auth_headers: [
+          ...v.auth_headers,
+          {
+            header_name:
+              AUTH_HEADER_NAME_OPTIONS.find((name) => !used.has(name.toLowerCase())) ?? "",
+            value_template: DEFAULT_AUTH_HEADER_TEMPLATE,
+            secret_ref: "",
+          },
+        ],
+      };
+    });
+  };
+
+  const handleUpdateAuthHeader = (index: number, patch: Partial<WebAuthHeader>) => {
+    setAuthHeaderTestResult(null);
+    setValues((v) => ({
+      ...v,
+      auth_headers: v.auth_headers.map((header, position) =>
+        position === index ? { ...header, ...patch } : header,
+      ),
+    }));
+  };
+
+  const handleRemoveAuthHeader = (index: number) => {
+    setAuthHeaderTestResult(null);
+    setValues((v) => ({
+      ...v,
+      auth_headers: v.auth_headers.filter((_, position) => position !== index),
+    }));
+  };
+
+  const handleTestAuthHeaders = async (): Promise<void> => {
+    setTestingAuthHeaders(true);
+    setAuthHeaderTestResult(null);
+    try {
+      const preview = buildPreviewPayload(values, isEdit, initial?.source_id);
+      const settings = (preview.settings ?? {}) as Record<string, unknown>;
+      const response = await fetch(WEB_PREVIEW_PATH, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...preview,
+          settings: { ...settings, max_pages: 1 },
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail =
+          typeof result?.detail === "string"
+            ? result.detail
+            : typeof result?.error === "string"
+              ? result.error
+              : `The request failed (${response.status}).`;
+        setAuthHeaderTestResult({ ok: false, message: detail });
+        return;
+      }
+      const items = Array.isArray(result?.items) ? result.items : [];
+      if (items.length === 0) {
+        setAuthHeaderTestResult({
+          ok: false,
+          message: "The request succeeded but no page content was returned.",
+        });
+        return;
+      }
+      setAuthHeaderTestResult({
+        ok: true,
+        message: `Fetched ${items.length} page${items.length === 1 ? "" : "s"} and found content.`,
+      });
+    } catch (testError) {
+      setAuthHeaderTestResult({
+        ok: false,
+        message:
+          testError instanceof Error
+            ? testError.message
+            : "Could not reach the ingestor to run this test.",
+      });
+    } finally {
+      setTestingAuthHeaders(false);
     }
   };
 
@@ -1370,6 +1595,233 @@ export function IngestionSourceForm({
                       placeholder="Optional custom user agent"
                     />
                   </div>
+                  {credentialsEnabled && (
+                    <div className="space-y-3 rounded-lg border border-border/60 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium">Request headers with a credential</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Send a saved credential as a request header when the site
+                            requires sign-in. The crawler substitutes the value at
+                            request time; the secret itself is never stored with this
+                            source.
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1"
+                          disabled={
+                            saving || values.auth_headers.length >= MAX_AUTH_HEADERS
+                          }
+                          onClick={handleAddAuthHeader}
+                        >
+                          <Plus className="h-4 w-4" />
+                          Add header
+                        </Button>
+                      </div>
+
+                      {values.auth_headers.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          No headers. Public sites do not need one.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {values.auth_headers.map((header, index) => {
+                            const isKnownHeader = (
+                              AUTH_HEADER_NAME_OPTIONS as readonly string[]
+                            ).includes(header.header_name);
+                            const selectedSecret = secretOptions.find(
+                              (secret) => secret.id === header.secret_ref,
+                            );
+                            const isDuplicate = duplicateAuthHeaders.has(index);
+                            return (
+                              <div
+                                key={index}
+                                className="grid gap-2 md:grid-cols-[1fr_1.5fr_1fr_auto]"
+                              >
+                                <div className="space-y-1">
+                                  <Select
+                                    aria-label="Header name"
+                                    aria-invalid={isDuplicate}
+                                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                                    value={
+                                      isKnownHeader ? header.header_name : CUSTOM_HEADER_VALUE
+                                    }
+                                    onChange={(e) =>
+                                      handleUpdateAuthHeader(index, {
+                                        header_name:
+                                          e.target.value === CUSTOM_HEADER_VALUE
+                                            ? ""
+                                            : e.target.value,
+                                      })
+                                    }
+                                  >
+                                    {AUTH_HEADER_NAME_OPTIONS.map((headerName) => (
+                                      <option key={headerName} value={headerName}>
+                                        {headerName}
+                                      </option>
+                                    ))}
+                                    <option value={CUSTOM_HEADER_VALUE}>Custom header</option>
+                                  </Select>
+                                  {!isKnownHeader && (
+                                    <Input
+                                      aria-label="Custom header name"
+                                      aria-invalid={isDuplicate}
+                                      value={header.header_name}
+                                      onChange={(e) =>
+                                        handleUpdateAuthHeader(index, {
+                                          header_name: e.target.value,
+                                        })
+                                      }
+                                      placeholder="Header name"
+                                    />
+                                  )}
+                                  {isDuplicate && (
+                                    <p className="text-xs text-destructive">
+                                      Another header above already uses this name. Header
+                                      names must be unique.
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="space-y-1">
+                                  <Input
+                                    aria-label="Header value template"
+                                    value={header.value_template}
+                                    onChange={(e) =>
+                                      handleUpdateAuthHeader(index, {
+                                        value_template: e.target.value,
+                                      })
+                                    }
+                                    placeholder={DEFAULT_AUTH_HEADER_TEMPLATE}
+                                  />
+                                  {header.value_template.includes(SECRET_PLACEHOLDER) ? (
+                                    <p
+                                      className="truncate rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground"
+                                      data-testid={`auth-header-preview-${index}`}
+                                    >
+                                      {renderAuthHeaderTemplate(
+                                        header.value_template,
+                                        secretTokenLabel(selectedSecret),
+                                      )}
+                                    </p>
+                                  ) : (
+                                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                                      Add {SECRET_PLACEHOLDER} where the credential
+                                      value belongs.
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="space-y-1">
+                                  <SearchablePicker
+                                    options={secretOptions}
+                                    selected={selectedSecret}
+                                    onSelect={(secret) =>
+                                      handleUpdateAuthHeader(index, { secret_ref: secret.id })
+                                    }
+                                    getOptionKey={(secret) => secret.id}
+                                    getOptionLabel={(secret) => secret.name}
+                                    getSearchText={(secret) => [secret.id, secret.name]}
+                                    placeholder={
+                                      secretOptions.length === 0
+                                        ? "No saved credentials"
+                                        : "Select a credential"
+                                    }
+                                    searchPlaceholder="Search credentials..."
+                                    emptyLabel="No credentials match"
+                                    ariaLabel="Credential"
+                                    loading={secretsLoading}
+                                    required
+                                    disabled={saving || secretOptions.length === 0}
+                                    triggerClassName="h-9 text-sm"
+                                  />
+                                  {selectedSecret?.maskedPreview && (
+                                    <p className="inline-flex rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
+                                      Preview {selectedSecret.maskedPreview}
+                                    </p>
+                                  )}
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label="Remove header"
+                                  disabled={saving}
+                                  onClick={() => handleRemoveAuthHeader(index)}
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {values.auth_headers.length > 0 && (
+                        <>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-2"
+                              disabled={
+                                saving ||
+                                testingAuthHeaders ||
+                                hasAuthHeaderConflict ||
+                                !identityFieldsValid(values) ||
+                                normalizedAuthHeaders(values.auth_headers).length === 0
+                              }
+                              onClick={() => void handleTestAuthHeaders()}
+                            >
+                              {testingAuthHeaders ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                              {testingAuthHeaders ? "Testing…" : "Test headers"}
+                            </Button>
+                            <p className="text-xs text-muted-foreground">
+                              {values.auth_headers.length >= MAX_AUTH_HEADERS
+                                ? `Fetches a single page with these headers. Maximum of ${MAX_AUTH_HEADERS} headers reached.`
+                                : "Fetches a single page with these headers."}
+                            </p>
+                          </div>
+                          {authHeaderTestResult && (
+                            <div
+                              aria-live="polite"
+                              className={cn(
+                                "space-y-1 rounded-md border p-2 text-xs",
+                                authHeaderTestResult.ok
+                                  ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                                  : "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300",
+                              )}
+                            >
+                              <p>{authHeaderTestResult.message}</p>
+                              {!authHeaderTestResult.ok && <p>{CREDENTIAL_FAILURE_HINT}</p>}
+                            </div>
+                          )}
+                          {normalizedAuthHeaders(values.auth_headers).length > 0 && (
+                            <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                              <div className="flex items-center gap-2 text-sm font-medium">
+                                <Info className="h-4 w-4 text-primary" />
+                                Credential access for this source
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                Saving this source grants the ingestion service read
+                                access to the credentials above. It reads them on every
+                                crawl of this source, including scheduled refreshes.
+                                Access ends when you detach the credential or delete the
+                                source, and you can revoke it at any time under
+                                Credentials → Sharing.
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               </details>
             </>
