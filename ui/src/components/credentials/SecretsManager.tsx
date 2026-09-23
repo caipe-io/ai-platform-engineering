@@ -540,9 +540,6 @@ export function SecretsManager() {
                   Secret details
                 </p>
                 <h2 className="mt-1 text-lg font-semibold">{detailsSecret.name}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Details only. The saved value stays protected; this preview is masked.
-                </p>
               </div>
               <Button
                 type="button"

@@ -28,6 +28,12 @@ import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
 AccessSubjectMultiPicker,
 AccessSubjectPicker,
 type AccessSubjectOption,
@@ -53,8 +59,9 @@ WebAuthHeader,
 WebCrawlMode,
 } from "@/types/ingestion-source";
 import type { PendingPublicationRequestView } from "@/types/publication-approval";
-import { Eye, Info, Loader2, Plus, X } from "lucide-react";
+import { Eye, Loader2, Plus, X } from "lucide-react";
 import { Fragment, useEffect,useState, type ReactNode } from "react";
+import { AdvancedSettings } from "./AdvancedSettings";
 import { DatasourceAccessFields } from "./DatasourceAccessFields";
 import { PendingPublicationRequestNotice } from "./PendingPublicationRequestNotice";
 import { CollectionSearchAccessNotice } from "./CollectionSearchAccess";
@@ -74,8 +81,7 @@ const SOURCE_TYPE_OPTIONS: Array<{ value: IngestionSourceType; label: string }> 
 /** Substituted with the resolved secret by the ingestor, never by the browser. */
 const SECRET_PLACEHOLDER = "{{secret}}";
 const DEFAULT_AUTH_HEADER_TEMPLATE = `Bearer ${SECRET_PLACEHOLDER}`;
-const AUTH_HEADER_NAME_OPTIONS = ["Authorization", "Cookie", "X-Api-Key"] as const;
-const CUSTOM_HEADER_VALUE = "__custom__";
+const DEFAULT_AUTH_HEADER_NAME = "Authorization";
 /** Mirrors MAX_AUTH_HEADERS in lib/ingestion-source-config.ts. */
 const MAX_AUTH_HEADERS = 10;
 
@@ -557,6 +563,16 @@ function duplicateAuthHeaderIndexes(rows: WebAuthHeader[]): Set<number> {
   return duplicates;
 }
 
+/**
+ * Trailing characters of the store's masked hint, which is enough to tell two
+ * credentials apart without showing any leading characters of the value.
+ */
+function shortSecretPreview(maskedPreview: string | undefined): string | null {
+  const tail = maskedPreview?.trim().slice(-3);
+  return tail ? `...${tail}` : null;
+}
+
+/** Shell-style stand-in for a credential, derived from its display name. */
 function secretTokenLabel(secret: SecretReferenceOption | undefined): string {
   if (!secret) return SECRET_PLACEHOLDER;
   const token = secret.name
@@ -567,6 +583,7 @@ function secretTokenLabel(secret: SecretReferenceOption | undefined): string {
   return token ? `$${token}` : SECRET_PLACEHOLDER;
 }
 
+/** Renders a template with the placeholder shown as a highlighted credential token. */
 function renderAuthHeaderTemplate(template: string, token: string): ReactNode {
   const segments = template.split(SECRET_PLACEHOLDER);
   return segments.map((segment, index) => (
@@ -579,6 +596,36 @@ function renderAuthHeaderTemplate(template: string, token: string): ReactNode {
       )}
     </Fragment>
   ));
+}
+
+/**
+ * The request the crawler will actually send, rendered as curl. Credential values
+ * collapse to their trailing hint, so the preview stays safe to leave on screen.
+ */
+function authHeaderRequestPreview(input: {
+  url: string;
+  headers: WebAuthHeader[];
+  secrets: SecretReferenceOption[];
+  userAgent: string;
+}): string[] {
+  const sent: string[] = [];
+  const userAgent = input.userAgent.trim();
+  if (userAgent) sent.push(`User-Agent: ${userAgent}`);
+
+  for (const header of input.headers) {
+    const secret = input.secrets.find((option) => option.id === header.secret_ref);
+    const hint = shortSecretPreview(secret?.maskedPreview) ?? SECRET_PLACEHOLDER;
+    const value = header.value_template.split(SECRET_PLACEHOLDER).join(hint);
+    sent.push(`${header.header_name}: ${value}`);
+  }
+
+  if (sent.length === 0) return [];
+  return [
+    `curl '${input.url.trim() || "<source URL>"}' \\`,
+    ...sent.map(
+      (line, index) => `  -H '${line}'${index === sent.length - 1 ? "" : " \\"}`,
+    ),
+  ];
 }
 
 function webSettingsPayload(values: IngestionSourceFormValues): Record<string, unknown> {
@@ -856,6 +903,19 @@ export function IngestionSourceForm({
     values.source_type === "web_url" &&
     duplicateAuthHeaders.size > 0;
 
+  // A resolved template renders its credential as a highlighted token; the raw
+  // text with the placeholder is shown only while the field is being edited.
+  const [editingTemplateIndex, setEditingTemplateIndex] = useState<number | null>(null);
+
+  const sentAuthHeaders = normalizedAuthHeaders(values.auth_headers);
+  const authHeaderPreviewLines = authHeaderRequestPreview({
+    url: values.url,
+    headers: sentAuthHeaders,
+    secrets: secretOptions,
+    userAgent: values.user_agent,
+  });
+  const unsentAuthHeaderCount = values.auth_headers.length - sentAuthHeaders.length;
+
   const canSave =
     !isReadOnly &&
     values.name.trim().length > 0 &&
@@ -973,23 +1033,19 @@ export function IngestionSourceForm({
 
   const handleAddAuthHeader = () => {
     setAuthHeaderTestResult(null);
-    setValues((v) => {
-      const used = new Set(
-        v.auth_headers.map((header) => header.header_name.trim().toLowerCase()),
-      );
-      return {
-        ...v,
-        auth_headers: [
-          ...v.auth_headers,
-          {
-            header_name:
-              AUTH_HEADER_NAME_OPTIONS.find((name) => !used.has(name.toLowerCase())) ?? "",
-            value_template: DEFAULT_AUTH_HEADER_TEMPLATE,
-            secret_ref: "",
-          },
-        ],
-      };
-    });
+    setValues((v) => ({
+      ...v,
+      auth_headers: [
+        ...v.auth_headers,
+        {
+          // Later rows start unnamed: an empty name is an incomplete row rather
+          // than an immediate collision with the first row's default.
+          header_name: v.auth_headers.length === 0 ? DEFAULT_AUTH_HEADER_NAME : "",
+          value_template: DEFAULT_AUTH_HEADER_TEMPLATE,
+          secret_ref: "",
+        },
+      ],
+    }));
   };
 
   const handleUpdateAuthHeader = (index: number, patch: Partial<WebAuthHeader>) => {
@@ -1448,11 +1504,7 @@ export function IngestionSourceForm({
                   />
                 </div>
               </div>
-              <details className="rounded-lg border border-border/50 p-3">
-                <summary className="cursor-pointer text-sm font-medium">
-                  Advanced web crawl settings
-                </summary>
-                <div className="mt-3 space-y-3">
+              <AdvancedSettings title="Advanced web crawl settings">
                   <div className="grid grid-cols-3 gap-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="page-load-timeout">Page timeout (s)</Label>
@@ -1602,9 +1654,10 @@ export function IngestionSourceForm({
                           <p className="text-sm font-medium">Request headers with a credential</p>
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             Send a saved credential as a request header when the site
-                            requires sign-in. The crawler substitutes the value at
-                            request time; the secret itself is never stored with this
-                            source.
+                            requires sign-in. The secret is never stored with this
+                            source — the ingestion service reads it on every crawl,
+                            including scheduled refreshes. Revoke access any time under
+                            Credentials → Sharing.
                           </p>
                         </div>
                         <Button
@@ -1628,56 +1681,42 @@ export function IngestionSourceForm({
                         </p>
                       ) : (
                         <div className="space-y-3">
+                          <div className="hidden gap-2 md:grid md:grid-cols-[1fr_1.5fr_1fr_auto]">
+                            <Label className="text-xs text-muted-foreground">
+                              Header name
+                            </Label>
+                            <Label className="text-xs text-muted-foreground">Value</Label>
+                            <Label className="text-xs text-muted-foreground">
+                              Credential
+                            </Label>
+                            <span className="w-10" aria-hidden="true" />
+                          </div>
                           {values.auth_headers.map((header, index) => {
-                            const isKnownHeader = (
-                              AUTH_HEADER_NAME_OPTIONS as readonly string[]
-                            ).includes(header.header_name);
                             const selectedSecret = secretOptions.find(
                               (secret) => secret.id === header.secret_ref,
                             );
                             const isDuplicate = duplicateAuthHeaders.has(index);
+                            const showResolvedTemplate =
+                              editingTemplateIndex !== index &&
+                              Boolean(selectedSecret) &&
+                              header.value_template.includes(SECRET_PLACEHOLDER);
                             return (
                               <div
                                 key={index}
                                 className="grid gap-2 md:grid-cols-[1fr_1.5fr_1fr_auto]"
                               >
                                 <div className="space-y-1">
-                                  <Select
+                                  <Input
                                     aria-label="Header name"
                                     aria-invalid={isDuplicate}
-                                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                                    value={
-                                      isKnownHeader ? header.header_name : CUSTOM_HEADER_VALUE
-                                    }
+                                    value={header.header_name}
                                     onChange={(e) =>
                                       handleUpdateAuthHeader(index, {
-                                        header_name:
-                                          e.target.value === CUSTOM_HEADER_VALUE
-                                            ? ""
-                                            : e.target.value,
+                                        header_name: e.target.value,
                                       })
                                     }
-                                  >
-                                    {AUTH_HEADER_NAME_OPTIONS.map((headerName) => (
-                                      <option key={headerName} value={headerName}>
-                                        {headerName}
-                                      </option>
-                                    ))}
-                                    <option value={CUSTOM_HEADER_VALUE}>Custom header</option>
-                                  </Select>
-                                  {!isKnownHeader && (
-                                    <Input
-                                      aria-label="Custom header name"
-                                      aria-invalid={isDuplicate}
-                                      value={header.header_name}
-                                      onChange={(e) =>
-                                        handleUpdateAuthHeader(index, {
-                                          header_name: e.target.value,
-                                        })
-                                      }
-                                      placeholder="Header name"
-                                    />
-                                  )}
+                                    placeholder="Authorization"
+                                  />
                                   {isDuplicate && (
                                     <p className="text-xs text-destructive">
                                       Another header above already uses this name. Header
@@ -1686,27 +1725,36 @@ export function IngestionSourceForm({
                                   )}
                                 </div>
                                 <div className="space-y-1">
-                                  <Input
-                                    aria-label="Header value template"
-                                    value={header.value_template}
-                                    onChange={(e) =>
-                                      handleUpdateAuthHeader(index, {
-                                        value_template: e.target.value,
-                                      })
-                                    }
-                                    placeholder={DEFAULT_AUTH_HEADER_TEMPLATE}
-                                  />
-                                  {header.value_template.includes(SECRET_PLACEHOLDER) ? (
-                                    <p
-                                      className="truncate rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground"
-                                      data-testid={`auth-header-preview-${index}`}
+                                  {showResolvedTemplate ? (
+                                    <button
+                                      type="button"
+                                      aria-label="Header value template"
+                                      disabled={saving}
+                                      onClick={() => setEditingTemplateIndex(index)}
+                                      className="flex h-9 w-full items-center overflow-hidden rounded-md border border-input bg-background px-3 text-left font-mono text-sm"
                                     >
-                                      {renderAuthHeaderTemplate(
-                                        header.value_template,
-                                        secretTokenLabel(selectedSecret),
-                                      )}
-                                    </p>
+                                      <span className="truncate">
+                                        {renderAuthHeaderTemplate(
+                                          header.value_template,
+                                          secretTokenLabel(selectedSecret),
+                                        )}
+                                      </span>
+                                    </button>
                                   ) : (
+                                    <Input
+                                      aria-label="Header value template"
+                                      autoFocus={editingTemplateIndex === index}
+                                      value={header.value_template}
+                                      onChange={(e) =>
+                                        handleUpdateAuthHeader(index, {
+                                          value_template: e.target.value,
+                                        })
+                                      }
+                                      onBlur={() => setEditingTemplateIndex(null)}
+                                      placeholder={DEFAULT_AUTH_HEADER_TEMPLATE}
+                                    />
+                                  )}
+                                  {!header.value_template.includes(SECRET_PLACEHOLDER) && (
                                     <p className="text-xs text-amber-700 dark:text-amber-400">
                                       Add {SECRET_PLACEHOLDER} where the credential
                                       value belongs.
@@ -1736,11 +1784,6 @@ export function IngestionSourceForm({
                                     disabled={saving || secretOptions.length === 0}
                                     triggerClassName="h-9 text-sm"
                                   />
-                                  {selectedSecret?.maskedPreview && (
-                                    <p className="inline-flex rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
-                                      Preview {selectedSecret.maskedPreview}
-                                    </p>
-                                  )}
                                 </div>
                                 <Button
                                   type="button"
@@ -1758,35 +1801,65 @@ export function IngestionSourceForm({
                         </div>
                       )}
 
+                      {authHeaderPreviewLines.length > 0 && (
+                        <div className="space-y-1">
+                          <Label className="text-xs text-muted-foreground">
+                            Request the crawler will send
+                          </Label>
+                          <pre
+                            data-testid="auth-header-request-preview"
+                            className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs leading-relaxed text-muted-foreground"
+                          >
+                            {authHeaderPreviewLines.join("\n")}
+                          </pre>
+                          {unsentAuthHeaderCount > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              {unsentAuthHeaderCount === 1
+                                ? "1 incomplete header is not sent."
+                                : `${unsentAuthHeaderCount} incomplete headers are not sent.`}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       {values.auth_headers.length > 0 && (
                         <>
                           <div className="flex flex-wrap items-center gap-3">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="gap-2"
-                              disabled={
-                                saving ||
-                                testingAuthHeaders ||
-                                hasAuthHeaderConflict ||
-                                !identityFieldsValid(values) ||
-                                normalizedAuthHeaders(values.auth_headers).length === 0
-                              }
-                              onClick={() => void handleTestAuthHeaders()}
-                            >
-                              {testingAuthHeaders ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                              {testingAuthHeaders ? "Testing…" : "Test headers"}
-                            </Button>
-                            <p className="text-xs text-muted-foreground">
-                              {values.auth_headers.length >= MAX_AUTH_HEADERS
-                                ? `Fetches a single page with these headers. Maximum of ${MAX_AUTH_HEADERS} headers reached.`
-                                : "Fetches a single page with these headers."}
-                            </p>
+                            <TooltipProvider delayDuration={150}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="gap-2"
+                                    disabled={
+                                      saving ||
+                                      testingAuthHeaders ||
+                                      hasAuthHeaderConflict ||
+                                      !identityFieldsValid(values) ||
+                                      sentAuthHeaders.length === 0
+                                    }
+                                    onClick={() => void handleTestAuthHeaders()}
+                                  >
+                                    {testingAuthHeaders ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Eye className="h-4 w-4" />
+                                    )}
+                                    {testingAuthHeaders ? "Testing…" : "Test headers"}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" sideOffset={8}>
+                                  Fetches a single page with these headers.
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                            {values.auth_headers.length >= MAX_AUTH_HEADERS && (
+                              <p className="text-xs text-muted-foreground">
+                                Maximum of {MAX_AUTH_HEADERS} headers reached.
+                              </p>
+                            )}
                           </div>
                           {authHeaderTestResult && (
                             <div
@@ -1802,28 +1875,11 @@ export function IngestionSourceForm({
                               {!authHeaderTestResult.ok && <p>{CREDENTIAL_FAILURE_HINT}</p>}
                             </div>
                           )}
-                          {normalizedAuthHeaders(values.auth_headers).length > 0 && (
-                            <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
-                              <div className="flex items-center gap-2 text-sm font-medium">
-                                <Info className="h-4 w-4 text-primary" />
-                                Credential access for this source
-                              </div>
-                              <p className="text-xs text-muted-foreground">
-                                Saving this source grants the ingestion service read
-                                access to the credentials above. It reads them on every
-                                crawl of this source, including scheduled refreshes.
-                                Access ends when you detach the credential or delete the
-                                source, and you can revoke it at any time under
-                                Credentials → Sharing.
-                              </p>
-                            </div>
-                          )}
                         </>
                       )}
                     </div>
                   )}
-                </div>
-              </details>
+              </AdvancedSettings>
             </>
           )}
 
@@ -1927,11 +1983,7 @@ export function IngestionSourceForm({
             </div>
           )}
 
-          <details className="rounded-lg border border-border/60 p-4">
-            <summary className="cursor-pointer text-sm font-medium">
-              Advanced settings
-            </summary>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <AdvancedSettings contentClassName="grid gap-3 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <Label htmlFor="chunk-size">Chunk Size</Label>
                 <Input
@@ -1971,8 +2023,7 @@ export function IngestionSourceForm({
                   }
                 />
               </div>
-            </div>
-          </details>
+          </AdvancedSettings>
 
           <DatasourceAccessFields
             ownerControl={isEdit ? (

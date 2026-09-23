@@ -130,7 +130,6 @@ describe("SecretsManager", () => {
 
     const dialog = await screen.findByRole("dialog", { name: /github token details/i });
     expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getByText(/saved value stays protected; this preview is masked/i)).toBeInTheDocument();
     expect(within(dialog).getByText(/masked preview/i)).toBeInTheDocument();
     expect(within(dialog).getByText("ghp_...abcd")).toBeInTheDocument();
     expect(within(dialog).getByText("Alice Example")).toBeInTheDocument();

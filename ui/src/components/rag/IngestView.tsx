@@ -83,6 +83,7 @@ import type {
 import type { RagCollectionWithPermissions } from "@/types/rag-collection";
 import { BulkEditSourcesModal } from "./BulkEditSourcesModal";
 import { DatasourceAccessBadges } from "./DatasourceAccessBadges";
+import { AdvancedSettings } from "./AdvancedSettings";
 import { DatasourceAccessFields } from "./DatasourceAccessFields";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import {
@@ -373,7 +374,6 @@ export default function IngestView() {
   const ingestSectionRef = useRef<HTMLElement | null>(null);
   const [description, setDescription] = useState("");
   const [includeSubPages, setIncludeSubPages] = useState(false);
-  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const selectedManagedSourceType = ingestTypeConfigs[ingestType]?.sourceType;
 
   // Scrapy settings state (for web ingest type)
@@ -2022,34 +2022,7 @@ export default function IngestView() {
                       />
                     </div>
 
-                  {/* Advanced settings - Animated Collapsible */}
-                  <div>
-                    <button
-                      onClick={() =>
-                        setShowAdvancedOptions(!showAdvancedOptions)
-                      }
-                      className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      <Settings className="h-4 w-4" />
-                      <span>Advanced settings</span>
-                      <motion.div
-                        animate={{ rotate: showAdvancedOptions ? 180 : 0 }}
-                        transition={{ duration: 0.2 }}
-                      >
-                        <ChevronDown className="h-4 w-4" />
-                      </motion.div>
-                    </button>
-
-                    <AnimatePresence>
-                      {showAdvancedOptions && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: "auto", opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          transition={{ duration: 0.2 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="mt-4 p-4 rounded-lg bg-muted/50 border border-border/50 space-y-4">
+                    <AdvancedSettings className="mt-3" contentClassName="space-y-4">
                             {/* Web-specific Scrapy settings */}
                             {ingestType === "web" && (
                               <>
@@ -2467,11 +2440,7 @@ export default function IngestView() {
                                 </div>
                               </div>
                             )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
+                  </AdvancedSettings>
                   <DatasourceAccessFields
                     className="mt-4"
                     ownerControl={

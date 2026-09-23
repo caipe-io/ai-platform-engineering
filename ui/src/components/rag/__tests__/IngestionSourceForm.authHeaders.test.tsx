@@ -69,7 +69,7 @@ function mockFetch(previewResponse?: { ok: boolean; body: unknown }) {
             id: SECRET_ID,
             name: SECRET_NAME,
             type: "bearer_token",
-            maskedPreview: "d...n",
+            maskedPreview: "oyw9...BxRZ",
             value: PLAINTEXT_SENTINEL,
           },
         ],
@@ -101,6 +101,18 @@ async function addHeaderWithCredential(user: ReturnType<typeof userEvent.setup>)
   await user.click(await screen.findByRole("option", { name: SECRET_NAME }));
 }
 
+/**
+ * A resolved template renders as a button showing the highlighted credential
+ * token; clicking it exposes the raw text input.
+ */
+async function focusTemplateInput(
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<HTMLElement> {
+  const field = screen.getByLabelText(/header value template/i);
+  if (field.tagName === "BUTTON") await user.click(field);
+  return screen.getByLabelText(/header value template/i);
+}
+
 beforeEach(() => {
   mockCredentialsEnabled = true;
   mockFetch();
@@ -129,16 +141,17 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
       },
     ]);
     expect(JSON.stringify(payload)).not.toContain(PLAINTEXT_SENTINEL);
-    expect(JSON.stringify(payload)).not.toContain("d...n");
+    expect(JSON.stringify(payload)).not.toContain("oyw9...BxRZ");
   });
 
-  it("keeps a custom header name and a custom value prefix", async () => {
+  it("keeps a typed header name and a custom value prefix", async () => {
     const { user, onSave } = await renderWebForm();
     await addHeaderWithCredential(user);
 
-    await user.selectOptions(screen.getByLabelText(/header name/i), "__custom__");
-    await user.type(screen.getByLabelText(/custom header name/i), "X-Docs-Token");
-    const template = screen.getByLabelText(/header value template/i);
+    const headerName = screen.getByLabelText("Header name");
+    await user.clear(headerName);
+    await user.type(headerName, "X-Docs-Token");
+    const template = await focusTemplateInput(user);
     await user.clear(template);
     // `type` reads `{{` as an escaped brace, so paste the placeholder verbatim.
     await user.click(template);
@@ -159,41 +172,38 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     ]);
   });
 
-  it("renders the placeholder as a credential token once a credential is selected", async () => {
+  it("previews the request only once a header is complete, keeping the template editable", async () => {
     const { user } = await renderWebForm();
     await user.click(screen.getByRole("button", { name: /add header/i }));
 
-    expect(screen.getByTestId("auth-header-preview-0")).toHaveTextContent("Bearer {{secret}}");
+    // An incomplete row is not sent, so there is nothing to preview yet.
+    expect(screen.queryByTestId("auth-header-request-preview")).not.toBeInTheDocument();
 
     await user.click(await screen.findByRole("combobox", { name: /^credential$/i }));
     await user.click(await screen.findByRole("option", { name: SECRET_NAME }));
 
-    expect(screen.getByTestId("auth-header-preview-0")).toHaveTextContent(
+    const preview = screen.getByTestId("auth-header-request-preview");
+    expect(preview).toHaveTextContent("curl");
+    expect(preview).toHaveTextContent("-H 'Authorization: Bearer ...xRZ'");
+
+    // The resolved field names the credential; the raw placeholder is still what
+    // gets stored, and is revealed for editing on click.
+    expect(screen.getByLabelText(/header value template/i)).toHaveTextContent(
       "Bearer $DOCS_SITE_TOKEN",
     );
-    expect(screen.getByLabelText(/header value template/i)).toHaveValue("Bearer {{secret}}");
+    expect(await focusTemplateInput(user)).toHaveValue("Bearer {{secret}}");
   });
 
-  it("explains the ingestor's standing credential access once a header resolves", async () => {
+  it("states the ingestor's standing credential access up front", async () => {
     const { user, onSave } = await renderWebForm();
-    const noticeHeading = /credential access for this source/i;
-    expect(screen.queryByText(noticeHeading)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /add header/i }));
-    expect(screen.queryByText(noticeHeading)).not.toBeInTheDocument();
+    // Always visible, so the access implication is stated before a credential
+    // is ever attached rather than appearing after the fact.
+    expect(
+      screen.getByText(/the ingestion service reads it on every crawl/i),
+    ).toBeInTheDocument();
 
-    await user.click(await screen.findByRole("combobox", { name: /^credential$/i }));
-    await user.click(await screen.findByRole("option", { name: SECRET_NAME }));
-    expect(screen.getByText(noticeHeading)).toBeInTheDocument();
-    expect(screen.getByText(/on every crawl of this source, including scheduled refreshes/i))
-      .toBeInTheDocument();
-
-    // A reload interval is irrelevant: the ingestor authenticates as itself for
-    // every crawl, so the notice is not tied to scheduling.
-    const reloadInterval = screen.getByLabelText(/reload interval/i);
-    await user.clear(reloadInterval);
-    await user.type(reloadInterval, "0");
-    expect(screen.getByText(noticeHeading)).toBeInTheDocument();
+    await addHeaderWithCredential(user);
 
     await act(async () => {
       await user.click(screen.getByRole("button", { name: /create source/i }));
@@ -208,7 +218,7 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     const { user, onSave } = await renderWebForm();
     await addHeaderWithCredential(user);
 
-    const template = screen.getByLabelText(/header value template/i);
+    const template = await focusTemplateInput(user);
     await user.clear(template);
     await user.type(template, "Bearer ");
     expect(screen.getByText(/add \{\{secret\}\} where the credential value belongs/i))
@@ -260,17 +270,19 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
 
     await addHeaderWithCredential(user);
     await user.click(screen.getByRole("button", { name: /add header/i }));
-    // A new row takes the first unused name, so no conflict is manufactured.
+    // A later row starts unnamed, so no conflict is manufactured.
+    expect(screen.getAllByLabelText("Header name")[1]).toHaveValue("");
     expect(screen.queryByText(duplicateMessage)).not.toBeInTheDocument();
     expect(createButton).not.toBeDisabled();
 
-    await user.selectOptions(screen.getAllByLabelText("Header name")[1], "Authorization");
+    await user.type(screen.getAllByLabelText("Header name")[1], "Authorization");
     expect(screen.getByText(duplicateMessage)).toBeInTheDocument();
     expect(screen.getAllByLabelText("Header name")[1]).toHaveAttribute("aria-invalid", "true");
     expect(createButton).toBeDisabled();
     expect(screen.getByRole("button", { name: /test headers/i })).toBeDisabled();
 
-    await user.selectOptions(screen.getAllByLabelText("Header name")[1], "Cookie");
+    await user.clear(screen.getAllByLabelText("Header name")[1]);
+    await user.type(screen.getAllByLabelText("Header name")[1], "X-Other-Token");
     expect(screen.queryByText(duplicateMessage)).not.toBeInTheDocument();
     expect(createButton).not.toBeDisabled();
   });
@@ -280,11 +292,70 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     await addHeaderWithCredential(user);
     await user.click(screen.getByRole("button", { name: /add header/i }));
 
-    await user.selectOptions(screen.getAllByLabelText("Header name")[1], "__custom__");
-    await user.type(screen.getByLabelText(/custom header name/i), "authorization");
+    await user.type(screen.getAllByLabelText("Header name")[1], "authorization");
 
     expect(screen.getByText(/another header above already uses this name/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /create source/i })).toBeDisabled();
+  });
+
+  it("names the first header row and leaves later rows for the user to fill", async () => {
+    const { user } = await renderWebForm();
+
+    await user.click(screen.getByRole("button", { name: /add header/i }));
+    expect(screen.getAllByLabelText("Header name")[0]).toHaveValue("Authorization");
+
+    await user.click(screen.getByRole("button", { name: /add header/i }));
+    await user.click(screen.getByRole("button", { name: /add header/i }));
+    const names = screen.getAllByLabelText("Header name");
+    expect(names).toHaveLength(3);
+    expect(names[1]).toHaveValue("");
+    expect(names[2]).toHaveValue("");
+    expect(screen.queryByText(/already uses this name/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create source/i })).not.toBeDisabled();
+  });
+
+  it("submits every completed row when several headers are added", async () => {
+    const { user, onSave } = await renderWebForm();
+    await addHeaderWithCredential(user);
+
+    await user.click(screen.getByRole("button", { name: /add header/i }));
+    await user.type(screen.getAllByLabelText("Header name")[1], "X-Second-Token");
+    await user.click(screen.getAllByRole("combobox", { name: /^credential$/i })[1]);
+    await user.click(await screen.findByRole("option", { name: SECRET_NAME }));
+
+    await user.click(screen.getByRole("button", { name: /add header/i }));
+    await user.type(screen.getAllByLabelText("Header name")[2], "X-Third-Token");
+    await user.click(screen.getAllByRole("combobox", { name: /^credential$/i })[2]);
+    await user.click(await screen.findByRole("option", { name: SECRET_NAME }));
+
+    await act(async () => {
+      await user.click(screen.getByRole("button", { name: /create source/i }));
+    });
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    const payload = onSave.mock.calls[0][0] as { settings: { auth_headers: unknown[] } };
+    expect(payload.settings.auth_headers).toEqual([
+      { header_name: "Authorization", value_template: "Bearer {{secret}}", secret_ref: SECRET_ID },
+      { header_name: "X-Second-Token", value_template: "Bearer {{secret}}", secret_ref: SECRET_ID },
+      { header_name: "X-Third-Token", value_template: "Bearer {{secret}}", secret_ref: SECRET_ID },
+    ]);
+  });
+
+  it("shows only the last three characters of a credential preview", async () => {
+    const { user } = await renderWebForm();
+    await addHeaderWithCredential(user);
+
+    expect(screen.getByTestId("auth-header-request-preview")).toHaveTextContent("...xRZ");
+    expect(screen.queryByText(/oyw9/)).not.toBeInTheDocument();
+  });
+
+  it("labels the header columns", async () => {
+    const { user } = await renderWebForm();
+    await user.click(screen.getByRole("button", { name: /add header/i }));
+
+    expect(screen.getByText("Header name")).toBeInTheDocument();
+    expect(screen.getByText("Value")).toBeInTheDocument();
+    expect(screen.getByText("Credential")).toBeInTheDocument();
   });
 
   it("stops adding rows at the header limit", async () => {
