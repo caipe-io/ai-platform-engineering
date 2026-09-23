@@ -108,4 +108,31 @@ describe("getAuditBackend", () => {
     expect(mockWrite).toHaveBeenCalledTimes(1);
     expect(mockWrite).toHaveBeenCalledWith(event);
   });
+
+  it("attributes events to the administrator during impersonation", async () => {
+    const mockWrite = jest.fn();
+    const MockServiceBackend = jest.fn().mockImplementation(() => ({ write: mockWrite }));
+    jest.doMock("../backends/service-backend", () => ({ ServiceBackend: MockServiceBackend }));
+
+    const { getAuditBackend } = await import("../backend");
+    const { setAuditImpersonationContext } = await import("../impersonation-context");
+    setAuditImpersonationContext({
+      actorSub: "admin-sub",
+      startedAt: "2026-09-23T12:00:00.000Z",
+    });
+
+    getAuditBackend().write({
+      type: "auth",
+      subject_ref: "user:target-sub",
+    });
+    setAuditImpersonationContext(undefined);
+
+    expect(mockWrite).toHaveBeenCalledWith(expect.objectContaining({
+      subject_ref: "user:target-sub",
+      actor_ref: "user:admin-sub",
+      actor_hash: expect.stringMatching(/^sha256:/),
+      impersonation: true,
+      impersonation_started_at: "2026-09-23T12:00:00.000Z",
+    }));
+  });
 });

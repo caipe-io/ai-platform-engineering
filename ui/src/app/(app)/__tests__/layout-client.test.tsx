@@ -28,6 +28,10 @@ jest.mock("@/components/layout/LiveStreamBanner", () => ({
   LiveStreamBanner: () => <div data-testid="live-stream-banner" />,
 }));
 
+jest.mock("@/components/auth/ImpersonationBanner", () => ({
+  ImpersonationBanner: () => <div data-testid="impersonation-banner" />,
+}));
+
 jest.mock("@/hooks/use-user-init", () => ({
   useUserInit: jest.fn(),
 }));

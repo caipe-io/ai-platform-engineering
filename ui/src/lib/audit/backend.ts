@@ -10,6 +10,8 @@
  * AuditBackend.write() must never throw; implementations log errors internally.
  */
 
+import { withAuditImpersonationActor } from "./impersonation-context";
+
 export interface AuditBackend {
   /** Fire-and-forget write. Must never throw; log errors internally. */
   write(event: Record<string, unknown>): void;
@@ -21,6 +23,14 @@ class NoopAuditBackend implements AuditBackend {
   write(_event: Record<string, unknown>): void {
     // assisted-by Codex Codex-sonnet-4-6
     void _event;
+  }
+}
+
+class AttributingAuditBackend implements AuditBackend {
+  constructor(private readonly delegate: AuditBackend) {}
+
+  write(event: Record<string, unknown>): void {
+    this.delegate.write(withAuditImpersonationActor(event));
   }
 }
 
@@ -49,7 +59,9 @@ function createBackend(): AuditBackend {
     const flushIntervalMs = parseInt(process.env.AUDIT_SERVICE_FLUSH_INTERVAL_MS ?? "1000", 10);
     const flushBatchSize = parseInt(process.env.AUDIT_SERVICE_FLUSH_BATCH_SIZE ?? "100", 10);
     console.info(`[audit] backend=service url=${serviceUrl}`);
-    return new ServiceBackend(serviceUrl, flushIntervalMs, flushBatchSize);
+    return new AttributingAuditBackend(
+      new ServiceBackend(serviceUrl, flushIntervalMs, flushBatchSize),
+    );
   }
 
   console.warn(

@@ -7,11 +7,6 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
-import {
-  resolveAuthorizedAdminSimulationScope,
-  simulationSubjectCanAuditOrganization,
-  simulationSubjectCanManageAdminSurface,
-} from "@/lib/rbac/admin-simulation-server";
 import { getDirectSharingAccessConversationIds } from "@/lib/rbac/conversation-implicit-authz";
 import { hasOrganizationAdmin } from "@/lib/rbac/platform-admin";
 import {
@@ -300,29 +295,19 @@ export const GET = withErrorHandler(
     }
 
     const { session } = await getAuthFromBearerOrSession(request);
-    const simulationScope = await resolveAuthorizedAdminSimulationScope(
-      request.nextUrl.searchParams,
-      session,
-    );
-    const [canManageAllInsights,canAuditOrganization] = simulationScope
-      ? await Promise.all([
-          simulationSubjectCanManageAdminSurface(simulationScope, "stats"),
-          simulationSubjectCanAuditOrganization(simulationScope),
-        ])
-      : await Promise.all([
-          requireAdminSurfaceManage(session, "stats").then(
-            () => true,
-            () => false,
-          ),
-          hasOrganizationAdmin(session),
-        ]);
+    const [canManageAllInsights,canAuditOrganization] = await Promise.all([
+      requireAdminSurfaceManage(session, "stats").then(
+        () => true,
+        () => false,
+      ),
+      hasOrganizationAdmin(session),
+    ]);
     const isFullInsightsScope = canManageAllInsights || canAuditOrganization;
 
     // Direct calls from a baseline member still need the same read grant that
     // exposes Admin → Insights. A stats manager/org admin already passed the
-    // stronger check above. Access-preview requests were authorized when the
-    // simulation scope was resolved and are evaluated as that subject below.
-    if (!simulationScope && !isFullInsightsScope) {
+    // stronger check above.
+    if (!isFullInsightsScope) {
       await requireBaselineAdminSurfaceRead(session, "stats");
     }
 
@@ -336,16 +321,12 @@ export const GET = withErrorHandler(
       ? identity.toLowerCase()
       : identity;
 
-    const openfgaUser = simulationScope?.openfgaUser ?? (
-      typeof session.sub === "string" && session.sub.trim()
-        ? `user:${session.sub.trim()}`
-        : ""
-    );
-    const actorOwnerEmail = simulationScope?.ownerEmail ?? (
-      typeof session.user?.email === "string"
-        ? session.user.email.trim()
-        : ""
-    );
+    const openfgaUser = typeof session.sub === "string" && session.sub.trim()
+      ? `user:${session.sub.trim()}`
+      : "";
+    const actorOwnerEmail = typeof session.user?.email === "string"
+      ? session.user.email.trim()
+      : "";
     if (!isFullInsightsScope && !openfgaUser && !actorOwnerEmail) {
       throw new ApiError("Unauthorized", 401, "UNAUTHORIZED");
     }
@@ -380,11 +361,9 @@ export const GET = withErrorHandler(
       !isFullInsightsScope && openfgaUser
         ? getOwnedAgents(openfgaUser)
         : Promise.resolve([]),
-      !isFullInsightsScope && simulationScope?.subjectType === "team"
-        ? Promise.resolve([simulationScope.subjectId])
-        : !isFullInsightsScope && openfgaUser
-          ? getInsightsActorTeamSlugs(openfgaUser)
-          : Promise.resolve([]),
+      !isFullInsightsScope && openfgaUser
+        ? getInsightsActorTeamSlugs(openfgaUser)
+        : Promise.resolve([]),
     ]);
     const readableWebConversationIds = [
       ...new Set([

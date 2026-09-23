@@ -11,6 +11,9 @@ jest.mock('../auth-token-store', () => ({
   storeTokens: jest.fn(async (sub: string | undefined, tokens: import('../auth-token-store').StoredTokens) => {
     if (sub) _mockTokenStore.set(sub, tokens)
   }),
+  deleteStoredTokens: jest.fn(async (sub: string | undefined) => {
+    if (sub) _mockTokenStore.delete(sub)
+  }),
   resetTokenStore: jest.fn(() => { _mockTokenStore.clear() }),
 }))
 
@@ -27,6 +30,26 @@ jest.mock('next-auth/jwt', () => ({
 const mockReconcileOidcClaimGroupsForUser = jest.fn()
 jest.mock('@/lib/rbac/oidc-claim-reconciler', () => ({
   reconcileOidcClaimGroupsForUser: (...args: unknown[]) => mockReconcileOidcClaimGroupsForUser(...args),
+}))
+
+const mockHasOrganizationAdmin = jest.fn()
+jest.mock('@/lib/rbac/platform-admin', () => ({
+  hasOrganizationAdmin: (...args: unknown[]) => mockHasOrganizationAdmin(...args),
+}))
+
+const mockMintImpersonatedUserToken = jest.fn()
+jest.mock('@/lib/auth/user-impersonation', () => ({
+  mintImpersonatedUserToken: (...args: unknown[]) => mockMintImpersonatedUserToken(...args),
+}))
+
+const mockReconcileLoginOpenFgaAccess = jest.fn()
+jest.mock('@/lib/rbac/login-openfga-bootstrap', () => ({
+  reconcileLoginOpenFgaAccess: (...args: unknown[]) => mockReconcileLoginOpenFgaAccess(...args),
+}))
+
+const mockLogAuthzDecision = jest.fn()
+jest.mock('@/lib/rbac/audit', () => ({
+  logAuthzDecision: (...args: unknown[]) => mockLogAuthzDecision(...args),
 }))
 
 import {
@@ -119,6 +142,23 @@ function makeRefreshFetchMock(opts: {
 describe('auth-config', () => {
   beforeEach(() => {
     mockReconcileOidcClaimGroupsForUser.mockReset()
+    mockHasOrganizationAdmin.mockReset().mockResolvedValue(true)
+    mockMintImpersonatedUserToken.mockReset().mockResolvedValue({
+      accessToken: 'impersonated-access-token',
+      expiresAt: 8_888_888_888,
+      claims: { sub: 'target-sub', groups: [], org: 'example' },
+      target: {
+        sub: 'target-sub',
+        name: 'Target User',
+        email: 'target@example.com',
+        username: 'target-user',
+      },
+    })
+    mockReconcileLoginOpenFgaAccess.mockReset().mockResolvedValue({
+      status: 'completed',
+      tuple_write_count: 1,
+    })
+    mockLogAuthzDecision.mockReset()
     _resetServerTokenStore()
   })
 
@@ -968,6 +1008,100 @@ describe('auth-config', () => {
       })
 
       expect(result.role).toBe('user')
+    })
+  })
+
+  describe('user impersonation', () => {
+    const actorToken = {
+      sub: 'actor-sub',
+      name: 'Admin User',
+      email: 'admin@example.com',
+      accessToken: 'actor-access-token',
+      expiresAt: 9_999_999_999,
+      isAuthorized: true,
+      canViewAdmin: true,
+      role: 'admin',
+      org: 'example',
+    }
+
+    it('projects the target identity and bearer into the session', async () => {
+      const token = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+        token: { ...actorToken },
+        trigger: 'update',
+        session: { impersonation: { action: 'start', targetSub: 'target-sub' } },
+      })
+
+      expect(mockHasOrganizationAdmin).toHaveBeenCalledWith({
+        sub: 'actor-sub',
+        user: { email: 'admin@example.com' },
+      })
+      expect(mockMintImpersonatedUserToken).toHaveBeenCalledWith('target-sub')
+      expect(mockReconcileLoginOpenFgaAccess).toHaveBeenCalledWith({
+        subject: 'target-sub',
+        email: 'target@example.com',
+        isAuthorized: true,
+        isAdmin: false,
+      })
+      expect(token.sub).toBe('actor-sub')
+      expect(token.impersonation).toEqual(expect.objectContaining({
+        targetSub: 'target-sub',
+        targetEmail: 'target@example.com',
+      }))
+
+      const session = await (authOptions.callbacks!.session! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+        session: { user: { name: 'Admin User', email: 'admin@example.com' } },
+        token,
+      })
+
+      expect(session).toEqual(expect.objectContaining({
+        sub: 'target-sub',
+        impersonatedBySub: 'actor-sub',
+        accessToken: 'impersonated-access-token',
+        expiresAt: 9_999_999_999,
+        role: 'user',
+        org: 'example',
+      }))
+      expect(session.user).toEqual(expect.objectContaining({
+        name: 'Target User',
+        email: 'target@example.com',
+      }))
+      expect(session.impersonation).toEqual(expect.objectContaining({
+        actor: expect.objectContaining({ sub: 'actor-sub' }),
+        target: expect.objectContaining({ sub: 'target-sub' }),
+      }))
+    })
+
+    it('refuses to start when the actor is no longer an organization admin', async () => {
+      mockHasOrganizationAdmin.mockResolvedValue(false)
+
+      const token = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+        token: { ...actorToken },
+        trigger: 'update',
+        session: { impersonation: { action: 'start', targetSub: 'target-sub' } },
+      })
+
+      expect(token.impersonation).toBeUndefined()
+      expect(token.impersonationNotice).toBe('Only organization administrators can impersonate users')
+      expect(mockMintImpersonatedUserToken).not.toHaveBeenCalled()
+    })
+
+    it('deletes the target bearer when impersonation stops', async () => {
+      const started = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+        token: { ...actorToken },
+        trigger: 'update',
+        session: { impersonation: { action: 'start', targetSub: 'target-sub' } },
+      })
+      const storeKey = (started.impersonation as { storeKey: string }).storeKey
+      expect(_mockTokenStore.has(storeKey)).toBe(true)
+
+      const stopped = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+        token: started,
+        trigger: 'update',
+        session: { impersonation: { action: 'stop' } },
+      })
+
+      expect(stopped.impersonation).toBeUndefined()
+      expect(_mockTokenStore.has(storeKey)).toBe(false)
     })
   })
 

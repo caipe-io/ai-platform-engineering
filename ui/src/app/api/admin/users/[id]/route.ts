@@ -6,7 +6,7 @@ successResponse,
 withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
-import { requireAdminSimulationUserProfileRead } from "@/lib/rbac/admin-simulation-server";
+import { requireUserProfileRead } from "@/lib/rbac/require-openfga";
 import {
 deleteRealmUser,
 getRealmUserById,
@@ -61,11 +61,7 @@ export const GET = withErrorHandler(
     const { session } = await getAuthFromBearerOrSession(request);
     const params = await context.params;
     const id = params.id;
-    await requireAdminSimulationUserProfileRead(
-      new URL(request.url).searchParams,
-      session,
-      id,
-    );
+    await requireUserProfileRead(session, id);
 
     const kcUser = await getRealmUserById(id);
 

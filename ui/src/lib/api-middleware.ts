@@ -18,6 +18,7 @@ import {
 } from '@/lib/jwt-validation';
 import { verifyCatalogApiKey } from '@/lib/catalog-api-keys';
 import { ApiError } from '@/lib/api-error';
+import { setAuditImpersonationContext } from '@/lib/audit/impersonation-context';
 import type { AuthFailureAction, AuthFailureReason } from '@/lib/auth-error';
 import { CredentialError } from '@/lib/credentials/errors';
 import { getRbacCollection } from '@/lib/rbac/mongo-collections';
@@ -152,6 +153,10 @@ type SessionAuthSession = {
   canViewAdmin?: boolean;
   isAuthorized?: boolean;
   isServiceAccount?: boolean;
+  impersonatedBySub?: string;
+  impersonation?: {
+    startedAt?: string;
+  };
   org?: string;
   principalType?: 'oidc_user' | 'service_account' | 'catalog_api_key' | 'skills_api_key';
   /**
@@ -170,6 +175,15 @@ type SessionAuthSession = {
     name?: string;
   } | null;
 };
+
+function bindAuditImpersonationContext(session: SessionAuthSession): void {
+  const actorSub = session.impersonatedBySub?.trim();
+  setAuditImpersonationContext(
+    actorSub
+      ? { actorSub, startedAt: session.impersonation?.startedAt }
+      : undefined,
+  );
+}
 
 type SessionAuthPayload = {
   user: {
@@ -415,12 +429,14 @@ export async function getAuthenticatedUser(
 ) {
   const cached = readCachedSessionAuth(request);
   if (cached) {
+    bindAuditImpersonationContext(cached.session);
     return cached;
   }
 
   const session = await getServerSession(authOptions);
 
   if (!session || !session.user?.email) {
+    setAuditImpersonationContext(undefined);
     const { allowAnonymous = false } = options;
     if (allowAnonymous && isDevAnonymousAuthEnabled()) {
       return {
@@ -436,6 +452,8 @@ export async function getAuthenticatedUser(
       'sign_in'
     );
   }
+
+  bindAuditImpersonationContext(session);
 
   if (getConfig('ssoEnabled') && session.isAuthorized === false) {
     throw new ApiError(
@@ -651,6 +669,7 @@ export async function withAuth<T>(
 export async function getAuthFromBearerOrSession(
   request: NextRequest,
 ): Promise<{ user: { email: string; name: string; role: string }; session: SessionAuthSession }> {
+  setAuditImpersonationContext(undefined);
   const authHeader = request.headers.get('Authorization');
   const catalogKey = request.headers.get('X-Caipe-Catalog-Key');
 
@@ -985,6 +1004,7 @@ export async function requireRbacPermission(
     org?: string;
     role?: string;
     user?: { email?: string };
+    impersonatedBySub?: string;
     principalType?: SessionAuthSession['principalType'];
     isServiceAccount?: boolean;
   },
@@ -994,9 +1014,19 @@ export async function requireRbacPermission(
   const accessToken = session.accessToken;
   const email = session.user?.email;
   const subject = session.sub;
+  const actorSub = session.impersonatedBySub;
   const principal = subject
     ? `${session.isServiceAccount === true ? 'service_account' : 'user'}:${subject}`
     : null;
+  const logRequestDecision = (
+    params: Parameters<typeof logAuthzDecision>[0],
+  ): void => {
+    logAuthzDecision({
+      ...params,
+      actorSub,
+      subjectRef: params.subjectRef ?? principal ?? undefined,
+    });
+  };
 
   if (session.principalType === 'catalog_api_key' || session.principalType === 'skills_api_key') {
     throw new ApiError(
@@ -1010,7 +1040,7 @@ export async function requireRbacPermission(
 
   if (isUnsafeRbacBypassEnabled()) {
     warnUnsafeRbacBypassEnabled(`${resource}#${scope}`);
-    logAuthzDecision({
+    logRequestDecision({
       tenantId: session.org ?? 'unknown',
       sub: subject ?? email ?? 'unsafe-rbac-bypass',
       resource,
@@ -1024,7 +1054,7 @@ export async function requireRbacPermission(
   }
 
   if (!accessToken && !subject) {
-    logAuthzDecision({
+    logRequestDecision({
       tenantId: session.org ?? 'unknown',
       sub: session.sub ?? 'unknown',
       resource,
@@ -1048,7 +1078,7 @@ export async function requireRbacPermission(
     session.role === 'admin' &&
     (!accessToken || jwtHasRealmRole(accessToken, 'admin'))
   ) {
-    logAuthzDecision({
+    logRequestDecision({
       tenantId: session.org ?? 'unknown',
       sub: session.sub ?? 'unknown',
       resource,
@@ -1062,7 +1092,7 @@ export async function requireRbacPermission(
   }
 
   if (!subject && process.env.NODE_ENV === 'test' && await allowViaLegacyTestPdp(accessToken, resource, scope)) {
-    logAuthzDecision({
+    logRequestDecision({
       tenantId: session.org ?? 'unknown',
       sub: session.sub ?? 'unknown',
       resource,
@@ -1082,7 +1112,7 @@ export async function requireRbacPermission(
     try {
       const result = await checkOpenFgaTuple(resourceScopedTuple);
       if (result.allowed) {
-        logAuthzDecision({
+        logRequestDecision({
           tenantId: session.org ?? 'unknown',
           sub: session.sub ?? 'unknown',
           resource,
@@ -1096,7 +1126,7 @@ export async function requireRbacPermission(
       }
     } catch {
       if (!isBootstrapAdminEmail(email)) {
-        logAuthzDecision({
+        logRequestDecision({
           tenantId: session.org ?? 'unknown',
           sub: session.sub ?? 'unknown',
           resource,
@@ -1117,7 +1147,7 @@ export async function requireRbacPermission(
     }
 
     if (!isBootstrapAdminEmail(email)) {
-      logAuthzDecision({
+      logRequestDecision({
         tenantId: session.org ?? 'unknown',
         sub: session.sub ?? 'unknown',
         resource,
@@ -1150,7 +1180,7 @@ export async function requireRbacPermission(
     try {
       const result = await checkOpenFgaTuple(tuple);
       if (result.allowed) {
-        logAuthzDecision({
+        logRequestDecision({
           tenantId: session.org ?? 'unknown',
           sub: session.sub ?? 'unknown',
           resource,
@@ -1166,7 +1196,7 @@ export async function requireRbacPermission(
       if (isOpenFgaUnconfiguredTestError(error)) {
         const legacyDecision = await legacyTestPdpDecision(accessToken, resource, scope);
         if (legacyDecision === true) {
-          logAuthzDecision({
+          logRequestDecision({
             tenantId: session.org ?? 'unknown',
             sub: session.sub ?? 'unknown',
             resource,
@@ -1179,7 +1209,7 @@ export async function requireRbacPermission(
           return;
         }
         if (legacyDecision === false) {
-          logAuthzDecision({
+          logRequestDecision({
             tenantId: session.org ?? 'unknown',
             sub: session.sub ?? 'unknown',
             resource,
@@ -1200,7 +1230,7 @@ export async function requireRbacPermission(
         }
       }
       if (!isBootstrapAdminEmail(email)) {
-        logAuthzDecision({
+        logRequestDecision({
           tenantId: session.org ?? 'unknown',
           sub: session.sub ?? 'unknown',
           resource,
@@ -1222,7 +1252,7 @@ export async function requireRbacPermission(
   }
 
   if (isBootstrapAdminEmail(email)) {
-    logAuthzDecision({
+    logRequestDecision({
       tenantId: session.org ?? 'unknown',
       sub: session.sub ?? 'unknown',
       resource,
@@ -1235,7 +1265,7 @@ export async function requireRbacPermission(
     return;
   }
 
-  logAuthzDecision({
+  logRequestDecision({
     tenantId: session.org ?? 'unknown',
     sub: session.sub ?? 'unknown',
     resource,

@@ -14,9 +14,10 @@ import {
   getUserFederatedIdentities,
   getUserSessions,
   getKeycloakRealm,
+  listIdpAliases,
   listRealmRoleMappingsForUser,
 } from "@/lib/rbac/keycloak-admin";
-import { requireAdminSimulationUserProfileRead } from "@/lib/rbac/admin-simulation-server";
+import { requireUserProfileRead } from "@/lib/rbac/require-openfga";
 import type { UserIdentityInfo } from "@/types/admin-user-identity";
 import { type NextRequest } from "next/server";
 
@@ -27,18 +28,15 @@ export const GET = withErrorHandler(
   ) => {
     const { session } = await getAuthFromBearerOrSession(request);
     const { id } = await context.params;
-    await requireAdminSimulationUserProfileRead(
-      new URL(request.url).searchParams,
-      session,
-      id,
-    );
+    await requireUserProfileRead(session, id);
 
     const results = await Promise.allSettled([
       getUserSessions(id),
       getUserFederatedIdentities(id),
+      listIdpAliases(),
       listRealmRoleMappingsForUser(id),
     ]);
-    const keys = ["sessions", "federatedIdentities", "realmRoles"] as const;
+    const keys = ["sessions", "federatedIdentities", "identityProviders", "realmRoles"] as const;
     const unavailable: UserIdentityInfo["unavailable"] = [];
     results.forEach((result, index) => {
       if (result.status === "rejected") {
@@ -49,8 +47,9 @@ export const GET = withErrorHandler(
     });
     const sessions = results[0].status === "fulfilled" ? results[0].value : [];
     const federatedIdentities = results[1].status === "fulfilled" ? results[1].value : [];
-    const realmRoles = results[2].status === "fulfilled"
-      ? results[2].value.map((role) => role.name).sort()
+    const identityProviders = results[2].status === "fulfilled" ? results[2].value : [];
+    const realmRoles = results[3].status === "fulfilled"
+      ? results[3].value.map((role) => role.name).sort()
       : [];
 
     const lastAccess = sessions.reduce((max, s) => {
@@ -63,6 +62,9 @@ export const GET = withErrorHandler(
       fetchedAt: new Date().toISOString(),
       sessions: sessions.map(({ id: sessionId, start, lastAccess }) => ({ id: sessionId, start, lastAccess })),
       federatedIdentities,
+      federationRequired: results[2].status === "fulfilled"
+        ? identityProviders.some((provider) => provider.enabled !== false)
+        : undefined,
       realmRoles,
       unavailable,
       lastAccess: lastAccess > 0 ? lastAccess : null,

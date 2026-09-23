@@ -127,7 +127,7 @@ warning. Choose another agent or remove the platform default.
 - Any signed-in user can manage personal preferences and inspect their own
   account and access information.
 - Only admins can see or change Platform settings.
-- Admin View as remains read-only for operational and policy controls.
+- Organization admins can impersonate an eligible human user from **Security & Policy → User Impersonation**. When the realm uses an external identity provider, unlinked Keycloak shell users are excluded; configured OIDC sign-in group requirements also apply. A persistent warning bar identifies the target and provides the exit action.
 - Sensitive session and token values remain concealed until explicitly opened.
 
 ## Related pages

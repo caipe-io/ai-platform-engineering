@@ -4,10 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Select } from "@/components/ui/select";
-import {
-  withAdminSimulationParams,
-  type AdminSimulationQueryTarget,
-} from "@/lib/rbac/admin-simulation-query";
 import { AlertCircle,ChevronLeft,ChevronRight,Loader2 } from "lucide-react";
 import { usePathname,useRouter,useSearchParams } from "next/navigation";
 import {
@@ -51,7 +47,6 @@ interface TeamListItem {
 
 export interface UserManagementTabProps {
   onSelectUser: (userId: string) => void;
-  simulationTarget?: AdminSimulationQueryTarget | null;
 }
 
 function parseListParam(raw: string | null): string[] {
@@ -86,16 +81,11 @@ function webexStatusForUser(u: AdminUserRow): "linked" | "unlinked" {
 
 export function UserManagementTab({
   onSelectUser,
-  simulationTarget = null,
 }: UserManagementTabProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const skipSearchDraftSyncRef = useRef(false);
-  const withPreviewScope = useCallback(
-    (path: string) => withAdminSimulationParams(path, simulationTarget),
-    [simulationTarget],
-  );
 
   const page = Math.max(
     1,
@@ -195,7 +185,7 @@ export function UserManagementTab({
     setTeams([]);
     (async () => {
       try {
-        const res = await fetch(withPreviewScope("/api/admin/teams"));
+        const res = await fetch("/api/admin/teams");
         const json = await res.json();
         if (!json.success) return;
         if (!cancelled) {
@@ -208,7 +198,7 @@ export function UserManagementTab({
     return () => {
       cancelled = true;
     };
-  }, [withPreviewScope]);
+  }, []);
 
 
   // The shared MultiSelect works on plain string options, while `teamsFilter`
@@ -257,7 +247,7 @@ export function UserManagementTab({
         if (enabledFilter === "enabled") qs.set("enabled", "true");
         if (enabledFilter === "disabled") qs.set("enabled", "false");
 
-        const res = await fetch(withPreviewScope(`/api/admin/users?${qs.toString()}`));
+        const res = await fetch(`/api/admin/users?${qs.toString()}`);
         const data = await res.json();
         if (!res.ok) {
           throw new Error(
@@ -292,7 +282,6 @@ export function UserManagementTab({
     slackFilter,
     webexFilter,
     enabledFilter,
-    withPreviewScope,
   ]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));

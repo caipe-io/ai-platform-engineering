@@ -814,12 +814,12 @@ def test_get_verbosity_verbose(tmp_path: Path) -> None:
 
 
 def test_get_storage_local(tmp_path: Path) -> None:
-    # Use local_retention_days=90 so the pre-seeded file is not purged on startup
+    # Keep the seeded object inside the retention window regardless of test date.
     app = create_app(_settings(tmp_path, local_retention_days=90))
-    # Write a real file into the store directory so audit_bytes > 0
-    day_dir = tmp_path / "2026" / "06" / "20"
+    now = datetime.now(timezone.utc)
+    day_dir = tmp_path / now.strftime("%Y") / now.strftime("%m") / now.strftime("%d")
     day_dir.mkdir(parents=True)
-    (day_dir / "audit-20260620T000000Z-abc.ndjson").write_bytes(b"x" * 512)
+    (day_dir / f"audit-{now.strftime('%Y%m%dT%H%M%SZ')}-abc.ndjson").write_bytes(b"x" * 512)
     with TestClient(app) as client:
         response = client.get("/v1/audit/storage")
     assert response.status_code == 200

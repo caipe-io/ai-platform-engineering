@@ -29,6 +29,9 @@ describe("admin route registry", () => {
     );
     expect(findAdminDestinationByPath("/admin/security/ai-review/")?.id).toBe("ai-review");
     expect(findAdminDestinationByPath("/admin/security/audit")?.id).toBe("audit");
+    expect(findAdminDestinationByPath("/admin/security/impersonation")?.id).toBe(
+      "impersonation",
+    );
     expect(findAdminDestinationByPath("/admin/security/access-operations")?.id).toBe("access-operations");
     expect(findAdminDestinationByPath("/admin/security/rbac-audit")).toBeUndefined();
     expect(findAdminDestinationByPath("/admin/security/access-explorer")).toBeUndefined();
@@ -70,6 +73,18 @@ describe("admin route registry", () => {
     expect(categories[0].destinations.map((destination) => destination.id)).toEqual([
       "audit",
       "access-operations",
+    ]);
+  });
+
+  it("shows user impersonation in the Security & Policy navigation for admins", () => {
+    const categories = filterAdminCategories({ platform_settings: true });
+    const security = categories.find((category) => category.id === "security");
+
+    expect(security?.label).toBe("Security & Policy");
+    expect(security?.destinations.map((destination) => destination.label)).toEqual([
+      "Access before sign-in",
+      "AI Review",
+      "User Impersonation",
     ]);
   });
 

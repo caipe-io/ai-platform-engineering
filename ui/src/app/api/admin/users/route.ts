@@ -17,10 +17,6 @@ import {
 curateRealmRolesForUser,
 type RealmRoleClassification,
 } from "@/lib/rbac/keycloak-transition";
-import {
-resolveAuthorizedAdminSimulationScope,
-simulationSubjectCanAuditOrganization,
-} from "@/lib/rbac/admin-simulation-server";
 import { listOpenFgaObjects } from "@/lib/rbac/openfga";
 import { requireBaselineAdminSurfaceRead } from "@/lib/rbac/require-openfga";
 import {
@@ -194,17 +190,13 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   const { session } = await getAuthFromBearerOrSession(request);
   await requireBaselineAdminSurfaceRead(session, "users");
   const url = new URL(request.url);
-  const simulationScope = await resolveAuthorizedAdminSimulationScope(url.searchParams, session);
-
-  const hasAdminView = simulationScope
-    ? await simulationSubjectCanAuditOrganization(simulationScope)
-    : await requireRbacPermission(session, "admin_ui", "view").then(
-        () => true,
-        () => false
-      );
+  const hasAdminView = await requireRbacPermission(session, "admin_ui", "view").then(
+    () => true,
+    () => false
+  );
 
   // Per-user role enrichment is opt-in. The Users-tab table, the team
-  // typeaheads, the simulation picker, and the ReBAC graph filters do not
+  // typeaheads and the ReBAC graph filters do not
   // render role fields; they should not pay for N extra Keycloak round-trips
   // per page. Callers that need role data either pass `?includeRoles=true`
   // or use the per-user `/api/admin/users/[id]/roles` endpoint.
@@ -229,20 +221,11 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   // admin) is now widened to the same full-list view so they can VIEW any
   // user, but each row is stamped `can_edit` only for users on a team they
   // administer. Plain members fall back to the self/team-scoped listing.
-  const selfSubjectId = simulationScope
-    ? simulationScope.subjectType === "user"
-      ? simulationScope.subjectId
-      : ""
-    : typeof session.sub === "string"
-      ? session.sub.trim()
-      : "";
-  const actor = simulationScope?.openfgaUser
-    ?? (selfSubjectId ? `user:${selfSubjectId}` : "");
+  const selfSubjectId = typeof session.sub === "string" ? session.sub.trim() : "";
+  const actor = selfSubjectId ? `user:${selfSubjectId}` : "";
   let adminSlugs = new Set<string>();
   if (!hasAdminView) {
-    if (simulationScope?.subjectType === "team" && simulationScope.teamRelation === "admin") {
-      adminSlugs = new Set([simulationScope.subjectId]);
-    } else if (actor) {
+    if (actor) {
       try {
         const adminObjects = await listOpenFgaObjects({
           user: actor,
@@ -309,24 +292,20 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
     };
 
     let teamSlugs: string[] = [];
-    if (simulationScope?.subjectType === "team") {
-      teamSlugs = [simulationScope.subjectId];
-    } else {
-      try {
-        const teamObjects = await listOpenFgaObjects({
-          user: actor,
-          relation: "member",
-          type: "team",
-        });
-        teamSlugs = teamObjects.objects
-          .map((obj) => {
-            const parts = obj.split(":");
-            return parts.length >= 2 ? parts.slice(1).join(":") : "";
-          })
-          .filter(Boolean);
-      } catch {
-        // fall through to self-only
-      }
+    try {
+      const teamObjects = await listOpenFgaObjects({
+        user: actor,
+        relation: "member",
+        type: "team",
+      });
+      teamSlugs = teamObjects.objects
+        .map((obj) => {
+          const parts = obj.split(":");
+          return parts.length >= 2 ? parts.slice(1).join(":") : "";
+        })
+        .filter(Boolean);
+    } catch {
+      // fall through to self-only
     }
 
     if (teamSlugs.length === 0) {

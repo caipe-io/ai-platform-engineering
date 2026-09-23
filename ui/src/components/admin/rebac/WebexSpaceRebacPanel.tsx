@@ -3,8 +3,6 @@
 import { useMemo } from "react";
 
 import { getConfig } from "@/lib/config";
-import type { AdminSimulationQueryTarget } from "@/lib/rbac/admin-simulation-query";
-import { withAdminSimulationParams } from "@/lib/rbac/admin-simulation-query";
 import { ConnectorAdminPanel } from "./ConnectorAdminPanel";
 import { WebexDirectUsersPanel } from "./WebexDirectUsersPanel";
 import { WebexConfiguredSpaceDetail } from "./webex/WebexConfiguredSpaceDetail";
@@ -327,11 +325,9 @@ const WEBEX_ADAPTER: ConnectorAdminAdapter = {
 export function WebexSpaceRebacPanel({
   disabled = false,
   selfService = false,
-  simulationTarget = null,
 }: {
   disabled?: boolean;
   selfService?: boolean;
-  simulationTarget?: AdminSimulationQueryTarget | null;
 }) {
   const appName = getConfig("appName");
   const adapter = useMemo<ConnectorAdminAdapter>(
@@ -341,12 +337,8 @@ export function WebexSpaceRebacPanel({
         ...WEBEX_ADAPTER.copy,
         configuredTabDescription: `Spaces ${appName} already knows about. Click a space to manage its integration.`,
       },
-      api: {
-        ...WEBEX_ADAPTER.api,
-        list: withAdminSimulationParams(WEBEX_ADAPTER.api.list, simulationTarget),
-      },
     }),
-    [appName, simulationTarget],
+    [appName],
   );
   return (
     <ConnectorAdminPanel

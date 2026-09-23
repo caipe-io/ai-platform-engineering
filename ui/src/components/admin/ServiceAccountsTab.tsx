@@ -48,8 +48,6 @@ import {
   type ProviderOption,
 } from "@/components/ui/provider-select";
 import { CopyButton } from "@/components/ui/copy-button";
-import { withAdminSimulationParams } from "@/lib/rbac/admin-simulation-query";
-import type { AdminSimulationQueryTarget } from "@/lib/rbac/admin-simulation-query";
 import { cn } from "@/lib/utils";
 import { getProviderDisplayName } from "@/lib/credentials/provider-display-names";
 
@@ -146,10 +144,8 @@ interface ServiceAccountCredential {
 
 export function ServiceAccountsTab({
   readOnly = false,
-  simulationTarget = null,
 }: {
   readOnly?: boolean;
-  simulationTarget?: AdminSimulationQueryTarget | null;
 }) {
   const [items, setItems] = useState<ServiceAccountListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -187,11 +183,8 @@ export function ServiceAccountsTab({
     params.set("page", String(page));
     params.set("page_size", String(PAGE_SIZE));
     if (search) params.set("search", search);
-    return withAdminSimulationParams(
-      `/api/admin/service-accounts?${params.toString()}`,
-      simulationTarget,
-    );
-  }, [page, search, simulationTarget]);
+    return `/api/admin/service-accounts?${params.toString()}`;
+  }, [page, search]);
 
   const loadList = useCallback(
     async (isRefresh = false) => {

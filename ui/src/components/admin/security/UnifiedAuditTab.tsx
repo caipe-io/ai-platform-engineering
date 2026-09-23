@@ -435,11 +435,11 @@ function compactHash(value?: string | null): string | undefined {
 function hasReadableActor(evt: UnifiedAuditEvent): boolean {
   return Boolean(
     evt.actor_display ||
+      evt.actor_ref ||
       evt.caller_display ||
       evt.subject_display ||
       evt.user_email ||
       evt.caller_ref ||
-      evt.actor_ref ||
       evt.subject_ref,
   );
 }
@@ -451,11 +451,11 @@ function hasReadableSubject(evt: UnifiedAuditEvent): boolean {
 function actorLabel(evt: UnifiedAuditEvent): string {
   const label =
     evt.actor_display ||
+    evt.actor_ref ||
     evt.caller_display ||
+    evt.caller_ref ||
     evt.subject_display ||
     evt.user_email ||
-    evt.caller_ref ||
-    evt.actor_ref ||
     evt.subject_ref ||
     compactHash(evt.actor_hash) ||
     compactHash(evt.subject_hash);
@@ -1270,8 +1270,13 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
 	                          <td className="px-3 py-2">
 	                            <TypeBadge type={evt.type} />
 	                          </td>
-	                          <td className="px-3 py-2 text-xs max-w-[220px] truncate" title={actor}>
-	                            {actor}
+	                          <td className="px-3 py-2 text-xs max-w-[220px]" title={actor}>
+	                            <div className="truncate">{actor}</div>
+                                {evt.impersonation ? (
+                                  <Badge variant="outline" className="mt-1 border-amber-500/50 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-300">
+                                    Admin impersonation
+                                  </Badge>
+                                ) : null}
 	                          </td>
 	                          <td className="px-3 py-2 min-w-[260px]" title={`${evt.action} ${evt.resource_ref || ""}`.trim()}>
 	                            <div className="font-medium text-sm">{story}</div>
@@ -1313,6 +1318,11 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
 	                              </div>
 	                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
 	                                <DetailField label="Actor" value={actor} />
+	                                <DetailField
+	                                  label="Execution mode"
+	                                  value={evt.impersonation ? "Admin impersonation" : undefined}
+	                                />
+	                                <DetailField label="Impersonation started" value={evt.impersonation_started_at} />
 	                                <DetailField
 	                                  label={evt.type === "cas_reconcile" ? "Target" : "Subject"}
 	                                  value={subject}

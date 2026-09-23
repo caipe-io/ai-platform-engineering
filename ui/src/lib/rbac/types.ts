@@ -98,6 +98,9 @@ export interface AuditEvent {
   tenant_id: string;
   subject_hash: string;
   actor_hash?: string;
+  actor_ref?: string;
+  impersonation?: boolean;
+  impersonation_started_at?: string;
   capability: string;
   component: RbacResource;
   resource_ref?: string;
@@ -182,6 +185,10 @@ export interface UnifiedAuditEvent {
   actor_ref?: string;
   /** Canonical actor label for display (for example a user email). */
   actor_display?: string;
+  /** True when a human administrator acted through user impersonation. */
+  impersonation?: boolean;
+  /** Start time of the impersonation session that produced the event. */
+  impersonation_started_at?: string;
   /** CAS grant/revoke: readable caller ref (e.g. user:sub). */
   caller_ref?: string;
   /** Canonical caller label for display (for example a user email). */

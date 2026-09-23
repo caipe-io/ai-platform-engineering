@@ -17,6 +17,7 @@ import {
   SlidersHorizontal,
   TrendingUp,
   User,
+  UserRoundCog,
   Users,
   UsersRound,
   type LucideIcon,
@@ -51,6 +52,7 @@ export type AdminDestinationId =
   | "metrics"
   | "health"
   | "access-before-sign-in"
+  | "impersonation"
   | "ai-review"
   | "audit"
   | "approvals"
@@ -294,6 +296,15 @@ export const ADMIN_CATEGORIES: AdminCategoryDefinition[] = [
         gateKey: "action_audit",
         gateKeys: ["action_audit", "audit_logs", "openfga"],
         subgroup: "Audit",
+      },
+      {
+        id: "impersonation",
+        href: "/admin/security/impersonation",
+        label: "User Impersonation",
+        description: "Temporarily sign in as a user to reproduce their application experience.",
+        icon: UserRoundCog,
+        gateKey: "platform_settings",
+        subgroup: "Authorization",
       },
       {
         id: "approvals",

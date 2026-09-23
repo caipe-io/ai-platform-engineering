@@ -6,7 +6,6 @@ import { NextRequest } from "next/server";
 
 const mockCheckPermission = jest.fn();
 const mockGetRealmUserById = jest.fn();
-const mockGetRealmUserByIdOrNull = jest.fn();
 const mockGetRoleByName = jest.fn();
 const mockAssignRealmRolesToUser = jest.fn();
 const mockRemoveRealmRolesFromUser = jest.fn();
@@ -58,7 +57,6 @@ jest.mock("@/lib/rbac/audit", () => ({
 
 jest.mock("@/lib/rbac/keycloak-admin", () => ({
   getRealmUserById: (...args: unknown[]) => mockGetRealmUserById(...args),
-  getRealmUserByIdOrNull: (...args: unknown[]) => mockGetRealmUserByIdOrNull(...args),
   deleteRealmUser: (...args: unknown[]) => mockDeleteRealmUser(...args),
   getRoleByName: (...args: unknown[]) => mockGetRoleByName(...args),
   assignRealmRolesToUser: (...args: unknown[]) => mockAssignRealmRolesToUser(...args),
@@ -110,7 +108,6 @@ beforeEach(() => {
     enabled: true,
     attributes: {},
   });
-  mockGetRealmUserByIdOrNull.mockResolvedValue(null);
   mockListRealmRoleMappingsForUser.mockResolvedValue([]);
   mockGetUserSessions.mockResolvedValue([]);
   mockGetUserFederatedIdentities.mockResolvedValue([]);
@@ -223,92 +220,6 @@ describe("admin user sibling routes dual-auth PDP gates", () => {
     expect(response.status).toBe(200);
     expect(body.data.user).toEqual(expect.objectContaining({ id: "alice-sub" }));
     expect(mockGetRealmUserById).toHaveBeenCalledWith("alice-sub");
-  });
-
-  it("authorizes a simulated self-profile read as the selected user", async () => {
-    mockCheckOpenFgaTuple.mockImplementation(async (tuple: {
-      user: string;
-      relation: string;
-      object: string;
-    }) => ({
-      allowed:
-        (tuple.user === "user:bob-sub"
-          && tuple.relation === "can_manage"
-          && tuple.object === "organization:caipe")
-        || (tuple.user === "user:alice-sub"
-          && tuple.relation === "can_read"
-          && tuple.object === "user_profile:alice-sub"),
-    }));
-    mockGetRealmUserByIdOrNull.mockResolvedValue({
-      id: "alice-sub",
-      email: "alice@example.com",
-    });
-    mockGetRealmUserById.mockResolvedValue({
-      id: "alice-sub",
-      username: "alice@example.com",
-      email: "alice@example.com",
-      enabled: true,
-      attributes: {},
-    });
-
-    const { GET } = await import("../[id]/route");
-    const response = await GET(
-      request(
-        "/api/admin/users/alice-sub?simulate_type=user&simulate_id=alice-sub",
-        { method: "GET" },
-      ),
-      { params: Promise.resolve({ id: "alice-sub" }) },
-    );
-
-    expect(response.status).toBe(200);
-    expect(mockCheckOpenFgaTuple).toHaveBeenCalledWith({
-      user: "user:alice-sub",
-      relation: "can_read",
-      object: "user_profile:alice-sub",
-    });
-    expect(mockCheckOpenFgaTuple).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        user: "user:bob-sub",
-        relation: "can_read",
-        object: "user_profile:alice-sub",
-      }),
-    );
-  });
-
-  it("applies team-admin profile visibility to a team-admin preview", async () => {
-    mockCheckOpenFgaTuple.mockImplementation(async (tuple: {
-      user: string;
-      relation: string;
-      object: string;
-    }) => ({
-      allowed:
-        tuple.user === "user:bob-sub"
-        && tuple.relation === "can_manage"
-        && tuple.object === "organization:caipe",
-    }));
-    mockGetRealmUserById.mockResolvedValue({
-      id: "alice-sub",
-      username: "alice@example.com",
-      email: "alice@example.com",
-      enabled: true,
-      attributes: {},
-    });
-
-    const { GET } = await import("../[id]/route");
-    const response = await GET(
-      request(
-        "/api/admin/users/alice-sub?simulate_type=team&simulate_id=platform&simulate_relation=admin",
-        { method: "GET" },
-      ),
-      { params: Promise.resolve({ id: "alice-sub" }) },
-    );
-
-    expect(response.status).toBe(200);
-    expect(mockCheckOpenFgaTuple).toHaveBeenCalledWith({
-      user: "team:platform#admin",
-      relation: "can_manage",
-      object: "admin_surface:users",
-    });
   });
 
   it("requires admin_surface users read even when organization admin view is allowed", async () => {

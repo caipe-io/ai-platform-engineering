@@ -1114,17 +1114,20 @@ Admin tab visibility is now a deterministic Web UI backend gate (`/api/rbac/admi
 based on session role plus feature flags; resource authorization is modeled in
 OpenFGA relationships.
 
-The Admin UI also includes a read-only effective-permissions simulator. Platform
-admins can add `simulate_type=user&simulate_id=<keycloak_sub>` or
-`simulate_type=team&simulate_id=<slug>&simulate_relation=member|admin` to the
-Admin URL through the **View As read-only access preview** control. The browser stays
-authenticated as the real admin; the Web UI backend simply evaluates tab gates as
-the simulated OpenFGA subject (`user:<sub>` or `team:<slug>#admin`). Simulation is
-not Keycloak impersonation, never mints a token for the target principal, and
-disables mutation-oriented integration panels while previewing. Configured
-Slack channels, Webex spaces, Statistics, and Feedback are filtered through the
-simulated subject's effective access, so the preview contains only resources
-and activity that principal can access.
+The Admin UI includes real user impersonation under **Security & Policy → User
+Impersonation**. An organization admin selects an enabled human account, and the
+Web UI backend uses Keycloak token exchange to mint a short-lived bearer for that
+subject. The original admin identity stays sealed in the server-managed session
+as the actor, while application requests, writes, tool calls, and OpenFGA checks
+use the target user as the subject. A non-dismissible warning bar identifies the
+target and restores the actor session on exit. Authorization decisions and
+impersonation transitions record the target as subject, the administrator as
+actor, and an explicit impersonation marker. The same attribution is applied to
+Web UI backend auth, CAS, credential, and policy-change audit events, including
+delayed CAS allow rollups. Disabled users and service accounts are never eligible
+targets. When the realm has an enabled IdP broker, users without a federated
+identity link are also excluded; `OIDC_REQUIRED_GROUP` remains an admission gate
+for the exchanged user token.
 
 The UI is intentionally Web UI backend first:
 

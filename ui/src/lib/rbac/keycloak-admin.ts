@@ -1541,6 +1541,90 @@ export async function ensureWebexBotOboPermissions(): Promise<void> {
   return ensureBotOboPermissions(WEBEX_BOT_CLIENT_ID, "caipe-webex-bot-token-exchange");
 }
 
+/**
+ * Ensure the UI's confidential platform client can exchange its service token
+ * for a selected human user's token. Product authorization still verifies the
+ * initiating administrator before this Keycloak capability is used.
+ */
+export async function ensureUiUserImpersonationPermissions(): Promise<void> {
+  const clientId = process.env.KEYCLOAK_ADMIN_CLIENT_ID?.trim() || "caipe-platform";
+  const audienceClientId = BOT_OBO_AUDIENCE_CLIENT_ID;
+  const [client, audienceClient, realmManagementClient] = await Promise.all([
+    getClientByClientId(clientId),
+    getClientByClientId(audienceClientId),
+    getClientByClientId("realm-management"),
+  ]);
+  if (!client) {
+    throw new Error(`Keycloak UI impersonation client "${clientId}" not found`);
+  }
+  if (!realmManagementClient) {
+    throw new Error('Keycloak client "realm-management" not found');
+  }
+  if (!audienceClient) {
+    throw new Error(`Keycloak audience client "${audienceClientId}" not found`);
+  }
+
+  const [clientPerms, audiencePerms, usersPerms] = await Promise.all([
+    enableClientManagementPermissions(client.id, client.clientId),
+    audienceClient.id === client.id
+      ? Promise.resolve(null)
+      : enableClientManagementPermissions(audienceClient.id, audienceClient.clientId),
+    enableUsersManagementPermissions(),
+  ]);
+  const tokenExchangePermissionId = clientPerms.scopePermissions?.["token-exchange"];
+  const audienceTokenExchangePermissionId = audienceClient.id === client.id
+    ? tokenExchangePermissionId
+    : audiencePerms?.scopePermissions?.["token-exchange"];
+  const usersImpersonatePermissionId = usersPerms.scopePermissions?.impersonate;
+  if (!tokenExchangePermissionId) {
+    throw new Error(`Keycloak client "${clientId}" has no token-exchange permission`);
+  }
+  if (!usersImpersonatePermissionId) {
+    throw new Error("Keycloak users impersonate permission is not enabled");
+  }
+  if (!audienceTokenExchangePermissionId) {
+    throw new Error(`Keycloak audience client "${audienceClientId}" has no token-exchange permission`);
+  }
+
+  const policy = await ensureClientPolicy(
+    realmManagementClient.id,
+    "caipe-ui-user-impersonation",
+    "Allows the CAIPE UI to exchange tokens for administrator-selected users.",
+    client.id
+  );
+  const tokenExchangePermissionIds = new Set([
+    tokenExchangePermissionId,
+    audienceTokenExchangePermissionId,
+  ]);
+  await Promise.all([
+    ...Array.from(tokenExchangePermissionIds).map(async (permissionId) => {
+      await attachPolicyToScopePermission(
+        realmManagementClient.id,
+        permissionId,
+        policy.id
+      );
+      await setScopePermissionDecisionStrategy(
+        realmManagementClient.id,
+        permissionId,
+        "AFFIRMATIVE"
+      );
+    }),
+    (async () => {
+      await attachPolicyToScopePermission(
+        realmManagementClient.id,
+        usersImpersonatePermissionId,
+        policy.id
+      );
+      await setScopePermissionDecisionStrategy(
+        realmManagementClient.id,
+        usersImpersonatePermissionId,
+        "AFFIRMATIVE"
+      );
+    })(),
+  ]);
+  await ensureBotServiceAccountImpersonationRoles([clientId]);
+}
+
 export async function ensureCaipePlatformTokenExchangeDecisionStrategy(
   decisionStrategy: "AFFIRMATIVE" | "UNANIMOUS" = "AFFIRMATIVE"
 ): Promise<void> {

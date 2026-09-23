@@ -3,12 +3,10 @@
 import { TeamPicker, type TeamPickerOption } from "@/components/ui/team-picker";
 import { UserIdentityDetails, UserMembershipSources } from "./UserIdentityDetails";
 import type { UserIdentityInfo, UserMembershipSourceInfo } from "@/types/admin-user-identity";
-import {
-  withAdminSimulationParams,
-  type AdminSimulationQueryTarget,
-} from "@/lib/rbac/admin-simulation-query";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { useChatStore } from "@/store/chat-store";
+import { ChevronDown, Loader2, UserRoundCog } from "lucide-react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -17,7 +15,6 @@ export interface UserDetailModalProps {
   onClose: () => void;
   onSaved: () => void;
   readOnly?: boolean;
-  simulationTarget?: AdminSimulationQueryTarget | null;
   /** Pre-loaded team list from the parent page — skips the /api/admin/teams fetch. */
   teamOptions?: Array<{ teamId: string; label: string }>;
 }
@@ -174,10 +171,10 @@ export function UserDetailModal({
   onClose,
   onSaved,
   readOnly = false,
-  simulationTarget = null,
   teamOptions: teamOptionsProp,
 }: UserDetailModalProps) {
-  const { update: updateSession } = useSession();
+  const { data: session, update: updateSession } = useSession();
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   // Profile section
   const [profileLoading, setProfileLoading] = useState(true);
@@ -204,17 +201,11 @@ export function UserDetailModal({
   const [identityLoading, setIdentityLoading] = useState(true);
   const [identityError, setIdentityError] = useState<string | null>(null);
   const identityRequest = useRef(0);
-  const withPreviewScope = useCallback(
-    (path: string) => withAdminSimulationParams(path, simulationTarget),
-    [simulationTarget],
-  );
 
   const refreshProfile = useCallback(async () => {
     const requestId = ++profileRequest.current;
     setProfileError(null);
-    const res = await fetch(
-      withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}`),
-    );
+    const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`);
     const json = (await readJson(res)) as {
       success?: boolean;
       data?: { user?: ProfileUser };
@@ -228,7 +219,7 @@ export function UserDetailModal({
       );
     }
     if (requestId === profileRequest.current) setUser(json.data.user);
-  }, [userId, withPreviewScope]);
+  }, [userId]);
 
   const loadTeams = useCallback(async () => {
     if (teamOptionsProp) return; // parent already supplied the list
@@ -261,7 +252,7 @@ export function UserDetailModal({
     setIdentity(null);
     try {
       const res = await fetch(
-        withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}/identity`),
+        `/api/admin/users/${encodeURIComponent(userId)}/identity`,
       );
       const json = (await readJson(res)) as {
         success?: boolean;
@@ -277,7 +268,7 @@ export function UserDetailModal({
     } finally {
       if (requestId === identityRequest.current) setIdentityLoading(false);
     }
-  }, [userId, withPreviewScope]);
+  }, [userId]);
 
   const loadAccess = useCallback(async () => {
     const requestId = ++accessRequest.current;
@@ -285,7 +276,7 @@ export function UserDetailModal({
     setAccessLoading(true);
     try {
       const res = await fetch(
-        withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}/access`),
+        `/api/admin/users/${encodeURIComponent(userId)}/access`,
       );
       const json = (await readJson(res)) as {
         success?: boolean;
@@ -304,7 +295,7 @@ export function UserDetailModal({
     } finally {
       if (requestId === accessRequest.current) setAccessLoading(false);
     }
-  }, [userId, withPreviewScope]);
+  }, [userId]);
 
   useEffect(() => {
     setMounted(true);
@@ -426,6 +417,14 @@ export function UserDetailModal({
     if (feds.length === 0) return "No broker link reported";
     return feds.map((f) => f.identityProvider).join(", ") || "Not reported";
   }, [identity]);
+  const canImpersonateLinkedUser = !identityLoading
+    && identity != null
+    && !identity.unavailable?.includes("federatedIdentities")
+    && !identity.unavailable?.includes("identityProviders")
+    && (
+      identity.federationRequired === false
+      || identity.federatedIdentities.length > 0
+    );
 
   const accessTotal = useMemo(() => {
     if (!access) return 0;
@@ -449,6 +448,31 @@ export function UserDetailModal({
     user?.createdAt != null && user.createdAt > 0
       ? formatTs(user.createdAt)
       : "—";
+
+  const startImpersonation = async (): Promise<void> => {
+    if (!user || !user.enabled || user.id === session?.sub) return;
+    if (!window.confirm(`Impersonate ${fullName}? You will have the same permissions as ${user.email}.`)) {
+      return;
+    }
+    setActionError(null);
+    setBusy("impersonation");
+    try {
+      const nextSession = await updateSession({
+        impersonation: { action: "start", targetSub: user.id },
+      });
+      if (!nextSession?.impersonation) {
+        throw new Error(nextSession?.impersonationNotice || "Unable to start impersonation");
+      }
+      useChatStore.getState().clearAllConversations();
+      onClose();
+      router.replace("/");
+      router.refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Unable to start impersonation");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const toggleEnabled = () => {
     if (!user) return;
@@ -582,6 +606,32 @@ export function UserDetailModal({
                 </div>
               </div>
               <div className="flex items-center gap-3 shrink-0">
+                {!readOnly ? (
+                  <button
+                    type="button"
+                    onClick={() => void startImpersonation()}
+                    disabled={
+                      !user.enabled
+                      || user.id === session?.sub
+                      || identityLoading
+                      || !canImpersonateLinkedUser
+                      || busy != null
+                    }
+                    title={
+                      canImpersonateLinkedUser
+                        ? "Impersonate this user"
+                        : "This user has not completed a supported web sign-in"
+                    }
+                    className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === "impersonation" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    ) : (
+                      <UserRoundCog className="h-4 w-4" aria-hidden />
+                    )}
+                    Impersonate user
+                  </button>
+                ) : null}
                 <span className="text-sm text-muted-foreground">Account</span>
                 <button
                   type="button"

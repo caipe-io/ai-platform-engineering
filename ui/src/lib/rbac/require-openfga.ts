@@ -121,7 +121,7 @@ export interface UserProfileReadActor {
   administersAnyTeam?: boolean;
 }
 
-/** Apply the normal profile-read policy to an explicit access-preview actor. */
+/** Apply the normal profile-read policy to an explicit OpenFGA actor. */
 export async function requireUserProfileReadAsActor(
   actor: UserProfileReadActor,
   subject: string,
@@ -130,7 +130,7 @@ export async function requireUserProfileReadAsActor(
 
   const openfgaUser = actor.openfgaUser.trim();
   if (!openfgaUser) {
-    throw new ApiError("A stable preview subject is required.", 401, "NO_TOKEN", "session_expired", "sign_in");
+    throw new ApiError("A stable user subject is required.", 401, "NO_TOKEN", "session_expired", "sign_in");
   }
 
   // Fast path: a user can always read their own profile.
