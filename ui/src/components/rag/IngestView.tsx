@@ -57,6 +57,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Lock,
   RotateCcw,
   Search,
   Server,
@@ -65,6 +66,12 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import React, {
   useCallback,
   useEffect,
@@ -159,6 +166,53 @@ const IconRenderer = ({
       className={className}
       style={{ display: "inline-block" }}
     />
+  );
+};
+
+/** Chunks fetched per page while scrolling a datasource's documents. */
+const DOCUMENT_PAGE_SIZE = 25;
+
+/**
+ * Requests the next page once it scrolls into view, so a long document list
+ * extends by scrolling rather than by repeatedly pressing a button.
+ */
+const InfiniteScrollSentinel = ({
+  onVisible,
+  loading,
+}: {
+  onVisible: () => void;
+  loading: boolean;
+}) => {
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const handleVisible = useEffectEvent(onVisible);
+
+  useEffect(() => {
+    const anchor = anchorRef.current;
+    if (!anchor || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) handleVisible();
+      },
+      // Start fetching slightly before the anchor is reached.
+      { rootMargin: "120px" },
+    );
+    observer.observe(anchor);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={anchorRef}
+      aria-live="polite"
+      className="mt-2 flex items-center justify-center gap-1 border-t border-border/50 py-2 text-xs text-muted-foreground"
+    >
+      {loading && (
+        <>
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Loading more chunks…
+        </>
+      )}
+    </div>
   );
 };
 
@@ -1306,7 +1360,11 @@ export default function IngestView() {
     setLoadingDocuments((prev) => new Set(prev).add(datasourceId));
 
     try {
-      const response = await getDatasourceDocuments(datasourceId, offset, 100);
+      const response = await getDatasourceDocuments(
+        datasourceId,
+        offset,
+        DOCUMENT_PAGE_SIZE,
+      );
 
       if (offset === 0) {
         // First page - replace
@@ -2884,6 +2942,13 @@ export default function IngestView() {
                         sourceConfig?.config_driven,
                       );
                       const icon = getIconForType(ds.source_type);
+                      const usesCredential =
+                        sourceConfig?.source_type === "web_url" &&
+                        Boolean(
+                          sourceConfig.settings?.auth_headers?.some(
+                            (header) => header.secret_ref,
+                          ),
+                        );
 
                       // Get reload interval (first-class field or default)
                       const dsReloadInterval =
@@ -2957,8 +3022,34 @@ export default function IngestView() {
                               <ChevronRight className="h-4 w-4 text-muted-foreground" />
                             </motion.div>
 
-                            {icon && (
+                            {icon && !usesCredential && (
                               <IconRenderer icon={icon} className="w-5 h-5" />
+                            )}
+                            {icon && usesCredential && (
+                              <TooltipProvider delayDuration={150}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span
+                                      className="relative inline-flex shrink-0"
+                                      data-testid={`credentialed-source-${ds.datasource_id}`}
+                                    >
+                                      <IconRenderer icon={icon} className="w-5 h-5" />
+                                      <Lock
+                                        aria-label="Crawled with a saved credential"
+                                        className="absolute -bottom-1.5 -right-1.5 h-4 w-4 rounded-full bg-background p-[1px] text-purple-500"
+                                      />
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent
+                                    side="top"
+                                    sideOffset={8}
+                                    className="max-w-xs whitespace-normal text-left"
+                                  >
+                                    Crawled with a saved credential, so its content may
+                                    not be public.
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
                             )}
 
                             <div className="flex-1 min-w-0">
@@ -4208,44 +4299,33 @@ export default function IngestView() {
                                                   </div>
                                                 )}
 
-                                              {/* Load More button */}
                                               {documentsPagination[
                                                 ds.datasource_id
                                               ]?.hasMore && (
-                                                <div className="pt-2 text-center border-t border-border/50 mt-2">
-                                                  <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      const pagination =
-                                                        documentsPagination[
-                                                          ds.datasource_id
-                                                        ];
-                                                      if (pagination) {
-                                                        fetchDocumentsPage(
-                                                          ds.datasource_id,
-                                                          pagination.offset,
-                                                        );
-                                                      }
-                                                    }}
-                                                    disabled={loadingDocuments.has(
-                                                      ds.datasource_id,
-                                                    )}
-                                                    className="text-xs"
-                                                  >
-                                                    {loadingDocuments.has(
-                                                      ds.datasource_id,
-                                                    ) ? (
-                                                      <>
-                                                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                                                        Loading...
-                                                      </>
-                                                    ) : (
-                                                      <>Load More Chunks</>
-                                                    )}
-                                                  </Button>
-                                                </div>
+                                                <InfiniteScrollSentinel
+                                                  loading={loadingDocuments.has(
+                                                    ds.datasource_id,
+                                                  )}
+                                                  onVisible={() => {
+                                                    if (
+                                                      loadingDocuments.has(
+                                                        ds.datasource_id,
+                                                      )
+                                                    ) {
+                                                      return;
+                                                    }
+                                                    const pagination =
+                                                      documentsPagination[
+                                                        ds.datasource_id
+                                                      ];
+                                                    if (pagination) {
+                                                      fetchDocumentsPage(
+                                                        ds.datasource_id,
+                                                        pagination.offset,
+                                                      );
+                                                    }
+                                                  }}
+                                                />
                                               )}
                                             </div>
                                           </motion.div>

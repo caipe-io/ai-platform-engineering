@@ -60,7 +60,7 @@ WebAuthHeader,
 WebCrawlMode,
 } from "@/types/ingestion-source";
 import type { PendingPublicationRequestView } from "@/types/publication-approval";
-import { Eye, Loader2, Plus, X } from "lucide-react";
+import { Eye, Loader2, Lock, Plus, X } from "lucide-react";
 import { useEffect,useState } from "react";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { DatasourceAccessFields } from "./DatasourceAccessFields";
@@ -796,6 +796,8 @@ export function IngestionSourceForm({
   // Kept apart from the form-level error so the outcome reads beside the button
   // that produced it rather than at the foot of the dialog.
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [credentialSharingConfirmed, setCredentialSharingConfirmed] = useState(false);
+  const [credentialSharingPrompt, setCredentialSharingPrompt] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const credentialsEnabled = config.credentialsEnabled;
   const [secretOptions, setSecretOptions] = useState<SecretReferenceOption[]>([]);
@@ -821,6 +823,8 @@ export function IngestionSourceForm({
     setPreviewError(null);
     setError(null);
     setAuthHeaderTestResult(null);
+    setCredentialSharingConfirmed(false);
+    setCredentialSharingPrompt(false);
     setTransferRequested(false);
     setTransferConfirmedNotMember(false);
     setTransferNeedsServerConfirm(false);
@@ -914,6 +918,15 @@ export function IngestionSourceForm({
     duplicateAuthHeaders.size > 0;
 
   const sentAuthHeaders = normalizedAuthHeaders(values.auth_headers);
+  // Content gathered with a credential may not be public, so widening who can
+  // reach it is a decision the owner should make deliberately.
+  const usesCredential = sentAuthHeaders.some((header) => Boolean(header.secret_ref));
+  const accessReachesOthers =
+    Boolean(values.owner_team_slug.trim()) ||
+    values.search_team_slugs.length > 0 ||
+    values.search_user_subjects.length > 0;
+  const needsCredentialSharingConfirm =
+    usesCredential && accessReachesOthers && !credentialSharingConfirmed;
   const authHeaderPreviewLines = authHeaderRequestPreview({
     url: values.url,
     headers: sentAuthHeaders,
@@ -2135,6 +2148,19 @@ export function IngestionSourceForm({
                 />
               </div>
             )}
+            footer={
+              usesCredential ? (
+                <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+                  <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <p>
+                    This source is crawled with a saved credential, so it may hold
+                    content that is not public. Anyone you give Owner or Search access
+                    to can read what was gathered, and it is your responsibility to be
+                    sure they should see it.
+                  </p>
+                </div>
+              ) : undefined
+            }
           />
         </fieldset>
 
@@ -2165,12 +2191,71 @@ export function IngestionSourceForm({
             </Button>
           )}
           {!isReadOnly && (
-            <Button onClick={() => void handleSave()} disabled={saving || !canSave}>
+            <Button
+              onClick={() => {
+                if (needsCredentialSharingConfirm) {
+                  setCredentialSharingPrompt(true);
+                  return;
+                }
+                void handleSave();
+              }}
+              disabled={saving || !canSave}
+            >
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {isEdit ? "Save Changes" : displayMode === "inline" ? "Ingest Source" : "Create Source"}
             </Button>
           )}
         </DialogFooter>
+
+        {credentialSharingPrompt && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm sharing a credentialed source"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+          >
+            <div className="w-full max-w-md space-y-4 rounded-2xl border border-border bg-card p-5 shadow-2xl">
+              <div className="flex items-start gap-3">
+                <Lock
+                  className="mt-0.5 h-5 w-5 shrink-0 text-amber-500"
+                  aria-hidden="true"
+                />
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold">
+                    Share content gathered with a credential?
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    This source is crawled with a saved credential, so it may hold
+                    content that is not public. Everyone you grant Owner or Search
+                    access to will be able to read what was gathered, and it is your
+                    responsibility to be sure they should see it.
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCredentialSharingPrompt(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    setCredentialSharingConfirmed(true);
+                    setCredentialSharingPrompt(false);
+                    void handleSave();
+                  }}
+                >
+                  Confirm and save
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
     </>
   );
 

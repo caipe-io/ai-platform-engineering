@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 jest.mock("@/components/ui/toast", () => ({
@@ -408,6 +408,72 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     expect(screen.getAllByLabelText("Header name")).toHaveLength(10);
     expect(addButton).toBeDisabled();
     expect(screen.getByText(/maximum of 10 headers reached/i)).toBeInTheDocument();
+  });
+
+  describe("sharing a source that carries a credential", () => {
+    const sharingWarning = /may hold content that is not public/i;
+
+    it("says nothing about sharing until a credential is attached", async () => {
+      await renderWebForm();
+      expect(screen.queryByText(sharingWarning)).not.toBeInTheDocument();
+    });
+
+    it("keeps a standing warning under the access controls", async () => {
+      const { user } = await renderWebForm();
+      await addHeaderWithCredential(user);
+
+      expect(screen.getByText(sharingWarning)).toBeInTheDocument();
+    });
+
+    it("saves without a prompt while the source stays private", async () => {
+      const { user, onSave } = await renderWebForm();
+      await addHeaderWithCredential(user);
+
+      await act(async () => {
+        await user.click(screen.getByRole("button", { name: /create source/i }));
+      });
+
+      expect(screen.queryByRole("dialog", { name: /confirm sharing/i })).not.toBeInTheDocument();
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    });
+
+    it("requires a confirmation before granting others access", async () => {
+      const { user, onSave } = await renderWebForm();
+      await addHeaderWithCredential(user);
+      await user.type(screen.getByTestId("mock-owner-team"), "author-team");
+
+      await act(async () => {
+        await user.click(screen.getByRole("button", { name: /create source/i }));
+      });
+
+      // The save is withheld until the reach of the credential is acknowledged.
+      expect(onSave).not.toHaveBeenCalled();
+      const prompt = screen.getByRole("dialog", { name: /confirm sharing/i });
+      expect(prompt).toBeInTheDocument();
+
+      await act(async () => {
+        await user.click(
+          screen.getByRole("button", { name: /confirm and save/i }),
+        );
+      });
+
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    });
+
+    it("abandons the save when the confirmation is dismissed", async () => {
+      const { user, onSave } = await renderWebForm();
+      await addHeaderWithCredential(user);
+      await user.type(screen.getByTestId("mock-owner-team"), "author-team");
+
+      await act(async () => {
+        await user.click(screen.getByRole("button", { name: /create source/i }));
+      });
+      const prompt = screen.getByRole("dialog", { name: /confirm sharing/i });
+      await user.click(within(prompt).getByRole("button", { name: /^cancel$/i }));
+
+      expect(onSave).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog", { name: /confirm sharing/i })).not.toBeInTheDocument();
+    });
   });
 
   it("hides the control when credential features are disabled", async () => {
