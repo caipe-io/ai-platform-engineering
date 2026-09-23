@@ -172,65 +172,16 @@ const IconRenderer = ({
 /** Chunks fetched per page while scrolling a datasource's documents. */
 const DOCUMENT_PAGE_SIZE = 25;
 
-/** The scrollable ancestor an anchor lives in, or null for the viewport. */
-function nearestScrollParent(node: HTMLElement): HTMLElement | null {
-  let current = node.parentElement;
-  while (current) {
-    const overflowY = window.getComputedStyle(current).overflowY;
-    if (overflowY === "auto" || overflowY === "scroll") return current;
-    current = current.parentElement;
-  }
-  return null;
-}
+/** Distance from the bottom of a list at which the next page is requested. */
+const DOCUMENT_PREFETCH_MARGIN_PX = 120;
 
-/**
- * Requests the next page once it scrolls into view, so a long document list
- * extends by scrolling rather than by repeatedly pressing a button.
- *
- * Must render inside the list's own scroll container: observed against the page
- * viewport instead, an anchor below a bounded list stays permanently visible and
- * requests page after page. Observation also stops while a page is in flight, so
- * one fetch cannot queue several more before the first arrives.
- */
-const InfiniteScrollSentinel = ({
-  onVisible,
-  loading,
-}: {
-  onVisible: () => void;
-  loading: boolean;
-}) => {
-  const anchorRef = useRef<HTMLDivElement>(null);
-  const handleVisible = useEffectEvent(onVisible);
-
-  useEffect(() => {
-    const anchor = anchorRef.current;
-    if (!anchor || loading || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) handleVisible();
-      },
-      // Start fetching slightly before the anchor is reached.
-      { root: nearestScrollParent(anchor), rootMargin: "120px" },
-    );
-    observer.observe(anchor);
-    return () => observer.disconnect();
-  }, [loading]);
-
+/** True when a scroll container has reached the point of needing another page. */
+function isNearBottom(element: HTMLElement): boolean {
   return (
-    <div
-      ref={anchorRef}
-      aria-live="polite"
-      className="flex items-center justify-center gap-1 py-2 text-xs text-muted-foreground"
-    >
-      {loading && (
-        <>
-          <Loader2 className="h-3 w-3 animate-spin" />
-          Loading more chunks…
-        </>
-      )}
-    </div>
+    element.scrollHeight - element.scrollTop - element.clientHeight <=
+    DOCUMENT_PREFETCH_MARGIN_PX
   );
-};
+}
 
 // Status badge component with consistent styling
 const StatusBadge = ({ status }: { status: string }) => {
@@ -3947,7 +3898,31 @@ export default function IngestView() {
                                                   No documents found
                                                 </p>
                                               ) : (
-                                                <div className="space-y-1 max-h-[32rem] overflow-y-auto pr-2">
+                                                // Height is fixed while more pages are coming, so appending one
+                                                // cannot grow this panel and move the page under the cursor.
+                                                <div
+                                                  onScroll={(event) => {
+                                                    if (
+                                                      !documentsPagination[ds.datasource_id]?.hasMore ||
+                                                      loadingDocuments.has(ds.datasource_id) ||
+                                                      !isNearBottom(event.currentTarget)
+                                                    ) {
+                                                      return;
+                                                    }
+                                                    fetchDocumentsPage(
+                                                      ds.datasource_id,
+                                                      documentsPagination[ds.datasource_id].offset,
+                                                    );
+                                                  }}
+                                                  className={cn(
+                                                    "space-y-1 overflow-y-auto overscroll-contain pr-2 [overflow-anchor:none]",
+                                                    documentsPagination[ds.datasource_id]?.hasMore ||
+                                                      (datasourceDocuments[ds.datasource_id]?.documents.length ??
+                                                        0) > DOCUMENT_PAGE_SIZE
+                                                      ? "h-[32rem]"
+                                                      : "max-h-[32rem]",
+                                                  )}
+                                                >
                                                   {datasourceDocuments[
                                                     ds.datasource_id
                                                   ]?.documents.map(
@@ -4294,26 +4269,16 @@ export default function IngestView() {
                                                       );
                                                     },
                                                   )}
-                                                  {documentsPagination[
-                                                    ds.datasource_id
-                                                  ]?.hasMore && (
-                                                    <InfiniteScrollSentinel
-                                                      loading={loadingDocuments.has(
-                                                        ds.datasource_id,
-                                                      )}
-                                                      onVisible={() => {
-                                                        const pagination =
-                                                          documentsPagination[
-                                                            ds.datasource_id
-                                                          ];
-                                                        if (pagination) {
-                                                          fetchDocumentsPage(
-                                                            ds.datasource_id,
-                                                            pagination.offset,
-                                                          );
-                                                        }
-                                                      }}
-                                                    />
+                                                  {loadingDocuments.has(
+                                                    ds.datasource_id,
+                                                  ) && (
+                                                    <div
+                                                      aria-live="polite"
+                                                      className="flex items-center justify-center gap-1 py-2 text-xs text-muted-foreground"
+                                                    >
+                                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                                      Loading more chunks…
+                                                    </div>
                                                   )}
                                                 </div>
                                               )}

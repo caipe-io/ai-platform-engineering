@@ -52,6 +52,7 @@ DEFAULT_RAG_INGESTOR_LIMITS,
 normalizeRagIngestorLimits,
 type RagIngestorLimits,
 } from "@/lib/rag-ingestor-limits";
+import { shortMaskedPreview } from "@/lib/credentials/masking";
 import { cn } from "@/lib/utils";
 import type {
 IngestionSourceConfig,
@@ -580,15 +581,6 @@ function duplicateAuthHeaderIndexes(rows: WebAuthHeader[]): Set<number> {
   return duplicates;
 }
 
-/**
- * Trailing characters of the store's masked hint, which is enough to tell two
- * credentials apart without showing any leading characters of the value.
- */
-function shortSecretPreview(maskedPreview: string | undefined): string | null {
-  const tail = maskedPreview?.trim().slice(-3);
-  return tail ? `...${tail}` : null;
-}
-
 /** Shell-style stand-in for a credential, derived from its display name. */
 function secretTokenLabel(secret: SecretReferenceOption | undefined): string {
   if (!secret) return SECRET_PLACEHOLDER;
@@ -620,7 +612,7 @@ function authHeaderRequestPreview(input: {
       continue;
     }
     const secret = input.secrets.find((option) => option.id === header.secret_ref);
-    const hint = shortSecretPreview(secret?.maskedPreview) ?? SECRET_PLACEHOLDER;
+    const hint = shortMaskedPreview(secret?.maskedPreview) ?? SECRET_PLACEHOLDER;
     const value = header.value_template.split(SECRET_PLACEHOLDER).join(hint);
     sent.push(`${header.header_name}: ${value}`);
   }

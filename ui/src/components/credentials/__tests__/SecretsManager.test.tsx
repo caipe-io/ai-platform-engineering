@@ -117,7 +117,8 @@ describe("SecretsManager", () => {
     render(<SecretsManager />);
 
     expect(await screen.findByText("GitHub token")).toBeInTheDocument();
-    expect(screen.getByText("Preview ghp_...abcd")).toBeInTheDocument();
+    expect(screen.getByText("Preview ...bcd")).toBeInTheDocument();
+    expect(screen.queryByText(/ghp_/)).not.toBeInTheDocument();
     expect(screen.queryByText("ghp_raw_token_value")).not.toBeInTheDocument();
   });
 
@@ -131,7 +132,8 @@ describe("SecretsManager", () => {
     const dialog = await screen.findByRole("dialog", { name: /github token details/i });
     expect(dialog).toBeInTheDocument();
     expect(within(dialog).getByText(/masked preview/i)).toBeInTheDocument();
-    expect(within(dialog).getByText("ghp_...abcd")).toBeInTheDocument();
+    expect(within(dialog).getByText("...bcd")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/ghp_/)).not.toBeInTheDocument();
     expect(within(dialog).getByText("Alice Example")).toBeInTheDocument();
     expect(within(dialog).getByText(/Shared with/i)).toBeInTheDocument();
     expect(within(dialog).getByText("platform-team")).toBeInTheDocument();
@@ -244,7 +246,7 @@ describe("SecretsManager", () => {
       }),
     );
     expect(screen.queryByRole("region", { name: /github token rotation/i })).not.toBeInTheDocument();
-    expect(screen.getByText("Preview new_...ated")).toBeInTheDocument();
+    expect(screen.getByText("Preview ...ted")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("rotated-secret-value")).not.toBeInTheDocument();
   });
 

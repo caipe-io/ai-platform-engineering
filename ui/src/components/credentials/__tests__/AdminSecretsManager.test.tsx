@@ -142,7 +142,8 @@ describe("AdminSecretsManager", () => {
     expect(await screen.findByText("GitHub token")).toBeInTheDocument();
     expect(screen.queryByText("user:alice-sub")).not.toBeInTheDocument();
     expect(screen.getByText("Alice Example")).toBeInTheDocument();
-    expect(screen.getByText("Preview ghp_...abcd")).toBeInTheDocument();
+    expect(screen.getByText("Preview ...bcd")).toBeInTheDocument();
+    expect(screen.queryByText(/ghp_/)).not.toBeInTheDocument();
     expect(screen.getByText("Shared with 1 team")).toBeInTheDocument();
     expect(screen.getByText("Used in 1 place")).toBeInTheDocument();
     expect(screen.queryByText(/Created by Alice Example/)).not.toBeInTheDocument();

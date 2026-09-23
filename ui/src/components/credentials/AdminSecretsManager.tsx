@@ -6,6 +6,7 @@ import React from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { SaveButton } from "@/components/admin/shared/SaveButton";
+import { shortMaskedPreview } from "@/lib/credentials/masking";
 import { Button } from "@/components/ui/button";
 
 import { principalLabel, SecretProtectionBadge } from "./SecretProtectionDetails";
@@ -234,7 +235,7 @@ export function AdminSecretsManager({ readOnly = false }: { readOnly?: boolean }
                         <p className="truncate text-xs text-muted-foreground">{secret.description || secret.type}</p>
                       </div>
                       <code className="mt-1 inline-flex max-w-full rounded bg-muted px-2 py-1 text-xs">
-                        <span className="truncate">Preview {secret.maskedPreview}</span>
+                        <span className="truncate">Preview {shortMaskedPreview(secret.maskedPreview)}</span>
                       </code>
                     </div>
 
