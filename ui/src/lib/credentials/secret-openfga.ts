@@ -78,6 +78,44 @@ export function buildSecretRefShareTuples(secretId: string, teamId: string): Ope
   ];
 }
 
+/**
+ * Grant tuples letting a backend service account resolve a secret.
+ *
+ * Writes the direct `user` relation because `can_use` is computed and cannot be
+ * written. Only `use` is granted: resolving a value needs nothing more.
+ */
+export function buildSecretRefServiceAccountUseTuples(
+  secretId: string,
+  serviceAccountSubjects: string[],
+): OpenFgaTupleKey[] {
+  const object = objectId(secretId);
+  return unique(
+    serviceAccountSubjects.filter(validId).map((subject) => ({
+      user: `service_account:${subject}`,
+      relation: "user",
+      object,
+    })),
+  );
+}
+
+export async function reconcileSecretRefServiceAccountUse(
+  secretId: string,
+  serviceAccountSubjects: string[],
+): Promise<void> {
+  const writes = buildSecretRefServiceAccountUseTuples(secretId, serviceAccountSubjects);
+  if (writes.length === 0) return;
+  await writeOpenFgaTupleDiff({ writes, deletes: [] });
+}
+
+export async function deleteSecretRefServiceAccountUse(
+  secretId: string,
+  serviceAccountSubjects: string[],
+): Promise<void> {
+  const deletes = buildSecretRefServiceAccountUseTuples(secretId, serviceAccountSubjects);
+  if (deletes.length === 0) return;
+  await writeOpenFgaTupleDiff({ writes: [], deletes });
+}
+
 export async function reconcileSecretRefOwnerRelationships(input: {
   secretId: string;
   owner: CredentialOwnerRef;

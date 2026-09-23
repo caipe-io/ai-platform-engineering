@@ -138,6 +138,18 @@ export interface JiraProjectSource extends IngestionSourceConfigBase {
 
 export type WebCrawlMode = "single" | "sitemap" | "recursive";
 
+/**
+ * Request header attached to web crawl fetches. `value_template` carries the
+ * literal `{{secret}}` placeholder; the ingestor resolves `secret_ref` against
+ * the credential store and substitutes it server-side, so the plaintext value
+ * never travels with the source configuration.
+ */
+export interface WebAuthHeader {
+  header_name: string;
+  value_template: string;
+  secret_ref: string;
+}
+
 export interface WebSourceSettings {
   crawl_mode: WebCrawlMode;
   max_depth?: number;
@@ -155,6 +167,7 @@ export interface WebSourceSettings {
   chunk_overlap?: number;
   user_agent?: string | null;
   allow_non_public_urls?: boolean;
+  auth_headers?: WebAuthHeader[];
 }
 
 export interface WebUrlSource extends IngestionSourceConfigBase {

@@ -3,6 +3,7 @@ import { parseConfluenceLocator } from "@/lib/confluence-url";
 import type { IngestionSourceIdentity } from "@/lib/ingestion-source-id";
 import type {
   IngestionSourceType,
+  WebAuthHeader,
   WebSourceSettings,
 } from "@/types/ingestion-source";
 
@@ -177,6 +178,59 @@ export function optionalStringMap(
   );
 }
 
+const SECRET_PLACEHOLDER = "{{secret}}";
+const MAX_AUTH_HEADERS = 10;
+// RFC 7230 token; anything outside it could break request framing.
+const HEADER_NAME_PATTERN = /^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$/;
+// Becomes an OpenFGA object id, so it must satisfy that character set.
+const SECRET_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
+
+function invalidAuthHeaders(message: string): ApiError {
+  return new ApiError(`settings.auth_headers ${message}`, 400, "INVALID_SOURCE_PAYLOAD");
+}
+
+export function optionalAuthHeaders(value: unknown): WebAuthHeader[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    throw invalidAuthHeaders("must be an array");
+  }
+  if (value.length > MAX_AUTH_HEADERS) {
+    throw invalidAuthHeaders(`must contain at most ${MAX_AUTH_HEADERS} entries`);
+  }
+
+  const headers: WebAuthHeader[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw invalidAuthHeaders("entries must be objects");
+    }
+    const record = entry as Record<string, unknown>;
+    const headerName = typeof record.header_name === "string" ? record.header_name.trim() : "";
+    const valueTemplate = typeof record.value_template === "string" ? record.value_template : "";
+    const secretRef = typeof record.secret_ref === "string" ? record.secret_ref.trim() : "";
+
+    if (!HEADER_NAME_PATTERN.test(headerName) || headerName.length > 128) {
+      throw invalidAuthHeaders("entries require a valid header_name");
+    }
+    if (valueTemplate.length > 2000 || /[\r\n]/.test(valueTemplate)) {
+      throw invalidAuthHeaders("entries require a value_template without line breaks");
+    }
+    if (!valueTemplate.includes(SECRET_PLACEHOLDER)) {
+      throw invalidAuthHeaders(`entries require a value_template containing ${SECRET_PLACEHOLDER}`);
+    }
+    if (!SECRET_REF_PATTERN.test(secretRef)) {
+      throw invalidAuthHeaders("entries require a valid secret_ref");
+    }
+    const key = headerName.toLowerCase();
+    if (seen.has(key)) {
+      throw invalidAuthHeaders(`must not repeat header ${headerName}`);
+    }
+    seen.add(key);
+    headers.push({ header_name: headerName, value_template: valueTemplate, secret_ref: secretRef });
+  }
+  return headers;
+}
+
 export function optionalWebSettings(
   value: unknown,
 ): WebSourceSettings | undefined {
@@ -206,6 +260,7 @@ export function optionalWebSettings(
     "chunk_overlap",
     "user_agent",
     "allow_non_public_urls",
+    "auth_headers",
   ]);
   for (const key of Object.keys(input)) {
     if (!allowedKeys.has(key as keyof WebSourceSettings)) {
@@ -285,6 +340,9 @@ export function optionalWebSettings(
     }
     result.download_delay = input.download_delay;
   }
+
+  const authHeaders = optionalAuthHeaders(input.auth_headers);
+  if (authHeaders !== undefined) result.auth_headers = authHeaders;
 
   const chunkSize =
     (result.chunk_size as number | undefined) ?? DEFAULT_CHUNK_SIZE;

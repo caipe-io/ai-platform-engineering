@@ -68,6 +68,11 @@ import {
   optionalStringMap,
   optionalWebSettings,
 } from "@/lib/ingestion-source-config";
+import {
+  authorizedSourceSecretRefs,
+  reconcileIngestorSecretAccess,
+  secretRefsFromSettings,
+} from "@/lib/rag-source-credentials.server";
 import type { IngestionSourceConfig } from "@/types/ingestion-source";
 import { NextRequest } from "next/server";
 
@@ -639,6 +644,17 @@ export const PATCH = withErrorHandler(
 
     const updateData = pickMutableFields(body);
     validateMutableFields(source, updateData);
+    const settingsWereRequested = Object.prototype.hasOwnProperty.call(
+      updateData,
+      "settings",
+    );
+    const nextSecretRefs = settingsWereRequested
+      ? await authorizedSourceSecretRefs(
+          session,
+          updateData.settings,
+          source.source_type,
+        )
+      : null;
     const searchTeamsWereRequested = Object.prototype.hasOwnProperty.call(
       body,
       "search_team_slugs",
@@ -1128,6 +1144,17 @@ export const PATCH = withErrorHandler(
       );
     }
 
+    if (nextSecretRefs !== null) {
+      await reconcileIngestorSecretAccess({
+        sourceId,
+        sourceType: source.source_type,
+        previousSecretRefs: secretRefsFromSettings(
+          (source as { settings?: unknown }).settings,
+        ),
+        nextSecretRefs,
+      });
+    }
+
     let publicationRequest: Awaited<ReturnType<typeof createPublicationRequest>> | null = null;
     if (publication.plan.requires_approval) {
       publicationRequest = await createPublicationRequest({
@@ -1335,6 +1362,15 @@ export const DELETE = withErrorHandler(
         "SOURCE_DELETE_FAILED",
       );
     }
+
+    await reconcileIngestorSecretAccess({
+      sourceId,
+      sourceType: source.source_type,
+      previousSecretRefs: secretRefsFromSettings(
+        (source as { settings?: unknown }).settings,
+      ),
+      nextSecretRefs: [],
+    });
 
     return successResponse({ deleted: sourceId });
   },
