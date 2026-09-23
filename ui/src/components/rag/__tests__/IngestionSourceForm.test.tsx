@@ -237,6 +237,112 @@ describe("<IngestionSourceForm /> — create", () => {
     );
   });
 
+  it("supports a Confluence folder URL and always ingests every nested page", async () => {
+    const user = userEvent.setup();
+    const onSave = jest.fn().mockResolvedValue(undefined);
+    render(
+      <IngestionSourceForm
+        open
+        displayMode="inline"
+        onClose={jest.fn()}
+        onSave={onSave}
+        initial={null}
+        defaultSourceType="confluence_space"
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/^name/i), "Example folder");
+    await user.type(
+      screen.getByLabelText(/^url/i),
+      "https://example.atlassian.net/wiki/spaces/ENG/folder/456",
+    );
+    await user.type(screen.getByLabelText(/space key/i), "ENG");
+
+    expect(screen.queryByText(/include child pages/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /ingest source/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source_type: "confluence_space",
+        url: "https://example.atlassian.net/wiki/spaces/ENG/folder/456",
+        confluence_url: "https://example.atlassian.net/wiki",
+        space_key: "ENG",
+        get_child_pages: true,
+      }),
+    );
+  });
+
+  it("previews a folder source with the same scope it will be saved with", async () => {
+    const user = userEvent.setup();
+    render(
+      <IngestionSourceForm
+        open
+        displayMode="inline"
+        onClose={jest.fn()}
+        onSave={jest.fn()}
+        initial={null}
+        defaultSourceType="confluence_space"
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/^name/i), "Example folder");
+    await user.type(
+      screen.getByLabelText(/^url/i),
+      "https://example.atlassian.net/wiki/spaces/ENG/folder/456",
+    );
+    await user.type(screen.getByLabelText(/space key/i), "ENG");
+    await user.click(screen.getByRole("button", { name: /preview ingestion/i }));
+
+    await waitFor(() => {
+      const previewCall = (global.fetch as jest.Mock).mock.calls.find(
+        ([url]: [string]) => url.includes("confluence/preview"),
+      );
+      expect(previewCall).toBeDefined();
+    });
+
+    const previewCall = (global.fetch as jest.Mock).mock.calls.find(
+      ([url]: [string]) => url.includes("confluence/preview"),
+    ) as [string, RequestInit];
+    const body = JSON.parse(previewCall[1].body as string);
+    expect(body.get_child_pages).toBe(true);
+  });
+
+  it("supports a whole Confluence space URL", async () => {
+    const user = userEvent.setup();
+    const onSave = jest.fn().mockResolvedValue(undefined);
+    render(
+      <IngestionSourceForm
+        open
+        displayMode="inline"
+        onClose={jest.fn()}
+        onSave={onSave}
+        initial={null}
+        defaultSourceType="confluence_space"
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/^name/i), "Example space");
+    await user.type(
+      screen.getByLabelText(/^url/i),
+      "https://example.atlassian.net/wiki/spaces/ENG",
+    );
+    await user.type(screen.getByLabelText(/space key/i), "ENG");
+    await user.click(screen.getByRole("button", { name: /ingest source/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source_type: "confluence_space",
+        url: "https://example.atlassian.net/wiki/spaces/ENG",
+        confluence_url: "https://example.atlassian.net/wiki",
+        space_key: "ENG",
+        get_child_pages: true,
+      }),
+    );
+  });
+
   it("creates web sources with the existing sitemap crawl defaults", async () => {
     const user = userEvent.setup();
     const onSave = jest.fn().mockResolvedValue(undefined);
@@ -427,5 +533,86 @@ describe("<IngestionSourceForm /> — edit", () => {
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({ search_team_slugs: ["everyone"] }),
     );
+  });
+
+  it("falls back to the stored whole_space flag when editing an adopted source with no start_page_url", () => {
+    const wholeSpaceInitial: IngestionSourceConfig = {
+      source_id: "src_confluence___example_atlassian_net__ENG",
+      source_type: "confluence_space",
+      confluence_url: "https://example.atlassian.net/wiki",
+      space_key: "ENG",
+      whole_space: true,
+      name: "example-space",
+      description: "",
+      status: "active",
+      default_chunk_size: 10000,
+      default_chunk_overlap: 2000,
+      reload_interval: 86400,
+      config_driven: false,
+      config_import_adopted: true,
+      visibility: "team",
+      shared_with_teams: [],
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+
+    render(<IngestionSourceForm open onClose={jest.fn()} onSave={jest.fn()} initial={wholeSpaceInitial} />);
+
+    expect(screen.getByText(/every page in this space will be ingested/i)).toBeInTheDocument();
+    expect(screen.queryByText(/include child pages/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the stored content_kind when editing a folder source with no start_page_url", () => {
+    const folderInitial: IngestionSourceConfig = {
+      source_id: "src_confluence___example_atlassian_net__ENG__folder__456",
+      source_type: "confluence_space",
+      confluence_url: "https://example.atlassian.net/wiki",
+      space_key: "ENG",
+      content_kind: "folder",
+      name: "example-folder",
+      description: "",
+      status: "active",
+      default_chunk_size: 10000,
+      default_chunk_overlap: 2000,
+      reload_interval: 86400,
+      config_driven: false,
+      config_import_adopted: true,
+      visibility: "team",
+      shared_with_teams: [],
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+
+    render(<IngestionSourceForm open onClose={jest.fn()} onSave={jest.fn()} initial={folderInitial} />);
+
+    expect(
+      screen.getByText(/every page nested under this folder, including subfolders, will be ingested/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/include child pages/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("<IngestionSourceForm /> — Confluence URL validation", () => {
+  it("shows an inline error for an unrecognized Confluence URL and keeps Ingest Source disabled", async () => {
+    const user = userEvent.setup();
+    render(
+      <IngestionSourceForm
+        open
+        displayMode="inline"
+        onClose={jest.fn()}
+        onSave={jest.fn()}
+        initial={null}
+        defaultSourceType="confluence_space"
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/^name/i), "Example");
+    await user.type(screen.getByLabelText(/^url/i), "https://example.atlassian.net/wiki/display/ENG");
+    await user.type(screen.getByLabelText(/space key/i), "ENG");
+
+    expect(
+      screen.getByText(/couldn.t recognize this as a confluence page, folder, or space url/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /ingest source/i })).toBeDisabled();
   });
 });

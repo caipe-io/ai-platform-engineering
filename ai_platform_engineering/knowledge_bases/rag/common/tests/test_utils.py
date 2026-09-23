@@ -2,7 +2,11 @@ import socket
 
 import pytest
 
-from common.utils import generate_confluence_datasource_id, sanitize_url
+from common.utils import (
+  generate_confluence_datasource_id,
+  parse_confluence_locator,
+  sanitize_url,
+)
 
 
 def _patch_dns(monkeypatch, records: dict[str, list[str]]) -> None:
@@ -102,3 +106,85 @@ def test_generate_confluence_datasource_id_makes_page_source_safe_for_managed_ac
     "Control Plane",
     "123456",
   ) == "src_confluence___wiki_example_com_8090__Control_Plane__123456"
+
+
+def test_generate_confluence_datasource_id_scopes_ui_source_to_root_folder():
+  assert generate_confluence_datasource_id(
+    "https://wiki.example.com/confluence",
+    "ENG",
+    "789",
+    "folder",
+  ) == "src_confluence___wiki_example_com__ENG__folder__789"
+
+
+def test_generate_confluence_datasource_id_folder_and_page_ids_dont_collide():
+  page_id = generate_confluence_datasource_id("https://wiki.example.com", "ENG", "123")
+  folder_id = generate_confluence_datasource_id("https://wiki.example.com", "ENG", "123", "folder")
+  assert page_id != folder_id
+
+
+def test_parse_confluence_locator_page():
+  locator = parse_confluence_locator("https://wiki.example.com/wiki/spaces/ENG/pages/123/Overview")
+  assert locator.kind == "page"
+  assert locator.space_key == "ENG"
+  assert locator.content_id == "123"
+
+
+def test_parse_confluence_locator_folder():
+  locator = parse_confluence_locator("https://wiki.example.com/wiki/spaces/ENG/folder/456")
+  assert locator.kind == "folder"
+  assert locator.space_key == "ENG"
+  assert locator.content_id == "456"
+
+
+def test_parse_confluence_locator_space_root():
+  locator = parse_confluence_locator("https://wiki.example.com/wiki/spaces/ENG")
+  assert locator.kind == "space"
+  assert locator.space_key == "ENG"
+  assert locator.content_id is None
+
+
+def test_parse_confluence_locator_space_overview():
+  locator = parse_confluence_locator("https://wiki.example.com/wiki/spaces/ENG/overview")
+  assert locator.kind == "space"
+  assert locator.space_key == "ENG"
+
+
+def test_parse_confluence_locator_decodes_space_key():
+  locator = parse_confluence_locator("https://wiki.example.com/wiki/spaces/MY%20SPACE")
+  assert locator.space_key == "MY SPACE"
+
+
+def test_parse_confluence_locator_rejects_page_listing_with_no_id():
+  assert parse_confluence_locator("https://wiki.example.com/wiki/spaces/ENG/pages") is None
+
+
+def test_parse_confluence_locator_rejects_unrelated_url():
+  assert parse_confluence_locator("https://wiki.example.com/wiki/display/ENG") is None
+
+
+def test_parse_confluence_locator_prefers_page_over_a_trailing_folder_looking_segment():
+  # A URL matching the page pattern is resolved as a page even if a later
+  # segment looks like a folder path — page/pages/folder ordering is checked
+  # first and is unambiguous once matched.
+  locator = parse_confluence_locator(
+    "https://wiki.example.com/wiki/spaces/ENG/pages/123/folder/456",
+  )
+  assert locator.kind == "page"
+  assert locator.content_id == "123"
+
+
+def test_parse_confluence_locator_rejects_a_folder_listing_with_no_id():
+  assert parse_confluence_locator("https://wiki.example.com/wiki/spaces/ENG/folder") is None
+
+
+def test_parse_confluence_locator_ignores_a_trailing_query_string():
+  locator = parse_confluence_locator("https://wiki.example.com/wiki/spaces/ENG?foo=bar")
+  assert locator.kind == "space"
+  assert locator.space_key == "ENG"
+
+  locator = parse_confluence_locator(
+    "https://wiki.example.com/wiki/spaces/ENG/pages/123/Title?foo=bar",
+  )
+  assert locator.kind == "page"
+  assert locator.content_id == "123"

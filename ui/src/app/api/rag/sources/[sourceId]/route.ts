@@ -108,6 +108,7 @@ const IMMUTABLE_FIELDS = [
   "confluence_url",
   "space_key",
   "start_page_url",
+  "content_kind",
   "whole_space",
   "page_configs",
   "project_key",
