@@ -21,19 +21,26 @@ export function getLastActiveConversationId(): string | null {
 export function resolveChatNavigationPath(state: {
   conversations: Conversation[];
   activeConversationId: string | null;
+  ownerId?: string | null;
 }): string {
-  const { conversations, activeConversationId } = state;
+  const { conversations, activeConversationId, ownerId } = state;
+  const normalizedOwnerId = ownerId?.trim().toLowerCase();
+  const ownedConversations = normalizedOwnerId
+    ? conversations.filter(
+        (conversation) =>
+          !conversation.owner_id
+          || conversation.owner_id.trim().toLowerCase() === normalizedOwnerId,
+      )
+    : conversations;
   const lastActive = activeConversationId ?? getLastActiveConversationId();
-  if (lastActive) {
-    if (
-      conversations.length === 0 ||
-      conversations.some((conversation) => conversation.id === lastActive)
-    ) {
-      return `/chat/${lastActive}`;
-    }
+  if (
+    lastActive
+    && ownedConversations.some((conversation) => conversation.id === lastActive)
+  ) {
+    return `/chat/${lastActive}`;
   }
-  if (conversations.length > 0) {
-    const latest = [...conversations].sort(
+  if (ownedConversations.length > 0) {
+    const latest = [...ownedConversations].sort(
       (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
     )[0];
     return `/chat/${latest.id}`;
@@ -166,6 +173,9 @@ const MESSAGE_PAGE_SIZE = 10;
 
 // Coalesce identical list requests while allowing a filter change to start immediately.
 const conversationLoadsInFlight = new Map<string, Promise<void>>();
+// Async results from a prior login or impersonation identity must never
+// repopulate the store after an identity-boundary reset.
+let identityStateGeneration = 0;
 
 // NOTE: savedMessageIds / savedMessageState tracking removed.
 // With the upsert-based API, saveMessagesToServer sends ALL messages every
@@ -310,6 +320,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       inputRequiredConversations: new Set<string>(),
 
       createConversation: async (agentId: string) => {
+        const requestGeneration = identityStateGeneration;
         const storageMode = getStorageMode();
         const normalizedAgentId = agentId.trim();
         if (!normalizedAgentId) {
@@ -326,6 +337,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             agent_id: normalizedAgentId,
           });
           id = result.conversation._id;
+          if (requestGeneration !== identityStateGeneration) {
+            throw new Error("The active chat identity changed while creating the conversation");
+          }
         } else {
           // localStorage mode: generate locally
           id = generateId();
@@ -758,6 +772,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       },
 
       clearAllConversations: () => {
+        identityStateGeneration += 1;
         for (const stream of get().streamingConversations.values()) {
           stream.client.abort();
         }
@@ -871,6 +886,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       },
 
       loadConversationsFromServer: async (options) => {
+        const requestGeneration = identityStateGeneration;
         const storageMode = getStorageMode();
 
         // Only load from server in MongoDB mode
@@ -894,7 +910,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           isLoadingMoreConversations: append,
         });
 
-        const requestKey = `${filter}:${page}`;
+        const requestKey = `${requestGeneration}:${filter}:${page}`;
         const existingRequest = conversationLoadsInFlight.get(requestKey);
         if (existingRequest) {
           console.log('[ChatStore] Joining in-flight conversation load:', requestKey);
@@ -912,6 +928,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 source: filter,
                 client_type: filter === 'api' || filter === 'all' ? null : 'webui',
               });
+              if (requestGeneration !== identityStateGeneration) return;
             } catch (apiError) {
             // Check if it's an auth error (expected when not logged in)
             const errorMessage = apiError instanceof Error ? apiError.message : String(apiError);
@@ -972,7 +989,10 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           // conversation is opened. Only preserve local-only conversations that
           // are actively streaming (just created, server hasn't caught up).
           // Ignore a response that arrived after the user selected another filter.
-          if (get().conversationFilter !== filter) return;
+          if (
+            requestGeneration !== identityStateGeneration
+            || get().conversationFilter !== filter
+          ) return;
           const latestState = get();
 
           // Convert server items to local Conversation format
@@ -1060,7 +1080,10 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             // Don't clear conversations on error - preserve what we have
           } finally {
             conversationLoadsInFlight.delete(requestKey);
-            if (get().conversationFilter === filter) {
+            if (
+              requestGeneration === identityStateGeneration
+              && get().conversationFilter === filter
+            ) {
               set({ isLoadingMoreConversations: false });
             }
           }
