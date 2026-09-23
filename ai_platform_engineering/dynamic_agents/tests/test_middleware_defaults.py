@@ -1,3 +1,4 @@
+import pytest
 from langchain.agents.middleware.context_editing import ContextEditingMiddleware
 from langchain.agents.middleware.model_retry import ModelRetryMiddleware
 
@@ -5,10 +6,17 @@ from dynamic_agents.services.context_usage import ContextUsageMiddleware
 from dynamic_agents.services.middleware import (
     InterruptAwareToolRetryMiddleware,
     ToolResultInvariantMiddleware,
+    TransientModelRetryMiddleware,
     build_middleware,
     get_default_middleware_entries,
     get_middleware_definitions,
 )
+
+
+class _StatusError(Exception):
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(f"HTTP {status_code}")
 
 
 def test_default_middleware_entries_enable_context_editing_and_raise_model_errors():
@@ -42,3 +50,24 @@ def test_build_middleware_uses_context_editing_guardrail_by_default():
     assert context_editing.edits[0].keep == 3
     assert any(isinstance(middleware, ToolResultInvariantMiddleware) for middleware in stack)
     assert any(isinstance(middleware, ContextUsageMiddleware) for middleware in stack)
+
+
+def test_model_retry_does_not_retry_terminal_client_errors():
+    middleware = TransientModelRetryMiddleware(
+        max_retries=5,
+        initial_delay=0,
+        on_failure=lambda exc: str(exc),
+    )
+    calls = 0
+
+    def fail_request(_request):
+        nonlocal calls
+        calls += 1
+        raise _StatusError(400)
+
+    with pytest.raises(_StatusError):
+        middleware.wrap_model_call(None, fail_request)
+
+    assert calls == 1
+    assert middleware.retry_on(_StatusError(429)) is True
+    assert middleware.retry_on(_StatusError(503)) is True
