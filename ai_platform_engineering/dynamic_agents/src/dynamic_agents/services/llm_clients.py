@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import date
 from functools import lru_cache
+from threading import Lock
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -21,6 +25,8 @@ from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 logger = logging.getLogger(__name__)
 
 SHARE_CLIENTS = os.getenv("LLM_CLIENT_SHARING", "true").lower() != "false"
+_AZURE_RESPONSES_MIN_API_VERSION = "2025-03-01-preview"
+_AZURE_ENV_LOCK = Lock()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -75,6 +81,52 @@ def _get_httpx_client(endpoint: str) -> Any:
     if SHARE_CLIENTS:
         return _cached_httpx_client(endpoint)
     return _create_httpx_client(endpoint)
+
+
+def _azure_responses_api_version(configured: str | None) -> str:
+    """Return an Azure API version that supports the Responses API."""
+    if not configured:
+        return _AZURE_RESPONSES_MIN_API_VERSION
+    try:
+        configured_date = date.fromisoformat(configured[:10])
+    except ValueError:
+        return configured
+    minimum_date = date.fromisoformat(_AZURE_RESPONSES_MIN_API_VERSION[:10])
+    if configured_date < minimum_date:
+        return _AZURE_RESPONSES_MIN_API_VERSION
+    return configured
+
+
+@contextmanager
+def _azure_responses_environment(enabled: bool) -> Iterator[None]:
+    """Force the Responses API and its minimum Azure API version during construction."""
+    if not enabled:
+        yield
+        return
+
+    with _AZURE_ENV_LOCK:
+        original_responses = os.environ.get("AZURE_OPENAI_USE_RESPONSES")
+        original_version = os.environ.get("AZURE_OPENAI_API_VERSION")
+        effective_version = _azure_responses_api_version(original_version)
+        os.environ["AZURE_OPENAI_USE_RESPONSES"] = "true"
+        os.environ["AZURE_OPENAI_API_VERSION"] = effective_version
+        if effective_version != original_version:
+            logger.warning(
+                "[llm] Azure Responses API requires api-version %s or later; using %s",
+                _AZURE_RESPONSES_MIN_API_VERSION,
+                effective_version,
+            )
+        try:
+            yield
+        finally:
+            if original_responses is None:
+                os.environ.pop("AZURE_OPENAI_USE_RESPONSES", None)
+            else:
+                os.environ["AZURE_OPENAI_USE_RESPONSES"] = original_responses
+            if original_version is None:
+                os.environ.pop("AZURE_OPENAI_API_VERSION", None)
+            else:
+                os.environ["AZURE_OPENAI_API_VERSION"] = original_version
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -158,6 +210,17 @@ def get_llm(
             resolved_model or "<from env>",
         )
 
+    normalized_provider = resolved_provider.lower().replace("_", "-")
+    use_azure_responses = (
+        model_supports_effort
+        and normalized_provider == "azure-openai"
+        and resolved_model is not None
+        and resolved_model.lower().startswith(("gpt-5", "gpt-6"))
+    )
+    if model_supports_effort and normalized_provider in {"aws-bedrock", "bedrock"}:
+        # Anthropic accepts only its default temperature while thinking is enabled.
+        kwargs["temperature"] = 1.0
+
     if SHARE_CLIENTS:
         p = resolved_provider.lower().replace("-", "_")
         if "bedrock" in p or "aws" in p:
@@ -173,10 +236,11 @@ def get_llm(
         # google-gemini / google-vertex-ai: no shared client needed
 
     try:
-        factory = LLMFactory(provider=resolved_provider)
-        if model_supports_effort:
-            kwargs["reasoning_effort"] = reasoning_effort
-        llm = factory.get_llm(**kwargs)
+        with _azure_responses_environment(use_azure_responses):
+            factory = LLMFactory(provider=resolved_provider)
+            if model_supports_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
+            llm = factory.get_llm(**kwargs)
     except ValueError as exc:
         # LLMFactory raises ValueError for unknown providers OR missing
         # provider-specific env vars. Re-raise as LLMConfigError so the
