@@ -1,0 +1,7 @@
+deepeval==4.0.7
+httpx==0.28.1
+pydantic==2.13.4
+pyyaml==6.0.3
+requests==2.34.2
+psycopg2-binary>=2.9
+pandas>=2.0

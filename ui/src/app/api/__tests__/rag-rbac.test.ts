@@ -983,4 +983,243 @@ describe('RAG RBAC Integration', () => {
       expect(global.fetch).not.toHaveBeenCalled();
     });
   });
+
+  describe('RAG proxy with Bearer JWT', () => {
+    it('authenticates via Authorization Bearer token without session cookie', async () => {
+      jest.mocked(getServerSession).mockResolvedValue(null);
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ tool_id: 'bearer-tool', description: 'test' }),
+      } as Response);
+
+      const { POST } = await import('@/app/api/rag/[...path]/route');
+      const body = {
+        tool_id: 'bearer-tool',
+        description: 'test',
+        parallel_searches: [{ label: 'results', datasource_ids: [], semantic_weight: 0.5, extra_filters: {} }],
+        allow_runtime_filters: true,
+        shared_with_org: true,
+      };
+
+      const response = await POST(
+        ragRequest('/api/rag/v1/mcp/custom-tools', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer test-bearer-jwt-token',
+            'Content-Type': 'application/json',
+            'content-length': String(JSON.stringify(body).length),
+          },
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ path: ['v1', 'mcp', 'custom-tools'] }) },
+      );
+
+      expect(response.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/v1/mcp/custom-tools'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-bearer-jwt-token',
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('RAG batch jobs (v1/job) RBAC scope and action resolution', () => {
+    beforeEach(async () => {
+      const nextAuth = await import('next-auth');
+      jest.mocked(nextAuth.getServerSession).mockResolvedValue({
+        sub: 'alice-sub',
+        role: 'user',
+        org: 'team-alpha',
+        accessToken: 'browser-token',
+        user: { email: 'alice@example.com' },
+      } as unknown);
+    });
+
+    it('maps GET /api/rag/v1/job to query scope and read action', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ jobs: [] }),
+      } as Response);
+
+      const { GET } = await import('@/app/api/rag/[...path]/route');
+      const response = await GET(
+        ragRequest('/api/rag/v1/job'),
+        { params: Promise.resolve({ path: ['v1', 'job'] }) },
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockRequireRbacPermission).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: 'alice-sub' }),
+        'rag',
+        'query',
+      );
+    });
+
+    it('maps POST /api/rag/v1/job to query scope and ingest action', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ job_id: 'job-1' }),
+      } as Response);
+
+      const { POST } = await import('@/app/api/rag/[...path]/route');
+      const body = { datasource_id: 'ds-1' };
+      const response = await POST(
+        ragRequest('/api/rag/v1/job', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'content-length': String(JSON.stringify(body).length) },
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ path: ['v1', 'job'] }) },
+      );
+
+      expect(response.status).toBe(201);
+      expect(mockRequireRbacPermission).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: 'alice-sub' }),
+        'rag',
+        'query',
+      );
+    });
+
+    it('maps PATCH /api/rag/v1/job/job-123 to query scope and ingest action', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ job_id: 'job-123', status: 'cancelled' }),
+      } as Response);
+
+      const { PATCH } = await import('@/app/api/rag/[...path]/route');
+      const body = { status: 'cancelled' };
+      const response = await PATCH(
+        ragRequest('/api/rag/v1/job/job-123', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'content-length': String(JSON.stringify(body).length) },
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ path: ['v1', 'job', 'job-123'] }) },
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockRequireRbacPermission).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: 'alice-sub' }),
+        'rag',
+        'query',
+      );
+    });
+
+    it('maps DELETE /api/rag/v1/job/job-123 to admin scope', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+      } as Response);
+
+      const { DELETE } = await import('@/app/api/rag/[...path]/route');
+      const response = await DELETE(
+        ragRequest('/api/rag/v1/job/job-123', { method: 'DELETE' }),
+        { params: Promise.resolve({ path: ['v1', 'job', 'job-123'] }) },
+      );
+
+      expect(response.status).toBe(204);
+      expect(mockRequireRbacPermission).toHaveBeenCalledWith(
+        expect.objectContaining({ sub: 'alice-sub' }),
+        'rag',
+        'admin',
+      );
+    });
+  });
+
+  describe('RAG proxy URL search parameter preservation', () => {
+    beforeEach(async () => {
+      const nextAuth = await import('next-auth');
+      jest.mocked(nextAuth.getServerSession).mockResolvedValue({
+        sub: 'alice-sub',
+        role: 'user',
+        org: 'team-alpha',
+        accessToken: 'browser-token',
+        user: { email: 'alice@example.com' },
+      } as unknown);
+    });
+
+    it('preserves query search parameters on POST requests', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ results: [] }),
+      } as Response);
+
+      const { POST } = await import('@/app/api/rag/[...path]/route');
+      const body = { query: 'test query' };
+      const response = await POST(
+        ragRequest('/api/rag/v1/query?reindex=true&top_k=5', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'content-length': String(JSON.stringify(body).length) },
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ path: ['v1', 'query'] }) },
+      );
+
+      expect(response.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:9446/v1/query?reindex=true&top_k=5',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('preserves query search parameters on PUT requests', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ updated: true }),
+      } as Response);
+
+      const { PUT } = await import('@/app/api/rag/[...path]/route');
+      const body = { name: 'updated' };
+      const response = await PUT(
+        ragRequest('/api/rag/v1/datasource/ds1?dry_run=true', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'content-length': String(JSON.stringify(body).length) },
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ path: ['v1', 'datasource', 'ds1'] }) },
+      );
+
+      expect(response.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:9446/v1/datasource/ds1?dry_run=true',
+        expect.objectContaining({ method: 'PUT' }),
+      );
+    });
+
+    it('preserves query search parameters on PATCH requests', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ patched: true }),
+      } as Response);
+
+      const { PATCH } = await import('@/app/api/rag/[...path]/route');
+      const body = { status: 'paused' };
+      const response = await PATCH(
+        ragRequest('/api/rag/v1/job/job-999?force=true', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'content-length': String(JSON.stringify(body).length) },
+          body: JSON.stringify(body),
+        }),
+        { params: Promise.resolve({ path: ['v1', 'job', 'job-999'] }) },
+      );
+
+      expect(response.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:9446/v1/job/job-999?force=true',
+        expect.objectContaining({ method: 'PATCH' }),
+      );
+    });
+  });
 });
+

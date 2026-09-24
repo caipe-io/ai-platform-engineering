@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: caipe-postgres-nodeport
+  namespace: caipe
+spec:
+  type: NodePort
+  ports:
+    - port: 5432
+      targetPort: 5432
+      nodePort: 30543
+  selector:
+    app.kubernetes.io/instance: caipe-postgres
+    app.kubernetes.io/name: postgresql
