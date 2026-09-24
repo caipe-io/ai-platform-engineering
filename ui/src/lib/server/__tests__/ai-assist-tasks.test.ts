@@ -1,7 +1,7 @@
 /**
  * Unit tests for the AI Assist task registry. Focuses on prompt construction
- * (no network) — verifies the system prompts are stable, model env overrides
- * are honored, and prompt-injection guards wrap untrusted prior text.
+ * (no network) — verifies the system prompts are stable and that
+ * prompt-injection guards wrap untrusted prior text.
  */
 
 import {
@@ -135,41 +135,3 @@ describe("shell-script task", () => {
   });
 });
 
-describe("model env overrides", () => {
-  const taskId: AiAssistTaskId = "describe-skill";
-
-  it("returns global default when no overrides set", () => {
-    const env = {} as NodeJS.ProcessEnv;
-    const m = getAiAssistTask(taskId)!.defaultModel(env);
-    // Default model is Haiku 4.5 (raw Bedrock modelId, no `bedrock/`
-    // prefix). See `GLOBAL_DEFAULT_MODEL_ID` in ai-assist-tasks.ts for
-    // the rationale.
-    expect(m.id).toBe("global.anthropic.claude-haiku-4-5-20251001-v1:0");
-    // aws-bedrock is the safer default: it ships pre-configured in most
-    // deployments, while `openai` requires OPENAI_API_KEY which is often
-    // missing in local/dev. Per-task or AI_ASSIST_MODEL_PROVIDER overrides
-    // can flip this when an OpenAI key is wired up.
-    expect(m.provider).toBe("aws-bedrock");
-  });
-
-  it("honors task-specific override over global override", () => {
-    const env = {
-      AI_ASSIST_MODEL_ID: "global/model",
-      AI_ASSIST_MODEL_DESCRIBE_SKILL_ID: "describe/model",
-      AI_ASSIST_MODEL_DESCRIBE_SKILL_PROVIDER: "anthropic",
-    } as unknown as NodeJS.ProcessEnv;
-    const m = getAiAssistTask(taskId)!.defaultModel(env);
-    expect(m.id).toBe("describe/model");
-    expect(m.provider).toBe("anthropic");
-  });
-
-  it("honors legacy SKILL_AI_MODEL_ID for skill-md task", () => {
-    const env = {
-      SKILL_AI_MODEL_ID: "legacy/skill",
-      SKILL_AI_MODEL_PROVIDER: "legacy-provider",
-    } as unknown as NodeJS.ProcessEnv;
-    const m = getAiAssistTask("skill-md")!.defaultModel(env);
-    expect(m.id).toBe("legacy/skill");
-    expect(m.provider).toBe("legacy-provider");
-  });
-});

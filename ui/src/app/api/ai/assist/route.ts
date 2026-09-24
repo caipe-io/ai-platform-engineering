@@ -7,8 +7,7 @@
  * Request body:
  *   {
  *     "task": "describe-skill" | "skill-md" | ...,
- *     "context": { instruction?, current_value?, name?, ... },
- *     "model"?: { id, provider }    // optional override
+ *     "context": { instruction?, current_value?, name?, ... }
  *   }
  *
  * Response: text/event-stream
@@ -35,32 +34,6 @@ import { loadRubricGuidance } from "@/lib/server/ai-review/rubric-guidance";
 import { NextRequest } from "next/server";
 
 /**
- * Resolve a model the dynamic-agents service can actually serve. Tries the
- * caller-provided override first, then any `AI_ASSIST_MODEL_*` env defaults,
- * then falls back to the first model present in the `llm_models` MongoDB
- * collection (the same source the custom-agent model picker uses). The final
- * fallback is the registry's static default.
- *
- * Returning a model that DA can't authenticate against produces an opaque
- * 500 ("Failed to generate suggestion. Please try again.") with no actionable
- * message, so it's worth one extra Mongo hit per call to avoid that footgun.
- */
-async function resolveModel(
-  override: { id?: string; provider?: string } | undefined,
-  envDefault: { id: string; provider: string },
-): Promise<{ id: string; provider: string }> {
-  // `envDefault` always carries a value, so it only counts as an explicit
-  // deployment pin when one of the env vars behind it is actually set.
-  const envPinned =
-    process.env.AI_ASSIST_MODEL_ID ||
-    process.env.AI_ASSIST_MODEL_PROVIDER ||
-    process.env.SKILL_AI_MODEL_ID
-      ? envDefault
-      : null;
-  return resolveLlmModel({ override, envModel: envPinned });
-}
-
-/**
  * Pull a stable per-user key from the base64-encoded X-User-Context header
  * that `authenticateRequest` builds. Using the header avoids a second JWT/JWKS
  * round-trip (which can time out if the SSO IdP is slow), and keeps the
@@ -82,7 +55,6 @@ export const dynamic = "force-dynamic";
 interface AssistRequestBody {
   task?: string;
   context?: AiAssistContext;
-  model?: { id?: string; provider?: string };
 }
 
 function sseEvent(type: string, payload: Record<string, unknown> = {}): string {
@@ -148,7 +120,7 @@ export async function POST(request: NextRequest) {
 
   // ---- Build prompt + call backend ---------------------------------------
   const userMessage = task.buildUserMessage(context);
-  const model = await resolveModel(body.model, task.defaultModel(process.env));
+  const model = await resolveLlmModel();
 
   // When the task feeds a graded surface, append the live AI Review rubric to
   // the system prompt so generated content clears the grader on the first try.

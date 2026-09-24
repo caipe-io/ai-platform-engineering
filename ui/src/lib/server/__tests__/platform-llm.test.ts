@@ -57,42 +57,22 @@ describe("readPlatformLlm", () => {
 });
 
 describe("resolveLlmModel precedence", () => {
-  it("prefers a request override above everything", async () => {
-    setPlatformLlm(PLATFORM);
-    await expect(
-      resolveLlmModel({
-        override: { id: "override", provider: "openai" },
-        configModel: { id: "config", provider: "openai" },
-        envModel: { id: "env", provider: "openai" },
-      }),
-    ).resolves.toEqual({ id: "override", provider: "openai" });
-  });
-
   it("prefers a feature's own pinned model over the platform default", async () => {
     setPlatformLlm(PLATFORM);
     await expect(
-      resolveLlmModel({ configModel: { id: "config", provider: "openai" } }),
+      resolveLlmModel({ id: "config", provider: "openai" }),
     ).resolves.toEqual({ id: "config", provider: "openai" });
   });
 
-  it("uses the platform default ahead of an environment pin", async () => {
+  it("uses the platform default when the feature pins nothing", async () => {
     setPlatformLlm(PLATFORM);
-    await expect(
-      resolveLlmModel({ envModel: { id: "env", provider: "openai" } }),
-    ).resolves.toEqual(PLATFORM);
-  });
-
-  it("falls back to the environment pin when no platform default is set", async () => {
-    setPlatformLlm(null);
-    await expect(
-      resolveLlmModel({ envModel: { id: "env", provider: "openai" } }),
-    ).resolves.toEqual({ id: "env", provider: "openai" });
+    await expect(resolveLlmModel()).resolves.toEqual(PLATFORM);
   });
 
   it("falls back to the first registered model when nothing else is set", async () => {
     setPlatformLlm(null);
     collections.set("llm_models", [REGISTERED]);
-    await expect(resolveLlmModel({})).resolves.toEqual({
+    await expect(resolveLlmModel()).resolves.toEqual({
       id: "registry-model",
       provider: "openai",
     });
@@ -100,12 +80,12 @@ describe("resolveLlmModel precedence", () => {
 
   it("ends at the global default", async () => {
     setPlatformLlm(null);
-    await expect(resolveLlmModel({})).resolves.toEqual(GLOBAL_DEFAULT_MODEL);
+    await expect(resolveLlmModel()).resolves.toEqual(GLOBAL_DEFAULT_MODEL);
   });
 
-  it("ignores a half-configured override rather than calling a broken model", async () => {
+  it("ignores a half-configured pin rather than calling a broken model", async () => {
     setPlatformLlm(PLATFORM);
-    await expect(resolveLlmModel({ override: { id: "override" } })).resolves.toEqual(
+    await expect(resolveLlmModel({ id: "config" })).resolves.toEqual(
       PLATFORM,
     );
   });

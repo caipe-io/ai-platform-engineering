@@ -51,7 +51,6 @@ export function PlatformDefaultsSettings({
   const [scheduleEditorSaveState,setScheduleEditorSaveState] = useState<AutoSaveState>({ status: "idle" });
   const [platformLlm,setPlatformLlm] = useState<PlatformLlmRef | null>(null);
   const [savedPlatformLlm,setSavedPlatformLlm] = useState<PlatformLlmRef | null>(null);
-  const [platformLlmSource,setPlatformLlmSource] = useState("fallback");
   const [platformLlmSaveState,setPlatformLlmSaveState] = useState<AutoSaveState>({ status: "idle" });
   const [llmModels,setLlmModels] = useState<LlmModelOption[]>([]);
   const [llmModelsLoading,setLlmModelsLoading] = useState(true);
@@ -86,7 +85,6 @@ export function PlatformDefaultsSettings({
         const platformLlmValue = (configData.data.platform_llm ?? null) as PlatformLlmRef | null;
         setPlatformLlm(platformLlmValue);
         setSavedPlatformLlm(platformLlmValue);
-        setPlatformLlmSource(configData.data.platform_llm_source || "fallback");
       } catch (reason) {
         if (!cancelled) {
           setLoadError(reason instanceof Error ? reason.message : "Could not load the platform default");
@@ -189,7 +187,6 @@ export function PlatformDefaultsSettings({
       const effectiveValue = (data.data?.platform_llm ?? null) as PlatformLlmRef | null;
       setPlatformLlm(effectiveValue);
       setSavedPlatformLlm(effectiveValue);
-      setPlatformLlmSource(data.data?.platform_llm_source || "fallback");
       setPlatformLlmSaveState({ status: "saved" });
     } catch (reason) {
       setPlatformLlm(savedPlatformLlm);
@@ -387,11 +384,6 @@ export function PlatformDefaultsSettings({
           </div>
         ) : (
           <div className="space-y-4">
-            {platformLlmSource === "env" ? (
-              <p className="text-xs text-muted-foreground">
-                Currently using the deployment value (<code>AI_ASSIST_MODEL_ID</code>). Choosing a model here overrides it.
-              </p>
-            ) : null}
             <div className="space-y-2">
               <label className="text-sm font-medium" htmlFor="platform-llm">
                 Model

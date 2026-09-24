@@ -19,8 +19,8 @@
  *   5. Load the review config from Mongo, fall back to seed defaults.
  *   6. If the config is `enabled === false`, return a synthetic "passed"
  *      result so consumer flows aren't blocked while admins are mid-config.
- *   7. Resolve the model: per-request override > per-config override >
- *      env default > Mongo `llm_models` first row > registry default.
+ *   7. Resolve the model: per-config override > Platform LLM >
+ *      Mongo `llm_models` first row > registry default.
  *   8. Run all criteria in parallel via Promise.all (runCriterion catches
  *      its own errors and returns a verdict-with-error).
  *   9. Aggregate via computeScoreAndGrade; pass = score >= min_score.
@@ -51,10 +51,6 @@ const MAX_CONTEXT_BYTES = 64 * 1024;
 /** Conservative cap on rubric size — prevents runaway parallel LLM calls. */
 const MAX_CRITERIA = 30;
 
-/** Bedrock-friendly default that matches /api/ai/assist's fallback. */
-const GLOBAL_DEFAULT_MODEL_ID = "global.anthropic.claude-haiku-4-5-20251001-v1:0";
-const GLOBAL_DEFAULT_PROVIDER = "aws-bedrock";
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -77,29 +73,6 @@ function userKeyFromUserContext(
   } catch {
     return undefined;
   }
-}
-
-/** An explicitly pinned environment model, or null when nothing is set. */
-function envPinnedModel(): { id: string; provider: string } | null {
-  const id = process.env.AI_ASSIST_MODEL_ID || process.env.SKILL_AI_MODEL_ID;
-  const provider =
-    process.env.AI_ASSIST_MODEL_PROVIDER || process.env.SKILL_AI_MODEL_PROVIDER;
-  if (!id && !provider) return null;
-  return {
-    id: id || GLOBAL_DEFAULT_MODEL_ID,
-    provider: provider || GLOBAL_DEFAULT_PROVIDER,
-  };
-}
-
-async function resolveModel(
-  override: { id?: string; provider?: string } | undefined,
-  configModel: { id?: string; provider?: string } | undefined,
-): Promise<{ id: string; provider: string }> {
-  return resolveLlmModel({
-    override,
-    configModel,
-    envModel: envPinnedModel(),
-  });
 }
 
 /** Compute sha-256 hex of `content` server-side for hash verification. */
@@ -219,7 +192,7 @@ export async function POST(request: NextRequest) {
 
   // ---- Build runner inputs ------------------------------------------------
   const enabledCriteria = (config.criteria ?? []).slice(0, MAX_CRITERIA);
-  const model = await resolveModel(body.model, config.model);
+  const model = await resolveLlmModel(config.model);
 
   // Forward the same auth headers `da-proxy.buildBackendHeaders` would, so
   // each parallel `/api/v1/assistant/suggest` call passes through DA's

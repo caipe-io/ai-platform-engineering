@@ -1,10 +1,9 @@
 /**
  * Resolution of the LLM a server-side feature should call.
  *
- * `ai/review`, `ai/assist` and `skills/generate` each used to carry their own
- * copy of the same fallback ladder, so a deployment had to be configured three
- * times to change one answer. They now share this module, and the Platform LLM
- * chosen in Admin → Platform configuration is the single place to set it.
+ * `ai/review`, `ai/assist` and `skills/generate` all resolve through here, so
+ * the Platform LLM chosen in Admin → Platform configuration is the single place
+ * to set the model. AI Review may additionally pin a model per review target.
  */
 
 import { getCollection } from "@/lib/mongodb";
@@ -18,6 +17,10 @@ export interface LlmModelRef {
 /**
  * Last-resort model. Bedrock is the provider most deployments already have
  * credentials for, whereas OpenAI needs a key that is often absent in dev.
+ *
+ * `id` is the raw Bedrock modelId, not a LiteLLM-style `bedrock/...` value:
+ * cnoe-agent-utils passes it straight to `client.converse(modelId=...)`, and
+ * Bedrock rejects a prefixed id with `ValidationException`.
  */
 export const GLOBAL_DEFAULT_MODEL: LlmModelRef = {
   id: "global.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -64,24 +67,17 @@ async function readFirstRegisteredModel(): Promise<LlmModelRef | null> {
 /**
  * Pick the model to call.
  *
- * The Platform LLM deliberately outranks environment defaults: an admin who
- * chose one in the UI expects it to win, and only deployments that set it see
- * any change. Environment variables remain ahead of the registry so existing
- * installs that pin a model keep working untouched.
+ * Model choice belongs to the database, set through the UI. The only thing that
+ * outranks the Platform LLM is a model pinned on the feature's own config, which
+ * is itself a UI setting.
  */
-export async function resolveLlmModel(input: {
-  /** Per-request override, highest precedence. */
-  override?: { id?: string; provider?: string } | null;
+export async function resolveLlmModel(
   /** A model pinned on the feature's own config, e.g. an AI Review target. */
-  configModel?: { id?: string; provider?: string } | null;
-  /** Explicitly configured environment default, or null when unset. */
-  envModel?: { id?: string; provider?: string } | null;
-}): Promise<LlmModelRef> {
+  configModel?: { id?: string; provider?: string } | null,
+): Promise<LlmModelRef> {
   return (
-    toModelRef(input.override) ??
-    toModelRef(input.configModel) ??
+    toModelRef(configModel) ??
     (await readPlatformLlm()) ??
-    toModelRef(input.envModel) ??
     (await readFirstRegisteredModel()) ??
     GLOBAL_DEFAULT_MODEL
   );

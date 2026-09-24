@@ -240,13 +240,6 @@ async function getPlatformConfig(request: NextRequest) {
     const victoropsEnvFallback = process.env.SLACK_INTEGRATION_VICTOROPS_AGENT_ID || null;
     const ragIngestorLimits = normalizeRagIngestorLimits(doc?.rag_ingestor_limits);
     const platformLlm = normalizePlatformLlm(doc?.platform_llm);
-    const platformLlmEnvFallback =
-      process.env.AI_ASSIST_MODEL_ID?.trim() && process.env.AI_ASSIST_MODEL_PROVIDER?.trim()
-        ? {
-            id: process.env.AI_ASSIST_MODEL_ID.trim(),
-            provider: process.env.AI_ASSIST_MODEL_PROVIDER.trim(),
-          }
-        : null;
 
     return NextResponse.json({
       success: true,
@@ -257,8 +250,8 @@ async function getPlatformConfig(request: NextRequest) {
         schedule_editor_agent_source: scheduleEditorAgentId
           ? 'db'
           : (scheduleEditorEnvFallback ? 'env' : 'fallback'),
-        platform_llm: platformLlm ?? platformLlmEnvFallback,
-        platform_llm_source: platformLlm ? 'db' : (platformLlmEnvFallback ? 'env' : 'fallback'),
+        platform_llm: platformLlm,
+        platform_llm_source: platformLlm ? 'db' : 'fallback',
         slack_victorops_escalation_agent_id: victoropsAgentId ?? victoropsEnvFallback,
         slack_victorops_escalation_agent_source: victoropsAgentId ? 'db' : (victoropsEnvFallback ? 'env' : 'fallback'),
         release_notes: normalizeReleaseNotesConfig(doc?.release_notes),

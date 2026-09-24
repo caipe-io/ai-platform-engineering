@@ -47,8 +47,6 @@ export interface AiAssistContext {
 
 export interface UseAiAssistOptions {
   task: AiAssistTaskId;
-  /** Optional model override. Falls back to per-task default on the server. */
-  model?: { id: string; provider: string };
 }
 
 export interface UseAiAssistResult {
@@ -85,10 +83,7 @@ interface ServerEvent {
   rate_limit?: { limit: number; remaining: number; window_ms: number };
 }
 
-export function useAiAssist({
-  task,
-  model,
-}: UseAiAssistOptions): UseAiAssistResult {
+export function useAiAssist({ task }: UseAiAssistOptions): UseAiAssistResult {
   const { data: session } = useSession();
   const ssoEnabled = getConfig("ssoEnabled");
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
@@ -144,7 +139,6 @@ export function useAiAssist({
           body: JSON.stringify({
             task: effectiveTask,
             context: ctx,
-            ...(model ? { model } : {}),
           }),
           signal: controller.signal,
         });
@@ -219,7 +213,7 @@ export function useAiAssist({
         }
       }
     },
-    [accessToken, cancel, model, task],
+    [accessToken, cancel, task],
   );
 
   return {

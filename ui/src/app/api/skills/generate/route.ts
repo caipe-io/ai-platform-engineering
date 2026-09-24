@@ -80,15 +80,7 @@ export async function POST(request: NextRequest) {
           skill_description: body.skill_description,
         });
 
-        const envDefault = task.defaultModel(process.env);
-        const model = await resolveLlmModel({
-          // `defaultModel` always returns something, so it only counts as a
-          // deployment pin when one of the env vars behind it is actually set.
-          envModel:
-            process.env.AI_ASSIST_MODEL_ID || process.env.SKILL_AI_MODEL_ID
-              ? envDefault
-              : null,
-        });
+        const model = await resolveLlmModel();
 
         const result = await fetchAssistantSuggest(headers, {
           system_prompt: task.systemPrompt,
