@@ -31,13 +31,13 @@
 # value MUST match what the configured provider expects:
 #
 #   aws-bedrock  → raw Bedrock modelId, e.g. "global.anthropic.claude-sonnet-4-6"
-#                  (NO "bedrock/" prefix — cnoe-agent-utils passes it straight
+#                  (NO "bedrock/" prefix — the model id is passed straight
 #                  to boto3 and Bedrock will reject a prefixed string).
 #   openai       → OpenAI model name, e.g. "gpt-4o"
 #   azure-openai → Azure deployment name (matches AZURE_OPENAI_DEPLOYMENT)
 #   anthropic-claude → Anthropic model id, e.g. "claude-sonnet-4-5"
 #
-# `provider` must be one of the cnoe-agent-utils bindings.
+# `provider` must be one of the supported provider bindings.
 models:
   # AWS Bedrock — Claude family (inference-profile IDs, "global." prefix).
   # Requires AWS_REGION + AWS credentials (env or AWS_PROFILE) on the

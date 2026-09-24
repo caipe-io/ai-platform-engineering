@@ -17,6 +17,7 @@ from functools import lru_cache
 from threading import Lock
 from typing import Any
 
+from ai_platform_engineering.llm_wrapper.build import LLMConfigError as WrapperConfigError
 from langchain_core.language_models import BaseChatModel
 
 from dynamic_agents.models import ReasoningEffort
@@ -137,7 +138,7 @@ def _azure_responses_environment(enabled: bool) -> Iterator[None]:
 class LLMConfigError(ValueError):
     """Raised when an agent has no usable LLM configuration.
 
-    Distinct from `LLMFactory`'s generic `ValueError` so callers (and the
+    Distinct from the wrapper's generic `ValueError` so callers (and the
     chat SSE wrapper) can map it to a user-actionable message instead of
     the misleading "Something went wrong - some tools or subagents may
     have timed out" fallback.
@@ -155,12 +156,12 @@ def _resolve_llm_defaults(provider: str | None, model_id: str | None) -> tuple[s
 
     Resolution order:
     - `provider`: agent value → `LLM_PROVIDER` env var
-    - `model_id`: agent value → `None` (LLMFactory then reads the
+    - `model_id`: agent value → `None` (`build_chat_model` then reads the
       provider-specific env var, e.g. `AWS_BEDROCK_MODEL_ID`,
       `OPENAI_MODEL_NAME`, `ANTHROPIC_MODEL_NAME`, etc.)
 
     Empty `model_id` is returned as `None` rather than `""` so the
-    downstream `model_override` check in LLMFactory falls through to
+    downstream `model_override` check in `build_chat_model` falls through to
     its env-based lookup.
     """
     resolved_provider = (provider or "").strip() or os.getenv("LLM_PROVIDER", "").strip()
@@ -193,13 +194,11 @@ def get_llm(
     `LLMConfigError` with an actionable message if neither agent nor env
     define a usable provider.
     """
-    from cnoe_agent_utils import LLMFactory
+    from ai_platform_engineering.llm_wrapper.build import build_chat_model
 
     resolved_provider, resolved_model = _resolve_llm_defaults(provider, model_id)
 
     kwargs: dict[str, Any] = {}
-    if resolved_model is not None:
-        kwargs["model"] = resolved_model
     model_supports_effort = (
         reasoning_effort is not None
         and supports_reasoning_effort(resolved_model, reasoning_effort)
@@ -237,14 +236,16 @@ def get_llm(
 
     try:
         with _azure_responses_environment(use_azure_responses):
-            factory = LLMFactory(provider=resolved_provider)
             if model_supports_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
-            llm = factory.get_llm(**kwargs)
+            llm = build_chat_model(resolved_provider, resolved_model, **kwargs)
+    except WrapperConfigError as exc:
+        # Re-raise as this module's LLMConfigError so the SSE chat wrapper can
+        # translate it into an actionable user message. Both are ValueError
+        # subclasses; the wrapper's is caught first because it already carries
+        # provider and model context.
+        raise LLMConfigError(str(exc)) from exc
     except ValueError as exc:
-        # LLMFactory raises ValueError for unknown providers OR missing
-        # provider-specific env vars. Re-raise as LLMConfigError so the
-        # SSE chat wrapper can translate to an actionable user message.
         raise LLMConfigError(
             f"Cannot initialize LLM (provider={resolved_provider!r}, "
             f"model={resolved_model!r}): {exc}"

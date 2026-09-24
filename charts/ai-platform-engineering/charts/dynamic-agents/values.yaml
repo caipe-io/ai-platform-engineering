@@ -216,7 +216,7 @@ config:
   # explicit value always wins over the global); e.g. ATTACHMENT_BACKEND: "s3".
   ATTACHMENT_LOCAL_PATH: "/var/lib/caipe-attachments"
   # ─── Bedrock prompt caching ─────────────────────────────────────────────
-  # Selects ChatBedrockConverse (via cnoe_agent_utils.LLMFactory) and lets the
+  # Selects ChatBedrockConverse and lets the
   # rehydration middleware insert cachePoint markers so the large stable prefix
   # (system + tools + completed turns and their re-sent file bytes) is cached
   # and only the newest turn is billed uncached. REQUIRED for the attachment

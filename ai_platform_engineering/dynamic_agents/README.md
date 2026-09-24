@@ -190,7 +190,7 @@ For a private deployment alias, configure both sides of discovery:
 - `MODEL_CAPABILITIES_JSON` advertises the alias and its supported
   `reasoning_efforts` to the Dynamic Agents API and UI.
 - `LLM_REASONING_EFFORT_MAP_JSON` maps each portable level to the provider's
-  native string or thinking-token budget in `cnoe-agent-utils`.
+  native string or thinking-token budget.
 
 ## API Reference
 

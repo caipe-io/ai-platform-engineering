@@ -61,7 +61,7 @@ defensive — unknown attribute shapes pass through untouched, so a
 bug here can never break tracing, only fail to redact.
 
 We register the processor by attaching it to the active
-``TracerProvider``. ``cnoe_agent_utils.tracing.manager`` installs
+``TracerProvider``. The tracing manager installs
 its own ``BatchSpanProcessor`` first; we install ours alongside.
 The OTel SDK fans every span through every registered processor in
 registration order, so as long as we install before the first span
@@ -463,7 +463,7 @@ def install_skill_content_scrubber() -> bool:
     add_processor = getattr(provider, "add_span_processor", None)
     if add_processor is None:
         # NoOpTracerProvider (tracing not initialized) returns None
-        # here; nothing to attach to. The cnoe_agent_utils manager
+        # here; nothing to attach to. The tracing manager
         # logs its own "tracing disabled" line in that case.
         logger.info("[skill-scrubber] active TracerProvider has no add_span_processor; skipping")
         return False

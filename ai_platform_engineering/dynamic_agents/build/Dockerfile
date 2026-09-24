@@ -13,14 +13,29 @@ ENV UV_PYTHON_DOWNLOADS=0
 
 WORKDIR /app/dynamic_agents
 
-# Install dependencies first (cached layer)
+# Build context is the REPOSITORY ROOT, not this directory, so shared source
+# under ai_platform_engineering/ can be copied into the image. Changing this
+# back to a component-scoped context is what previously forced shared modules
+# to be duplicated into the component tree.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=ai_platform_engineering/dynamic_agents/uv.lock,target=uv.lock \
+    --mount=type=bind,source=ai_platform_engineering/dynamic_agents/pyproject.toml,target=pyproject.toml \
     UV_HTTP_TIMEOUT=900 uv sync --locked --no-install-project --no-dev
 
-# Copy source code and install project
-COPY . .
+# Component source.
+COPY ai_platform_engineering/dynamic_agents/ .
+
+# Shared source, single copy, imported as `ai_platform_engineering.llm_wrapper`.
+# It declares no dependencies of its own; this package's pyproject pins the
+# provider integrations it needs.
+#
+# It lands under /app/shared rather than /app so that PYTHONPATH can expose it
+# without also exposing /app/dynamic_agents. That directory holds src/, tests/
+# and pyproject.toml but no __init__.py, so putting /app on PYTHONPATH would
+# make it a namespace package that shadows the real `dynamic_agents` installed
+# into the venv.
+COPY ai_platform_engineering/__init__.py /app/shared/ai_platform_engineering/__init__.py
+COPY ai_platform_engineering/llm_wrapper/ /app/shared/ai_platform_engineering/llm_wrapper/
 RUN --mount=type=cache,target=/root/.cache/uv \
     UV_HTTP_TIMEOUT=900 uv sync --locked --no-dev
 
@@ -85,6 +100,10 @@ WORKDIR /app/dynamic_agents
 
 # Add virtual environment to PATH
 ENV PATH="/app/dynamic_agents/.venv/bin:$PATH"
+
+# Shared source lives outside the venv; see the builder stage for why it is
+# under /app/shared rather than /app.
+ENV PYTHONPATH="/app/shared"
 
 # Run as non-root user
 USER app

@@ -22,7 +22,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from cnoe_agent_utils.llm_factory import resolve_bedrock_client
+from ai_platform_engineering.llm_wrapper.bedrock_family import resolve_bedrock_client
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain.agents.middleware.context_editing import (
     ClearToolUsesEdit,
@@ -507,7 +507,7 @@ def _instantiate_model(
     model_id: str,
     model_provider: str,
 ) -> Any:
-    """Instantiate an LLM via LLMFactory for middleware that need a model.
+    """Instantiate an LLM via `build_chat_model` for middleware that need a model.
 
     Args:
         model_id: LLM model identifier.
@@ -612,7 +612,7 @@ def _build_prompt_cache_middleware(model_id: str) -> AgentMiddleware | None:
     """Return the native prompt-caching middleware for the resolved Bedrock client.
 
     The Bedrock client adapter is selected by ``resolve_bedrock_client`` (the same
-    logic ``LLMFactory`` uses at instantiation time):
+    logic ``build_chat_model`` uses at instantiation time):
 
     - ``anthropic`` -> ``ChatAnthropicBedrock``: return None. ``create_deep_agent``
       already appends ``AnthropicPromptCachingMiddleware`` unconditionally to the
