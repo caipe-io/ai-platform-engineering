@@ -16,7 +16,7 @@ multi-step skill run.
 
 Usage::
 
-    # Run AFTER cnoe_agent_utils.tracing.manager has set up the
+    # Run AFTER the tracing manager has set up the
     # global TracerProvider (so we can attach to the same provider).
     from ai_platform_engineering.utils.tracing import install_skill_content_scrubber
     install_skill_content_scrubber()
