@@ -64,3 +64,11 @@ dev = [
 constraint-dependencies = ["click==8.5.0", "starlette==1.6.0", "langchain-aws==1.5.0"]
 # cnoe-agent-utils 0.5.0 still pins 1.4.3, which is affected by GHSA-gr75-jv2w-4656.
 override-dependencies = ["langchain-anthropic==1.4.6"]
+
+# TEMPORARY: pin to the unreleased fix for the extended-thinking max_tokens
+# bug (cnoe-io/cnoe-agent-utils#45) so we can deploy and verify it before
+# that PR merges and a real 0.5.1 is released. Still reports version 0.5.0,
+# matching the dependency pin above — only the code differs. Revert this
+# override once #45 merges and a released version supersedes it.
+[tool.uv.sources]
+cnoe-agent-utils = { git = "https://github.com/cisco-erilutz/cnoe-agent-utils.git", rev = "8fb60d7e1463508a0a1d5a08d4b4ce380f980984" }
