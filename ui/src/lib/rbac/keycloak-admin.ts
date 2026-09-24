@@ -54,6 +54,8 @@ function getRealm(): string {
   return realm || "caipe";
 }
 
+export { getRealm as getKeycloakRealm };
+
 function getRealmTokenEndpoint(): string {
   return `${getKeycloakUrl()}/realms/${encodeURIComponent(getRealm())}/protocol/openid-connect/token`;
 }
