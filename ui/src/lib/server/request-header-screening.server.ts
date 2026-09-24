@@ -7,12 +7,16 @@
  * costs nothing here.
  *
  * Two layers, in order:
- *  1. Deterministic patterns for well-known credential formats. These always
- *     block, cannot be talked around, and need no model.
- *  2. An advisory model check for what patterns miss — odd encodings, unusual
+ *  1. Secretlint, which recognises the well-known credential formats. These
+ *     always block, cannot be talked around, and need no model.
+ *  2. An advisory model check for what those rules miss — odd encodings, unusual
  *     token shapes, attempts to smuggle instructions. Advisory by design: an
  *     unreachable or unconfigured model must not stop a datasource being saved.
  */
+
+import { lintSource } from "@secretlint/core";
+import { creator as patternRule } from "@secretlint/secretlint-rule-pattern";
+import { creator as presetCanary } from "@secretlint/secretlint-rule-preset-canary";
 
 import { fetchAssistantSuggest } from "@/lib/server/assistant-suggest-da";
 import { readPlatformLlm } from "@/lib/server/platform-llm.server";
@@ -34,48 +38,100 @@ export interface HeaderScreeningFinding {
   reason: string;
 }
 
-/**
- * Formats that identify a specific credential type. Deliberately narrow: a
- * false positive blocks a legitimate save, so generic "looks random" shapes are
- * left to the advisory layer.
- */
-const SECRET_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
-  { label: "a GitLab token", pattern: /\bglpat-[A-Za-z0-9_-]{16,}/ },
-  { label: "a GitLab token", pattern: /\bgl(?:rt|soat|cbt|ptt)-[A-Za-z0-9_-]{16,}/ },
-  { label: "a GitHub token", pattern: /\bgh[pousr]_[A-Za-z0-9]{16,}/ },
-  { label: "a GitHub app token", pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}/ },
-  // `sk-ant-` first: the broader OpenAI `sk-` shape also matches it, and the
-  // label should name the more specific format.
-  { label: "an Anthropic key", pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}/ },
-  { label: "an OpenAI key", pattern: /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}/ },
-  { label: "a Slack token", pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}/ },
-  { label: "an AWS access key id", pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
-  { label: "a Google API key", pattern: /\bAIza[0-9A-Za-z_-]{35}\b/ },
-  { label: "an Atlassian token", pattern: /\bATATT3[A-Za-z0-9_\-=]{20,}/ },
-  { label: "a JSON web token", pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}/ },
-  { label: "a private key block", pattern: /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/ },
-];
-
 /** The credential placeholder, which is never itself a finding. */
 const SECRET_PLACEHOLDER = "{{secret}}";
+
+/**
+ * Formats the canary preset leaves uncovered, expressed as configuration for
+ * secretlint's own pattern rule so detection stays one pipeline rather than a
+ * second regex engine beside it.
+ *
+ * The preset's rules are tuned to real credential shapes — its OpenAI rule, for
+ * instance, keys off the marker embedded in genuine keys. These patterns are
+ * looser on purpose: a value pasted into a header is worth catching even when it
+ * does not match a provider's exact issued form. Each was checked to fire on the
+ * format named and to leave ordinary header values such as `application/json`,
+ * `gzip, deflate, br`, a UUID and a hex digest alone.
+ */
+const ADDITIONAL_SECRET_PATTERNS: ReadonlyArray<{ name: string; pattern: string }> = [
+  { name: "an OpenAI or Anthropic key", pattern: String.raw`/\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}/` },
+  { name: "an AWS access key id", pattern: String.raw`/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/` },
+  { name: "a Google API key", pattern: String.raw`/\bAIza[0-9A-Za-z_-]{35}\b/` },
+  { name: "a Hugging Face token", pattern: String.raw`/\bhf_[A-Za-z0-9]{30,}/` },
+  { name: "a JSON web token", pattern: String.raw`/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{5,}/` },
+  { name: "a private key block", pattern: String.raw`/-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/` },
+];
+
+/**
+ * Secretlint's canary preset — the broadest official rule set, covering GitHub,
+ * GitLab, Slack, Stripe, npm, OpenAI and roughly twenty other providers — plus
+ * the patterns above. Coverage of newly published credential formats then
+ * arrives by upgrading the preset rather than by editing this file.
+ */
+const SECRETLINT_CONFIG = {
+  rules: [
+    { id: "@secretlint/secretlint-rule-preset-canary", rule: presetCanary },
+    {
+      id: "@secretlint/secretlint-rule-pattern",
+      rule: patternRule,
+      options: { patterns: ADDITIONAL_SECRET_PATTERNS },
+    },
+  ],
+};
 
 /** Headers whose value is literal, and so worth screening. */
 export function staticHeaders(headers: readonly ScreenedHeader[]): ScreenedHeader[] {
   return headers.filter((header) => !header.secret_ref?.trim());
 }
 
-/** Findings from the deterministic layer. These always block. */
-export function findKnownSecretFormats(
+/**
+ * Describes a finding from the rule that produced it.
+ *
+ * Secretlint's own message embeds the matched text, and masking it also masks the
+ * rule name, leaving "found matching ****: ****". Building the reason from the
+ * rule id instead keeps it readable and cannot leak the value.
+ */
+function reasonForRuleId(ruleId: string): string {
+  const provider = ruleId.replace("@secretlint/secretlint-rule-", "");
+  if (!provider || provider === "pattern" || provider.startsWith("preset-")) {
+    return "the value looks like a credential";
+  }
+  return `the value looks like a ${provider} credential`;
+}
+
+/**
+ * Findings from the deterministic layer. These always block.
+ *
+ * Each header is linted on its own so a finding can name the header it came
+ * from, which is what the operator needs in order to fix it.
+ */
+export async function findKnownSecretFormats(
   headers: readonly ScreenedHeader[],
-): HeaderScreeningFinding[] {
+): Promise<HeaderScreeningFinding[]> {
   const findings: HeaderScreeningFinding[] = [];
   for (const header of staticHeaders(headers)) {
     const value = header.value_template.split(SECRET_PLACEHOLDER).join("");
-    const match = SECRET_PATTERNS.find((entry) => entry.pattern.test(value));
-    if (match) {
+    if (!value.trim()) continue;
+    const result = await lintSource({
+      source: {
+        content: `${header.header_name}: ${value}`,
+        filePath: "request-header.txt",
+        ext: ".txt",
+        contentType: "text",
+      },
+      options: {
+        config: SECRETLINT_CONFIG,
+        // Belt and braces: the reason is built from the rule id, but masking
+        // keeps the value out of anything else that reads these messages.
+        maskSecrets: true,
+        noPhysicFilePath: true,
+      },
+    });
+    const first = result.messages[0];
+    if (first) {
       findings.push({
         header_name: header.header_name,
-        reason: `the value looks like ${match.label}`,
+        reason: reasonForRuleId(first.ruleId ?? ""),
       });
     }
   }

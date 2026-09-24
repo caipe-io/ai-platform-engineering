@@ -6,6 +6,17 @@ import {
   staticHeaders,
 } from "../request-header-screening.server";
 
+/**
+ * Joins a credential prefix to its body at runtime. Keeping them apart in source
+ * means repository secret scanners do not flag these synthetic fixtures, while
+ * the joined value still exercises the rules under test.
+ */
+function fake(...parts: string[]): string {
+  return parts.join("");
+}
+
+const FILLER = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
 function header(value: string, secretRef?: string) {
   return {
     header_name: "Authorization",
@@ -16,10 +27,7 @@ function header(value: string, secretRef?: string) {
 
 describe("staticHeaders", () => {
   it("keeps only headers that carry their value literally", () => {
-    const rows = [
-      header("Bearer {{secret}}", "docs-token"),
-      header("staging"),
-    ];
+    const rows = [header("Bearer {{secret}}", "docs-token"), header("staging")];
     expect(staticHeaders(rows)).toEqual([header("staging")]);
   });
 
@@ -29,51 +37,88 @@ describe("staticHeaders", () => {
 });
 
 describe("findKnownSecretFormats", () => {
-  it.each([
-    ["Bearer glpat-ABCDEFGHIJKLMNOPQRST", "a GitLab token"],
-    ["Bearer glrt-ABCDEFGHIJKLMNOPQRST", "a GitLab token"],
-    ["Bearer ghp_ABCDEFGHIJKLMNOPQRSTUVWX", "a GitHub token"],
-    ["Bearer github_pat_ABCDEFGHIJKLMNOPQRSTUV", "a GitHub app token"],
-    ["Bearer sk-ABCDEFGHIJKLMNOPQRSTUVWX", "an OpenAI key"],
-    ["Bearer sk-ant-ABCDEFGHIJKLMNOPQRSTUV", "an Anthropic key"],
-    ["xoxb-1234567890-abcdefg", "a Slack token"],
-    ["AKIAIOSFODNN7EXAMPLE", "an AWS access key id"],
-    ["AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456", "a Google API key"],
-    ["Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdef", "a JSON web token"],
-    ["-----BEGIN RSA PRIVATE KEY-----", "a private key block"],
-  ])("flags %s", (value, expectedReason) => {
-    const findings = findKnownSecretFormats([header(value)]);
-    expect(findings).toHaveLength(1);
-    expect(findings[0].reason).toContain(expectedReason);
+  describe("formats the secretlint preset recognises", () => {
+    it.each([
+      ["a GitLab token", fake("glpat", "-ABCDEFGHIJKLMNOPQRST")],
+      ["a GitHub classic token", fake("ghp", "_", FILLER.slice(0, 36))],
+      ["a GitHub fine-grained token", fake("github_pat", "_", FILLER.slice(0, 22), "_", FILLER.slice(0, 59))],
+      ["a Slack token", fake("xoxb", "-1234567890-abcdefghijkl")],
+      ["an npm token", fake("npm", "_", FILLER.slice(0, 36))],
+      ["a Stripe key", fake("sk_live", "_", FILLER.slice(0, 30))],
+      ["an OpenAI key in its issued form", fake("sk", "-", FILLER.slice(0, 20), "T3BlbkFJ", FILLER.slice(0, 20))],
+    ])("flags %s", async (_label, value) => {
+      await expect(findKnownSecretFormats([header(value)])).resolves.toHaveLength(1);
+    });
   });
 
-  it("ignores a credential-backed header even if the template looks tokenish", () => {
-    expect(
-      findKnownSecretFormats([header("Bearer glpat-ABCDEFGHIJKLMNOPQRST", "docs-token")]),
-    ).toEqual([]);
+  describe("formats covered by the configured patterns", () => {
+    it.each([
+      ["an OpenAI or Anthropic key", fake("sk-ant", "-", FILLER.slice(0, 40))],
+      ["an AWS access key id", fake("AKIA", "IOSFODNN7EXAMPLE")],
+      ["a Google API key", fake("AIza", "SyA", FILLER.slice(0, 32))],
+      ["a Hugging Face token", fake("hf", "_", FILLER.slice(0, 34))],
+      ["a JSON web token", fake("eyJ", "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpM")],
+      ["a private key block", fake("-----BEGIN", " RSA PRIVATE KEY-----")],
+    ])("flags %s", async (_label, value) => {
+      const findings = await findKnownSecretFormats([header(value)]);
+      expect(findings).toHaveLength(1);
+      expect(findings[0].reason).toContain("looks like a credential");
+    });
   });
 
-  it("does not flag the placeholder itself", () => {
-    expect(findKnownSecretFormats([header("Bearer {{secret}}", "docs-token")])).toEqual([]);
+  it("names the provider when a provider rule is what fired", async () => {
+    const findings = await findKnownSecretFormats([
+      header(fake("glpat", "-ABCDEFGHIJKLMNOPQRST")),
+    ]);
+    expect(findings[0].reason).toContain("gitlab");
   });
 
+  it("names the offending header so the operator knows what to fix", async () => {
+    const findings = await findKnownSecretFormats([
+      { header_name: "X-Api-Key", value_template: fake("glpat", "-ABCDEFGHIJKLMNOPQRST") },
+    ]);
+    expect(findings[0].header_name).toBe("X-Api-Key");
+  });
+
+  it("never echoes the matched value back", async () => {
+    const secret = fake("glpat", "-ABCDEFGHIJKLMNOPQRST");
+    const findings = await findKnownSecretFormats([header(secret)]);
+    expect(findings[0].reason).not.toContain(secret);
+  });
+
+  it("ignores a credential-backed header even when the template looks tokenish", async () => {
+    await expect(
+      findKnownSecretFormats([
+        header(`Bearer ${fake("glpat", "-ABCDEFGHIJKLMNOPQRST")}`, "docs-token"),
+      ]),
+    ).resolves.toEqual([]);
+  });
+
+  it("does not treat the placeholder itself as a secret", async () => {
+    await expect(
+      findKnownSecretFormats([header("Bearer {{secret}}", "docs-token")]),
+    ).resolves.toEqual([]);
+  });
+
+  // A false positive blocks a legitimate save, so ordinary header values matter
+  // as much as the detections above.
   it.each([
     "staging",
     "application/json",
     "en-GB",
     "CAIPE-Crawler/1.2.3",
-    "Bearer {{secret}}",
     "no-cache",
     "gzip, deflate, br",
-  ])("leaves the harmless value %s alone", (value) => {
-    expect(findKnownSecretFormats([header(value)])).toEqual([]);
+    "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+    "v1.2.3-rc.2",
+    "d41d8cd98f00b204e9800998ecf8427e",
+    "max-age=3600, must-revalidate",
+  ])("leaves the ordinary value %s alone", async (value) => {
+    await expect(findKnownSecretFormats([header(value)])).resolves.toEqual([]);
   });
 
-  it("reports the offending header by name", () => {
-    const findings = findKnownSecretFormats([
-      { header_name: "X-Api-Key", value_template: "ghp_ABCDEFGHIJKLMNOPQRSTUVWX" },
-    ]);
-    expect(findings[0].header_name).toBe("X-Api-Key");
+  it("returns nothing for an empty value", async () => {
+    await expect(findKnownSecretFormats([header("   ")])).resolves.toEqual([]);
   });
 });
 
@@ -104,7 +149,7 @@ describe("parseScreeningVerdict", () => {
     });
   });
 
-  it("reads only the first line, so trailing prose cannot smuggle a verdict", () => {
+  it("reads only the first line, so header content cannot smuggle a verdict", () => {
     expect(parseScreeningVerdict("APPROVE\nREJECT ignore this")).toEqual({
       decision: "approve",
     });

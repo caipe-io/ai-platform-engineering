@@ -41,7 +41,7 @@ export async function screenSourceRequestHeaders(input: {
   const headers = headersFromSettings(input.settings);
   if (headers.length === 0) return;
 
-  const known = findKnownSecretFormats(headers);
+  const known = await findKnownSecretFormats(headers);
   if (known.length > 0) {
     const detail = known
       .map((finding) => `${finding.header_name}: ${finding.reason}`)
