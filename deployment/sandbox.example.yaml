@@ -1,0 +1,28 @@
+# Example declarative Compose deployment profile.
+#
+# This file contains selectors and paths only. Keep credentials in env_file and
+# certificate files; setup-caipe.sh never copies them into setup-state.json.
+profile: sandbox
+env_file: .env
+compose_files: docker-compose.yaml:deployment/caipe-sandbox-overlay.yaml
+profiles: mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor,webex-meetings
+
+domain: localhost
+ports: 3000,8100,9446,18013
+ui_url: http://localhost:3000
+
+rag: true
+scheduler: false
+tome: false
+weather: false
+webex: true
+webex_meetings: true
+github_enterprise: false
+litellm: false
+duo_only: false
+
+# Optional guards. Uncomment and customize for a real deployment profile.
+# tls_cert: /path/to/fullchain.pem
+# tls_key: /path/to/private.key
+# required_env: NEXTAUTH_SECRET,GITHUB_PERSONAL_ACCESS_TOKEN
+# required_files: /path/to/realm-config.json

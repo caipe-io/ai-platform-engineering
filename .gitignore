@@ -190,6 +190,7 @@ a2a-python
 
 # Local configuration files
 .DS_Store
+.caipe/
 
 # LangGraph Server
 .langgraph_api/

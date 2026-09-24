@@ -1,0 +1,31 @@
+# Small, non-secret overlay used by deployment/sandbox.example.yaml.
+# Environment-specific connector credentials remain in the selected env file.
+services:
+  # The production Compose file intentionally stays provider-neutral.  This
+  # optional overlay adds the Meetings MCP service without enabling the entire
+  # development Compose surface.
+  mcp-webex-meetings:
+    image: ghcr.io/caipe-io/mcp-webex-meetings:${IMAGE_TAG:-0.5.66}
+    container_name: mcp-webex-meetings
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
+    ports: ["18013:8000"]
+    environment:
+      - MCP_MODE=http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - WEBEX_ACCESS_TOKEN=${WEBEX_ACCESS_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); result=s.connect_ex(('localhost', 8000)); s.close(); exit(0 if result == 0 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    profiles:
+      - webex-meetings
+      - mcp-servers
+
+  caipe-ui:
+    environment:
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
+      - CAIPE_UI_BASE_URL=${CAIPE_UI_BASE_URL:-http://localhost:3000}

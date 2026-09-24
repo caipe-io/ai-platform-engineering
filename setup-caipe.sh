@@ -239,6 +239,29 @@ TLS_SELF_SIGNED=false   # true when setup generates the cert (no --tls-cert)
 ENV_FILE=""
 UI_ENV_FILE=""
 COMPOSE_ENV_FILE=""
+# Compose deployment controls.  The Kubernetes wizard keeps its existing
+# configuration path; these values are only consumed by the Compose commands.
+COMPOSE_CONFIG_FILE="${COMPOSE_CONFIG_FILE:-}"
+CAIPE_COMPOSE_FILES="${CAIPE_COMPOSE_FILES:-}"
+COMPOSE_WAIT=false
+COMPOSE_VALIDATE_AFTER_UP=false
+COMPOSE_STATE_FILE="${CAIPE_SETUP_STATE_FILE:-.caipe/setup-state.json}"
+COMPOSE_PROFILE_NAME=""
+COMPOSE_FEATURE_RAG=""
+COMPOSE_FEATURE_SCHEDULER=""
+COMPOSE_FEATURE_TOME=""
+COMPOSE_FEATURE_WEATHER=""
+COMPOSE_FEATURE_WEBEX=""
+COMPOSE_FEATURE_WEBEX_MEETINGS=""
+COMPOSE_FEATURE_GITHUB_ENTERPRISE=""
+COMPOSE_FEATURE_LITELLM=""
+COMPOSE_FEATURE_DUO_ONLY=""
+COMPOSE_REQUIRED_ENV=""
+COMPOSE_REQUIRED_FILES=""
+COMPOSE_HOST_PORTS=""
+COMPOSE_UI_URL=""
+COMPOSE_FILE_ARGS=()
+COMPOSE_FILE_LIST=()
 COMPOSE_PROFILES_DEFAULT="mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor"
 USE_DOCKER_COMPOSE=false
 # Chat-bot surfaces (the slack-bot / webex-bot deployments — distinct from the
@@ -3181,6 +3204,577 @@ _env_true() {
   [[ "$val" == "true" || "$val" == "yes" || "$val" == "1" ]]
 }
 
+# Read a scalar from the Compose deployment profile.  The profile format is
+# intentionally flat so setup-caipe.sh does not acquire a Python/yq runtime
+# dependency.  Values may be quoted and may contain commas or colons.
+_compose_cfg_get() {
+  local key="$1"
+  [[ -n "${COMPOSE_CONFIG_FILE:-}" && -f "$COMPOSE_CONFIG_FILE" ]] || return 0
+  grep -m1 -E "^[[:space:]]*${key}[[:space:]]*:" "$COMPOSE_CONFIG_FILE" 2>/dev/null \
+    | sed -E "s/^[^:]+:[[:space:]]*//; s/[[:space:]]+#.*$//; s/^['\"]//; s/['\"]$//" \
+    | sed -E 's/^\[//; s/\]$//' \
+    || true
+}
+
+_compose_cfg_set_if_unset() {
+  local key="$1" variable="$2" value
+  value=$(_compose_cfg_get "$key")
+  [[ -n "$value" && -z "${!variable:-}" ]] || return 0
+  printf -v "$variable" '%s' "$value"
+}
+
+_compose_cfg_export_if_present() {
+  local key="$1" variable="$2" value
+  value=$(_compose_cfg_get "$key")
+  [[ -n "$value" ]] || return 0
+  export "$variable=$value"
+}
+
+_compose_feature_value() {
+  local feature="$1" variable="$2" value
+  value="${!feature:-}"
+  if _env_true "$value"; then
+    export "$variable=true"
+  elif [[ "$(echo "$value" | tr '[:upper:]' '[:lower:]')" == "false" ]]; then
+    export "$variable=false"
+  fi
+}
+
+_load_compose_config() {
+  [[ -n "${COMPOSE_CONFIG_FILE:-}" ]] || return 0
+  if [[ ! -f "$COMPOSE_CONFIG_FILE" ]]; then
+    err "Compose deployment profile not found: ${COMPOSE_CONFIG_FILE}"
+    exit 1
+  fi
+
+  _compose_cfg_set_if_unset profile COMPOSE_PROFILE_NAME
+  _compose_cfg_set_if_unset env_file COMPOSE_ENV_FILE
+  _compose_cfg_set_if_unset compose_files CAIPE_COMPOSE_FILES
+  _compose_cfg_set_if_unset profiles COMPOSE_PROFILES
+  _compose_cfg_set_if_unset domain CAIPE_DOMAIN
+  _compose_cfg_set_if_unset tls_cert TLS_CERT_FILE
+  _compose_cfg_set_if_unset tls_key TLS_KEY_FILE
+  _compose_cfg_set_if_unset github_enterprise_host GITHUB_ENTERPRISE_HOST
+  _compose_cfg_set_if_unset ports COMPOSE_HOST_PORTS
+  _compose_cfg_set_if_unset ui_url COMPOSE_UI_URL
+  _compose_cfg_set_if_unset required_env COMPOSE_REQUIRED_ENV
+  _compose_cfg_set_if_unset required_files COMPOSE_REQUIRED_FILES
+
+  _compose_cfg_export_if_present nextauth_url NEXTAUTH_URL
+  _compose_cfg_export_if_present sso_issuer OIDC_ISSUER
+  _compose_cfg_export_if_present sso_client_id OIDC_CLIENT_ID
+  _compose_cfg_export_if_present sso_group_claim OIDC_GROUP_CLAIM
+  _compose_cfg_export_if_present required_group OIDC_REQUIRED_GROUP
+  _compose_cfg_export_if_present admin_group OIDC_REQUIRED_ADMIN_GROUP
+  _compose_cfg_export_if_present bootstrap_admins BOOTSTRAP_ADMIN_EMAILS
+  _compose_cfg_export_if_present scheduler_url SCHEDULER_URL
+  _compose_cfg_export_if_present litellm_endpoint LITELLM_ENDPOINT
+
+  local feature value
+  for feature in rag scheduler tome weather webex webex_meetings github_enterprise litellm duo_only; do
+    value=$(_compose_cfg_get "$feature")
+    [[ -n "$value" ]] || continue
+    local feature_variable="COMPOSE_FEATURE_${feature^^}"
+    [[ -n "${!feature_variable:-}" ]] || printf -v "$feature_variable" '%s' "$value"
+  done
+
+  # Exported values take precedence over an env-file entry in Compose's
+  # interpolation and make profile toggles reproducible without rewriting the
+  # operator's secret file.
+  _compose_feature_value COMPOSE_FEATURE_RAG RAG_ENABLED
+  _compose_feature_value COMPOSE_FEATURE_SCHEDULER SCHEDULER_ENABLED
+  _compose_feature_value COMPOSE_FEATURE_TOME TOME_ENABLED
+  _compose_feature_value COMPOSE_FEATURE_WEATHER WEATHER_ENABLED
+  _compose_feature_value COMPOSE_FEATURE_WEBEX ENABLE_WEBEX
+  _compose_feature_value COMPOSE_FEATURE_WEBEX_MEETINGS WEBEX_MEETINGS_ENABLED
+  _compose_feature_value COMPOSE_FEATURE_GITHUB_ENTERPRISE GITHUB_ENTERPRISE_ENABLED
+  _compose_feature_value COMPOSE_FEATURE_LITELLM LITELLM_ENABLED
+  _compose_feature_value COMPOSE_FEATURE_DUO_ONLY DUO_ONLY
+
+  if _env_true "${COMPOSE_FEATURE_RAG:-}" || $ENABLE_RAG; then
+    ENABLE_RAG=true
+    export RAG_ENABLED=true
+  fi
+  if _env_true "${COMPOSE_FEATURE_GITHUB_ENTERPRISE:-}"; then
+    export GITHUB_ENTERPRISE_ENABLED=true
+  fi
+  if [[ -n "${GITHUB_ENTERPRISE_HOST:-}" ]]; then
+    export GITHUB_API_URL="${GITHUB_API_URL:-https://${GITHUB_ENTERPRISE_HOST}/api/graphql}"
+    export GITHUB_REST_API_URL="${GITHUB_REST_API_URL:-https://${GITHUB_ENTERPRISE_HOST}/api/v3}"
+  fi
+}
+
+_compose_normalize_path() {
+  local path="$1"
+  if [[ "$path" == ~/* ]]; then
+    path="${HOME}/${path#~/}"
+  fi
+  printf '%s' "$path"
+}
+
+_compose_prepare_files() {
+  local file
+  COMPOSE_FILE_ARGS=()
+  COMPOSE_FILE_LIST=()
+  if [[ -z "${CAIPE_COMPOSE_FILES:-}" ]]; then
+    CAIPE_COMPOSE_FILES="docker-compose.yaml"
+  fi
+  IFS=':' read -ra _compose_files <<< "$CAIPE_COMPOSE_FILES"
+  for file in "${_compose_files[@]}"; do
+    file=$(_compose_normalize_path "$file")
+    [[ -n "$file" ]] || continue
+    COMPOSE_FILE_LIST+=("$file")
+    COMPOSE_FILE_ARGS+=("-f" "$file")
+  done
+  unset _compose_files
+  if [[ ${#COMPOSE_FILE_LIST[@]} -eq 0 ]]; then
+    err "CAIPE_COMPOSE_FILES did not contain any Compose files"
+    exit 1
+  fi
+}
+
+_compose_add_profile() {
+  local profile="$1"
+  [[ -n "$profile" ]] || return 0
+  [[ ",${COMPOSE_PROFILES}," == *",${profile},"* ]] || COMPOSE_PROFILES="${COMPOSE_PROFILES},${profile}"
+}
+
+_compose_remove_profile() {
+  local profile="$1" value item kept=()
+  IFS=',' read -ra _profiles <<< "${COMPOSE_PROFILES:-}"
+  for item in "${_profiles[@]}"; do
+    [[ -n "$item" && "$item" != "$profile" ]] && kept+=("$item")
+  done
+  (IFS=','; printf '%s' "${kept[*]}")
+}
+
+_compose_apply_feature_profiles() {
+  local feature value variable_name
+  for feature in rag scheduler tome weather webex webex_meetings github_enterprise litellm; do
+    variable_name="COMPOSE_FEATURE_${feature^^}"
+    value="${!variable_name:-}"
+    if [[ "$feature" == "rag" && "$ENABLE_RAG" == true ]]; then
+      _compose_add_profile rag
+    elif _env_true "$value"; then
+      case "$feature" in
+        scheduler) _compose_add_profile scheduler; export SCHEDULER_ENABLED=true ;;
+        tome) _compose_add_profile tome; export TOME_ENABLED=true ;;
+        weather) _compose_add_profile weather; export WEATHER_ENABLED=true ;;
+        webex) _compose_add_profile webex; export ENABLE_WEBEX=true ;;
+        webex_meetings) _compose_add_profile webex-meetings; export WEBEX_MEETINGS_ENABLED=true ;;
+        github_enterprise) _compose_add_profile github-enterprise; export GITHUB_ENTERPRISE_ENABLED=true ;;
+        litellm) _compose_add_profile litellm; export LITELLM_ENABLED=true ;;
+      esac
+    fi
+  done
+  if [[ "${COMPOSE_FEATURE_RAG:-}" =~ ^([Ff][Aa][Ll][Ss][Ee]|0|[Nn][Oo])$ ]]; then
+    COMPOSE_PROFILES=$(_compose_remove_profile rag)
+    export RAG_ENABLED=false
+  fi
+}
+
+_compose_cmd() {
+  docker compose --env-file "$COMPOSE_ENV_FILE" "${COMPOSE_FILE_ARGS[@]}" "$@"
+}
+
+_compose_sha256() {
+  if command -v sha256sum &>/dev/null; then
+    sha256sum
+  else
+    shasum -a 256
+  fi
+}
+
+_compose_feature_enabled() {
+  local variable value
+  variable="$1"
+  value="${!variable:-}"
+  _env_true "$value"
+}
+
+_compose_required_env_check() {
+  local key value
+  IFS=',:' read -ra _required_env_keys <<< "${COMPOSE_REQUIRED_ENV:-}"
+  for key in "${_required_env_keys[@]}"; do
+    key=$(_trim_input "$key")
+    [[ -n "$key" ]] || continue
+    value="${!key:-}"
+    [[ -n "$value" ]] || value=$(_env_get "$COMPOSE_ENV_FILE" "$key")
+    if [[ -z "$value" ]]; then
+      err "Required Compose secret/configuration is missing: ${key} (from deployment profile)"
+      return 1
+    fi
+  done
+  unset _required_env_keys
+}
+
+_compose_port_available() {
+  local port="$1" listeners
+  [[ "$port" =~ ^[0-9]+$ ]] || return 0
+  if command -v lsof &>/dev/null; then
+    listeners=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+    [[ -z "$listeners" ]] && return 0
+    # A running CAIPE container may already own the port during repair.
+    if docker ps --format '{{.Ports}}' 2>/dev/null | grep -Eq "(^|[:, ])${port}->"; then
+      return 0
+    fi
+    err "Host TCP port ${port} is already in use"
+    return 1
+  fi
+  return 0
+}
+
+_compose_preflight() {
+  local failed=0 file path domain port cert_expiry
+  step "Docker Compose preflight"
+
+  if ! command -v docker &>/dev/null; then
+    err "Docker is required for Compose deployment"
+    failed=1
+  elif ! docker info >/dev/null 2>&1; then
+    err "Docker daemon is unavailable or the current user cannot access it"
+    failed=1
+  fi
+
+  for file in "${COMPOSE_FILE_LIST[@]}"; do
+    path=$(_compose_normalize_path "$file")
+    if [[ ! -f "$path" ]]; then
+      err "Compose file not found: ${path}"
+      failed=1
+    fi
+  done
+  if [[ ! -f "$COMPOSE_ENV_FILE" ]]; then
+    err "Compose env file not found: ${COMPOSE_ENV_FILE}"
+    failed=1
+  elif [[ -f "$COMPOSE_ENV_FILE" ]]; then
+    # Secret-bearing env files should never be group/world readable.  The
+    # first-install helper creates .env with this mode as well.
+    if command -v stat &>/dev/null; then
+      local mode
+      mode=$(stat -c '%a' "$COMPOSE_ENV_FILE" 2>/dev/null || stat -f '%Lp' "$COMPOSE_ENV_FILE" 2>/dev/null || echo 600)
+      if [[ "$(basename "$COMPOSE_ENV_FILE")" != ".env.example" \
+            && ("$mode" =~ [2-9][0-9]$ || "$mode" =~ [0-9][2-9]$) ]]; then
+        err "Compose env file is readable by other users: ${COMPOSE_ENV_FILE} (chmod 600)"
+        failed=1
+      fi
+    fi
+  fi
+
+  if ! _compose_required_env_check; then failed=1; fi
+
+  local volume_dir="${DOCKER_VOLUME_DIRECTORY:-.}" free_kb min_free_kb
+  min_free_kb=$(( ${CAIPE_MIN_FREE_GB:-1} * 1024 * 1024 ))
+  if [[ ! -d "$volume_dir" || ! -w "$volume_dir" ]]; then
+    err "Compose volume directory is missing or not writable: ${volume_dir}"
+    failed=1
+  else
+    free_kb=$(df -Pk "$volume_dir" | awk 'NR==2 {print $4}')
+    if [[ "$free_kb" =~ ^[0-9]+$ && "$free_kb" -lt "$min_free_kb" ]]; then
+      err "Insufficient free disk space at ${volume_dir}: ${free_kb} KiB available"
+      failed=1
+    fi
+  fi
+  if command -v docker &>/dev/null && docker info >/dev/null 2>&1; then
+    local docker_root docker_free_kb
+    docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
+    if [[ -n "$docker_root" && -d "$docker_root" ]]; then
+      docker_free_kb=$(df -Pk "$docker_root" | awk 'NR==2 {print $4}')
+      if [[ "$docker_free_kb" =~ ^[0-9]+$ && "$docker_free_kb" -lt "$min_free_kb" ]]; then
+        err "Insufficient free disk space in Docker data-root ${docker_root}: ${docker_free_kb} KiB available"
+        failed=1
+      fi
+    fi
+  fi
+
+  IFS=',:' read -ra _compose_ports <<< "${COMPOSE_HOST_PORTS:-}"
+  for port in "${_compose_ports[@]}"; do
+    port=$(_trim_input "$port")
+    [[ -n "$port" ]] || continue
+    _compose_port_available "$port" || failed=1
+  done
+  unset _compose_ports
+
+  if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+    domain="${CAIPE_DOMAIN#http://}"
+    domain="${domain#https://}"
+    domain="${domain%%/*}"
+    if [[ "$domain" != localhost && "$domain" != 127.0.0.1 ]]; then
+      if command -v getent &>/dev/null; then
+        getent hosts "$domain" >/dev/null 2>&1 || { err "Domain does not resolve: ${domain}"; failed=1; }
+      elif command -v dscacheutil &>/dev/null; then
+        dscacheutil -q host -a name "$domain" | grep -q 'ip_address' || { err "Domain does not resolve: ${domain}"; failed=1; }
+      else
+        warn "Could not verify DNS for ${domain}; getent/dscacheutil is unavailable"
+      fi
+    fi
+  fi
+
+  if [[ -n "${TLS_CERT_FILE:-}" || -n "${TLS_KEY_FILE:-}" ]]; then
+    if [[ -z "${TLS_CERT_FILE:-}" || -z "${TLS_KEY_FILE:-}" ]]; then
+      err "TLS certificate and key must be provided together"
+      failed=1
+    elif [[ ! -r "$TLS_CERT_FILE" || ! -r "$TLS_KEY_FILE" ]]; then
+      err "TLS certificate/key is not readable"
+      failed=1
+    elif ! command -v openssl &>/dev/null; then
+      err "openssl is required to validate TLS certificate/key pairs"
+      failed=1
+    else
+      if ! openssl x509 -in "$TLS_CERT_FILE" -noout >/dev/null 2>&1; then
+        err "TLS certificate is not a readable PEM certificate: ${TLS_CERT_FILE}"
+        failed=1
+      else
+        cert_expiry=$(openssl x509 -in "$TLS_CERT_FILE" -enddate -noout 2>/dev/null || true)
+        if ! openssl x509 -in "$TLS_CERT_FILE" -checkend 86400 -noout >/dev/null 2>&1; then
+          err "TLS certificate expires within 24 hours: ${cert_expiry}"
+          failed=1
+        fi
+        local cert_pubkey key_pubkey
+        cert_pubkey=$(openssl x509 -in "$TLS_CERT_FILE" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | _compose_sha256 | awk '{print $1}')
+        key_pubkey=$(openssl pkey -in "$TLS_KEY_FILE" -pubout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | _compose_sha256 | awk '{print $1}')
+        if [[ -z "$cert_pubkey" || "$cert_pubkey" != "$key_pubkey" ]]; then
+          err "TLS certificate and private key do not match"
+          failed=1
+        fi
+      fi
+    fi
+  fi
+
+  IFS=',:' read -ra _required_files <<< "${COMPOSE_REQUIRED_FILES:-}"
+  for file in "${_required_files[@]}"; do
+    file=$(_compose_normalize_path "$(_trim_input "$file")")
+    [[ -n "$file" ]] || continue
+    if [[ ! -r "$file" ]]; then
+      err "Required deployment file is missing or unreadable: ${file}"
+      failed=1
+    fi
+  done
+  unset _required_files
+
+  if (( failed == 0 )); then
+    if ! _compose_cmd config --quiet >/dev/null; then
+      err "Docker Compose configuration is invalid; check files, profiles, and required variables"
+      failed=1
+    fi
+  fi
+  if (( failed == 0 )); then
+    local services feature found
+    services=$(_compose_cmd config --services 2>/dev/null || true)
+    for feature in scheduler tome weather webex webex_meetings github_enterprise litellm; do
+      local feature_variable="COMPOSE_FEATURE_${feature^^}"
+      _compose_feature_enabled "$feature_variable" || continue
+      found=false
+      case "$feature" in
+        scheduler) grep -Eq '(^|[[:space:]])caipe-scheduler$' <<< "$services" && found=true ;;
+        tome) grep -Eq '(^|[[:space:]])(mcp-tome|tome)$' <<< "$services" && found=true ;;
+        weather) grep -Eq '(^|[[:space:]])(mcp-weather|weather|agentic-app-weather)$' <<< "$services" && found=true ;;
+        webex) grep -Eq '(^|[[:space:]])mcp-webex$' <<< "$services" && found=true ;;
+        webex_meetings) grep -Eq '(^|[[:space:]])mcp-webex-meetings$' <<< "$services" && found=true ;;
+        # The public github-mcp-server is not enough for GHES: it does not
+        # prove that the Enterprise REST/GraphQL endpoints are configured.
+        github_enterprise) grep -Eq '(^|[[:space:]])(github-ingestor|mcp-github)$' <<< "$services" && found=true ;;
+        litellm) grep -Eq '(^|[[:space:]])(litellm|litellm-proxy)$' <<< "$services" && found=true ;;
+      esac
+      if $found; then
+        log "Feature backend present: ${feature}"
+      else
+        err "Feature '${feature}' is enabled but its Compose backend is missing"
+        failed=1
+      fi
+    done
+  fi
+
+  if (( failed != 0 )); then
+    err "Compose preflight failed"
+    return 1
+  fi
+  log "Compose preflight passed"
+}
+
+_compose_ui_url() {
+  if [[ -n "${COMPOSE_UI_URL:-}" ]]; then
+    printf '%s' "$COMPOSE_UI_URL"
+  elif [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+    printf 'https://%s' "${CAIPE_DOMAIN#https://}"
+  else
+    printf 'http://localhost:%s' "${UI_PORT}"
+  fi
+}
+
+_compose_wait_for_services() {
+  local timeout="${CAIPE_COMPOSE_WAIT_TIMEOUT:-300}" interval=5 elapsed=0 rows pending bad service state health
+  step "Waiting for Compose services"
+  while (( elapsed < timeout )); do
+    rows=$(_compose_cmd ps --all --format '{{.Service}}|{{.State}}|{{.Health}}' 2>/dev/null || true)
+    pending=0
+    bad=0
+    while IFS='|' read -r service state health; do
+      [[ -n "$service" ]] || continue
+      if [[ "$state" != running ]]; then
+        if [[ "$service" == *init* || "$service" == *migrate* || "$service" == *token-exchange* ]]; then
+          continue
+        fi
+        pending=1
+      elif [[ "$health" == unhealthy ]]; then
+        bad=1
+      fi
+    done <<< "$rows"
+    if (( pending == 0 && bad == 0 )) && [[ -n "$rows" ]]; then
+      log "Compose services are running"
+      return 0
+    fi
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+  err "Compose services did not become healthy within ${timeout}s"
+  _compose_cmd ps --all || true
+  return 1
+}
+
+_compose_post_deploy_validate() {
+  local failed=0 ui_url ui_code service_rows service state health
+  step "Post-deployment validation"
+  ui_url=$(_compose_ui_url)
+  ui_code=$(curl -ks -o /dev/null -w '%{http_code}' "${ui_url%/}/api/health" --max-time 10 2>/dev/null || echo 000)
+  if [[ "$ui_code" =~ ^(200|301|302|405)$ ]]; then
+    log "CAIPE UI health: HTTP ${ui_code} (${ui_url})"
+  else
+    err "CAIPE UI health failed: HTTP ${ui_code} (${ui_url})"
+    failed=1
+  fi
+
+  if [[ "$ui_url" == https://* ]]; then
+    if curl -ksf -o /dev/null --max-time 10 "$ui_url"; then
+      log "HTTPS endpoint reachable"
+    else
+      err "HTTPS endpoint is not reachable"
+      failed=1
+    fi
+    if command -v openssl &>/dev/null; then
+      local tls_host="${ui_url#https://}"
+      tls_host="${tls_host%%/*}"
+      if openssl s_client -connect "${tls_host}:443" -servername "${tls_host}" </dev/null >/dev/null 2>&1; then
+        log "HTTPS certificate handshake succeeded"
+      else
+        err "HTTPS certificate handshake failed for ${tls_host}:443"
+        failed=1
+      fi
+    fi
+  fi
+  if _compose_feature_enabled COMPOSE_FEATURE_RAG || [[ "${RAG_ENABLED:-}" == true ]]; then
+    if check_http "http://localhost:${RAG_SERVER_PORT}/healthz" "RAG server"; then :; else failed=1; fi
+  fi
+  if _compose_feature_enabled COMPOSE_FEATURE_LITELLM; then
+    if check_http "http://localhost:${LITELLM_PORT:-4000}/health/liveliness" "LiteLLM"; then :; else failed=1; fi
+  fi
+  if _compose_feature_enabled COMPOSE_FEATURE_GITHUB_ENTERPRISE && [[ -n "${GITHUB_ENTERPRISE_HOST:-}" ]]; then
+    local github_url github_code
+    github_url="${GITHUB_REST_API_URL:-https://${GITHUB_ENTERPRISE_HOST}/api/v3}"
+    github_code=$(curl -ks -o /dev/null -w '%{http_code}' "$github_url" --max-time 10 2>/dev/null || echo 000)
+    if [[ "$github_code" =~ ^(2[0-9][0-9]|401|403)$ ]]; then
+      log "GitHub Enterprise REST endpoint reachable (HTTP ${github_code})"
+    else
+      err "GitHub Enterprise REST endpoint unavailable (HTTP ${github_code})"
+      failed=1
+    fi
+  fi
+
+  service_rows=$(_compose_cmd ps --all --format '{{.Service}}|{{.State}}|{{.Health}}' 2>/dev/null || true)
+  if _compose_feature_enabled COMPOSE_FEATURE_SCHEDULER; then
+    local scheduler_row
+    scheduler_row=$(printf '%s\n' "$service_rows" | grep '^caipe-scheduler|' || true)
+    if [[ "$scheduler_row" == caipe-scheduler\|running\|* ]]; then
+      log "Scheduler backend is running"
+    else
+      err "Scheduler backend is not running"
+      failed=1
+    fi
+    local schedules_code
+    schedules_code=$(curl -ks -o /dev/null -w '%{http_code}' "${ui_url%/}/schedules" --max-time 10 2>/dev/null || echo 000)
+    if [[ "$schedules_code" =~ ^(200|301|302|307|401|403)$ ]]; then
+      log "Schedules UI route is visible (HTTP ${schedules_code})"
+    else
+      err "Schedules UI route is unavailable (HTTP ${schedules_code})"
+      failed=1
+    fi
+  fi
+
+  while IFS='|' read -r service state health; do
+    [[ -n "$service" ]] || continue
+    [[ "$service" == mcp-* || "$service" == github-mcp-server || "$service" == *ingestor ]] || continue
+    if [[ "$state" == running && "$health" != unhealthy ]]; then
+      log "Connector service running: ${service}"
+    else
+      err "Connector service is not healthy: ${service} (${state:-unknown}/${health:-no-healthcheck})"
+      failed=1
+    fi
+  done <<< "$service_rows"
+  return "$failed"
+}
+
+_compose_write_state() {
+  local image_tag features files profiles revision
+  mkdir -p "$(dirname "$COMPOSE_STATE_FILE")"
+  chmod 700 "$(dirname "$COMPOSE_STATE_FILE")" 2>/dev/null || true
+  image_tag=$(_env_get "$COMPOSE_ENV_FILE" IMAGE_TAG)
+  features=""
+  local feature variable_name
+  for feature in rag scheduler tome weather webex webex_meetings github_enterprise litellm; do
+    variable_name="COMPOSE_FEATURE_${feature^^}"
+    if _compose_feature_enabled "$variable_name"; then
+      features="${features:+${features},}${feature}"
+    fi
+  done
+  files=$(IFS=':'; printf '%s' "${COMPOSE_FILE_LIST[*]}")
+  profiles="${COMPOSE_PROFILES:-}"
+  revision=$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
+  jq -n \
+    --arg profile "${COMPOSE_PROFILE_NAME:-default}" \
+    --arg image_tag "$image_tag" \
+    --arg features "$features" \
+    --arg files "$files" \
+    --arg profiles "$profiles" \
+    --arg revision "$revision" \
+    --arg deployed_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    '{schema_version: 1, runtime: "compose", profile: $profile,
+      image_tag: $image_tag, enabled_features: ($features | split(",") | map(select(length > 0))),
+      compose_files: ($files | split(":")), profiles: ($profiles | split(",") | map(select(length > 0))),
+      deployment_revision: $revision, deployed_at: $deployed_at}' \
+    > "$COMPOSE_STATE_FILE"
+  chmod 600 "$COMPOSE_STATE_FILE" 2>/dev/null || true
+  log "Saved non-secret setup state to ${COMPOSE_STATE_FILE}"
+}
+
+_compose_setup_context() {
+  local allow_missing="${1:-false}" env_file
+  _load_compose_config
+  env_file=$(_compose_env_file)
+  if [[ ! -f "$env_file" && "$allow_missing" == true && -f ".env.example" ]]; then
+    env_file=".env.example"
+    COMPOSE_ENV_FILE="$env_file"
+  else
+    _ensure_compose_env_file "$env_file"
+  fi
+  COMPOSE_ENV_FILE="$env_file"
+  [[ -n "${TLS_CERT_FILE:-}" ]] && TLS_CERT_FILE=$(_compose_normalize_path "$TLS_CERT_FILE")
+  [[ -n "${TLS_KEY_FILE:-}" ]] && TLS_KEY_FILE=$(_compose_normalize_path "$TLS_KEY_FILE")
+  export CAIPE_DOMAIN TLS_CERT_FILE TLS_KEY_FILE
+  _choose_database_provider "$env_file"
+  _compose_prepare_files
+  COMPOSE_PROFILES="${COMPOSE_PROFILES:-$(_env_get "$env_file" COMPOSE_PROFILES)}"
+  COMPOSE_PROFILES="${COMPOSE_PROFILES:-$COMPOSE_PROFILES_DEFAULT}"
+  [[ "$ENABLE_RAG" == true ]] && COMPOSE_FEATURE_RAG=true
+  _env_true "${SCHEDULER_ENABLED:-}" && COMPOSE_FEATURE_SCHEDULER=true
+  _env_true "${TOME_ENABLED:-}" && COMPOSE_FEATURE_TOME=true
+  _env_true "${WEATHER_ENABLED:-}" && COMPOSE_FEATURE_WEATHER=true
+  _env_true "${ENABLE_WEBEX:-}" && COMPOSE_FEATURE_WEBEX=true
+  _env_true "${WEBEX_MEETINGS_ENABLED:-}" && COMPOSE_FEATURE_WEBEX_MEETINGS=true
+  _env_true "${GITHUB_ENTERPRISE_ENABLED:-}" && COMPOSE_FEATURE_GITHUB_ENTERPRISE=true
+  _env_true "${LITELLM_ENABLED:-}" && COMPOSE_FEATURE_LITELLM=true
+  _compose_apply_feature_profiles
+  export COMPOSE_PROFILES CAIPE_COMPOSE_ENV_FILE="$COMPOSE_ENV_FILE"
+}
+
 _choose_database_provider() {
   local env_file="${1:-}"
   if [[ -z "${DATABASE_PROVIDER:-}" && -n "$env_file" && -f "$env_file" ]]; then
@@ -3258,6 +3852,7 @@ _ensure_compose_env_file() {
     exit 1
   fi
   cp .env.example "$env_file"
+  chmod 600 "$env_file" 2>/dev/null || true
   log "Created ${env_file} from .env.example"
 }
 
@@ -8207,10 +8802,8 @@ cmd_update_compose_release() {
 
 cmd_docker_compose() {
   local env_file
-  env_file=$(_compose_env_file)
-  _ensure_compose_env_file "$env_file"
-  _update_compose_image_tag "$env_file"
-  _choose_database_provider "$env_file"
+  _compose_setup_context false
+  env_file="$COMPOSE_ENV_FILE"
 
   if [[ "$(uname -s)" == "Darwin" && -x "/usr/local/bin/docker" && ! "$(command -v docker 2>/dev/null)" ]]; then
     export PATH="/usr/local/bin:$PATH"
@@ -8232,8 +8825,8 @@ cmd_docker_compose() {
   fi
   _check_docker_access
 
-  COMPOSE_PROFILES="${COMPOSE_PROFILES:-$(_env_get "$env_file" COMPOSE_PROFILES)}"
-  COMPOSE_PROFILES="${COMPOSE_PROFILES:-$COMPOSE_PROFILES_DEFAULT}"
+  _compose_preflight
+  _update_compose_image_tag "$env_file"
   if [[ "$DATABASE_PROVIDER" == "documentdb" ]]; then
     COMPOSE_PROFILES=$(echo "$COMPOSE_PROFILES" | sed 's/caipe-mongodb/caipe-documentdb/g')
     if [[ ",$COMPOSE_PROFILES," != *,caipe-documentdb,* ]]; then
@@ -8251,14 +8844,71 @@ cmd_docker_compose() {
   fi
   export COMPOSE_PROFILES
 
-  step "Starting Docker Compose all-in-one stack from docker-compose.yaml"
+  step "Starting Docker Compose deployment"
   log "Env file: ${env_file}"
+  log "Compose files: ${COMPOSE_FILE_LIST[*]}"
   log "Profiles: ${COMPOSE_PROFILES}"
   log "Database: ${DATABASE_PROVIDER} ($(_database_service_name))"
-  docker compose --env-file "$env_file" -f docker-compose.yaml up -d
+  _compose_cmd up -d
 
-  log "CAIPE UI: http://localhost:3000"
+  if $COMPOSE_WAIT; then
+    _compose_wait_for_services
+  fi
+  if $COMPOSE_VALIDATE_AFTER_UP; then
+    _compose_post_deploy_validate
+  fi
+  _compose_write_state
+
+  log "CAIPE UI: $(_compose_ui_url)"
   log "Knowledge Bases ingest: http://localhost:3000/knowledge-bases/ingest"
+}
+
+cmd_compose_plan() {
+  _compose_setup_context true
+  _compose_preflight
+  echo ""
+  header "Compose deployment plan"
+  echo "  Profile: ${COMPOSE_PROFILE_NAME:-default}"
+  echo "  Env file: ${COMPOSE_ENV_FILE}"
+  echo "  Compose files: ${COMPOSE_FILE_LIST[*]}"
+  echo "  Profiles: ${COMPOSE_PROFILES}"
+  echo "  UI URL: $(_compose_ui_url)"
+  echo "  Services:"
+  _compose_cmd config --services | sed 's/^/    - /'
+  echo "  Changes: reconcile the rendered services above; no containers or setup state will be modified."
+}
+
+cmd_compose_validate() {
+  _compose_setup_context false
+  _compose_preflight
+  _compose_post_deploy_validate
+}
+
+cmd_compose_repair() {
+  _compose_setup_context false
+  _compose_preflight
+  step "Reconciling Docker Compose deployment"
+  _compose_cmd up -d --remove-orphans
+  COMPOSE_WAIT=true
+  _compose_wait_for_services
+  _compose_post_deploy_validate
+  _compose_write_state
+}
+
+cmd_compose_status() {
+  _compose_setup_context true
+  if ! command -v docker &>/dev/null || ! docker info >/dev/null 2>&1; then
+    err "Docker daemon is unavailable"
+    return 1
+  fi
+  echo ""
+  header "Compose deployment status"
+  if [[ -f "$COMPOSE_STATE_FILE" ]]; then
+    jq . "$COMPOSE_STATE_FILE"
+  else
+    warn "No Compose setup state found at ${COMPOSE_STATE_FILE}"
+  fi
+  _compose_cmd ps --all
 }
 
 choose_setup_target() {
@@ -9096,9 +9746,10 @@ Commands:
   nuke          Non-interactive cleanup (same as: cleanup --yes)
   status        Show pod status and Helm releases
   docker-compose
-                Prepare .env, update IMAGE_TAG to the latest GitHub release,
-                and start the OSS all-in-one Docker Compose stack from
-                docker-compose.yaml
+                Prepare the env file, validate the rendered Compose deployment,
+                update IMAGE_TAG, and start the configured Compose stack
+  plan          Render and display a Compose deployment plan without starting it
+  repair        Reconcile an existing Compose deployment and verify its health
   update-compose-release
                 Update IMAGE_TAG in .env (or --env-file=FILE) to the latest
                 GitHub release using gh
@@ -9117,6 +9768,21 @@ Options:
                      normal consent handling. Other values are rejected.
   --docker-compose   Run the Docker Compose setup path instead of the default
                      Kind/Kubernetes setup path
+  --config=FILE      Compose deployment profile (flat YAML; see deployment/*.yaml)
+                     May also be passed as: --config FILE
+  --compose-files=FILES
+                     Colon-separated Compose files. Overrides CAIPE_COMPOSE_FILES.
+  --wait             Wait for all enabled Compose services to become healthy
+  --validate         Run post-deployment HTTP/service validation after starting
+  --scheduler        Enable schedules; fails if a caipe-scheduler backend is absent
+  --no-scheduler     Disable schedules in the Compose deployment
+  --tome             Enable the Tome connector; requires an mcp-tome service
+  --weather          Enable the Weather connector; requires a weather MCP service
+  --webex            Enable the Webex connector
+  --webex-meetings   Enable the Webex Meetings connector
+  --github-enterprise=HOST
+                     Configure GitHub Enterprise API URLs and require its backend
+  --duo-only         Mark the deployment as Duo-only in the rendered environment
   --load-config=FILE Load wizard config from FILE instead of the default
                      ~/.config/caipe/config.yaml (shows summary, asks confirmation)
   --create-cluster   Create a Kind cluster if no kubectl context exists
@@ -9140,9 +9806,9 @@ Options:
   --litellm-db          Like --litellm, plus persist LiteLLM virtual keys/spend in the shared Postgres
   --litellm-models=FILE Onboard extra models: seeds the litellm-extra-models ConfigMap (never regenerated;
                         kubectl-editable) whose entries are appended to the proxy config each deploy. See
-                        deploy/kind/litellm-models.example.yaml; scan with `setup-caipe.sh models`.
+                        deploy/kind/litellm-models.example.yaml; scan with 'setup-caipe.sh models'.
   --litellm-upstream-env=FILE  KEY=VALUE .env -> litellm-extra-upstream Secret (optional envFrom) so
-                        `api_key: "os.environ/<KEY>"` refs in --litellm-models resolve.
+                        'api_key: "os.environ/<KEY>"' refs in --litellm-models resolve.
   --persistence      Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --no-persistence   Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --database=NAME    MongoDB-compatible database: mongodb (default) or documentdb
@@ -9303,6 +9969,9 @@ Examples:
   $(basename "$0") nuke                                   # teardown (confirm once with 'yes')
   $(basename "$0") docker-compose                         # update .env IMAGE_TAG + start Docker Compose
   $(basename "$0") update-compose-release                 # only update IMAGE_TAG in .env
+  $(basename "$0") plan --config deployment/sandbox.example.yaml
+  $(basename "$0") compose --config deployment/sandbox.example.yaml --wait --validate
+  $(basename "$0") repair --config deployment/sandbox.example.yaml
   LLM_PROVIDER=openai $(basename "$0") --non-interactive  # OpenAI instead of Claude
   LLM_PROVIDER=aws-bedrock $(basename "$0") --non-interactive       # AWS Bedrock (uses profile)
   ENABLE_VLLM=true $(basename "$0") --non-interactive                    # vLLM + LiteLLM (gpt-oss-20B in-cluster)
@@ -9322,6 +9991,29 @@ EOF
   exit 0
 }
 
+# Normalize the value-taking flags so both `--config=FILE` and
+# `--config FILE` work.  The existing parser remains positional-agnostic.
+_normalized_args=()
+_expecting_value=""
+for _raw_arg in "$@"; do
+  if [[ -n "$_expecting_value" ]]; then
+    _normalized_args+=("--${_expecting_value}=${_raw_arg}")
+    _expecting_value=""
+    continue
+  fi
+  case "$_raw_arg" in
+    --config|--env-file|--compose-env-file|--compose-files|--tls-cert|--tls-key|--github-enterprise)
+      _expecting_value="${_raw_arg#--}" ;;
+    *) _normalized_args+=("$_raw_arg") ;;
+  esac
+done
+if [[ -n "$_expecting_value" ]]; then
+  err "Missing value for --${_expecting_value}"
+  exit 1
+fi
+set -- "${_normalized_args[@]}"
+unset _normalized_args _expecting_value _raw_arg
+
 # Parse flags from any position
 args=()
 for arg in "$@"; do
@@ -9330,6 +10022,8 @@ for arg in "$@"; do
     --no-sudo)         ALLOW_SUDO=0 ;;
     --allow-sudo)      if [[ "$ALLOW_SUDO" != "0" ]]; then ALLOW_SUDO=1; fi ;;
     --docker-compose)  USE_DOCKER_COMPOSE=true ;;
+    --config=*)         COMPOSE_CONFIG_FILE="${arg#--config=}" ;;
+    --compose-files=*)  CAIPE_COMPOSE_FILES="${arg#--compose-files=}" ;;
     --non-interactive) NON_INTERACTIVE=true ;;
     --create-cluster)  CREATE_CLUSTER=true ;;
     --rag)             ENABLE_RAG=true ;;
@@ -9342,19 +10036,34 @@ for arg in "$@"; do
     --no-rbac-runtime) ENABLE_RBAC_RUNTIME=false ;;
     --shared-postgres)    ENABLE_SHARED_POSTGRES=true ;;
     --no-shared-postgres) ENABLE_SHARED_POSTGRES=false ;;
-    --litellm)            LLM_VIA_LITELLM=true ;;
-    --no-litellm)         LLM_VIA_LITELLM=false ;;
-    --litellm-db)         LLM_VIA_LITELLM=true; ENABLE_LITELLM_DB=true ;;
+    --litellm)            LLM_VIA_LITELLM=true; COMPOSE_FEATURE_LITELLM=true; export LITELLM_ENABLED=true ;;
+    --no-litellm)         LLM_VIA_LITELLM=false; COMPOSE_FEATURE_LITELLM=false; export LITELLM_ENABLED=false ;;
+    --litellm-db)         LLM_VIA_LITELLM=true; ENABLE_LITELLM_DB=true; COMPOSE_FEATURE_LITELLM=true; export LITELLM_ENABLED=true ;;
     --litellm-models=*)      LITELLM_EXTRA_MODELS_FILE="${1#*=}"; LLM_VIA_LITELLM=true ;;
     --litellm-upstream-env=*) LITELLM_UPSTREAM_ENV_FILE="${1#*=}" ;;
     --persistence)     ENABLE_PERSISTENCE=true ;;
     --no-persistence)  ENABLE_PERSISTENCE=false ;;
     --database=*)      DATABASE_PROVIDER="${arg#--database=}" ;;
+    --scheduler)       COMPOSE_FEATURE_SCHEDULER=true; export SCHEDULER_ENABLED=true ;;
+    --no-scheduler)    COMPOSE_FEATURE_SCHEDULER=false; export SCHEDULER_ENABLED=false ;;
+    --tome)            COMPOSE_FEATURE_TOME=true; export TOME_ENABLED=true ;;
+    --weather)         COMPOSE_FEATURE_WEATHER=true; export WEATHER_ENABLED=true ;;
+    --webex)           COMPOSE_FEATURE_WEBEX=true; export ENABLE_WEBEX=true ;;
+    --webex-meetings)  COMPOSE_FEATURE_WEBEX_MEETINGS=true; export WEBEX_MEETINGS_ENABLED=true ;;
+    --duo-only)        COMPOSE_FEATURE_DUO_ONLY=true; export DUO_ONLY=true ;;
     --metallb)         ENABLE_METALLB=true ;;
     --no-metallb)      ENABLE_METALLB=false; ENABLE_INGRESS=false ;;
     --ingress)         ENABLE_INGRESS=true; ENABLE_METALLB=true ;;
     --no-ingress)      ENABLE_INGRESS=false ;;
     --domain=*)        CAIPE_DOMAIN="${arg#--domain=}" ;;
+    --github-enterprise=*)
+      local_ghe_host="${arg#--github-enterprise=}"
+      COMPOSE_FEATURE_GITHUB_ENTERPRISE=true
+      export GITHUB_ENTERPRISE_ENABLED=true GITHUB_ENTERPRISE_HOST="$local_ghe_host"
+      export GITHUB_API_URL="https://${local_ghe_host}/api/graphql"
+      export GITHUB_REST_API_URL="https://${local_ghe_host}/api/v3"
+      unset local_ghe_host
+      ;;
     --github-social)            ENABLE_GITHUB_SOCIAL=true ;;
     --no-github-social)         ENABLE_GITHUB_SOCIAL=false ;;
     --github-social-id=*)       GITHUB_SOCIAL_CLIENT_ID="${arg#--github-social-id=}" ;;
@@ -9369,10 +10078,12 @@ for arg in "$@"; do
     --local-user-password=*)    LOCAL_USER_PASSWORD="${arg#--local-user-password=}" ;;
     --tls-cert=*)      TLS_CERT_FILE="${arg#--tls-cert=}" ;;
     --tls-key=*)       TLS_KEY_FILE="${arg#--tls-key=}" ;;
-    --env-file=*)      ENV_FILE="${arg#--env-file=}" ;;
+    --env-file=*)      ENV_FILE="${arg#--env-file=}"; COMPOSE_ENV_FILE="${arg#--env-file=}" ;;
     --compose-env-file=*) COMPOSE_ENV_FILE="${arg#--compose-env-file=}" ;;
     --ui-env-file=*)   UI_ENV_FILE="${arg#--ui-env-file=}" ;;
     --load-config=*)   CAIPE_CONFIG_FILE="${arg#--load-config=}" ;;
+    --wait)            COMPOSE_WAIT=true ;;
+    --validate)        COMPOSE_VALIDATE_AFTER_UP=true ;;
     --slack-bot)       ENABLE_SLACK_BOT=true;  _SLACK_BOT_FORCED=on ;;
     --no-slack-bot)    ENABLE_SLACK_BOT=false; _SLACK_BOT_FORCED=off ;;
     --webex-bot)       ENABLE_WEBEX_BOT=true;  _WEBEX_BOT_FORCED=on ;;
@@ -9386,11 +10097,14 @@ for arg in "$@"; do
 done
 
 if $USE_DOCKER_COMPOSE; then
-  if [[ ${#args[@]} -gt 0 && "${args[0]}" != "setup" ]]; then
+  if [[ ${#args[@]} -gt 0 && "${args[0]}" != "setup" && "${args[0]}" != "plan" \
+        && "${args[0]}" != "validate" && "${args[0]}" != "repair" && "${args[0]}" != "status" ]]; then
     err "--docker-compose cannot be combined with the '${args[0]}' command"
     usage
   fi
-  args=(docker-compose)
+  if [[ ${#args[@]} -eq 0 || "${args[0]}" == setup ]]; then
+    args=(docker-compose)
+  fi
 fi
 
 $ENABLE_RBAC_RUNTIME && ENABLE_AGENTGATEWAY=true
@@ -9400,13 +10114,27 @@ $ENABLE_GRAPH_RAG && ENABLE_RAG=true
 case "${args[0]:-setup}" in
   setup)        cmd_setup ;;
   port-forward) cmd_port_forward ;;
-  validate)     cmd_validate ;;
+  validate)
+    if $USE_DOCKER_COMPOSE || [[ -n "${COMPOSE_CONFIG_FILE:-}" ]] || [[ "${CAIPE_RUNTIME:-}" == compose ]]; then
+      cmd_compose_validate
+    else
+      cmd_validate
+    fi
+    ;;
   creds)        cmd_creds ;;
   models|litellm-models) cmd_litellm_models ;;
   cleanup)      cmd_cleanup ;;
   nuke)         AUTO_YES=true; cmd_cleanup ;;
-  status)       cmd_status ;;
+  status)
+    if $USE_DOCKER_COMPOSE || [[ -n "${COMPOSE_CONFIG_FILE:-}" ]] || [[ "${CAIPE_RUNTIME:-}" == compose ]]; then
+      cmd_compose_status
+    else
+      cmd_status
+    fi
+    ;;
   docker-compose|compose) cmd_docker_compose ;;
+  plan)         cmd_compose_plan ;;
+  repair)       cmd_compose_repair ;;
   update-compose-release) cmd_update_compose_release ;;
   -h|--help)    usage ;;
   *)            err "Unknown command: ${args[0]}"; usage ;;
