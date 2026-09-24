@@ -1,13 +1,15 @@
 "use client";
 
 import { TeamPicker, type TeamPickerOption } from "@/components/ui/team-picker";
+import { UserIdentityDetails, UserMembershipSources } from "./UserIdentityDetails";
+import type { UserIdentityInfo, UserMembershipSourceInfo } from "@/types/admin-user-identity";
 import {
   withAdminSimulationParams,
   type AdminSimulationQueryTarget,
 } from "@/lib/rbac/admin-simulation-query";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 export interface UserDetailModalProps {
@@ -22,6 +24,7 @@ export interface UserDetailModalProps {
 
 type ProfileUser = {
   id: string;
+  principalType?: "user" | "service_account";
   username: string;
   email: string;
   firstName: string;
@@ -31,16 +34,8 @@ type ProfileUser = {
   attributes: Record<string, string[]>;
   slackLinkStatus: "linked" | "unlinked";
   teams: Array<{ team_id: string; tenant_id: string }>;
-};
-
-type IdentityInfo = {
-  sessions: Array<{ id: string; start?: number; lastAccess?: number }>;
-  federatedIdentities: Array<{
-    identityProvider: string;
-    userId: string;
-    userName: string;
-  }>;
-  lastAccess: number | null;
+  membershipSources?: UserMembershipSourceInfo[];
+  membershipSourcesAvailable?: boolean;
 };
 
 type AccessVia = {
@@ -188,6 +183,7 @@ export function UserDetailModal({
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [user, setUser] = useState<ProfileUser | null>(null);
+  const profileRequest = useRef(0);
   // Team picker options — use prop if provided, otherwise fetch
   const [teamOptionsLoading, setTeamOptionsLoading] = useState(!readOnly && !teamOptionsProp);
   const [teamOptionsFetched, setTeamOptionsFetched] = useState<
@@ -201,16 +197,20 @@ export function UserDetailModal({
   const [access, setAccess] = useState<AccessGroups | null>(null);
   const [accessLoading, setAccessLoading] = useState(true);
   const [accessError, setAccessError] = useState<string | null>(null);
+  const accessRequest = useRef(0);
   const [teamsExpanded, setTeamsExpanded] = useState(false);
   // Identity section (lazy — sessions + federated identities from Keycloak)
-  const [identity, setIdentity] = useState<IdentityInfo | null>(null);
+  const [identity, setIdentity] = useState<UserIdentityInfo | null>(null);
   const [identityLoading, setIdentityLoading] = useState(true);
+  const [identityError, setIdentityError] = useState<string | null>(null);
+  const identityRequest = useRef(0);
   const withPreviewScope = useCallback(
     (path: string) => withAdminSimulationParams(path, simulationTarget),
     [simulationTarget],
   );
 
   const refreshProfile = useCallback(async () => {
+    const requestId = ++profileRequest.current;
     setProfileError(null);
     const res = await fetch(
       withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}`),
@@ -227,7 +227,7 @@ export function UserDetailModal({
           : null) || `Failed to load user (${res.status})`
       );
     }
-    setUser(json.data.user);
+    if (requestId === profileRequest.current) setUser(json.data.user);
   }, [userId, withPreviewScope]);
 
   const loadTeams = useCallback(async () => {
@@ -255,25 +255,32 @@ export function UserDetailModal({
   }, [teamOptionsProp]);
 
   const loadIdentity = useCallback(async () => {
+    const requestId = ++identityRequest.current;
     setIdentityLoading(true);
+    setIdentityError(null);
+    setIdentity(null);
     try {
       const res = await fetch(
         withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}/identity`),
       );
       const json = (await readJson(res)) as {
         success?: boolean;
-        data?: IdentityInfo;
+        data?: UserIdentityInfo;
         error?: string;
       } | null;
-      if (res.ok && json?.success && json.data) {
-        setIdentity(json.data);
+      if (!res.ok || !json?.success || !json.data || !Array.isArray(json.data.federatedIdentities)) {
+        throw new Error("Identity information unavailable. Please retry.");
       }
+      if (requestId === identityRequest.current) setIdentity(json.data);
+    } catch {
+      if (requestId === identityRequest.current) setIdentityError("Identity information unavailable. Please retry.");
     } finally {
-      setIdentityLoading(false);
+      if (requestId === identityRequest.current) setIdentityLoading(false);
     }
   }, [userId, withPreviewScope]);
 
   const loadAccess = useCallback(async () => {
+    const requestId = ++accessRequest.current;
     setAccessError(null);
     setAccessLoading(true);
     try {
@@ -288,12 +295,14 @@ export function UserDetailModal({
       if (!res.ok || !json?.success || !json.data?.access) {
         throw new Error(json?.error || `Failed to load access (${res.status})`);
       }
-      setAccess(json.data.access);
+      if (requestId === accessRequest.current) setAccess(json.data.access);
     } catch (e) {
-      setAccessError(e instanceof Error ? e.message : "Failed to load access");
-      setAccess(null);
+      if (requestId === accessRequest.current) {
+        setAccessError(e instanceof Error ? e.message : "Failed to load access");
+        setAccess(null);
+      }
     } finally {
-      setAccessLoading(false);
+      if (requestId === accessRequest.current) setAccessLoading(false);
     }
   }, [userId, withPreviewScope]);
 
@@ -348,6 +357,9 @@ export function UserDetailModal({
 
     return () => {
       cancelled = true;
+      profileRequest.current += 1;
+      accessRequest.current += 1;
+      identityRequest.current += 1;
     };
   }, [userId, readOnly, teamOptionsProp, refreshProfile, loadTeams, loadAccess, loadIdentity]);
 
@@ -409,10 +421,11 @@ export function UserDetailModal({
   }, [teamOptions, memberTeamIds]);
 
   const idpLabel = useMemo(() => {
+    if (!identity || identity.unavailable?.includes("federatedIdentities")) return "Unavailable";
     const feds = identity?.federatedIdentities ?? [];
-    if (feds.length === 0) return "Local";
-    return feds.map((f) => f.identityProvider).join(", ") || "Local";
-  }, [identity?.federatedIdentities]);
+    if (feds.length === 0) return "No broker link reported";
+    return feds.map((f) => f.identityProvider).join(", ") || "Not reported";
+  }, [identity]);
 
   const accessTotal = useMemo(() => {
     if (!access) return 0;
@@ -598,7 +611,130 @@ export function UserDetailModal({
               </p>
             ) : null}
 
-            <section className="mt-6 border-t border-border pt-6">
+            <details key={`identity-${user.id}`} className="group mt-4 rounded-lg border border-border">
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg p-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="h-4 w-4 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />
+                <span>Identity</span>
+                <span className="ml-auto text-xs font-normal text-muted-foreground">{identityLoading ? "Loading…" : identityError || identity?.unavailable?.length ? "Some data unavailable" : idpLabel}</span>
+              </summary>
+              <div className="border-t border-border p-4 space-y-4">
+            <UserIdentityDetails
+              userId={user.id}
+              principalType={user.principalType}
+              identity={identity}
+              loading={identityLoading}
+              error={identityError}
+              onRetry={() => void loadIdentity()}
+            />
+
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold text-foreground mb-3">
+                Account details & integration links
+              </h4>
+              <p className="text-xs text-muted-foreground">Messaging-account links are integrations, not necessarily login methods.</p>
+              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                <div><dt className="text-muted-foreground">Keycloak username</dt><dd className="break-all">{user.username || "Not reported"}</dd></div>
+                <div><dt className="text-muted-foreground">Email attribute</dt><dd className="break-all">{user.email || "Not reported"}</dd></div>
+                <div>
+                  <dt className="text-muted-foreground">IdP source</dt>
+                  <dd className="font-medium text-foreground mt-0.5">
+                    {identityLoading ? (
+                      <span className="inline-block h-3 w-16 rounded bg-muted animate-pulse" />
+                    ) : idpLabel}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Slack</dt>
+                  <dd className="mt-0.5">
+                    {user.slackLinkStatus === "linked" ? (
+                      <span className="inline-flex flex-col gap-2">
+                        <span className="inline-flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center w-fit rounded-full bg-emerald-500/15 text-emerald-400 px-2 py-0.5 text-xs font-medium">
+                            Linked
+                          </span>
+                          {!readOnly && (
+                            <button
+                              type="button"
+                              disabled={busy === "slack-unlink"}
+                              onClick={() => unlinkSlack()}
+                              className="rounded-md border border-destructive/40 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              {busy === "slack-unlink" ? "Unlinking…" : "Unlink Slack"}
+                            </button>
+                          )}
+                        </span>
+                        {slackUserId ? (
+                          <span className="font-mono text-xs text-muted-foreground">{slackUserId}</span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className="inline-flex rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">
+                        Unlinked
+                      </span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Webex</dt>
+                  <dd className="mt-0.5">
+                    {webexLinked ? (
+                      <span className="inline-flex flex-col gap-2">
+                        <span className="inline-flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center w-fit rounded-full bg-emerald-500/15 text-emerald-400 px-2 py-0.5 text-xs font-medium">
+                            Linked
+                          </span>
+                          {!readOnly && (
+                            <button
+                              type="button"
+                              disabled={busy === "webex-unlink"}
+                              onClick={() => unlinkWebex()}
+                              className="rounded-md border border-destructive/40 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              {busy === "webex-unlink" ? "Unlinking…" : "Unlink Webex"}
+                            </button>
+                          )}
+                        </span>
+                        {webexUserEmail ? (
+                          <span className="text-xs text-muted-foreground">{webexUserEmail}</span>
+                        ) : webexUserId ? (
+                          <span className="font-mono text-xs text-muted-foreground">{webexUserId}</span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className="inline-flex rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">
+                        Unlinked
+                      </span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Latest active-session activity</dt>
+                  <dd className="font-medium text-foreground mt-0.5">
+                    {identityLoading ? (
+                      <span className="inline-block h-3 w-24 rounded bg-muted animate-pulse" />
+                    ) : !identity || identity.unavailable?.includes("sessions") ? "Unavailable" : identity.lastAccess ? lastLoginLabel : "No active-session activity reported"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Account created</dt>
+                  <dd className="font-medium text-foreground mt-0.5">
+                    {createdLabel}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+              </div>
+            </details>
+
+            <details key={`teams-${user.id}`} className="group mt-4 rounded-lg border border-border">
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg p-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="h-4 w-4 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />
+                <span>Teams</span>
+                <span className="ml-auto text-xs font-normal text-muted-foreground">{teams.length} teams{!user.membershipSourcesAvailable ? " · Sources unavailable" : user.membershipSources?.some((source) => source.subject !== user.id) ? " · Identity link needs review" : ""}</span>
+              </summary>
+              <div className="border-t border-border p-4 space-y-4">
+            <div>
+              <p className="mb-3 text-xs text-muted-foreground">Recorded team memberships and their sources. A membership record alone does not confirm access to a resource.</p>
               <div className="mb-3 flex items-center justify-between gap-3">
                 <button
                   type="button"
@@ -614,7 +750,7 @@ export function UserDetailModal({
                     } ${teams.length <= TEAM_COLLAPSED_LIMIT ? "opacity-0" : ""}`}
                     aria-hidden
                   />
-                  <span>Teams</span>
+                  <span>Memberships</span>
                   <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                     {teams.length}
                   </span>
@@ -690,13 +826,23 @@ export function UserDetailModal({
                   )}
                 </div>
               )}
-            </section>
+            </div>
+            <UserMembershipSources userId={user.id} sources={user.membershipSources} sourcesAvailable={user.membershipSourcesAvailable} />
+              </div>
+            </details>
 
-            <section className="mt-6 border-t border-border pt-6">
+            <details key={`access-${user.id}`} className="group mt-4 rounded-lg border border-border">
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg p-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="h-4 w-4 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />
+                <span>Access</span>
+                <span className="ml-auto text-xs font-normal text-muted-foreground">{accessLoading ? "Loading…" : accessError ? "Unavailable" : `${accessTotal} reported permissions`}</span>
+              </summary>
+              <div className="border-t border-border p-4 space-y-4">
+            <div>
               <div className="flex items-baseline justify-between mb-3">
-                <h3 className="text-sm font-semibold text-foreground">Access</h3>
+                <h4 className="text-sm font-semibold text-foreground">Resource access</h4>
                 <span className="text-xs text-muted-foreground">
-                  Effective permissions
+                  Reported resource permissions
                 </span>
               </div>
               {accessLoading ? (
@@ -708,8 +854,7 @@ export function UserDetailModal({
                 <p className="text-sm text-destructive">{accessError}</p>
               ) : !access || accessTotal === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No resource access. Access is granted by adding this user to a
-                  team that owns agents, tools, or knowledge bases.
+                  No access found for the resource types and capabilities checked here.
                 </p>
               ) : (
                 <div className="space-y-4">
@@ -720,101 +865,10 @@ export function UserDetailModal({
                   })}
                 </div>
               )}
-            </section>
-
-            <section className="mt-6 border-t border-border pt-6">
-              <h3 className="text-sm font-semibold text-foreground mb-3">
-                Identity & account
-              </h3>
-              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
-                <div>
-                  <dt className="text-muted-foreground">IdP source</dt>
-                  <dd className="font-medium text-foreground mt-0.5">
-                    {identityLoading ? (
-                      <span className="inline-block h-3 w-16 rounded bg-muted animate-pulse" />
-                    ) : idpLabel}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Slack</dt>
-                  <dd className="mt-0.5">
-                    {user.slackLinkStatus === "linked" ? (
-                      <span className="inline-flex flex-col gap-2">
-                        <span className="inline-flex flex-wrap items-center gap-2">
-                          <span className="inline-flex items-center w-fit rounded-full bg-emerald-500/15 text-emerald-400 px-2 py-0.5 text-xs font-medium">
-                            Linked
-                          </span>
-                          {!readOnly && (
-                            <button
-                              type="button"
-                              disabled={busy === "slack-unlink"}
-                              onClick={() => unlinkSlack()}
-                              className="rounded-md border border-destructive/40 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:cursor-wait disabled:opacity-60"
-                            >
-                              {busy === "slack-unlink" ? "Unlinking…" : "Unlink Slack"}
-                            </button>
-                          )}
-                        </span>
-                        {slackUserId ? (
-                          <span className="font-mono text-xs text-muted-foreground">{slackUserId}</span>
-                        ) : null}
-                      </span>
-                    ) : (
-                      <span className="inline-flex rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">
-                        Unlinked
-                      </span>
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Webex</dt>
-                  <dd className="mt-0.5">
-                    {webexLinked ? (
-                      <span className="inline-flex flex-col gap-2">
-                        <span className="inline-flex flex-wrap items-center gap-2">
-                          <span className="inline-flex items-center w-fit rounded-full bg-emerald-500/15 text-emerald-400 px-2 py-0.5 text-xs font-medium">
-                            Linked
-                          </span>
-                          {!readOnly && (
-                            <button
-                              type="button"
-                              disabled={busy === "webex-unlink"}
-                              onClick={() => unlinkWebex()}
-                              className="rounded-md border border-destructive/40 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:cursor-wait disabled:opacity-60"
-                            >
-                              {busy === "webex-unlink" ? "Unlinking…" : "Unlink Webex"}
-                            </button>
-                          )}
-                        </span>
-                        {webexUserEmail ? (
-                          <span className="text-xs text-muted-foreground">{webexUserEmail}</span>
-                        ) : webexUserId ? (
-                          <span className="font-mono text-xs text-muted-foreground">{webexUserId}</span>
-                        ) : null}
-                      </span>
-                    ) : (
-                      <span className="inline-flex rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">
-                        Unlinked
-                      </span>
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Last login</dt>
-                  <dd className="font-medium text-foreground mt-0.5">
-                    {identityLoading ? (
-                      <span className="inline-block h-3 w-24 rounded bg-muted animate-pulse" />
-                    ) : lastLoginLabel}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Account created</dt>
-                  <dd className="font-medium text-foreground mt-0.5">
-                    {createdLabel}
-                  </dd>
-                </div>
-              </dl>
-            </section>
+              <p className="mt-3 text-xs text-muted-foreground">OpenFGA-backed access summary, not a complete grant inventory or a CAS decision for a specific request. “Effective” means the exact grant source was not resolved.</p>
+            </div>
+              </div>
+            </details>
 
             <div className="mt-8 flex justify-end gap-2 border-t border-border pt-4">
               <button
