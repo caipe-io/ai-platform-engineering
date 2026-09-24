@@ -119,3 +119,66 @@ def test_provider_error_is_wrapped_with_context(monkeypatch: pytest.MonkeyPatch)
 
 def test_langchain_provider_for_is_usable_without_building() -> None:
     assert langchain_provider_for("aws-bedrock", "anthropic.claude-v2") == "anthropic_bedrock"
+
+
+# ── reasoning effort ────────────────────────────────────────────────────────
+# LangChain does not normalize this. ChatOpenAI takes `reasoning_effort`
+# natively; ChatAnthropic does not, and silently forwards it into
+# `model_kwargs` where thinking is never enabled. These pin the translation.
+
+
+def test_openai_keeps_native_reasoning_effort(captured: dict[str, Any]) -> None:
+    build_chat_model("openai", "gpt-5", reasoning_effort="high")
+    assert captured["kwargs"]["reasoning_effort"] == "high"
+    assert "thinking" not in captured["kwargs"]
+
+
+def test_anthropic_translates_effort_to_a_thinking_budget(captured: dict[str, Any]) -> None:
+    build_chat_model("anthropic-claude", "claude-sonnet-4-5", reasoning_effort="high")
+    kwargs = captured["kwargs"]
+    assert kwargs["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+    # Never forwarded raw: LangChain would bury it in model_kwargs.
+    assert "reasoning_effort" not in kwargs
+
+
+def test_anthropic_derives_max_tokens_above_the_budget(captured: dict[str, Any]) -> None:
+    # Anthropic rejects max_tokens <= budget_tokens. Without an explicit
+    # max_tokens the chat model's own default can sit at or below the budget.
+    build_chat_model("anthropic-claude", "claude-sonnet-4-5", reasoning_effort="max")
+    kwargs = captured["kwargs"]
+    assert kwargs["max_tokens"] > kwargs["thinking"]["budget_tokens"]
+
+
+def test_caller_max_tokens_clamps_the_budget(captured: dict[str, Any]) -> None:
+    build_chat_model(
+        "anthropic-claude", "claude-sonnet-4-5", reasoning_effort="max", max_tokens=6000
+    )
+    kwargs = captured["kwargs"]
+    assert kwargs["max_tokens"] == 6000
+    assert kwargs["thinking"]["budget_tokens"] <= 6000 - 4096
+
+
+def test_tiny_max_tokens_falls_back_to_the_minimum_budget(captured: dict[str, Any]) -> None:
+    build_chat_model(
+        "anthropic-claude", "claude-sonnet-4-5", reasoning_effort="max", max_tokens=100
+    )
+    assert captured["kwargs"]["thinking"]["budget_tokens"] == 1024
+
+
+def test_bedrock_anthropic_also_gets_a_thinking_budget(captured: dict[str, Any]) -> None:
+    build_chat_model("aws-bedrock", "anthropic.claude-v2", reasoning_effort="low")
+    assert captured["kwargs"]["thinking"]["budget_tokens"] == 1024
+    # Anthropic accepts only its default temperature while thinking is enabled.
+    assert captured["kwargs"]["temperature"] == 1.0
+
+
+def test_gemini_uses_its_own_lower_ceiling(captured: dict[str, Any]) -> None:
+    build_chat_model("google-gemini", "gemini-2.5-pro", reasoning_effort="high")
+    assert captured["kwargs"]["thinking_budget"] == 24576
+    assert "thinking" not in captured["kwargs"]
+
+
+def test_no_effort_leaves_kwargs_untouched(captured: dict[str, Any]) -> None:
+    build_chat_model("anthropic-claude", "claude-sonnet-4-5")
+    assert "thinking" not in captured["kwargs"]
+    assert "max_tokens" not in captured["kwargs"]

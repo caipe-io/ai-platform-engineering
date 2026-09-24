@@ -17,6 +17,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
 from .bedrock_family import BEDROCK_FAMILY_TO_PROVIDER, resolve_bedrock_client
+from .reasoning import ReasoningEffort, apply_reasoning_effort
 from .providers import (
     OPENAI_COMPATIBLE,
     PROVIDERS,
@@ -61,6 +62,7 @@ def build_chat_model(
     model_id: str | None = None,
     *,
     enable_cache: bool = False,
+    reasoning_effort: ReasoningEffort | None = None,
     **kwargs: Any,
 ) -> BaseChatModel:
     """Build a chat model for ``provider``.
@@ -71,6 +73,9 @@ def build_chat_model(
             variable is read.
         enable_cache: Whether prompt caching is wanted. Only affects Bedrock,
             where it selects the Converse client over the legacy one.
+        reasoning_effort: Translated to each provider's native thinking
+            configuration. OpenAI takes it directly; Anthropic and Gemini need
+            an explicit thinking budget, which LangChain does not derive.
         **kwargs: Passed through to the underlying chat model -- shared
             transport clients, timeouts, reasoning effort, and so on.
 
@@ -90,6 +95,11 @@ def build_chat_model(
         )
 
     lc_provider = langchain_provider_for(canonical, resolved_model, enable_cache=enable_cache)
+
+    # Must run after the provider is resolved: Bedrock's three client families
+    # need different thinking configuration from each other.
+    effort = reasoning_effort if reasoning_effort is not None else kwargs.pop("reasoning_effort", None)
+    kwargs = apply_reasoning_effort(lc_provider, effort, kwargs)
 
     if canonical == OPENAI_COMPATIBLE:
         base_url = os.getenv("OPENAI_COMPATIBLE_BASE_URL")
