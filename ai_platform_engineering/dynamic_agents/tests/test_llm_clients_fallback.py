@@ -37,7 +37,7 @@ def test_get_llm_uses_agent_values_when_both_set(monkeypatch):
         return "llm"
 
     monkeypatch.setattr(
-        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+        "ai_platform_engineering.llm_wrapper.build.build_chat_model", _build
     )
     monkeypatch.setenv("LLM_PROVIDER", "openai")
 
@@ -59,7 +59,7 @@ def test_get_llm_falls_back_to_env_provider_when_agent_provider_empty(monkeypatc
         return "llm"
 
     monkeypatch.setattr(
-        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+        "ai_platform_engineering.llm_wrapper.build.build_chat_model", _build
     )
     monkeypatch.setenv("LLM_PROVIDER", "aws-bedrock")
 
@@ -85,7 +85,7 @@ def test_get_llm_skips_model_kwarg_when_agent_model_empty(monkeypatch):
         return "llm"
 
     monkeypatch.setattr(
-        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+        "ai_platform_engineering.llm_wrapper.build.build_chat_model", _build
     )
     monkeypatch.setenv("LLM_PROVIDER", "aws-bedrock")
 
@@ -110,7 +110,7 @@ def test_get_llm_both_empty_falls_back_to_env(monkeypatch):
         return "llm"
 
     monkeypatch.setattr(
-        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+        "ai_platform_engineering.llm_wrapper.build.build_chat_model", _build
     )
     monkeypatch.setenv("LLM_PROVIDER", "aws-bedrock")
 
@@ -138,7 +138,7 @@ def test_get_llm_wraps_factory_value_error_as_llm_config_error(monkeypatch):
         raise ValueError("Unsupported provider: 'bogus'")
 
     monkeypatch.setattr(
-        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _boom
+        "ai_platform_engineering.llm_wrapper.build.build_chat_model", _boom
     )
 
     with pytest.raises(llm_clients.LLMConfigError) as excinfo:
@@ -158,7 +158,7 @@ def test_get_llm_whitespace_only_provider_treated_as_empty(monkeypatch):
         return "llm"
 
     monkeypatch.setattr(
-        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+        "ai_platform_engineering.llm_wrapper.build.build_chat_model", _build
     )
     monkeypatch.setenv("LLM_PROVIDER", "openai")
 
@@ -195,7 +195,7 @@ def test_get_llm_passes_supported_reasoning_effort(monkeypatch):
         return "llm"
 
     monkeypatch.setattr(
-        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+        "ai_platform_engineering.llm_wrapper.build.build_chat_model", _build
     )
 
     result = llm_clients.get_llm("openai", "gpt-5.5", "max")
@@ -217,7 +217,7 @@ def test_get_llm_uses_supported_api_version_for_azure_gpt5_reasoning(monkeypatch
         return "llm"
 
     monkeypatch.setattr(
-        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+        "ai_platform_engineering.llm_wrapper.build.build_chat_model", _build
     )
     monkeypatch.setenv("AZURE_OPENAI_USE_RESPONSES", "false")
     monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2024-11-01-preview")
@@ -243,7 +243,7 @@ def test_get_llm_uses_valid_temperature_for_bedrock_reasoning(monkeypatch):
         return "llm"
 
     monkeypatch.setattr(
-        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+        "ai_platform_engineering.llm_wrapper.build.build_chat_model", _build
     )
 
     result = llm_clients.get_llm(
@@ -265,7 +265,7 @@ def test_get_llm_omits_effort_for_unsupported_model(monkeypatch):
         return "llm"
 
     monkeypatch.setattr(
-        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+        "ai_platform_engineering.llm_wrapper.build.build_chat_model", _build
     )
 
     llm_clients.get_llm("openai", "gpt-4.1", "medium")

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ai_platform_engineering.llm_wrapper.build import build_chat_model
 from botocore.config import Config as BotocoreConfig
-
-from dynamic_agents._vendor.llm_wrapper.build import build_chat_model
 
 
 def _provider_supports_botocore_config(provider: str) -> bool:

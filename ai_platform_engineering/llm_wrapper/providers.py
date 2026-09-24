@@ -5,7 +5,7 @@ agent records and rendered in the admin UI, so they cannot change (spec FR-006).
 LangChain's ``init_chat_model`` uses different spellings. This module is the
 translation, and the only place that knows both.
 
-This module is canonical source that consumers copy. See README.md.
+Single shared source, imported directly. See README.md.
 """
 
 from __future__ import annotations

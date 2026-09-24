@@ -9,7 +9,9 @@ Replace the three `cnoe-agent-utils` surfaces with in-repo equivalents so CAIPE 
 
 Chat-model construction moves to `langchain.chat_models.init_chat_model`, which returns provider-native `BaseChatModel` instances and therefore preserves every middleware, provider kwarg, and transport-sharing path already in use. Tracing moves to the Langfuse SDK plus OpenTelemetry directly, both already direct dependencies. The Bedrock client-family classifier is vendored unchanged.
 
-The replacement logic lives in a canonical directory, `ai_platform_engineering/llm_wrapper/`, split into small single-purpose modules. Consumers vendor the modules they need; CI verifies vendored copies against canonical and fails on undeclared drift. This is **not** a published package and **not** a uv workspace member — that distinction is the point, because a package would impose one `langchain-aws` / `boto3` / `langchain-anthropic` version on every consumer, which is the exact mechanism being removed.
+The replacement logic lives in `ai_platform_engineering/llm_wrapper/` as a **single shared source**, imported directly. It is not vendored, not published, and declares no dependencies of its own — which is what lets it be shared without coupling: each consuming package pins the provider integrations it ships. A package that declared those integrations would impose one `langchain-aws` / `boto3` / `langchain-anthropic` version on every consumer, the exact mechanism being removed.
+
+Sharing it requires the consuming image to build with the **repository root** as its Docker context. The dynamic-agents image previously used `context: ai_platform_engineering/dynamic_agents`, which is why shared modules such as `utils.auth` were duplicated into component trees; widening the context removes that constraint at its root rather than working around it.
 
 ## Technical Context
 

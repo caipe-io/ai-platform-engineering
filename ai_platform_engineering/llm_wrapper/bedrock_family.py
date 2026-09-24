@@ -5,7 +5,7 @@ with behaviour preserved exactly. The classification selects the prompt-caching
 middleware and the attachment block shape, so changing it changes cost and
 document handling -- see spec FR-014 and A-006.
 
-This module is canonical source that consumers copy. See README.md.
+Single shared source, imported directly. See README.md.
 """
 
 from __future__ import annotations

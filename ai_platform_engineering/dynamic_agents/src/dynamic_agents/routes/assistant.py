@@ -8,11 +8,11 @@ LLM call with a system prompt and user message.
 import logging
 from typing import Any
 
+from ai_platform_engineering.llm_wrapper.build import build_chat_model
 from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, model_validator
 
-from dynamic_agents._vendor.llm_wrapper.build import build_chat_model
 from dynamic_agents.auth.auth import UserContext, get_user_context
 from dynamic_agents.models import ModelConfig
 

@@ -5,7 +5,7 @@ provider-native ``BaseChatModel`` instances, so the agent middleware stack,
 provider-specific kwargs, and shared-transport injection all keep working
 unchanged.
 
-This module is canonical source that consumers copy. See README.md.
+Single shared source, imported directly. See README.md.
 """
 
 from __future__ import annotations
