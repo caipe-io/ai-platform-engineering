@@ -45,6 +45,7 @@ import { SecurityWorkspaceTabs } from "@/components/admin/security/SecurityWorks
 import { UnifiedAuditTab } from "@/components/admin/security/UnifiedAuditTab";
 import { ImportAgentsFromConfigCard } from "@/components/admin/settings/ImportAgentsFromConfigCard";
 import { MCPCatalogSettingsCard } from "@/components/admin/settings/MCPCatalogSettingsCard";
+import { PlatformMcpConnectCard } from "@/components/admin/settings/PlatformMcpConnectCard";
 import { RagSettingsTab } from "@/components/admin/settings/RagSettingsTab";
 import { CardPagination } from "@/components/admin/shared/CardPagination";
 import { DateRangeFilter,presetToRange,type DateRange,type DateRangePreset } from "@/components/admin/shared/DateRangeFilter";
@@ -1722,6 +1723,7 @@ function AdminPage() {
 
               {tabGateValues.mcp && (
                 <TabsContent value="mcp" className="space-y-4">
+                  <PlatformMcpConnectCard readOnly={isSimulationActive} />
                   <MCPCatalogSettingsCard
                     isAdmin={effectiveOrganizationAdmin}
                     readOnly={isSimulationActive}
