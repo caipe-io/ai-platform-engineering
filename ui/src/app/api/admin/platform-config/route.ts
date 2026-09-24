@@ -158,14 +158,79 @@ async function reconcileDefaultAgentGrant(previousAgentId: string | null, nextAg
   await writeOpenFgaTuples({ writes, deletes });
 }
 
-// Release notes is a single platform-wide on/off switch. The announcement
-// always targets the currently deployed version, and dismissal is permanent
-// per-version, so there is no version/revision/toast/CTA config to store.
-function normalizeReleaseNotesConfig(input: unknown = {}) {
+export interface ReleaseNotesNotificationConfig {
+  enabled: boolean;
+  repository_url: string | null;
+  previous_commit: string | null;
+  latest_commit: string | null;
+}
+
+function optionalTrimmedString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizeReleaseNotesConfig(input: unknown = {}): ReleaseNotesNotificationConfig {
   const source = isRecord(input) ? input : {};
   return {
     enabled: source.enabled !== false,
+    repository_url: optionalTrimmedString(source.repository_url),
+    previous_commit: optionalTrimmedString(source.previous_commit),
+    latest_commit: optionalTrimmedString(source.latest_commit),
   };
+}
+
+function validateReleaseNotesConfig(config: ReleaseNotesNotificationConfig): void {
+  const rangeValues = [config.repository_url, config.previous_commit, config.latest_commit];
+  const configuredValues = rangeValues.filter(Boolean).length;
+  if (configuredValues !== 0 && configuredValues !== rangeValues.length) {
+    throw new ApiError(
+      'repository_url, previous_commit, and latest_commit must all be set or all be empty',
+      400,
+      'INCOMPLETE_RELEASE_NOTES_COMPARE',
+    );
+  }
+  if (configuredValues === 0) return;
+
+  let repositoryUrl: URL;
+  try {
+    repositoryUrl = new URL(config.repository_url as string);
+  } catch {
+    throw new ApiError(
+      'release notes repository_url must be a valid GitHub repository URL',
+      400,
+      'INVALID_RELEASE_NOTES_REPOSITORY',
+    );
+  }
+  const pathParts = repositoryUrl.pathname.replace(/\.git\/?$/i, '').split('/').filter(Boolean);
+  if (
+    repositoryUrl.protocol !== 'https:' ||
+    repositoryUrl.hostname.toLowerCase() !== 'github.com' ||
+    pathParts.length !== 2 ||
+    repositoryUrl.search ||
+    repositoryUrl.hash
+  ) {
+    throw new ApiError(
+      'release notes repository_url must be an https://github.com/<owner>/<repository> URL',
+      400,
+      'INVALID_RELEASE_NOTES_REPOSITORY',
+    );
+  }
+
+  const commitPattern = /^[0-9a-f]{7,40}$/i;
+  if (!commitPattern.test(config.previous_commit as string)) {
+    throw new ApiError(
+      'release notes previous_commit must be a 7 to 40 character commit SHA',
+      400,
+      'INVALID_RELEASE_NOTES_PREVIOUS_COMMIT',
+    );
+  }
+  if (!commitPattern.test(config.latest_commit as string)) {
+    throw new ApiError(
+      'release notes latest_commit must be a 7 to 40 character commit SHA',
+      400,
+      'INVALID_RELEASE_NOTES_LATEST_COMMIT',
+    );
+  }
 }
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -273,8 +338,10 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       : null;
     if (hasVictoropsUpdate) update.slack_victorops_escalation_agent_id = nextVictoropsAgentId;
 
-    if (body.release_notes) {
-      update.release_notes = normalizeReleaseNotesConfig(body.release_notes);
+    if (Object.prototype.hasOwnProperty.call(body, 'release_notes')) {
+      const releaseNotesConfig = normalizeReleaseNotesConfig(body.release_notes);
+      validateReleaseNotesConfig(releaseNotesConfig);
+      update.release_notes = releaseNotesConfig;
     }
 
     // Slack and Webex discovery caches are configured independently.
