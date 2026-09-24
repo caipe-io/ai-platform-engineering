@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from botocore.exceptions import ClientError
 
 from ai_platform_engineering.llm_wrapper import build as build_mod
 from ai_platform_engineering.llm_wrapper.build import (
@@ -96,6 +97,97 @@ def test_missing_model_id_names_the_env_var(
 def test_unknown_provider_lists_the_supported_ones(captured: dict[str, Any]) -> None:
     with pytest.raises(LLMConfigError, match="Unsupported LLM provider"):
         build_chat_model("not-a-provider", "m")
+
+
+AIP_MODEL_ID = "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123"
+
+
+def _access_denied_error() -> ClientError:
+    return ClientError(
+        error_response={"Error": {"Code": "AccessDeniedException", "Message": "denied"}},
+        operation_name="GetInferenceProfile",
+    )
+
+
+class TestBedrockBaseModelId:
+    """AWS_BEDROCK_BASE_MODEL_ID and the GetInferenceProfile fallback (converse only)."""
+
+    def test_base_model_id_env_var_passes_through_for_converse(
+        self, captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AWS_BEDROCK_BASE_MODEL_ID", "anthropic.claude-sonnet-4-5-v1:0")
+        build_chat_model("aws-bedrock", AIP_MODEL_ID, enable_cache=True)
+        assert captured["kwargs"]["base_model_id"] == "anthropic.claude-sonnet-4-5-v1:0"
+
+    def test_base_model_id_env_var_ignored_for_legacy_client(
+        self, captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AWS_BEDROCK_BASE_MODEL_ID", "amazon.nova-pro-v1:0")
+        build_chat_model("aws-bedrock", "us.amazon.nova-pro-v1:0", enable_cache=False)
+        assert "base_model_id" not in captured["kwargs"]
+
+    def test_explicit_base_model_id_kwarg_is_not_overridden(
+        self, captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AWS_BEDROCK_BASE_MODEL_ID", "from-env-var")
+        build_chat_model("aws-bedrock", AIP_MODEL_ID, enable_cache=True, base_model_id="from-caller")
+        assert captured["kwargs"]["base_model_id"] == "from-caller"
+
+    def test_retries_with_empty_base_model_id_on_access_denied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AWS_BEDROCK_BASE_MODEL_ID", raising=False)
+        monkeypatch.delenv("AWS_BEDROCK_CLIENT", raising=False)
+        calls: list[dict[str, Any]] = []
+
+        def _fake(model: str, model_provider: str, **kwargs: Any) -> str:
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise _access_denied_error()
+            return "chat-model"
+
+        monkeypatch.setattr(build_mod, "init_chat_model", _fake)
+        llm = build_chat_model("aws-bedrock", AIP_MODEL_ID, enable_cache=True)
+
+        assert llm == "chat-model"
+        assert len(calls) == 2
+        assert "base_model_id" not in calls[0]
+        assert calls[1]["base_model_id"] == ""
+
+    def test_non_access_denied_client_error_propagates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AWS_BEDROCK_BASE_MODEL_ID", raising=False)
+        monkeypatch.delenv("AWS_BEDROCK_CLIENT", raising=False)
+        throttling_error = ClientError(
+            error_response={"Error": {"Code": "ThrottlingException", "Message": "slow down"}},
+            operation_name="GetInferenceProfile",
+        )
+
+        def _fake(model: str, model_provider: str, **kwargs: Any) -> str:
+            raise throttling_error
+
+        monkeypatch.setattr(build_mod, "init_chat_model", _fake)
+        with pytest.raises(ClientError) as exc_info:
+            build_chat_model("aws-bedrock", AIP_MODEL_ID, enable_cache=True)
+        assert exc_info.value.response["Error"]["Code"] == "ThrottlingException"
+
+    def test_non_aip_model_id_never_retries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Converse family (non-Anthropic model id, caching on), but not an
+        # application-inference-profile ARN - exercises the ARN-substring
+        # guard specifically, distinct from the provider-family guard.
+        monkeypatch.delenv("AWS_BEDROCK_BASE_MODEL_ID", raising=False)
+        monkeypatch.delenv("AWS_BEDROCK_CLIENT", raising=False)
+        calls: list[dict[str, Any]] = []
+
+        def _fake(model: str, model_provider: str, **kwargs: Any) -> str:
+            calls.append(kwargs)
+            raise _access_denied_error()
+
+        monkeypatch.setattr(build_mod, "init_chat_model", _fake)
+        with pytest.raises(ClientError):
+            build_chat_model("aws-bedrock", "us.amazon.nova-pro-v1:0", enable_cache=True)
+        assert len(calls) == 1
 
 
 def test_missing_integration_package_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None:
