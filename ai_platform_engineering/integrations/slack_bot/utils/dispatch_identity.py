@@ -124,6 +124,9 @@ def apply_execution_identity(
     try:
         sa_loop = asyncio.new_event_loop()
         sa_obo = sa_loop.run_until_complete(impersonate_fn(sa_sub))
+        current_obo = context.get("obo_token")
+        if isinstance(current_obo, str) and current_obo and not context.get("initiator_obo_token"):
+            context["initiator_obo_token"] = current_obo
         context["obo_token"] = sa_obo.access_token
         logger.info(
             "[{}] dispatch_identity: run_as=service_account agent={} sa={} ({}) — minted SA token",

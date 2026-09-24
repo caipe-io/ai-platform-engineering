@@ -61,6 +61,17 @@ def test_builtin_map_includes_knowledge_base_caller_token():
     ]
 
 
+def test_builtin_map_includes_platform_initiator_token():
+    builtin = _builtin_credential_sources()
+    assert builtin["platform"] == [
+        {
+            "kind": "initiator_token",
+            "name": "X-CAIPE-Initiator-Token",
+            "target": "header",
+        }
+    ]
+
+
 def test_get_server_injects_builtin_when_missing():
     """A built-in server stored without credential_sources is self-healed."""
     service = _make_service()

@@ -42,8 +42,14 @@ def configure_actions(dependencies: ActionDependencies) -> None:
   APP_NAME = dependencies.app_name
 
 
-def handle_hitl_action(ack: Any, body: dict[str, Any], client: Any) -> None:
+def handle_hitl_action(
+  ack: Any,
+  body: dict[str, Any],
+  client: Any,
+  context: Any = None,
+) -> None:
   ack()
+  _bind_obo_for_handler(context)
   try:
     result = hitl_handler.handle_interaction(body, client)
     if result and result.get("resume_context"):
@@ -446,7 +452,7 @@ def _open_feedback_modal(
         "submit": {"type": "plain_text", "text": "Submit"},
         "close": {"type": "plain_text", "text": "Cancel"},
         "blocks": [
-          {"type": "section", "text": {"type": "mrkdwn", "text": f"Your feedback is recorded either way. {APP_NAME} will only generate a new response if you tick the box below."}},
+          {"type": "section", "text": {"type": "mrkdwn", "text": f"Your feedback is recorded either way. {APP_NAME} will only act on it if you tick the box below. Requested platform edits still require your approval and normal access."}},
           {
             "type": "input",
             "block_id": "correction_input",
@@ -468,12 +474,12 @@ def _open_feedback_modal(
               "action_id": "regen",
               "options": [
                 {
-                  "text": {"type": "plain_text", "text": "Attempt to regenerate a response based on feedback?"},
+                  "text": {"type": "plain_text", "text": "Ask the agent to act on this feedback?"},
                   "value": "regenerate",
                 },
               ],
             },
-            "label": {"type": "plain_text", "text": "Generate new response"},
+            "label": {"type": "plain_text", "text": "Send to agent"},
           },
         ],
       },
@@ -501,14 +507,19 @@ def _regen_message_text(feedback_type: str, comment: str) -> str:
     if comment:
       return (
         f'The user indicated your previous response needed work and provided the '
-        f'following IMPORTANT context: "{comment}"\n\nPlease carefully review this '
-        f'feedback and provide a corrected response.'
+        f'following IMPORTANT instruction: "{comment}"\n\nAct on this feedback. If the '
+        f'user explicitly requested a platform configuration edit, use the platform '
+        f'proposal and approval workflow; otherwise provide a corrected response.'
       )
-    return "The user indicated your previous response needed work. Please review it and provide a corrected response."
+    return "The user indicated your previous response needed work. Review it and provide a corrected response."
 
   instruction = _REGEN_INSTRUCTIONS.get(feedback_type, "")
   if comment:
-    return f'{instruction}\n\nAdditional context from the user: "{comment}"'
+    return (
+      f'{instruction}\n\nAdditional instruction from the user: "{comment}"\n\n'
+      "If that instruction explicitly requests a platform configuration edit, use "
+      "the platform proposal and approval workflow."
+    )
   return instruction
 
 

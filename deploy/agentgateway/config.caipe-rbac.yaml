@@ -41,6 +41,13 @@ binds:
           targets:
           - name: argocd
             mcp: { host: http://mcp-argocd:8000/mcp }
+    - matches: [{ path: { pathPrefix: /mcp/platform } }]
+      policies: *mcpAuthzPolicy
+      backends:
+      - mcp:
+          targets:
+          - name: platform
+            mcp: { host: http://mcp-platform:8000/mcp }
     - matches: [{ path: { pathPrefix: /mcp/backstage } }]
       policies: *mcpAuthzPolicy
       backends:

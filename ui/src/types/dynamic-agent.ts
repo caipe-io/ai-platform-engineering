@@ -78,7 +78,7 @@ export interface MCPServerConfigWithPermissions extends MCPServerConfig {
 }
 
 export interface MCPCredentialSource {
-  kind: "secret_ref" | "provider_connection" | "caller_token";
+  kind: "secret_ref" | "provider_connection" | "caller_token" | "initiator_token";
   target: "env" | "header";
   name: string;
   secret_ref?: string;

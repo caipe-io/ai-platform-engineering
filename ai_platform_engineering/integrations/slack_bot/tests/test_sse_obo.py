@@ -20,6 +20,7 @@ import pytest
 
 from ai_platform_engineering.integrations.slack_bot.sse_client import (
     SSEClient,
+    set_initiator_token,
     set_obo_token,
 )
 
@@ -32,8 +33,10 @@ def _reset_obo_token():
     very thing we're trying to test).
     """
     set_obo_token(None)
+    set_initiator_token(None)
     yield
     set_obo_token(None)
+    set_initiator_token(None)
 
 
 def _make_client_with_sa(sa_token: str = "sa-fallback-token") -> SSEClient:
@@ -81,6 +84,15 @@ class TestHeaderPrecedence:
         headers = client._get_headers()
 
         assert "Authorization" not in headers
+
+    def test_human_initiator_is_forwarded_separately_from_service_execution(self):
+        client = _make_client_with_sa("service-execution-token")
+        set_initiator_token("human-initiator-token")
+
+        headers = client._get_headers()
+
+        assert headers["Authorization"] == "Bearer service-execution-token"
+        assert headers["X-CAIPE-Initiator-Token"] == "human-initiator-token"
 
 
 class TestContextVarLifecycle:

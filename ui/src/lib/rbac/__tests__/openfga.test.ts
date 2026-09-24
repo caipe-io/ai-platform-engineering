@@ -727,6 +727,11 @@ describe("OpenFGA team resource tuple reconciliation", () => {
 
     expect(diff.writes).toEqual([
       {
+        user: "agent:agent-test-april-2025",
+        relation: "caller",
+        object: "tool:platform/*",
+      },
+      {
         user: "user:admin-sub",
         relation: "owner",
         object: "agent:agent-test-april-2025",
@@ -769,6 +774,7 @@ describe("OpenFGA team resource tuple reconciliation", () => {
     });
 
     expect(diff.writes).toEqual([
+      { user: "agent:agent-platform-helper", relation: "caller", object: "tool:platform/*" },
       { user: "user:admin-sub", relation: "owner", object: "agent:agent-platform-helper" },
       { user: "organization:default#admin", relation: "manager", object: "agent:agent-platform-helper" },
       { user: "team:platform#member", relation: "user", object: "agent:agent-platform-helper" },

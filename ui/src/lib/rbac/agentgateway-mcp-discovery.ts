@@ -87,6 +87,13 @@ export const BUILTIN_MCP_CREDENTIAL_SOURCES: Record<string, MCPCredentialSource[
       fallback_client_credentials: true,
     },
   ],
+  platform: [
+    {
+      kind: "initiator_token",
+      name: "X-CAIPE-Initiator-Token",
+      target: "header",
+    },
+  ],
 };
 
 /** Built-in credential sources for a discovered target id, if any. */

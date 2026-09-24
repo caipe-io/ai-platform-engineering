@@ -71,7 +71,7 @@ spec:
             {{- if .Values.mcp.env }}
             {{- range $key, $value := .Values.mcp.env }}
             - name: {{ $key }}
-              value: {{ $value | quote }}
+              value: {{ tpl ($value | toString) $ | quote }}
             {{- end }}
             {{- end }}
           {{- with .Values.mcp.startupProbe }}

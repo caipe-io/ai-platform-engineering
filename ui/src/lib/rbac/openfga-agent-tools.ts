@@ -165,6 +165,11 @@ export function buildAgentRelationshipTupleDiff(input: AgentToolTupleDiffInput):
   const writes: OpenFgaTupleKey[] = [];
   const deletes: OpenFgaTupleKey[] = [];
 
+  // Every agent receives the reviewable platform control-plane tools. The
+  // tools still authorize the initiating human against each target resource;
+  // this tuple only permits the agent to reach that BFF authorization boundary.
+  writes.push(agentToolTuple(input.agentId, "platform", "*"));
+
   if (input.ownerSubject && isValidOpenFgaId(input.ownerSubject)) {
     writes.push({
       user: `user:${input.ownerSubject}`,

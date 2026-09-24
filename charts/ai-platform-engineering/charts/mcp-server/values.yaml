@@ -130,6 +130,9 @@ agentSecrets:
 # useRemoteMcpServer is not set. stdio mode / useRemoteMcpServer create no deploy.
 mcp:
   mode: "http"
+  # Environment values are rendered with Helm's tpl function, so parent
+  # charts can reference release-scoped service names.
+  env: {}
   # MCP container image configuration
   image:
     repository:

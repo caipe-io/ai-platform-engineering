@@ -1101,6 +1101,7 @@ function deriveAgentToolPlan(agents: Array<Document>): MigrationRuntimePlan {
     }
     const allowedTools = agent.allowed_tools ?? {};
     if (Object.keys(allowedTools).length > 0) agentsWithTools += 1;
+    tuples.push({ user: `agent:${agentId}`, relation: "caller", object: "tool:platform/*" });
     for (const [serverId, tools] of Object.entries(allowedTools)) {
       if (!isOpenFgaId(serverId)) {
         invalidIdentifiers += 1;

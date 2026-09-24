@@ -134,6 +134,7 @@ describe("AgentGateway MCP discovery", () => {
           "komodor",
           "netutils",
           "pagerduty",
+          "platform",
           "slack",
           "splunk",
           "victorops",
@@ -298,6 +299,16 @@ describe("AgentGateway MCP discovery", () => {
         provider: "github",
         target: "header",
         fallback_env: "GITHUB_PERSONAL_ACCESS_TOKEN",
+      },
+    ]);
+  });
+
+  it("attaches the initiating human token to the platform target", () => {
+    expect(builtinCredentialSourcesFor("platform")).toEqual([
+      {
+        kind: "initiator_token",
+        name: "X-CAIPE-Initiator-Token",
+        target: "header",
       },
     ]);
   });

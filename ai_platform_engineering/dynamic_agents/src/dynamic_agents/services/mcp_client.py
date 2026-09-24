@@ -19,7 +19,7 @@ import httpx
 from langchain_core.tools import BaseTool, StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-from dynamic_agents.auth.token_context import current_user_token
+from dynamic_agents.auth.token_context import current_initiator_token, current_user_token
 from dynamic_agents.config import get_settings
 from dynamic_agents.models import MCPServerConfig, TransportType
 from dynamic_agents.services.credential_exchange import CredentialExchangeClient
@@ -454,6 +454,7 @@ async def resolve_mcp_credential_refs(
     *,
     credential_client: CredentialExchangeClient | Any,
     caller_token: str | None = None,
+    initiator_token: str | None = None,
 ) -> dict[str, Any]:
     """Resolve MCP credential sources into env vars or headers.
 
@@ -534,6 +535,11 @@ async def resolve_mcp_credential_refs(
                 if isinstance(user_jwt, str) and user_jwt:
                     credential = user_jwt
                     origin = "user_jwt"
+            elif source.kind == "initiator_token":
+                human_jwt = initiator_token or current_initiator_token.get()
+                if isinstance(human_jwt, str) and human_jwt:
+                    credential = human_jwt
+                    origin = "initiator_user_jwt"
         except McpCredentialUnavailableError:
             raise
         except Exception as exc:  # noqa: BLE001 - fall back to static credential below
@@ -611,6 +617,7 @@ async def resolve_mcp_connections_credential_refs(
     *,
     credential_client: CredentialExchangeClient | Any | None,
     caller_token: str | None = None,
+    initiator_token: str | None = None,
 ) -> McpCredentialResolutionResult:
     """Resolve credential refs across a connection map.
 
@@ -623,7 +630,7 @@ async def resolve_mcp_connections_credential_refs(
     from ``connections`` and recorded in ``failures`` with structured reasons.
     """
 
-    if credential_client is None or not _use_impersonation_tokens():
+    if not _use_impersonation_tokens():
         return McpCredentialResolutionResult(connections=dict(connections))
 
     server_map = {server.id: server for server in servers}
@@ -640,6 +647,7 @@ async def resolve_mcp_connections_credential_refs(
                 config,
                 credential_client=credential_client,
                 caller_token=caller_token,
+                initiator_token=initiator_token,
             )
         except McpCredentialUnavailableError as exc:
             if exc.server_id is None:

@@ -712,6 +712,15 @@ function buildExpectedTuplesAndStaleReferences(
     if (agent.visibility === "global") {
       tuples.push(expected("dynamic_agents.visibility", "user:*", "user", object, resource));
     }
+    if (scopeResourceExists("tool", "platform/*", resourceIndex)) {
+      tuples.push(expected(
+        "dynamic_agents.allowed_tools",
+        `agent:${agentId}`,
+        "caller",
+        "tool:platform/*",
+        resource,
+      ));
+    }
     for (const [serverId, toolName] of normalizeAllowedTools(agent.allowed_tools)) {
       const toolRef = `${serverId}/${toolName}`;
       if (!scopeResourceExists("tool", toolRef, resourceIndex)) {

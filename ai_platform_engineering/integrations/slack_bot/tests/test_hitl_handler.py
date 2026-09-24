@@ -133,6 +133,27 @@ class TestParseAguiInterrupt:
     assert form.actions[0].action_id == "approve"
     assert form.actions[1].action_id == "reject"
 
+  def test_platform_tool_approval_shows_tool_and_change_id(self):
+    event = SSEEvent(
+      type=SSEEventType.RUN_FINISHED,
+      outcome="interrupt",
+      interrupt={
+        "id": "int-platform",
+        "reason": "tool_approval",
+        "payload": {
+          "tool_name": "platform_apply_platform_change",
+          "tool_args": {"change_id": "chg-example", "confirmed": True},
+          "agent": "agent-example",
+        },
+      },
+    )
+
+    form = parse_agui_interrupt(event, conversation_id="conv-example", agent_id="agent-example")
+
+    assert form.title == "Approve platform change"
+    assert "platform_apply_platform_change" in form.description
+    assert "chg-example" in form.description
+
   def test_missing_interrupt_graceful(self):
     """Handle event with no interrupt dict."""
     event = SSEEvent(type=SSEEventType.RUN_FINISHED, outcome="interrupt")

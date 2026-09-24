@@ -80,11 +80,21 @@ def parse_agui_interrupt(event, conversation_id: str = None, agent_id: str = Non
   prompt = payload.get("prompt", "Action Required")
   raw_fields = payload.get("fields", [])
   agent = payload.get("agent", "")
+  is_tool_approval = reason == "tool_approval"
+  tool_name = payload.get("tool_name", "")
+  tool_args = payload.get("tool_args", {})
+
+  if is_tool_approval:
+    prompt = "Approve platform change" if tool_name == "platform_apply_platform_change" else "Approve tool action"
+    detail = json.dumps(tool_args, indent=2, sort_keys=True, default=str)
+    description = f"Tool: `{tool_name}`\n```{detail[:2400]}```"
+  else:
+    description = f"Agent: {agent}" if agent else ""
 
   form = HITLForm(
     form_id=f"hitl_{interrupt_id}",
     title=prompt,
-    description=f"Agent: {agent}" if agent else "",
+    description=description,
     conversation_id=conversation_id,
     agent_id=agent_id,
     metadata={"interrupt_id": interrupt_id, "reason": reason},

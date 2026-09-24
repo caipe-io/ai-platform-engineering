@@ -12,6 +12,8 @@ import requests
 from typing import Optional
 from loguru import logger
 
+from sse_client import get_initiator_token, get_obo_token
+
 from .session_manager import SessionManager
 from .config_models import Config
 
@@ -146,7 +148,9 @@ def submit_feedback_score(
   url = f"{feedback_api_url.rstrip('/')}/api/feedback"
 
   try:
-    response = requests.post(url, json=payload, timeout=10)
+    token = get_initiator_token() or get_obo_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    response = requests.post(url, json=payload, headers=headers, timeout=10)
     if response.status_code == 200:
       data = response.json()
       logger.info(f"Feedback API response: {data}")

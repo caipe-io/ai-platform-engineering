@@ -723,8 +723,16 @@ def stream_response(
             except Exception as e:
               logger.debug(f"[{thread_ts}] Failed to stop stream before HITL form: {e}")
 
-          # Post or update with form blocks
-          if response_ts:
+          is_tool_approval = update.interrupt.get("reason") == "tool_approval"
+          if is_tool_approval and user_id and not channel_id.startswith("D"):
+            slack_client.chat_postEphemeral(
+              channel=channel_id,
+              user=user_id,
+              thread_ts=thread_ts,
+              blocks=form_blocks,
+              text="Action required",
+            )
+          elif response_ts:
             try:
               slack_client.chat_update(
                 channel=channel_id,
