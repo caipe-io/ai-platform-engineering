@@ -9,7 +9,7 @@ dependencies = [
     "deepagents==0.6.8",
     "langchain-mcp-adapters==0.3.2",
     "langgraph-checkpoint-mongodb==0.4.0",
-    "cnoe-agent-utils==0.5.0",
+    "cnoe-agent-utils==0.5.1",
     "pymongo==4.16.0",
     "pydantic==2.13.4",
     "pydantic-settings==2.15.0",
