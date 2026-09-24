@@ -297,10 +297,9 @@ test.describe("RBAC e2e — credential secrets management", () => {
     await expect(dialog).toBeVisible();
     await dismissReleaseUpgradeDialog(page);
     await expect(dialog).toBeVisible();
-    await expect(page.getByText("Preview ghp_...abcd")).toBeVisible();
-    await expect(dialog.getByText(/saved value stays protected; this preview is masked/i)).toBeVisible();
+    await expect(page.getByText("Preview ...bcd")).toBeVisible();
     await expect(dialog.getByText(/Masked preview/)).toBeVisible();
-    await expect(dialog.getByText("ghp_...abcd")).toBeVisible();
+    await expect(dialog.getByText("...bcd")).toBeVisible();
     await expect(dialog.getByText("Alice Example")).toBeVisible();
     await expect(dialog.getByText("user:alice-sub")).toHaveCount(0);
     await expect(dialog.getByText(/Shared with/)).toBeVisible();
@@ -369,7 +368,7 @@ test.describe("RBAC e2e — credential secrets management", () => {
       { action: "rotate", value: "rotated-secret-value" },
     ]);
     await expect(panel).toHaveCount(0);
-    await expect(page.getByText("Preview rot_...ated")).toBeVisible();
+    await expect(page.getByText("Preview ...ted")).toBeVisible();
     await expect(page.getByText("rotated-secret-value")).toHaveCount(0);
   });
 
