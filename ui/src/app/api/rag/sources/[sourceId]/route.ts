@@ -70,6 +70,7 @@ import {
 } from "@/lib/ingestion-source-config";
 import {
   authorizedSourceSecretRefs,
+  screenSourceRequestHeaders,
 } from "@/lib/rag-source-credentials.server";
 import type { IngestionSourceConfig } from "@/types/ingestion-source";
 import { NextRequest } from "next/server";
@@ -648,6 +649,7 @@ export const PATCH = withErrorHandler(
     );
     if (settingsWereRequested) {
       await authorizedSourceSecretRefs(session, updateData.settings);
+      await screenSourceRequestHeaders({ settings: updateData.settings, session });
     }
     const searchTeamsWereRequested = Object.prototype.hasOwnProperty.call(
       body,

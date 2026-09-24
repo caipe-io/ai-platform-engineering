@@ -10,9 +10,68 @@
 import { ApiError } from "@/lib/api-error";
 import { recordIngestPreviewGrant } from "@/lib/credentials/ingest-credential-usage.server";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
+import {
+  findKnownSecretFormats,
+  screenHeadersWithPlatformLlm,
+} from "@/lib/server/request-header-screening.server";
 import type { WebAuthHeader } from "@/types/ingestion-source";
 
 type AuthzSession = Parameters<typeof requireResourcePermission>[0];
+
+function headersFromSettings(settings: unknown): WebAuthHeader[] {
+  return (
+    (settings as { auth_headers?: WebAuthHeader[] } | null | undefined)?.auth_headers ?? []
+  );
+}
+
+/**
+ * Refuses a source whose literal header values carry a credential.
+ *
+ * The credential store exists so a token never lives in a datasource, which is
+ * defeated by pasting one into a static header. Known credential formats always
+ * block. The model check that follows is advisory: it adds judgment for what
+ * patterns miss, but an unconfigured or unreachable model must not stop a save,
+ * so the deterministic layer is what this actually relies on.
+ */
+export async function screenSourceRequestHeaders(input: {
+  settings: unknown;
+  /** Caller session; its access token identifies us to the assistant service. */
+  session: AuthzSession & { accessToken?: unknown };
+}): Promise<void> {
+  const headers = headersFromSettings(input.settings);
+  if (headers.length === 0) return;
+
+  const known = findKnownSecretFormats(headers);
+  if (known.length > 0) {
+    const detail = known
+      .map((finding) => `${finding.header_name}: ${finding.reason}`)
+      .join("; ");
+    throw new ApiError(
+      `Remove the credential from the header value and attach a saved credential instead (${detail}).`,
+      400,
+      "HEADER_CONTAINS_SECRET",
+    );
+  }
+
+  const accessToken =
+    typeof input.session.accessToken === "string" ? input.session.accessToken : "";
+  const verdict = await screenHeadersWithPlatformLlm(
+    headers,
+    accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+  );
+  if (verdict.decision === "reject") {
+    throw new ApiError(
+      `A request header was rejected by screening: ${verdict.reason}.`,
+      400,
+      "HEADER_REJECTED_BY_SCREENING",
+    );
+  }
+  if (verdict.decision === "unavailable") {
+    console.warn(
+      `[rag-source-credentials] header screening unavailable, allowing save: ${verdict.detail}`,
+    );
+  }
+}
 
 /**
  * The distinct credential references a source's settings depend on.

@@ -45,7 +45,10 @@ import {
   prepareRagPublication,
   ragPublicationRevision,
 } from "@/lib/rag-publication-approval.server";
-import { authorizedSourceSecretRefs } from "@/lib/rag-source-credentials.server";
+import {
+  authorizedSourceSecretRefs,
+  screenSourceRequestHeaders,
+} from "@/lib/rag-source-credentials.server";
 import { allowedSourceTypesForIngestorServiceAccount } from "@/lib/rbac/ingestor-service-accounts";
 import { checkOpenFgaTuple } from "@/lib/rbac/openfga";
 import {
@@ -617,6 +620,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   await authorizedSourceSecretRefs(session, body.settings);
+  await screenSourceRequestHeaders({ settings: body.settings, session });
 
   if (body.search_team_slugs !== undefined && !Array.isArray(body.search_team_slugs)) {
     throw new ApiError(
