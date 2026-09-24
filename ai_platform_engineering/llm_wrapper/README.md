@@ -78,6 +78,28 @@ Two lines — one entry in `PROVIDERS`, one dependency in the consuming package'
 `build.py` does not change. Do **not** add the dependency to the platform root:
 each image should install only the integrations it uses.
 
+## Reaching LiteLLM (and anything else a gateway fronts)
+
+Set the `openai-compatible` provider at a LiteLLM Proxy, Bifrost, Portkey, or
+any other OpenAI-compatible endpoint:
+
+```bash
+export LLM_PROVIDER=openai-compatible
+export OPENAI_COMPATIBLE_BASE_URL=http://litellm-proxy:4000/v1
+export OPENAI_COMPATIBLE_API_KEY=<key>
+export OPENAI_COMPATIBLE_MODEL=<model the gateway exposes>
+```
+
+There is deliberately **no in-process LiteLLM provider**. `langchain-litellm`
+was considered and dropped: it occupies no niche the other two paths leave
+open. Native providers give provider-native behaviour `ChatLiteLLM` cannot
+(Bedrock and Anthropic prompt caching, shared transport clients), and a proxy
+reaches the same model set with no extra dependency and works for a sandboxed
+runtime, which cannot hold provider credentials. Its only unique offer is
+client-side routing and fallbacks, which the proxy does server-side and
+`ModelFallbackMiddleware` already does in-process. Adding it back would also
+put a broad routing library in an agent-serving process, which FR-024 forbids.
+
 ## Compatibility rules
 
 - Do not change the public provider strings (`aws-bedrock`, `azure-openai`,

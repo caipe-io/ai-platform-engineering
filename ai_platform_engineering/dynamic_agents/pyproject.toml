@@ -9,9 +9,7 @@ dependencies = [
     "deepagents==0.6.8",
     "langchain-mcp-adapters==0.3.2",
     "langgraph-checkpoint-mongodb==0.4.0",
-    # LLM provider integrations, declared directly so this image can patch a
-    # provider advisory without waiting on a third party's release. Add a
-    # provider here only if this image serves it.
+    # LLM provider integrations. Add one here only if this image serves it.
     "langchain==1.4.1",
     "langchain-core==1.6.3",
     "langchain-aws==1.5.0",
@@ -41,14 +39,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Opt-in only, and deliberately not a default dependency. Selecting the
-# `litellm` provider gives client-side routing across LiteLLM's provider set,
-# at the cost of the capabilities that need provider-native clients: no
-# Bedrock or Anthropic native prompt caching, and no shared transport clients.
-# Most deployments wanting LiteLLM should point the `openai-compatible`
-# provider at a LiteLLM Proxy instead -- no in-process dependency, and it is
-# the only form that works for a sandboxed runtime.
-litellm = ["langchain-litellm==0.8.0"]
 dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
@@ -82,5 +72,3 @@ dev = [
 
 [tool.uv]
 constraint-dependencies = ["click==8.5.0", "starlette==1.6.0"]
-# No override-dependencies. langchain-anthropic is a direct dependency above, so
-# GHSA-gr75-jv2w-4656 and anything after it is fixed by editing that pin.

@@ -39,7 +39,7 @@ Then add the string to the UI provider list. That is the whole change: `init_cha
 
 ## Using the gateway provider
 
-For any OpenAI-compatible endpoint — a self-hosted LiteLLM Proxy, Bifrost, Portkey, or an egress proxy in front of a sandbox:
+For any OpenAI-compatible endpoint — a self-hosted LiteLLM Proxy, Bifrost, Portkey, or an egress proxy in front of a sandbox. **This is also how LiteLLM is reached**; there is no in-process LiteLLM provider:
 
 ```bash
 export LLM_PROVIDER=openai-compatible

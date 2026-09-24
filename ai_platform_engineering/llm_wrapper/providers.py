@@ -14,9 +14,16 @@ import os
 from dataclasses import dataclass
 
 #: Provider option for any OpenAI-compatible endpoint: a self-hosted gateway,
-#: or the egress boundary in front of a sandboxed runtime. Required rather than
-#: optional -- a sandboxed runtime cannot hold raw provider credentials, so this
-#: is a precondition for sandboxed execution (spec FR-021).
+#: the egress boundary in front of a sandboxed runtime, or a LiteLLM Proxy.
+#: Required rather than optional -- a sandboxed runtime cannot hold raw provider
+#: credentials, so this is a precondition for sandboxed execution (spec FR-021).
+#:
+#: This is also how LiteLLM is reached. There is deliberately no in-process
+#: LiteLLM provider: a routing library in an agent process brings its own
+#: provider closure (FR-024), and `ChatLiteLLM` cannot use the provider-native
+#: paths -- Bedrock and Anthropic prompt caching, shared transport clients --
+#: that the native providers give. Behind a proxy, this option reaches the same
+#: models with no extra dependency.
 OPENAI_COMPATIBLE = "openai-compatible"
 
 
@@ -49,13 +56,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "gcp-vertexai": ProviderSpec("google_vertexai", "VERTEXAI_MODEL_NAME"),
     "groq": ProviderSpec("groq", "GROQ_MODEL_NAME"),
     OPENAI_COMPATIBLE: ProviderSpec("openai", "OPENAI_COMPATIBLE_MODEL"),
-    # Opt-in only. `langchain-litellm` is not installed by default; a deployment
-    # that wants LiteLLM's client-side routing installs the extra and accepts
-    # the capability differences (no Bedrock/Anthropic native prompt caching,
-    # no shared transport clients). Most deployments wanting LiteLLM should
-    # point OPENAI_COMPATIBLE at a LiteLLM Proxy instead -- no in-process
-    # dependency, and it works for sandboxed runtimes.
-    "litellm": ProviderSpec("litellm", "LITELLM_MODEL_NAME"),
 }
 
 BEDROCK = "aws-bedrock"
