@@ -221,7 +221,8 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | dynamic-agents.nameOverride | string | `"dynamic-agents"` |  |
 | dynamic-agents.service.metricsPort | int | `0` |  |
 | dynamic-agents.service.port | int | `8001` |  |
-| extraDeployMap | object | `{}` |  |
+| extraDeploy | list | `[]` | Extra Kubernetes resources expressed as a list. Deprecated in favor of extraDeployMap, but retained for backward compatibility. |
+| extraDeployMap | object | `{}` | Extra Kubernetes resources keyed by a stable, deployment-defined name. Use this form when Helm --set/--set-file must target individual resources. |
 | global.agentgateway.enabled | bool | `true` |  |
 | global.agentgateway.extAuth.enabled | bool | `false` |  |
 | global.agentgateway.extAuth.port | int | `9100` |  |
