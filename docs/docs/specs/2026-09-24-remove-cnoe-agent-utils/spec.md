@@ -146,15 +146,16 @@ A release engineer builds a platform image for a deployment that uses exactly on
 
 **Gateway provider**
 
-- **FR-021**: The platform MUST offer a provider option that reaches any OpenAI-compatible endpoint, configured by endpoint, credential, and model identifier.
+- **FR-021**: The platform MUST offer a provider option that reaches any OpenAI-compatible endpoint, configured by endpoint, credential, and model identifier. This is required rather than optional: a sandboxed agent runtime cannot hold raw provider credentials, so an endpoint-plus-egress-boundary path is a precondition for sandboxed execution, not only a breadth feature.
 - **FR-022**: The gateway provider MUST support tool calling and streamed responses at parity with native providers.
 - **FR-023**: The gateway provider MUST be optional: when unconfigured it MUST impose no required dependency, credential, or setting, and MUST NOT appear as a configuration error.
-- **FR-024**: The platform MUST NOT add a broad multi-provider routing library to the dependency set of any agent-serving process in order to satisfy FR-021.
+- **FR-024**: The platform MUST NOT add a broad multi-provider routing library to the dependency set of any agent-serving process in order to satisfy FR-021. Such libraries carry their own wide provider dependency closure, which would reintroduce the problem this feature removes.
 
 **Scope and sequencing**
 
 - **FR-025**: The change MUST be delivered so that the dynamic-agents component is fully migrated and shippable before the ontology and autonomous-agents components are migrated.
 - **FR-026**: Until every component is migrated, the platform MUST remain deployable and MUST NOT require two conflicting versions of any shared provider integration.
+- **FR-027**: The change SHOULD land before any future portable-runtime adapter takes over the LangChain agent harness, so that the new adapter is not created already carrying the transitive version pins this feature removes.
 
 ### Key Entities
 
@@ -184,8 +185,8 @@ A release engineer builds a platform image for a deployment that uses exactly on
 
 - **A-001**: The platform's existing agent framework remains the basis for agent execution; this feature replaces how model objects are constructed, not how agents are built or run. A change of agent framework is out of scope.
 - **A-002**: The set of natively supported providers stays as it is today. Breadth beyond that set is served by the gateway provider (FR-021) rather than by adding native integrations.
-- **A-003**: "OpenAI-compatible gateway" is intentionally unnamed so operators can use whichever gateway they already run. Several mature open-source gateways expose this interface; selecting or shipping one is a deployment decision, not part of this feature.
-- **A-004**: Keeping broad multi-provider routing out of agent-serving processes (FR-024) is deliberate. Such routing libraries sit on the critical path of every model call and have a history of both wide transitive dependency footprints and at least one confirmed package-registry compromise; running that capability out of process as a gateway confines the blast radius and is the reason FR-021 and FR-024 are paired.
+- **A-003**: "OpenAI-compatible gateway" is intentionally unnamed so operators can use whichever gateway they already run, including an egress boundary in front of a sandboxed runtime. Several mature open-source gateways expose this interface; selecting or shipping one is a deployment decision, not part of this feature. Deployments that cannot reach an external service — air-gapped or under strict data governance — must be able to satisfy FR-021 with something they host themselves, so no hosted-only option may become the platform's sole breadth path.
+- **A-004**: Keeping broad multi-provider routing out of agent-serving processes (FR-024) is deliberate, and rests on dependency footprint rather than on any provider's security history. A routing library brings its own provider closure into every image that imports it — one such library declares an OpenAI SDK as a core dependency, so a Bedrock-only deployment would ship it — which is the coupling this feature exists to remove. Running that capability behind an endpoint instead keeps the footprint out of the agent process, which is why FR-021 and FR-024 are paired.
 - **A-005**: The trace destination and the tracing configuration surface stay as they are today; this feature changes which code configures tracing, not where traces go.
 - **A-006**: The Bedrock client-family classification in use today is correct and is being preserved rather than redesigned. Any behaviour change there would be a separate feature.
 - **A-007**: Provider credentials continue to be supplied by the existing credential mechanism; this feature does not change credential storage or custody.
