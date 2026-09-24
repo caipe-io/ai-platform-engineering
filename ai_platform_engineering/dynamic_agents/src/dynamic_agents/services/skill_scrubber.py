@@ -61,7 +61,7 @@ defensive — unknown attribute shapes pass through untouched, so a
 bug here can never break tracing, only fail to redact.
 
 We register the processor by attaching it to the active
-``TracerProvider``. ``dynamic_agents.services.tracing`` installs
+``TracerProvider``. The tracing manager installs
 its own ``BatchSpanProcessor`` first; we install ours alongside.
 The OTel SDK fans every span through every registered processor in
 registration order, so as long as we install before the first span
