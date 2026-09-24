@@ -29,10 +29,11 @@ import { cn } from "@/lib/utils";
  * proposal, discussions #2818 / PR #2819), which lets an MCP client read
  * this deployment as the signed-in user.
  *
- * Deliberately no "mint an API token" path yet — Phase 1 only supports
- * the OAuth + RFC 9728 discovery flow already shipped; a scoped-token
- * fallback for headless clients is an explicit open question in #2818
- * and isn't invented here ahead of that decision.
+ * No "mint an API token" path, by design — Platform MCP only supports
+ * OAuth 2.0 Dynamic Client Registration + PKCE (RFC 9728 discovery,
+ * RFC 7591 self-registration). A client authenticates as the signed-in
+ * user; there is no separate long-lived token to generate, copy, or
+ * revoke. See discussions #2818 for the full rationale.
  */
 
 function originOf(): string {
