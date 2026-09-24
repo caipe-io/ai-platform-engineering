@@ -1,29 +1,36 @@
 # llm_wrapper
 
-Canonical source for building LangChain chat models from CAIPE provider
-configuration. **Consumers copy these files; they do not install them.**
+Single source for building LangChain chat models from CAIPE provider
+configuration. **One copy, imported directly — not vendored, not published.**
 
 Spec: [`docs/docs/specs/2026-09-24-remove-cnoe-agent-utils/`](../../docs/docs/specs/2026-09-24-remove-cnoe-agent-utils/)
 
-## Why vendored and not a package
+## Why it declares no dependencies
 
-An installed package sets one `langchain-aws` / `boto3` / `langchain-anthropic`
-version for every consumer. That coupling is exactly what this code was written
-to remove: CAIPE previously could not patch a provider integration without
-waiting on an upstream release, and carried a dependency override to escape
-GHSA-gr75-jv2w-4656 as a result.
+This directory has no `pyproject.toml` and no dependencies of its own. That is
+what lets it be a single shared source without coupling its consumers: each
+consuming package pins the provider integrations *it* ships, and this code just
+imports whatever is installed there.
 
-Components legitimately want different versions — `boto3` is pinned differently
-in the platform root, in `dynamic_agents`, and in `harness_engine`. Vendoring
-lets each consumer pin its own, and lets a consumer take a subset.
+A package that declared `langchain-aws` / `boto3` / `langchain-anthropic` would
+set one version for everyone, which is exactly the coupling this code was
+written to remove — CAIPE previously could not patch a provider integration
+without waiting on an upstream release, and carried a dependency override to
+escape GHSA-gr75-jv2w-4656 as a result. Components legitimately differ: `boto3`
+is pinned differently in the platform root, in `dynamic_agents`, and in
+`harness_engine`.
+
+`build.py` imports LangChain; `providers.py` and `bedrock_family.py` import
+nothing third-party. `__init__.py` re-exports nothing so that a consumer needing
+only the latter two can import them without LangChain installed.
 
 ## Why not under `utils/`
 
 `utils/pyproject.toml` sets `packages = ["."]`, so that directory builds the
 `ai-platform-engineering-utils` wheel and everything under it ships inside it.
-Canonical-source-to-vendor must not live in a published package: installing
-that wheel would deliver source importing LangChain the package does not
-declare, and running these tests in that context would push someone to add
+Shared source that is imported directly must not sit in a published package:
+installing that wheel would deliver source importing LangChain the package does
+not declare, and running these tests in that context would push someone to add
 `langchain` to `utils/pyproject.toml`, giving every utils consumer the full
 provider closure.
 
@@ -39,28 +46,30 @@ A sandboxed harness worker is expected to take the first two and not the third:
 it holds no raw provider credentials, so the shared-transport paths in `build.py`
 do not apply to it.
 
-## Vendoring
+## How consumers get it
 
-```bash
-cp ai_platform_engineering/llm_wrapper/{__init__,providers,bedrock_family,build}.py \
-   ai_platform_engineering/<consumer>/src/<consumer>/_vendor/llm_wrapper/
-python scripts/check_vendored.py
+Imported directly as `ai_platform_engineering.llm_wrapper.<module>`. There is
+one copy in the repository and one in each image.
+
+Container images must therefore be built with the **repository root** as the
+Docker build context, and must copy this directory in. `dynamic_agents` does
+this:
+
+```dockerfile
+COPY ai_platform_engineering/__init__.py /app/shared/ai_platform_engineering/__init__.py
+COPY ai_platform_engineering/llm_wrapper/ /app/shared/ai_platform_engineering/llm_wrapper/
+ENV PYTHONPATH="/app/shared"
 ```
 
-`scripts/check_vendored.py` hashes each vendored copy against canonical and
-fails on any difference not declared in `vendored.toml`. **Change canonical and
-re-copy in the same PR.** A `resolve_bedrock_client` that classifies a model id
-differently in two copies produces different prompt caching and attachment
-shaping for the same model — a bug that reproduces in one service and not the
-other.
+It lands under `/app/shared` rather than `/app` on purpose: `/app/dynamic_agents`
+holds `src/`, `tests/` and `pyproject.toml` but no `__init__.py`, so putting
+`/app` on `PYTHONPATH` would make it a namespace package shadowing the real
+`dynamic_agents` installed into the venv.
 
-Deliberate divergence is fine when declared:
-
-```toml
-[[divergence]]
-path = "ai_platform_engineering/<worker>/_vendor/llm_wrapper/build.py"
-reason = "Sandboxed worker holds no AWS credentials; shared-client path removed."
-```
+A component-scoped build context cannot see this directory. That constraint is
+why other shared modules in this repository were duplicated into component
+trees; widening the context is the fix, and the CI workflow for a consuming
+image must pass `context: .`.
 
 ## Adding a provider
 
