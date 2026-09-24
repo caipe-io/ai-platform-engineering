@@ -22,7 +22,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from cnoe_agent_utils.llm_factory import resolve_bedrock_client
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain.agents.middleware.context_editing import (
     ClearToolUsesEdit,
@@ -39,6 +38,7 @@ from langchain_aws.middleware.prompt_caching import BedrockPromptCachingMiddlewa
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.errors import GraphBubbleUp
 
+from dynamic_agents._vendor.llm_wrapper.bedrock_family import resolve_bedrock_client
 from dynamic_agents.services.llm import get_configured_llm
 
 if TYPE_CHECKING:

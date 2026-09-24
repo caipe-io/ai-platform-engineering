@@ -9,7 +9,19 @@ dependencies = [
     "deepagents==0.6.8",
     "langchain-mcp-adapters==0.3.2",
     "langgraph-checkpoint-mongodb==0.4.0",
-    "cnoe-agent-utils==0.5.0",
+    # LLM provider integrations, declared directly so this image can patch a
+    # provider advisory without waiting on a third party's release. Add a
+    # provider here only if this image serves it.
+    "langchain==1.4.1",
+    "langchain-core==1.6.3",
+    "langchain-aws==1.5.0",
+    "langchain-anthropic==1.4.6",
+    "langchain-openai==1.6.2",
+    "langchain-google-genai==4.4.0",
+    "langchain-google-vertexai==3.2.4",
+    "langchain-groq==1.1.3",
+    # Tracing, replacing cnoe-agent-utils.TracingManager.
+    "langfuse==3.15.0",
     "pymongo==4.16.0",
     "pydantic==2.13.4",
     "pydantic-settings==2.15.0",
@@ -22,13 +34,21 @@ dependencies = [
     # (vendored from ai_platform_engineering.utils.auth so the DA image
     # does not need to install the entire shared package).
     "pyjwt[crypto]==2.13.0",
-    # S3 attachment store (services/attachment_store.py) uses boto3. Pinned to the
-    # version cnoe-agent-utils resolves to so both share one boto3 in the workspace
-    # lock; bump this in lockstep with cnoe-agent-utils when it moves.
+    # S3 attachment store (services/attachment_store.py) and the Bedrock
+    # transport clients in services/llm_clients.py. Chosen by this package;
+    # no longer held in lockstep with an external utility library.
     "boto3==1.43.16",
 ]
 
 [project.optional-dependencies]
+# Opt-in only, and deliberately not a default dependency. Selecting the
+# `litellm` provider gives client-side routing across LiteLLM's provider set,
+# at the cost of the capabilities that need provider-native clients: no
+# Bedrock or Anthropic native prompt caching, and no shared transport clients.
+# Most deployments wanting LiteLLM should point the `openai-compatible`
+# provider at a LiteLLM Proxy instead -- no in-process dependency, and it is
+# the only form that works for a sandboxed runtime.
+litellm = ["langchain-litellm==0.8.0"]
 dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
@@ -61,6 +81,6 @@ dev = [
 ]
 
 [tool.uv]
-constraint-dependencies = ["click==8.5.0", "starlette==1.6.0", "langchain-aws==1.5.0"]
-# cnoe-agent-utils 0.5.0 still pins 1.4.3, which is affected by GHSA-gr75-jv2w-4656.
-override-dependencies = ["langchain-anthropic==1.4.6"]
+constraint-dependencies = ["click==8.5.0", "starlette==1.6.0"]
+# No override-dependencies. langchain-anthropic is a direct dependency above, so
+# GHSA-gr75-jv2w-4656 and anything after it is fixed by editing that pin.

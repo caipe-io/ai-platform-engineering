@@ -1,6 +1,6 @@
 """Generic AI assistant endpoint for LLM-powered suggestions.
 
-Provides a thin, generic wrapper around LLMFactory for simple text generation.
+Provides a thin, generic wrapper around the LLM factory for simple text generation.
 No agent orchestration, no tools, no conversation persistence — just a direct
 LLM call with a system prompt and user message.
 """
@@ -8,11 +8,11 @@ LLM call with a system prompt and user message.
 import logging
 from typing import Any
 
-from cnoe_agent_utils import LLMFactory
 from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, model_validator
 
+from dynamic_agents._vendor.llm_wrapper.build import build_chat_model
 from dynamic_agents.auth.auth import UserContext, get_user_context
 from dynamic_agents.models import ModelConfig
 
@@ -82,9 +82,7 @@ async def suggest(
     )
 
     try:
-        llm = LLMFactory(provider=request.model.provider).get_llm(
-            model=request.model.id,
-        )
+        llm = build_chat_model(request.model.provider, request.model.id)
         result = await llm.ainvoke(
             [
                 SystemMessage(content=request.system_prompt),

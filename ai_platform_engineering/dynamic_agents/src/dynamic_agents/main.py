@@ -10,7 +10,7 @@ dotenv.load_dotenv()  # Ensure .env is in os.environ before any boto3/httpx clie
 
 from dynamic_agents.log_config import setup_logging
 
-# Setup logging before other imports that trigger cnoe-agent-utils
+# Setup logging before other imports that configure the root logger
 logger = setup_logging()
 
 
@@ -68,9 +68,8 @@ async def lifespan(app: FastAPI):
     # ``dynamic_agents.services.skill_scrubber`` — see the file
     # header for the source-of-truth location.
     try:
-        from cnoe_agent_utils.tracing import TracingManager
-
         from dynamic_agents.services.skill_scrubber import install_skill_content_scrubber
+        from dynamic_agents.services.tracing import TracingManager
 
         TracingManager()
         install_skill_content_scrubber()

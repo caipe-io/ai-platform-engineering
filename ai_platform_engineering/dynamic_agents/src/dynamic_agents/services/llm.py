@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from botocore.config import Config as BotocoreConfig
-from cnoe_agent_utils import LLMFactory
+
+from dynamic_agents._vendor.llm_wrapper.build import build_chat_model
 
 
 def _provider_supports_botocore_config(provider: str) -> bool:
-    """Return whether LLMFactory should receive a Botocore ``config`` kwarg."""
+    """Return whether the model constructor should receive a Botocore ``config`` kwarg."""
     normalized = provider.lower().replace("_", "-")
     return normalized in {"aws-bedrock", "bedrock"}
 
@@ -26,7 +27,4 @@ def get_configured_llm(model_id: str, model_provider: str) -> Any:
     if _provider_supports_botocore_config(model_provider):
         kwargs["config"] = BotocoreConfig(read_timeout=300, connect_timeout=60)
 
-    return LLMFactory(provider=model_provider).get_llm(
-        model=model_id,
-        **kwargs,
-    )
+    return build_chat_model(model_provider, model_id, **kwargs)
