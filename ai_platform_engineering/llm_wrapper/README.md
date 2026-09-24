@@ -88,3 +88,10 @@ each image should install only the integrations it uses.
 - `bedrock_family.py` preserves `cnoe_agent_utils` 0.5.0 behaviour exactly,
   including the `AWS_BEDROCK_CLIENT` override. Changing it changes cost and
   document handling (spec FR-014, A-006).
+- `build.py` also preserves `AWS_BEDROCK_BASE_MODEL_ID`: for `ChatBedrockConverse`
+  it bypasses the `bedrock:GetInferenceProfile` call that resolves an
+  application-inference-profile ARN's underlying foundation model, needed when
+  the IAM role doesn't grant that permission. That call has no `try`/`except`
+  inside `ChatBedrockConverse` itself, so `build_chat_model` retries once with
+  `base_model_id=""` (the same bypass) if it's denied, rather than failing to
+  construct the model.
