@@ -114,6 +114,15 @@ describe("UserDetailModal", () => {
           json: () => Promise.resolve(accessResponse),
         });
       }
+      if (url.includes("/api/admin/users/user-1/identity")) {
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ success: true, data: {
+            realm: "example", fetchedAt: "2026-09-24T12:00:00Z",
+            sessions: [], federatedIdentities: [], realmRoles: [], unavailable: [], lastAccess: null,
+          } }),
+        });
+      }
       if (url.includes("/api/admin/users/user-1")) {
         return Promise.resolve({
           ok: true,
@@ -138,6 +147,18 @@ describe("UserDetailModal", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("handles identity network failures without presenting a local account", async () => {
+    const original = global.fetch;
+    global.fetch = jest.fn((...args: Parameters<typeof fetch>) => {
+      if (String(args[0]).includes("/identity")) return Promise.reject(new Error("network failed"));
+      return original(...args);
+    });
+    render(<UserDetailModal userId="user-1" onClose={jest.fn()} onSaved={jest.fn()} />);
+    expect(await screen.findByText("Identity information unavailable. Please retry.")).toBeInTheDocument();
+    expect(screen.queryByText("Local")).not.toBeInTheDocument();
+    expect(screen.queryByText("No broker link reported")).not.toBeInTheDocument();
   });
 
   it("does not expose Keycloak role management in the user detail modal", async () => {

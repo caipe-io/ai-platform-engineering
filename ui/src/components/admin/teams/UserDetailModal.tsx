@@ -1,13 +1,15 @@
 "use client";
 
 import { TeamPicker, type TeamPickerOption } from "@/components/ui/team-picker";
+import { UserIdentityDetails } from "./UserIdentityDetails";
+import type { UserIdentityInfo, UserMembershipSourceInfo } from "@/types/admin-user-identity";
 import {
   withAdminSimulationParams,
   type AdminSimulationQueryTarget,
 } from "@/lib/rbac/admin-simulation-query";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 export interface UserDetailModalProps {
@@ -22,6 +24,7 @@ export interface UserDetailModalProps {
 
 type ProfileUser = {
   id: string;
+  principalType?: "user" | "service_account";
   username: string;
   email: string;
   firstName: string;
@@ -31,16 +34,8 @@ type ProfileUser = {
   attributes: Record<string, string[]>;
   slackLinkStatus: "linked" | "unlinked";
   teams: Array<{ team_id: string; tenant_id: string }>;
-};
-
-type IdentityInfo = {
-  sessions: Array<{ id: string; start?: number; lastAccess?: number }>;
-  federatedIdentities: Array<{
-    identityProvider: string;
-    userId: string;
-    userName: string;
-  }>;
-  lastAccess: number | null;
+  membershipSources?: UserMembershipSourceInfo[];
+  membershipSourcesAvailable?: boolean;
 };
 
 type AccessVia = {
@@ -188,6 +183,7 @@ export function UserDetailModal({
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [user, setUser] = useState<ProfileUser | null>(null);
+  const profileRequest = useRef(0);
   // Team picker options — use prop if provided, otherwise fetch
   const [teamOptionsLoading, setTeamOptionsLoading] = useState(!readOnly && !teamOptionsProp);
   const [teamOptionsFetched, setTeamOptionsFetched] = useState<
@@ -201,16 +197,20 @@ export function UserDetailModal({
   const [access, setAccess] = useState<AccessGroups | null>(null);
   const [accessLoading, setAccessLoading] = useState(true);
   const [accessError, setAccessError] = useState<string | null>(null);
+  const accessRequest = useRef(0);
   const [teamsExpanded, setTeamsExpanded] = useState(false);
   // Identity section (lazy — sessions + federated identities from Keycloak)
-  const [identity, setIdentity] = useState<IdentityInfo | null>(null);
+  const [identity, setIdentity] = useState<UserIdentityInfo | null>(null);
   const [identityLoading, setIdentityLoading] = useState(true);
+  const [identityError, setIdentityError] = useState<string | null>(null);
+  const identityRequest = useRef(0);
   const withPreviewScope = useCallback(
     (path: string) => withAdminSimulationParams(path, simulationTarget),
     [simulationTarget],
   );
 
   const refreshProfile = useCallback(async () => {
+    const requestId = ++profileRequest.current;
     setProfileError(null);
     const res = await fetch(
       withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}`),
@@ -227,7 +227,7 @@ export function UserDetailModal({
           : null) || `Failed to load user (${res.status})`
       );
     }
-    setUser(json.data.user);
+    if (requestId === profileRequest.current) setUser(json.data.user);
   }, [userId, withPreviewScope]);
 
   const loadTeams = useCallback(async () => {
@@ -255,25 +255,32 @@ export function UserDetailModal({
   }, [teamOptionsProp]);
 
   const loadIdentity = useCallback(async () => {
+    const requestId = ++identityRequest.current;
     setIdentityLoading(true);
+    setIdentityError(null);
+    setIdentity(null);
     try {
       const res = await fetch(
         withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}/identity`),
       );
       const json = (await readJson(res)) as {
         success?: boolean;
-        data?: IdentityInfo;
+        data?: UserIdentityInfo;
         error?: string;
       } | null;
-      if (res.ok && json?.success && json.data) {
-        setIdentity(json.data);
+      if (!res.ok || !json?.success || !json.data || !Array.isArray(json.data.federatedIdentities)) {
+        throw new Error("Identity information unavailable. Please retry.");
       }
+      if (requestId === identityRequest.current) setIdentity(json.data);
+    } catch {
+      if (requestId === identityRequest.current) setIdentityError("Identity information unavailable. Please retry.");
     } finally {
-      setIdentityLoading(false);
+      if (requestId === identityRequest.current) setIdentityLoading(false);
     }
   }, [userId, withPreviewScope]);
 
   const loadAccess = useCallback(async () => {
+    const requestId = ++accessRequest.current;
     setAccessError(null);
     setAccessLoading(true);
     try {
@@ -288,12 +295,14 @@ export function UserDetailModal({
       if (!res.ok || !json?.success || !json.data?.access) {
         throw new Error(json?.error || `Failed to load access (${res.status})`);
       }
-      setAccess(json.data.access);
+      if (requestId === accessRequest.current) setAccess(json.data.access);
     } catch (e) {
-      setAccessError(e instanceof Error ? e.message : "Failed to load access");
-      setAccess(null);
+      if (requestId === accessRequest.current) {
+        setAccessError(e instanceof Error ? e.message : "Failed to load access");
+        setAccess(null);
+      }
     } finally {
-      setAccessLoading(false);
+      if (requestId === accessRequest.current) setAccessLoading(false);
     }
   }, [userId, withPreviewScope]);
 
@@ -348,6 +357,9 @@ export function UserDetailModal({
 
     return () => {
       cancelled = true;
+      profileRequest.current += 1;
+      accessRequest.current += 1;
+      identityRequest.current += 1;
     };
   }, [userId, readOnly, teamOptionsProp, refreshProfile, loadTeams, loadAccess, loadIdentity]);
 
@@ -409,10 +421,11 @@ export function UserDetailModal({
   }, [teamOptions, memberTeamIds]);
 
   const idpLabel = useMemo(() => {
+    if (!identity || identity.unavailable?.includes("federatedIdentities")) return "Unavailable";
     const feds = identity?.federatedIdentities ?? [];
-    if (feds.length === 0) return "Local";
-    return feds.map((f) => f.identityProvider).join(", ") || "Local";
-  }, [identity?.federatedIdentities]);
+    if (feds.length === 0) return "No broker link reported";
+    return feds.map((f) => f.identityProvider).join(", ") || "Not reported";
+  }, [identity]);
 
   const accessTotal = useMemo(() => {
     if (!access) return 0;
@@ -696,7 +709,7 @@ export function UserDetailModal({
               <div className="flex items-baseline justify-between mb-3">
                 <h3 className="text-sm font-semibold text-foreground">Access</h3>
                 <span className="text-xs text-muted-foreground">
-                  Effective permissions
+                  Reported resource permissions
                 </span>
               </div>
               {accessLoading ? (
@@ -708,8 +721,7 @@ export function UserDetailModal({
                 <p className="text-sm text-destructive">{accessError}</p>
               ) : !access || accessTotal === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No resource access. Access is granted by adding this user to a
-                  team that owns agents, tools, or knowledge bases.
+                  No access found for the resource types and capabilities checked here.
                 </p>
               ) : (
                 <div className="space-y-4">
@@ -720,7 +732,19 @@ export function UserDetailModal({
                   })}
                 </div>
               )}
+              <p className="mt-3 text-xs text-muted-foreground">OpenFGA-backed access summary, not a complete grant inventory or a CAS decision for a specific request. “Effective” means the exact grant source was not resolved.</p>
             </section>
+
+            <UserIdentityDetails
+              userId={user.id}
+              principalType={user.principalType}
+              identity={identity}
+              loading={identityLoading}
+              error={identityError}
+              sources={user.membershipSources}
+              sourcesAvailable={user.membershipSourcesAvailable}
+              onRetry={() => void loadIdentity()}
+            />
 
             <section className="mt-6 border-t border-border pt-6">
               <h3 className="text-sm font-semibold text-foreground mb-3">
@@ -800,11 +824,11 @@ export function UserDetailModal({
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Last login</dt>
+                  <dt className="text-muted-foreground">Latest active-session activity</dt>
                   <dd className="font-medium text-foreground mt-0.5">
                     {identityLoading ? (
                       <span className="inline-block h-3 w-24 rounded bg-muted animate-pulse" />
-                    ) : lastLoginLabel}
+                    ) : !identity || identity.unavailable?.includes("sessions") ? "Unavailable" : identity.lastAccess ? lastLoginLabel : "No active-session activity reported"}
                   </dd>
                 </div>
                 <div>
