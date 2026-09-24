@@ -9,7 +9,7 @@ Replace the three `cnoe-agent-utils` surfaces with in-repo equivalents so CAIPE 
 
 Chat-model construction moves to `langchain.chat_models.init_chat_model`, which returns provider-native `BaseChatModel` instances and therefore preserves every middleware, provider kwarg, and transport-sharing path already in use. Tracing moves to the Langfuse SDK plus OpenTelemetry directly, both already direct dependencies. The Bedrock client-family classifier is vendored unchanged.
 
-The replacement logic lives in a canonical directory, `ai_platform_engineering/caipe_llm_wrapper/`, split into small single-purpose modules. Consumers vendor the modules they need; CI verifies vendored copies against canonical and fails on undeclared drift. This is **not** a published package and **not** a uv workspace member — that distinction is the point, because a package would impose one `langchain-aws` / `boto3` / `langchain-anthropic` version on every consumer, which is the exact mechanism being removed.
+The replacement logic lives in a canonical directory, `ai_platform_engineering/utils/llm_wrapper/`, split into small single-purpose modules. Consumers vendor the modules they need; CI verifies vendored copies against canonical and fails on undeclared drift. This is **not** a published package and **not** a uv workspace member — that distinction is the point, because a package would impose one `langchain-aws` / `boto3` / `langchain-anthropic` version on every consumer, which is the exact mechanism being removed.
 
 ## Technical Context
 
@@ -59,19 +59,22 @@ No `data-model.md`: this feature introduces no entities. No `contracts/`: it exp
 
 ```text
 ai_platform_engineering/
-├── caipe_llm_wrapper/              # NEW — canonical source, not a package
-│   ├── README.md                   # what it is, why it is vendored not installed
-│   ├── providers.py                # public provider string -> (init_chat_model provider, model env var)
-│   ├── bedrock_family.py           # resolve_bedrock_client -> anthropic | converse | legacy
-│   ├── build.py                    # build_chat_model() over init_chat_model
-│   └── tests/
-│       ├── test_providers.py
-│       ├── test_bedrock_family.py
-│       └── test_build.py
+├── utils/                          # existing shared-source dir; auth/ is already vendored from
+│   ├── auth/                       # precedent: dynamic_agents vendors from here today
+│   ├── tracing/                    # existing sibling
+│   └── llm_wrapper/                # NEW — canonical source, vendored not installed
+│       ├── README.md               # what it is, why it is vendored
+│       ├── providers.py            # public provider string -> (init_chat_model provider, model env var)
+│       ├── bedrock_family.py       # resolve_bedrock_client -> anthropic | converse | legacy
+│       ├── build.py                # build_chat_model() over init_chat_model
+│       └── tests/
+│           ├── test_providers.py
+│           ├── test_bedrock_family.py
+│           └── test_build.py
 │
 ├── dynamic_agents/                 # PHASE 1 — the only full-surface consumer
 │   └── src/dynamic_agents/
-│       ├── _vendor/caipe_llm_wrapper/   # vendored copy, drift-checked in CI
+│       ├── _vendor/llm_wrapper/   # vendored copy, drift-checked in CI
 │       ├── services/
 │       │   ├── llm_clients.py      # 259/266 lines unchanged; factory call swapped
 │       │   ├── llm.py              # import swap
@@ -89,7 +92,11 @@ scripts/check_vendored.py           # NEW — CI drift gate
 .github/workflows/                   # wire the gate in
 ```
 
-**Structure Decision**: Canonical source under `ai_platform_engineering/caipe_llm_wrapper/`, vendored into consumers under a `_vendor/` subpackage. Three separate modules rather than one file, so a future consumer can vendor a subset — the anticipated Deep Agents sandbox worker needs `providers.py` and `bedrock_family.py` but not the transport-sharing logic in `build.py`, because a sandboxed worker holds no raw provider credentials.
+**Structure Decision**: Canonical source under `ai_platform_engineering/utils/llm_wrapper/`, vendored into consumers under a `_vendor/` subpackage. Three separate modules rather than one file, so a future consumer can vendor a subset — the anticipated Deep Agents sandbox worker needs `providers.py` and `bedrock_family.py` but not the transport-sharing logic in `build.py`, because a sandboxed worker holds no raw provider credentials.
+
+`utils/` is the right home rather than a new top-level directory: it already holds `auth/`, `tracing/`, `agui/`, and `oauth/` as sibling subpackages, and `dynamic_agents` already vendors from `utils.auth` — the pattern this plan formalises is the one that directory is already used for. The name drops a `caipe` prefix because the repository is already CAIPE.
+
+One packaging note: `utils/pyproject.toml` sets `packages = ["."]`, so everything under `utils/` ships in the `ai-platform-engineering-utils` wheel, and that package does not declare LangChain. `llm_wrapper` would therefore be importable-but-broken for anyone who installs that wheel and imports it directly. This is pre-existing rather than new — `utils/tracing/` already imports OpenTelemetry without `utils/pyproject.toml` declaring it — and it does not affect consumers, who vendor the source rather than installing the package. Left as-is to avoid widening scope; worth a separate cleanup.
 
 ## Database migrations
 
@@ -110,5 +117,5 @@ Sequence Phases 0–3 **before** the harness-engine cutover in [#2401](https://g
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| Canonical directory + vendoring + CI drift gate established at the **first** consumer, against Principles I, II, and III | The second consumer is known and named rather than speculative: [#2401](https://github.com/caipe-io/ai-platform-engineering/pull/2401) defers a "Deep Agents adapter and certification", and its sandbox-worker contract requires model construction inside a worker image. Establishing the mechanism before two teams edit the same logic is cheaper than retrofitting it after they have diverged. The drift risk being guarded is a **correctness** risk, not tidiness: if `resolve_bedrock_client` classifies a model id differently in two copies, prompt-caching middleware selection and attachment block shaping silently diverge for the same model. | The alternative — a single module inside `dynamic_agents`, promoted later — was the original recommendation and remains viable at near-zero cost. It was rejected by decision, not by analysis. **Honest statement of the weakness:** with one consumer the vendored copy is byte-identical to canonical, so the drift gate passes trivially and guards nothing until Phase 2 of the harness work. Principle III would say wait for the third occurrence; this waits for the first. If a reviewer prefers the constitution's reading, collapse `caipe_llm_wrapper/` into `dynamic_agents/services/llm_factory.py` and delete `scripts/check_vendored.py` — the module boundaries in this plan are drawn so that this is a `git mv`, not a refactor. |
+| Canonical directory + vendoring + CI drift gate established at the **first** consumer, against Principles I, II, and III | The second consumer is known and named rather than speculative: [#2401](https://github.com/caipe-io/ai-platform-engineering/pull/2401) defers a "Deep Agents adapter and certification", and its sandbox-worker contract requires model construction inside a worker image. Establishing the mechanism before two teams edit the same logic is cheaper than retrofitting it after they have diverged. The drift risk being guarded is a **correctness** risk, not tidiness: if `resolve_bedrock_client` classifies a model id differently in two copies, prompt-caching middleware selection and attachment block shaping silently diverge for the same model. | The alternative — a single module inside `dynamic_agents`, promoted later — was the original recommendation and remains viable at near-zero cost. It was rejected by decision, not by analysis. **Honest statement of the weakness:** with one consumer the vendored copy is byte-identical to canonical, so the drift gate passes trivially and guards nothing until Phase 2 of the harness work. Principle III would say wait for the third occurrence; this waits for the first. If a reviewer prefers the constitution's reading, collapse `utils/llm_wrapper/` into `dynamic_agents/services/llm_factory.py` and delete `scripts/check_vendored.py` — the module boundaries in this plan are drawn so that this is a `git mv`, not a refactor. |
 | A vendored copy that is byte-identical to its canonical source | Required for the drift gate to be meaningful once a second consumer exists, and makes the consumer's import path stable across the transition. | Importing canonical directly via a path dependency would reintroduce a shared version floor across consumers — the precise failure this feature removes, and the reason `dynamic_agents` already vendors `utils.auth` rather than depending on `ai-platform-engineering-utils`. |
