@@ -35,7 +35,7 @@ Every NEEDS CLARIFICATION from Technical Context is resolved below. Each entry r
 
 ## D4 — Replacement for `resolve_bedrock_client`
 
-**Decision**: Vendor the classification rules unchanged into `bedrock_family.py`.
+**Decision**: Port the classification rules unchanged into `bedrock_family.py`.
 
 **Rationale**: About twenty lines. It maps a Bedrock model id to `anthropic` / `converse` / `legacy`, which selects the prompt-caching middleware and the attachment block shape. Spec A-006 states the current behaviour is correct and is being preserved, not redesigned. `init_chat_model` covers model *construction* for all three families; this is *classification*, a separate concern.
 
@@ -43,9 +43,11 @@ Every NEEDS CLARIFICATION from Technical Context is resolved below. Each entry r
 
 ## D5 — Shared-code mechanism
 
-**Decision**: Canonical directory plus vendored copies, verified by a CI drift gate. Not a published package, not a uv workspace member.
+**Decision**: One shared directory, imported directly. Not vendored into consumers, not a published package, not a uv workspace member.
 
-**Rationale**: A package sets one `langchain-aws` / `boto3` / `langchain-anthropic` version for every consumer — the exact mechanism being removed. Vendoring preserves independent pinning and permits deliberate divergence, which is a requirement rather than a flaw: a sandboxed Deep Agents worker cannot use the `LLM_CLIENT_SHARING` boto3 injection, because it holds no AWS credentials. There is repo precedent — `dynamic_agents/pyproject.toml:22` records vendoring `utils.auth` rather than depending on `ai-platform-engineering-utils`, for image-size reasons.
+**Rationale**: A package sets one `langchain-aws` / `boto3` / `langchain-anthropic` version for every consumer — the exact mechanism being removed. A directory with no `pyproject.toml` and no dependencies of its own imposes no floor at all: each consuming package pins what it ships. Splitting it into dependency-free modules plus `build.py` lets a consumer take a subset, which matters for a sandboxed Deep Agents worker that holds no AWS credentials and so cannot use the `LLM_CLIENT_SHARING` boto3 injection.
+
+**Vendoring was implemented first and then removed.** It put two identical copies of each file in one repository and needed a CI drift gate that guards nothing until a second consumer exists. The reason vendoring looked necessary was the Docker build context: with `context: ai_platform_engineering/dynamic_agents`, nothing outside that directory can enter the image — the same constraint that forced `utils.auth` to be duplicated, per the comment at `dynamic_agents/pyproject.toml:22`. Widening the context to the repository root removes the cause. The repository already builds slack-bot with `context: .`.
 
 **Alternatives considered**:
 

@@ -1,20 +1,21 @@
-# Quickstart: the vendored LLM wrapper
+# Quickstart: the shared LLM wrapper
 
 **Plan**: [plan.md](./plan.md) | **Research**: [research.md](./research.md)
 
 ## What this is
 
-`ai_platform_engineering/llm_wrapper/` is **canonical source that consumers copy**, not a package they install. Copying is deliberate: an installed package would pin one `langchain-aws` / `boto3` / `langchain-anthropic` version for every consumer, which is the coupling this feature exists to remove.
+`ai_platform_engineering/llm_wrapper/` is **one shared source, imported directly** — not copied into consumers, not installed as a package. It declares no dependencies of its own, which is what lets it be shared without coupling: each consuming package pins the provider integrations it ships. A package that declared them would pin one `langchain-aws` / `boto3` / `langchain-anthropic` version for everyone, the coupling this feature exists to remove.
 
-Three modules, so a consumer can take a subset:
+Separate modules, so a consumer can take a subset:
 
 | Module | Contains | Who needs it |
 |---|---|---|
 | `providers.py` | public provider string → (`init_chat_model` provider, model-id env var) | every consumer |
 | `bedrock_family.py` | `resolve_bedrock_client()` → `anthropic` / `converse` / `legacy` | anything selecting prompt-caching middleware or shaping attachments |
+| `reasoning.py` | reasoning effort → provider-native thinking config | every consumer that exposes reasoning effort |
 | `build.py` | `build_chat_model()` over `init_chat_model` | consumers that construct models with credentials present |
 
-A sandboxed harness worker is expected to take the first two and not the third — it holds no raw provider credentials.
+A sandboxed harness worker is expected to take the dependency-free modules and not `build.py` — it holds no raw provider credentials.
 
 ## Adding a provider
 
@@ -50,33 +51,29 @@ export OPENAI_COMPATIBLE_MODEL=<model the gateway exposes>
 
 This is implemented as `ChatOpenAI(base_url=...)` and adds no dependency. It is required for sandboxed harness workers, which cannot hold raw provider credentials — see research D7.
 
-## Vendoring into a consumer
+## How an image gets it
 
-```bash
-# from repo root
-cp ai_platform_engineering/llm_wrapper/{providers,bedrock_family,build}.py \
-   ai_platform_engineering/<consumer>/src/<consumer>/_vendor/llm_wrapper/
-python scripts/check_vendored.py            # must pass before commit
+Imported directly as `ai_platform_engineering.llm_wrapper.<module>`. The
+consuming image must build with the **repository root** as its Docker context
+and copy the directory in:
+
+```dockerfile
+COPY ai_platform_engineering/__init__.py /app/shared/ai_platform_engineering/__init__.py
+COPY ai_platform_engineering/llm_wrapper/ /app/shared/ai_platform_engineering/llm_wrapper/
+ENV PYTHONPATH="/app/shared"
 ```
 
-`scripts/check_vendored.py` hashes every vendored copy against canonical. It fails on any difference unless the path is listed as a deliberate divergence in `vendored.toml`, with a reason.
+`/app/shared` rather than `/app`: `/app/dynamic_agents` holds `src/`, `tests/`
+and `pyproject.toml` but no `__init__.py`, so `/app` on `PYTHONPATH` would make
+it a namespace package shadowing the real `dynamic_agents` in the venv.
 
-**When you change canonical**, re-copy into every consumer in the same PR. The gate will fail otherwise, which is the intended behaviour: a `resolve_bedrock_client` that classifies a model id differently in two copies produces different prompt-caching and attachment shaping for the same model — a bug that reproduces in one service and not the other.
-
-**When a consumer must diverge**, record it explicitly:
-
-```toml
-# vendored.toml
-[[divergence]]
-path = "ai_platform_engineering/<worker>/_vendor/llm_wrapper/build.py"
-reason = "Sandboxed worker holds no AWS credentials; LLM_CLIENT_SHARING path removed."
-```
-
-Silent divergence is the failure mode. Declared divergence is fine.
+A component-scoped build context cannot see this directory — that constraint is
+why other shared modules here were duplicated into component trees. The CI
+workflow for a consuming image must pass `context: .`.
 
 ## What not to do
 
-- **Do not make this a package or a uv workspace member.** See research D5.
+- **Do not make this a package, a uv workspace member, or copy it into consumers.** See research D5.
 - **Do not import it into `harness_engine`.** That control plane has no LangChain by design, and its `ModelPolicy` already owns the portable model layer. See research D6.
 - **Do not add a multi-provider routing library** to any agent-serving process (FR-024). Breadth comes from provider strings and the gateway.
 - **Do not change the public provider strings** (`aws-bedrock`, `azure-openai`, `anthropic-claude`, `google-gemini`, `gcp-vertexai`, `openai`, `groq`). They are persisted in agent records and rendered in the admin UI (FR-006).
@@ -84,10 +81,18 @@ Silent divergence is the failure mode. Declared divergence is fine.
 ## Verifying a change
 
 ```bash
-uv run pytest ai_platform_engineering/llm_wrapper/tests -q
-uv run pytest ai_platform_engineering/dynamic_agents/tests -q
-python scripts/check_vendored.py
-uv run ruff check ai_platform_engineering/utils/llm_wrapper
+PYTHONPATH=.:ai_platform_engineering/dynamic_agents/src \
+  uv run pytest ai_platform_engineering/llm_wrapper/tests \
+                ai_platform_engineering/dynamic_agents/tests -q
+uv run ruff check ai_platform_engineering/llm_wrapper
+```
+
+The dependency-free modules must also import without LangChain — that property
+is what lets a sandboxed worker take a subset:
+
+```bash
+python -m pytest ai_platform_engineering/llm_wrapper/tests/test_providers.py \
+                 ai_platform_engineering/llm_wrapper/tests/test_bedrock_family.py -q
 ```
 
 For anything touching model construction, also confirm the US3 capabilities by hand on at least one Bedrock and one non-Bedrock provider: cache-read tokens still reported on turn 2, per-runtime memory unchanged with `LLM_CLIENT_SHARING=true`, a long tool call not hitting a read timeout, and a text-family attachment accepted.

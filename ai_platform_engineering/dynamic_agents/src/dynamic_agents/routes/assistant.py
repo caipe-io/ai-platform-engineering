@@ -1,6 +1,6 @@
 """Generic AI assistant endpoint for LLM-powered suggestions.
 
-Provides a thin, generic wrapper around the LLM factory for simple text generation.
+Provides a thin, generic wrapper around `build_chat_model` for simple text generation.
 No agent orchestration, no tools, no conversation persistence — just a direct
 LLM call with a system prompt and user message.
 """

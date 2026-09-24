@@ -1,6 +1,6 @@
 """Resolve which LangChain Bedrock chat client a model id belongs to.
 
-Vendored from ``cnoe_agent_utils.llm_factory.resolve_bedrock_client`` (0.5.0)
+Ported from ``cnoe_agent_utils.llm_factory.resolve_bedrock_client`` (0.5.0)
 with behaviour preserved exactly. The classification selects the prompt-caching
 middleware and the attachment block shape, so changing it changes cost and
 document handling -- see spec FR-014 and A-006.
