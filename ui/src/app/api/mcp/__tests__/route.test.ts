@@ -1,10 +1,13 @@
 /**
  * @jest-environment node
  *
- * CAIPE Platform MCP transport — Phase 1 (see the "CAIPE Platform/Admin
- * MCP server" proposal): JSON-RPC 2.0 skeleton, feature gate, RFC 9728
- * discovery pointer, and the two forwarding tools that prove the pattern
- * (`caipe_agent_list`, `caipe_agent_get`) plus `caipe_whoami`.
+ * CAIPE Platform MCP transport (see the "CAIPE Platform/Admin MCP server"
+ * proposal, discussions #2818): JSON-RPC 2.0 skeleton, feature gate, RFC
+ * 9728 discovery pointer, Phase 1's read tools (`caipe_whoami`,
+ * `caipe_agent_list`, `caipe_agent_get`), and Phase 2's agent-lifecycle
+ * write tools (`caipe_agent_create`, `caipe_agent_update`,
+ * `caipe_agent_set_prompt`, `caipe_agent_delete`,
+ * `caipe_agent_available_tools`).
  *
  * Every forwarding tool re-enters an existing BFF route with the caller's
  * own credentials — these tests assert that forwarding, not a parallel
@@ -81,7 +84,7 @@ describe("POST /api/mcp", () => {
     });
   });
 
-  it("lists exactly the Phase 1 tools", async () => {
+  it("lists exactly the Phase 1 + Phase 2 tools", async () => {
     const { POST } = await import("../route");
 
     const response = await POST(jsonRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
@@ -91,6 +94,11 @@ describe("POST /api/mcp", () => {
       "caipe_whoami",
       "caipe_agent_list",
       "caipe_agent_get",
+      "caipe_agent_available_tools",
+      "caipe_agent_create",
+      "caipe_agent_update",
+      "caipe_agent_set_prompt",
+      "caipe_agent_delete",
     ]);
   });
 
@@ -206,5 +214,205 @@ describe("POST /api/mcp", () => {
 
     expect(Array.isArray(body)).toBe(true);
     expect(body.map((r: { id: number }) => r.id)).toEqual([1, 2]);
+  });
+
+  async function callTool(name: string, args: Record<string, unknown>) {
+    const { POST } = await import("../route");
+    return POST(
+      jsonRequest({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+    );
+  }
+
+  describe("caipe_agent_available_tools", () => {
+    it("lists builtin tools only when no agent_id is given", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        status: 200,
+        text: async () => JSON.stringify({ tools: ["web_search"] }),
+      });
+
+      const response = await callTool("caipe_agent_available_tools", {});
+      const body = await response.json();
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(global.fetch).toHaveBeenCalledWith(
+        "http://localhost:3000/api/dynamic-agents/builtin-tools",
+        expect.objectContaining({ method: "GET" }),
+      );
+      const result = JSON.parse(body.result.content[0].text);
+      expect(result.builtin_tools).toEqual({ tools: ["web_search"] });
+      expect(result.available_subagents).toBeUndefined();
+    });
+
+    it("also lists available subagents when agent_id is given", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        status: 200,
+        text: async () => JSON.stringify({ success: true, data: [] }),
+      });
+
+      await callTool("caipe_agent_available_tools", { agent_id: "agent-sre" });
+
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect(global.fetch).toHaveBeenCalledWith(
+        "http://localhost:3000/api/dynamic-agents/available-subagents?id=agent-sre",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+  });
+
+  describe("caipe_agent_create", () => {
+    it("forwards the full arguments as the POST body", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        status: 201,
+        text: async () => JSON.stringify({ success: true, data: { _id: "agent-jira-triage" } }),
+      });
+
+      const args = {
+        name: "Jira Triage",
+        system_prompt: "Triage new Jira issues.",
+        model: { id: "gpt-4o", provider: "openai" },
+        owner_team_slug: "platform",
+      };
+      const response = await callTool("caipe_agent_create", args);
+      const body = await response.json();
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "http://localhost:3000/api/dynamic-agents",
+        expect.objectContaining({ method: "POST", body: JSON.stringify(args) }),
+      );
+      expect(JSON.parse(body.result.content[0].text)).toEqual({ _id: "agent-jira-triage" });
+    });
+  });
+
+  describe("caipe_agent_update", () => {
+    it("requires agent_id", async () => {
+      const response = await callTool("caipe_agent_update", { name: "New Name" });
+      const body = await response.json();
+
+      expect(body.result.isError).toBe(true);
+      expect(body.result.content[0].text).toContain("agent_id is required");
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects a call with no fields besides agent_id", async () => {
+      const response = await callTool("caipe_agent_update", { agent_id: "a1" });
+      const body = await response.json();
+
+      expect(body.result.isError).toBe(true);
+      expect(body.result.content[0].text).toContain("Nothing to update");
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("forwards to PUT ?id=<agent_id> with agent_id stripped from the body", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        status: 200,
+        text: async () => JSON.stringify({ success: true, data: { _id: "a1", enabled: false } }),
+      });
+
+      await callTool("caipe_agent_update", { agent_id: "a1", enabled: false });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "http://localhost:3000/api/dynamic-agents?id=a1",
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ enabled: false }) }),
+      );
+    });
+
+    it("surfaces a config-driven rejection as a tool error", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        status: 403,
+        text: async () =>
+          JSON.stringify({ success: false, error: "Config-driven agents cannot be modified." }),
+      });
+
+      const response = await callTool("caipe_agent_update", { agent_id: "a1", enabled: false });
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.result.isError).toBe(true);
+      expect(body.result.content[0].text).toContain("Config-driven agents cannot be modified");
+    });
+  });
+
+  describe("caipe_agent_set_prompt", () => {
+    it("fetches the current prompt, PUTs the new one, and returns a diff", async () => {
+      const fetchMock = global.fetch as jest.Mock;
+      fetchMock
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () =>
+            JSON.stringify({ success: true, data: { name: "SRE Agent", system_prompt: "Be terse." } }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () => JSON.stringify({ success: true, data: { _id: "a1" } }),
+        });
+
+      const response = await callTool("caipe_agent_set_prompt", {
+        agent_id: "a1",
+        system_prompt: "Be terse and cite sources.",
+      });
+      const body = await response.json();
+
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        1,
+        "http://localhost:3000/api/dynamic-agents/agents/a1",
+        expect.objectContaining({ method: "GET" }),
+      );
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        "http://localhost:3000/api/dynamic-agents?id=a1",
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ system_prompt: "Be terse and cite sources." }),
+        }),
+      );
+      const text = body.result.content[0].text;
+      expect(text).toContain("Updated SRE Agent's system_prompt.");
+      expect(text).toContain("- Be terse.");
+      expect(text).toContain("+ Be terse and cite sources.");
+    });
+
+    it("skips the write and says so when the prompt is already identical", async () => {
+      const fetchMock = global.fetch as jest.Mock;
+      fetchMock.mockResolvedValueOnce({
+        status: 200,
+        text: async () =>
+          JSON.stringify({ success: true, data: { name: "SRE Agent", system_prompt: "Be terse." } }),
+      });
+
+      const response = await callTool("caipe_agent_set_prompt", {
+        agent_id: "a1",
+        system_prompt: "Be terse.",
+      });
+      const body = await response.json();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(body.result.content[0].text).toContain("No change made");
+    });
+  });
+
+  describe("caipe_agent_delete", () => {
+    it("requires agent_id", async () => {
+      const response = await callTool("caipe_agent_delete", {});
+      const body = await response.json();
+
+      expect(body.result.isError).toBe(true);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("forwards to DELETE ?id=<agent_id>", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        status: 200,
+        text: async () => JSON.stringify({ success: true, data: { deleted: "a1" } }),
+      });
+
+      const response = await callTool("caipe_agent_delete", { agent_id: "a1" });
+      const body = await response.json();
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "http://localhost:3000/api/dynamic-agents?id=a1",
+        expect.objectContaining({ method: "DELETE" }),
+      );
+      expect(JSON.parse(body.result.content[0].text)).toEqual({ deleted: "a1" });
+    });
   });
 });
