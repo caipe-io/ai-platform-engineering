@@ -302,6 +302,55 @@ class AgentRuntimeCache:
                 agent_config.id,
             )
 
+    @asynccontextmanager
+    async def reader(
+        self,
+        agent_config: "DynamicAgentConfig",
+        mcp_servers: list["MCPServerConfig"],
+        session_id: str,
+        *,
+        user: "UserContext | None" = None,
+        client_context: "ClientContext | None" = None,
+    ):
+        """Create a non-cached, read-only runtime for probing durable state.
+
+        Like `persistent()`, this reads the real (Mongo-backed) checkpointer
+        so it sees durably-persisted state, and never enters the shared
+        runtime cache. Unlike `persistent()`, it is for callers that only
+        inspect state (e.g. checking for a pending interrupt) and must not
+        mutate anything a live chat runtime for the same (agent, session)
+        may depend on — in particular, it never deletes or reseeds the
+        shared GridFS skill-file namespace. Use `persistent()` instead for
+        callers that actually execute a turn (scheduled/webhook runs).
+        """
+        runtime = AgentRuntime(
+            agent_config,
+            mcp_servers,
+            mongo_service=self._mongo_service,
+            user=user,
+            client_context=client_context,
+            session_id=session_id,
+            readonly=True,
+        )
+        try:
+            await runtime.initialize()
+        except Exception as e:
+            logger.exception(
+                "Read-only runtime initialization failed for agent '%s'",
+                agent_config.id,
+            )
+            raise RuntimeInitError(agent_config.id, e) from e
+
+        logger.info("Created read-only one-shot runtime for agent %s", agent_config.id)
+        try:
+            yield runtime
+        finally:
+            await runtime.cleanup()
+            logger.debug(
+                "Read-only one-shot runtime cleaned up for agent %s",
+                agent_config.id,
+            )
+
     async def _create_runtime(
         self,
         key: str,

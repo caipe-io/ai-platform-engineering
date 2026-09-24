@@ -591,11 +591,18 @@ class AgentRuntime:
         session_id: str | None = None,
         mongo_client: MongoClient | None = None,
         ephemeral: bool = False,
+        readonly: bool = False,
     ):
         self.config = config
         self.mcp_servers = mcp_servers
         self.settings = settings or get_settings()
         self._mongo_service = mongo_service
+        # A read-only runtime still reads the durable (real) checkpointer —
+        # unlike `ephemeral`, which swaps in an in-memory checkpointer/store —
+        # but must never mutate the shared GridFS filesystem namespace it
+        # inherits from a real chat runtime for the same (agent, session).
+        # See `initialize()`'s skill-seeding step.
+        self._readonly = readonly
         self._user = user
         self._client_context = client_context
         # Spec 102 Phase 8 / T107: prefer the per-request bearer from
@@ -1008,7 +1015,14 @@ class AgentRuntime:
         # share the same fs_namespace — without this, Agent B would inherit
         # Agent A's skill files if Agent B has no skills of its own (because
         # the seeding block below is skipped when self.config.skills is empty).
-        if self._resolve_backend_type() == BACKEND_STORE and self._store:
+        #
+        # Skipped for read-only runtimes: the default fs_namespace is
+        # (agent_id, session_id, "filesystem"), which a one-shot reader
+        # shares with any real chat runtime cached for that same
+        # conversation. Deleting here would wipe that runtime's live skill
+        # files out from under it; a failed reseed (e.g. a transient skill-
+        # catalog query error) never restores them.
+        if not self._readonly and self._resolve_backend_type() == BACKEND_STORE and self._store:
             if hasattr(self._store, "delete_by_key_prefix"):
                 fs_ns = self._resolve_fs_namespace()
                 self._store.delete_by_key_prefix(fs_ns, "/skills/")
@@ -1040,7 +1054,9 @@ class AgentRuntime:
                             # Seed skill files into GridFS so SkillsMiddleware and
                             # read_file can find them via StoreBackend.
                             # Note: stale skills were already cleared above.
-                            if self._store:
+                            # Skipped for read-only runtimes — see the matching
+                            # guard on the clear step above.
+                            if not self._readonly and self._store:
                                 namespace = fs_ns
                                 for path, file_data in self._skills_files.items():
                                     self._store.put(namespace, path, file_data)
