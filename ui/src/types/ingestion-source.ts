@@ -138,6 +138,21 @@ export interface JiraProjectSource extends IngestionSourceConfigBase {
 
 export type WebCrawlMode = "single" | "sitemap" | "recursive";
 
+/**
+ * Request header attached to web crawl fetches.
+ *
+ * A static header carries its value directly and omits `secret_ref`. A
+ * credential-backed header marks the value's position with the literal
+ * `{{secret}}`; the ingestor resolves `secret_ref` against the credential store
+ * and substitutes it server-side, so the plaintext never travels with the source
+ * configuration. The placeholder and the reference are only ever set together.
+ */
+export interface WebAuthHeader {
+  header_name: string;
+  value_template: string;
+  secret_ref?: string;
+}
+
 export interface WebSourceSettings {
   crawl_mode: WebCrawlMode;
   max_depth?: number;
@@ -155,6 +170,7 @@ export interface WebSourceSettings {
   chunk_overlap?: number;
   user_agent?: string | null;
   allow_non_public_urls?: boolean;
+  auth_headers?: WebAuthHeader[];
 }
 
 export interface WebUrlSource extends IngestionSourceConfigBase {

@@ -32,6 +32,7 @@ from scrapy.crawler import CrawlerRunner
 from scrapy.exceptions import CloseSpider, IgnoreRequest
 from scrapy.http import Response
 from scrapy.utils.log import configure_logging
+from scrapy.utils.url import url_is_from_any_domain
 
 from common.utils import get_fresh_until, is_publicly_routable_url
 from common.models.server import ScrapySettings, CrawlMode
@@ -69,6 +70,28 @@ class SSRFProtectionMiddleware:
     raise IgnoreRequest(error_msg)
 
 
+class AuthHeaderMiddleware:
+  """Attach the datasource's credential headers to requests for its origin only.
+
+  Scoping matters more than it looks: a crawl may follow off-site links, and a
+  login wall typically answers with a redirect to a different host. Matching the
+  origin keeps the credential from being replayed to either. Scrapy's own
+  RedirectMiddleware drops `Authorization` across origins but not custom header
+  names, so this cannot be delegated to it.
+  """
+
+  def process_request(self, request: Request, spider):
+    headers = getattr(spider, "auth_headers", None)
+    origin = getattr(spider, "auth_origin", None)
+    if not headers or not origin:
+      return None
+    if not url_is_from_any_domain(request.url, [origin]):
+      return None
+    for name, value in headers.items():
+      request.headers[name] = value
+    return None
+
+
 class WorkerSpider(Spider):
   """
   Generic spider that handles all crawl modes.
@@ -99,6 +122,12 @@ class WorkerSpider(Spider):
     self.denied_patterns = request.denied_url_patterns or []
     self.allow_non_public_urls = request.allow_non_public_urls or False
 
+    self.auth_headers = request.resolved_auth_headers or {}
+    self.auth_credential_labels = list(request.auth_credential_labels or [])
+    # Deliberately the configured URL's host, not `effective_domain`, which is
+    # reassigned to a redirect target and would carry credentials off-origin.
+    self.auth_origin = urlparse(request.url).hostname
+
     # Track the effective domain (may change after redirect for sitemap mode)
     self.effective_domain: str | None = None
 
@@ -110,6 +139,9 @@ class WorkerSpider(Spider):
     # so this is the only signal available to tell that failure mode apart
     # from a page that is genuinely empty.
     self.pages_fetched_no_content = 0
+    # Statuses a rejected credential tends to produce. 404 belongs here because
+    # some sites hide protected paths rather than admitting they exist.
+    self.auth_denied_statuses: dict[int, int] = {}
     self.documents: List[dict] = []
     self.visited_urls: set = set()
     self.start_time = time.time()
@@ -587,6 +619,8 @@ class WorkerSpider(Spider):
       error_msg = f"Ignoring non-200 response ({response.status}): {response.url}"
       self._log(logging.WARNING, error_msg)
       self.pages_failed += 1
+      if response.status in (401, 403, 404):
+        self.auth_denied_statuses[response.status] = self.auth_denied_statuses.get(response.status, 0) + 1
       if len(self.errors) < self.max_errors:
         self.errors.append(error_msg)
       return
@@ -893,6 +927,16 @@ class WorkerSpider(Spider):
     self.result_queue.put(WorkerMessage.crawl_result(result).to_dict())
     self._log(logging.INFO, f"Spider closed: {reason}, crawled {self.pages_crawled} pages in {elapsed:.1f}s")
 
+  def _credential_hint(self) -> str:
+    """Explain a likely credential failure, naming the credential but never its value."""
+    names = ", ".join(f"'{label}'" for label in self.auth_credential_labels)
+    return (
+      f"This crawl authenticated with {names}. A credential that is invalid, expired, "
+      "or missing the scope needed to read this site often produces a sign-in page, "
+      "a 404, or an empty response rather than an explicit authentication error - "
+      "verify the credential and its permissions."
+    )
+
   def _build_failure_message(self) -> str:
     """Build a detailed message explaining why the crawl failed."""
     parts = []
@@ -946,13 +990,24 @@ class WorkerSpider(Spider):
     # of which branch above ran, including a sitemap crawl that found URLs
     # and dispatched them to parse_page but scraped none of them.
     if self.pages_fetched_no_content > 0:
-      parts.append(
-        f"{self.pages_fetched_no_content} page(s) loaded successfully but had "
-        "no extractable content. If this site requires signing in, an "
-        "unauthenticated request commonly lands on a login page instead of "
-        "returning an error - confirm the URL is reachable without "
-        "authentication."
-      )
+      if self.auth_credential_labels:
+        parts.append(
+          f"{self.pages_fetched_no_content} page(s) loaded successfully but had "
+          "no extractable content, which is what a sign-in page looks like to "
+          f"the crawler. {self._credential_hint()}"
+        )
+      else:
+        parts.append(
+          f"{self.pages_fetched_no_content} page(s) loaded successfully but had "
+          "no extractable content. If this site requires signing in, an "
+          "unauthenticated request commonly lands on a login page instead of "
+          "returning an error - confirm the URL is reachable without "
+          "authentication."
+        )
+
+    if self.auth_denied_statuses and self.auth_credential_labels:
+      status_summary = ", ".join(f"{count}x HTTP {status}" for status, count in sorted(self.auth_denied_statuses.items()))
+      parts.append(f"Requests were rejected ({status_summary}). {self._credential_hint()}")
 
     # Include collected error messages for more detail
     if self.errors:
@@ -985,6 +1040,8 @@ def build_spider_settings(request: CrawlRequest) -> dict:
   scrapy_settings = build_scrapy_settings(settings)
   downloader_middlewares = dict(scrapy_settings.get("DOWNLOADER_MIDDLEWARES", {}))
   downloader_middlewares["ingestors.webloader.loader.scrapy_worker.SSRFProtectionMiddleware"] = 543
+  # Below RedirectMiddleware (600) so requests re-issued by a redirect are seen.
+  downloader_middlewares["ingestors.webloader.loader.scrapy_worker.AuthHeaderMiddleware"] = 544
   scrapy_settings["DOWNLOADER_MIDDLEWARES"] = downloader_middlewares
   return scrapy_settings
 

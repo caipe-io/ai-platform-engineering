@@ -42,6 +42,7 @@ interface PlatformConfigDoc extends PlatformDefaultAgentDocument {
   remote_mcp_catalog?: unknown;
   rag_default_search_team_slug?: unknown;
   rag_ingestor_limits?: unknown;
+  platform_llm?: unknown;
 }
 
 interface TeamConfigDoc {
@@ -147,6 +148,40 @@ function normalizeScheduleEditorAgentId(value: unknown): string | null {
   return trimmed;
 }
 
+/**
+ * The Platform LLM: a registry model id plus its provider, or null to clear it
+ * and let each feature fall back to its own defaults.
+ */
+function normalizePlatformLlm(value: unknown): { id: string; provider: string } | null {
+  if (value == null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new ApiError(
+      'platform_llm must be an object with id and provider, or null',
+      400,
+      'INVALID_PLATFORM_LLM',
+    );
+  }
+  const candidate = value as { id?: unknown; provider?: unknown };
+  const id = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+  const provider = typeof candidate.provider === 'string' ? candidate.provider.trim() : '';
+  if (!id && !provider) return null;
+  if (!id || !provider) {
+    throw new ApiError(
+      'platform_llm requires both id and provider',
+      400,
+      'INVALID_PLATFORM_LLM',
+    );
+  }
+  if (id.length > 200 || provider.length > 100) {
+    throw new ApiError(
+      'platform_llm id or provider is too long',
+      400,
+      'INVALID_PLATFORM_LLM',
+    );
+  }
+  return { id, provider };
+}
+
 function defaultAgentTuple(agentId: string): OpenFgaTupleKey {
   return { user: 'user:*', relation: 'user', object: `agent:${agentId}` };
 }
@@ -204,6 +239,7 @@ async function getPlatformConfig(request: NextRequest) {
     const victoropsAgentId = normalizeVictoropsAgentId(doc?.slack_victorops_escalation_agent_id);
     const victoropsEnvFallback = process.env.SLACK_INTEGRATION_VICTOROPS_AGENT_ID || null;
     const ragIngestorLimits = normalizeRagIngestorLimits(doc?.rag_ingestor_limits);
+    const platformLlm = normalizePlatformLlm(doc?.platform_llm);
 
     return NextResponse.json({
       success: true,
@@ -214,6 +250,8 @@ async function getPlatformConfig(request: NextRequest) {
         schedule_editor_agent_source: scheduleEditorAgentId
           ? 'db'
           : (scheduleEditorEnvFallback ? 'env' : 'fallback'),
+        platform_llm: platformLlm,
+        platform_llm_source: platformLlm ? 'db' : 'fallback',
         slack_victorops_escalation_agent_id: victoropsAgentId ?? victoropsEnvFallback,
         slack_victorops_escalation_agent_source: victoropsAgentId ? 'db' : (victoropsEnvFallback ? 'env' : 'fallback'),
         release_notes: normalizeReleaseNotesConfig(doc?.release_notes),
@@ -262,6 +300,14 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       ? normalizeScheduleEditorAgentId(body.schedule_editor_agent_id)
       : null;
     if (hasScheduleEditorUpdate) update.schedule_editor_agent_id = nextScheduleEditorAgentId;
+
+    // The Platform LLM is the default model server-side AI features call when
+    // they have no model of their own. It grants no access to the model itself.
+    const hasPlatformLlmUpdate = Object.prototype.hasOwnProperty.call(body, 'platform_llm');
+    const nextPlatformLlm = hasPlatformLlmUpdate
+      ? normalizePlatformLlm(body.platform_llm)
+      : null;
+    if (hasPlatformLlmUpdate) update.platform_llm = nextPlatformLlm;
 
     // Slack VictorOps escalation agent (Admin → Integrations → Slack →
     // Advanced). Unlike the platform default this does NOT grant any user
@@ -420,6 +466,12 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
               schedule_editor_agent_source: update.schedule_editor_agent_id
                 ? 'db'
                 : (process.env.SCHEDULE_EDITOR_AGENT_ID?.trim() ? 'env' : 'fallback'),
+            }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(update, 'platform_llm')
+          ? {
+              platform_llm: update.platform_llm ?? null,
+              platform_llm_source: update.platform_llm ? 'db' : 'fallback',
             }
           : {}),
         ...(Object.prototype.hasOwnProperty.call(update, 'slack_victorops_escalation_agent_id')

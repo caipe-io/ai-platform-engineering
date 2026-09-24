@@ -19,6 +19,14 @@ reconcileSecretRefShare,
 } from "./secret-openfga";
 import { SecretService,type SecretRefDocument,type SecretUsageReference } from "./secret-service";
 
+interface IngestionSourceSecretUsageDocument {
+  source_id: string;
+  name?: string;
+  settings?: {
+    auth_headers?: Array<{ header_name?: string; secret_ref?: string }>;
+  };
+}
+
 interface McpServerSecretUsageDocument {
   _id: string;
   name?: string;
@@ -79,8 +87,9 @@ function llmProviderUsage(secret: SecretRefDocument): SecretUsageReference[] {
   ];
 }
 
-function createSecretUsageResolver() {
+export function createSecretUsageResolver() {
   let mcpServersPromise: Promise<McpServerSecretUsageDocument[]> | null = null;
+  let ingestionSourcesPromise: Promise<IngestionSourceSecretUsageDocument[]> | null = null;
 
   async function mcpServers(): Promise<McpServerSecretUsageDocument[]> {
     mcpServersPromise ??= getCollection<McpServerSecretUsageDocument>("mcp_servers")
@@ -90,6 +99,17 @@ function createSecretUsageResolver() {
           .toArray(),
       );
     return mcpServersPromise;
+  }
+
+  async function ingestionSources(): Promise<IngestionSourceSecretUsageDocument[]> {
+    ingestionSourcesPromise ??= getCollection<IngestionSourceSecretUsageDocument>(
+      "rag_ingestion_sources",
+    ).then((collection) =>
+      collection
+        .find({ "settings.auth_headers.secret_ref": { $exists: true } } as never)
+        .toArray(),
+    );
+    return ingestionSourcesPromise;
   }
 
   return async (secret: SecretRefDocument): Promise<SecretUsageReference[]> => {
@@ -103,6 +123,18 @@ function createSecretUsageResolver() {
           name: server.name || String(server._id),
           location: "Agents > Tools",
           detail: [source.target, source.name].filter(Boolean).join(": "),
+        });
+      }
+    }
+    for (const source of await ingestionSources()) {
+      for (const header of source.settings?.auth_headers ?? []) {
+        if (header.secret_ref !== secret.id) continue;
+        usage.push({
+          type: "ingestion_source",
+          id: source.source_id,
+          name: source.name || source.source_id,
+          location: "Knowledge Bases > Ingest",
+          detail: header.header_name,
         });
       }
     }

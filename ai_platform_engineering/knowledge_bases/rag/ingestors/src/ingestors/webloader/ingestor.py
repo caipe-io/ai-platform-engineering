@@ -159,6 +159,7 @@ async def preview_url_ingestion(
   requested_max_pages = settings.max_pages
   preview_max_pages = min(requested_max_pages, PREVIEW_MAX_ITEMS)
   preview_job_id = f"preview-{uuid.uuid4()}"
+  auth_headers, auth_credential_labels = await client.resolve_auth_headers(settings.auth_headers)
   request = CrawlRequest(
     job_id=preview_job_id,
     url=url_request.url,
@@ -177,6 +178,8 @@ async def preview_url_ingestion(
     respect_robots_txt=settings.respect_robots_txt,
     user_agent=settings.user_agent,
     allow_non_public_urls=settings.allow_non_public_urls,
+    resolved_auth_headers=auth_headers or None,
+    auth_credential_labels=auth_credential_labels,
     ingestor_id=client.ingestor_id or "",
     datasource_name=url_request.description or url_request.url,
     reload_interval=url_request.reload_interval,

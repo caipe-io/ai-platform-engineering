@@ -7,8 +7,7 @@
  * Request body:
  *   {
  *     "task": "describe-skill" | "skill-md" | ...,
- *     "context": { instruction?, current_value?, name?, ... },
- *     "model"?: { id, provider }    // optional override
+ *     "context": { instruction?, current_value?, name?, ... }
  *   }
  *
  * Response: text/event-stream
@@ -24,8 +23,8 @@
  */
 
 import { authenticateRequest } from "@/lib/da-proxy";
-import { getCollection } from "@/lib/mongodb";
 import { consume } from "@/lib/server/ai-assist-rate-limit";
+import { resolveLlmModel } from "@/lib/server/platform-llm.server";
 import {
 getAiAssistTask,
 type AiAssistContext,
@@ -33,45 +32,6 @@ type AiAssistContext,
 import { fetchAssistantSuggest } from "@/lib/server/assistant-suggest-da";
 import { loadRubricGuidance } from "@/lib/server/ai-review/rubric-guidance";
 import { NextRequest } from "next/server";
-
-/**
- * Resolve a model the dynamic-agents service can actually serve. Tries the
- * caller-provided override first, then any `AI_ASSIST_MODEL_*` env defaults,
- * then falls back to the first model present in the `llm_models` MongoDB
- * collection (the same source the custom-agent model picker uses). The final
- * fallback is the registry's static default.
- *
- * Returning a model that DA can't authenticate against produces an opaque
- * 500 ("Failed to generate suggestion. Please try again.") with no actionable
- * message, so it's worth one extra Mongo hit per call to avoid that footgun.
- */
-async function resolveModel(
-  override: { id?: string; provider?: string } | undefined,
-  envDefault: { id: string; provider: string },
-): Promise<{ id: string; provider: string }> {
-  if (override?.id && override?.provider) {
-    return { id: override.id, provider: override.provider };
-  }
-  // Honour env overrides whenever they're set so a deployment can pin a
-  // specific model regardless of what's seeded in Mongo.
-  if (
-    process.env.AI_ASSIST_MODEL_ID ||
-    process.env.AI_ASSIST_MODEL_PROVIDER ||
-    process.env.SKILL_AI_MODEL_ID
-  ) {
-    return envDefault;
-  }
-  try {
-    const col = await getCollection("llm_models");
-    const first = await col.findOne({}, { sort: { name: 1 } });
-    if (first?.model_id && first?.provider) {
-      return { id: String(first.model_id), provider: String(first.provider) };
-    }
-  } catch {
-    // Mongo unavailable or collection empty — fall through to env default.
-  }
-  return envDefault;
-}
 
 /**
  * Pull a stable per-user key from the base64-encoded X-User-Context header
@@ -95,7 +55,6 @@ export const dynamic = "force-dynamic";
 interface AssistRequestBody {
   task?: string;
   context?: AiAssistContext;
-  model?: { id?: string; provider?: string };
 }
 
 function sseEvent(type: string, payload: Record<string, unknown> = {}): string {
@@ -161,7 +120,7 @@ export async function POST(request: NextRequest) {
 
   // ---- Build prompt + call backend ---------------------------------------
   const userMessage = task.buildUserMessage(context);
-  const model = await resolveModel(body.model, task.defaultModel(process.env));
+  const model = await resolveLlmModel();
 
   // When the task feeds a graded surface, append the live AI Review rubric to
   // the system prompt so generated content clears the grader on the first try.

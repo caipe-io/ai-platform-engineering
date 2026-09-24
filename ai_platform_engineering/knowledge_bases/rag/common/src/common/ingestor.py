@@ -5,7 +5,7 @@ import time
 from typing import List, Optional, Dict, Any, Callable
 import aiohttp
 from common.models.rag import DataSourceInfo, DocumentMetadata, StructuredEntity
-from common.models.server import DocumentIngestRequest, IngestorPingRequest, ExploreDataEntityRequest
+from common.models.server import AuthHeader, DocumentIngestRequest, IngestorPingRequest, ExploreDataEntityRequest
 from common.job_manager import JobStatus, JobInfo
 from common.constants import (
   DATASOURCE_SCHEDULE_CHECK_INTERVAL,
@@ -52,6 +52,13 @@ class Client:
     self.oidc_discovery_url = os.getenv("INGESTOR_OIDC_DISCOVERY_URL")
     # Scope is optional - if not set, don't send any scope (many providers don't need it for client credentials)
     self.oidc_scope = os.getenv("INGESTOR_OIDC_SCOPE", "")
+
+    # Credential service, used to resolve request headers that reference a stored
+    # credential. Derived from the platform API base so a deployment only has to
+    # say where CAIPE is; CREDENTIAL_API_URL overrides it for a split deployment.
+    caipe_api_url = os.getenv("CAIPE_API_URL", "").rstrip("/")
+    self.credential_api_url = os.getenv("CREDENTIAL_API_URL", "") or (f"{caipe_api_url}/api/credentials" if caipe_api_url else "")
+    self.credential_service_audience = os.getenv("CREDENTIAL_SERVICE_AUDIENCE", "caipe-credential-service")
 
     # Token cache
     self._access_token: Optional[str] = None
@@ -280,6 +287,64 @@ class Client:
     except Exception as e:
       logger.error(f"Ingestor '{self.ingestor_name}': ✗ Unexpected error fetching OAuth2 access token: {e}")
       raise
+
+  async def retrieve_secret(self, secret_ref: str, *, intended_use: str = "internal_service") -> str:
+    """
+    Resolve a credential store reference to its current value.
+
+    The credential service authorizes against this ingestor's own identity, so
+    the datasource owner must have granted it access to the referenced secret.
+    """
+    if not self.credential_api_url:
+      raise RuntimeError("CREDENTIAL_API_URL must be configured to ingest sources that use stored credentials")
+
+    token = await self._get_access_token()
+    url = f"{self.credential_api_url.rstrip('/')}/retrieve"
+    headers = {
+      "Authorization": f"Bearer {token}",
+      "x-caipe-credential-caller": "internal_service",
+      "x-caipe-credential-audience": self.credential_service_audience,
+      "Content-Type": "application/json",
+    }
+
+    async with aiohttp.ClientSession() as session:
+      async with session.post(url, json={"secret_ref": secret_ref, "intended_use": intended_use}, headers=headers) as resp:
+        if resp.status in (401, 403):
+          raise PermissionError(f"Ingestor '{self.ingestor_name}' is not authorized to use credential '{secret_ref}'. Grant it access from the credential's sharing settings.")
+        resp.raise_for_status()
+        payload = await resp.json()
+
+    data = payload.get("data", payload)
+    credential = data.get("credential")
+    if not isinstance(credential, str) or not credential:
+      raise ValueError(f"Credential service returned no value for '{secret_ref}'")
+    return credential
+
+  async def resolve_auth_headers(self, auth_headers: Optional[List[AuthHeader]]) -> tuple[Dict[str, str], List[str]]:
+    """
+    Render configured request headers into concrete values.
+
+    Static headers pass through untouched; only those referencing a credential
+    reach the credential service. Returns the header map alongside the credential
+    references used, which are safe to log and let a failed crawl name the
+    credential without exposing its value.
+    """
+    if not auth_headers:
+      return {}, []
+
+    rendered: Dict[str, str] = {}
+    labels: List[str] = []
+    for header in auth_headers:
+      if header.secret_ref:
+        rendered[header.header_name] = header.render(await self.retrieve_secret(header.secret_ref))
+        labels.append(header.secret_ref)
+      else:
+        rendered[header.header_name] = header.render()
+
+    if labels:
+      logger.info(f"Resolved {len(labels)} header(s) from credential(s): {', '.join(labels)}")
+    logger.info(f"Applying {len(rendered)} request header(s) to this crawl")
+    return rendered, labels
 
   async def _get_auth_headers(self) -> Dict[str, str]:
     """

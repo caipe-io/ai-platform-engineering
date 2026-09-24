@@ -12,17 +12,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AgentPicker,type AgentPickerOption } from "@/components/ui/agent-picker";
+import { ModelPicker,type ModelPickerOption } from "@/components/ui/model-picker";
 import type { AutoSaveState } from "@/hooks/use-keyed-auto-save";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import {
   AlertTriangle,
   Bot,
+  BrainCircuit,
   CalendarClock,
   Loader2,
 } from "lucide-react";
 import { useEffect,useState } from "react";
 
 type PendingAction = "set" | "clear";
+
+interface PlatformLlmRef {
+  id: string;
+  provider: string;
+}
+
+type LlmModelOption = ModelPickerOption;
 
 export function PlatformDefaultsSettings({
   readOnly = false,
@@ -40,6 +49,11 @@ export function PlatformDefaultsSettings({
   const [savedScheduleEditorAgentId,setSavedScheduleEditorAgentId] = useState<string | null>(null);
   const [scheduleEditorSource,setScheduleEditorSource] = useState("fallback");
   const [scheduleEditorSaveState,setScheduleEditorSaveState] = useState<AutoSaveState>({ status: "idle" });
+  const [platformLlm,setPlatformLlm] = useState<PlatformLlmRef | null>(null);
+  const [savedPlatformLlm,setSavedPlatformLlm] = useState<PlatformLlmRef | null>(null);
+  const [platformLlmSaveState,setPlatformLlmSaveState] = useState<AutoSaveState>({ status: "idle" });
+  const [llmModels,setLlmModels] = useState<LlmModelOption[]>([]);
+  const [llmModelsLoading,setLlmModelsLoading] = useState(true);
   const [confirmAction,setConfirmAction] = useState<PendingAction | null>(null);
 
   useEffect(() => {
@@ -68,12 +82,34 @@ export function PlatformDefaultsSettings({
         setSelectedScheduleEditorAgentId(scheduleEditorValue);
         setSavedScheduleEditorAgentId(scheduleEditorValue);
         setScheduleEditorSource(configData.data.schedule_editor_agent_source || "fallback");
+        const platformLlmValue = (configData.data.platform_llm ?? null) as PlatformLlmRef | null;
+        setPlatformLlm(platformLlmValue);
+        setSavedPlatformLlm(platformLlmValue);
       } catch (reason) {
         if (!cancelled) {
           setLoadError(reason instanceof Error ? reason.message : "Could not load the platform default");
         }
       } finally {
         if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/dynamic-agents/models");
+        if (!response.ok) throw new Error(`(${response.status}) ${response.statusText}`);
+        const body = (await response.json()) as { data?: LlmModelOption[] };
+        if (!cancelled) setLlmModels(body.data ?? []);
+      } catch {
+        // Leave the list empty; the card explains that no models are available.
+      } finally {
+        if (!cancelled) setLlmModelsLoading(false);
       }
     })();
     return () => {
@@ -124,6 +160,40 @@ export function PlatformDefaultsSettings({
       });
     } finally {
       setConfirmAction(null);
+    }
+  };
+
+  const selectPlatformLlm = async (next: PlatformLlmRef | null) => {
+    const unchanged =
+      (next?.id ?? null) === (savedPlatformLlm?.id ?? null) &&
+      (next?.provider ?? null) === (savedPlatformLlm?.provider ?? null);
+    if (unchanged) {
+      setPlatformLlm(savedPlatformLlm);
+      return;
+    }
+
+    setPlatformLlm(next);
+    setPlatformLlmSaveState({ status: "saving" });
+    try {
+      const response = await fetch("/api/admin/platform-config",{
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform_llm: next }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Could not update the platform LLM");
+      }
+      const effectiveValue = (data.data?.platform_llm ?? null) as PlatformLlmRef | null;
+      setPlatformLlm(effectiveValue);
+      setSavedPlatformLlm(effectiveValue);
+      setPlatformLlmSaveState({ status: "saved" });
+    } catch (reason) {
+      setPlatformLlm(savedPlatformLlm);
+      setPlatformLlmSaveState({
+        status: "error",
+        error: reason instanceof Error ? reason.message : "Could not update the platform LLM",
+      });
     }
   };
 
@@ -298,6 +368,46 @@ export function PlatformDefaultsSettings({
                 This setting does not grant users access to the selected agent.
               </p>
               <AutoSaveStatus state={scheduleEditorSaveState} />
+            </div>
+          </div>
+        )}
+      </SettingsCard>
+
+      <SettingsCard
+        description="The model server-side AI features use when they have none of their own, such as AI Review, AI Assist and skill generation."
+        title={<span className="flex items-center gap-2"><BrainCircuit className="h-5 w-5 text-primary" />Platform LLM</span>}
+      >
+        {loading ? (
+          <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading the platform LLM…
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="platform-llm">
+                Model
+              </label>
+              <div className="w-96 max-w-full">
+                <ModelPicker
+                  ariaLabel="Platform LLM"
+                  disabled={readOnly || platformLlmSaveState.status === "saving"}
+                  id="platform-llm"
+                  loading={llmModelsLoading}
+                  modelId={platformLlm?.id ?? ""}
+                  modelProvider={platformLlm?.provider ?? ""}
+                  onChange={(id, provider) =>
+                    void selectPlatformLlm(id && provider ? { id, provider } : null)
+                  }
+                  options={llmModels}
+                  placeholder="Select the platform LLM..."
+                  platformLlmLabel="No platform LLM"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Features that pin their own model keep using it. This setting does not grant users access to the model.
+              </p>
+              <AutoSaveStatus state={platformLlmSaveState} />
             </div>
           </div>
         )}

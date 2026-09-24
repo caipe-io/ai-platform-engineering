@@ -26,7 +26,7 @@ export interface SecretStorageMetadata {
 }
 
 export interface SecretUsageReference {
-  type: "mcp_server" | "llm_provider";
+  type: "mcp_server" | "llm_provider" | "ingestion_source";
   id: string;
   name: string;
   location: string;

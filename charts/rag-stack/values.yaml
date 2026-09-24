@@ -27,6 +27,8 @@ global:
       clientSecretRef:
         name: ""
         key: "INGESTOR_OIDC_CLIENT_SECRET"
+    caipeApi:
+      url: ""
     ragServer:
       host: "rag-server"
       port: 9446

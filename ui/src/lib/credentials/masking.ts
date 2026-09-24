@@ -17,6 +17,17 @@ export function maskCredentialValue(value: string): string {
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
+/**
+ * Display form of a masked hint, keeping only its trailing characters.
+ *
+ * Enough to tell two credentials apart without repeating any of the leading
+ * characters that `maskCredentialValue` retains for storage.
+ */
+export function shortMaskedPreview(maskedPreview: string | undefined | null): string | null {
+  const tail = maskedPreview?.trim().slice(-3);
+  return tail ? `...${tail}` : null;
+}
+
 export function isOpaqueMaskedPreview(value: string): boolean {
   return value.length > 1 && /^\*+$/.test(value);
 }

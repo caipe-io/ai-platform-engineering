@@ -1368,6 +1368,7 @@ services:
       - INGESTOR_OIDC_CLIENT_SECRET=${INGESTOR_OIDC_CLIENT_SECRET}
       - INGESTOR_OIDC_DISCOVERY_URL=${INGESTOR_OIDC_DISCOVERY_URL:-}
       - INGESTOR_OIDC_SCOPE=${INGESTOR_OIDC_SCOPE:-}
+      - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
     env_file: [.env]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]

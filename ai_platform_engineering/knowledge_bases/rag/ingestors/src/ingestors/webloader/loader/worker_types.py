@@ -62,6 +62,12 @@ class CrawlRequest:
   user_agent: str | None = None
   allow_non_public_urls: bool = False
 
+  # Rendered credential values, resolved in the main process and passed in
+  # memory only; never persisted or logged. `auth_credential_labels` carries
+  # the credential names so diagnostics can identify them without their values.
+  resolved_auth_headers: dict[str, str] | None = None
+  auth_credential_labels: list[str] = field(default_factory=list)
+
   # Metadata for document creation
   ingestor_id: str = ""
   datasource_name: str = ""

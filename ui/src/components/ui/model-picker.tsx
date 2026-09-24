@@ -27,6 +27,13 @@ export interface ModelPickerProps {
   emptyLabel?: string;
   triggerClassName?: string;
   contentSide?: "top" | "bottom";
+  /**
+   * Label for an option that defers to the Platform LLM rather than pinning a
+   * model, e.g. `Use Platform LLM (Claude Haiku 4.5)`. Selecting it reports an
+   * empty id and provider, which callers persist as "no model of my own".
+   * Omit to require an explicit model, as the per-agent pickers do.
+   */
+  platformLlmLabel?: string | null;
 }
 
 function modelKey(model: ModelPickerOption): string {
@@ -56,6 +63,7 @@ export function ModelPicker({
   emptyLabel = "No models available",
   triggerClassName,
   contentSide,
+  platformLlmLabel,
 }: ModelPickerProps) {
   const selected = options.find(
     (model) =>
@@ -69,11 +77,22 @@ export function ModelPicker({
           provider: modelProvider,
         }
       : undefined;
-  const selectedModel = selected ?? staleSelection;
-  const pickerOptions: readonly ModelPickerOption[] = staleSelection
-    ? [staleSelection, ...options]
-    : options;
-  const unavailable = disabled || loading || options.length === 0;
+  // An empty id and provider means "no model of my own", which this option
+  // represents so the deferral is a visible choice rather than a blank field.
+  const platformOption: ModelPickerOption | undefined = platformLlmLabel
+    ? { model_id: "", provider: "", name: platformLlmLabel }
+    : undefined;
+  const selectedModel =
+    selected ??
+    staleSelection ??
+    (platformOption && !modelId && !modelProvider ? platformOption : undefined);
+  const pickerOptions: readonly ModelPickerOption[] = [
+    ...(platformOption ? [platformOption] : []),
+    ...(staleSelection ? [staleSelection] : []),
+    ...options,
+  ];
+  const unavailable =
+    disabled || loading || (options.length === 0 && !platformOption);
 
   return (
     <SearchablePicker

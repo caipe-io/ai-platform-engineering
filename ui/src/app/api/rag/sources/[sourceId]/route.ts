@@ -68,6 +68,10 @@ import {
   optionalStringMap,
   optionalWebSettings,
 } from "@/lib/ingestion-source-config";
+import {
+  authorizedSourceSecretRefs,
+  screenSourceRequestHeaders,
+} from "@/lib/rag-source-credentials.server";
 import type { IngestionSourceConfig } from "@/types/ingestion-source";
 import { NextRequest } from "next/server";
 
@@ -639,6 +643,14 @@ export const PATCH = withErrorHandler(
 
     const updateData = pickMutableFields(body);
     validateMutableFields(source, updateData);
+    const settingsWereRequested = Object.prototype.hasOwnProperty.call(
+      updateData,
+      "settings",
+    );
+    if (settingsWereRequested) {
+      await authorizedSourceSecretRefs(session, updateData.settings);
+      await screenSourceRequestHeaders({ settings: updateData.settings, session });
+    }
     const searchTeamsWereRequested = Object.prototype.hasOwnProperty.call(
       body,
       "search_team_slugs",

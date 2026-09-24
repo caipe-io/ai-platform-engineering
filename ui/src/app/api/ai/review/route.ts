@@ -19,19 +19,19 @@
  *   5. Load the review config from Mongo, fall back to seed defaults.
  *   6. If the config is `enabled === false`, return a synthetic "passed"
  *      result so consumer flows aren't blocked while admins are mid-config.
- *   7. Resolve the model: per-request override > per-config override >
- *      env default > Mongo `llm_models` first row > registry default.
+ *   7. Resolve the model: per-config override > Platform LLM >
+ *      Mongo `llm_models` first row > registry default.
  *   8. Run all criteria in parallel via Promise.all (runCriterion catches
  *      its own errors and returns a verdict-with-error).
  *   9. Aggregate via computeScoreAndGrade; pass = score >= min_score.
  */
 
 import { authenticateRequest } from "@/lib/da-proxy";
-import { getCollection } from "@/lib/mongodb";
 import { consume } from "@/lib/server/ai-assist-rate-limit";
 import { ensureConfig } from "@/lib/server/ai-review/defaults";
 import { computeScoreAndGrade } from "@/lib/server/ai-review/grading";
 import { runCriterion } from "@/lib/server/ai-review/run-criteria";
+import { resolveLlmModel } from "@/lib/server/platform-llm.server";
 import {
 DEFAULT_GRADE_THRESHOLDS,
 type CriterionVerdict,
@@ -50,10 +50,6 @@ const MAX_CONTEXT_BYTES = 64 * 1024;
 
 /** Conservative cap on rubric size — prevents runaway parallel LLM calls. */
 const MAX_CRITERIA = 30;
-
-/** Bedrock-friendly default that matches /api/ai/assist's fallback. */
-const GLOBAL_DEFAULT_MODEL_ID = "global.anthropic.claude-haiku-4-5-20251001-v1:0";
-const GLOBAL_DEFAULT_PROVIDER = "aws-bedrock";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -77,54 +73,6 @@ function userKeyFromUserContext(
   } catch {
     return undefined;
   }
-}
-
-function envDefaultModel(): { id: string; provider: string } {
-  return {
-    id:
-      process.env.AI_ASSIST_MODEL_ID ||
-      process.env.SKILL_AI_MODEL_ID ||
-      GLOBAL_DEFAULT_MODEL_ID,
-    provider:
-      process.env.AI_ASSIST_MODEL_PROVIDER ||
-      process.env.SKILL_AI_MODEL_PROVIDER ||
-      GLOBAL_DEFAULT_PROVIDER,
-  };
-}
-
-/**
- * Resolve a runnable model. Same precedence rules as /api/ai/assist:
- * caller override → per-target config override → env default → first
- * llm_models doc in Mongo → registry default.
- */
-async function resolveModel(
-  override: { id?: string; provider?: string } | undefined,
-  configModel: { id?: string; provider?: string } | undefined,
-): Promise<{ id: string; provider: string }> {
-  if (override?.id && override?.provider) {
-    return { id: override.id, provider: override.provider };
-  }
-  if (configModel?.id && configModel?.provider) {
-    return { id: configModel.id, provider: configModel.provider };
-  }
-  // If env explicitly pins a model, use it before consulting Mongo.
-  if (
-    process.env.AI_ASSIST_MODEL_ID ||
-    process.env.AI_ASSIST_MODEL_PROVIDER ||
-    process.env.SKILL_AI_MODEL_ID
-  ) {
-    return envDefaultModel();
-  }
-  try {
-    const col = await getCollection("llm_models");
-    const first = await col.findOne({}, { sort: { name: 1 } });
-    if (first?.model_id && first?.provider) {
-      return { id: String(first.model_id), provider: String(first.provider) };
-    }
-  } catch {
-    // Mongo unavailable — fall through.
-  }
-  return envDefaultModel();
 }
 
 /** Compute sha-256 hex of `content` server-side for hash verification. */
@@ -244,7 +192,7 @@ export async function POST(request: NextRequest) {
 
   // ---- Build runner inputs ------------------------------------------------
   const enabledCriteria = (config.criteria ?? []).slice(0, MAX_CRITERIA);
-  const model = await resolveModel(body.model, config.model);
+  const model = await resolveLlmModel(config.model);
 
   // Forward the same auth headers `da-proxy.buildBackendHeaders` would, so
   // each parallel `/api/v1/assistant/suggest` call passes through DA's

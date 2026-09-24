@@ -122,7 +122,7 @@ export interface ReviewConfig {
   /** Pass threshold (0..1). Only consulted when enforcement === "blocking". */
   min_score: number;
   grade_thresholds: GradeThresholds;
-  /** Per-target model override; falls back to env / Mongo seed list. */
+  /** Per-target model override; falls back to the Platform LLM when unset. */
   model?: { id?: string; provider?: string };
   criteria: ReviewCriterion[];
   updated_at: string;
@@ -132,8 +132,14 @@ export interface ReviewConfig {
 
 /** Update-payload — partial; updated_at is server-stamped. */
 export type ReviewConfigUpdate = Partial<
-  Omit<ReviewConfig, "_id" | "target" | "updated_at">
->;
+  Omit<ReviewConfig, "_id" | "target" | "updated_at" | "model">
+> & {
+  /**
+   * Null clears the pinned model so the target falls back to the Platform LLM.
+   * Omitting the key leaves whatever is stored untouched.
+   */
+  model?: { id?: string; provider?: string } | null;
+};
 
 // ---------------------------------------------------------------------------
 // Run-time review request / response
@@ -223,6 +229,4 @@ export interface ReviewRequest {
   /** Hex sha-256 of `content` computed by the client. */
   content_hash: string;
   context?: ReviewContext;
-  /** Optional caller override; admins can pin per-target via review_configs. */
-  model?: { id: string; provider: string };
 }
