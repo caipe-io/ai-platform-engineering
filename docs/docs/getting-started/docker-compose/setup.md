@@ -6,7 +6,7 @@ sidebar_position: 1
 
 Use Docker Compose for a local CAIPE stack with the UI, Dynamic Agents, MCP
 servers, a MongoDB-compatible database, RBAC services, and optional RAG/tracing
-components. MongoDB is the default; DocumentDB is opt-in.
+components. DocumentDB is the default; MongoDB is opt-in.
 
 ## Prerequisites
 
@@ -32,7 +32,7 @@ OPENAI_API_KEY=<token>
 The checked-in example starts the default OSS stack:
 
 ```bash
-COMPOSE_PROFILES=mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor
+COMPOSE_PROFILES=mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-documentdb,web_ingestor
 ```
 
 `mcp-servers` starts the packaged MCP server containers. Add credentials only
@@ -104,10 +104,10 @@ To let the setup helper update `.env` and start Compose:
 
 The setup script asks before using sudo. Use `--no-sudo` to forbid it or `--allow-sudo` to permit it without a consent prompt. See [sudo consent](../kind/setup.md#sudo-consent) for automation and fallback behavior.
 
-Choose the MIT-licensed DocumentDB provider instead:
+Choose MongoDB instead:
 
 ```bash
-./setup-caipe.sh --docker-compose --database=documentdb
+./setup-caipe.sh --docker-compose --database=mongodb
 ```
 
 ## Profiles
@@ -116,8 +116,8 @@ Choose the MIT-licensed DocumentDB provider instead:
 |---------|-------------|
 | `mcp-servers` | Packaged MCP server containers |
 | `caipe-ui-prod` | Production CAIPE UI image |
-| `caipe-mongodb` | MongoDB for UI state, Dynamic Agents, RBAC metadata, and checkpoints |
-| `caipe-documentdb` | Opt-in DocumentDB provider for the same MongoDB-compatible state |
+| `caipe-documentdb` | Default DocumentDB provider for UI state, Dynamic Agents, RBAC metadata, and checkpoints |
+| `caipe-mongodb` | Opt-in MongoDB provider for the same MongoDB-compatible state |
 | `rbac` | Local Keycloak, OpenFGA, AgentGateway, and config bridge |
 | `dynamic-agents` | Dynamic Agents runtime used by chat, skills, and Agent Builder |
 | `rag` | Vector RAG services |
@@ -165,7 +165,7 @@ AUTHZ_SERVICE_URL=http://caipe-ui:3000
 Then recreate the services that consume those settings:
 
 ```bash
-COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor" \
+COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-documentdb,web_ingestor" \
 docker compose --env-file .env -f docker-compose.yaml up -d --force-recreate caipe-ui dynamic-agents keycloak-init
 ```
 

@@ -9,7 +9,7 @@
 # as a standalone MCP server container (mcp-*); start the ones you need via their
 # profile, e.g.:
 #
-#   docker compose -f docker-compose.dev.yaml --profile caipe-ui --profile caipe-mongodb up --build
+#   docker compose -f docker-compose.dev.yaml --profile caipe-ui --profile caipe-documentdb up --build
 #   docker compose -f docker-compose.dev.yaml --profile mcp-servers up --build   # all MCP servers
 #
 # Agent selection and configuration are controlled through environment variables
@@ -19,9 +19,10 @@
 services:
 
   ####################################################################################################
-  #                                          MongoDB                                                 #
+  #                                   DocumentDB / MongoDB                                           #
   ####################################################################################################
-  # MongoDB for CAIPE UI chat history and user settings
+  # MongoDB provider for CAIPE UI chat history and user settings (opt-in).
+  # Use the caipe-documentdb profile for the default DocumentDB provider.
   # Note: Default password "changeme" is for local development only. For production, use
   # the Helm chart and External Secrets to store the MongoDB secret in an external secrets manager.
   caipe-mongodb:
@@ -48,7 +49,7 @@ services:
     profiles:
       - caipe-mongodb
 
-  # Opt-in MIT-licensed, PostgreSQL-backed MongoDB-compatible provider.
+  # MongoDB-compatible DocumentDB provider (default).
   caipe-documentdb:
     image: ghcr.io/documentdb/documentdb/documentdb-local:${DOCUMENTDB_IMAGE_TAG:-pg17-0.113.0}
     container_name: caipe-documentdb-dev
@@ -618,7 +619,7 @@ services:
       # Autonomous Agents - URL the UI's /api/autonomous proxy targets.
       # Add the autonomous-agents profile when starting compose to enable the service:
       #   docker compose -f docker-compose.dev.yaml --profile caipe-ui --profile autonomous-agents \
-      #                  --profile dynamic-agents --profile caipe-mongodb up --build
+      #                  --profile dynamic-agents --profile caipe-documentdb up --build
       # The Autonomous tab in the UI is admin-gated; in local dev (SSO off) you also need
       # ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED=true (set below) so the dev-admin fallback is enabled.
       - AUTONOMOUS_AGENTS_URL=${AUTONOMOUS_AGENTS_URL:-http://autonomous-agents:8002}
@@ -641,7 +642,7 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-${GITHUB_PERSONAL_ACCESS_TOKEN:-}}
       # MongoDB (when running with profile caipe-ui; mongodb service is in same profile)
       # (changeme default is for local dev only; for production use Helm chart and External Secrets)
-      - MONGODB_URI=${MONGODB_URI:-mongodb://admin:changeme@caipe-mongodb:27017/caipe?authSource=admin}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://admin:changeme@caipe-documentdb:10260/caipe?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - AGENTGATEWAY_TARGETS_TOKEN=${AGENTGATEWAY_TARGETS_TOKEN:-agentgateway-config-bridge-dev-token}
       # Connections & Secrets. Local OAuth connector bootstrap reads these
@@ -865,7 +866,7 @@ services:
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
       - SKILL_SCANNER_URL=${SKILL_SCANNER_URL:-http://skill-scanner:8000}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-${GITHUB_PERSONAL_ACCESS_TOKEN:-}}
-      - MONGODB_URI=${MONGODB_URI:-mongodb://admin:changeme@caipe-mongodb:27017/caipe?authSource=admin}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://admin:changeme@caipe-documentdb:10260/caipe?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - AGENTGATEWAY_TARGETS_TOKEN=${AGENTGATEWAY_TARGETS_TOKEN:-agentgateway-config-bridge-dev-token}
       - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
@@ -1042,8 +1043,8 @@ services:
       - AWS_BEDROCK_STREAMING=${AWS_BEDROCK_STREAMING:-false}
       - AWS_BEDROCK_USE_CONVERSE_API=${AWS_BEDROCK_USE_CONVERSE_API:-true}
       - AWS_BEDROCK_BASE_MODEL_ID=${AWS_BEDROCK_BASE_MODEL_ID:-}
-      # MongoDB (same as CAIPE UI)
-      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      # MongoDB-compatible persistence (same as CAIPE UI)
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-documentdb:10260/${MONGODB_DATABASE:-caipe}?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       # Authentication (same OIDC config as CAIPE UI)
       - AUTH_ENABLED=${AUTH_ENABLED:-false}
@@ -1188,7 +1189,7 @@ services:
       - DYNAMIC_AGENTS_OAUTH2_CLIENT_ID=${DYNAMIC_AGENTS_OAUTH2_CLIENT_ID:-caipe-platform}
       - DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET=${DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET:-caipe-platform-dev-secret}
       - DYNAMIC_AGENTS_OAUTH2_SCOPE=${DYNAMIC_AGENTS_OAUTH2_SCOPE:-openid profile email}
-      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-documentdb:10260/${MONGODB_DATABASE:-caipe}?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       # Publish completed runs into the UI conversations collection so
       # operators can click the "Open run" deep link from the Autonomous tab and
@@ -1986,7 +1987,7 @@ services:
       - SLACK_INTEGRATION_AUTH_SCOPE=${SLACK_INTEGRATION_AUTH_SCOPE:-}
       - SLACK_INTEGRATION_AUTH_AUDIENCE=${SLACK_INTEGRATION_AUTH_AUDIENCE:-}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
-      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-documentdb:10260/${MONGODB_DATABASE:-caipe}?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - SLACK_WORKSPACE_URL=${SLACK_WORKSPACE_URL:-}
       # Canonical Slack workspace namespace; incoming Slack team_id values map to this alias.
@@ -2075,7 +2076,7 @@ services:
       - WEBEX_WORKSPACE_ID=${WEBEX_WORKSPACE_ID:-}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
       - CAIPE_UI_BASE_URL=${CAIPE_UI_BASE_URL:-http://localhost:3000}
-      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-documentdb:10260/${MONGODB_DATABASE:-caipe}?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - WEBEX_AGENT_ROUTES_MODE=${WEBEX_AGENT_ROUTES_MODE:-db_prefer}
       - WEBEX_THREAD_CONTEXT_ENABLED=${WEBEX_THREAD_CONTEXT_ENABLED:-true}
@@ -2117,7 +2118,7 @@ services:
   ####################################################################################################
   # Keycloak + OpenFGA + AgentGateway for Enterprise RBAC.
   # Usage (Slack + RAG RBAC — copy deploy/rbac/.env.rbac.example into .env and set embeddings keys):
-  #   COMPOSE_PROFILES=rbac,rag,slack-bot,caipe-ui,caipe-mongodb \
+  #   COMPOSE_PROFILES=rbac,rag,slack-bot,caipe-ui,caipe-documentdb \
   #     docker compose -f docker-compose.dev.yaml up -d
   #
   # RAG: http://localhost:9446  (requires Milvus stack + embedding provider env, e.g. AZURE_OPENAI_*)

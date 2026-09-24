@@ -1009,12 +1009,12 @@ caipe-ui:
         #     key: dev/mongodb
         #     property: password
 
-# Values passed to the `mongodb` dependency alias. MongoDB remains the default;
-# set provider=documentdb together with caipe-ui.mongodb.enabled=true to use the
-# MIT-licensed PostgreSQL-backed implementation.
+# Values passed to the `mongodb` dependency alias. DocumentDB is the default;
+# set provider=mongodb together with caipe-ui.mongodb.enabled=true to use
+# MongoDB instead.
 mongodb:
-  provider: mongodb
-  nameOverride: mongodb
+  provider: documentdb
+  nameOverride: documentdb
   image:
     repository: mongo
     tag: "7.0"

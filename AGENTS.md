@@ -114,7 +114,7 @@ The `docker-compose.yaml` + `.env.example` path must work for a first-time OSS
 user with the minimal profiles:
 
 ```bash
-mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor
+mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-documentdb,web_ingestor
 ```
 
 Do not add Slack/Webex bots to that default path.
