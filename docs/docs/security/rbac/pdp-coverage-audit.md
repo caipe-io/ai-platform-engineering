@@ -48,7 +48,7 @@ return withAuth(request, async (req, user, session) => { ... });
 | `/api/auth/my-roles`, `/api/auth/role`                | `self_profile#read`            |
 | `/api/auth/slack-link`, `/api/auth/webex-link`        | `self_profile#write`           |
 | `/api/settings`                                       | `user_settings#read/write`     |
-| `/api/feedback`                                       | `feedback#submit`              |
+| `/api/feedback`, `/api/tickets/report`, `/api/tickets/jira` | `feedback#submit`       |
 | `/api/chat`, `/api/dynamic-agents/models`, `/api/dynamic-agents/available` | `chat#invoke` |
 | `/api/files`                                          | `user_files#read/write`        |
 | `/api/ai`                                             | `ai_assist#invoke`             |
@@ -119,7 +119,7 @@ These routes look ungated at first glance — the only auth line in the file is 
 | `/api/chat/conversations/[id]/messages` | `ui/src/app/api/chat/conversations/[id]/messages/route.ts` | `chat#invoke` at the BFF + an inline conversation write check on `PATCH` until that route is fully migrated |
 | `/api/chat/conversations/[id]/share` | `ui/src/app/api/chat/conversations/[id]/share/route.ts` | `chat#invoke` at the BFF + `requireConversationResourcePermission(session, user.email, conversation, "share")` inline |
 | `/api/settings/*` | `ui/src/app/api/settings/...` | `user_settings#read/write` |
-| `/api/feedback` | `ui/src/app/api/feedback/...` | `feedback#submit` |
+| `/api/feedback`, `/api/tickets/report`, `/api/tickets/jira` | `ui/src/app/api/feedback/...`, `ui/src/app/api/tickets/...` | `feedback#submit` — direct ticket submission uses the same feedback gate as stored feedback |
 | `/api/files/list`, `/api/files/content` | `ui/src/app/api/files/...` | `user_files#read/write` (session-scoped upload tree) |
 | `/api/ai/review`, `/api/ai/assist` | `ui/src/app/api/ai/...` | `ai_assist#invoke` |
 | `/api/credentials/{retrieve,audit,health}` | `ui/src/app/api/credentials/...` | `credential_vault#use` at the BFF; per-credential `secret_ref` checks enforced inside the credential services in `ui/src/lib/credentials/` |

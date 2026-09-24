@@ -47,6 +47,7 @@
     "@dnd-kit/sortable": "10.0.0",
     "@dnd-kit/utilities": "3.2.2",
     "@lezer/highlight": "1.2.3",
+    "@octokit/rest": "22.0.1",
     "@okta/okta-sdk-nodejs": "8.1.0",
     "@radix-ui/react-dialog": "1.1.23",
     "@radix-ui/react-label": "2.1.15",

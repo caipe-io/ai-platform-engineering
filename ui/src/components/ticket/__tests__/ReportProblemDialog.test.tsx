@@ -39,7 +39,7 @@ jest.mock("@/lib/config", () => ({
 const mockCreateTicketViaAgent = jest.fn();
 
 jest.mock("@/lib/ticket-client", () => ({
-  createTicketViaAgent: (opts: unknown) => mockCreateTicketViaAgent(opts),
+  createTicket: (opts: unknown) => mockCreateTicketViaAgent(opts),
 }));
 
 jest.mock("next-auth/react", () => ({
