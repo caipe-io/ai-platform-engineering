@@ -12,7 +12,7 @@ from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.config import get_stream_writer
 
 DEFAULT_COMPACTION_FRACTION = 0.85
-DEFAULT_COMPACTION_TOKEN_LIMIT = 170_000
+DEFAULT_COMPACTION_TOKEN_LIMIT = 200_000
 CONTEXT_USAGE_EVENT = "context_usage"
 
 
