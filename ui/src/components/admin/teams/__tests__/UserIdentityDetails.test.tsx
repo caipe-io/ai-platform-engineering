@@ -1,6 +1,6 @@
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { UserIdentityDetails } from "../UserIdentityDetails";
+import { UserIdentityDetails, UserMembershipSources } from "../UserIdentityDetails";
 import type { UserIdentityInfo } from "@/types/admin-user-identity";
 
 const identity: UserIdentityInfo = {
@@ -10,11 +10,11 @@ const identity: UserIdentityInfo = {
 };
 
 it("separates canonical identity, linked upstream identity and direct roles", () => {
-  render(<UserIdentityDetails userId="canonical-id" identity={identity} loading={false} error={null} onRetry={jest.fn()} sourcesAvailable sources={[]} />);
+  render(<UserIdentityDetails userId="canonical-id" identity={identity} loading={false} error={null} onRetry={jest.fn()} />);
   expect(screen.getByText("user:canonical-id")).toBeInTheDocument();
   expect(screen.getByText("upstream-id")).toBeInTheDocument();
   expect(screen.getByText("example-reader")).toBeInTheDocument();
-  expect(screen.getByText(/No active membership sources recorded/)).toBeInTheDocument();
+  expect(screen.getByText(/Provider claim-mapping rules/)).toBeInTheDocument();
   expect(screen.queryByText("Local")).not.toBeInTheDocument();
 });
 
@@ -22,7 +22,6 @@ it("shows unavailable and a refresh action rather than a local identity", () => 
   const retry = jest.fn();
   render(<UserIdentityDetails userId="canonical-id" identity={null} loading={false} error="Identity information unavailable." onRetry={retry} />);
   expect(screen.getByRole("alert")).toHaveTextContent("unavailable");
-  expect(screen.getByText("Membership source information unavailable.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Refresh identity" }));
   expect(retry).toHaveBeenCalledTimes(1);
   expect(screen.queryByText("Local")).not.toBeInTheDocument();
@@ -41,11 +40,18 @@ it("distinguishes a failed broker lookup from a successful empty result", () => 
 });
 
 it("flags mismatched and unresolved membership identities without claiming graph drift", () => {
-  render(<UserIdentityDetails userId="canonical-id" identity={identity} loading={false} error={null} onRetry={jest.fn()} sourcesAvailable sources={[
+  render(<UserMembershipSources userId="canonical-id" sourcesAvailable sources={[
     { team: "example-team", relationship: "member", source: "oidc_claim", provider: "primary", externalGroup: "example-group", subject: "old-id" },
     { team: "another-team", relationship: "member", source: "manual" },
   ]} />);
   expect(screen.getByText(/Recorded subject differs/)).toBeInTheDocument();
   expect(screen.getByText("Identity link is unresolved.")).toBeInTheDocument();
   expect(screen.getByText(/not a live upstream directory query or proof/)).toBeInTheDocument();
+});
+
+it("distinguishes unavailable membership information from an empty result", () => {
+  const { rerender } = render(<UserMembershipSources userId="canonical-id" />);
+  expect(screen.getByText("Membership source information unavailable.")).toBeInTheDocument();
+  rerender(<UserMembershipSources userId="canonical-id" sourcesAvailable sources={[]} />);
+  expect(screen.getByText("No active membership sources recorded.")).toBeInTheDocument();
 });

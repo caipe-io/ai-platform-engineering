@@ -1,7 +1,7 @@
 "use client";
 
 import { TeamPicker, type TeamPickerOption } from "@/components/ui/team-picker";
-import { UserIdentityDetails } from "./UserIdentityDetails";
+import { UserIdentityDetails, UserMembershipSources } from "./UserIdentityDetails";
 import type { UserIdentityInfo, UserMembershipSourceInfo } from "@/types/admin-user-identity";
 import {
   withAdminSimulationParams,
@@ -611,146 +611,30 @@ export function UserDetailModal({
               </p>
             ) : null}
 
-            <section className="mt-6 border-t border-border pt-6">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-md text-left text-sm font-semibold text-foreground hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  aria-expanded={teamsExpanded}
-                  aria-controls="user-detail-teams-list"
-                  disabled={teams.length <= TEAM_COLLAPSED_LIMIT}
-                  onClick={() => setTeamsExpanded((prev) => !prev)}
-                >
-                  <ChevronDown
-                    className={`h-4 w-4 transition-transform ${
-                      teamsExpanded ? "rotate-0" : "-rotate-90"
-                    } ${teams.length <= TEAM_COLLAPSED_LIMIT ? "opacity-0" : ""}`}
-                    aria-hidden
-                  />
-                  <span>Teams</span>
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                    {teams.length}
-                  </span>
-                </button>
-                {teams.length > TEAM_COLLAPSED_LIMIT ? (
-                  <button
-                    type="button"
-                    className="rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10"
-                    onClick={() => setTeamsExpanded((prev) => !prev)}
-                  >
-                    {teamsExpanded ? "Collapse" : `Show ${hiddenTeamCount} more`}
-                  </button>
-                ) : null}
-              </div>
-              <div id="user-detail-teams-list" className="mb-3 flex flex-wrap gap-2">
-                {teams.length === 0 ? (
-                  <span className="text-sm text-muted-foreground">No teams</span>
-                ) : (
-                  visibleTeams.map((t) => (
-                    <span
-                      key={`${t.team_id}:${t.tenant_id}`}
-                      className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground"
-                    >
-                      {t.team_id}
-                      <span className="text-muted-foreground font-normal">
-                        ({t.tenant_id})
-                      </span>
-                      {!readOnly && (
-                        <button
-                          type="button"
-                          className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                          aria-label={`Remove team ${t.team_id}`}
-                          disabled={busy != null}
-                          onClick={() => removeTeam(t.team_id)}
-                        >
-                          ×
-                        </button>
-                      )}
-                    </span>
-                  ))
-                )}
-                {hiddenTeamCount > 0 ? (
-                  <span className="inline-flex items-center rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-                    +{hiddenTeamCount} more
-                  </span>
-                ) : null}
-              </div>
-              {!readOnly && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <label htmlFor="add-team" className="text-sm text-muted-foreground">
-                    Add team
-                  </label>
-                  {teamOptionsLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
-                  ) : (
-                    <TeamPicker
-                      id="add-team"
-                      value={addTeamValue}
-                      onChange={(v) => {
-                        if (!v) return;
-                        addTeam(v);
-                        setAddTeamValue("");
-                      }}
-                      disabled={busy != null || addableTeams.length === 0}
-                      placeholder={addableTeams.length === 0 ? "No teams to add" : "Select a team…"}
-                      searchPlaceholder="Search teams..."
-                      triggerClassName="min-w-[12rem]"
-                      options={addableTeams.map<TeamPickerOption>((t) => ({
-                        slug: t.teamId,
-                        name: t.label,
-                      }))}
-                    />
-                  )}
-                </div>
-              )}
-            </section>
-
-            <section className="mt-6 border-t border-border pt-6">
-              <div className="flex items-baseline justify-between mb-3">
-                <h3 className="text-sm font-semibold text-foreground">Access</h3>
-                <span className="text-xs text-muted-foreground">
-                  Reported resource permissions
-                </span>
-              </div>
-              {accessLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                  <span>Resolving access…</span>
-                </div>
-              ) : accessError ? (
-                <p className="text-sm text-destructive">{accessError}</p>
-              ) : !access || accessTotal === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No access found for the resource types and capabilities checked here.
-                </p>
-              ) : (
-                <div className="space-y-4">
-                  {ACCESS_GROUP_LABELS.map(({ key, label }) => {
-                    const items = access[key] ?? [];
-                    if (items.length === 0) return null;
-                    return <AccessGroupList key={key} label={label} items={items} />;
-                  })}
-                </div>
-              )}
-              <p className="mt-3 text-xs text-muted-foreground">OpenFGA-backed access summary, not a complete grant inventory or a CAS decision for a specific request. “Effective” means the exact grant source was not resolved.</p>
-            </section>
-
+            <details key={`identity-${user.id}`} className="group mt-4 rounded-lg border border-border">
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg p-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="h-4 w-4 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />
+                <span>Identity</span>
+                <span className="ml-auto text-xs font-normal text-muted-foreground">{identityLoading ? "Loading…" : identityError || identity?.unavailable?.length ? "Some data unavailable" : idpLabel}</span>
+              </summary>
+              <div className="border-t border-border p-4 space-y-4">
             <UserIdentityDetails
               userId={user.id}
               principalType={user.principalType}
               identity={identity}
               loading={identityLoading}
               error={identityError}
-              sources={user.membershipSources}
-              sourcesAvailable={user.membershipSourcesAvailable}
               onRetry={() => void loadIdentity()}
             />
 
-            <section className="mt-6 border-t border-border pt-6">
-              <h3 className="text-sm font-semibold text-foreground mb-3">
-                Identity & account
-              </h3>
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold text-foreground mb-3">
+                Account details & integration links
+              </h4>
+              <p className="text-xs text-muted-foreground">Messaging-account links are integrations, not necessarily login methods.</p>
               <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                <div><dt className="text-muted-foreground">Keycloak username</dt><dd className="break-all">{user.username || "Not reported"}</dd></div>
+                <div><dt className="text-muted-foreground">Email attribute</dt><dd className="break-all">{user.email || "Not reported"}</dd></div>
                 <div>
                   <dt className="text-muted-foreground">IdP source</dt>
                   <dd className="font-medium text-foreground mt-0.5">
@@ -838,7 +722,153 @@ export function UserDetailModal({
                   </dd>
                 </div>
               </dl>
-            </section>
+            </div>
+              </div>
+            </details>
+
+            <details key={`teams-${user.id}`} className="group mt-4 rounded-lg border border-border">
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg p-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="h-4 w-4 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />
+                <span>Teams</span>
+                <span className="ml-auto text-xs font-normal text-muted-foreground">{teams.length} teams{!user.membershipSourcesAvailable ? " · Sources unavailable" : user.membershipSources?.some((source) => source.subject !== user.id) ? " · Identity link needs review" : ""}</span>
+              </summary>
+              <div className="border-t border-border p-4 space-y-4">
+            <div>
+              <p className="mb-3 text-xs text-muted-foreground">Recorded team memberships and their sources. A membership record alone does not confirm access to a resource.</p>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-md text-left text-sm font-semibold text-foreground hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  aria-expanded={teamsExpanded}
+                  aria-controls="user-detail-teams-list"
+                  disabled={teams.length <= TEAM_COLLAPSED_LIMIT}
+                  onClick={() => setTeamsExpanded((prev) => !prev)}
+                >
+                  <ChevronDown
+                    className={`h-4 w-4 transition-transform ${
+                      teamsExpanded ? "rotate-0" : "-rotate-90"
+                    } ${teams.length <= TEAM_COLLAPSED_LIMIT ? "opacity-0" : ""}`}
+                    aria-hidden
+                  />
+                  <span>Memberships</span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                    {teams.length}
+                  </span>
+                </button>
+                {teams.length > TEAM_COLLAPSED_LIMIT ? (
+                  <button
+                    type="button"
+                    className="rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10"
+                    onClick={() => setTeamsExpanded((prev) => !prev)}
+                  >
+                    {teamsExpanded ? "Collapse" : `Show ${hiddenTeamCount} more`}
+                  </button>
+                ) : null}
+              </div>
+              <div id="user-detail-teams-list" className="mb-3 flex flex-wrap gap-2">
+                {teams.length === 0 ? (
+                  <span className="text-sm text-muted-foreground">No teams</span>
+                ) : (
+                  visibleTeams.map((t) => (
+                    <span
+                      key={`${t.team_id}:${t.tenant_id}`}
+                      className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground"
+                    >
+                      {t.team_id}
+                      <span className="text-muted-foreground font-normal">
+                        ({t.tenant_id})
+                      </span>
+                      {!readOnly && (
+                        <button
+                          type="button"
+                          className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                          aria-label={`Remove team ${t.team_id}`}
+                          disabled={busy != null}
+                          onClick={() => removeTeam(t.team_id)}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  ))
+                )}
+                {hiddenTeamCount > 0 ? (
+                  <span className="inline-flex items-center rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                    +{hiddenTeamCount} more
+                  </span>
+                ) : null}
+              </div>
+              {!readOnly && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <label htmlFor="add-team" className="text-sm text-muted-foreground">
+                    Add team
+                  </label>
+                  {teamOptionsLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
+                  ) : (
+                    <TeamPicker
+                      id="add-team"
+                      value={addTeamValue}
+                      onChange={(v) => {
+                        if (!v) return;
+                        addTeam(v);
+                        setAddTeamValue("");
+                      }}
+                      disabled={busy != null || addableTeams.length === 0}
+                      placeholder={addableTeams.length === 0 ? "No teams to add" : "Select a team…"}
+                      searchPlaceholder="Search teams..."
+                      triggerClassName="min-w-[12rem]"
+                      options={addableTeams.map<TeamPickerOption>((t) => ({
+                        slug: t.teamId,
+                        name: t.label,
+                      }))}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+            <UserMembershipSources userId={user.id} sources={user.membershipSources} sourcesAvailable={user.membershipSourcesAvailable} />
+              </div>
+            </details>
+
+            <details key={`access-${user.id}`} className="group mt-4 rounded-lg border border-border">
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg p-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="h-4 w-4 -rotate-90 transition-transform group-open:rotate-0" aria-hidden />
+                <span>Access</span>
+                <span className="ml-auto text-xs font-normal text-muted-foreground">{accessLoading ? "Loading…" : accessError ? "Unavailable" : `${accessTotal} reported permissions`}</span>
+              </summary>
+              <div className="border-t border-border p-4 space-y-4">
+            <div>
+              <div className="flex items-baseline justify-between mb-3">
+                <h4 className="text-sm font-semibold text-foreground">Resource access</h4>
+                <span className="text-xs text-muted-foreground">
+                  Reported resource permissions
+                </span>
+              </div>
+              {accessLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  <span>Resolving access…</span>
+                </div>
+              ) : accessError ? (
+                <p className="text-sm text-destructive">{accessError}</p>
+              ) : !access || accessTotal === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No access found for the resource types and capabilities checked here.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {ACCESS_GROUP_LABELS.map(({ key, label }) => {
+                    const items = access[key] ?? [];
+                    if (items.length === 0) return null;
+                    return <AccessGroupList key={key} label={label} items={items} />;
+                  })}
+                </div>
+              )}
+              <p className="mt-3 text-xs text-muted-foreground">OpenFGA-backed access summary, not a complete grant inventory or a CAS decision for a specific request. “Effective” means the exact grant source was not resolved.</p>
+            </div>
+              </div>
+            </details>
 
             <div className="mt-8 flex justify-end gap-2 border-t border-border pt-4">
               <button

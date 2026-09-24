@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { UserDetailModal } from "../UserDetailModal";
 
 const updateSession = jest.fn();
@@ -149,6 +149,29 @@ describe("UserDetailModal", () => {
     jest.restoreAllMocks();
   });
 
+  it("starts with Identity, Teams and Access collapsed and opens them independently", async () => {
+    render(<UserDetailModal userId="user-1" onClose={jest.fn()} onSaved={jest.fn()} />);
+    await screen.findByText("Test User");
+    const sections = ["Identity", "Teams", "Access"].map((name) => screen.getByText(name).closest("details")!);
+    expect(sections.every((section) => !section.open)).toBe(true);
+    expect(sections[0].compareDocumentPosition(sections[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sections[1].compareDocumentPosition(sections[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByText("Identity"));
+    expect(sections[0].open).toBe(true);
+    expect(sections[1].open).toBe(false);
+    expect(within(sections[0]).getByText("Keycloak user ID")).toBeInTheDocument();
+    expect(within(sections[0]).getByText("Account created")).toBeInTheDocument();
+    expect(within(sections[0]).queryByText(/Active membership sources/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Teams"));
+    expect(sections[0].open).toBe(true);
+    expect(sections[1].open).toBe(true);
+    expect(within(sections[1]).getByText(/Active membership sources/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Access"));
+    expect(sections[2].open).toBe(true);
+    expect(screen.queryByText("Identity diagnostics")).not.toBeInTheDocument();
+    expect(screen.queryByText("Identity & account")).not.toBeInTheDocument();
+  });
+
   it("handles identity network failures without presenting a local account", async () => {
     const original = global.fetch;
     global.fetch = jest.fn((...args: Parameters<typeof fetch>) => {
@@ -157,6 +180,7 @@ describe("UserDetailModal", () => {
     });
     render(<UserDetailModal userId="user-1" onClose={jest.fn()} onSaved={jest.fn()} />);
     expect(await screen.findByText("Identity information unavailable. Please retry.")).toBeInTheDocument();
+    expect(screen.getByText("Some data unavailable")).toBeVisible();
     expect(screen.queryByText("Local")).not.toBeInTheDocument();
     expect(screen.queryByText("No broker link reported")).not.toBeInTheDocument();
   });
@@ -251,6 +275,7 @@ describe("UserDetailModal", () => {
     expect(screen.getByText("tool-7")).toBeInTheDocument();
     expect(screen.queryByText("tool-8")).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByText("Access"));
     const showMore = screen.getByRole("button", { name: /show 12 more/i });
     fireEvent.click(showMore);
 
@@ -295,6 +320,7 @@ describe("UserDetailModal", () => {
     expect(screen.queryByText("team-8")).not.toBeInTheDocument();
     expect(screen.getByText("+6 more")).toBeInTheDocument();
 
+    fireEvent.click(screen.getByText("Teams"));
     fireEvent.click(screen.getByRole("button", { name: /show 6 more/i }));
 
     expect(screen.getByText("team-13")).toBeInTheDocument();
@@ -366,6 +392,8 @@ describe("UserDetailModal", () => {
     );
 
     expect(await screen.findByText("Test User")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Identity"));
+    fireEvent.click(screen.getByText("Teams"));
     expect(screen.getByRole("switch")).toBeDisabled();
     expect(screen.queryByRole("button", { name: /unlink webex/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /unlink slack/i })).not.toBeInTheDocument();
@@ -410,6 +438,7 @@ describe("UserDetailModal", () => {
     );
 
     expect(await screen.findByText("person-abc@example.com")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Identity"));
     fireEvent.click(screen.getByRole("button", { name: /unlink webex/i }));
 
     await waitFor(() => {
@@ -432,6 +461,7 @@ describe("UserDetailModal", () => {
 
     expect(await screen.findByText("U123SLACK")).toBeInTheDocument();
 
+    fireEvent.click(screen.getByText("Identity"));
     fireEvent.click(screen.getByRole("button", { name: /unlink slack/i }));
 
     await waitFor(() => {

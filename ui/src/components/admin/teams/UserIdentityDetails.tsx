@@ -2,26 +2,25 @@
 
 import type { UserIdentityInfo, UserMembershipSourceInfo } from "@/types/admin-user-identity";
 
-export function UserIdentityDetails({ userId, principalType = "user", identity, loading, error, sources, sourcesAvailable, onRetry }: {
+export function UserIdentityDetails({ userId, principalType = "user", identity, loading, error, onRetry }: {
   userId: string;
   principalType?: "user" | "service_account";
   identity: UserIdentityInfo | null;
   loading: boolean;
   error: string | null;
-  sources?: UserMembershipSourceInfo[];
-  sourcesAvailable?: boolean;
   onRetry: () => void;
 }) {
   const unavailable = identity?.unavailable ?? [];
   return (
-    <section className="mt-6 border-t border-border pt-6 space-y-4" aria-label="Identity diagnostics">
+    <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">Identity diagnostics</h3>
+        <h4 className="text-sm font-semibold">CAIPE identity</h4>
         <button type="button" className="text-xs underline disabled:opacity-50" disabled={loading} onClick={onRetry}>
           {loading ? "Loading identity…" : "Refresh identity"}
         </button>
       </div>
       <dl className="grid gap-3 sm:grid-cols-2 text-sm">
+        <div><dt className="text-muted-foreground">Account type</dt><dd>{principalType === "service_account" ? "Service account" : "Human user"}</dd></div>
         <div><dt className="text-muted-foreground">Keycloak user ID</dt><dd className="font-mono break-all select-all">{userId}</dd></div>
         <div><dt className="text-muted-foreground">Expected OpenFGA principal</dt><dd className="font-mono break-all select-all">{principalType}:{userId}</dd></div>
         <div><dt className="text-muted-foreground">Keycloak realm</dt><dd>{loading ? "Loading…" : identity?.realm || "Unavailable"}</dd></div>
@@ -31,6 +30,7 @@ export function UserIdentityDetails({ userId, principalType = "user", identity, 
       {!loading && identity && <>
         <div>
           <h4 className="text-sm font-medium">Linked upstream accounts</h4>
+          <p className="mt-1 text-xs text-muted-foreground">These external accounts are linked to the Keycloak user above. Provider claim-mapping rules and original upstream claim values are not inspected in this view.</p>
           {unavailable.includes("federatedIdentities") ? <p className="text-sm text-destructive">Linked accounts unavailable. This does not mean the account is local.</p>
             : identity.federatedIdentities.length === 0 ? <p className="text-sm text-muted-foreground">No broker-linked accounts reported by Keycloak.</p>
             : <ul className="mt-2 space-y-2">{identity.federatedIdentities.map((link) => (
@@ -48,8 +48,19 @@ export function UserIdentityDetails({ userId, principalType = "user", identity, 
         </details>
         <p className="text-xs text-muted-foreground">Keycloak queried at {identity.fetchedAt || "unknown time"}. Linked accounts do not expose all upstream claims, scopes or entitlements.</p>
       </>}
-      <details className="text-sm">
-        <summary className="cursor-pointer font-medium">Active membership sources{sourcesAvailable ? ` (${sources?.length ?? 0})` : ""}</summary>
+
+    </div>
+  );
+}
+
+export function UserMembershipSources({ userId, sources, sourcesAvailable }: {
+  userId: string;
+  sources?: UserMembershipSourceInfo[];
+  sourcesAvailable?: boolean;
+}) {
+  return (
+      <div className="text-sm space-y-2">
+        <h4 className="font-medium">Active membership sources{sourcesAvailable ? ` (${sources?.length ?? 0})` : ""}</h4>
         <p className="mt-2 text-xs text-muted-foreground">CAIPE membership records matched by this account’s email, not a live upstream directory query or proof of OpenFGA synchronization.</p>
         {!sourcesAvailable ? <p className="mt-2">Membership source information unavailable.</p>
           : !sources?.length ? <p className="mt-2">No active membership sources recorded.</p>
@@ -63,7 +74,6 @@ export function UserIdentityDetails({ userId, principalType = "user", identity, 
               <p className="text-xs text-muted-foreground">Last observed: {source.lastSeenAt || "Not recorded"} · Last applied: {source.lastAppliedAt || "Not recorded"}</p>
             </li>
           ))}</ul>}
-      </details>
-    </section>
+      </div>
   );
 }
