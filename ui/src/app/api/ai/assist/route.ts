@@ -24,8 +24,8 @@
  */
 
 import { authenticateRequest } from "@/lib/da-proxy";
-import { getCollection } from "@/lib/mongodb";
 import { consume } from "@/lib/server/ai-assist-rate-limit";
+import { resolveLlmModel } from "@/lib/server/platform-llm.server";
 import {
 getAiAssistTask,
 type AiAssistContext,
@@ -49,28 +49,15 @@ async function resolveModel(
   override: { id?: string; provider?: string } | undefined,
   envDefault: { id: string; provider: string },
 ): Promise<{ id: string; provider: string }> {
-  if (override?.id && override?.provider) {
-    return { id: override.id, provider: override.provider };
-  }
-  // Honour env overrides whenever they're set so a deployment can pin a
-  // specific model regardless of what's seeded in Mongo.
-  if (
+  // `envDefault` always carries a value, so it only counts as an explicit
+  // deployment pin when one of the env vars behind it is actually set.
+  const envPinned =
     process.env.AI_ASSIST_MODEL_ID ||
     process.env.AI_ASSIST_MODEL_PROVIDER ||
     process.env.SKILL_AI_MODEL_ID
-  ) {
-    return envDefault;
-  }
-  try {
-    const col = await getCollection("llm_models");
-    const first = await col.findOne({}, { sort: { name: 1 } });
-    if (first?.model_id && first?.provider) {
-      return { id: String(first.model_id), provider: String(first.provider) };
-    }
-  } catch {
-    // Mongo unavailable or collection empty — fall through to env default.
-  }
-  return envDefault;
+      ? envDefault
+      : null;
+  return resolveLlmModel({ override, envModel: envPinned });
 }
 
 /**

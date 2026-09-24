@@ -1,5 +1,5 @@
 import { authenticateRequest } from "@/lib/da-proxy";
-import { getCollection } from "@/lib/mongodb";
+import { resolveLlmModel } from "@/lib/server/platform-llm.server";
 import { getAiAssistTask } from "@/lib/server/ai-assist-tasks";
 import { fetchAssistantSuggest } from "@/lib/server/assistant-suggest-da";
 import { NextRequest } from "next/server";
@@ -80,27 +80,15 @@ export async function POST(request: NextRequest) {
           skill_description: body.skill_description,
         });
 
-        // Mirror /api/ai/assist's model fallback: prefer Mongo-seeded llm_models
-        // over the static env default so deployments without OPENAI_API_KEY
-        // don't 500 with the opaque "Failed to generate suggestion" detail.
-        let model = task.defaultModel(process.env);
-        if (
-          !process.env.AI_ASSIST_MODEL_ID &&
-          !process.env.SKILL_AI_MODEL_ID
-        ) {
-          try {
-            const col = await getCollection("llm_models");
-            const first = await col.findOne({}, { sort: { name: 1 } });
-            if (first?.model_id && first?.provider) {
-              model = {
-                id: String(first.model_id),
-                provider: String(first.provider),
-              };
-            }
-          } catch {
-            /* fall through to env default */
-          }
-        }
+        const envDefault = task.defaultModel(process.env);
+        const model = await resolveLlmModel({
+          // `defaultModel` always returns something, so it only counts as a
+          // deployment pin when one of the env vars behind it is actually set.
+          envModel:
+            process.env.AI_ASSIST_MODEL_ID || process.env.SKILL_AI_MODEL_ID
+              ? envDefault
+              : null,
+        });
 
         const result = await fetchAssistantSuggest(headers, {
           system_prompt: task.systemPrompt,

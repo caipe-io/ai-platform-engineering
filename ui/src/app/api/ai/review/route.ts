@@ -27,11 +27,11 @@
  */
 
 import { authenticateRequest } from "@/lib/da-proxy";
-import { getCollection } from "@/lib/mongodb";
 import { consume } from "@/lib/server/ai-assist-rate-limit";
 import { ensureConfig } from "@/lib/server/ai-review/defaults";
 import { computeScoreAndGrade } from "@/lib/server/ai-review/grading";
 import { runCriterion } from "@/lib/server/ai-review/run-criteria";
+import { resolveLlmModel } from "@/lib/server/platform-llm.server";
 import {
 DEFAULT_GRADE_THRESHOLDS,
 type CriterionVerdict,
@@ -79,52 +79,27 @@ function userKeyFromUserContext(
   }
 }
 
-function envDefaultModel(): { id: string; provider: string } {
+/** An explicitly pinned environment model, or null when nothing is set. */
+function envPinnedModel(): { id: string; provider: string } | null {
+  const id = process.env.AI_ASSIST_MODEL_ID || process.env.SKILL_AI_MODEL_ID;
+  const provider =
+    process.env.AI_ASSIST_MODEL_PROVIDER || process.env.SKILL_AI_MODEL_PROVIDER;
+  if (!id && !provider) return null;
   return {
-    id:
-      process.env.AI_ASSIST_MODEL_ID ||
-      process.env.SKILL_AI_MODEL_ID ||
-      GLOBAL_DEFAULT_MODEL_ID,
-    provider:
-      process.env.AI_ASSIST_MODEL_PROVIDER ||
-      process.env.SKILL_AI_MODEL_PROVIDER ||
-      GLOBAL_DEFAULT_PROVIDER,
+    id: id || GLOBAL_DEFAULT_MODEL_ID,
+    provider: provider || GLOBAL_DEFAULT_PROVIDER,
   };
 }
 
-/**
- * Resolve a runnable model. Same precedence rules as /api/ai/assist:
- * caller override → per-target config override → env default → first
- * llm_models doc in Mongo → registry default.
- */
 async function resolveModel(
   override: { id?: string; provider?: string } | undefined,
   configModel: { id?: string; provider?: string } | undefined,
 ): Promise<{ id: string; provider: string }> {
-  if (override?.id && override?.provider) {
-    return { id: override.id, provider: override.provider };
-  }
-  if (configModel?.id && configModel?.provider) {
-    return { id: configModel.id, provider: configModel.provider };
-  }
-  // If env explicitly pins a model, use it before consulting Mongo.
-  if (
-    process.env.AI_ASSIST_MODEL_ID ||
-    process.env.AI_ASSIST_MODEL_PROVIDER ||
-    process.env.SKILL_AI_MODEL_ID
-  ) {
-    return envDefaultModel();
-  }
-  try {
-    const col = await getCollection("llm_models");
-    const first = await col.findOne({}, { sort: { name: 1 } });
-    if (first?.model_id && first?.provider) {
-      return { id: String(first.model_id), provider: String(first.provider) };
-    }
-  } catch {
-    // Mongo unavailable — fall through.
-  }
-  return envDefaultModel();
+  return resolveLlmModel({
+    override,
+    configModel,
+    envModel: envPinnedModel(),
+  });
 }
 
 /** Compute sha-256 hex of `content` server-side for hash verification. */
