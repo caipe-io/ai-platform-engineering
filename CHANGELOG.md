@@ -1,3 +1,14 @@
+## 1.3.0-rc.2 (2026-09-24)
+
+### Feat
+
+- **admin**: improve user identity and access visibility (#2810)
+- **authz**: establish BFF access API foundation (#2807)
+
+### Fix
+
+- **agents**: restore Azure and Bedrock reasoning (#2809)
+
 ## 1.3.0-rc.1 (2026-09-23)
 
 ### Feat
