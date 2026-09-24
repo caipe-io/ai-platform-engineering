@@ -89,9 +89,11 @@ def test_openai_compatible_is_present_and_maps_to_openai() -> None:
     assert PROVIDERS[OPENAI_COMPATIBLE].langchain_provider == "openai"
 
 
-def test_litellm_is_available_as_an_opt_in_provider() -> None:
-    # Present in the map, but `langchain-litellm` is not a default dependency.
-    assert PROVIDERS["litellm"].langchain_provider == "litellm"
+def test_no_in_process_routing_library_provider() -> None:
+    # FR-024: no broad multi-provider routing library in an agent-serving
+    # process. LiteLLM is reached through its proxy via OPENAI_COMPATIBLE,
+    # which needs no extra dependency and works for sandboxed runtimes.
+    assert "litellm" not in PROVIDERS
 
 
 def test_bedrock_is_not_in_the_static_map() -> None:
