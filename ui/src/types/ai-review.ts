@@ -132,8 +132,14 @@ export interface ReviewConfig {
 
 /** Update-payload — partial; updated_at is server-stamped. */
 export type ReviewConfigUpdate = Partial<
-  Omit<ReviewConfig, "_id" | "target" | "updated_at">
->;
+  Omit<ReviewConfig, "_id" | "target" | "updated_at" | "model">
+> & {
+  /**
+   * Null clears the pinned model so the target falls back to the Platform LLM.
+   * Omitting the key leaves whatever is stored untouched.
+   */
+  model?: { id?: string; provider?: string } | null;
+};
 
 // ---------------------------------------------------------------------------
 // Run-time review request / response

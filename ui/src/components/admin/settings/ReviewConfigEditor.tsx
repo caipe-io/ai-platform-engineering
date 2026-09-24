@@ -314,10 +314,13 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
     setError(null);
     setSaving(true);
     try {
+      // Explicitly null, not undefined: `JSON.stringify` drops undefined, and the
+      // API reads an absent `model` as "leave it alone". Only null clears the
+      // pinned model so this target falls back to the Platform LLM.
       const modelObj =
         state.model_id && state.model_provider
           ? { id: state.model_id, provider: state.model_provider }
-          : undefined;
+          : null;
 
       const payload: ReviewConfigUpdate = {
         enabled: state.enabled,
