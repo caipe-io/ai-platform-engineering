@@ -4,7 +4,7 @@
 
 ## What this is
 
-`ai_platform_engineering/caipe_llm_wrapper/` is **canonical source that consumers copy**, not a package they install. Copying is deliberate: an installed package would pin one `langchain-aws` / `boto3` / `langchain-anthropic` version for every consumer, which is the coupling this feature exists to remove.
+`ai_platform_engineering/utils/llm_wrapper/` is **canonical source that consumers copy**, not a package they install. Copying is deliberate: an installed package would pin one `langchain-aws` / `boto3` / `langchain-anthropic` version for every consumer, which is the coupling this feature exists to remove.
 
 Three modules, so a consumer can take a subset:
 
@@ -21,7 +21,7 @@ A sandboxed harness worker is expected to take the first two and not the third â
 Two lines. Say you want DeepSeek:
 
 ```python
-# caipe_llm_wrapper/providers.py
+# ai_platform_engineering/utils/llm_wrapper/providers.py
 _PROVIDERS = {
     ...
     "deepseek": ("deepseek", "DEEPSEEK_MODEL_NAME"),
@@ -35,7 +35,7 @@ _PROVIDERS = {
 
 Then add the string to the UI provider list. That is the whole change: `init_chat_model` already knows 28 provider strings, so nothing in `build.py` changes.
 
-**Do not** add a provider to `caipe_llm_wrapper` and to the root `pyproject.toml` at the same time. The point of this structure is that each image installs only the integrations it uses.
+**Do not** add a provider to `llm_wrapper` and to the root `pyproject.toml` at the same time. The point of this structure is that each image installs only the integrations it uses.
 
 ## Using the gateway provider
 
@@ -54,8 +54,8 @@ This is implemented as `ChatOpenAI(base_url=...)` and adds no dependency. It is 
 
 ```bash
 # from repo root
-cp ai_platform_engineering/caipe_llm_wrapper/{providers,bedrock_family,build}.py \
-   ai_platform_engineering/<consumer>/src/<consumer>/_vendor/caipe_llm_wrapper/
+cp ai_platform_engineering/utils/llm_wrapper/{providers,bedrock_family,build}.py \
+   ai_platform_engineering/<consumer>/src/<consumer>/_vendor/llm_wrapper/
 python scripts/check_vendored.py            # must pass before commit
 ```
 
@@ -68,7 +68,7 @@ python scripts/check_vendored.py            # must pass before commit
 ```toml
 # vendored.toml
 [[divergence]]
-path = "ai_platform_engineering/<worker>/_vendor/caipe_llm_wrapper/build.py"
+path = "ai_platform_engineering/<worker>/_vendor/llm_wrapper/build.py"
 reason = "Sandboxed worker holds no AWS credentials; LLM_CLIENT_SHARING path removed."
 ```
 
@@ -84,10 +84,10 @@ Silent divergence is the failure mode. Declared divergence is fine.
 ## Verifying a change
 
 ```bash
-uv run pytest ai_platform_engineering/caipe_llm_wrapper/tests -q
+uv run pytest ai_platform_engineering/utils/llm_wrapper/tests -q
 uv run pytest ai_platform_engineering/dynamic_agents/tests -q
 python scripts/check_vendored.py
-uv run ruff check ai_platform_engineering/caipe_llm_wrapper
+uv run ruff check ai_platform_engineering/utils/llm_wrapper
 ```
 
 For anything touching model construction, also confirm the US3 capabilities by hand on at least one Bedrock and one non-Bedrock provider: cache-read tokens still reported on turn 2, per-runtime memory unchanged with `LLM_CLIENT_SHARING=true`, a long tool call not hitting a read timeout, and a text-family attachment accepted.
