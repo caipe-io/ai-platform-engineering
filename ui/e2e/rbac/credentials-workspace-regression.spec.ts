@@ -326,9 +326,15 @@ test.describe("mocked credentials workspace browser regression", () => {
       });
       const relayPage = await relayPagePromise;
       await relayPage.waitForLoadState("domcontentloaded");
-      await relayPage.close().catch(() => undefined);
 
+      // Wait for the navigation triggered by the relay's postMessage/
+      // BroadcastChannel before closing the relay page. Both delivery
+      // mechanisms are asynchronous, so closing the sender immediately
+      // after domcontentloaded can tear down its browsing context before
+      // the message actually reaches this page's listeners, making this
+      // assertion fail even though the relay's script already ran.
       await expect(page).toHaveURL(/\/credentials\/connections$/);
+      await relayPage.close().catch(() => undefined);
       await expect(page.getByRole("heading", { name: "Connected Apps" })).toBeVisible();
       await expect(page.getByText("Atlassian Cloud")).toBeVisible();
       await expect(page.getByText("healthy")).toBeVisible();
