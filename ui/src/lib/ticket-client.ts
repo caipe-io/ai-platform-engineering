@@ -225,8 +225,11 @@ export async function createTicketViaAgent(
       message: prompt,
       conversationId: conversation.conversation._id,
       agentId: agent.id,
-      source: "web",
+      // `source` MUST live inside clientContext: the custom stream consumer
+      // serializes only `client_context` into the request body, and the
+      // backend's ClientContext model requires `source` (422 otherwise).
       clientContext: {
+        source: "webui",
         userEmail: request.userEmail,
         ticketProvider: getConfig("ticketProvider"),
       },
