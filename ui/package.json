@@ -6,10 +6,15 @@
     "node": ">=24.11.0 <25"
   },
   "scripts": {
+    "generate:native-extensions": "node scripts/generate-native-extensions.mjs",
+    "predev": "npm run generate:native-extensions",
     "dev": "next dev",
+    "prebuild": "npm run generate:native-extensions",
     "build": "next build",
     "start": "next start",
+    "prelint": "npm run generate:native-extensions",
     "lint": "eslint .",
+    "pretest": "npm run generate:native-extensions",
     "test": "jest",
     "test:external-app-examples": "node --test examples/external-apps/weather/test/*.test.mjs",
     "test:watch": "jest --watch",

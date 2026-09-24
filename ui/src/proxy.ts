@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { AGENTIC_APP_PUBLIC_BASE, AGENTIC_APP_RUNTIME_BASE } from "@/lib/agentic-apps/runtime";
+import {
+  nativeExtensionForApiPath,
+  nativeExtensionForHostPath,
+} from "@/native-extensions/runtime";
 
 const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -16,6 +20,20 @@ const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
  */
 export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
+  const nativeApiExtension = nativeExtensionForApiPath(pathname);
+  if (nativeApiExtension) {
+    const runtimeUrl = request.nextUrl.clone();
+    runtimeUrl.pathname = `${nativeApiExtension.api.basePath}${pathname}`;
+    return NextResponse.rewrite(runtimeUrl);
+  }
+
+  const nativeHostExtension = nativeExtensionForHostPath(pathname);
+  if (nativeHostExtension) {
+    const extensionUrl = request.nextUrl.clone();
+    extensionUrl.pathname = `/native-extensions/${nativeHostExtension.id}${pathname}`;
+    return NextResponse.rewrite(extensionUrl);
+  }
+
   const appPath = parseAgenticAppPath(pathname);
 
   if (!appPath || isHostShellRequest(request)) {
@@ -33,7 +51,9 @@ export function proxy(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ["/apps/:path*"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|icon.ico|robots.txt|sitemap.xml).*)",
+  ],
 };
 
 function parseAgenticAppPath(pathname: string): string | null {
