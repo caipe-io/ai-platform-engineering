@@ -64,13 +64,3 @@ dev = [
 constraint-dependencies = ["click==8.5.0", "starlette==1.6.0", "langchain-aws==1.5.0"]
 # cnoe-agent-utils 0.5.0 still pins 1.4.3, which is affected by GHSA-gr75-jv2w-4656.
 override-dependencies = ["langchain-anthropic==1.4.6"]
-
-# TEMPORARY: cnoe-io/cnoe-agent-utils#46 (the extended-thinking max_tokens
-# fix) is merged to upstream main as of commit 309cbdf, but no 0.5.1 tag/
-# release has been cut yet — PyPI still only has 0.5.0. Pin straight to the
-# merged main commit instead of a fork now that it's reviewed and merged.
-# A direct tarball URL is used instead of a `git` source because the
-# dynamic_agents build image doesn't have the `git` binary installed.
-# Revert this override once 0.5.1 (or later) is published to PyPI.
-[tool.uv.sources]
-cnoe-agent-utils = { url = "https://github.com/cnoe-io/cnoe-agent-utils/archive/309cbdf5b45d68f6b9fd8b34fa213e5b728d843d.tar.gz" }

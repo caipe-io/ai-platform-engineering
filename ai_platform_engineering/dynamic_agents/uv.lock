@@ -231,7 +231,7 @@ wheels = [
 [[package]]
 name = "cnoe-agent-utils"
 version = "0.5.1"
-source = { url = "https://github.com/cnoe-io/cnoe-agent-utils/archive/309cbdf5b45d68f6b9fd8b34fa213e5b728d843d.tar.gz" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
     { name = "botocore" },
@@ -252,68 +252,10 @@ dependencies = [
     { name = "tiktoken" },
     { name = "typing-extensions" },
 ]
-sdist = { hash = "sha256:e8f791994257d48cdb9176f3054fbd36f6bdee177fd0a76687f854c43aa89b8d" }
-
-[package.metadata]
-requires-dist = [
-    { name = "a2a-sdk", marker = "extra == 'a2a'", specifier = "==1.0.3" },
-    { name = "a2a-sdk", marker = "extra == 'agents-all'", specifier = "==1.0.3" },
-    { name = "boto3", specifier = "==1.43.16" },
-    { name = "boto3", marker = "extra == 'aws'", specifier = "==1.43.16" },
-    { name = "botocore", specifier = "==1.43.16" },
-    { name = "botocore", marker = "extra == 'aws'", specifier = "==1.43.16" },
-    { name = "commitizen", marker = "extra == 'dev'", specifier = "==4.13.9" },
-    { name = "google-auth", specifier = "==2.53.0" },
-    { name = "google-auth", marker = "extra == 'gcp'", specifier = "==2.53.0" },
-    { name = "google-cloud-aiplatform", specifier = "==1.154.0" },
-    { name = "google-cloud-aiplatform", marker = "extra == 'gcp'", specifier = "==1.154.0" },
-    { name = "langchain-anthropic", specifier = "==1.4.3" },
-    { name = "langchain-anthropic", marker = "extra == 'anthropic'", specifier = "==1.4.3" },
-    { name = "langchain-aws", specifier = "==1.5.0" },
-    { name = "langchain-aws", marker = "extra == 'aws'", specifier = "==1.5.0" },
-    { name = "langchain-core", marker = "extra == 'agents-all'", specifier = "==1.4.0" },
-    { name = "langchain-core", marker = "extra == 'langgraph'", specifier = "==1.4.0" },
-    { name = "langchain-google-genai", specifier = "==4.2.3" },
-    { name = "langchain-google-genai", marker = "extra == 'gcp'", specifier = "==4.2.3" },
-    { name = "langchain-google-vertexai", specifier = "==3.2.3" },
-    { name = "langchain-google-vertexai", marker = "extra == 'gcp'", specifier = "==3.2.3" },
-    { name = "langchain-groq", specifier = "==1.1.2" },
-    { name = "langchain-groq", marker = "extra == 'groq'", specifier = "==1.1.2" },
-    { name = "langchain-mcp-adapters", marker = "extra == 'agents-all'", specifier = "==0.2.2" },
-    { name = "langchain-mcp-adapters", marker = "extra == 'langgraph'", specifier = "==0.2.2" },
-    { name = "langchain-openai", specifier = "==1.2.2" },
-    { name = "langchain-openai", marker = "extra == 'azure'", specifier = "==1.2.2" },
-    { name = "langchain-openai", marker = "extra == 'openai'", specifier = "==1.2.2" },
-    { name = "langfuse", specifier = "==3.15.0" },
-    { name = "langfuse", marker = "extra == 'tracing'", specifier = "==3.15.0" },
-    { name = "langgraph", marker = "extra == 'agents-all'", specifier = "==1.2.2" },
-    { name = "langgraph", marker = "extra == 'langgraph'", specifier = "==1.2.2" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = "==2.1.0" },
-    { name = "opentelemetry-api", specifier = "==1.42.1" },
-    { name = "opentelemetry-api", marker = "extra == 'tracing'", specifier = "==1.42.1" },
-    { name = "opentelemetry-exporter-otlp", specifier = "==1.42.1" },
-    { name = "opentelemetry-exporter-otlp", marker = "extra == 'tracing'", specifier = "==1.42.1" },
-    { name = "opentelemetry-sdk", specifier = "==1.42.1" },
-    { name = "opentelemetry-sdk", marker = "extra == 'tracing'", specifier = "==1.42.1" },
-    { name = "pip", marker = "extra == 'dev'", specifier = "==26.1.1" },
-    { name = "pydantic", specifier = "==2.13.4" },
-    { name = "pydantic", marker = "extra == 'agents'", specifier = "==2.13.4" },
-    { name = "pydantic", marker = "extra == 'agents-all'", specifier = "==2.13.4" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.3" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = "==1.4.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = "==7.1.0" },
-    { name = "python-dotenv", specifier = "==1.2.2" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.14" },
-    { name = "strands", marker = "extra == 'agents-all'", specifier = "==0.1.0" },
-    { name = "strands", marker = "extra == 'strands'", specifier = "==0.1.0" },
-    { name = "tiktoken", specifier = "==0.13.0" },
-    { name = "tiktoken", marker = "extra == 'agents'", specifier = "==0.13.0" },
-    { name = "tiktoken", marker = "extra == 'agents-all'", specifier = "==0.13.0" },
-    { name = "typing-extensions", specifier = "==4.15.0" },
-    { name = "typing-extensions", marker = "extra == 'agents'", specifier = "==4.15.0" },
-    { name = "typing-extensions", marker = "extra == 'agents-all'", specifier = "==4.15.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/33/83/fa34dc9e42f585f4ce423aa97551352123bf6f15023469595112a59c7c8c/cnoe_agent_utils-0.5.1.tar.gz", hash = "sha256:845a70f77c76afb50688a60fc9aa0cfae03bc9f7259f84a838f54e4ea8d92b6f", size = 252473, upload-time = "2026-09-24T16:07:44.647Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/4c/b84dabb47873a94ac73061e1a213cb6a9b81fcb7d09f58df4ca27cd52b2e/cnoe_agent_utils-0.5.1-py3-none-any.whl", hash = "sha256:c005cdb48738a87ab397710909d7eb94bb2b64d42ce2f3346939e14f55e67f0b", size = 67513, upload-time = "2026-09-24T16:07:43.139Z" },
 ]
-provides-extras = ["anthropic", "dev", "openai", "azure", "aws", "tracing", "gcp", "agents", "langgraph", "strands", "a2a", "agents-all", "groq"]
 
 [[package]]
 name = "colorama"
@@ -496,7 +438,7 @@ dev = [
 requires-dist = [
     { name = "beautifulsoup4", specifier = "==4.15.0" },
     { name = "boto3", specifier = "==1.43.16" },
-    { name = "cnoe-agent-utils", url = "https://github.com/cnoe-io/cnoe-agent-utils/archive/309cbdf5b45d68f6b9fd8b34fa213e5b728d843d.tar.gz" },
+    { name = "cnoe-agent-utils", specifier = "==0.5.1" },
     { name = "deepagents", specifier = "==0.6.8" },
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "jinja2", specifier = "==3.1.6" },
