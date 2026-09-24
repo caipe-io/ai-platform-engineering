@@ -527,6 +527,22 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     expect(countDocuments).toHaveBeenCalled();
   });
 
+  it.each([403, 503])("stops scheduled execution on agent-use status %s", async (status) => {
+    const denial = NextResponse.json({ success: false }, { status });
+    mockRequireAgentUsePermission.mockResolvedValue(denial);
+    const response = await invokePost(jsonRequest(
+      "/api/v1/chat/invoke",
+      { message: "run report", conversation_id: "scheduled-example", agent_id: "untrusted-agent", client_context: { source: "scheduler", schedule_id: "example" } },
+      { "X-Scheduler-Token": "service-token" },
+    ));
+    expect(response).toBe(denial);
+    expect(mockRequireAgentUsePermission).toHaveBeenCalledWith(expect.objectContaining({
+      subject: "owner-sub", agentId: "agent-persisted", isServiceAccount: false,
+    }));
+    expect(mockProxyJSONRequest).not.toHaveBeenCalled();
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
+
   it("fails a scheduler-token invoke closed when the owner cannot be resolved", async () => {
     mockResolveScheduledRunContext.mockResolvedValue(null);
 

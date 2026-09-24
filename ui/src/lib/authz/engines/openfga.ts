@@ -19,6 +19,7 @@ import { openFgaResourceObject, parseOpenFgaObject } from "@/lib/rbac/openfga-re
 import {
   getCachedOpenFgaStoreId,
   getOpenFgaStoreId,
+  OPENFGA_READ_TIMEOUT_MS,
   requestOpenFga,
   resetOpenFgaStoreIdCacheForTests,
 } from "./openfga-client";
@@ -27,17 +28,25 @@ import {
 
 const BATCH_CONCURRENCY = 10;
 
-async function fgaCheck(storeId: string, user: string, relation: string, object: string): Promise<boolean> {
+async function fgaCheck(
+  storeId: string, user: string, relation: string, object: string,
+  options: { consistency?: "HIGHER_CONSISTENCY"; signal?: AbortSignal } = {},
+): Promise<boolean> {
   const res = await requestOpenFga(`/stores/${storeId}/check`, {
     method: "POST",
-    body: JSON.stringify({ tuple_key: { user, relation, object } }),
+    body: JSON.stringify({
+      tuple_key: { user, relation, object },
+      ...(options.consistency ? { consistency: options.consistency } : {}),
+    }),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
   if (res.status === 404) {
     throw new Error("OpenFGA store not found (404)");
   }
   if (!res.ok) throw new Error(`OpenFGA check failed: ${res.status}`);
   const body = (await res.json()) as { allowed?: boolean };
-  return Boolean(body.allowed);
+  if (typeof body.allowed !== "boolean") throw new Error("OpenFGA check returned an invalid decision");
+  return body.allowed;
 }
 
 async function fgaListObjects(
@@ -207,7 +216,7 @@ function deny(reason: AuthorizeResult["reason"] = "NO_CAPABILITY"): AuthorizeRes
   return { decision: "DENY", reason, retriable: getReasonMeta(reason).retriable };
 }
 
-async function runCheck(req: AuthorizeRequest): Promise<AuthorizeResult> {
+async function runCheck(req: AuthorizeRequest, fresh = false): Promise<AuthorizeResult> {
   if (!circuitAllows()) return deny("AUTHZ_UNAVAILABLE");
 
   const relation = openFgaCheckRelation(req.action);
@@ -215,10 +224,15 @@ async function runCheck(req: AuthorizeRequest): Promise<AuthorizeResult> {
   const object = openFgaResourceObject(req.resource.type, req.resource.id);
 
   try {
+    // Start before discovery so it consumes the same execution-check budget.
+    const signal = fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined;
     const storeId = await getOpenFgaStoreId();
-    const allowed = await fgaCheck(storeId, user, relation, object);
+    signal?.throwIfAborted();
+    const allowed = await fgaCheck(storeId, user, relation, object,
+      fresh ? { consistency: "HIGHER_CONSISTENCY", signal } : {});
     recordSuccess();
-    return allowed ? allow() : deny("NO_CAPABILITY");
+    const result = allowed ? allow() : deny("NO_CAPABILITY");
+    return fresh ? { ...result, ttl_seconds: 0 } : result;
   } catch (err) {
     recordFailure();
     console.warn("[cas/openfga] check error:", err instanceof Error ? err.message : String(err));
@@ -287,6 +301,12 @@ async function checkWithCache(req: AuthorizeRequest): Promise<AuthorizeResult> {
 export function createOpenFgaEngine(): PolicyEngine {
   return {
     check(req: AuthorizeRequest): Promise<AuthorizeResult> {
+      // A single agent-use check enforces execution. Never reuse an allow/deny
+      // from a picker batch or another request, even on this replica.
+      if (req.resource.type === "agent" && req.action === "use") {
+        cacheMisses++;
+        return runCheck(req, true);
+      }
       return checkWithCache(req);
     },
 

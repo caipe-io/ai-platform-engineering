@@ -1,6 +1,7 @@
 # Access API: one authorization boundary
 
-**Status:** foundation implemented in the BFF; consumers are not migrated yet.
+**Status:** Access API foundation implemented; BFF chat agent-use guard migrated
+to in-process CAS. Remote consumers are not migrated yet.
 
 CAS answers permission questions. Each service still stops an operation when
 the answer is no. CAS is a module inside the BFF, not another deployed service.
@@ -18,7 +19,7 @@ flowchart TD
 ```
 
 This is the destination, not today's complete wiring. The new `/api/access/*`
-routes call CAS now. Existing `/api/authz/v1/*` callers, direct service clients
+routes and the shared BFF agent-use guard call CAS now. Existing `/api/authz/v1/*` callers, direct service clients
 and the gateway bridge are unchanged. Migrating them is separate work, not a
 commitment to maintain two public contracts permanently.
 
@@ -53,7 +54,31 @@ CAS owns the decisions and changes to relationships.
 - Migration of gateway, RAG, bots and older BFF authorization paths.
 - Resource registration, unbounded discovery or a generic resource catalog.
 - System-wide model pinning, bounded dependency calls and revocation freshness.
-  Existing CAS decision caches still apply; HTTP `no-store` does not disable them.
+  Single agent-use checks are fresh; other decision and query caches still apply.
+  HTTP `no-store` does not disable those caches.
+
+## BFF agent execution
+
+```text
+Chat routes → existing agent-use guard → CAS → OpenFGA
+              validate + enforce       decide + audit
+```
+
+- Seven calls across six route files include interactive and scheduled-owner
+  execution. Conversation checks and scheduled-owner token exchange are unchanged.
+- Human and service-account checks use their canonical Keycloak IDs. The guard
+  no longer retries with email or enumerates teams; OpenFGA follows team relations.
+  Email-only grants no longer authorize this path. Existing tuples are untouched.
+- Single CAS `agent/use` checks skip the BFF decision cache, request higher
+  consistency, and have a five-second dependency budget including discovery.
+  A definitive answer has `ttl_seconds: 0`. Dependency failures return unavailable,
+  not allow; the legacy unsafe bypass is not honored.
+- CAS records the decision. The guard preserves its 401/400/403/503 envelopes
+  and passes tracing metadata without emitting a second legacy decision event.
+
+Picker filtering, membership writes, seed identity cleanup and other services
+remain separate migrations. Fresh checks cannot repair a missing relationship
+write or cancel a run that has already started.
 
 Moving remote consumers onto CAS makes BFF latency and availability part of
 their authorization path. Prove that behavior before migrating them. Enforcement

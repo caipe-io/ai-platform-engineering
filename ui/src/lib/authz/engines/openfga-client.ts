@@ -5,6 +5,9 @@ import { getCurrentTraceparent } from "@/lib/rbac/authz-tracing";
 let storeIdPromise: Promise<string> | null = null;
 let cachedStoreId: string | null = null;
 
+// Bound discovery and fresh execution checks without replaying failed requests.
+export const OPENFGA_READ_TIMEOUT_MS = 5_000;
+
 export function isOpenFgaConfigured(): boolean {
   return Boolean(process.env.OPENFGA_HTTP?.trim());
 }
@@ -24,7 +27,7 @@ function invalidateStoreId(): void {
 
 export async function requestOpenFga(
   path: `/stores${string}`,
-  options: { method: "GET" | "POST"; body?: string },
+  options: { method: "GET" | "POST"; body?: string; signal?: AbortSignal },
 ): Promise<Response> {
   const baseUrl = process.env.OPENFGA_HTTP?.trim().replace(/\/+$/, "");
   if (!baseUrl) throw new Error("OPENFGA_HTTP is not set");
@@ -42,7 +45,10 @@ export async function getOpenFgaStoreId(): Promise<string> {
   if (explicit) return explicit;
   if (!storeIdPromise) {
     const storeName = process.env.OPENFGA_STORE_NAME?.trim() || "caipe-openfga";
-    storeIdPromise = requestOpenFga("/stores", { method: "GET" })
+    storeIdPromise = requestOpenFga("/stores", {
+      method: "GET",
+      signal: AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS),
+    })
       .then(async (response) => {
         if (!response.ok) throw new Error(`OpenFGA store discovery failed: ${response.status}`);
         const body = (await response.json()) as { stores?: Array<{ id?: string; name?: string }> };
