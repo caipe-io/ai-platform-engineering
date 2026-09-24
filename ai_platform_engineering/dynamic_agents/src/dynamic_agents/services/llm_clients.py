@@ -156,12 +156,12 @@ def _resolve_llm_defaults(provider: str | None, model_id: str | None) -> tuple[s
 
     Resolution order:
     - `provider`: agent value → `LLM_PROVIDER` env var
-    - `model_id`: agent value → `None` (LLMFactory then reads the
+    - `model_id`: agent value → `None` (`build_chat_model` then reads the
       provider-specific env var, e.g. `AWS_BEDROCK_MODEL_ID`,
       `OPENAI_MODEL_NAME`, `ANTHROPIC_MODEL_NAME`, etc.)
 
     Empty `model_id` is returned as `None` rather than `""` so the
-    downstream `model_override` check in LLMFactory falls through to
+    downstream `model_override` check in `build_chat_model` falls through to
     its env-based lookup.
     """
     resolved_provider = (provider or "").strip() or os.getenv("LLM_PROVIDER", "").strip()

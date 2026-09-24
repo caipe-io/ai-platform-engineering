@@ -7,7 +7,7 @@
 
 Replace the three `cnoe-agent-utils` surfaces with in-repo equivalents so CAIPE owns the versions of every LLM provider integration it ships.
 
-Chat-model construction moves to `langchain.chat_models.init_chat_model`, which returns provider-native `BaseChatModel` instances and therefore preserves every middleware, provider kwarg, and transport-sharing path already in use. Tracing moves to the Langfuse SDK plus OpenTelemetry directly, both already direct dependencies. The Bedrock client-family classifier is vendored unchanged.
+Chat-model construction moves to `langchain.chat_models.init_chat_model`, which returns provider-native `BaseChatModel` instances and therefore preserves every middleware, provider kwarg, and transport-sharing path already in use. Tracing moves to the Langfuse SDK plus OpenTelemetry directly, both already direct dependencies. The Bedrock client-family classifier is ported unchanged.
 
 The replacement logic lives in `ai_platform_engineering/llm_wrapper/` as a **single shared source**, imported directly. It is not vendored, not published, and declares no dependencies of its own — which is what lets it be shared without coupling: each consuming package pins the provider integrations it ships. A package that declared those integrations would impose one `langchain-aws` / `boto3` / `langchain-anthropic` version on every consumer, the exact mechanism being removed.
 
@@ -31,12 +31,12 @@ Sharing it requires the consuming image to build with the **repository root** as
 
 | Principle | Status | Notes |
 |---|---|---|
-| I. Worse is Better | ⚠️ **Deviation** | The canonical-directory + drift-check setup is an abstraction introduced ahead of its second consumer. See Complexity Tracking. |
-| II. YAGNI | ⚠️ **Deviation** | Same. The vendoring machinery is not needed by any code shipping in Phase 1. |
+| I. Worse is Better | ⚠️ **Deviation** | A shared directory created ahead of its second consumer. Milder than earlier drafts — the vendoring and drift-gate machinery is gone — but still shared structure for one consumer. See Complexity Tracking. |
+| II. YAGNI | ⚠️ **Deviation** | Same. Nothing in Phase 1 needs the code to be shared; `dynamic_agents` is its only consumer. |
 | III. Rule of Three | ⚠️ **Deviation** | Explicitly says tolerate duplication until the third occurrence. This plan establishes the sharing mechanism at the first. |
-| IV. Composition over Inheritance | ✅ Pass | Plain functions and module-level maps. No class hierarchy. The factory is called, not subclassed. |
+| IV. Composition over Inheritance | ✅ Pass | Plain functions and module-level maps. No class hierarchy — `build_chat_model` is called, not subclassed. |
 | V. Specs as Source of Truth | ✅ Pass | spec → plan → tasks → implement, artifacts under `docs/docs/specs/2026-09-24-remove-cnoe-agent-utils/`. |
-| VI. CI Gates Non-Negotiable | ✅ Pass | Adds a gate (vendor drift check) rather than relaxing one. Ruff and pytest unchanged. |
+| VI. CI Gates Non-Negotiable | ✅ Pass | Ruff, pytest and the uv-lock check all unchanged and passing. No gate relaxed. |
 | VII. Security by Default | ✅ **Strengthened** | Removes an override that exists solely to escape GHSA-gr75-jv2w-4656 and restores same-day patching of provider integrations. No secrets move. The gateway provider is the mechanism that lets sandboxed workers run without raw provider credentials. |
 
 Three deviations, all the same deviation. They are recorded and justified in Complexity Tracking rather than silently taken. **A reviewer should decide whether the justification holds**; if it does not, the fallback is stated there and costs nothing to adopt.
@@ -50,7 +50,7 @@ docs/docs/specs/2026-09-24-remove-cnoe-agent-utils/
 ├── spec.md                    # Phase -1 (/speckit.specify)
 ├── plan.md                    # This file
 ├── research.md                # Phase 0 — decisions and rejected alternatives
-├── quickstart.md              # Phase 1 — how to add a provider, how to vendor
+├── quickstart.md              # Phase 1 — how to add a provider, how it reaches images
 ├── checklists/requirements.md # spec quality checklist
 └── tasks.md                   # Phase 2 (/speckit.tasks — not created here)
 ```
@@ -61,22 +61,20 @@ No `data-model.md`: this feature introduces no entities. No `contracts/`: it exp
 
 ```text
 ai_platform_engineering/
-├── llm_wrapper/                    # NEW — canonical source, vendored not installed.
-│   │                               # Deliberately NOT under utils/: that directory builds a
-│   │                               # wheel (packages = ["."]), and canonical-source-to-vendor
-│   │                               # must not ship inside a published package.
-│   ├── README.md                   # what it is, why it is vendored
+├── llm_wrapper/                    # NEW — single shared source, imported directly.
+│   │                               # NOT under utils/: that directory builds a wheel
+│   │                               # (packages = ["."]), and shared source imported
+│   │                               # directly must not ship inside a published package.
+│   │                               # Declares no dependencies of its own.
+│   ├── README.md                   # what it is, how images get it
 │   ├── providers.py                # public provider string -> (init_chat_model provider, model env var)
 │   ├── bedrock_family.py           # resolve_bedrock_client -> anthropic | converse | legacy
+│   ├── reasoning.py                # reasoning effort -> provider-native thinking config
 │   ├── build.py                    # build_chat_model() over init_chat_model
 │   └── tests/
-│       ├── test_providers.py
-│       ├── test_bedrock_family.py
-│       └── test_build.py
 │
 ├── dynamic_agents/                 # PHASE 1 — the only full-surface consumer
 │   └── src/dynamic_agents/
-│       ├── _vendor/llm_wrapper/   # vendored copy, drift-checked in CI
 │       ├── services/
 │       │   ├── llm_clients.py      # 259/266 lines unchanged; factory call swapped
 │       │   ├── llm.py              # import swap
@@ -90,15 +88,17 @@ ai_platform_engineering/
 ├── autonomous_agents/                   # PHASE 2 — delete unused declaration
 └── harness_engine/                      # UNTOUCHED — deliberately has no LangChain
 
-scripts/check_vendored.py           # NEW — CI drift gate
-.github/workflows/                   # wire the gate in
+ai_platform_engineering/dynamic_agents/build/Dockerfile   # build context widened to repo root
+.github/workflows/{prebuild,ci}-dynamic-agents.yml        # context: .
 ```
 
-**Structure Decision**: Canonical source under `ai_platform_engineering/llm_wrapper/`, vendored into consumers under a `_vendor/` subpackage. Three separate modules rather than one file, so a future consumer can vendor a subset — the anticipated Deep Agents sandbox worker needs `providers.py` and `bedrock_family.py` but not the transport-sharing logic in `build.py`, because a sandboxed worker holds no raw provider credentials.
+**Structure Decision**: One shared source under `ai_platform_engineering/llm_wrapper/`, imported directly as `ai_platform_engineering.llm_wrapper.<module>`. Separate modules rather than one file so a consumer can take a subset: `providers.py`, `bedrock_family.py` and `reasoning.py` import nothing third-party, which both lets them be tested without LangChain installed and suits the anticipated Deep Agents sandbox worker, which holds no raw provider credentials and cannot use the transport paths in `build.py`.
 
-`llm_wrapper/` sits beside the consumers rather than inside `utils/`. `utils/` was considered first, because `dynamic_agents` already vendors from `utils.auth` and the directory holds `auth/`, `tracing/`, `agui/` and `oauth/` as siblings. It was rejected on packaging: `utils/pyproject.toml` sets `packages = ["."]`, so that directory builds the `ai-platform-engineering-utils` wheel and everything under it ships inside it.
+Sharing requires the consuming image to build with the **repository root** as its Docker context. The dynamic-agents image used `context: ai_platform_engineering/dynamic_agents`, so nothing outside that directory could enter it — the same constraint that forced `utils.auth` to be duplicated into the component tree. Widening it removes the cause rather than working around it; the repository already builds slack-bot with `context: .`.
 
-Two failure modes follow from mixing canonical-source-to-vendor with a published package. Anyone installing that wheel would get `llm_wrapper` source importing LangChain the package does not declare. And running `llm_wrapper`'s tests in that package's context would eventually push someone to add `langchain` to `utils/pyproject.toml`, at which point every utils consumer inherits the full provider closure — reconstructing the exact coupling this feature removes, inside the fix. A hatch `exclude` would also work but is a config line that can be silently undone; a separate directory makes the rule structural.
+`llm_wrapper/` sits beside the consumers rather than inside `utils/`. `utils/` was considered first, because `dynamic_agents` already copies from `utils.auth` and the directory holds `auth/`, `tracing/`, `agui/` and `oauth/` as siblings. It was rejected on packaging: `utils/pyproject.toml` sets `packages = ["."]`, so that directory builds the `ai-platform-engineering-utils` wheel and everything under it ships inside it.
+
+Two failure modes follow from putting directly-imported shared source inside a published package. Anyone installing that wheel would get `llm_wrapper` source importing LangChain the package does not declare. And running `llm_wrapper`'s tests in that package's context would eventually push someone to add `langchain` to `utils/pyproject.toml`, at which point every utils consumer inherits the full provider closure — reconstructing the exact coupling this feature removes, inside the fix. A hatch `exclude` would also work but is a config line that can be silently undone; a separate directory makes the rule structural.
 
 Measured, not assumed: today nothing declares `ai-platform-engineering-utils` as a dependency and no Dockerfile copies `ai_platform_engineering/utils/`, so this is about preventing a future trap rather than fixing present bloat.
 
@@ -110,8 +110,8 @@ Measured, not assumed: today nothing declares `ai-platform-engineering-utils` as
 
 | Phase | Scope | Ships independently | Gate |
 |---|---|---|---|
-| 0 | Canonical source + tests + CI drift gate | Yes — no consumer yet | New tests pass; gate green on an empty vendor set |
-| 1 | `dynamic_agents`: 6 import sites, tracing, vendored copy, drop `cnoe-agent-utils` + `override-dependencies` | Yes (FR-025) | US3 capability checks; SC-003/004/005/006 |
+| 0 | `llm_wrapper/` + tests | Yes — no consumer yet | New tests pass, including the LangChain-free subset |
+| 1 | `dynamic_agents`: 6 import sites, tracing, build context, drop `cnoe-agent-utils` + `override-dependencies` | Yes (FR-025) | US3 capability checks; SC-003/004/005/006 |
 | 2 | `agent_ontology` inline; delete stale `autonomous_agents` declaration | Yes | Ontology agent answers a turn |
 | 3 | Remove from root `pyproject.toml`; drop the lockstep `boto3` pin | Yes | SC-001: lock resolves with zero overrides |
 
@@ -121,5 +121,5 @@ Sequence Phases 0–3 **before** the harness-engine cutover in [#2401](https://g
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| Canonical directory + vendoring + CI drift gate established at the **first** consumer, against Principles I, II, and III | The second consumer is known and named rather than speculative: [#2401](https://github.com/caipe-io/ai-platform-engineering/pull/2401) defers a "Deep Agents adapter and certification", and its sandbox-worker contract requires model construction inside a worker image. Establishing the mechanism before two teams edit the same logic is cheaper than retrofitting it after they have diverged. The drift risk being guarded is a **correctness** risk, not tidiness: if `resolve_bedrock_client` classifies a model id differently in two copies, prompt-caching middleware selection and attachment block shaping silently diverge for the same model. | The alternative — a single module inside `dynamic_agents`, promoted later — was the original recommendation and remains viable at near-zero cost. It was rejected by decision, not by analysis. **Honest statement of the weakness:** with one consumer the vendored copy is byte-identical to canonical, so the drift gate passes trivially and guards nothing until Phase 2 of the harness work. Principle III would say wait for the third occurrence; this waits for the first. If a reviewer prefers the constitution's reading, collapse `llm_wrapper/` into `dynamic_agents/services/llm_factory.py` and delete `scripts/check_vendored.py` — the module boundaries in this plan are drawn so that this is a `git mv`, not a refactor. |
-| A vendored copy that is byte-identical to its canonical source | Required for the drift gate to be meaningful once a second consumer exists, and makes the consumer's import path stable across the transition. | Importing canonical directly via a path dependency would reintroduce a shared version floor across consumers — the precise failure this feature removes, and the reason `dynamic_agents` already vendors `utils.auth` rather than depending on `ai-platform-engineering-utils`. |
+| A shared directory, `ai_platform_engineering/llm_wrapper/`, created at the **first** consumer, against Principles I, II and III | The second consumer is named rather than speculative: [#2401](https://github.com/caipe-io/ai-platform-engineering/pull/2401) defers a "Deep Agents adapter and certification", and its sandbox-worker contract requires model construction inside a worker image. The module split also has present value independent of sharing: `providers.py` and `bedrock_family.py` import nothing third-party, which is what lets the reasoning and classification logic be unit-tested without LangChain installed. | A single module inside `dynamic_agents`, promoted later, remains viable at near-zero cost and is what Principle III prescribes. It was rejected by decision, not by analysis. **Honest statement of the weakness:** with one consumer, sharing buys nothing today. If a reviewer prefers the constitution's reading, moving `llm_wrapper/` under `dynamic_agents/src/dynamic_agents/services/` is a `git mv` plus reverting the build-context change. |
+| Widening the dynamic-agents Docker build context from the component directory to the repository root | Required for a single shared source: with `context: ai_platform_engineering/dynamic_agents`, nothing outside that directory can enter the image. That constraint is why `utils.auth` is duplicated into the component tree today. The repository already builds slack-bot with `context: .`, so this follows an existing convention. | Vendoring — a copy in each consumer plus a CI drift gate — was implemented first and rejected: it means two copies of the same file in one repository, and the gate guards nothing until a second consumer exists. Publishing a package was rejected because it would set one `langchain-aws` / `boto3` / `langchain-anthropic` version for every consumer, which is the coupling this feature removes. |

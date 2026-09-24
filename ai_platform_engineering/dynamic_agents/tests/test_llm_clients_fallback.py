@@ -72,7 +72,7 @@ def test_get_llm_falls_back_to_env_provider_when_agent_provider_empty(monkeypatc
 
 
 def test_get_llm_skips_model_kwarg_when_agent_model_empty(monkeypatch):
-    """Empty `model_id` must NOT be forwarded as `model=""` — LLMFactory
+    """Empty `model_id` must NOT be forwarded as `model=""` — the builder
     needs to fall through to its provider-specific env-var lookup
     (e.g. AWS_BEDROCK_MODEL_ID, OPENAI_MODEL_NAME).
     """
@@ -94,7 +94,7 @@ def test_get_llm_skips_model_kwarg_when_agent_model_empty(monkeypatch):
     assert result == "llm"
     assert captured["provider"] == "aws-bedrock"
     assert captured["model"] is None, (
-        "Empty model_id leaked into kwargs; LLMFactory would treat it "
+        "Empty model_id leaked into kwargs; the builder would treat it "
         "as an explicit override instead of falling back to env."
     )
 
