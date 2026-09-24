@@ -1,6 +1,7 @@
 // MongoDB collection type definitions
 
 import type { StreamEvent } from "@/lib/streaming/types";
+import type { ProductTourState } from "@/lib/product-tour";
 import type { TimelineSegment } from "@/types/dynamic-agent-timeline";
 import { ObjectId } from "mongodb";
 
@@ -265,6 +266,8 @@ export interface UserSettings {
     home_widgets_version?: number;
     /** Which Home page layout the user sees — the new default, or the previous fixed layout. */
     home_experience?: "new" | "classic";
+    /** Server-backed progress for the post-install end-user product tour. */
+    product_tour?: ProductTourState;
   };
   notifications: {
     email_enabled: boolean;

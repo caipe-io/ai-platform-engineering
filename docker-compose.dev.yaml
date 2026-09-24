@@ -605,11 +605,14 @@ services:
       - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       # Workflows tab - set WORKFLOWS_ENABLED=true to show the top-level Workflows UI
       - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
-      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
       - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
+      - SCHEDULER_URL=${SCHEDULER_URL:-http://caipe-scheduler:8080}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
       - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}
       # Dynamic Agents - set DYNAMIC_AGENTS_ENABLED=true and add dynamic-agents profile to enable Custom Agents tab
       - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-false}
+      - SETUP_WIZARD_ENABLED=${SETUP_WIZARD_ENABLED:-true}
       # Chat runtime health endpoint URL
       - A2A_BASE_URL=${A2A_BASE_URL:-http://dynamic-agents:8001}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
@@ -622,6 +625,11 @@ services:
       # The Autonomous tab in the UI is admin-gated; in local dev (SSO off) you also need
       # ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED=true (set below) so the dev-admin fallback is enabled.
       - AUTONOMOUS_AGENTS_URL=${AUTONOMOUS_AGENTS_URL:-http://autonomous-agents:8002}
+      # External Apps are available in local Compose with an empty
+      # deployment-owned catalog mounted below.
+      - AGENTIC_APPS_INSTALL_ENABLED=${AGENTIC_APPS_INSTALL_ENABLED:-true}
+      - AGENTIC_APPS_CONFIG_PATH=/app/config/agentic-apps.yaml
+      - AGENTIC_APP_TOKEN_SECRET=${AGENTIC_APP_TOKEN_SECRET:-local-agentic-app-token-secret-change-me}
       # Dev-admin fallback for local testing without SSO. NEVER enable this in production --
       # it grants admin to anonymous browser sessions. Required for the Autonomous tab to be
       # visible/usable in the dev compose stack since admin gating depends on either an OIDC
@@ -647,7 +655,7 @@ services:
       # Connections & Secrets. Local OAuth connector bootstrap reads these
       # values from .env; Kubernetes deployments use ESO to inject the same
       # variable names into caipe-ui.
-      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
+      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-true}
       - CREDENTIAL_STORE_BACKEND=${CREDENTIAL_STORE_BACKEND:-mongodb-envelope}
       - CREDENTIAL_KEY_PROVIDER=${CREDENTIAL_KEY_PROVIDER:-local-cmk}
       - CREDENTIAL_KMS_CMK_ID=${CREDENTIAL_KMS_CMK_ID:-}
@@ -656,9 +664,9 @@ services:
       # run under NODE_ENV=production for prod-parity testing. INSECURE — keys
       # are wrapped with locally-derived material, not a real KMS/HSM. Never set
       # this true in a real production deployment.
-      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-false}
+      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-true}
       - CREDENTIAL_SERVICE_AUDIENCE=${CREDENTIAL_SERVICE_AUDIENCE:-caipe-credential-service}
-      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-false}
+      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-true}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
@@ -727,6 +735,7 @@ services:
       # APP_CONFIG_FILE remains accepted as an alias for CAIPE_APP_CONFIG_FILE.
       # If neither is set, mount the committed example template config/app-config.yaml.
       - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
+      - ${AGENTIC_APPS_CONFIG_FILE:-./config/agentic-apps.yaml}:/app/config/agentic-apps.yaml:ro
       - ./charts/ai-platform-engineering/data/skills:/charts/ai-platform-engineering/data/skills:ro
       # Hot-reload bind mounts. These are SAFE in prod because the
       # `runner` stage uses Next standalone output and never reads
@@ -810,6 +819,9 @@ services:
       - RAG_SERVER_URL=${RAG_SERVER_URL:-http://rag-server:9446}
       - RAG_URL=${RAG_URL:-http://localhost:9446}
       - AUTONOMOUS_AGENTS_URL=${AUTONOMOUS_AGENTS_URL:-http://autonomous-agents:8002}
+      - AGENTIC_APPS_INSTALL_ENABLED=${AGENTIC_APPS_INSTALL_ENABLED:-true}
+      - AGENTIC_APPS_CONFIG_PATH=/app/config/agentic-apps.yaml
+      - AGENTIC_APP_TOKEN_SECRET=${AGENTIC_APP_TOKEN_SECRET:-local-agentic-app-token-secret-change-me}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-caipe-dev-secret-change-in-production}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
       - SSO_ENABLED=${SSO_ENABLED:-false}
@@ -856,10 +868,13 @@ services:
       - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
       - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
-      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
       - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
+      - SCHEDULER_URL=${SCHEDULER_URL:-http://caipe-scheduler:8080}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
       - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}
       - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-false}
+      - SETUP_WIZARD_ENABLED=${SETUP_WIZARD_ENABLED:-true}
       # Chat runtime health endpoint URL
       - A2A_BASE_URL=${A2A_BASE_URL:-http://dynamic-agents:8001}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
@@ -868,7 +883,7 @@ services:
       - MONGODB_URI=${MONGODB_URI:-mongodb://admin:changeme@caipe-mongodb:27017/caipe?authSource=admin}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - AGENTGATEWAY_TARGETS_TOKEN=${AGENTGATEWAY_TARGETS_TOKEN:-agentgateway-config-bridge-dev-token}
-      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
+      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-true}
       - CREDENTIAL_STORE_BACKEND=${CREDENTIAL_STORE_BACKEND:-mongodb-envelope}
       - CREDENTIAL_KEY_PROVIDER=${CREDENTIAL_KEY_PROVIDER:-local-cmk}
       - CREDENTIAL_KMS_CMK_ID=${CREDENTIAL_KMS_CMK_ID:-}
@@ -876,10 +891,10 @@ services:
       # DEV-ONLY escape hatch (prod-parity image runs NODE_ENV=production). Lets
       # the local key wrapper run despite production. INSECURE — never set true
       # in a real production deployment. See build/Dockerfile.caipe-ui header.
-      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-false}
+      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-true}
       - CREDENTIAL_ALLOW_LOCALHOST_OAUTH_REDIRECTS=${CREDENTIAL_ALLOW_LOCALHOST_OAUTH_REDIRECTS:-true}
       - CREDENTIAL_SERVICE_AUDIENCE=${CREDENTIAL_SERVICE_AUDIENCE:-caipe-credential-service}
-      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-false}
+      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-true}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
@@ -935,6 +950,7 @@ services:
       # the prod runner's prebuilt assets (e.g. ui/public, which the
       # entrypoint writes env-config.js into).
       - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
+      - ${AGENTIC_APPS_CONFIG_FILE:-./config/agentic-apps.yaml}:/app/config/agentic-apps.yaml:ro
       - ./charts/ai-platform-engineering/data/skills:/charts/ai-platform-engineering/data/skills:ro
     command: /app/entrypoint.sh
     depends_on:
@@ -1093,7 +1109,7 @@ services:
       # Connections & Secrets credential exchange. Disabled by default; when
       # USE_IMPERSONATION_TOKENS=true, DA resolves MCP credential refs via the
       # server-to-server credential API instead of browser/session cookies.
-      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
+      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-true}
       - CREDENTIAL_API_URL=${CREDENTIAL_API_URL:-http://caipe-ui:3000/api/credentials}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
       # Browser-reachable Grid URL for workflow run links returned by workflow tools.
@@ -1144,6 +1160,41 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
+    profiles:
+      - dynamic-agents
+
+  ####################################################################################################
+  #                                     Scheduler Service                                           #
+  ####################################################################################################
+  caipe-scheduler:
+    image: ghcr.io/caipe-io/caipe-scheduler:${SCHEDULER_IMAGE_TAG:-1.1.1}
+    container_name: caipe-scheduler
+    env_file: [.env]
+    environment:
+      - SCHEDULER_BACKEND=${SCHEDULER_BACKEND:-local}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
+      - SCHEDULER_JWT_JWKS_URL=${SCHEDULER_JWT_JWKS_URL:-http://keycloak:7080/realms/caipe/protocol/openid-connect/certs}
+      - SCHEDULER_JWT_ISSUER=${SCHEDULER_JWT_ISSUER:-${OIDC_ISSUER:-http://localhost:7080/realms/caipe}}
+      - SCHEDULER_JWT_AUDIENCES=${SCHEDULER_JWT_AUDIENCES:-caipe-platform}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://admin:changeme@caipe-mongodb:27017/caipe?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
+      - CAIPE_API_URL=${SCHEDULER_CAIPE_API_URL:-http://caipe-ui:3000}
+      - CAIPE_CHAT_PATH=/api/v1/chat/invoke
+      - SCHEDULER_INTERNAL_URL=http://caipe-scheduler:8080
+    depends_on:
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      keycloak:
+        condition: service_started
+        required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
     profiles:
       - dynamic-agents

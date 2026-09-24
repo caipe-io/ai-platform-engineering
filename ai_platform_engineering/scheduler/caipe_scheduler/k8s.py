@@ -42,6 +42,10 @@ def cronjob_name_for(schedule_id: str) -> str:
 class CronJobOps:
   def __init__(self, settings: Settings):
     self._settings = settings
+    self._local = settings.scheduler_backend == "local"
+    if self._local:
+      self._batch = None
+      return
     try:
       config.load_incluster_config()
     except config.ConfigException:
@@ -61,6 +65,8 @@ class CronJobOps:
   ) -> str:
     """Create the CronJob for the given schedule. Returns its name."""
     name = cronjob_name_for(schedule_id)
+    if self._local:
+      return name
     body = self._build_body(name=name, schedule_id=schedule_id, cron=cron, tz=tz)
     try:
       self._batch.create_namespaced_cron_job(namespace=self._settings.namespace, body=body)
@@ -82,6 +88,8 @@ class CronJobOps:
     tz: str | None = None,
     suspend: bool | None = None,
   ) -> None:
+    if self._local:
+      return
     body: dict = {"spec": {}}
     if cron is not None:
       body["spec"]["schedule"] = cron
@@ -94,6 +102,8 @@ class CronJobOps:
     self._batch.patch_namespaced_cron_job(name=cronjob_name, namespace=self._settings.namespace, body=body)
 
   def delete(self, cronjob_name: str) -> None:
+    if self._local:
+      return
     try:
       self._batch.delete_namespaced_cron_job(
         name=cronjob_name,
@@ -108,6 +118,14 @@ class CronJobOps:
 
   def reconcile_runner_template(self, *, cronjob_name: str, dry_run: bool = True) -> dict[str, Any]:
     """Optionally patch an existing CronJob to the current runner image."""
+    if self._local:
+      return {
+        "current_image": self._settings.cron_runner_image,
+        "desired_image": self._settings.cron_runner_image,
+        "current_image_pull_policy": self._settings.cron_runner_image_pull_policy,
+        "desired_image_pull_policy": self._settings.cron_runner_image_pull_policy,
+        "changed": False,
+      }
     s = self._settings
     cronjob = self._batch.read_namespaced_cron_job(
       name=cronjob_name,
@@ -171,6 +189,8 @@ class CronJobOps:
     message_template_override: str | None = None,
   ) -> str:
     """Create a normal Job by copying an existing CronJob's jobTemplate."""
+    if self._local:
+      raise RuntimeError("Local scheduler dispatches one-off runs in-process")
     job_name = f"caipe-oneoff-{_sanitize_name(one_off_run_id)}"
     cronjob = self._batch.read_namespaced_cron_job(
       name=cronjob_name,

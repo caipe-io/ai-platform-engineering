@@ -1,9 +1,26 @@
 "use client";
 
-import { ArrowUpRight, LayoutGrid, LoaderCircle, Search } from "lucide-react";
+import {
+  ArrowUpRight,
+  CheckCircle2,
+  ExternalLink,
+  LayoutGrid,
+  LoaderCircle,
+  Search,
+  CloudSun,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import type { PublicAgenticApp } from "@/types/agentic-app";
 
 type LoadState =
@@ -15,6 +32,7 @@ export function AgenticAppsHub(): React.ReactElement {
   const router = useRouter();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [query, setQuery] = useState("");
+  const [weatherPromptOpen, setWeatherPromptOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +77,9 @@ export function AgenticAppsHub(): React.ReactElement {
     );
   }, [query, state]);
 
+  const weatherAppConfigured = state.status === "ready"
+    && state.apps.some((app) => app.appId === "weather");
+
   return (
     <main className="flex-1 overflow-y-auto bg-background px-6 py-8">
       <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -93,6 +114,27 @@ export function AgenticAppsHub(): React.ReactElement {
 
         {state.status === "ready" ? (
           <>
+            {!weatherAppConfigured ? (
+              <section className="rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 via-background to-sky-500/5 p-5 shadow-sm">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-3">
+                    <span className="rounded-lg bg-primary/15 p-2 text-primary">
+                      <CloudSun className="h-5 w-5" aria-hidden />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold">Try the Weather App</p>
+                      <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                        Would you like to install a small starter app to see how CAIPE connects users to an external application?
+                      </p>
+                    </div>
+                  </div>
+                  <Button type="button" onClick={() => setWeatherPromptOpen(true)}>
+                    Ask to install
+                  </Button>
+                </div>
+              </section>
+            ) : null}
+
             {state.apps.length > 0 ? (
               <label className="relative block" aria-label="Search Apps">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
@@ -154,6 +196,41 @@ export function AgenticAppsHub(): React.ReactElement {
           </>
         ) : null}
       </div>
+
+      <Dialog open={weatherPromptOpen} onOpenChange={setWeatherPromptOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Install the Weather App?</DialogTitle>
+            <DialogDescription>
+              The Weather App is a safe starter example for trying the Apps experience. It shows a forecast in the CAIPE shell and uses the app-bound identity flow.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
+            <div className="flex items-start gap-2">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+              <p>
+                Apps are installed by the platform administrator through the deployment-owned catalog. This browser action will not change your deployment automatically.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setWeatherPromptOpen(false)}>
+              Not now
+            </Button>
+            <Button asChild>
+              <a
+                href="https://caipe.io/docs/features/agentic-apps/"
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setWeatherPromptOpen(false)}
+              >
+                Open install guide
+                <ExternalLink className="h-4 w-4" aria-hidden />
+              </a>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

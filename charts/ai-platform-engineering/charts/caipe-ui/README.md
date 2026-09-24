@@ -98,6 +98,7 @@ helm show values oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0
 | config.OIDC_REQUIRED_GROUP | string | `""` |  |
 | config.OPENFGA_HTTP | string | `""` |  |
 | config.OPENFGA_STORE_NAME | string | `"caipe-openfga"` |  |
+| config.SETUP_WIZARD_ENABLED | string | `"true"` | Automatically show the guided first-admin setup wizard. |
 | config.SHOW_POWERED_BY | string | `"false"` |  |
 | config.SKILL_SCANNER_URL | string | `""` |  |
 | config.SLACK_BOT_ADMIN_AUDIENCE | string | `"caipe-slack-bot-admin"` |  |

@@ -809,6 +809,8 @@ caipe-ui:
     # Dynamic Agents: set to "true" to enable custom agent creation and management
     # Requires admin role and MongoDB storage mode
     DYNAMIC_AGENTS_ENABLED: "false"
+    # Automatic guided first-admin setup prompt. Disable for fully declarative installations.
+    SETUP_WIZARD_ENABLED: "true"
     # Dynamic Agents service URL. Leave empty to use the chart default.
     # DYNAMIC_AGENTS_URL: ""
     # Scheduler service used by the Schedules page and scheduled-run BFF path.

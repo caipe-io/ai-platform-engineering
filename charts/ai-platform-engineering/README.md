@@ -116,6 +116,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | caipe-ui.config.OPENFGA_RECONCILE_ENABLED | string | `"true"` |  |
 | caipe-ui.config.OPENFGA_STORE_NAME | string | `"caipe-openfga"` |  |
 | caipe-ui.config.SCHEDULER_URL | string | `"http://caipe-scheduler:8080"` |  |
+| caipe-ui.config.SETUP_WIZARD_ENABLED | string | `"true"` | Automatically show the guided first-admin setup wizard. |
 | caipe-ui.config.SHOW_POWERED_BY | string | `"false"` |  |
 | caipe-ui.config.SKILLS_DIR | string | `"/app/data/skills"` |  |
 | caipe-ui.config.SKILLS_HELPER_FILE | string | `"/app/data/skills-live-skills/caipe-skills.py"` |  |

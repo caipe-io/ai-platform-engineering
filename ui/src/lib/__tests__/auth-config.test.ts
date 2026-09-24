@@ -298,6 +298,44 @@ describe('auth-config', () => {
     })
   })
 
+  describe('split OIDC endpoints', () => {
+    const originalEnv = process.env
+
+    beforeEach(() => {
+      process.env = { ...originalEnv }
+    })
+
+    afterAll(() => {
+      process.env = originalEnv
+    })
+
+    it('uses the browser issuer for authorization and the server issuer for token/profile calls', () => {
+      process.env.OIDC_ISSUER = 'http://localhost:7080/realms/caipe'
+      process.env.OIDC_DISCOVERY_URL = 'http://caipe-keycloak:8080/realms/caipe'
+
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { authOptions } = require('../auth-config')
+        const provider = authOptions.providers[0]
+
+        expect(provider.authorization.url).toBe(
+          'http://localhost:7080/realms/caipe/protocol/openid-connect/auth',
+        )
+        expect(provider.issuer).toBe('http://localhost:7080/realms/caipe')
+        expect(provider.wellKnown).toBeUndefined()
+        expect(provider.jwks_endpoint).toBe(
+          'http://caipe-keycloak:8080/realms/caipe/protocol/openid-connect/certs',
+        )
+        expect(provider.token).toEqual({
+          url: 'http://caipe-keycloak:8080/realms/caipe/protocol/openid-connect/token',
+        })
+        expect(provider.userinfo).toEqual({
+          url: 'http://caipe-keycloak:8080/realms/caipe/protocol/openid-connect/userinfo',
+        })
+      })
+    })
+  })
+
   // ─────────────────────────────────────────────────────────────────────────
   // kc_idp_hint forwarding
   //

@@ -382,6 +382,12 @@ milvus:
       # minAvailable: 2  # Ensure at least 2 out of 3 pods are available (maintains quorum)
 
   minio:
+    # Use Quay for the pinned image. Older Docker Hub tags can disappear or be
+    # rate-limited during a fresh install, leaving Milvus and RAG offline.
+    image:
+      repository: quay.io/minio/minio
+      tag: RELEASE.2024-12-18T13-15-44Z
+      pullPolicy: IfNotPresent
     podAnnotations: {}
     # PodDisruptionBudget configuration for MinIO
     # Recommended for production to prevent multiple MinIO pods from being disrupted simultaneously
