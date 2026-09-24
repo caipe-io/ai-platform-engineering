@@ -81,11 +81,12 @@ function request(path: string, init?: RequestInit): NextRequest {
   return new NextRequest(new URL(path, "http://localhost:3000"), init);
 }
 
-const session = { sub: "bob-sub", role: "user" };
+const session = { sub: "test-user", role: "user", accessToken: "caller-token" };
 
 describe("POST /api/mcp-servers/probe", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET;
     mockGetAuthFromBearerOrSession.mockResolvedValue({ session });
     mockRequireResourcePermission.mockResolvedValue(undefined);
     mockGetCollection.mockResolvedValue({
@@ -96,8 +97,8 @@ describe("POST /api/mcp-servers/probe", () => {
       }),
     });
     mockAuthenticateRequest.mockResolvedValue({
-      subject: "bob-sub",
-      email: "bob@example.com",
+      subject: "test-user",
+      email: "test-user@example.com",
       role: "user",
       bearerToken: "token",
     });
@@ -212,7 +213,7 @@ describe("POST /api/mcp-servers/probe", () => {
     });
   });
 
-  it("runs a safe no-argument MCP tool after direct tools/list when one is available", async () => {
+  it("only lists tools and never invokes one during discovery", async () => {
     mockGetCollection.mockResolvedValueOnce({
       findOne: jest.fn().mockResolvedValue({
         _id: "mcp-netutils",
@@ -222,61 +223,130 @@ describe("POST /api/mcp-servers/probe", () => {
         enabled: true,
       }),
     });
-    global.fetch = jest
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json({
-          jsonrpc: "2.0",
-          id: "tools-list",
-          result: {
-            tools: [
-              {
-                name: "version",
-                description: "Return server version",
-                inputSchema: { type: "object", properties: {}, required: [] },
-              },
-            ],
-          },
-        }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({
-          jsonrpc: "2.0",
-          id: "tools-call",
-          result: { content: [{ type: "text", text: "1.2.3" }] },
-        }),
-      ) as unknown as typeof fetch;
+    global.fetch = jest.fn().mockResolvedValueOnce(
+      Response.json({
+        jsonrpc: "2.0",
+        id: "tools-list",
+        result: {
+          tools: [
+            {
+              name: "version",
+              description: "Return server version",
+              inputSchema: { type: "object", properties: {}, required: [] },
+            },
+          ],
+        },
+      }),
+    ) as unknown as typeof fetch;
     const { POST } = await import("../route");
 
     const response = await POST(
       request("/api/mcp-servers/probe?id=mcp-netutils", { method: "POST" }),
     );
+    expect(response.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(String((global.fetch as jest.Mock).mock.calls[0][1].body)).toContain('"method":"tools/list"');
+    expect(String((global.fetch as jest.Mock).mock.calls[0][1].body)).not.toContain('"method":"tools/call"');
+  });
+
+  it("discovers managed tools through AgentGateway without calling the upstream endpoint", async () => {
+    process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET = "internal-test-secret";
+    mockGetCollection.mockResolvedValueOnce({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "mcp-example",
+        name: "Example",
+        transport: "http",
+        endpoint: "http://agentgateway:4000/mcp/mcp-example",
+        agentgateway_target_endpoint: "https://example.test/mcp",
+        source: "agentgateway",
+        agentgateway_discovered: true,
+        enabled: true,
+      }),
+    });
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            jsonrpc: "2.0",
+            id: "initialize",
+            result: { protocolVersion: "2024-11-05", capabilities: {} },
+          },
+          { headers: { "mcp-session-id": "session-123" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          jsonrpc: "2.0",
+          id: "tools-list",
+          result: { tools: [{ name: "example_search", description: "Search" }] },
+        }),
+      ) as unknown as typeof fetch;
+    const { POST } = await import("../route");
+
+    const response = await POST(
+      request("/api/mcp-servers/probe?id=mcp-example", { method: "POST" }),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(global.fetch).toHaveBeenNthCalledWith(
-      2,
-      "http://mcp-netutils:8000/mcp",
+      1,
+      "http://agentgateway:4000/mcp/mcp-example",
       expect.objectContaining({
         method: "POST",
-        body: expect.stringContaining('"method":"tools/call"'),
+        headers: expect.objectContaining({
+          Authorization: "Bearer caller-token",
+          "X-CAIPE-Agent-Context": expect.anything(),
+          "X-CAIPE-Agent-Context-Signature": expect.anything(),
+        }),
+        body: expect.stringContaining('"method":"initialize"'),
       }),
     );
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
-      "http://mcp-netutils:8000/mcp",
+      "http://agentgateway:4000/mcp/mcp-example",
       expect.objectContaining({
-        body: expect.stringContaining('"name":"version"'),
+        headers: expect.objectContaining({ "mcp-session-id": "session-123" }),
+        body: expect.stringContaining('"method":"tools/list"'),
       }),
     );
+    expect(global.fetch).not.toHaveBeenCalledWith("https://example.test/mcp", expect.anything());
+    for (const call of (global.fetch as jest.Mock).mock.calls) {
+      expect(String(call[1].body)).not.toContain('"method":"tools/call"');
+    }
     expect(body.data).toMatchObject({
+      server_id: "mcp-example",
       success: true,
-      source: "direct",
-      tool_test: {
-        toolName: "version",
-        success: true,
-      },
+      source: "agentgateway",
+      tools: [{ name: "example_search" }],
     });
+  });
+
+  it("fails closed when a managed server does not contain an AgentGateway route", async () => {
+    mockGetCollection.mockResolvedValueOnce({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "mcp-example",
+        name: "Example",
+        transport: "http",
+        endpoint: "https://example.test/mcp",
+        agentgateway_target_endpoint: "https://example.test/mcp",
+        source: "agentgateway",
+        enabled: true,
+      }),
+    });
+    global.fetch = jest.fn() as unknown as typeof fetch;
+    const { POST } = await import("../route");
+
+    const response = await POST(
+      request("/api/mcp-servers/probe?id=mcp-example", { method: "POST" }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(body.error).toMatch(/missing its Gateway route/i);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("initializes Streamable HTTP MCP sessions before listing tools when required", async () => {

@@ -130,6 +130,18 @@ jest.mock('@/components/admin/settings/ImportAgentsFromConfigCard', () => ({
   ),
 }));
 
+jest.mock('@/components/admin/settings/AgentGatewayRepairCard', () => ({
+  AgentGatewayRepairCard: (props: { isAdmin?: boolean; readOnly?: boolean }) => (
+    <div
+      data-testid="agentgateway-repair-card"
+      data-admin={String(Boolean(props.isAdmin))}
+      data-read-only={String(Boolean(props.readOnly))}
+    >
+      AgentGatewayRepairCard
+    </div>
+  ),
+}));
+
 jest.mock('@/components/admin/autonomous/AutonomousTeamAccessPanel', () => ({
   AutonomousTeamAccessPanel: () => (
     <div data-testid="autonomous-enablement-panel">Autonomous team access</div>
