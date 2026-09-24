@@ -13,24 +13,8 @@ from __future__ import annotations
 
 import importlib
 import os
-import sys
-import types
 
 import pytest
-
-
-class _PlaceholderFactory:
-    def __init__(self, provider):
-        self.provider = provider
-
-    def get_llm(self, **kwargs):
-        return ("llm", self.provider, kwargs)
-
-
-sys.modules.setdefault(
-    "cnoe_agent_utils",
-    types.SimpleNamespace(LLMFactory=_PlaceholderFactory),
-)
 
 llm_clients = importlib.import_module("dynamic_agents.services.llm_clients")
 
@@ -46,43 +30,45 @@ def _disable_share_clients(monkeypatch):
 def test_get_llm_uses_agent_values_when_both_set(monkeypatch):
     captured = {}
 
-    class _Factory:
-        def __init__(self, provider):
-            captured["provider"] = provider
+    def _build(provider, model=None, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        captured["kwargs"] = kwargs
+        return "llm"
 
-        def get_llm(self, **kwargs):
-            captured["kwargs"] = kwargs
-            return "llm"
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+    monkeypatch.setattr(
+        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+    )
     monkeypatch.setenv("LLM_PROVIDER", "openai")
 
     result = llm_clients.get_llm("aws-bedrock", "claude-sonnet-4-6")
 
     assert result == "llm"
     assert captured["provider"] == "aws-bedrock"
-    assert captured["kwargs"] == {"model": "claude-sonnet-4-6"}
+    assert captured["model"] == "claude-sonnet-4-6"
+    assert captured["kwargs"] == {}
 
 
 def test_get_llm_falls_back_to_env_provider_when_agent_provider_empty(monkeypatch):
     captured = {}
 
-    class _Factory:
-        def __init__(self, provider):
-            captured["provider"] = provider
+    def _build(provider, model=None, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        captured["kwargs"] = kwargs
+        return "llm"
 
-        def get_llm(self, **kwargs):
-            captured["kwargs"] = kwargs
-            return "llm"
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+    monkeypatch.setattr(
+        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+    )
     monkeypatch.setenv("LLM_PROVIDER", "aws-bedrock")
 
     result = llm_clients.get_llm("", "claude-sonnet-4-6")
 
     assert result == "llm"
     assert captured["provider"] == "aws-bedrock"
-    assert captured["kwargs"] == {"model": "claude-sonnet-4-6"}
+    assert captured["model"] == "claude-sonnet-4-6"
+    assert captured["kwargs"] == {}
 
 
 def test_get_llm_skips_model_kwarg_when_agent_model_empty(monkeypatch):
@@ -92,22 +78,22 @@ def test_get_llm_skips_model_kwarg_when_agent_model_empty(monkeypatch):
     """
     captured = {}
 
-    class _Factory:
-        def __init__(self, provider):
-            captured["provider"] = provider
+    def _build(provider, model=None, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        captured["kwargs"] = kwargs
+        return "llm"
 
-        def get_llm(self, **kwargs):
-            captured["kwargs"] = kwargs
-            return "llm"
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+    monkeypatch.setattr(
+        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+    )
     monkeypatch.setenv("LLM_PROVIDER", "aws-bedrock")
 
     result = llm_clients.get_llm("aws-bedrock", "")
 
     assert result == "llm"
     assert captured["provider"] == "aws-bedrock"
-    assert "model" not in captured["kwargs"], (
+    assert captured["model"] is None, (
         "Empty model_id leaked into kwargs; LLMFactory would treat it "
         "as an explicit override instead of falling back to env."
     )
@@ -117,15 +103,15 @@ def test_get_llm_both_empty_falls_back_to_env(monkeypatch):
     """The exact shape of the seeded Hello World agent."""
     captured = {}
 
-    class _Factory:
-        def __init__(self, provider):
-            captured["provider"] = provider
+    def _build(provider, model=None, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        captured["kwargs"] = kwargs
+        return "llm"
 
-        def get_llm(self, **kwargs):
-            captured["kwargs"] = kwargs
-            return "llm"
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+    monkeypatch.setattr(
+        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+    )
     monkeypatch.setenv("LLM_PROVIDER", "aws-bedrock")
 
     result = llm_clients.get_llm("", "")
@@ -148,14 +134,12 @@ def test_get_llm_raises_actionable_error_when_no_provider_anywhere(monkeypatch):
 
 
 def test_get_llm_wraps_factory_value_error_as_llm_config_error(monkeypatch):
-    class _BoomFactory:
-        def __init__(self, provider):
-            pass
+    def _boom(provider, model=None, **kwargs):
+        raise ValueError("Unsupported provider: 'bogus'")
 
-        def get_llm(self, **kwargs):
-            raise ValueError("Unsupported provider: 'bogus'")
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _BoomFactory, raising=False)
+    monkeypatch.setattr(
+        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _boom
+    )
 
     with pytest.raises(llm_clients.LLMConfigError) as excinfo:
         llm_clients.get_llm("bogus", "some-model")
@@ -168,14 +152,14 @@ def test_get_llm_wraps_factory_value_error_as_llm_config_error(monkeypatch):
 def test_get_llm_whitespace_only_provider_treated_as_empty(monkeypatch):
     captured = {}
 
-    class _Factory:
-        def __init__(self, provider):
-            captured["provider"] = provider
+    def _build(provider, model=None, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        return "llm"
 
-        def get_llm(self, **kwargs):
-            return "llm"
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+    monkeypatch.setattr(
+        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+    )
     monkeypatch.setenv("LLM_PROVIDER", "openai")
 
     llm_clients.get_llm("   ", "   ")
@@ -202,38 +186,39 @@ def test_resolve_helper_returns_none_for_empty_model_id():
 def test_get_llm_passes_supported_reasoning_effort(monkeypatch):
     captured = {}
 
-    class _Factory:
-        def __init__(self, provider):
-            captured["provider"] = provider
+    def _build(provider, model=None, reasoning_effort=None, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
+        captured["kwargs"] = kwargs
+        return "llm"
 
-        def get_llm(self, reasoning_effort=None, **kwargs):
-            if reasoning_effort is not None:
-                kwargs["reasoning_effort"] = reasoning_effort
-            captured["kwargs"] = kwargs
-            return "llm"
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+    monkeypatch.setattr(
+        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+    )
 
     result = llm_clients.get_llm("openai", "gpt-5.5", "max")
 
     assert result == "llm"
-    assert captured["kwargs"] == {"model": "gpt-5.5", "reasoning_effort": "max"}
+    assert captured["model"] == "gpt-5.5"
+    assert captured["kwargs"] == {"reasoning_effort": "max"}
 
 
 def test_get_llm_uses_supported_api_version_for_azure_gpt5_reasoning(monkeypatch):
     captured = {}
 
-    class _Factory:
-        def __init__(self, provider):
-            captured["provider"] = provider
+    def _build(provider, model=None, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        captured["kwargs"] = kwargs
+        captured["responses"] = os.environ["AZURE_OPENAI_USE_RESPONSES"]
+        captured["api_version"] = os.environ["AZURE_OPENAI_API_VERSION"]
+        return "llm"
 
-        def get_llm(self, **kwargs):
-            captured["kwargs"] = kwargs
-            captured["responses"] = os.environ["AZURE_OPENAI_USE_RESPONSES"]
-            captured["api_version"] = os.environ["AZURE_OPENAI_API_VERSION"]
-            return "llm"
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+    monkeypatch.setattr(
+        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+    )
     monkeypatch.setenv("AZURE_OPENAI_USE_RESPONSES", "false")
     monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2024-11-01-preview")
 
@@ -242,7 +227,8 @@ def test_get_llm_uses_supported_api_version_for_azure_gpt5_reasoning(monkeypatch
     assert result == "llm"
     assert captured["responses"] == "true"
     assert captured["api_version"] == "2025-03-01-preview"
-    assert captured["kwargs"] == {"model": "gpt-5.5", "reasoning_effort": "high"}
+    assert captured["model"] == "gpt-5.5"
+    assert captured["kwargs"] == {"reasoning_effort": "high"}
     assert os.environ["AZURE_OPENAI_USE_RESPONSES"] == "false"
     assert os.environ["AZURE_OPENAI_API_VERSION"] == "2024-11-01-preview"
 
@@ -250,41 +236,39 @@ def test_get_llm_uses_supported_api_version_for_azure_gpt5_reasoning(monkeypatch
 def test_get_llm_uses_valid_temperature_for_bedrock_reasoning(monkeypatch):
     captured = {}
 
-    class _Factory:
-        def __init__(self, provider):
-            captured["provider"] = provider
+    def _build(provider, model=None, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        captured["kwargs"] = kwargs
+        return "llm"
 
-        def get_llm(self, **kwargs):
-            captured["kwargs"] = kwargs
-            return "llm"
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+    monkeypatch.setattr(
+        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+    )
 
     result = llm_clients.get_llm(
         "aws-bedrock", "global.anthropic.claude-haiku-4-5-20251001-v1:0", "medium"
     )
 
     assert result == "llm"
-    assert captured["kwargs"] == {
-        "model": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
-        "reasoning_effort": "medium",
-        "temperature": 1.0,
-    }
+    assert captured["model"] == "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert captured["kwargs"] == {"reasoning_effort": "medium", "temperature": 1.0}
 
 
 def test_get_llm_omits_effort_for_unsupported_model(monkeypatch):
     captured = {}
 
-    class _Factory:
-        def __init__(self, provider):
-            captured["provider"] = provider
+    def _build(provider, model=None, **kwargs):
+        captured["provider"] = provider
+        captured["model"] = model
+        captured["kwargs"] = kwargs
+        return "llm"
 
-        def get_llm(self, **kwargs):
-            captured["kwargs"] = kwargs
-            return "llm"
-
-    monkeypatch.setattr("cnoe_agent_utils.LLMFactory", _Factory, raising=False)
+    monkeypatch.setattr(
+        "dynamic_agents._vendor.llm_wrapper.build.build_chat_model", _build
+    )
 
     llm_clients.get_llm("openai", "gpt-4.1", "medium")
 
-    assert captured["kwargs"] == {"model": "gpt-4.1"}
+    assert captured["model"] == "gpt-4.1"
+    assert captured["kwargs"] == {}
