@@ -4,7 +4,7 @@
 
 ## What this is
 
-`ai_platform_engineering/utils/llm_wrapper/` is **canonical source that consumers copy**, not a package they install. Copying is deliberate: an installed package would pin one `langchain-aws` / `boto3` / `langchain-anthropic` version for every consumer, which is the coupling this feature exists to remove.
+`ai_platform_engineering/llm_wrapper/` is **canonical source that consumers copy**, not a package they install. Copying is deliberate: an installed package would pin one `langchain-aws` / `boto3` / `langchain-anthropic` version for every consumer, which is the coupling this feature exists to remove.
 
 Three modules, so a consumer can take a subset:
 
@@ -21,7 +21,7 @@ A sandboxed harness worker is expected to take the first two and not the third â
 Two lines. Say you want DeepSeek:
 
 ```python
-# ai_platform_engineering/utils/llm_wrapper/providers.py
+# ai_platform_engineering/llm_wrapper/providers.py
 _PROVIDERS = {
     ...
     "deepseek": ("deepseek", "DEEPSEEK_MODEL_NAME"),
@@ -54,7 +54,7 @@ This is implemented as `ChatOpenAI(base_url=...)` and adds no dependency. It is 
 
 ```bash
 # from repo root
-cp ai_platform_engineering/utils/llm_wrapper/{providers,bedrock_family,build}.py \
+cp ai_platform_engineering/llm_wrapper/{providers,bedrock_family,build}.py \
    ai_platform_engineering/<consumer>/src/<consumer>/_vendor/llm_wrapper/
 python scripts/check_vendored.py            # must pass before commit
 ```
@@ -84,7 +84,7 @@ Silent divergence is the failure mode. Declared divergence is fine.
 ## Verifying a change
 
 ```bash
-uv run pytest ai_platform_engineering/utils/llm_wrapper/tests -q
+uv run pytest ai_platform_engineering/llm_wrapper/tests -q
 uv run pytest ai_platform_engineering/dynamic_agents/tests -q
 python scripts/check_vendored.py
 uv run ruff check ai_platform_engineering/utils/llm_wrapper
