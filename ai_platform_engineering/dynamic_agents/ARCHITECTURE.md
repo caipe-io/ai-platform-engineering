@@ -148,7 +148,7 @@ When the service starts, the following sequence occurs:
 2. _setup_logging()
    • Creates 'dynamic_agents' logger
    • Adds SessionContextFilter for request tracing
-   • Disables propagation to root logger (isolates from cnoe-agent-utils)
+   • Disables propagation to root logger (isolates from third-party root config)
         │
         ▼
 3. create_app()

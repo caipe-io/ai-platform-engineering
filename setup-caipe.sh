@@ -6769,7 +6769,7 @@ DAEOF
   fi
 
   if $ENABLE_TRACING; then
-    # dynamic-agents uses cnoe-agent-utils TracingManager, which reads
+    # dynamic-agents uses its own TracingManager, which reads
     # ENABLE_TRACING + the LANGFUSE_* creds from its config. Langfuse public/
     # secret keys are wired separately (langfuse secret); here we flip the
     # flag and point at the in-cluster Langfuse host.

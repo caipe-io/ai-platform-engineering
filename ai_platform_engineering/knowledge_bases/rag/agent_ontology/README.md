@@ -45,7 +45,7 @@ LOG_LEVEL=DEBUG python src/agent_ontology/restapi.py
 
 ### LLM Configuration
 
-Requires LLM configuration via `cnoe-agent-utils`. Set one of:
+Requires LLM configuration. Set one of:
 - `OPENAI_API_KEY` - For OpenAI models
 - `ANTHROPIC_API_KEY` - For Anthropic Claude
 - Custom LLM provider environment variables
