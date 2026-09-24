@@ -31,6 +31,7 @@ const configuredApp: ConfiguredAgenticApp = {
     displayName: "Example App",
     description: "Example",
     apiVersion: "1.0",
+    auth: { mode: "app-scoped-token" },
     runtime: {
       kind: "proxied-next-zone",
       origin: "http://example-app.example.svc",
@@ -113,6 +114,66 @@ describe("External App runtime route", () => {
     expect(headers.get("x-example-app-position")).toBeNull();
     expect(response.headers.get("x-frame-options")).toBeNull();
 
+    fetchMock.mockRestore();
+  });
+
+  it("forwards the server-side user access token for trusted apps", async () => {
+    mockGetAuthenticatedUser.mockResolvedValueOnce({
+      user: { email: "test-user@example.com", name: "Test User", role: "user" },
+      session: {
+        sub: "stable-subject",
+        role: "user",
+        accessToken: "keycloak-user-access-token",
+      },
+    });
+    mockGetConfiguredAgenticApp.mockReturnValueOnce({
+      ...configuredApp,
+      manifest: {
+        ...configuredApp.manifest,
+        auth: { mode: "forward-user-access-token" },
+      },
+    } satisfies ConfiguredAgenticApp);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true })),
+    );
+
+    const response = await GET(
+      new NextRequest("https://host.example/api/agentic-apps/runtime/example-app/api/items", {
+        headers: {
+          authorization: "Bearer caller-controlled-token",
+          cookie: "untrusted=session",
+          "x-caipe-auth-mode": "app-scoped-token",
+        },
+      }),
+      { params: Promise.resolve({ appId: "example-app", path: ["api", "items"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    const headers = new Headers(fetchMock.mock.calls[0][1]?.headers);
+    expect(headers.get("authorization")).toBe("Bearer keycloak-user-access-token");
+    expect(headers.get("x-caipe-auth-mode")).toBe("forward-user-access-token");
+    expect(headers.get("cookie")).toBeNull();
+    fetchMock.mockRestore();
+  });
+
+  it("fails closed when a trusted app session has no user access token", async () => {
+    mockGetConfiguredAgenticApp.mockReturnValueOnce({
+      ...configuredApp,
+      manifest: {
+        ...configuredApp.manifest,
+        auth: { mode: "forward-user-access-token" },
+      },
+    } satisfies ConfiguredAgenticApp);
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    const response = await GET(
+      new NextRequest("https://host.example/api/agentic-apps/runtime/example-app"),
+      { params: Promise.resolve({ appId: "example-app", path: [] }) },
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "user_access_token_required" });
+    expect(fetchMock).not.toHaveBeenCalled();
     fetchMock.mockRestore();
   });
 

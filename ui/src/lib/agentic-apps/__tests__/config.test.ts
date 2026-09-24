@@ -24,6 +24,7 @@ describe("External Apps deployment config", () => {
         expect.objectContaining({
           manifest: expect.objectContaining({
             id: "example-app",
+            auth: { mode: "app-scoped-token" },
             runtime: expect.objectContaining({ maxRequestBodyBytes: 67108864 }),
             access: expect.objectContaining({ tokenScopes: ["example-app:read"] }),
           }),
@@ -47,6 +48,44 @@ describe("External Apps deployment config", () => {
         },
       );
     }
+  });
+
+  it("accepts explicit user access-token forwarding for trusted apps", () => {
+    withConfig(
+      validConfig().replace(
+        '        apiVersion: "1.0"',
+        '        apiVersion: "1.0"\n        auth:\n          mode: forward-user-access-token',
+      ),
+      (path) => {
+        const [configured] = loadConfiguredAgenticApps(path);
+        expect(configured.manifest.auth).toEqual({
+          mode: "forward-user-access-token",
+        });
+      },
+    );
+  });
+
+  it("rejects invalid or unknown authentication settings", () => {
+    withConfig(
+      validConfig().replace(
+        '        apiVersion: "1.0"',
+        '        apiVersion: "1.0"\n        auth:\n          mode: passthrough-cookie',
+      ),
+      (path) => {
+        expect(() => loadConfiguredAgenticApps(path)).toThrow(/auth.mode must be/);
+      },
+    );
+    withConfig(
+      validConfig().replace(
+        '        apiVersion: "1.0"',
+        '        apiVersion: "1.0"\n        auth:\n          mode: app-scoped-token\n          forwardCookie: true',
+      ),
+      (path) => {
+        expect(() => loadConfiguredAgenticApps(path)).toThrow(
+          /auth has unknown key "forwardCookie"/,
+        );
+      },
+    );
   });
 
   it("keeps the bundled Weather example compatible with the catalog parser", () => {

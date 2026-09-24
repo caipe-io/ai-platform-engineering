@@ -18,6 +18,7 @@ const app: ConfiguredAgenticApp = {
     displayName: "Example App",
     description: "Example",
     apiVersion: "1.0",
+    auth: { mode: "app-scoped-token" },
     runtime: {
       kind: "proxied-next-zone",
       origin: "http://example-app.example.svc",
