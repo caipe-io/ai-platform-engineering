@@ -170,7 +170,7 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     ]);
   });
 
-  it("previews the request, resolving a credential to its trailing hint", async () => {
+  it("previews the request, naming the credential rather than its value", async () => {
     const { user } = await renderWebForm();
     expect(screen.queryByTestId("auth-header-request-preview")).not.toBeInTheDocument();
 
@@ -180,7 +180,7 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
 
     const preview = screen.getByTestId("auth-header-request-preview");
     expect(preview).toHaveTextContent("curl");
-    expect(preview).toHaveTextContent("-H 'Authorization: Bearer ...xRZ'");
+    expect(preview).toHaveTextContent("-H 'Authorization: Bearer $DOCS_SITE_TOKEN'");
 
     // Selecting a credential appends it to the scheme-only default and renders it
     // as a chip, while the stored template keeps the canonical placeholder.
@@ -379,12 +379,16 @@ describe("<IngestionSourceForm /> — web auth headers", () => {
     ]);
   });
 
-  it("shows only the last three characters of a credential preview", async () => {
+  it("keeps every part of a credential value out of the request preview", async () => {
     const { user } = await renderWebForm();
     await addHeaderWithCredential(user);
 
-    expect(screen.getByTestId("auth-header-request-preview")).toHaveTextContent("...xRZ");
-    expect(screen.queryByText(/oyw9/)).not.toBeInTheDocument();
+    const preview = screen.getByTestId("auth-header-request-preview");
+    expect(preview).toHaveTextContent("$DOCS_SITE_TOKEN");
+    // Neither the leading nor the trailing characters of the stored hint appear.
+    expect(preview.textContent).not.toContain("oyw9");
+    expect(preview.textContent).not.toContain("BxRZ");
+    expect(preview.textContent).not.toContain("xRZ");
   });
 
   it("labels the header columns", async () => {

@@ -52,7 +52,6 @@ DEFAULT_RAG_INGESTOR_LIMITS,
 normalizeRagIngestorLimits,
 type RagIngestorLimits,
 } from "@/lib/rag-ingestor-limits";
-import { shortMaskedPreview } from "@/lib/credentials/masking";
 import { cn } from "@/lib/utils";
 import type {
 IngestionSourceConfig,
@@ -593,8 +592,9 @@ function secretTokenLabel(secret: SecretReferenceOption | undefined): string {
 }
 
 /**
- * The request the crawler will actually send, rendered as curl. Credential values
- * collapse to their trailing hint, so the preview stays safe to leave on screen.
+ * The request the crawler will actually send, rendered as curl. A credential shows
+ * as its shell-style name rather than any part of its value, so the preview is
+ * safe to leave on screen and reads like the command a person would write.
  */
 function authHeaderRequestPreview(input: {
   url: string;
@@ -612,8 +612,8 @@ function authHeaderRequestPreview(input: {
       continue;
     }
     const secret = input.secrets.find((option) => option.id === header.secret_ref);
-    const hint = shortMaskedPreview(secret?.maskedPreview) ?? SECRET_PLACEHOLDER;
-    const value = header.value_template.split(SECRET_PLACEHOLDER).join(hint);
+    const token = secretTokenLabel(secret);
+    const value = header.value_template.split(SECRET_PLACEHOLDER).join(token);
     sent.push(`${header.header_name}: ${value}`);
   }
 
