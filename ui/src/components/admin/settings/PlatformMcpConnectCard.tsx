@@ -162,8 +162,9 @@ function ConnectDialogBody({ endpoint }: { endpoint: string }) {
             <li>caipe shows connected in your client&apos;s MCP server list.</li>
             <li>
               Tools include <code className="rounded bg-muted px-1">caipe_whoami</code>,{" "}
-              <code className="rounded bg-muted px-1">caipe_agent_list</code>, and{" "}
-              <code className="rounded bg-muted px-1">caipe_agent_get</code>.
+              <code className="rounded bg-muted px-1">caipe_agent_get</code>, and agent-lifecycle
+              tools like <code className="rounded bg-muted px-1">caipe_agent_create</code> and{" "}
+              <code className="rounded bg-muted px-1">caipe_agent_set_prompt</code>.
             </li>
             <li>caipe_whoami reports your own email and role, not a service account.</li>
           </ul>
@@ -198,13 +199,13 @@ export function PlatformMcpConnectCard({ readOnly = false }: { readOnly?: boolea
             <Plug className="h-4 w-4" />
             Connect via MCP
             <Badge variant="secondary" className="text-[10px] font-normal">
-              Phase 1: read-only
+              Agents: read &amp; write
             </Badge>
           </CardTitle>
           <CardDescription>
-            Let Claude Code, Claude Desktop, Cursor, or another MCP client read this CAIPE
-            deployment as you — agents and their configuration, permission-filtered exactly like
-            the web UI.
+            Let Claude Code, Claude Desktop, Cursor, or another MCP client read and manage this
+            CAIPE deployment as you — agents and their configuration, permission-filtered exactly
+            like the web UI.
           </CardDescription>
         </div>
         <Button
