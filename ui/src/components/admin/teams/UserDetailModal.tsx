@@ -466,7 +466,7 @@ export function UserDetailModal({
       : "—";
 
   const startImpersonation = async (): Promise<void> => {
-    if (!user || !user.enabled || user.id === session?.sub) return;
+    if (!user || !user.enabled || user.id === session?.sub || session?.impersonation) return;
     setActionError(null);
     setBusy("impersonation");
     try {
@@ -621,7 +621,7 @@ export function UserDetailModal({
                 </div>
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                {!readOnly && canImpersonate ? (
+                {!readOnly && canImpersonate && !session?.impersonation ? (
                   <button
                     type="button"
                     disabled={

@@ -6,10 +6,14 @@ const updateSession = jest.fn();
 const replaceRoute = jest.fn();
 const refreshRoute = jest.fn();
 const clearAllConversations = jest.fn();
+const mockSession: {
+  sub: string;
+  impersonation?: { target: { sub: string } };
+} = { sub: "admin-sub" };
 
 jest.mock("next-auth/react", () => ({
   useSession: () => ({
-    data: { sub: "admin-sub" },
+    data: mockSession,
     update: updateSession,
   }),
 }));
@@ -126,6 +130,7 @@ const accessResponse = {
 describe("UserDetailModal", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    delete mockSession.impersonation;
     jest.spyOn(window, "confirm").mockReturnValue(true);
     updateSession.mockResolvedValue({
       impersonation: { target: { sub: "user-1" } },
@@ -502,6 +507,17 @@ describe("UserDetailModal", () => {
       }
       return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({ success: false }) });
     });
+
+    render(
+      <UserDetailModal userId="user-1" onClose={jest.fn()} onSaved={jest.fn()} />
+    );
+
+    expect(await screen.findByText("Test User")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /impersonate user/i })).not.toBeInTheDocument();
+  });
+
+  it("hides impersonation while another user is already impersonated", async () => {
+    mockSession.impersonation = { target: { sub: "other-user" } };
 
     render(
       <UserDetailModal userId="user-1" onClose={jest.fn()} onSaved={jest.fn()} />

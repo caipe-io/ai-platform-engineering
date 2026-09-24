@@ -1085,6 +1085,55 @@ describe('auth-config', () => {
       expect(mockMintImpersonatedUserToken).not.toHaveBeenCalled()
     })
 
+    it('refuses to switch targets while impersonation is active', async () => {
+      const started = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+        token: { ...actorToken },
+        trigger: 'update',
+        session: { impersonation: { action: 'start', targetSub: 'target-sub' } },
+      })
+
+      const switched = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+        token: started,
+        trigger: 'update',
+        session: { impersonation: { action: 'start', targetSub: 'other-target-sub' } },
+      })
+
+      expect(switched.impersonation).toEqual(expect.objectContaining({
+        targetSub: 'target-sub',
+      }))
+      expect(switched.impersonationNotice).toBe(
+        'Exit the current impersonation before starting another one',
+      )
+      expect(mockMintImpersonatedUserToken).toHaveBeenCalledTimes(1)
+    })
+
+    it('ends impersonation when the actor loses permission before renewal', async () => {
+      const started = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+        token: { ...actorToken },
+        trigger: 'update',
+        session: { impersonation: { action: 'start', targetSub: 'target-sub' } },
+      })
+      const impersonation = started.impersonation as { storeKey: string; expiresAt: number }
+      const storeKey = impersonation.storeKey
+      impersonation.expiresAt = 0
+      mockCanStartUserImpersonation.mockResolvedValue(false)
+
+      const renewed = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+        token: started,
+      })
+
+      expect(mockCanStartUserImpersonation).toHaveBeenLastCalledWith({
+        sub: 'actor-sub',
+        user: { email: 'admin@example.com' },
+      })
+      expect(renewed.impersonation).toBeUndefined()
+      expect(renewed.impersonationNotice).toBe(
+        'Impersonation ended because its authorization could not be renewed.',
+      )
+      expect(_mockTokenStore.has(storeKey)).toBe(false)
+      expect(mockMintImpersonatedUserToken).toHaveBeenCalledTimes(1)
+    })
+
     it('deletes the target bearer when impersonation stops', async () => {
       const started = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
         token: { ...actorToken },

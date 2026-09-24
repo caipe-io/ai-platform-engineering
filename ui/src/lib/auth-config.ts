@@ -700,6 +700,9 @@ export const authOptions: NextAuthOptions = {
         const targetSub = impersonationUpdate.targetSub;
         try {
           if (!targetSub) throw new Error("Select a user to impersonate");
+          if (token.impersonation) {
+            throw new Error("Exit the current impersonation before starting another one");
+          }
           if (!token.sub || targetSub === token.sub) {
             throw new Error("You cannot impersonate your own account");
           }
@@ -784,6 +787,14 @@ export const authOptions: NextAuthOptions = {
             !stored?.accessToken
             || activeImpersonation.expiresAt - now < IMPERSONATION_RENEWAL_WINDOW_SECONDS
           ) {
+            const { canStartUserImpersonation } = await import("@/lib/auth/impersonation-policy");
+            const actorCanContinue = await canStartUserImpersonation({
+              sub: token.sub,
+              user: { email: typeof token.email === "string" ? token.email : undefined },
+            });
+            if (!actorCanContinue) {
+              throw new Error("The administrator is no longer allowed to impersonate users");
+            }
             const { mintImpersonatedUserToken } = await import("@/lib/auth/user-impersonation");
             const minted = await mintImpersonatedUserToken(activeImpersonation.targetSub);
             const groups = extractGroups(minted.claims);
@@ -811,7 +822,7 @@ export const authOptions: NextAuthOptions = {
           console.error("[Auth] Active impersonation ended:", error);
           await clearImpersonation(token as Record<string, unknown>);
           token.impersonationNotice =
-            "Impersonation ended because the selected user's session could not be renewed.";
+            "Impersonation ended because its authorization could not be renewed.";
         }
       }
 
