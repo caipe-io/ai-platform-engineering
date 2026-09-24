@@ -3,8 +3,6 @@
 import { useMemo } from "react";
 
 import { getConfig } from "@/lib/config";
-import type { AdminSimulationQueryTarget } from "@/lib/rbac/admin-simulation-query";
-import { withAdminSimulationParams } from "@/lib/rbac/admin-simulation-query";
 import type {
 ConnectorAdminAdapter,
 DiagnosticRoute,
@@ -365,11 +363,9 @@ const SLACK_ADAPTER: ConnectorAdminAdapter = {
 export function SlackChannelRebacPanel({
   disabled = false,
   selfService = false,
-  simulationTarget = null,
 }: {
   disabled?: boolean;
   selfService?: boolean;
-  simulationTarget?: AdminSimulationQueryTarget | null;
 }) {
   const appName = getConfig("appName");
   const adapter = useMemo<ConnectorAdminAdapter>(
@@ -379,12 +375,8 @@ export function SlackChannelRebacPanel({
         ...SLACK_ADAPTER.copy,
         configuredTabDescription: `Channels ${appName} already knows about. Click a channel to manage its integration.`,
       },
-      api: {
-        ...SLACK_ADAPTER.api,
-        list: withAdminSimulationParams(SLACK_ADAPTER.api.list, simulationTarget),
-      },
     }),
-    [appName, simulationTarget],
+    [appName],
   );
   return (
     <ConnectorAdminPanel

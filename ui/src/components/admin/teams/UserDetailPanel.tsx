@@ -4,10 +4,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card,CardContent } from "@/components/ui/card";
 import {
-  withAdminSimulationParams,
-  type AdminSimulationQueryTarget,
-} from "@/lib/rbac/admin-simulation-query";
-import {
 Calendar,Clock,
 ExternalLink,
 Globe,
@@ -76,7 +72,6 @@ interface UserDetailData {
 interface UserDetailPanelProps {
   email: string | null;
   onClose: () => void;
-  simulationTarget?: AdminSimulationQueryTarget | null;
 }
 
 const VALUE_LABELS: Record<string, string> = {
@@ -107,7 +102,6 @@ function getConvLink(conv: UserConversation): string {
 export function UserDetailPanel({
   email,
   onClose,
-  simulationTarget = null,
 }: UserDetailPanelProps) {
   const [data, setData] = useState<UserDetailData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -125,10 +119,7 @@ export function UserDetailPanel({
     setLoading(true);
     setError(null);
     setActiveTab("overview");
-    fetch(withAdminSimulationParams(
-      `/api/admin/users/activity/${encodeURIComponent(email)}`,
-      simulationTarget,
-    ))
+    fetch(`/api/admin/users/activity/${encodeURIComponent(email)}`)
       .then((res) => res.json())
       .then((json) => {
         if (json.success) {
@@ -139,7 +130,7 @@ export function UserDetailPanel({
       })
       .catch(() => setError("Failed to load user"))
       .finally(() => setLoading(false));
-  }, [email, simulationTarget]);
+  }, [email]);
 
   // Close on escape
   useEffect(() => {

@@ -30,12 +30,6 @@ jest.mock("@/lib/rbac/openfga", () => ({
   readOpenFgaTuples: (...args: unknown[]) => mockReadOpenFgaTuples(...args),
 }));
 
-const mockResolveAuthorizedAdminSimulationScope = jest.fn();
-jest.mock("@/lib/rbac/admin-simulation-server", () => ({
-  resolveAuthorizedAdminSimulationScope: (...args: unknown[]) =>
-    mockResolveAuthorizedAdminSimulationScope(...args),
-}));
-
 const mockHasOrganizationAdmin = jest.fn();
 jest.mock("@/lib/rbac/platform-admin", () => ({
   hasOrganizationAdmin: (...args: unknown[]) =>
@@ -117,7 +111,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockGetServerSession.mockResolvedValue(SESSION);
   mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
-  mockResolveAuthorizedAdminSimulationScope.mockResolvedValue(null);
   mockHasOrganizationAdmin.mockResolvedValue(false);
   mockReadOpenFgaTuples.mockResolvedValue({
     tuples: [],
@@ -230,7 +223,7 @@ describe("GET /api/admin/service-accounts (list)", () => {
     const body = await res.json();
     expect(body.data.items).toHaveLength(1);
 
-    // No team filter, no preview subject: the admin sees every team's SAs, so
+    // With no team filter, the admin sees every team's SAs, so
     // the caller's own membership lookup is never consulted, and the Mongo
     // query is unbounded (owningTeamIds === null, not the caller's teams).
     expect(mockListOpenFgaObjects).not.toHaveBeenCalled();
@@ -239,55 +232,6 @@ describe("GET /api/admin/service-accounts (list)", () => {
     });
   });
 
-  it("uses the preview subject's team memberships for a read-only simulation", async () => {
-    mockResolveAuthorizedAdminSimulationScope.mockResolvedValue({
-      openfgaUser: "user:target-sub",
-      ownerEmail: "target@example.com",
-      subjectType: "user",
-      subjectId: "target-sub",
-    });
-    mockListOpenFgaObjects.mockResolvedValue({ objects: ["team:target-team"] });
-    mockListByOwningTeams.mockResolvedValue([]);
-
-    const res = await listGET(
-      listRequest(
-        "http://localhost:3000/api/admin/service-accounts?simulate_type=user&simulate_id=target-sub",
-      ),
-    );
-
-    expect(res.status).toBe(200);
-    expect(mockListOpenFgaObjects).toHaveBeenCalledWith({
-      user: "user:target-sub",
-      relation: "member",
-      type: "team",
-    });
-    expect(mockListByOwningTeams).toHaveBeenCalledWith(["target-team"], {
-      includeRevoked: false,
-    });
-  });
-
-  it("limits a team userset preview to the selected team's service accounts", async () => {
-    mockResolveAuthorizedAdminSimulationScope.mockResolvedValue({
-      openfgaUser: "team:platform#member",
-      ownerEmail: "",
-      subjectType: "team",
-      subjectId: "platform",
-      teamRelation: "member",
-    });
-    mockListByOwningTeams.mockResolvedValue([]);
-
-    const res = await listGET(
-      listRequest(
-        "http://localhost:3000/api/admin/service-accounts?simulate_type=team&simulate_id=platform",
-      ),
-    );
-
-    expect(res.status).toBe(200);
-    expect(mockListOpenFgaObjects).not.toHaveBeenCalled();
-    expect(mockListByOwningTeams).toHaveBeenCalledWith(["platform"], {
-      includeRevoked: false,
-    });
-  });
 });
 
 describe("GET /api/admin/service-accounts/[id] (detail)", () => {

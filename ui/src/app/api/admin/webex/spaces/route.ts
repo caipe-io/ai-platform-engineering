@@ -1,8 +1,7 @@
 import { NextRequest } from "next/server";
 
-import { ApiError,getAuthFromBearerOrSession,successResponse,withErrorHandler } from "@/lib/api-middleware";
+import { getAuthFromBearerOrSession,successResponse,withErrorHandler } from "@/lib/api-middleware";
 import { getRbacCollection } from "@/lib/rbac/mongo-collections";
-import { parseAdminSimulation } from "@/lib/rbac/admin-simulator";
 import { checkOpenFgaTuple } from "@/lib/rbac/openfga";
 import { hasOrganizationAdmin } from "@/lib/rbac/platform-admin";
 import { subjectFromSession } from "@/lib/rbac/resource-authz";
@@ -70,12 +69,8 @@ async function webexSpaceAccess(
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
     const { session } = await getAuthFromBearerOrSession(request);
-    const simulation = parseAdminSimulation(request.nextUrl.searchParams);
     const organizationAdmin = await hasOrganizationAdmin(session);
-    if (simulation.active && !organizationAdmin) {
-      throw new ApiError("Simulation requires organization admin access", 403);
-    }
-    const subject = simulation.subject?.openfga_user ?? subjectFromSession(session);
+    const subject = subjectFromSession(session);
     // `?health=1` opts the caller in to a per-row diagnostics summary
     // (warnings count + OpenFGA reachability + last runtime error
     // timestamp). Mirrors the Slack channels endpoint so the shared
@@ -123,7 +118,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
           const workspaceId = webexWorkspaceRef(row.webex_workspace_id);
           const [access, routes] = await Promise.all([
             subject
-              ? organizationAdmin && !simulation.active
+              ? organizationAdmin
                 ? Promise.resolve({ canRead: true, canManage: true })
                 : webexSpaceAccess(subject, workspaceId, row.webex_space_id)
               : Promise.resolve({ canRead: false, canManage: false }),

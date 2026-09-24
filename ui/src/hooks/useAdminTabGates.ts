@@ -3,7 +3,6 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import { allAdminTabGates,isDevAnonymousAuthEnabled } from "@/lib/auth/dev-auth-provider";
-import type { AdminSimulationQueryTarget } from "@/lib/rbac/admin-simulation-query";
 import type { AdminTabGatesMap,AdminTabKey,IntegrationPanelModesMap } from "@/lib/rbac/types";
 import { useSession } from "next-auth/react";
 import { useCallback,useEffect,useRef,useState } from "react";
@@ -38,41 +37,10 @@ interface AdminTabGatesState {
   integrationPanelModes: IntegrationPanelModesMap;
   loading: boolean;
   error: string | null;
-  simulation: AdminTabGateSimulation | null;
   /** Visible tab keys (convenience filter of gates with `true` values). */
   visibleTabs: AdminTabKey[];
   /** Force a re-fetch (e.g. after an admin updates a policy). */
   refresh: () => void;
-}
-
-export type AdminTabGateSimulationTarget = AdminSimulationQueryTarget;
-
-interface AdminTabGateSimulation {
-  active: boolean;
-  readonly: true;
-  subject?: {
-    type: "user" | "team";
-    id: string;
-    relation?: "member" | "admin";
-    openfga_user: string;
-    display_name?: string;
-    email?: string;
-    organization_admin?: boolean;
-  };
-}
-
-function adminTabGatesUrl(simulationTarget?: AdminTabGateSimulationTarget | null): string {
-  if (!simulationTarget?.type || !simulationTarget.id) {
-    return "/api/rbac/admin-tab-gates";
-  }
-  const params = new URLSearchParams({
-    simulate_type: simulationTarget.type,
-    simulate_id: simulationTarget.id,
-  });
-  if (simulationTarget.relation) {
-    params.set("simulate_relation", simulationTarget.relation);
-  }
-  return `/api/rbac/admin-tab-gates?${params.toString()}`;
 }
 
 /**
@@ -82,26 +50,19 @@ function adminTabGatesUrl(simulationTarget?: AdminTabGateSimulationTarget | null
  * Gates default to `false` (fail-closed) until the Web UI backend responds.
  * Results are cached per session and invalidated on token refresh.
  */
-export function useAdminTabGates(
-  simulationTarget?: AdminTabGateSimulationTarget | null
-): AdminTabGatesState {
+export function useAdminTabGates(): AdminTabGatesState {
   const { data: session, status } = useSession();
   const [gates, setGates] = useState<AdminTabGatesMap>(EMPTY_GATES);
   const [integrationPanelModes, setIntegrationPanelModes] = useState<IntegrationPanelModesMap>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [simulation, setSimulation] = useState<AdminTabGateSimulation | null>(null);
   const lastTokenRef = useRef<string | undefined>(undefined);
-  const simulationKey = simulationTarget?.type && simulationTarget.id
-    ? `${simulationTarget.type}:${simulationTarget.id}:${simulationTarget.relation ?? ""}`
-    : "";
   const devAuthEnabled = isDevAnonymousAuthEnabled();
 
   const fetchGates = useCallback(async () => {
-    if (devAuthEnabled && !simulationTarget) {
+    if (devAuthEnabled) {
       setGates(ALL_GATES);
       setIntegrationPanelModes({ slack: "full", webex: "full" });
-      setSimulation(null);
       setError(null);
       setLoading(false);
       return;
@@ -116,7 +77,7 @@ export function useAdminTabGates(
     setError(null);
 
     try {
-      const res = await fetch(adminTabGatesUrl(simulationTarget));
+      const res = await fetch("/api/rbac/admin-tab-gates");
       if (!res.ok) {
         throw new Error(`Failed to fetch tab gates: ${res.status}`);
       }
@@ -125,32 +86,28 @@ export function useAdminTabGates(
         setGates(data.gates);
       }
       setIntegrationPanelModes(data.integration_panel_modes ?? {});
-      setSimulation(data.simulation ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
       setGates(EMPTY_GATES);
       setIntegrationPanelModes({});
-      setSimulation(null);
     } finally {
       setLoading(false);
     }
-  }, [devAuthEnabled, simulationTarget, status]);
+  }, [devAuthEnabled, status]);
 
   useEffect(() => {
     if (status === "loading") {
       return;
     }
     if (status === "unauthenticated") {
-      if (devAuthEnabled && !simulationTarget) {
+      if (devAuthEnabled) {
         setGates(ALL_GATES);
         setIntegrationPanelModes({ slack: "full", webex: "full" });
-        setSimulation(null);
         setLoading(false);
         return;
       }
       setGates(EMPTY_GATES);
       setIntegrationPanelModes({});
-      setSimulation(null);
       setLoading(false);
       return;
     }
@@ -163,16 +120,15 @@ export function useAdminTabGates(
       ?.accessToken;
     const stableKey =
       token ?? `session:${(session as { user?: { email?: string | null } } | null)?.user?.email ?? ""}`;
-    const cacheKey = `${stableKey}|${simulationKey}`;
-    if (cacheKey !== lastTokenRef.current) {
-      lastTokenRef.current = cacheKey;
+    if (stableKey !== lastTokenRef.current) {
+      lastTokenRef.current = stableKey;
       fetchGates();
     }
-  }, [session, status, fetchGates, simulationKey, devAuthEnabled, simulationTarget]);
+  }, [session, status, fetchGates, devAuthEnabled]);
 
   const visibleTabs = (Object.entries(gates) as [AdminTabKey, boolean][])
     .filter(([, v]) => v)
     .map(([k]) => k);
 
-  return { gates, integrationPanelModes, loading, error, simulation, visibleTabs, refresh: fetchGates };
+  return { gates, integrationPanelModes, loading, error, visibleTabs, refresh: fetchGates };
 }

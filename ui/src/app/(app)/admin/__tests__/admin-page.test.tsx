@@ -290,6 +290,7 @@ const mockUsersListResponse = {
       firstName: 'Regular',
       lastName: 'User',
       enabled: true,
+      last_sign_in: null,
       attributes: {} as Record<string, string[]>,
       roles: ['user'],
     },
@@ -689,238 +690,6 @@ describe('Admin Dashboard Page', () => {
       setupFetchMock();
     });
 
-    it('opens a subtle searchable view-as modal from the category bar', async () => {
-      render(<AdminPage />);
-
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /view as/i })).toBeInTheDocument();
-      });
-      expect(screen.queryByText(/Read-only simulator\. The UI stays authenticated as you/i)).not.toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: /view as/i }));
-
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(screen.getByText('View As — Read-Only Access Preview')).toBeInTheDocument();
-      expect(screen.getByText(/does not sign in as them or change your current session/i)).toBeInTheDocument();
-      const search = screen.getByPlaceholderText(/search by email, name, or user id/i);
-      fireEvent.change(search, { target: { value: 'user' } });
-
-      await waitFor(() => {
-        expect(global.fetch).toHaveBeenCalledWith('/api/admin/users?search=user&pageSize=20');
-      });
-
-      fireEvent.click(await screen.findByRole('button', { name: /Regular User user@example.com kc-user/i }));
-      fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
-
-      expect(replaceMock).toHaveBeenCalledWith(
-        expect.stringContaining('simulate_type=user&simulate_id=kc-user'),
-        { scroll: false }
-      );
-    });
-
-    it('shows the simulated user name and baseline navigation instead of a blank shell', async () => {
-      currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=kc-user');
-      setupFetchMock({
-        tabGates: {
-          ...allGatesOpen,
-          roles: false,
-          identity_group_sync: false,
-          slack: true,
-          webex: true,
-          feedback: true,
-          stats: true,
-          metrics: false,
-          audit_logs: false,
-          action_audit: false,
-          openfga: false,
-          migrations: false,
-        },
-        simulation: {
-          active: true,
-          readonly: true,
-          subject: {
-            type: 'user',
-            id: 'kc-user',
-            openfga_user: 'user:kc-user',
-            display_name: 'Regular User',
-            email: 'user@example.com',
-          },
-        },
-        integrationPanelModes: {
-          slack: 'self_service',
-          webex: 'self_service',
-        },
-      });
-
-      render(<AdminPage />);
-
-      expect(await screen.findByRole('button', { name: /viewing as regular user/i })).toBeInTheDocument();
-      expect(screen.queryByText(/previewing regular user's effective access/i)).not.toBeInTheDocument();
-      expect(screen.getByText('Review people, roles, memberships, and resource access.')).toBeInTheDocument();
-      expect(screen.queryByText('Access Preview · Read-Only')).not.toBeInTheDocument();
-      expect(screen.queryByText(/no user session is impersonated/i)).not.toBeInTheDocument();
-      const navigation = await screen.findByRole('navigation', { name: 'Admin sections' });
-      expect(within(navigation).getByRole('button', { name: 'Teams & Users' })).toHaveAttribute(
-        'data-active',
-        'true',
-      );
-      expect(within(navigation).getByRole('link', { name: 'Users' })).toHaveAttribute(
-        'aria-current',
-        'page',
-      );
-      expect(within(navigation).getByRole('link', { name: 'Teams' })).toBeInTheDocument();
-      expect(within(navigation).getByRole('button', { name: 'Integrations' })).toBeInTheDocument();
-      expect(within(navigation).getByRole('button', { name: 'Insights' })).toBeInTheDocument();
-      expect(within(navigation).getByRole('button', { name: 'Metrics & Health' })).toBeInTheDocument();
-      expect(within(navigation).getByRole('link', { name: 'Users' })).toHaveAttribute(
-        'href',
-        expect.stringContaining('simulate_type=user'),
-      );
-      expect(screen.queryByText(/No Admin access is available/i)).not.toBeInTheDocument();
-    });
-
-    it('scopes Teams & Users data requests to the selected preview account', async () => {
-      currentPathname = '/admin/people/users';
-      currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=kc-user');
-      const fetchMock = setupFetchMock({
-        tabGates: baselineUserGates,
-        simulation: {
-          active: true,
-          readonly: true,
-          subject: {
-            type: 'user',
-            id: 'kc-user',
-            openfga_user: 'user:kc-user',
-            display_name: 'Regular User',
-          },
-        },
-      });
-
-      render(<AdminPage />);
-
-      await waitFor(() => {
-        expect(fetchMock).toHaveBeenCalledWith(
-          '/api/admin/users?page=1&pageSize=20&simulate_type=user&simulate_id=kc-user'
-        );
-        expect(fetchMock).toHaveBeenCalledWith(
-          '/api/admin/teams?simulate_type=user&simulate_id=kc-user'
-        );
-      });
-
-    });
-
-    it('scopes the Teams grid request to the selected preview account', async () => {
-      currentPathname = '/admin/people/teams';
-      currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=kc-user');
-      const fetchMock = setupFetchMock({
-        tabGates: baselineUserGates,
-        simulation: {
-          active: true,
-          readonly: true,
-          subject: {
-            type: 'user',
-            id: 'kc-user',
-            openfga_user: 'user:kc-user',
-            display_name: 'Regular User',
-          },
-        },
-      });
-
-      render(<AdminPage />);
-
-      await waitFor(() => {
-        const gridRequest = fetchMock.mock.calls.find(([url]) =>
-          typeof url === 'string'
-          && url.includes('/api/admin/teams?page=1')
-          && url.includes('simulate_type=user')
-          && url.includes('simulate_id=kc-user')
-        );
-        expect(gridRequest).toBeDefined();
-      });
-    });
-
-    it('uses a simulated admin\'s effective access while keeping the preview read-only', async () => {
-      currentPathname = '/admin/platform/agents';
-      currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=admin-target');
-      setupFetchMock({
-        tabGates: {
-          ...allGatesOpen,
-          credentials: true,
-          service_accounts: true,
-        },
-        simulation: {
-          active: true,
-          readonly: true,
-          subject: {
-            type: 'user',
-            id: 'admin-target',
-            openfga_user: 'user:admin-target',
-            display_name: 'Target Admin',
-            organization_admin: true,
-          },
-        },
-        integrationPanelModes: {
-          slack: 'full',
-          webex: 'full',
-        },
-      });
-
-      render(<AdminPage />);
-
-      expect(await screen.findByRole('button', { name: /viewing as target admin/i })).toBeInTheDocument();
-      const navigation = await screen.findByRole('navigation', { name: 'Admin sections' });
-      expect(within(navigation).getByRole('button', { name: 'Resources' })).toHaveAttribute(
-        'data-active',
-        'true',
-      );
-      for (const label of [
-        'Agent configuration',
-        'MCP Catalog',
-        'RAG',
-        'Skill Hubs',
-        'Service Accounts',
-        'Credentials',
-      ]) {
-        expect(within(navigation).getByRole('link', { name: label })).toBeInTheDocument();
-      }
-      expect(within(navigation).getByRole('link', { name: 'Agent configuration' })).toHaveAttribute(
-        'aria-current',
-        'page',
-      );
-      expect(screen.getByTestId('import-agents-card')).toHaveAttribute('data-read-only', 'true');
-    });
-
-    it('scopes Feedback requests to the selected preview account', async () => {
-      currentPathname = '/admin/insights/feedback';
-      currentSearchParams = new URLSearchParams('simulate_type=user&simulate_id=kc-user');
-      setupFetchMock({
-        tabGates: baselineUserGates,
-        integrationPanelModes: {
-          slack: 'self_service',
-          webex: 'self_service',
-        },
-        simulation: {
-          active: true,
-          readonly: true,
-          subject: {
-            type: 'user',
-            id: 'kc-user',
-            openfga_user: 'user:kc-user',
-            display_name: 'Regular User',
-            email: 'user@example.com',
-          },
-        },
-      });
-
-      render(<AdminPage />);
-
-      await waitFor(() => {
-        expect(global.fetch).toHaveBeenCalledWith(
-          expect.stringMatching(/\/api\/admin\/feedback\?.*simulate_type=user.*simulate_id=kc-user/)
-        );
-      });
-    });
-
     it('does not show Read-Only badge', async () => {
       render(<AdminPage />);
 
@@ -954,6 +723,9 @@ describe('Admin Dashboard Page', () => {
       const table = screen.getByRole('table');
       expect(within(table).getByText('Name')).toBeInTheDocument();
       expect(within(table).getByText('Email')).toBeInTheDocument();
+      expect(within(table).getByText('Last sign in')).toBeInTheDocument();
+      expect(within(table).getByText('Unknown')).toHaveClass('text-muted-foreground');
+      expect(within(table).getByText('Never')).toHaveClass('text-muted-foreground');
       expect(within(table).queryByText('Roles')).not.toBeInTheDocument();
     });
 
@@ -975,7 +747,9 @@ describe('Admin Dashboard Page', () => {
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringContaining('/api/admin/users?page=1&pageSize=20&slackStatus=linked')
+          expect.stringContaining(
+            '/api/admin/users?page=1&pageSize=20&includeLastSignIn=true&slackStatus=linked'
+          )
         );
       });
 
@@ -1004,7 +778,9 @@ describe('Admin Dashboard Page', () => {
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringContaining('/api/admin/users?page=1&pageSize=20&webexStatus=linked')
+          expect.stringContaining(
+            '/api/admin/users?page=1&pageSize=20&includeLastSignIn=true&webexStatus=linked'
+          )
         );
       });
 

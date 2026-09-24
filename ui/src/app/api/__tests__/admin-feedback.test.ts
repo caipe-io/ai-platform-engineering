@@ -72,11 +72,6 @@ jest.mock('@/lib/rbac/openfga', () => ({
   checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
 }));
 
-const mockGetRealmUserByIdOrNull = jest.fn();
-jest.mock('@/lib/rbac/keycloak-admin', () => ({
-  getRealmUserByIdOrNull: (...args: unknown[]) => mockGetRealmUserByIdOrNull(...args),
-}));
-
 let mockFeedbackEnabled = true;
 jest.mock('@/lib/config', () => ({
   getConfig: (key: string) => {
@@ -236,8 +231,6 @@ describe('GET /api/admin/feedback', () => {
     mockCheckOpenFgaTuple.mockImplementation(async (tuple: { user?: string }) => ({
       allowed: tuple.user === 'user:admin-sub',
     }));
-    mockGetRealmUserByIdOrNull.mockReset();
-    mockGetRealmUserByIdOrNull.mockResolvedValue(null);
     mockGetOwnedAgents.mockReset();
     mockGetOwnedAgents.mockResolvedValue([]);
     mockGetOwnedAgentConversationIds.mockReset();
@@ -322,39 +315,6 @@ describe('GET /api/admin/feedback', () => {
     expect(filter.$or).toBeUndefined();
     expect(filter.$and).toBeUndefined();
     expect(mockGetReadableSlackChannelNames).not.toHaveBeenCalled();
-  });
-
-  it('scopes an admin access preview to the selected user rather than the admin session', async () => {
-    mockGetServerSession.mockResolvedValue(adminSession());
-    mockGetRealmUserByIdOrNull.mockResolvedValue({
-      id: 'target-sub',
-      email: 'target@example.com',
-    });
-    mockGetReadableSlackChannelNames.mockResolvedValue(['target-channel']);
-    const feedbackCol = setupFeedbackCollection([], 0);
-
-    const res = await GET(makeRequest(
-      '/api/admin/feedback?simulate_type=user&simulate_id=target-sub'
-    ));
-
-    expect(res.status).toBe(200);
-    expect(mockGetRealmUserByIdOrNull).toHaveBeenCalledWith('target-sub');
-    expect(mockGetReadableSlackChannelNames).toHaveBeenCalledWith('user:target-sub');
-    expect(feedbackCol.find.mock.calls[0][0].$or).toEqual([
-      { source: 'slack', channel_name: 'target-channel' },
-      { user_email: 'target@example.com' },
-    ]);
-  });
-
-  it('rejects access-preview parameters from a non-admin caller', async () => {
-    mockGetServerSession.mockResolvedValue(userSession());
-    setupFeedbackCollection([], 0);
-
-    const res = await GET(makeRequest(
-      '/api/admin/feedback?simulate_type=user&simulate_id=target-sub'
-    ));
-
-    expect(res.status).toBe(403);
   });
 
   it('scopes distinct channel/user dropdowns to filter for non-admin', async () => {

@@ -18,6 +18,7 @@ const SESSION_KEEPALIVE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const SESSION_CREDENTIAL_ERRORS = new Set([
   "RefreshTokenExpired",
   "RefreshTokenError",
+  "ImpersonationTokenMissing",
 ]);
 /**
  * How many consecutive 30s check cycles we tolerate seeing the token as

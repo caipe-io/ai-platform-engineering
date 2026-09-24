@@ -125,6 +125,22 @@ export async function storeTokens(sub: string | undefined, tokens: StoredTokens)
   }
 }
 
+/** Remove persisted OAuth tokens and evict the local cache entry. */
+export async function deleteStoredTokens(key: string | undefined): Promise<void> {
+  if (!key) return;
+
+  _l1.delete(key);
+
+  if (!isMongoDBConfigured) return;
+
+  try {
+    const col = await getCollection<TokenStoreDoc>(COLLECTION);
+    await col.deleteOne({ _id: key } as Parameters<typeof col.deleteOne>[0]);
+  } catch (err) {
+    console.error('[auth-token-store] MongoDB delete error:', err);
+  }
+}
+
 /** Clear the L1 cache. For testing only. */
 export function resetTokenStore(): void {
   _l1.clear();

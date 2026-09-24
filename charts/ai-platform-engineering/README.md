@@ -321,6 +321,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | keycloak.image.pullPolicy | string | `"IfNotPresent"` |  |
 | keycloak.image.repository | string | `"quay.io/keycloak/keycloak"` |  |
 | keycloak.image.tag | string | `"26.3"` |  |
+| keycloak.platformClient.clientId | string | `"caipe-platform"` |  |
 | keycloak.platformClient.secretRef | string | `"caipe-platform-secret"` |  |
 | keycloak.realm.name | string | `"caipe"` |  |
 | keycloak.realm.sslRequired | string | `"external"` |  |

@@ -379,6 +379,7 @@ services:
       - OIDC_REQUIRED_GROUP=${OIDC_REQUIRED_GROUP:-}
       - OIDC_REQUIRED_ADMIN_GROUP=${OIDC_REQUIRED_ADMIN_GROUP:-}
       - BOOTSTRAP_ADMIN_EMAILS=${BOOTSTRAP_ADMIN_EMAILS:-}
+      - ADMIN_ALLOW_IMPERSONATION=${ADMIN_ALLOW_IMPERSONATION:-}
       - OIDC_ENABLE_REFRESH_TOKEN=${OIDC_ENABLE_REFRESH_TOKEN:-true}
       # Local Docker Keycloak admin client. The rbac profile seeds this
       # confidential client in realm-config.json; Kubernetes should inject
@@ -1344,6 +1345,8 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin
       KC_REALM: caipe
       KC_BOT_CLIENT_ID: caipe-slack-bot
+      KC_UI_IMPERSONATION_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-caipe-platform}
+      CAIPE_PLATFORM_AUDIENCE: ${CAIPE_PLATFORM_AUDIENCE:-caipe-platform}
       KC_SSL_REQUIRED: none
       # Seed the Slack bot's service-account read grant on
       # system_config:platform_settings so it can read platform-wide settings

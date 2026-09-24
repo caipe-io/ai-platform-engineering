@@ -9,6 +9,7 @@ import {
 countRealmUsers,
 findRealmUsersByExactEmail,
 getRealmUserById,
+getUserSessions,
 listRealmRoleMappingsForUser,
 listUsersWithRole,
 searchRealmUsers,
@@ -17,10 +18,6 @@ import {
 curateRealmRolesForUser,
 type RealmRoleClassification,
 } from "@/lib/rbac/keycloak-transition";
-import {
-resolveAuthorizedAdminSimulationScope,
-simulationSubjectCanAuditOrganization,
-} from "@/lib/rbac/admin-simulation-server";
 import { listOpenFgaObjects } from "@/lib/rbac/openfga";
 import { requireBaselineAdminSurfaceRead } from "@/lib/rbac/require-openfga";
 import {
@@ -40,6 +37,7 @@ type AdminUsersListBase = {
   attributes: Record<string, string[]>;
   slack_link_status: "linked" | "unlinked";
   webex_link_status: "linked" | "unlinked";
+  last_sign_in?: number | null;
 };
 
 type AdminUsersListWithRoles = AdminUsersListBase & {
@@ -150,23 +148,62 @@ function mapBaseRow(u: Record<string, unknown>): AdminUsersListBase {
   };
 }
 
-// Per-user role enrichment is opt-in via `?includeRoles=true`. Each call adds
-// one Keycloak Admin REST round-trip (`/users/{id}/role-mappings/realm`), so
-// with default pageSize=20 we previously fanned out to 20 extra calls per
-// list request. The UI list table does not render role fields; callers that
-// need them (detail panel) use `/api/admin/users/[id]/roles` instead.
+async function getLastSignIn(
+  userId: string,
+): Promise<number | null | undefined> {
+  try {
+    const sessions = await getUserSessions(userId);
+    const lastAccess = sessions.reduce((latest, session) => {
+      const timestamp = session.lastAccess ?? session.start ?? 0;
+      return Math.max(latest, timestamp);
+    }, 0);
+    return lastAccess > 0 ? lastAccess : null;
+  } catch (error) {
+    console.warn(`[admin/users] Could not load last sign-in for ${userId}:`, error);
+    return undefined;
+  }
+}
+
+// Per-user Keycloak enrichments are opt-in. The table requests last sign-in,
+// while role consumers use `?includeRoles=true` or the per-user roles route.
+// Bounded batches below prevent a page from flooding the Keycloak admin API.
 async function enrichListRow(
   u: Record<string, unknown>,
-  includeRoles: boolean
+  includeRoles: boolean,
+  includeLastSignIn: boolean,
 ): Promise<AdminUsersListItem> {
   const base = mapBaseRow(u);
-  if (!includeRoles) return base;
-  const roleRows = await listRealmRoleMappingsForUser(base.id);
+  const [roleRows, lastSignIn] = await Promise.all([
+    includeRoles ? listRealmRoleMappingsForUser(base.id) : Promise.resolve(null),
+    includeLastSignIn ? getLastSignIn(base.id) : Promise.resolve(undefined),
+  ]);
+  const signIn = includeLastSignIn
+    ? { last_sign_in: lastSignIn }
+    : {};
+  if (!roleRows) return { ...base, ...signIn };
   const curatedRoles = curateRealmRolesForUser(roleRows.map((r) => r.name));
   return {
     ...base,
+    ...signIn,
     ...curatedRoles,
   };
+}
+
+async function enrichListRows(
+  rows: Record<string, unknown>[],
+  includeRoles: boolean,
+  includeLastSignIn: boolean,
+): Promise<AdminUsersListItem[]> {
+  const enriched: AdminUsersListItem[] = [];
+  const maxConcurrentKeycloakRequests = 5;
+  for (let offset = 0; offset < rows.length; offset += maxConcurrentKeycloakRequests) {
+    enriched.push(...await Promise.all(
+      rows
+        .slice(offset, offset + maxConcurrentKeycloakRequests)
+        .map((row) => enrichListRow(row, includeRoles, includeLastSignIn)),
+    ));
+  }
+  return enriched;
 }
 
 function userMatchesFilters(
@@ -194,22 +231,20 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   const { session } = await getAuthFromBearerOrSession(request);
   await requireBaselineAdminSurfaceRead(session, "users");
   const url = new URL(request.url);
-  const simulationScope = await resolveAuthorizedAdminSimulationScope(url.searchParams, session);
-
-  const hasAdminView = simulationScope
-    ? await simulationSubjectCanAuditOrganization(simulationScope)
-    : await requireRbacPermission(session, "admin_ui", "view").then(
-        () => true,
-        () => false
-      );
+  const hasAdminView = await requireRbacPermission(session, "admin_ui", "view").then(
+    () => true,
+    () => false
+  );
 
   // Per-user role enrichment is opt-in. The Users-tab table, the team
-  // typeaheads, the simulation picker, and the ReBAC graph filters do not
+  // typeaheads and the ReBAC graph filters do not
   // render role fields; they should not pay for N extra Keycloak round-trips
   // per page. Callers that need role data either pass `?includeRoles=true`
   // or use the per-user `/api/admin/users/[id]/roles` endpoint.
   const includeRolesRaw = (url.searchParams.get("includeRoles") ?? "").trim().toLowerCase();
   const includeRoles = includeRolesRaw === "true" || includeRolesRaw === "1";
+  const includeLastSignInRaw = (url.searchParams.get("includeLastSignIn") ?? "").trim().toLowerCase();
+  const includeLastSignIn = includeLastSignInRaw === "true" || includeLastSignInRaw === "1";
 
   // Parsed once up front so both the plain-member (team-scoped) branch below
   // and the admin/team-admin branch can page their Keycloak round-trips
@@ -229,20 +264,11 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   // admin) is now widened to the same full-list view so they can VIEW any
   // user, but each row is stamped `can_edit` only for users on a team they
   // administer. Plain members fall back to the self/team-scoped listing.
-  const selfSubjectId = simulationScope
-    ? simulationScope.subjectType === "user"
-      ? simulationScope.subjectId
-      : ""
-    : typeof session.sub === "string"
-      ? session.sub.trim()
-      : "";
-  const actor = simulationScope?.openfgaUser
-    ?? (selfSubjectId ? `user:${selfSubjectId}` : "");
+  const selfSubjectId = typeof session.sub === "string" ? session.sub.trim() : "";
+  const actor = selfSubjectId ? `user:${selfSubjectId}` : "";
   let adminSlugs = new Set<string>();
   if (!hasAdminView) {
-    if (simulationScope?.subjectType === "team" && simulationScope.teamRelation === "admin") {
-      adminSlugs = new Set([simulationScope.subjectId]);
-    } else if (actor) {
+    if (actor) {
       try {
         const adminObjects = await listOpenFgaObjects({
           user: actor,
@@ -297,7 +323,8 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       }
       const self = await enrichListRow(
         await getRealmUserById(selfSubjectId),
-        true
+        true,
+        includeLastSignIn,
       );
       return NextResponse.json({
         users: [{ ...self, can_edit: self.id === selfSubjectId }],
@@ -309,24 +336,20 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
     };
 
     let teamSlugs: string[] = [];
-    if (simulationScope?.subjectType === "team") {
-      teamSlugs = [simulationScope.subjectId];
-    } else {
-      try {
-        const teamObjects = await listOpenFgaObjects({
-          user: actor,
-          relation: "member",
-          type: "team",
-        });
-        teamSlugs = teamObjects.objects
-          .map((obj) => {
-            const parts = obj.split(":");
-            return parts.length >= 2 ? parts.slice(1).join(":") : "";
-          })
-          .filter(Boolean);
-      } catch {
-        // fall through to self-only
-      }
+    try {
+      const teamObjects = await listOpenFgaObjects({
+        user: actor,
+        relation: "member",
+        type: "team",
+      });
+      teamSlugs = teamObjects.objects
+        .map((obj) => {
+          const parts = obj.split(":");
+          return parts.length >= 2 ? parts.slice(1).join(":") : "";
+        })
+        .filter(Boolean);
+    } catch {
+      // fall through to self-only
     }
 
     if (teamSlugs.length === 0) {
@@ -349,7 +372,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
     }
 
     const seenIds = new Set<string>();
-    const teamUsers: AdminUsersListItem[] = [];
+    const teamUserRows: Record<string, unknown>[] = [];
     await Promise.all(
       pageEmails.map(async (email) => {
         try {
@@ -358,7 +381,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
             const id = String(u.id ?? "");
             if (!id || seenIds.has(id)) continue;
             seenIds.add(id);
-            teamUsers.push(await enrichListRow(u, false));
+            teamUserRows.push(u);
           }
         } catch {
           // skip this email on error
@@ -367,6 +390,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
     );
 
     // Plain members can only edit their own profile.
+    const teamUsers = await enrichListRows(teamUserRows, false, includeLastSignIn);
     return NextResponse.json({
       users: teamUsers.map((u) => ({ ...u, can_edit: u.id === selfSubjectId })),
       total: teamMemberTotal,
@@ -448,9 +472,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
         max: pageSize,
       });
       const total = await countRealmUsers({ search, enabled });
-      const users = await Promise.all(
-        raw.map((row) => enrichListRow(row, includeRoles))
-      );
+      const users = await enrichListRows(raw, includeRoles, includeLastSignIn);
       return NextResponse.json({
         users: stampCanEdit(users),
         total,
@@ -483,7 +505,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
       for (const row of batch) {
         if (!userMatchesFilters(row, filterOpts)) continue;
         if (matchCount >= skip && pageRows.length < pageSize) {
-          pageRows.push(await enrichListRow(row, includeRoles));
+          pageRows.push(await enrichListRow(row, includeRoles, includeLastSignIn));
         }
         matchCount += 1;
       }

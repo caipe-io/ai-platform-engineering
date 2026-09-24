@@ -6,7 +6,7 @@ successResponse,
 withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
-import { requireAdminSimulationUserProfileRead } from "@/lib/rbac/admin-simulation-server";
+import { requireUserProfileRead } from "@/lib/rbac/require-openfga";
 import {
 deleteRealmUser,
 getRealmUserById,
@@ -18,6 +18,7 @@ deleteExactOpenFgaTuples,
 readOpenFgaTuples,
 type OpenFgaTupleKey,
 } from "@/lib/rbac/openfga";
+import { canStartUserImpersonation } from "@/lib/auth/impersonation-policy";
 import type { TeamMembershipSource } from "@/types/identity-group-sync";
 import type { UserMembershipSourceInfo } from "@/types/admin-user-identity";
 import { type NextRequest } from "next/server";
@@ -61,11 +62,7 @@ export const GET = withErrorHandler(
     const { session } = await getAuthFromBearerOrSession(request);
     const params = await context.params;
     const id = params.id;
-    await requireAdminSimulationUserProfileRead(
-      new URL(request.url).searchParams,
-      session,
-      id,
-    );
+    await requireUserProfileRead(session, id);
 
     const kcUser = await getRealmUserById(id);
 
@@ -106,12 +103,14 @@ export const GET = withErrorHandler(
     }
 
     const attributes = normalizeAttributes(kcUser.attributes);
+    const canImpersonate = await canStartUserImpersonation(session);
 
     const createdRaw = kcUser.createdTimestamp;
     const createdAt =
       typeof createdRaw === "number" && createdRaw > 0 ? createdRaw : null;
 
     return successResponse({
+      canImpersonate,
       user: {
         id: String(kcUser.id ?? id),
         principalType: kcUser.serviceAccountClientId ? "service_account" : "user",

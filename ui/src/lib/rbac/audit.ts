@@ -1,5 +1,6 @@
 import { createHash,randomUUID } from "crypto";
 import { getAuditBackend } from "@/lib/audit";
+import { withAuditImpersonationActor } from "@/lib/audit/impersonation-context";
 import {
 createAuthzTraceContext,
 emitAuthzSpan,
@@ -27,6 +28,8 @@ export interface LogAuthzDecisionParams {
   tenantId: string;
   sub: string;
   actorSub?: string;
+  subjectRef?: string;
+  impersonationStartedAt?: string;
   resource: RbacResource;
   scope: string;
   outcome: AuditOutcome;
@@ -59,6 +62,9 @@ export function logAuthzDecision(params: LogAuthzDecisionParams): AuditEvent {
     tenant_id: params.tenantId,
     subject_hash: hashSubject(params.sub),
     actor_hash: params.actorSub ? hashSubject(params.actorSub) : undefined,
+    actor_ref: params.actorSub ? `user:${params.actorSub}` : undefined,
+    impersonation: Boolean(params.actorSub),
+    impersonation_started_at: params.impersonationStartedAt,
     capability: `${params.resource}#${params.scope}`,
     component: params.resource,
     resource_ref: params.resourceRef,
@@ -84,7 +90,7 @@ export function logAuthzDecision(params: LogAuthzDecisionParams): AuditEvent {
   }
   const auditType: AuditEventType = params.auditType ?? "auth";
   const auditSource: AuditEventSource = params.source ?? WEBUI_BACKEND_SOURCE;
-  getAuditBackend().write({
+  getAuditBackend().write(withAuditImpersonationActor({
     ts: event.ts,
     type: auditType,
     tenant_id: event.tenant_id,
@@ -102,8 +108,14 @@ export function logAuthzDecision(params: LogAuthzDecisionParams): AuditEvent {
     ...(event.span_id ? { span_id: event.span_id } : {}),
     ...(event.trace_url ? { trace_url: event.trace_url } : {}),
     ...(event.actor_hash ? { actor_hash: event.actor_hash } : {}),
+    ...(event.actor_ref ? { actor_ref: event.actor_ref } : {}),
+    ...(params.subjectRef ? { subject_ref: params.subjectRef } : {}),
+    ...(event.impersonation ? { impersonation: true } : {}),
+    ...(event.impersonation_started_at
+      ? { impersonation_started_at: event.impersonation_started_at }
+      : {}),
     ...(params.email ? { user_email: params.email } : {}),
-  });
+  }, params.actorSub ? { actorSub: params.actorSub } : undefined));
   return event;
 }
 

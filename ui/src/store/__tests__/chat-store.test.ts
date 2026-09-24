@@ -217,10 +217,61 @@ describe('chat-store', () => {
 
       expect(getLastActiveConversationId()).toBeNull();
     });
+
+    it('clears all identity-owned and streaming state', () => {
+      const abort = jest.fn();
+      useChatStore.setState({
+        conversations: [makeConversation({ id: 'other-user-conversation' })],
+        activeConversationId: 'other-user-conversation',
+        isStreaming: true,
+        streamingConversations: new Map([
+          ['other-user-conversation', {
+            conversationId: 'other-user-conversation',
+            messageId: 'assistant-message',
+            client: { abort },
+          }],
+        ]),
+        pendingMessage: 'send after navigation',
+        contextUsageByConversation: {
+          'other-user-conversation': { usedTokens: 1 } as never,
+        },
+        conversationFilter: 'api',
+        conversationPage: 2,
+        conversationHasMore: true,
+        isLoadingMoreConversations: true,
+        messageHistory: {
+          'other-user-conversation': {
+            nextPage: 2,
+            hasMore: true,
+            isLoadingOlder: true,
+          },
+        },
+        unviewedConversations: new Set(['other-user-conversation']),
+        inputRequiredConversations: new Set(['other-user-conversation']),
+      });
+
+      useChatStore.getState().clearAllConversations();
+
+      const state = useChatStore.getState();
+      expect(abort).toHaveBeenCalledTimes(1);
+      expect(state.conversations).toEqual([]);
+      expect(state.activeConversationId).toBeNull();
+      expect(state.streamingConversations.size).toBe(0);
+      expect(state.isStreaming).toBe(false);
+      expect(state.pendingMessage).toBeNull();
+      expect(state.contextUsageByConversation).toEqual({});
+      expect(state.conversationFilter).toBe('all');
+      expect(state.conversationPage).toBe(0);
+      expect(state.conversationHasMore).toBe(false);
+      expect(state.isLoadingMoreConversations).toBe(false);
+      expect(state.messageHistory).toEqual({});
+      expect(state.unviewedConversations.size).toBe(0);
+      expect(state.inputRequiredConversations.size).toBe(0);
+    });
   });
 
   describe('resolveChatNavigationPath', () => {
-    it('returns the persisted last-active id before the conversation list hydrates', () => {
+    it('uses the landing page until a persisted conversation can be verified', () => {
       window.localStorage.setItem('caipe-chat-last-active-conversation', 'conv-persisted');
 
       expect(
@@ -228,7 +279,7 @@ describe('chat-store', () => {
           conversations: [],
           activeConversationId: null,
         }),
-      ).toBe('/chat/conv-persisted');
+      ).toBe('/chat');
     });
 
     it('prefers the active conversation when it is still in the list', () => {
@@ -244,6 +295,27 @@ describe('chat-store', () => {
           activeConversationId: 'conv-active',
         }),
       ).toBe('/chat/conv-active');
+    });
+
+    it('ignores active and recent conversations owned by another identity', () => {
+      const otherConversation = makeConversation({
+        id: 'other-conversation',
+        owner_id: 'other@example.com',
+        updatedAt: new Date('2026-09-23T12:00:00Z'),
+      });
+      const ownedConversation = makeConversation({
+        id: 'owned-conversation',
+        owner_id: 'viewer@example.com',
+        updatedAt: new Date('2026-09-23T11:00:00Z'),
+      });
+
+      expect(
+        resolveChatNavigationPath({
+          conversations: [otherConversation, ownedConversation],
+          activeConversationId: 'other-conversation',
+          ownerId: 'viewer@example.com',
+        }),
+      ).toBe('/chat/owned-conversation');
     });
   });
 
@@ -1002,6 +1074,39 @@ describe('chat-store', () => {
 
       await Promise.all([first, second]);
       expect(useChatStore.getState().conversations.map((c) => c.id)).toContain('shared-load');
+    });
+
+    it('discards a conversation list response from a prior identity generation', async () => {
+      let resolveGet: (value: {
+        items: Array<{ _id: string; title: string; created_at: string; updated_at: string }>;
+        total: number;
+        page: number;
+        page_size: number;
+        has_more: boolean;
+      }) => void;
+      mockApiClient.getConversations.mockReturnValue(new Promise((resolve) => {
+        resolveGet = resolve;
+      }));
+
+      const load = useChatStore.getState().loadConversationsFromServer();
+      useChatStore.getState().clearAllConversations();
+      resolveGet!({
+        items: [{
+          _id: 'prior-identity-conversation',
+          title: 'Prior identity',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }],
+        total: 1,
+        page: 1,
+        page_size: 30,
+        has_more: false,
+      });
+
+      await load;
+
+      expect(useChatStore.getState().conversations).toEqual([]);
+      expect(useChatStore.getState().activeConversationId).toBeNull();
     });
 
     it('preserves scheduled-run metadata from the server conversation list', async () => {

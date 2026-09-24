@@ -57,6 +57,10 @@ jest.mock("@/components/ui/button", () => ({
   },
 }));
 
+jest.mock("@/components/auth/ImpersonationBanner", () => ({
+  ImpersonationBanner: () => <div data-testid="impersonation-banner" />,
+}));
+
 // ---------------------------------------------------------------------------
 // Config mock — patched per test via mockReturnValue / mockImplementation
 // ---------------------------------------------------------------------------
@@ -154,6 +158,11 @@ describe("UnauthorizedPage", () => {
     expect(
       screen.getByRole("heading", { name: /access needed/i }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the impersonation exit banner available", () => {
+    render(<UnauthorizedPage />);
+    expect(screen.getByTestId("impersonation-banner")).toBeInTheDocument();
   });
 
   it("renders the sign-out button", () => {

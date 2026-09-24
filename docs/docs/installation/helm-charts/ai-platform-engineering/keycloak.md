@@ -163,6 +163,7 @@ helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.1.0
 | jobSecurityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` |  |
+| platformClient.clientId | string | `"caipe-platform"` |  |
 | platformClient.externalSecret.enabled | bool | `false` |  |
 | platformClient.externalSecret.refreshInterval | string | `"1h"` |  |
 | platformClient.externalSecret.remoteRef.key | string | `""` |  |

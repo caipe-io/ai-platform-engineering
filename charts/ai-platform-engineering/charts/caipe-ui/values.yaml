@@ -323,6 +323,9 @@ config:
   # organization/system_config grants. Remove after configuring Identity Group
   # Sync to grant OpenFGA admin.
   BOOTSTRAP_ADMIN_EMAILS: ""
+  # Explicit bootstrap or Super Admin email allowlist for read-only user impersonation.
+  # Empty disables user impersonation.
+  ADMIN_ALLOW_IMPERSONATION: ""
   # Unsafe dev/emergency escape hatch: when true, UI RBAC checks allow all
   # requests without consulting OpenFGA. Do not enable in staging or prod.
   CAIPE_UNSAFE_RBAC_BYPASS: "false"

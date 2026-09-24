@@ -1540,6 +1540,7 @@ keycloak:
   # KEYCLOAK_ADMIN_CLIENT_SECRET, and the Keycloak init/reconcile Jobs
   # read the same value as KEYCLOAK_PLATFORM_CLIENT_SECRET.
   platformClient:
+    clientId: "caipe-platform"
     secretRef: "caipe-platform-secret"
 
   # Upstream IDP broker (generic OIDC — works with Okta, Azure AD, Duo, etc.)
