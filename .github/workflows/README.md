@@ -6,6 +6,21 @@ This directory contains automated workflows for the AI Platform Engineering proj
 
 See the `.github/workflows/` directory for the full list of CI/CD workflows.
 
+### PR size labels
+
+- **[Review] PR Size Label** (`pr-size-label.yml`): advisory `size/XS`–`size/XXL`
+  labels for open PRs, including forks. Reads PR metadata only; checks out the trusted
+  workflow revision with credentials persistence disabled.
+- **Manual backfill after merge:** run on `main`; leave `pr_number` empty for all
+  open PRs, or enter a number to refresh one PR.
+- **Configuration:** `.github/pr-size/config.json` defines buckets, label metadata,
+  and generated-file globs. Changes take effect from the trusted base revision.
+- **Errors:** incomplete file lists and PRs above 3,000 files keep their current
+  labels. Other API failures are logged per PR; rerun the workflow after recovery.
+  Concurrent changes trigger at most three reconciliation attempts.
+- **Tests:** `pr-size-labels-test.yml` runs calculation and mocked API regression
+  tests without a write token. Local command: `node --test .github/pr-size/*.test.js`.
+
 ## General Information
 
 ### Monitoring Workflows

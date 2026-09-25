@@ -1,0 +1,55 @@
+name: "[Review] PR Size Label"
+
+# pull_request_target so fork pull requests can be labelled: under pull_request
+# their token is read-only. The job checks out the trusted workflow revision
+# and reads pull request data through the API; it never checks out,
+# builds, or runs pull request code. Buckets and the generated-file list live in
+# .github/pr-size/config.json.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to label (empty = all open pull requests)"
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number || 'backfill' }}
+  cancel-in-progress: false
+
+jobs:
+  label:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      startsWith(github.event.label.name, 'size/')
+    name: Apply size label
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: 📥 Checkout base branch config
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/pr-size
+          sparse-checkout-cone-mode: false
+
+      - name: 🏷️ Apply size label
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          script: |
+            const { run } = require(`${process.env.GITHUB_WORKSPACE}/.github/pr-size/label.js`);
+            await run({ github, context, core });

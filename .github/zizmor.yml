@@ -4,3 +4,7 @@ rules:
       # Intentional privileged follow-up workflow: reads coverage artifacts from
       # the completed unit-test run and posts a PR comment with a GitHub App token.
       - coverage-comment.yml
+      # Advisory fork-PR labels need a base-repository write token. Checkout is
+      # pinned to github.workflow_sha, never the PR head; only trusted labeling
+      # code/configuration runs, using PR file metadata from the GitHub API.
+      - pr-size-label.yml
