@@ -40,6 +40,19 @@ flowchart TD
 
 Size is guidance, not a gate. No check blocks a pull request for being large.
 
+### Automatic size labels
+
+Open PRs, including forks and drafts, receive an advisory `size/*` label when a
+complete file count is available.
+
+| Label | `XS` | `S` | `M` | `L` | `XL` | `XXL` |
+|---|---|---|---|---|---|---|
+| Changed lines | 0–9 | 10–29 | 30–99 | 100–499 | 500–999 | 1000+ |
+
+- Count additions plus deletions, excluding generated files. Generated-only PRs are `size/XS`.
+- [Label definitions and generated-file globs](https://github.com/caipe-io/ai-platform-engineering/blob/main/.github/pr-size/config.json).
+- [Workflow operation, backfill, and API limitations](https://github.com/caipe-io/ai-platform-engineering/blob/main/.github/workflows/README.md#pr-size-labels).
+
 ## What a reviewer checks
 
 **Structural**
@@ -143,6 +156,6 @@ limitations are recorded in the installation request.
 |---|---|
 | This policy and checklist | in effect on merge |
 | Pull request size guidance | in effect on merge |
-| Size labels on pull requests | not yet — separate task |
+| Size labels on pull requests | in effect on merge; existing PRs backfilled by manual workflow |
 | Automated first pass | not yet — tool selection, assessment, and pilot pending |
 | Backlog triage sweep | not yet — separate task |
