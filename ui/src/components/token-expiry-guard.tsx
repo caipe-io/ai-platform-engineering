@@ -344,7 +344,12 @@ export function TokenExpiryGuard() {
   // has their refresh token invalidated server-side, causing the next expiry check
   // to fail with invalid_token and immediately log them out.
   useEffect(() => {
-    if (!getConfig('ssoEnabled') || status !== "authenticated" || !session?.hasRefreshToken) {
+    if (
+      !getConfig('ssoEnabled') ||
+      status !== "authenticated" ||
+      !session?.hasRefreshToken ||
+      !!session?.error
+    ) {
       return;
     }
 
@@ -363,7 +368,7 @@ export function TokenExpiryGuard() {
         keepaliveIntervalRef.current = null;
       }
     };
-  }, [status, session?.hasRefreshToken, updateSession]);
+  }, [status, session?.hasRefreshToken, session?.error, updateSession]);
 
   useEffect(() => clearRedirectTimers, [clearRedirectTimers]);
 

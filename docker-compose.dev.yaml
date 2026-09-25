@@ -568,6 +568,7 @@ services:
       # fetch the well-known doc without going via the host. Browser still uses
       # OIDC_ISSUER (localhost:7080) for the auth redirect.
       - OIDC_DISCOVERY_URL=${OIDC_DISCOVERY_URL:-http://keycloak:7080/realms/caipe}
+      - OIDC_TOKEN_ENDPOINT=${OIDC_TOKEN_ENDPOINT:-http://keycloak:7080/realms/caipe/protocol/openid-connect/token}
       - OIDC_GROUP_CLAIM=${OIDC_GROUP_CLAIM:-}
       - OIDC_REQUIRED_GROUP=${OIDC_REQUIRED_GROUP:-}
       - OIDC_REQUIRED_ADMIN_GROUP=${OIDC_REQUIRED_ADMIN_GROUP:-}
@@ -829,6 +830,7 @@ services:
       - AUTHZ_TRACING_ENABLED=${AUTHZ_TRACING_ENABLED:-false}
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
       - OIDC_DISCOVERY_URL=${OIDC_DISCOVERY_URL:-http://keycloak:7080/realms/caipe}
+      - OIDC_TOKEN_ENDPOINT=${OIDC_TOKEN_ENDPOINT:-http://keycloak:7080/realms/caipe/protocol/openid-connect/token}
       - OIDC_GROUP_CLAIM=${OIDC_GROUP_CLAIM:-}
       - OIDC_REQUIRED_GROUP=${OIDC_REQUIRED_GROUP:-}
       - OIDC_REQUIRED_ADMIN_GROUP=${OIDC_REQUIRED_ADMIN_GROUP:-}

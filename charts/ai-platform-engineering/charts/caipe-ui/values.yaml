@@ -307,6 +307,8 @@ config:
   KEYCLOAK_RESOURCE_SERVER_ID: "caipe-platform"
   # Internal OIDC discovery URL for server-side token validation
   OIDC_DISCOVERY_URL: ""
+  # Internal OIDC token endpoint for server-side refreshes (bypasses public WAF)
+  OIDC_TOKEN_ENDPOINT: ""
   OIDC_CLIENT_ID: "caipe-ui"
   # Slack bot admin token URL (in-cluster Keycloak token endpoint)
   SLACK_BOT_ADMIN_TOKEN_URL: ""
