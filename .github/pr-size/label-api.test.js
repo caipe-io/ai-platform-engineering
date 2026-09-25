@@ -6,14 +6,14 @@ const config = require('./config.json');
 function fixture() {
   const labels = new Set(['bug', 'size/L']);
   const calls = [], warnings = [];
-  const state = { sha: 'old', changedFiles: 1, additions: 10 };
+  const state = { sha: 'old', baseSha: 'base', changedFiles: 1, additions: 10 };
   const hooks = {};
   const github = {
     rest: {
       pulls: {
         get: async ({ pull_number }) => {
           calls.push(['get', pull_number]);
-          return { data: { state: 'open', head: { sha: state.sha }, base: { sha: 'base' },
+          return { data: { state: 'open', head: { sha: state.sha }, base: { sha: state.baseSha },
             changed_files: state.changedFiles } };
         },
         listFiles: 'files', list: 'prs',
@@ -76,7 +76,7 @@ test('a failed replacement preserves the old label and backfill continues', asyn
   const f = fixture();
   f.context.eventName = 'workflow_dispatch';
   f.hooks.add = async ({ issue_number }) => {
-    if (issue_number === 1) throw new Error('API unavailable');
+    if (issue_number === 1) throw Object.assign(new Error('API unavailable'), { status: 502 });
     assert.ok(f.labels.has('size/L'));
   };
   await run(f);
@@ -84,16 +84,18 @@ test('a failed replacement preserves the old label and backfill continues', asyn
   assert.ok(f.calls.some(([name, number]) => name === 'add' && number === 2));
 });
 
-test('a push during pagination retries before mutating labels', async () => {
-  const f = fixture();
-  let pages = 0;
-  f.hooks.files = () => {
-    if (++pages === 1) f.state.sha = 'new';
-    return [{ filename: 'example.js', additions: pages === 1 ? 10 : 500, deletions: 0 }];
-  };
-  await run(f);
-  assert.deepEqual(f.calls.filter(([name]) => name === 'add'), [['add', 1, 'size/XL']]);
-  assert.deepEqual([...f.labels], ['bug', 'size/XL']);
+test('head or base changes with the same file count retry before mutating labels', async () => {
+  for (const field of ['sha', 'baseSha']) {
+    const f = fixture();
+    let pages = 0;
+    f.hooks.files = () => {
+      if (++pages === 1) f.state[field] = 'new';
+      return [{ filename: 'example.js', additions: pages === 1 ? 10 : 500, deletions: 0 }];
+    };
+    await run(f);
+    assert.deepEqual(f.calls.filter(([name]) => name === 'add'), [['add', 1, 'size/XL']]);
+    assert.deepEqual([...f.labels], ['bug', 'size/XL']);
+  }
 });
 
 test('a stale writer finishing after a newer run reconciles to exactly one current size', async () => {
@@ -161,5 +163,45 @@ test('only already_exists validation failures are treated as concurrent creation
     await run(f);
     assert.equal(f.labels.has('size/S'), code === 'already_exists');
     assert.equal(f.warnings.length, code === 'already_exists' ? 0 : 1);
+  }
+});
+
+// Exercise both discovery and individual-PR handling: neither may hide bugs or
+// mistake a recognized transport failure for a programming error.
+test('HTTP and network failures are logged at both API boundaries', async () => {
+  const errors = [
+    Object.assign(new Error('service unavailable'), { status: 502 }),
+    Object.assign(new Error('DNS unavailable'), { code: 'EAI_AGAIN' }),
+    Object.assign(new TypeError('fetch failed'), {
+      cause: Object.assign(new Error('connection lost'), { code: 'ECONNRESET' }),
+    }),
+    Object.assign(new Error('request aborted'), { name: 'AbortError' }),
+  ];
+  for (const error of errors) {
+    for (const discovery of [true, false]) {
+      const f = fixture();
+      f.context.eventName = 'workflow_dispatch';
+      if (discovery) f.github.paginate = async () => { throw error; };
+      else f.hooks.add = async ({ issue_number }) => { if (issue_number === 1) throw error; };
+      await assert.doesNotReject(run(f));
+      assert.equal(f.warnings.length, 1);
+      assert.ok(f.warnings[0].includes(error.message));
+      if (!discovery) assert.ok(f.calls.some(([name, number]) => name === 'add' && number === 2));
+    }
+  }
+});
+
+test('unexpected programming errors propagate from discovery and individual PRs', async () => {
+  for (const error of [new TypeError('invalid shape'), new Error('unexpected state'),
+    Object.assign(new Error('bad argument'), { code: 'ERR_INVALID_ARG_TYPE' })]) {
+    for (const discovery of [true, false]) {
+      const f = fixture();
+      f.context.eventName = 'workflow_dispatch';
+      if (discovery) f.github.paginate = async () => { throw error; };
+      else f.hooks.files = () => { throw error; };
+      await assert.rejects(run(f), (actual) => actual === error);
+      assert.deepEqual(f.warnings, []);
+      assert.deepEqual([...f.labels], ['bug', 'size/L']);
+    }
   }
 });

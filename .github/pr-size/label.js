@@ -6,6 +6,16 @@ const config = require('./config.json');
 
 // The API cannot provide a complete generated-file-aware count past this limit.
 const LIST_FILES_LIMIT = 3000;
+const NETWORK_ERROR_CODES = new Set([
+  'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET',
+]);
+
+function isOperationalError(error) {
+  return (Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599) ||
+    NETWORK_ERROR_CODES.has(error?.code) || NETWORK_ERROR_CODES.has(error?.cause?.code) ||
+    error?.name === 'AbortError' || error?.name === 'TimeoutError';
+}
 
 function globToRegExp(glob) {
   let pattern = '';
@@ -165,10 +175,13 @@ async function run({ github, context, core }) {
       try {
         await labelPullRequest({ github, repo, core, pullNumber });
       } catch (error) {
+        if (!isOperationalError(error)) throw error;
         core.warning(`#${pullNumber}: size labeling unavailable: ${error.message}`);
       }
     }
   } catch (error) {
+    // Discovery can fail before there is an individual PR to process.
+    if (!isOperationalError(error)) throw error;
     core.warning(`Size labeling unavailable: ${error.message}`);
   }
 }

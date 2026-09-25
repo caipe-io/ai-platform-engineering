@@ -42,25 +42,16 @@ Size is guidance, not a gate. No check blocks a pull request for being large.
 
 ### Automatic size labels
 
-Every new or updated open PR, including forks and drafts, gets one `size/*` label.
-Count additions plus deletions, excluding generated files; generated-only PRs are `size/XS`.
+Open PRs, including forks and drafts, receive an advisory `size/*` label when a
+complete file count is available.
 
 | Label | `XS` | `S` | `M` | `L` | `XL` | `XXL` |
 |---|---|---|---|---|---|---|
 | Changed lines | 0–9 | 10–29 | 30–99 | 100–499 | 500–999 | 1000+ |
 
-- Definitions and generated-file globs:
-  [`.github/pr-size/config.json`](https://github.com/caipe-io/ai-platform-engineering/blob/main/.github/pr-size/config.json).
-  Excludes lockfiles, chart-root READMEs, generated Helm documentation pages, and snapshots.
-- Labels are advisory: no bot comments or required size check. API errors are logged
-  per PR without failing the labeling job or stopping the backfill.
-- PRs above GitHub's 3,000-file API limit and incomplete file lists leave existing
-  labels unchanged. Changes during labeling are retried up to three times.
-- After merge, run **Actions → [Review] PR Size Label → Run workflow** on `main` once
-  to backfill existing open PRs. Leave `pr_number` empty for all open PRs, or enter
-  one PR number to retry it. Rerun after changing definitions or exclusions.
-- The privileged workflow checks out the trusted workflow revision, never the PR
-  head, and reads PR metadata through the API. It never executes PR code or artifacts.
+- Count additions plus deletions, excluding generated files. Generated-only PRs are `size/XS`.
+- [Label definitions and generated-file globs](https://github.com/caipe-io/ai-platform-engineering/blob/main/.github/pr-size/config.json).
+- [Workflow operation, backfill, and API limitations](https://github.com/caipe-io/ai-platform-engineering/blob/main/.github/workflows/README.md#pr-size-labels).
 
 ## What a reviewer checks
 

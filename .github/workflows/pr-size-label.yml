@@ -25,13 +25,12 @@ concurrency:
 jobs:
   label:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
-      startsWith(github.event.label.name, 'size/')
+      (github.event.action != 'edited' || github.event.changes.base) &&
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled' ||
+       startsWith(github.event.label.name, 'size/'))
     name: Apply size label
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
     permissions:
       contents: read
       issues: write

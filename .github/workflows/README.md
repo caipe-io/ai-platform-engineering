@@ -11,12 +11,17 @@ See the `.github/workflows/` directory for the full list of CI/CD workflows.
 - **[Review] PR Size Label** (`pr-size-label.yml`): advisory `size/XS`–`size/XXL`
   labels for open PRs, including forks. Reads PR metadata only; checks out the trusted
   workflow revision with credentials persistence disabled.
+- **Triggers:** PR creation, pushes, reopening, ready-for-review, base-branch edits,
+  and size-label additions/removals. Title/body edits and unrelated labels skip the job.
 - **Manual backfill after merge:** run on `main`; leave `pr_number` empty for all
   open PRs, or enter a number to refresh one PR.
 - **Configuration:** `.github/pr-size/config.json` defines buckets, label metadata,
   and generated-file globs. Changes take effect from the trusted base revision.
 - **Errors:** incomplete file lists and PRs above 3,000 files keep their current
-  labels. Other API failures are logged per PR; rerun the workflow after recovery.
+  labels. Expected HTTP and recognized network failures are logged, including failures
+  while listing open PRs. Per-PR failures allow the backfill to continue; discovery
+  failures end the run without labeling. Rerun after recovery. Unexpected programming
+  errors fail the job so broken automation is visible; keep this workflow non-required.
   Concurrent changes trigger at most three reconciliation attempts.
 - **Tests:** `pr-size-labels-test.yml` runs calculation and mocked API regression
   tests without a write token. Local command: `node --test .github/pr-size/*.test.js`.
