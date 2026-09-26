@@ -1,0 +1,119 @@
+# yaml-language-server: $schema=https://www.coderabbit.ai/integrations/schema.v2.json
+# Advisory review only. Installation and the 90-day pilot require owner assessment.
+inheritance: false
+early_access: false
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  review_progress: false
+  commit_status: false
+  fail_commit_status: false
+  disable_cache: true
+  high_level_summary: false
+  high_level_summary_placeholder: ""
+  auto_title_placeholder: ""
+  review_status: false
+  review_details: false
+  collapse_walkthrough: true
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  assess_linked_issues: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  auto_apply_labels: false
+  suggested_reviewers: false
+  auto_assign_reviewers: false
+  in_progress_fortune: false
+  poem: false
+  enable_prompt_for_ai_agents: false
+  slop_detection:
+    enabled: false
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_title_keywords: [WIP]
+    base_branches: [".*"]
+    auto_incremental_review: true
+  path_instructions:
+    - path: "**/*"
+      instructions: >-
+        Follow AGENTS.md. Focus on correctness, architecture, security, and
+        meaningful tests. Avoid repeating mechanical findings already covered
+        by CI. Feedback is advisory; never approve, request changes, or write
+        commits. Authors apply relevant suggestions locally with human DCO sign-off.
+  path_filters:
+    - "!**/uv.lock"
+    - "!**/package-lock.json"
+    - "!**/yarn.lock"
+    - "!**/pnpm-lock.yaml"
+    - "!**/Chart.lock"
+    - "!charts/**/README.md"
+    - "!docs/docs/installation/helm-charts/**/*.md"
+    - "!**/__snapshots__/**"
+    - "!**/*.snap"
+    - "!ui/src/lib/rbac/resource-catalog.generated.ts"
+  # Every code-writing entry point is disabled, including explicitly invoked fixes.
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+    custom: []
+  post_merge_actions: []
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    title:
+      mode: "off"
+    description:
+      mode: "off"
+    issue_assessment:
+      mode: "off"
+    custom_checks: []
+chat:
+  auto_reply: false
+  art: false
+  integrations:
+    jira:
+      usage: disabled
+    linear:
+      usage: disabled
+knowledge_base:
+  # Opt out of retained learnings; file-based guidelines remain the rule source.
+  opt_out: true
+  code_guidelines:
+    enabled: true
+    filePatterns: [AGENTS.md]
+  web_search:
+    enabled: false
+  automatic_linking_mode: disabled
+  linked_repositories: []
+  issues:
+    scope: local
+  pull_requests:
+    scope: local
+  jira:
+    usage: disabled
+  linear:
+    usage: disabled
+  mcp:
+    usage: disabled
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+  planning:
+    enabled: false
+    auto_planning:
+      enabled: false
+  labeling:
+    auto_apply_labels: false
