@@ -3,7 +3,10 @@
 
 // assisted-by claude code claude-sonnet-4-6
 
+import { randomUUID } from 'crypto';
+
 import { ApiError,requireRbacPermission,withAuth,withErrorHandler } from '@/lib/api-middleware';
+import { mutationSnapshotFilter } from '@/lib/rbac/mutation-snapshot';
 import { getCollection } from '@/lib/mongodb';
 import {
 normalizePlatformDefaultAgentId,
@@ -394,7 +397,21 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
     }
 
     const persist = async () => {
-      await col.updateOne({ _id: PLATFORM_CONFIG_ID } as never, { $set: update }, { upsert: true });
+      if (!hasDefaultAgentUpdate) {
+        await col.updateOne({ _id: PLATFORM_CONFIG_ID } as never, { $set: update }, { upsert: true });
+        return;
+      }
+      // For a missing document, upsert uses the unique _id to reject a racing
+      // creation rather than replacing its settings. Existing saves must match
+      // the exact snapshot used to derive their grant changes.
+      const result = await col.updateOne(
+        mutationSnapshotFilter(PLATFORM_CONFIG_ID, previousDoc) as never,
+        { $set: { ...update, authz_write_id: randomUUID() } },
+        { upsert: previousDoc === null },
+      );
+      if (result.matchedCount === 0 && !result.upsertedCount) {
+        throw new ApiError('Platform settings changed during this save. Reload them and check access before retrying.', 409, 'PLATFORM_CONFIG_SAVE_CONFLICT');
+      }
     };
     if (hasDefaultAgentUpdate) {
       await reconcileDefaultAgentGrant(previousDefaultAgentId, effectiveNextDefaultAgentId, {

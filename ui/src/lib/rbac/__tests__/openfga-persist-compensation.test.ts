@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { writeOpenFgaTupleDiff, type OpenFgaTupleKey } from "../openfga";
+import { OpenFgaMutationError, writeOpenFgaTupleDiff, type OpenFgaTupleKey } from "../openfga";
 
 const originalFetch = global.fetch;
 const originalEnv = { ...process.env };
@@ -49,10 +49,10 @@ it("saves only after every grant chunk has been applied", async () => {
   expect(persist).toHaveBeenCalledTimes(1);
 });
 
-it("undoes only changed grants when saving fails; pre-existing grants survive", async () => {
+it("removes additions but never restores revoked access on an uncertain save", async () => {
   await expect(writeOpenFgaTupleDiff(diff, async () => { throw new Error("Mongo save failed"); }))
-    .rejects.toThrow("Mongo save failed");
-  expect([...graph.values()]).toEqual([tuple("existing"), tuple("removed")]);
+    .rejects.toThrow(OpenFgaMutationError);
+  expect([...graph.values()]).toEqual([tuple("existing")]);
 });
 
 it.each([{ writes: [], deletes: [] }, { writes: [tuple("existing")], deletes: [] }])(
@@ -67,17 +67,86 @@ it.each([{ writes: [], deletes: [] }, { writes: [tuple("existing")], deletes: []
 it("does not save config when a grant write fails", async () => {
   rejectWrites = true;
   const persist = jest.fn(async () => {});
-  await expect(writeOpenFgaTupleDiff(diff, persist)).rejects.toThrow("OpenFGA tuple write failed");
+  await expect(writeOpenFgaTupleDiff(diff, persist)).rejects.toThrow("Could not complete the save");
   expect(persist).not.toHaveBeenCalled();
 });
 
-it("surfaces the original save failure and logs failed compensation", async () => {
+it("returns a safe reference and logs causes when restrictive cleanup fails", async () => {
   const log = jest.spyOn(console, "error").mockImplementation(() => {});
   try {
     await expect(writeOpenFgaTupleDiff(diff, async () => {
       rejectWrites = true;
       throw new Error("Mongo save failed");
-    })).rejects.toThrow("Mongo save failed");
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("manual cleanup may be required"), expect.anything());
+    })).rejects.toMatchObject({ statusCode: 503, code: "ACCESS_UPDATE_INCOMPLETE", message: expect.stringContaining("Reference:") });
+    expect(log).toHaveBeenCalledWith("[openfga] mutation incomplete", expect.objectContaining({ cause: expect.any(AggregateError) }));
   } finally { log.mockRestore(); }
+});
+
+it("does not republish an agent when Mongo commits a demotion but loses the response", async () => {
+  let visibility = "global";
+  await expect(writeOpenFgaTupleDiff({ writes: [], deletes: [tuple("removed")] }, async () => {
+    visibility = "team";
+    throw new Error("response lost after commit");
+  })).rejects.toThrow(OpenFgaMutationError);
+  expect(visibility).toBe("team");
+  expect(graph.has(key(tuple("removed")))).toBe(false);
+});
+
+it("does not undo a winning revocation when an overlapping save loses its snapshot", async () => {
+  let enterSave!: () => void;
+  const reachedSave = new Promise<void>(resolve => { enterSave = resolve; });
+  let finishLosingSave!: () => void;
+  const winningSaveCompleted = new Promise<void>(resolve => { finishLosingSave = resolve; });
+  let version = "first";
+  const losing = writeOpenFgaTupleDiff({ writes: [], deletes: [tuple("removed")] }, async () => {
+    enterSave();
+    await winningSaveCompleted;
+    if (version !== "first") throw new Error("snapshot conflict");
+  });
+  const rejected = expect(losing).rejects.toThrow(OpenFgaMutationError);
+  await reachedSave;
+  await writeOpenFgaTupleDiff({ writes: [], deletes: [tuple("removed")] }, async () => { version = "second"; });
+  finishLosingSave();
+  await rejected;
+  expect(graph.has(key(tuple("removed")))).toBe(false);
+  expect(version).toBe("second");
+});
+
+it("cleans an addition whose OpenFGA response was lost after commit", async () => {
+  const transport = global.fetch;
+  let loseResponse = true;
+  global.fetch = jest.fn(async (url, init) => {
+    const response = await transport(url, init);
+    if (loseResponse && String(url).endsWith("/write")) {
+      loseResponse = false;
+      throw new Error("response lost");
+    }
+    return response;
+  });
+  const persist = jest.fn(async () => {});
+  await expect(writeOpenFgaTupleDiff({ writes: [tuple("new")], deletes: [] }, persist)).rejects.toThrow(OpenFgaMutationError);
+  expect(graph.has(key(tuple("new")))).toBe(false);
+  expect(persist).not.toHaveBeenCalled();
+});
+
+it.each([undefined, "false", "true"])("persists once without OpenFGA (flag %s)", async flag => {
+  delete process.env.OPENFGA_HTTP;
+  if (flag === undefined) delete process.env.OPENFGA_RECONCILE_ENABLED;
+  else process.env.OPENFGA_RECONCILE_ENABLED = flag;
+  const persist = jest.fn(async () => {});
+  await expect(writeOpenFgaTupleDiff(diff, persist)).resolves.toMatchObject({ enabled: false });
+  expect(persist).toHaveBeenCalledTimes(1);
+  expect(global.fetch).not.toHaveBeenCalled();
+});
+
+it("does not persist when OpenFGA is configured but its writer is disabled", async () => {
+  process.env.OPENFGA_RECONCILE_ENABLED = "false";
+  const persist = jest.fn(async () => {});
+  await expect(writeOpenFgaTupleDiff(diff, persist)).resolves.toMatchObject({ enabled: false });
+  expect(persist).not.toHaveBeenCalled();
+});
+
+it("does not expose database details even if the permission diff is empty", async () => {
+  await expect(writeOpenFgaTupleDiff({ writes: [], deletes: [] }, async () => { throw new Error("private database detail"); }))
+    .rejects.toMatchObject({ code: "ACCESS_UPDATE_INCOMPLETE", message: expect.not.stringContaining("private database detail") });
 });

@@ -5,6 +5,7 @@ import { OpenFgaReconcileRequiredError, reconcileTupleDiff, type TupleReconcileC
 
 import {
 isOpenFgaReconciliationEnabled,
+isOpenFgaConfigured,
 readOpenFgaTuples,
 type OpenFgaReconcileResult,
 type OpenFgaTupleKey,
@@ -359,6 +360,10 @@ export async function deleteAllAgentToolTuples(agentId: string, context: TupleRe
     throw new Error(`Invalid OpenFGA agent id: ${agentId}`);
   }
   if (!isOpenFgaReconciliationEnabled()) {
+    if (persist && !isOpenFgaConfigured()) {
+      await persist();
+      return { enabled: false, writes: 0, deletes: 0 };
+    }
     if (persist) throw new OpenFgaReconcileRequiredError();
     return { enabled: false, writes: 0, deletes: 0 };
   }

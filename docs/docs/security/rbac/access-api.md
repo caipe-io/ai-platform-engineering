@@ -80,8 +80,10 @@ Agent lifecycle/default-selection writes now use CAS. The picker no longer
 creates or removes grants: public access is maintained by configuration changes
 and the existing startup reconciliation. A global agent retains public access
 when it stops being the default. Failed configuration saves trigger best-effort
-compensation of the tuples actually changed; this is not a cross-database
-transaction.
+restrictive cleanup: remove attempted new grants, never restore revoked access
+on an uncertain database result. Guarded saves reject stale snapshots; failures
+include a support reference and may require admin repair. This is not a
+cross-database transaction. See the [CAS README](https://github.com/caipe-io/ai-platform-engineering/blob/main/ui/src/lib/authz/README.md#agent-grant-lifecycle) for configuration and recovery limits.
 
 Picker filtering/caching, membership writes, seed identity cleanup and other
 services remain separate migrations. Fresh checks cannot repair a missing

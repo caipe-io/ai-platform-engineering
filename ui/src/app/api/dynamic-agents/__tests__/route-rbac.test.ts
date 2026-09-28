@@ -1031,7 +1031,7 @@ describe("dynamic agents RBAC routes", () => {
 
     expect(response.status).toBe(200);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-existing" },
+      { _id: "agent-existing", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
       {
         $set: expect.objectContaining({
           allowed_tools: { "knowledge-base": true },
@@ -1090,7 +1090,7 @@ describe("dynamic agents RBAC routes", () => {
 
     expect(response.status).toBe(200);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-existing" },
+      { _id: "agent-existing", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
       { $set: expect.objectContaining({ datasource_ids: [] }) },
       expect.any(Object),
     );
@@ -1146,7 +1146,7 @@ describe("dynamic agents RBAC routes", () => {
 
       expect(response.status).toBe(200);
       expect(findOneAndUpdate).toHaveBeenCalledWith(
-        { _id: "agent-existing" },
+        { _id: "agent-existing", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
         { $set: expect.any(Object), $unset: { [field]: "" } },
         expect.any(Object),
       );
@@ -1200,7 +1200,7 @@ describe("dynamic agents RBAC routes", () => {
 
     expect(response.status).toBe(200);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-existing" },
+      { _id: "agent-existing", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
       { $set: expect.any(Object), $unset: { datasource_ids: "" } },
       expect.any(Object),
     );
@@ -1270,7 +1270,7 @@ describe("dynamic agents RBAC routes", () => {
     );
     // The persisted shared_with_teams should be canonical slugs only.
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-shared-agent" },
+      { _id: "agent-shared-agent", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
       expect.objectContaining({
         $set: expect.objectContaining({ shared_with_teams: ["sre"] }),
       }),
@@ -1507,7 +1507,7 @@ describe("dynamic agents RBAC routes", () => {
     // The update document must not touch shared_with_teams since the
     // patch didn't include it — only `name` and `updated_at`.
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-shared-agent" },
+      { _id: "agent-shared-agent", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
       expect.objectContaining({
         $set: expect.not.objectContaining({
           shared_with_teams: expect.anything(),
@@ -1857,7 +1857,7 @@ describe("dynamic agents RBAC routes", () => {
   });
 
   it("requires agent delete access before deleting an agent document", async () => {
-    const deleteOne = jest.fn();
+    const deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });
     mockGetCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue({
         _id: "agent-1",
@@ -1885,12 +1885,36 @@ describe("dynamic agents RBAC routes", () => {
     expect(mockDeleteAllAgentToolTuples).toHaveBeenCalledWith("agent-1", expect.objectContaining({
       caller: { type: "user", id: "alice-sub" },
     }), expect.any(Function));
-    expect(deleteOne).toHaveBeenCalledWith({ _id: "agent-1" });
+    expect(deleteOne).toHaveBeenCalledWith({ _id: "agent-1", updated_at: { $exists: false }, authz_write_id: { $exists: false } });
     const cascadeOrder = mockCascadeDeleteAutonomousTasksForAgent.mock.invocationCallOrder[0];
     const tupleDeleteOrder = mockDeleteAllAgentToolTuples.mock.invocationCallOrder[0];
     const docDeleteOrder = deleteOne.mock.invocationCallOrder[0];
     expect(cascadeOrder).toBeLessThan(tupleDeleteOrder);
     expect(cascadeOrder).toBeLessThan(docDeleteOrder);
+  });
+
+  it("rejects an update after another writer replaces the loaded snapshot", async () => {
+    const snapshot = { _id: "agent-example", visibility: "team", owner_team_slug: "example", allowed_tools: {}, updated_at: "2026-01-01", authz_write_id: "first" };
+    const update = jest.fn().mockResolvedValue(null);
+    mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue(snapshot), findOneAndUpdate: update });
+    const { PUT } = await import("../route");
+    const response = await PUT(request("/api/dynamic-agents?id=agent-example", { method: "PUT", body: JSON.stringify({ name: "Changed" }) }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "AGENT_SAVE_CONFLICT" });
+    expect(update).toHaveBeenCalledWith(
+      { _id: snapshot._id, updated_at: snapshot.updated_at, authz_write_id: "first" },
+      { $set: expect.objectContaining({ authz_write_id: expect.any(String) }) },
+      { returnDocument: "after" },
+    );
+  });
+
+  it("rejects deletion when an agent changed after it was loaded", async () => {
+    const deleteOne = jest.fn().mockResolvedValue({ deletedCount: 0 });
+    mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue({ _id: "agent-example", authz_write_id: "first" }), deleteOne });
+    const { DELETE } = await import("../route");
+    const response = await DELETE(request("/api/dynamic-agents?id=agent-example", { method: "DELETE" }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "AGENT_SAVE_CONFLICT" });
   });
 
   it("aborts agent deletion when autonomous-task cascade cleanup fails", async () => {

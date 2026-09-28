@@ -5,6 +5,8 @@
  * The gateway owns all config writes — DA is a pure runtime reader.
  */
 
+import { randomUUID } from "crypto";
+
 import {
   ApiError,
   getAuthFromBearerOrSession,
@@ -14,6 +16,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { mutationSnapshotFilter } from "@/lib/rbac/mutation-snapshot";
 import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
 import {
   RAG_COLLECTION_ID_PATTERN,
@@ -1150,13 +1153,13 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     unlinkedGrantIsExplicit: explicitAgentIds.has(id),
     persist: async () => {
       updated = await collection.findOneAndUpdate(
-        { _id: id },
+        mutationSnapshotFilter(id, agent) as never,
         Object.keys(unsetData).length > 0
-          ? { $set: updateData, $unset: unsetData }
-          : { $set: updateData },
+          ? { $set: { ...updateData, authz_write_id: randomUUID() }, $unset: unsetData }
+          : { $set: { ...updateData, authz_write_id: randomUUID() } },
         { returnDocument: "after" },
       );
-      if (!updated) throw new ApiError("Failed to update agent", 500);
+      if (!updated) throw new ApiError("The agent changed during this save. Reload its settings and check access before retrying.", 409, "AGENT_SAVE_CONFLICT");
     },
   });
 
@@ -1239,7 +1242,10 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   await deleteAllAgentToolTuples(id, {
     ...createAuthzTraceContext(request.headers.get("traceparent")),
     caller: { type: session.isServiceAccount === true ? "service_account" : "user", id: String(session.sub) },
-  }, async () => { await collection.deleteOne({ _id: id }); });
+  }, async () => {
+    const result = await collection.deleteOne(mutationSnapshotFilter(id, agent) as never);
+    if (result.deletedCount === 0) throw new ApiError("The agent changed during deletion. Reload its settings and check access before retrying.", 409, "AGENT_SAVE_CONFLICT");
+  });
 
   return successResponse({ deleted: id });
 });

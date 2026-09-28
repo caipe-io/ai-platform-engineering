@@ -3,9 +3,15 @@ import { buildAgentRelationshipTupleDiff, reconcileAgentRelationships, deleteAll
 
 const mockReconcile = jest.fn();
 const mockRead = jest.fn();
-jest.mock("@/lib/authz", () => ({ reconcileTupleDiff: (...args: unknown[]) => mockReconcile(...args) }));
+const mockEnabled = jest.fn();
+const mockConfigured = jest.fn();
+jest.mock("@/lib/authz", () => ({
+  reconcileTupleDiff: (...args: unknown[]) => mockReconcile(...args),
+  OpenFgaReconcileRequiredError: class extends Error {},
+}));
 jest.mock("../openfga", () => ({
-  isOpenFgaReconciliationEnabled: () => true,
+  isOpenFgaReconciliationEnabled: () => mockEnabled(),
+  isOpenFgaConfigured: () => mockConfigured(),
   readOpenFgaTuples: (...args: unknown[]) => mockRead(...args),
 }));
 
@@ -13,7 +19,25 @@ const base = { agentId: "example", nextAllowedTools: {} };
 const publicGrant = { user: "user:*", relation: "user", object: "agent:example" };
 beforeEach(() => {
   jest.clearAllMocks();
+  mockEnabled.mockReturnValue(true);
+  mockConfigured.mockReturnValue(true);
   mockReconcile.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
+});
+
+it("deletes the record once without OpenFGA, without making graph requests", async () => {
+  mockEnabled.mockReturnValue(false);
+  mockConfigured.mockReturnValue(false);
+  const persist = jest.fn(async () => {});
+  await expect(deleteAllAgentToolTuples("example", {}, persist)).resolves.toMatchObject({ enabled: false });
+  expect(persist).toHaveBeenCalledTimes(1);
+  expect(mockRead).not.toHaveBeenCalled();
+});
+
+it("rejects deletion when the writer is disabled but OpenFGA is configured", async () => {
+  mockEnabled.mockReturnValue(false);
+  const persist = jest.fn(async () => {});
+  await expect(deleteAllAgentToolTuples("example", {}, persist)).rejects.toThrow();
+  expect(persist).not.toHaveBeenCalled();
 });
 
 it.each([false, true])("ensures a non-global platform default has a human grant (previously global: %s)", previousGlobalUserAccess => {

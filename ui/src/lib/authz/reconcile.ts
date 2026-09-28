@@ -7,6 +7,7 @@
 import {
   writeOpenFgaTupleDiff,
   isOpenFgaReconciliationEnabled,
+  isOpenFgaConfigured,
   type OpenFgaReconcileResult,
   type TeamResourceTupleDiff,
 } from "@/lib/rbac/openfga";
@@ -23,7 +24,10 @@ export interface TupleReconcileContext extends DecisionContext {
 }
 
 export class OpenFgaReconcileRequiredError extends Error {
-  constructor(message = "OpenFGA reconciliation is required for this mutation") {
+  readonly statusCode = 503;
+  readonly code = "ACCESS_WRITES_DISABLED";
+  readonly action = "contact_admin";
+  constructor(message = "Cannot save this change because permission updates are disabled. Ask an administrator to enable permission updates before changing access.") {
     super(message);
     this.name = "OpenFgaReconcileRequiredError";
   }
@@ -47,7 +51,8 @@ function assertReconciliationApplied(
  * decisions, and audit policy mutations or failed attempts. Filtered no-ops
  * do not represent policy changes and stay out of the audit trail.
  * An optional persist callback saves matching resource metadata after the
- * graph write; a rejected save triggers best-effort tuple compensation.
+ * graph write; a rejected save triggers restrictive cleanup, never restoration
+ * of revoked grants from a potentially stale configuration snapshot.
  * Do not use this as a distributed transaction or retry ambiguous writes.
  */
 export async function reconcileTupleDiff(
@@ -69,6 +74,9 @@ export async function reconcileTupleDiff(
   }
 
   try {
+    // The writer already invoked persistence in storage-only mode. Never call
+    // it twice, and never apply this exception when FGA still enforces access.
+    if (persist && !result.enabled && !isOpenFgaConfigured()) return result;
     if (persist && !result.enabled) throw new OpenFgaReconcileRequiredError();
     assertReconciliationApplied(diff, result);
   } catch (error) {

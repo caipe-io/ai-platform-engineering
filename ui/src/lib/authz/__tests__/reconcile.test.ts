@@ -6,12 +6,14 @@
 
 const mockWriteOpenFgaTupleDiff = jest.fn();
 const mockIsOpenFgaReconciliationEnabled = jest.fn();
+const mockIsOpenFgaConfigured = jest.fn();
 const mockEmitReconcileAudit = jest.fn();
 const mockInvalidateDecisionCache = jest.fn();
 
 jest.mock("@/lib/rbac/openfga", () => ({
   writeOpenFgaTupleDiff: (...args: unknown[]) => mockWriteOpenFgaTupleDiff(...args),
   isOpenFgaReconciliationEnabled: () => mockIsOpenFgaReconciliationEnabled(),
+  isOpenFgaConfigured: () => mockIsOpenFgaConfigured(),
 }));
 
 jest.mock("../audit", () => ({
@@ -36,10 +38,25 @@ const sampleWrite = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockIsOpenFgaReconciliationEnabled.mockReturnValue(true);
+  mockIsOpenFgaConfigured.mockReturnValue(true);
   mockWriteOpenFgaTupleDiff.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
 });
 
 describe("reconcileTupleDiff", () => {
+  it("preserves storage-only persistence without running its callback twice", async () => {
+    mockIsOpenFgaConfigured.mockReturnValue(false);
+    mockIsOpenFgaReconciliationEnabled.mockReturnValue(false);
+    const persist = jest.fn(async () => {});
+    mockWriteOpenFgaTupleDiff.mockImplementationOnce(async (_diff, save) => {
+      await save();
+      return { enabled: false, writes: 0, deletes: 0 };
+    });
+    await expect(reconcileTupleDiff({ writes: [sampleWrite], deletes: [] }, {}, persist))
+      .resolves.toEqual({ enabled: false, writes: 0, deletes: 0 });
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(mockEmitReconcileAudit).not.toHaveBeenCalled();
+  });
+
   it("passes the save callback to the compensating writer and audits after success", async () => {
     const persist = jest.fn(async () => {});
     mockWriteOpenFgaTupleDiff.mockImplementationOnce(async (_diff, save) => {

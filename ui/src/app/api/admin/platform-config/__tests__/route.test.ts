@@ -55,6 +55,23 @@ function request(path: string, init?: RequestInit): NextRequest {
 }
 
 describe("admin platform-config route", () => {
+  it("does not overwrite a concurrently changed default", async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 0, upsertedCount: 0 });
+    const snapshot = { _id: "platform_settings", default_agent_id: "agent-old", updated_at: "2026-01-01", authz_write_id: "first" };
+    mockGetCollection.mockImplementation(async (name: string) => name === "platform_config"
+      ? { findOne: jest.fn().mockResolvedValue(snapshot), updateOne }
+      : { findOne: jest.fn().mockResolvedValue({ visibility: "team" }) });
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request("/api/admin/platform-config", {
+      method: "PATCH", body: JSON.stringify({ default_agent_id: "agent-next", acknowledge_public_access: true }),
+    }))).rejects.toMatchObject({ code: "PLATFORM_CONFIG_SAVE_CONFLICT" });
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: "platform_settings", updated_at: snapshot.updated_at, authz_write_id: "first" },
+      { $set: expect.objectContaining({ authz_write_id: expect.any(String) }) },
+      { upsert: false },
+    );
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.DEFAULT_AGENT_ID;
