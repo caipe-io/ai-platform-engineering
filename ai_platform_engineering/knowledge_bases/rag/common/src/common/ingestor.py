@@ -3,6 +3,7 @@ import asyncio
 import inspect
 import time
 from typing import List, Optional, Dict, Any, Callable
+from urllib.parse import urlparse
 import aiohttp
 from common.models.rag import DataSourceInfo, DocumentMetadata, StructuredEntity
 from common.models.server import AuthHeader, DocumentIngestRequest, IngestorPingRequest, ExploreDataEntityRequest
@@ -324,7 +325,7 @@ class Client:
       raise ValueError(f"Credential service returned no value for '{secret_ref}'")
     return credential
 
-  async def resolve_auth_headers(self, auth_headers: Optional[List[AuthHeader]]) -> tuple[Dict[str, str], List[str]]:
+  async def resolve_auth_headers(self, url: str, auth_headers: Optional[List[AuthHeader]]) -> tuple[Dict[str, str], List[str]]:
     """
     Render configured request headers into concrete values.
 
@@ -332,9 +333,16 @@ class Client:
     reach the credential service. Returns the header map alongside the credential
     references used, which are safe to log and let a failed crawl name the
     credential without exposing its value.
+
+    Refuses to render any header for a non-HTTPS URL: the header goes out on
+    the crawl's very first request, not just on a redirect hop, so a plain-HTTP
+    target would put it on the wire in cleartext by design, not by accident.
     """
     if not auth_headers:
       return {}, []
+
+    if urlparse(url).scheme.lower() != "https":
+      raise ValueError(f"Refusing to send configured request headers over a non-HTTPS URL: {url}")
 
     rendered: Dict[str, str] = {}
     labels: List[str] = []

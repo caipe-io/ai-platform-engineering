@@ -159,7 +159,7 @@ async def preview_url_ingestion(
   requested_max_pages = settings.max_pages
   preview_max_pages = min(requested_max_pages, PREVIEW_MAX_ITEMS)
   preview_job_id = f"preview-{uuid.uuid4()}"
-  auth_headers, auth_credential_labels = await client.resolve_auth_headers(settings.auth_headers)
+  auth_headers, auth_credential_labels = await client.resolve_auth_headers(url_request.url, settings.auth_headers)
   request = CrawlRequest(
     job_id=preview_job_id,
     url=url_request.url,
