@@ -49,11 +49,8 @@ export function FeedbackButton({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
-  const [isSubmittingCombo, setIsSubmittingCombo] = useState(false);
 
   const reportProblemEnabled = getConfig("reportProblemEnabled");
-  const ticketEnabled = getConfig("ticketEnabled");
-  const ticketProvider = getConfig("ticketProvider");
 
   const handleThumbClick = (type: FeedbackType, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -96,11 +93,8 @@ export function FeedbackButton({
     }
   };
 
-  const handleSubmitFeedback = async () => {
-    if (!feedback?.reason || !feedback?.type) return;
-
-    setIsSubmitting(true);
-
+  const submitPendingFeedback = async (): Promise<void> => {
+    if (!feedback?.reason || !feedback?.type || feedback.submitted) return;
     const finalFeedback: Feedback = {
       ...feedback,
       additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
@@ -120,40 +114,22 @@ export function FeedbackButton({
 
     onFeedbackChange?.(finalFeedback);
     await onFeedbackSubmit?.(finalFeedback);
+  };
 
+  const handleSubmitFeedback = async () => {
+    if (!feedback?.reason || !feedback?.type) return;
+    setIsSubmitting(true);
+    await submitPendingFeedback();
     setIsSubmitting(false);
     setAdditionalFeedback("");
     setDialogOpen(false);
   };
 
-  const handleSubmitAndReport = async () => {
-    if (!feedback?.reason || !feedback?.type) return;
-
-    setIsSubmittingCombo(true);
-
-    const finalFeedback: Feedback = {
-      ...feedback,
-      additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
-      submitted: true,
-      showFeedbackOptions: false,
-    };
-
-    await submitFeedback({
-      traceId: traceId || messageId,
-      messageId,
-      feedbackType: feedback.type,
-      reason: feedback.reason,
-      additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
-      conversationId,
-    });
-
-    onFeedbackChange?.(finalFeedback);
-    await onFeedbackSubmit?.(finalFeedback);
-
-    setIsSubmittingCombo(false);
+  const handleOpenReportDialog = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    await submitPendingFeedback();
     setAdditionalFeedback("");
     setDialogOpen(false);
-
     setReportDialogOpen(true);
   };
 
@@ -257,34 +233,19 @@ export function FeedbackButton({
           <Button
             size="sm"
             onClick={handleSubmitFeedback}
-            disabled={!feedback?.reason || isSubmitting || isSubmittingCombo}
+            disabled={!feedback?.reason || isSubmitting}
             className="w-full gap-2"
           >
             {isSubmitting && <Loader2 className="h-3 w-3 animate-spin" />}
             Submit Feedback
           </Button>
 
-          {ticketEnabled && isDisliked && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleSubmitAndReport}
-              disabled={!feedback?.reason || isSubmitting || isSubmittingCombo}
-              className="w-full gap-2"
-            >
-              {isSubmittingCombo && <Loader2 className="h-3 w-3 animate-spin" />}
-              Submit &amp; Report {ticketProvider === "jira" ? "Jira" : "GitHub"} Issue
-            </Button>
-          )}
         </div>
 
         {reportProblemEnabled && isDisliked && (
           <button
             type="button"
-            onClick={() => {
-              setDialogOpen(false);
-              setReportDialogOpen(true);
-            }}
+            onClick={handleOpenReportDialog}
             className="w-full mt-1 flex items-center justify-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
           >
             <AlertTriangle className="h-3 w-3" />

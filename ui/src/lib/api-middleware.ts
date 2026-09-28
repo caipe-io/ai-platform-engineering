@@ -528,7 +528,11 @@ function resolveLegacyWithAuthRbacPolicy(request: NextRequest): RouteRbacPolicy 
       ? { resource: 'user_settings', scope: 'read' }
       : { resource: 'user_settings', scope: 'write' };
   }
-  if (pathname.startsWith('/api/feedback')) {
+  if (
+    pathname.startsWith('/api/feedback') ||
+    pathname === '/api/tickets/report' ||
+    pathname === '/api/tickets/jira'
+  ) {
     return { resource: 'feedback', scope: 'submit' };
   }
   if (

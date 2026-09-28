@@ -493,14 +493,14 @@ describe("FeedbackButton", () => {
       mockTicketProvider = null;
     });
 
-    it("shows 'Submit & Report Jira Issue' button on dislike", () => {
+    it("does not show a redundant submit-and-report button", () => {
       render(
         <FeedbackButton
           messageId="msg-1"
           feedback={{ type: "dislike", reason: "Inaccurate", showFeedbackOptions: true }}
         />
       );
-      expect(screen.getByText(/Submit & Report Jira Issue/)).toBeInTheDocument();
+      expect(screen.queryByText(/Submit & Report/)).not.toBeInTheDocument();
     });
 
     it("does NOT show combo button on positive feedback", () => {
@@ -533,7 +533,7 @@ describe("FeedbackButton", () => {
       expect(screen.queryByText("Report a Problem")).not.toBeInTheDocument();
     });
 
-    it("combo button submits feedback then opens report dialog", async () => {
+    it("report link submits pending feedback then opens report dialog", async () => {
       const onFeedbackChange = jest.fn();
       render(
         <FeedbackButton
@@ -543,7 +543,7 @@ describe("FeedbackButton", () => {
         />
       );
 
-      fireEvent.click(screen.getByText(/Submit & Report Jira Issue/));
+      fireEvent.click(screen.getByText("Report a Problem"));
 
       await waitFor(() => {
         expect(mockSubmitFeedback).toHaveBeenCalledWith(

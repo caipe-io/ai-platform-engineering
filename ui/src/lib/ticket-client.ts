@@ -129,6 +129,109 @@ export interface CreateTicketOptions {
   onEvent?: (event: TicketStreamEvent, logLine: string) => void;
   onResult?: (result: TicketResult) => void;
   signal?: AbortSignal;
+  /** Source of the report. */
+  source?: "header" | "chat-feedback";
+  /** Optional product area selected by the user. */
+  area?: string;
+  /** Issue type selected by the user. */
+  issueType?: "Bug" | "Enhancement";
+}
+
+/**
+ * Create a GitHub issue via the BFF API (direct REST — no agent required).
+ */
+export async function createTicketViaApi(
+  options: CreateTicketOptions,
+): Promise<TicketResult> {
+  const { request, signal, source = "header", area, issueType } = options;
+
+  const res = await fetch("/api/tickets/report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      description: request.description,
+      contextUrl: request.contextUrl,
+      feedbackContext: request.feedbackContext,
+      screenshotDataUrl: request.screenshotDataUrl,
+      source,
+      area,
+      issueType,
+    }),
+    signal,
+  });
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      typeof body?.message === "string"
+        ? body.message
+        : typeof body?.error === "string"
+          ? body.error
+          : `Ticket API failed (${res.status})`;
+    throw new Error(msg);
+  }
+
+  const data = body.data as TicketResult;
+  options.onResult?.(data);
+  options.onEvent?.({ type: "done" }, `<- done: ${data.id} ${data.url}`);
+  return data;
+}
+
+/**
+ * Create a Jira issue via the BFF API (direct REST).
+ */
+export async function createJiraTicketViaApi(
+  options: CreateTicketOptions,
+): Promise<TicketResult> {
+  const { request, signal, area, issueType } = options;
+
+  const res = await fetch("/api/tickets/jira", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      description: request.description,
+      contextUrl: request.contextUrl,
+      feedbackContext: request.feedbackContext,
+      screenshotDataUrl: request.screenshotDataUrl,
+      area,
+      issueType,
+    }),
+    signal,
+  });
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      typeof body?.message === "string"
+        ? body.message
+        : typeof body?.error === "string"
+          ? body.error
+          : `Jira ticket API failed (${res.status})`;
+    throw new Error(msg);
+  }
+
+  const data = body.data as TicketResult;
+  options.onResult?.(data);
+  options.onEvent?.({ type: "done" }, `<- done: ${data.id} ${data.url}`);
+  return data;
+}
+
+/**
+ * Create a ticket using the best available path.
+ * Uses the explicitly configured ticket provider. If no direct provider is
+ * enabled, falls back to the existing dynamic-agent ticket workflow.
+ */
+export async function createTicket(
+  options: CreateTicketOptions,
+): Promise<TicketResult | null> {
+  const provider = getConfig("ticketProvider");
+  if (provider === "github" && getConfig("githubTicketEnabled")) {
+    return createTicketViaApi(options);
+  }
+  if (provider === "jira" && getConfig("jiraTicketEnabled")) {
+    return createJiraTicketViaApi(options);
+  }
+  return createTicketViaAgent(options);
 }
 
 /**

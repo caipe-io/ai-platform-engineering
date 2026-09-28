@@ -12,7 +12,7 @@ DialogTitle,
 } from "@/components/ui/dialog";
 import { getConfig } from "@/lib/config";
 import {
-createTicketViaAgent,
+createTicket,
 type FeedbackContext,
 type TicketResult,
 } from "@/lib/ticket-client";
@@ -204,7 +204,7 @@ export function ReportProblemDialog({
     appendLog(`Context: ${contextUrl}`);
 
     try {
-      const result = await createTicketViaAgent({
+      const result = await createTicket({
         request: {
           description: feedbackContext
             ? `${feedbackContext.reason}: ${feedbackContext.additionalFeedback || description || "(no additional details)"}`
