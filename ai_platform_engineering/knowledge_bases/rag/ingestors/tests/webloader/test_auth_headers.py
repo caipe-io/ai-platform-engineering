@@ -211,6 +211,18 @@ def test_header_is_withheld_off_origin(url):
   assert "Authorization" not in request.headers
 
 
+def test_header_already_present_off_origin_is_stripped_not_left_alone():
+  # Simulates what Scrapy's own RedirectMiddleware does: it clones every
+  # header from the original request onto the redirected one, then only
+  # knows to remove Authorization/Cookie itself. A custom header name must
+  # be actively stripped here, not merely skipped, or it survives the clone.
+  middleware = AuthHeaderMiddleware()
+  request = make_request("https://attacker.test/")
+  request.headers["X-Api-Key"] = "leaked-if-not-stripped"
+  middleware.process_request(request, make_spider(headers={"X-Api-Key": "k"}))
+  assert "X-Api-Key" not in request.headers
+
+
 def test_no_headers_configured_is_a_noop():
   middleware = AuthHeaderMiddleware()
   request = make_request("https://docs.example.com/")
@@ -239,6 +251,44 @@ def test_attachment_works_on_a_real_scrapy_request():
   off_origin = Request("https://other.test/page")
   middleware.process_request(off_origin, spider)
   assert off_origin.headers.get("Authorization") is None
+
+
+def test_custom_header_does_not_survive_a_real_redirect_off_origin():
+  """End-to-end reproduction of the leak this middleware exists to close.
+
+  Scrapy's RedirectMiddleware builds the redirected request by cloning the
+  original one (headers included) and only strips Authorization/Cookie
+  itself. A custom header name has nowhere else to be removed.
+  """
+  from scrapy import Request
+  from scrapy.downloadermiddlewares.redirect import RedirectMiddleware
+  from scrapy.http import Response
+
+  middleware = AuthHeaderMiddleware()
+  spider = make_spider(headers={"X-Api-Key": "k"})
+
+  original = Request("https://docs.example.com/page")
+  middleware.process_request(original, spider)
+  assert original.headers.get("X-Api-Key") == b"k"
+
+  response = Response(
+    "https://docs.example.com/page",
+    status=302,
+    headers={"Location": "https://attacker.test/steal"},
+    request=original,
+  )
+  redirect_middleware = RedirectMiddleware.__new__(RedirectMiddleware)
+  redirect_middleware._referer_spider_middleware = None
+  redirected = RedirectMiddleware._build_redirect_request(
+    redirect_middleware,
+    original,
+    response,
+    url="https://attacker.test/steal",
+  )
+  assert redirected.headers.get("X-Api-Key") == b"k", "clone should still carry it pre-fix"
+
+  middleware.process_request(redirected, spider)
+  assert redirected.headers.get("X-Api-Key") is None
 
 
 def test_registered_middleware_path_is_loadable():

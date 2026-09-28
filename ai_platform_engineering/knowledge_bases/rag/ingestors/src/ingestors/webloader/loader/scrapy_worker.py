@@ -95,9 +95,10 @@ class AuthHeaderMiddleware:
   subdomain, and not the same host on a different scheme or port. A crawl may
   follow off-site links, and a login wall typically answers with a redirect to
   a different host or downgrades to plain HTTP; exact-origin matching keeps the
-  credential from being replayed to either. Scrapy's own RedirectMiddleware
-  drops `Authorization` across origins but not custom header names, so this
-  cannot be delegated to it.
+  credential from being replayed to either. Off-origin requests also have any
+  configured header actively stripped, not merely skipped, because Scrapy's own
+  RedirectMiddleware clones headers onto the redirected request and only knows
+  to drop `Authorization`/`Cookie` itself, not a custom header name.
   """
 
   def process_request(self, request: Request, spider):
@@ -106,6 +107,14 @@ class AuthHeaderMiddleware:
     if not headers or not origin:
       return None
     if _origin_key(request.url) != origin:
+      # A redirect off-origin reaches this middleware again on the same
+      # request object Scrapy's RedirectMiddleware built by cloning the
+      # original request, headers included — it only knows to strip
+      # `Authorization`/`Cookie` itself, not a custom header name. Strip
+      # every configured header rather than merely skip re-adding it, or a
+      # credential attached upstream would ride along to the redirect target.
+      for name in headers:
+        request.headers.pop(name, None)
       return None
     for name, value in headers.items():
       request.headers[name] = value
