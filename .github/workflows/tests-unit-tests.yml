@@ -166,7 +166,7 @@ jobs:
       # identically on main and are unrelated to LLM construction; they are
       # tracked separately rather than fixed here, so that adding the gate does
       # not also mean changing authz, credential and router behaviour.
-      # Remove each deselection as its issue is closed.
+      # Tracked in #2829; remove each deselection as it is fixed.
       - name: Run dynamic-agents tests
         run: |
           cd ai_platform_engineering/dynamic_agents
