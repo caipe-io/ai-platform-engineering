@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
+ReasoningEffort = Literal["low", "medium", "high", "max"]
+
 
 class TransportType(str, Enum):
     """MCP server transport types."""
@@ -170,6 +172,10 @@ class ModelConfig(BaseModel):
 
     id: str = Field(..., description="LLM model identifier (e.g., 'claude-sonnet-4-20250514')")
     provider: str = Field(..., description="LLM provider (anthropic-claude, openai, azure-openai, aws-bedrock, etc.)")
+    reasoning_effort: ReasoningEffort = Field(
+        "medium",
+        description="Portable default reasoning effort; ignored when the model does not support configurable reasoning",
+    )
 
 
 # =============================================================================
@@ -675,6 +681,10 @@ class ChatRequest(BaseModel):
     )
     protocol: str = Field("custom", pattern=r"^(custom|agui)$", description="Wire protocol: 'custom' or 'agui'")
     trace_id: str | None = Field(None, description="Optional trace ID for Langfuse tracing")
+    reasoning_effort: ReasoningEffort | None = Field(
+        None,
+        description="Conversation-level reasoning effort override",
+    )
     autonomous: bool = Field(
         False,
         description=(

@@ -2,7 +2,7 @@
 
 import logging
 from contextlib import AsyncExitStack
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -17,6 +17,7 @@ from dynamic_agents.config import get_settings
 from dynamic_agents.log_config import conversation_id_var
 from dynamic_agents.models import ChatRequest, ClientContext, DynamicAgentConfig, InputFile, UserContext
 from dynamic_agents.services.llm_clients import LLMConfigError
+from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
 from dynamic_agents.services.runtime_cache import (
     RuntimeCapacityError,
@@ -179,6 +180,7 @@ class ResumeStreamRequest(BaseModel):
     resume_data: str  # JSON string with type discriminator (form_input or tool_approval)
     protocol: str = Field("custom", pattern=r"^(custom|agui)$")
     trace_id: str | None = None
+    reasoning_effort: Literal["low", "medium", "high", "max"] | None = None
     config_override: dict | None = Field(
         None,
         description=(
@@ -194,6 +196,25 @@ class ResumeStreamRequest(BaseModel):
     workflow_config_id: str | None = Field(
         None,
         description="Workflow config ID when resuming a workflow step (for delegated agent use).",
+    )
+
+
+def _with_reasoning_effort(
+    agent: DynamicAgentConfig,
+    requested: Literal["low", "medium", "high", "max"] | None,
+) -> DynamicAgentConfig:
+    """Apply a validated conversation override without mutating stored config."""
+    if requested is None:
+        return agent
+    if not supports_reasoning_effort(agent.model.id, requested):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model {agent.model.id!r} does not support configurable reasoning effort",
+        )
+    return agent.model_copy(
+        update={
+            "model": agent.model.model_copy(update={"reasoning_effort": requested})
+        }
     )
 
 
@@ -374,6 +395,7 @@ async def chat_start_stream(
     # Apply config_override if provided (deep merge, validated)
     if request.config_override:
         agent = apply_config_override(agent, request.config_override)
+    agent = _with_reasoning_effort(agent, request.reasoning_effort)
 
     # Get MCP servers for this agent and its subagents
     mcp_servers = mongo.get_agent_mcp_servers(agent)
@@ -496,6 +518,7 @@ async def chat_resume_stream(
     # Apply config_override if provided (same as /stream/start)
     if request.config_override:
         agent = apply_config_override(agent, request.config_override)
+    agent = _with_reasoning_effort(agent, request.reasoning_effort)
 
     # Get MCP servers for this agent and its subagents
     mcp_servers = mongo.get_agent_mcp_servers(agent)
@@ -556,6 +579,8 @@ async def chat_invoke(
     # Apply config_override if provided (deep merge, validated)
     if request.config_override:
         agent = apply_config_override(agent, request.config_override)
+
+    agent = _with_reasoning_effort(agent, request.reasoning_effort)
 
     # Get MCP servers for this agent and its subagents
     mcp_servers = mongo.get_agent_mcp_servers(agent)

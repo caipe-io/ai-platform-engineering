@@ -480,7 +480,7 @@ export async function expectChatComposerReady(
   page: Page,
   timeoutMs = 30_000,
 ): Promise<void> {
-  const composer = page.locator("textarea").first();
+  const composer = page.getByRole("textbox", { name: "Message" });
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {

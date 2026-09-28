@@ -1,3 +1,27 @@
+## 1.3.0-rc.3 (2026-09-24)
+
+## 1.3.0-rc.2 (2026-09-24)
+
+### Feat
+
+- **admin**: improve user identity and access visibility (#2810)
+- **authz**: establish BFF access API foundation (#2807)
+
+### Fix
+
+- **agents**: restore Azure and Bedrock reasoning (#2809)
+
+## 1.3.0-rc.1 (2026-09-23)
+
+### Feat
+
+- **rag**: support Confluence folder and whole-space ingestion (#2805)
+- **agents**: add configurable reasoning effort (#2798)
+
+### Fix
+
+- **auth**: debounce Keycloak sub mapping writes for repeated identity calls (#2800)
+
 ## 1.2.0 (2026-09-22)
 
 ### Feat

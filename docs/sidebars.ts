@@ -316,6 +316,7 @@ const sidebars: SidebarsConfig = {
               items: [
                 { type: 'doc', id: 'security/rbac/feature-guide', label: 'Feature Guide' },
                 { type: 'doc', id: 'security/rbac/architecture', label: 'Architecture' },
+                { type: 'doc', id: 'security/rbac/access-api', label: 'Access API' },
                 { type: 'doc', id: 'security/rbac/pdp-coverage-audit', label: 'PDP Coverage Audit (BFF /api/*)' },
                 { type: 'doc', id: 'security/rbac/comprehensive-rbac-refactor', label: 'Comprehensive Refactor' },
                 { type: 'doc', id: 'security/rbac/workflows', label: 'Workflows' },

@@ -5,7 +5,7 @@ commands directed at the bot:
 
 * In a 1:1 DM (``space.type == "direct"``): the whole message body
   is the command (e.g. ``list``, ``use github``, ``use default``,
-  ``help``).
+  ``effort high``, ``help``).
 * In a group space: the message must begin with the bot mention.
   After stripping the mention, the remaining text is parsed the same
   way (e.g. ``@bot list``, ``@bot use github``).
@@ -15,7 +15,7 @@ This module exposes:
 * :func:`parse_command_text` — pure parser, returns a
   :class:`ParsedCommand` describing intent and argument.
 * :func:`handle_list_command` / :func:`handle_use_command` /
-  :func:`handle_help_command` — handlers parallel to the Slack
+  :func:`handle_effort_command` / :func:`handle_help_command` — handlers parallel to the Slack
   twin. They take their dependencies as kwargs so the Webex
   integration layer can pass already-constructed clients and the
   tests can pass fakes.
@@ -36,6 +36,7 @@ from .accessible_agents_client import AccessibleAgentsClient
 from .command_rate_limiter import CommandRateLimiter
 from .dm_authz_client import DmAuthzClient
 from .dm_thread_overrides import OverrideKey
+from .reasoning_effort import PendingEffortStore, REASONING_EFFORTS
 
 
 # --- copy ----------------------------------------------------------------
@@ -97,6 +98,7 @@ HELP_MESSAGE = (
     "• `list` — show the agents you can use\n"
     "• `use <agent>` — route this 1:1 space to a specific agent "
     "(type `use default` to clear the room override)\n"
+    "• `effort <low|medium|high|max>` — set reasoning effort for your next message\n"
     "• `help` — show this message\n"
     "\n"
     "Direct messages dispatch via: space override → this bot's configured "
@@ -112,6 +114,7 @@ class CommandIntent(Enum):
     LIST = "list"
     USE = "use"
     HELP = "help"
+    EFFORT = "effort"
 
 
 @dataclass(frozen=True)
@@ -122,7 +125,7 @@ class ParsedCommand:
 
 # Words that, as the first token, look like the bot-command surface.
 # Anything else is treated as a normal chat message.
-_COMMAND_HEADS = {"list", "use", "help"}
+_COMMAND_HEADS = {"list", "use", "help", "effort"}
 
 # Regex stripping a leading Webex ``@bot`` mention (HTML form is
 # stripped earlier in the Webex SDK pipeline; we still strip plain
@@ -151,6 +154,8 @@ def parse_command_text(text: str) -> ParsedCommand:
         return ParsedCommand(CommandIntent.LIST, argument)
     if head == "use":
         return ParsedCommand(CommandIntent.USE, argument)
+    if head == "effort":
+        return ParsedCommand(CommandIntent.EFFORT, argument)
     return ParsedCommand(CommandIntent.HELP, argument)
 
 
@@ -212,6 +217,36 @@ def handle_list_command(
         else:
             lines.append(f"• `{agent.id}` — {agent.name}")
     return TextCommandResult(text="\n".join(lines), code="list_ok")
+
+
+def handle_effort_command(
+    *,
+    user_key: str,
+    raw_text: str,
+    is_dm: bool,
+    person_id: str,
+    space_id: str,
+    pending_store: PendingEffortStore,
+    rate_limiter: Optional[CommandRateLimiter] = None,
+) -> TextCommandResult:
+    if not is_dm:
+        return TextCommandResult(
+            text="`effort` only applies in direct messages.",
+            code="effort_dm_only",
+        )
+    if _rate_limited(rate_limiter, user_key):
+        return TextCommandResult(text=RATE_LIMITED_MESSAGE, code="rate_limited")
+    effort = (raw_text or "").strip().lower()
+    if effort not in REASONING_EFFORTS:
+        return TextCommandResult(
+            text="Usage: `effort <low|medium|high|max>`.",
+            code="effort_invalid",
+        )
+    pending_store.set(person_id, space_id, effort)
+    return TextCommandResult(
+        text=f"Reasoning effort changed to `{effort}`. It applies to your next message and that chat.",
+        code="effort_ok",
+    )
 
 
 def handle_use_command(

@@ -210,6 +210,7 @@ def stream_response(
   resume_trace_id=None,
   client_context=None,
   files=None,
+  reasoning_effort=None,
 ):
   """
   Stream an AG-UI response to Slack.
@@ -513,6 +514,7 @@ def stream_response(
       agent_id=agent_id,
       client_context=client_context,
       files=files,
+      reasoning_effort=reasoning_effort,
     )
 
   try:
@@ -1009,6 +1011,7 @@ def invoke_response(
   escalation_config=None,
   client_context=None,
   files=None,
+  reasoning_effort=None,
 ):
   """
   Non-streaming invoke for bot users.
@@ -1026,6 +1029,7 @@ def invoke_response(
       agent_id=agent_id,
       client_context=client_context,
       files=files,
+      reasoning_effort=reasoning_effort,
     )
 
     if not result.get("success", True):

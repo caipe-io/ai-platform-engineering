@@ -1,9 +1,4 @@
-// assisted-by Codex Codex-sonnet-4-6
-//
-// Standalone OpenFGA adapter for CAS. Transport (HTTP client, store-id cache,
-// circuit breaker) is private to this silo. Vocabulary (action→relation maps)
-// is imported from lib/rbac/tuple-builders — the canonical source — so CAS
-// can never silently drift from the OpenFGA model used by the rest of the BFF.
+// CAS policy adapter: decisions and grants use the shared BFF transport.
 
 import type {
   Action,
@@ -21,52 +16,37 @@ import { getReasonMeta } from "../reasons";
 import { openFgaRelation, openFgaCheckRelation } from "@/lib/rbac/tuple-builders";
 import { openFgaResourceObject, parseOpenFgaObject } from "@/lib/rbac/openfga-resource-ids";
 
+import {
+  getCachedOpenFgaStoreId,
+  getOpenFgaStoreId,
+  OPENFGA_READ_TIMEOUT_MS,
+  requestOpenFga,
+  resetOpenFgaStoreIdCacheForTests,
+} from "./openfga-client";
+
 // ─── Transport ────────────────────────────────────────────────────────────────
 
-const DEFAULT_STORE_NAME = "caipe-openfga";
 const BATCH_CONCURRENCY = 10;
 
-function baseUrl(): string {
-  const url = process.env.OPENFGA_HTTP?.trim()?.replace(/\/+$/, "");
-  if (!url) throw new Error("OPENFGA_HTTP is not set");
-  return url;
-}
-
-function fgaHeaders(): Record<string, string> {
-  return { "Content-Type": "application/json" };
-}
-
-// Module-level store-id cache: warm at first call, invalidated on 404.
-let cachedStoreId: string | null = null;
-
-async function resolveStoreId(): Promise<string> {
-  const explicit = process.env.OPENFGA_STORE_ID?.trim();
-  if (explicit) return explicit;
-  if (cachedStoreId) return cachedStoreId;
-
-  const res = await fetch(`${baseUrl()}/stores`, { headers: fgaHeaders() });
-  if (!res.ok) throw new Error(`OpenFGA store discovery failed: ${res.status}`);
-  const body = (await res.json()) as { stores?: Array<{ id?: string; name?: string }> };
-  const storeName = process.env.OPENFGA_STORE_NAME?.trim() || DEFAULT_STORE_NAME;
-  const store = body.stores?.find((s) => s.name === storeName);
-  if (!store?.id) throw new Error(`OpenFGA store "${storeName}" not found`);
-  cachedStoreId = store.id;
-  return cachedStoreId;
-}
-
-async function fgaCheck(storeId: string, user: string, relation: string, object: string): Promise<boolean> {
-  const res = await fetch(`${baseUrl()}/stores/${storeId}/check`, {
+async function fgaCheck(
+  storeId: string, user: string, relation: string, object: string,
+  options: { consistency?: "HIGHER_CONSISTENCY"; signal?: AbortSignal } = {},
+): Promise<boolean> {
+  const res = await requestOpenFga(`/stores/${storeId}/check`, {
     method: "POST",
-    headers: fgaHeaders(),
-    body: JSON.stringify({ tuple_key: { user, relation, object } }),
+    body: JSON.stringify({
+      tuple_key: { user, relation, object },
+      ...(options.consistency ? { consistency: options.consistency } : {}),
+    }),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
   if (res.status === 404) {
-    cachedStoreId = null; // invalidate; next call re-resolves
     throw new Error("OpenFGA store not found (404)");
   }
   if (!res.ok) throw new Error(`OpenFGA check failed: ${res.status}`);
   const body = (await res.json()) as { allowed?: boolean };
-  return Boolean(body.allowed);
+  if (typeof body.allowed !== "boolean") throw new Error("OpenFGA check returned an invalid decision");
+  return body.allowed;
 }
 
 async function fgaListObjects(
@@ -75,13 +55,11 @@ async function fgaListObjects(
   relation: string,
   type: string,
 ): Promise<string[]> {
-  const res = await fetch(`${baseUrl()}/stores/${storeId}/list-objects`, {
+  const res = await requestOpenFga(`/stores/${storeId}/list-objects`, {
     method: "POST",
-    headers: fgaHeaders(),
     body: JSON.stringify({ user, relation, type }),
   });
   if (res.status === 404) {
-    cachedStoreId = null; // invalidate; next call re-resolves
     throw new Error("OpenFGA store not found (404)");
   }
   if (!res.ok) throw new Error(`OpenFGA list-objects failed: ${res.status}`);
@@ -152,7 +130,7 @@ export function __resetAdapterStateForTests(): void {
   failureCount = 0;
   openSince = 0;
   probeInFlight = false;
-  cachedStoreId = null;
+  resetOpenFgaStoreIdCacheForTests();
   cacheHits = 0;
   cacheMisses = 0;
   decisionCache.clear();
@@ -238,7 +216,7 @@ function deny(reason: AuthorizeResult["reason"] = "NO_CAPABILITY"): AuthorizeRes
   return { decision: "DENY", reason, retriable: getReasonMeta(reason).retriable };
 }
 
-async function runCheck(req: AuthorizeRequest): Promise<AuthorizeResult> {
+async function runCheck(req: AuthorizeRequest, fresh = false): Promise<AuthorizeResult> {
   if (!circuitAllows()) return deny("AUTHZ_UNAVAILABLE");
 
   const relation = openFgaCheckRelation(req.action);
@@ -246,10 +224,15 @@ async function runCheck(req: AuthorizeRequest): Promise<AuthorizeResult> {
   const object = openFgaResourceObject(req.resource.type, req.resource.id);
 
   try {
-    const storeId = await resolveStoreId();
-    const allowed = await fgaCheck(storeId, user, relation, object);
+    // Start before discovery so it consumes the same execution-check budget.
+    const signal = fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined;
+    const storeId = await getOpenFgaStoreId();
+    signal?.throwIfAborted();
+    const allowed = await fgaCheck(storeId, user, relation, object,
+      fresh ? { consistency: "HIGHER_CONSISTENCY", signal } : {});
     recordSuccess();
-    return allowed ? allow() : deny("NO_CAPABILITY");
+    const result = allowed ? allow() : deny("NO_CAPABILITY");
+    return fresh ? { ...result, ttl_seconds: 0 } : result;
   } catch (err) {
     recordFailure();
     console.warn("[cas/openfga] check error:", err instanceof Error ? err.message : String(err));
@@ -264,7 +247,7 @@ async function runListObjects(subject: Subject, action: Action, resourceType: Re
   const user = `${subject.type}:${subject.id}`;
 
   try {
-    const storeId = await resolveStoreId();
+    const storeId = await getOpenFgaStoreId();
     const objects = await fgaListObjects(storeId, user, relation, resourceType);
     recordSuccess();
     return { ids: new Set(objects.map(parseOpenFgaObject)), reason: "OK" };
@@ -318,6 +301,12 @@ async function checkWithCache(req: AuthorizeRequest): Promise<AuthorizeResult> {
 export function createOpenFgaEngine(): PolicyEngine {
   return {
     check(req: AuthorizeRequest): Promise<AuthorizeResult> {
+      // A single agent-use check enforces execution. Never reuse an allow/deny
+      // from a picker batch or another request, even on this replica.
+      if (req.resource.type === "agent" && req.action === "use") {
+        cacheMisses++;
+        return runCheck(req, true);
+      }
       return checkWithCache(req);
     },
 
@@ -375,9 +364,8 @@ async function fgaWrite(storeId: string, writes: FgaTuple[], deletes: FgaTuple[]
     ...(writes.length ? { writes: { tuple_keys: writes } } : {}),
     ...(deletes.length ? { deletes: { tuple_keys: deletes } } : {}),
   };
-  const res = await fetch(`${baseUrl()}/stores/${storeId}/write`, {
+  const res = await requestOpenFga(`/stores/${storeId}/write`, {
     method: "POST",
-    headers: fgaHeaders(),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -400,12 +388,12 @@ function isIdempotentWriteFailure(status: number, text: string, writes: FgaTuple
 export function createOpenFgaAdmin(): PolicyAdmin {
   return {
     async grant(intent: GrantIntent): Promise<void> {
-      const storeId = await resolveStoreId();
+      const storeId = await getOpenFgaStoreId();
       await fgaWrite(storeId, [grantTuple(intent)], []);
       invalidateDecisionCache(); // the graph changed — drop cached decisions
     },
     async revoke(intent: GrantIntent): Promise<void> {
-      const storeId = await resolveStoreId();
+      const storeId = await getOpenFgaStoreId();
       await fgaWrite(storeId, [], [grantTuple(intent)]);
       invalidateDecisionCache();
     },
@@ -429,6 +417,6 @@ export function describeFgaCheck(req: AuthorizeRequest): {
     relation: openFgaCheckRelation(req.action),
     user: `${req.subject.type}:${req.subject.id}`,
     object: openFgaResourceObject(req.resource.type, req.resource.id),
-    store: process.env.OPENFGA_STORE_ID?.trim() || cachedStoreId || "(resolved at boot)",
+    store: getCachedOpenFgaStoreId() || "(resolved at boot)",
   };
 }

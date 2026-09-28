@@ -65,6 +65,13 @@ export function DynamicAgentContext({
 
   // Get current conversation for download
   const conversation = conversations.find((c) => c.id === conversationId);
+  const storedReasoningEffort = conversation?.metadata?.reasoning_effort;
+  const hasConversationEffortOverride =
+    typeof storedReasoningEffort === "string" &&
+    ["low", "medium", "high", "max"].includes(storedReasoningEffort);
+  const effectiveReasoningEffort = hasConversationEffortOverride
+    ? storedReasoningEffort
+    : (agent?.model?.reasoning_effort ?? "medium");
   const contextUsage = conversationId
     ? contextUsageByConversation[conversationId]
     : undefined;
@@ -337,6 +344,8 @@ export function DynamicAgentContext({
               onFileDownload={handleFileDownload}
               getFileContent={handleGetFileContent}
               contextUsage={showContextUsage ? contextUsage : undefined}
+              reasoningEffort={effectiveReasoningEffort}
+              hasReasoningEffortOverride={hasConversationEffortOverride}
             />
           </div>
         </ScrollArea>
@@ -392,6 +401,8 @@ interface AgentInfoContentProps {
   onFileDownload?: (path: string) => void;
   getFileContent?: (path: string) => Promise<string | null>;
   contextUsage?: ContextUsageEventData;
+  reasoningEffort: string;
+  hasReasoningEffortOverride: boolean;
 }
 
 function AgentInfoContent({
@@ -411,6 +422,8 @@ function AgentInfoContent({
   onFileDownload,
   getFileContent,
   contextUsage,
+  reasoningEffort,
+  hasReasoningEffortOverride,
 }: AgentInfoContentProps) {
   // Count total tools across all MCP servers
   const toolCount = agent?.allowed_tools
@@ -477,6 +490,14 @@ function AgentInfoContent({
           <div className="space-y-0.5">
             <span className="text-xs text-muted-foreground">Visibility</span>
             <p className="font-medium">{visibilityDisplay}</p>
+          </div>
+
+          <div className="space-y-0.5">
+            <span className="text-xs text-muted-foreground">Reasoning effort</span>
+            <p className="font-medium capitalize">{reasoningEffort}</p>
+            <p className="text-[10px] text-muted-foreground">
+              {hasReasoningEffortOverride ? "Chat override" : "Agent default"}
+            </p>
           </div>
 
           {/* MCP Servers */}

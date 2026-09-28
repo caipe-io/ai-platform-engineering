@@ -93,22 +93,28 @@ export interface ConfluenceSpaceSource extends IngestionSourceConfigBase {
   source_type: "confluence_space";
   confluence_url: string;
   space_key: string;
-  /** Concrete page used to start the initial crawl for this space. */
+  /** Concrete page, folder, or whole-space URL used to start the initial crawl. */
   start_page_url?: string;
+  /** Discriminates what `start_page_url` points at. Defaults to "page" when absent (legacy sources). */
+  content_kind?: "page" | "folder" | "space";
   /** Imported configuration selected the entire space (no root page). */
   whole_space?: boolean;
+  /** Ignored for folder/space sources, which always ingest every nested page. */
   get_child_pages?: boolean;
   allowed_title_patterns?: string[];
   denied_title_patterns?: string[];
   /**
    * Full imported page selection retained during config migration. New sources
    * normally contain one entry, while an adopted whole-space source may
-   * contain several roots or an empty array meaning "the whole space".
+   * contain several roots or an empty array meaning "the whole space". Each
+   * entry has exactly one of `page_id` or `folder_id` set, matching
+   * `content_kind` — a folder entry expands to every page nested under it.
    */
   page_configs?: Array<{
-    page_id: string;
+    page_id?: string;
+    folder_id?: string;
     source?: string | null;
-    get_child_pages: boolean;
+    get_child_pages?: boolean;
   }>;
 }
 

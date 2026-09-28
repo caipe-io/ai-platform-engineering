@@ -77,6 +77,7 @@ export class CustomStreamAdapter implements StreamAdapter {
       message: params.message,
       conversation_id: params.conversationId,
       agent_id: params.agentId,
+      ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
       ...(params.turnId && { turn_id: params.turnId }),
       protocol: "custom",
       ...(params.clientContext && { client_context: params.clientContext }),
@@ -91,6 +92,7 @@ export class CustomStreamAdapter implements StreamAdapter {
     const body = JSON.stringify({
       conversation_id: params.conversationId,
       agent_id: params.agentId,
+      ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
       resume_data: params.resumeData,
       protocol: "custom",
       ...(params.clientContext && { client_context: params.clientContext }),

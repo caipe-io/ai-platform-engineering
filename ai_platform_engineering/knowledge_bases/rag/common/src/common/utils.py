@@ -10,8 +10,8 @@ import asyncio
 import hashlib
 import time
 import uuid
-from typing import Optional
-from urllib.parse import urlparse
+from typing import Any, Dict, NamedTuple, Optional
+from urllib.parse import urlparse, unquote, parse_qs
 from common.models.rag import StructuredEntity
 
 DURATION_DAY = 60 * 60 * 24
@@ -174,27 +174,105 @@ def generate_datasource_id_from_url(url: str) -> str:
 def generate_confluence_datasource_id(
   confluence_url: str,
   space_key: str,
-  page_id: Optional[str] = None,
+  content_id: Optional[str] = None,
+  content_kind: str = "page",
 ) -> str:
-  """Generate a stable ID for a Confluence space or page-rooted source.
+  """Generate a stable ID for a Confluence space, page, or folder-rooted source.
 
-  Imported whole-space records omit ``page_id``. New sources are rooted at a page;
-  including that immutable page ID lets one space contain multiple independent
-  datasources without changing scheduled reload or stale-chunk replacement.
+  Imported whole-space records and new whole-space sources both omit
+  ``content_id``. New sources rooted at a page or a folder include that
+  immutable content ID (disambiguated by ``content_kind``) so one space can
+  contain multiple independent datasources without changing scheduled reload
+  or stale-chunk replacement.
   """
   domain = urlparse(confluence_url).netloc.replace(".", "_").replace("-", "_")
   datasource_id = f"src_confluence___{domain}__{space_key}"
-  if not page_id:
+  if not content_id:
     # Keep imported whole-space datasource IDs stable. These
     # sources are handled by the one-time import compatibility path.
     return datasource_id
 
-  raw_id = f"{datasource_id}__{page_id}"
+  infix = "folder__" if content_kind == "folder" else ""
+  raw_id = f"{datasource_id}__{infix}{content_id}"
   safe_id = re.sub(r"[^A-Za-z0-9._~@|*+=,/-]", "_", raw_id)
   if len(safe_id) <= 192:
     return safe_id
   suffix = hashlib.sha256(raw_id.encode()).hexdigest()[:12]
   return f"{safe_id[:179]}_{suffix}"
+
+
+class ConfluenceLocator(NamedTuple):
+  """A parsed Confluence page, folder, or whole-space URL.
+
+  Mirrors ``ui/src/lib/confluence-url.ts``'s ``parseConfluenceLocator`` so the
+  UI and the ingestor/server agree on which URLs are supported.
+  """
+
+  kind: str  # "page" | "folder" | "space"
+  space_key: str
+  content_id: Optional[str] = None
+
+
+_CONFLUENCE_PAGE_PATH = re.compile(r"/spaces/([^/]+)/pages/(\d+)(?:/|$)")
+_CONFLUENCE_FOLDER_PATH = re.compile(r"/spaces/([^/]+)/folder/(\d+)(?:/|$)")
+_CONFLUENCE_SPACE_ROOT_PATH = re.compile(r"/spaces/([^/]+)(?:/overview)?/?$")
+
+
+def parse_confluence_locator(url: str) -> Optional[ConfluenceLocator]:
+  """Parse a Confluence URL into a page, folder, or whole-space locator.
+
+  Returns ``None`` when the URL doesn't match any of the three recognized
+  shapes (``/spaces/{key}/pages/{id}``, ``/spaces/{key}/folder/{id}``, or a
+  bare ``/spaces/{key}`` root).
+  """
+  parsed = urlparse(url)
+  path = parsed.path
+
+  match = _CONFLUENCE_PAGE_PATH.search(path)
+  if match:
+    return ConfluenceLocator(kind="page", space_key=unquote(match.group(1)), content_id=match.group(2))
+
+  match = _CONFLUENCE_FOLDER_PATH.search(path)
+  if match:
+    return ConfluenceLocator(kind="folder", space_key=unquote(match.group(1)), content_id=match.group(2))
+
+  match = _CONFLUENCE_SPACE_ROOT_PATH.search(path)
+  if match:
+    space_key = unquote(match.group(1))
+    # Confluence's own UI sends users to /spaces/{key}/overview?homepageId={id}
+    # when viewing a space's home page - it has no /pages/{id} segment, but
+    # homepageId genuinely identifies one page, not the whole space.
+    homepage_id = parse_qs(parsed.query).get("homepageId", [None])[0]
+    if homepage_id and homepage_id.isdigit():
+      return ConfluenceLocator(kind="page", space_key=space_key, content_id=homepage_id)
+    return ConfluenceLocator(kind="space", space_key=space_key)
+
+  return None
+
+
+def build_confluence_content_config(
+  locator: ConfluenceLocator,
+  *,
+  get_child_pages: bool = False,
+  source_url: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+  """Build the single ``load_pages()`` config entry for a parsed locator.
+
+  The single source of truth for the page/folder/space decision, shared by
+  the ingestor's on-demand ingest path and the server's route handler so they
+  can't drift into encoding it differently. Returns ``None`` for a
+  whole-space locator, which ``load_pages()`` enumerates directly instead of
+  via an explicit config entry.
+  """
+  if locator.kind == "page":
+    config: Dict[str, Any] = {"page_id": locator.content_id, "get_child_pages": get_child_pages}
+  elif locator.kind == "folder":
+    config = {"folder_id": locator.content_id}
+  else:
+    return None
+  if source_url is not None:
+    config["source"] = source_url
+  return config
 
 
 def derive_friendly_name_from_url(url: str, max_length: int = 64) -> str:
