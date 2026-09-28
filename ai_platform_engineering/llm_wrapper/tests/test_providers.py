@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ai_platform_engineering.llm_wrapper.providers import (
+from llm_wrapper.providers import (
     BEDROCK,
     OPENAI_COMPATIBLE,
     PROVIDERS,

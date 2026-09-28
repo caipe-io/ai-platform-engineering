@@ -51,25 +51,31 @@ export OPENAI_COMPATIBLE_MODEL=<model the gateway exposes>
 
 This is implemented as `ChatOpenAI(base_url=...)` and adds no dependency. It is required for sandboxed harness workers, which cannot hold raw provider credentials — see research D7.
 
-## How an image gets it
+## How a consumer gets it
 
-Imported directly as `ai_platform_engineering.llm_wrapper.<module>`. The
-consuming image must build with the **repository root** as its Docker context
-and copy the directory in:
+A **uv path dependency**, matching how the RAG packages consume `common`:
 
-```dockerfile
-COPY ai_platform_engineering/__init__.py /app/shared/ai_platform_engineering/__init__.py
-COPY ai_platform_engineering/llm_wrapper/ /app/shared/ai_platform_engineering/llm_wrapper/
-ENV PYTHONPATH="/app/shared"
+```toml
+dependencies = ["llm-wrapper", ...]
+
+[tool.uv.sources]
+llm-wrapper = { path = "../llm_wrapper", editable = true }
 ```
 
-`/app/shared` rather than `/app`: `/app/dynamic_agents` holds `src/`, `tests/`
-and `pyproject.toml` but no `__init__.py`, so `/app` on `PYTHONPATH` would make
-it a namespace package shadowing the real `dynamic_agents` in the venv.
+Imported as `llm_wrapper.<module>`, and resolved the same way locally, under
+`uv run pytest`, and in the image.
 
-A component-scoped build context cannot see this directory — that constraint is
-why other shared modules here were duplicated into component trees. The CI
-workflow for a consuming image must pass `context: .`.
+The image must also carry the directory, so the consuming image builds with the
+repository root as its Docker context and copies it next to the component
+before `uv sync` runs:
+
+```dockerfile
+# WORKDIR is /app/dynamic_agents, so `../llm_wrapper` resolves to /app/llm_wrapper
+COPY ai_platform_engineering/llm_wrapper/ /app/llm_wrapper/
+```
+
+A component-scoped context cannot see it, which is why the CI workflow for a
+consuming image must pass `context: .`.
 
 ## What not to do
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ai_platform_engineering.llm_wrapper.bedrock_family import (
+from llm_wrapper.bedrock_family import (
     BEDROCK_FAMILY_TO_PROVIDER,
     resolve_bedrock_client,
     uses_anthropic_bedrock_client,

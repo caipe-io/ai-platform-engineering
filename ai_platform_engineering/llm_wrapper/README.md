@@ -48,35 +48,37 @@ do not apply to it.
 
 ## How consumers get it
 
-Imported directly as `ai_platform_engineering.llm_wrapper.<module>`. There is
-one copy in the repository and one in each image.
+A **uv path dependency**, the same mechanism the RAG packages use for `common`:
 
-Container images must therefore be built with the **repository root** as the
-Docker build context, and must copy this directory in. `dynamic_agents` does
-this:
+```toml
+# the consumer's pyproject.toml
+dependencies = ["llm-wrapper", ...]
 
-```dockerfile
-COPY ai_platform_engineering/__init__.py /app/shared/ai_platform_engineering/__init__.py
-COPY ai_platform_engineering/llm_wrapper/ /app/shared/ai_platform_engineering/llm_wrapper/
-ENV PYTHONPATH="/app/shared"
+[tool.uv.sources]
+llm-wrapper = { path = "../llm_wrapper", editable = true }
 ```
 
-It lands under `/app/shared` rather than `/app` on purpose: `/app/dynamic_agents`
-holds `src/`, `tests/` and `pyproject.toml` but no `__init__.py`, so putting
-`/app` on `PYTHONPATH` would make it a namespace package shadowing the real
-`dynamic_agents` installed into the venv.
+Imported as `llm_wrapper.<module>`. One copy in the repository, installed into
+each consumer's venv, so it resolves identically in local development, in
+`uv run pytest`, and in the image.
 
-A component-scoped build context cannot see this directory. That constraint is
-why other shared modules in this repository were duplicated into component
-trees; widening the context is the fix, and the CI workflow for a consuming
-image must pass `context: .`.
+An earlier revision copied the files in and put them on `PYTHONPATH`. That
+worked in the image and broke every component-local test run, because
+`ai_platform_engineering` is not importable from inside `dynamic_agents`. A
+path dependency has no such split.
 
-## Adding a provider
+The image still needs the directory present, so the consuming image builds with
+the **repository root** as its Docker context and copies it next to the
+component before `uv sync` resolves it:
 
-Two lines — one entry in `PROVIDERS`, one dependency in the consuming package's
-`pyproject.toml`. `init_chat_model` already knows 28 provider strings, so
-`build.py` does not change. Do **not** add the dependency to the platform root:
-each image should install only the integrations it uses.
+```dockerfile
+# WORKDIR is /app/dynamic_agents, so `../llm_wrapper` must resolve to /app/llm_wrapper
+COPY ai_platform_engineering/llm_wrapper/ /app/llm_wrapper/
+```
+
+A component-scoped build context cannot see this directory — that constraint is
+why other shared modules here were duplicated into component trees. The CI
+workflow for a consuming image must pass `context: .`.
 
 ## Reaching LiteLLM (and anything else a gateway fronts)
 

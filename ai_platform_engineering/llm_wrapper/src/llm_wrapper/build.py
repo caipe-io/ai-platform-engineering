@@ -26,6 +26,7 @@ from .providers import (
     resolve_model_id,
     supported_providers,
 )
+from .reasoning import ReasoningEffort, apply_reasoning_effort
 
 
 class LLMConfigError(ValueError):

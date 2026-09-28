@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
-from ai_platform_engineering.llm_wrapper.bedrock_family import resolve_bedrock_client
 from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
@@ -33,6 +32,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
+from llm_wrapper.bedrock_family import resolve_bedrock_client
 from pymongo import MongoClient
 
 from dynamic_agents.config import Settings, get_settings

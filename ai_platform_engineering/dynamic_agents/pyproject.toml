@@ -9,6 +9,10 @@ dependencies = [
     "deepagents==0.6.8",
     "langchain-mcp-adapters==0.3.2",
     "langgraph-checkpoint-mongodb==0.4.0",
+    # Shared LLM construction. Path dependency, not a published package: it
+    # declares no dependencies of its own, so sharing it imposes no version
+    # floor -- the provider pins below are this image's own.
+    "llm-wrapper",
     # LLM provider integrations. Add one here only if this image serves it.
     "langchain==1.4.1",
     "langchain-core==1.6.3",
@@ -69,6 +73,9 @@ testpaths = ["tests"]
 dev = [
     "ruff==0.16.4",
 ]
+
+[tool.uv.sources]
+llm-wrapper = { path = "../llm_wrapper", editable = true }
 
 [tool.uv]
 constraint-dependencies = ["click==8.5.0", "starlette==1.6.0"]

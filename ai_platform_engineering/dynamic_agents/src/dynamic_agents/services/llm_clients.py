@@ -17,8 +17,8 @@ from functools import lru_cache
 from threading import Lock
 from typing import Any
 
-from ai_platform_engineering.llm_wrapper.build import LLMConfigError as WrapperConfigError
 from langchain_core.language_models import BaseChatModel
+from llm_wrapper.build import LLMConfigError as WrapperConfigError
 
 from dynamic_agents.models import ReasoningEffort
 from dynamic_agents.services.model_capabilities import supports_reasoning_effort
@@ -194,7 +194,7 @@ def get_llm(
     `LLMConfigError` with an actionable message if neither agent nor env
     define a usable provider.
     """
-    from ai_platform_engineering.llm_wrapper.build import build_chat_model
+    from llm_wrapper.build import build_chat_model
 
     resolved_provider, resolved_model = _resolve_llm_defaults(provider, model_id)
 

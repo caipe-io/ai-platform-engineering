@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from ai_platform_engineering.llm_wrapper import build as build_mod
-from ai_platform_engineering.llm_wrapper.build import (
+from llm_wrapper import build as build_mod
+from llm_wrapper.build import (
     LLMConfigError,
     build_chat_model,
     langchain_provider_for,
