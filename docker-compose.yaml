@@ -29,7 +29,7 @@ services:
   mcp-backstage:
     image: ghcr.io/cnoe-io/mcp-backstage:${IMAGE_TAG:-0.5.66}
     container_name: mcp-backstage
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18001:8000"]
     environment:
       - MCP_MODE=http
@@ -51,7 +51,7 @@ services:
   mcp-argocd:
     image: ghcr.io/cnoe-io/mcp-argocd:${IMAGE_TAG:-0.5.66}
     container_name: mcp-argocd
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18002:8000"]
     environment:
       - MCP_MODE=http
@@ -73,7 +73,7 @@ services:
   mcp-confluence:
     image: ghcr.io/sooperset/mcp-atlassian:latest
     container_name: mcp-confluence
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18003:8000"]
     environment:
       - CONFLUENCE_URL=${CONFLUENCE_URL}
@@ -89,7 +89,7 @@ services:
   mcp-jira:
     image: ghcr.io/cnoe-io/mcp-jira:${IMAGE_TAG:-0.5.66}
     container_name: mcp-jira
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18004:8000"]
     environment:
       - MCP_MODE=http
@@ -111,7 +111,7 @@ services:
   mcp-komodor:
     image: ghcr.io/cnoe-io/mcp-komodor:${IMAGE_TAG:-0.5.66}
     container_name: mcp-komodor
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18005:8000"]
     environment:
       - MCP_MODE=http
@@ -132,7 +132,7 @@ services:
   mcp-pagerduty:
     image: ghcr.io/cnoe-io/mcp-pagerduty:${IMAGE_TAG:-0.5.66}
     container_name: mcp-pagerduty
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18006:8000"]
     environment:
       - MCP_MODE=http
@@ -154,7 +154,7 @@ services:
   mcp-slack:
     image: ghcr.io/korotovsky/slack-mcp-server:v1.2.3
     container_name: mcp-slack
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18007:3001"]
     environment:
       - SLACK_MCP_HOST=0.0.0.0
@@ -182,7 +182,7 @@ services:
   mcp-splunk:
     image: ghcr.io/cnoe-io/mcp-splunk:${IMAGE_TAG:-0.5.66}
     container_name: mcp-splunk
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18008:8000"]
     environment:
       - MCP_MODE=http
@@ -204,7 +204,7 @@ services:
   mcp-webex:
     image: ghcr.io/cnoe-io/mcp-webex:${IMAGE_TAG:-0.5.66}
     container_name: mcp-webex
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18009:8000"]
     environment:
       - MCP_MODE=http
@@ -226,7 +226,7 @@ services:
   mcp-netutils:
     image: ghcr.io/cnoe-io/mcp-netutils:${IMAGE_TAG:-0.5.66}
     container_name: mcp-netutils
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["18011:8000"]
     environment:
       - MCP_MODE=http
@@ -337,7 +337,7 @@ services:
     container_name: caipe-ui
     ports: ["3000:3000"]
     env_file:
-      - .env
+      - "${CAIPE_COMPOSE_ENV_FILE:-.env}"
     environment:
       - NODE_ENV=production
       # Safe release metadata shown by System Health. A specific
@@ -538,7 +538,7 @@ services:
       - CAIPE_UNSAFE_RBAC_BYPASS=${CAIPE_UNSAFE_RBAC_BYPASS:-false}
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
     restart: unless-stopped
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     depends_on: [rag-redis]
     profiles:
       - rag
@@ -563,7 +563,7 @@ services:
     ports: ["8100:8001"]
     volumes:
       - ${HOME}/.aws:/home/app/.aws:ro
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     environment:
       - AWS_CONFIG_FILE=/home/app/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/home/app/.aws/credentials
@@ -634,7 +634,7 @@ services:
     # off-host access (which we explicitly do not want). See PR #14
     # review feedback.
     ports: ["127.0.0.1:8002:8002"]
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     environment:
       # Dynamic-agents runtime endpoint -- every autonomous task runs against a
       # dynamic agent (its tools / system prompt / middleware) selected by the
@@ -696,7 +696,7 @@ services:
       - NEO4J_USERNAME=neo4j
       - NEO4J_PASSWORD=dummy_password
       - SYNC_INTERVAL=86400
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     restart: unless-stopped
     depends_on: [rag-server, neo4j, neo4j-ontology, rag-redis]
     profiles:
@@ -713,7 +713,7 @@ services:
       - RAG_SERVER_URL=http://rag-server:9446
       - WEBLOADER_MAX_INGESTION_TASKS=${WEBLOADER_MAX_INGESTION_TASKS:-5}
       - WEBLOADER_CHECK_INTERVAL=${WEBLOADER_CHECK_INTERVAL:-86400}
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]
     profiles:
@@ -733,7 +733,7 @@ services:
       - REDIS_URL=redis://rag-redis:6379/0
       - RAG_SERVER_URL=http://rag-server:9446
       - SYNC_INTERVAL=${SYNC_INTERVAL:-86400}
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]
     profiles:
@@ -754,7 +754,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
       - RAG_SERVER_URL=http://rag-server:9446
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]
     profiles:
@@ -776,7 +776,7 @@ services:
       - INIT_DELAY_SECONDS=${INIT_DELAY_SECONDS:-0}
       - EXIT_AFTER_FIRST_SYNC=${EXIT_AFTER_FIRST_SYNC:-false}
       - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]
     profiles:
@@ -797,7 +797,7 @@ services:
       - INIT_DELAY_SECONDS=${INIT_DELAY_SECONDS:-60}
       - EXIT_AFTER_FIRST_SYNC=${EXIT_AFTER_FIRST_SYNC:-false}
       - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]
     profiles:
@@ -1089,7 +1089,7 @@ services:
   slack-bot:
     image: ghcr.io/cnoe-io/caipe-slack-bot:${IMAGE_TAG:-0.5.66}
     container_name: slack-bot
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["8030:3000"]
     environment:
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
@@ -1126,7 +1126,7 @@ services:
   webex-bot:
     image: ghcr.io/cnoe-io/caipe-webex-bot:${IMAGE_TAG:-0.5.66}
     container_name: webex-bot
-    env_file: [.env]
+    env_file: ["${CAIPE_COMPOSE_ENV_FILE:-.env}"]
     ports: ["8032:3002"]
     environment:
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
