@@ -32,6 +32,18 @@ def _is_rate_limited(exc: BaseException) -> bool:
   return isinstance(exc, aiohttp.ClientResponseError) and exc.status == 429
 
 
+_exponential_backoff = tenacity.wait_exponential(multiplier=1, min=1, max=30)
+
+
+def _wait_for_retry_after(retry_state: tenacity.RetryCallState) -> float:
+  """Honor the server's Retry-After (in seconds, capped at 60) on a 429, else fall back to exponential backoff."""
+  exc = retry_state.outcome.exception() if retry_state.outcome else None
+  retry_after = (getattr(exc, "headers", None) or {}).get("Retry-After", "")
+  if retry_after.isdigit():
+    return min(float(retry_after), 60.0)
+  return _exponential_backoff(retry_state)
+
+
 class Client:
   """
   Client bindings for RAG server REST API - handles ingestor lifecycle and data ingestion
@@ -530,7 +542,7 @@ class Client:
 
   @tenacity.retry(
     retry=tenacity.retry_if_exception(_is_rate_limited),
-    wait=tenacity.wait_exponential(multiplier=1, min=1, max=30),
+    wait=_wait_for_retry_after,
     stop=tenacity.stop_after_attempt(5),
     reraise=True,
   )

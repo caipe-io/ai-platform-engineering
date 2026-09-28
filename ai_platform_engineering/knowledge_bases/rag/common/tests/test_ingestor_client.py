@@ -8,7 +8,7 @@ import pytest
 import tenacity
 from langchain_core.documents import Document
 
-from common.ingestor import Client
+from common.ingestor import Client, _wait_for_retry_after
 from common.models.server import AuthHeader
 
 
@@ -127,11 +127,16 @@ def test_resolve_auth_headers_ignores_scheme_when_nothing_is_configured() -> Non
   assert labels == []
 
 
+@pytest.fixture(autouse=True)
+def _no_retry_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+  """Skip real backoff in tests; monkeypatch restores the shared retry policy after each test."""
+  monkeypatch.setattr(Client._post_ingest_request.retry, "wait", tenacity.wait_none())
+
+
 def _client_ready_to_post() -> Client:
   client = Client("primary", "webloader")
   client.ingestor_id = "ing-1"
   client._get_auth_headers = AsyncMock(return_value={})
-  client._post_ingest_request.retry.wait = tenacity.wait_none()
   return client
 
 
@@ -183,3 +188,31 @@ def test_ingest_batch_does_not_retry_a_non_transient_error() -> None:
       asyncio.run(client._ingest_documents_batch("job-1", "ds-1", [Document(page_content="x")], 0))
 
   assert fake_session.post_count == 1
+
+
+class _FakeRetryState:
+  """Stands in for tenacity.RetryCallState: only the fields _wait_for_retry_after reads."""
+
+  def __init__(self, exc: BaseException, attempt_number: int = 1) -> None:
+    self.outcome = MagicMock()
+    self.outcome.exception.return_value = exc
+    self.attempt_number = attempt_number
+
+
+def _rate_limited_error(headers: dict) -> aiohttp.ClientResponseError:
+  return aiohttp.ClientResponseError(request_info=MagicMock(), history=(), status=429, headers=headers)
+
+
+def test_wait_for_retry_after_honors_the_header() -> None:
+  exc = _rate_limited_error({"Retry-After": "5"})
+  assert _wait_for_retry_after(_FakeRetryState(exc)) == 5.0
+
+
+def test_wait_for_retry_after_caps_a_long_header_at_sixty_seconds() -> None:
+  exc = _rate_limited_error({"Retry-After": "9000"})
+  assert _wait_for_retry_after(_FakeRetryState(exc)) == 60.0
+
+
+def test_wait_for_retry_after_falls_back_to_backoff_without_a_header() -> None:
+  exc = _rate_limited_error({})
+  assert _wait_for_retry_after(_FakeRetryState(exc, attempt_number=2)) == 2.0
