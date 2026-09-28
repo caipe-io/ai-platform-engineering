@@ -11,6 +11,14 @@
  *
  * Testing or previewing happens before a source exists, which is what the
  * short-lived preview grant covers.
+ *
+ * These checks answer "does something legitimate need this secret right now",
+ * not "who is asking" — that verification happens one layer up, in
+ * `retrieval-service.ts`, which only reaches this module for a session already
+ * confirmed to be a recognized ingestor service account. Without that gate, the
+ * source-reference check alone would authorize any caller for any secret
+ * referenced by any source in the whole store, and the preview grant is keyed
+ * only by `secret_ref`, not by who requested the preview.
  */
 
 import { getCollection } from "@/lib/mongodb";

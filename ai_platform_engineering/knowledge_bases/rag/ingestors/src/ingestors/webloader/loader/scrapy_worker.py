@@ -32,7 +32,6 @@ from scrapy.crawler import CrawlerRunner
 from scrapy.exceptions import CloseSpider, IgnoreRequest
 from scrapy.http import Response
 from scrapy.utils.log import configure_logging
-from scrapy.utils.url import url_is_from_any_domain
 
 from common.utils import get_fresh_until, is_publicly_routable_url
 from common.models.server import ScrapySettings, CrawlMode
@@ -70,14 +69,35 @@ class SSRFProtectionMiddleware:
     raise IgnoreRequest(error_msg)
 
 
-class AuthHeaderMiddleware:
-  """Attach the datasource's credential headers to requests for its origin only.
+def _origin_key(url: str) -> tuple[str, str, int] | None:
+  """Scheme, hostname, and port as a comparable exact-origin key.
 
-  Scoping matters more than it looks: a crawl may follow off-site links, and a
-  login wall typically answers with a redirect to a different host. Matching the
-  origin keeps the credential from being replayed to either. Scrapy's own
-  RedirectMiddleware drops `Authorization` across origins but not custom header
-  names, so this cannot be delegated to it.
+  A missing port is resolved to the scheme's default so `https://h/` and
+  `https://h:443/` compare equal. An unrecognized scheme has no safe default,
+  so it never matches anything.
+  """
+  parsed = urlparse(url)
+  hostname = (parsed.hostname or "").lower()
+  scheme = (parsed.scheme or "").lower()
+  if not hostname or not scheme:
+    return None
+  default_port = {"http": 80, "https": 443}.get(scheme)
+  port = parsed.port or default_port
+  if port is None:
+    return None
+  return (scheme, hostname, port)
+
+
+class AuthHeaderMiddleware:
+  """Attach the datasource's credential headers to requests for its exact origin.
+
+  Origin means scheme, hostname, and port together, matched exactly — not a
+  subdomain, and not the same host on a different scheme or port. A crawl may
+  follow off-site links, and a login wall typically answers with a redirect to
+  a different host or downgrades to plain HTTP; exact-origin matching keeps the
+  credential from being replayed to either. Scrapy's own RedirectMiddleware
+  drops `Authorization` across origins but not custom header names, so this
+  cannot be delegated to it.
   """
 
   def process_request(self, request: Request, spider):
@@ -85,7 +105,7 @@ class AuthHeaderMiddleware:
     origin = getattr(spider, "auth_origin", None)
     if not headers or not origin:
       return None
-    if not url_is_from_any_domain(request.url, [origin]):
+    if _origin_key(request.url) != origin:
       return None
     for name, value in headers.items():
       request.headers[name] = value
@@ -124,9 +144,9 @@ class WorkerSpider(Spider):
 
     self.auth_headers = request.resolved_auth_headers or {}
     self.auth_credential_labels = list(request.auth_credential_labels or [])
-    # Deliberately the configured URL's host, not `effective_domain`, which is
+    # Deliberately the configured URL's origin, not `effective_domain`, which is
     # reassigned to a redirect target and would carry credentials off-origin.
-    self.auth_origin = urlparse(request.url).hostname
+    self.auth_origin = _origin_key(request.url)
 
     # Track the effective domain (may change after redirect for sitemap mode)
     self.effective_domain: str | None = None

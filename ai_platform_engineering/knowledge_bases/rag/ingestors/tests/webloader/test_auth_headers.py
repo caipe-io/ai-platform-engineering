@@ -14,6 +14,7 @@ from common.models.server import AuthHeader, CrawlMode, ScrapySettings
 
 from ingestors.webloader.loader.scrapy_worker import (
   AuthHeaderMiddleware,
+  _origin_key,
   build_spider_settings,
 )
 from ingestors.webloader.loader.worker_types import CrawlRequest
@@ -122,11 +123,44 @@ def test_auth_headers_default_to_absent():
 
 
 # ============================================================================
+# Origin key normalization
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+  "a,b",
+  [
+    ("https://docs.example.com/", "https://docs.example.com:443/other"),
+    ("http://docs.example.com/", "http://docs.example.com:80/other"),
+    ("https://Docs.Example.Com/", "https://docs.example.com/"),
+  ],
+)
+def test_origin_key_normalizes_default_ports_and_case(a, b):
+  assert _origin_key(a) == _origin_key(b)
+
+
+@pytest.mark.parametrize(
+  "a,b",
+  [
+    ("https://docs.example.com/", "http://docs.example.com/"),
+    ("https://docs.example.com/", "https://docs.example.com:8443/"),
+    ("https://docs.example.com/", "https://assets.docs.example.com/"),
+  ],
+)
+def test_origin_key_distinguishes_scheme_port_and_host(a, b):
+  assert _origin_key(a) != _origin_key(b)
+
+
+def test_origin_key_rejects_url_with_no_scheme_or_host():
+  assert _origin_key("not-a-url") is None
+
+
+# ============================================================================
 # Origin-scoped header attachment
 # ============================================================================
 
 
-def make_spider(origin: str | None = "docs.example.com", headers: dict | None = None):
+def make_spider(origin=("https", "docs.example.com", 443), headers: dict | None = None):
   spider = Mock()
   spider.auth_origin = origin
   spider.auth_headers = headers if headers is not None else {"Authorization": "Bearer secret-value"}
@@ -145,11 +179,10 @@ def make_request(url: str):
   [
     "https://docs.example.com/",
     "https://docs.example.com/guide/page.html",
-    "http://docs.example.com/plain",
-    "https://assets.docs.example.com/style.css",
+    "https://docs.example.com:443/explicit-default-port",
   ],
 )
-def test_header_is_attached_for_the_origin_and_its_subdomains(url):
+def test_header_is_attached_for_the_exact_origin(url):
   middleware = AuthHeaderMiddleware()
   request = make_request(url)
   middleware.process_request(request, make_spider())
@@ -163,6 +196,12 @@ def test_header_is_attached_for_the_origin_and_its_subdomains(url):
     "https://auth.example.org/login",
     "https://docs.example.com.evil.test/",
     "https://other-docs.example.net/",
+    # A subdomain of the origin is a different origin, not a trusted alias.
+    "https://assets.docs.example.com/style.css",
+    # Scheme downgrade must never carry a bearer credential over plaintext.
+    "http://docs.example.com/plain",
+    # A different port is a different origin even on the same host/scheme.
+    "https://docs.example.com:8443/",
   ],
 )
 def test_header_is_withheld_off_origin(url):

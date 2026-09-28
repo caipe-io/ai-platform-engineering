@@ -1,3 +1,4 @@
+import { allowedSourceTypesForIngestorServiceAccount } from "@/lib/rbac/ingestor-service-accounts";
 import type { ResourceAuthzSession } from "@/lib/rbac/resource-authz";
 
 import { writeCredentialAuditEvent, type CredentialAuditActor } from "./audit";
@@ -18,9 +19,12 @@ export interface CredentialRetrievalServiceOptions {
   payloadStore: PayloadStore;
   authorize: AuthorizeSecretUse;
   /**
-   * Consulted only for `internal_service` callers that the relationship check
-   * already refused, letting a backend service read a credential that the work
-   * it has been handed genuinely depends on.
+   * Consulted only for a verified ingestor service-account session, requesting
+   * `internal_service`, that the relationship check already refused — letting
+   * that backend service read a credential the work it has been handed
+   * genuinely depends on. `intended_use` and the caller-type header are both
+   * caller-supplied, so neither can be the gate; the session subject is the
+   * one claim `getAuthFromBearerOrSession` verified against the IdP.
    */
   authorizeByUsage?: (secretRef: string) => Promise<boolean>;
 }
@@ -91,8 +95,15 @@ export class CredentialRetrievalService {
     try {
       await this.authorize(input.session, { type: "secret_ref", id: secretRef, action: "use" });
     } catch (error) {
+      // `intended_use` is a value the caller chose; it can express intent but
+      // must never grant it. A caller that isn't a recognized ingestor
+      // service account has no path to this fallback no matter what it sets
+      // that field to.
+      const isRecognizedIngestor =
+        allowedSourceTypesForIngestorServiceAccount(input.session) !== null;
       const allowedByUsage =
         intendedUse === "internal_service" &&
+        isRecognizedIngestor &&
         this.authorizeByUsage !== undefined &&
         (await this.authorizeByUsage(secretRef));
 
