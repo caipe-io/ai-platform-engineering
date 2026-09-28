@@ -27,6 +27,7 @@ import {
   mapWithConcurrency,
 } from "@/lib/rbac/openfga";
 import { reconcileAgentRelationships } from "@/lib/rbac/openfga-agent-tools";
+import { getResolvedPlatformDefaultAgentId } from "@/lib/platform-default-agent";
 import {
   resolveUnlinkedServiceAccountSub,
   resolveUnlinkedServiceAccountGrantState,
@@ -1666,10 +1667,9 @@ export async function reconcileExistingPlatformMcpServerOpenFgaTuples(): Promise
 export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
   if (!isMongoDBConfigured || !isOpenFgaReconciliationEnabled()) return 0;
 
-  const { getPlatformDefaultAgentId } = await import(
-    "@/lib/rbac/platform-default"
-  );
-  const platformDefaultAgentId = await getPlatformDefaultAgentId();
+  // A failed config read must not be treated as "no default": that could
+  // revoke its public grant. Surface the failure to the startup reconciler.
+  const platformDefaultAgentId = await getResolvedPlatformDefaultAgentId();
 
   const collection = await getCollection<DynamicAgentConfig>("dynamic_agents");
   const agents = await collection
@@ -1715,6 +1715,7 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
       nextSharedTeamSlugs: sharedSlugs,
       previousSharedTeamSlugs: sharedSlugs,
       globalUserAccess: isGlobal,
+      platformDefaultUserAccess: retainPlatformDefaultGrant,
       // Sweep stale org-wide chat grants on team agents (including agents
       // demoted from global before reconcile carried delete flags).
       previousGlobalUserAccess: !isGlobal && !retainPlatformDefaultGrant,
@@ -1723,7 +1724,7 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
       // `can_use` tuple for non-global agents the admin granted directly, and
       // re-assert it if a prior visibility-driven delete removed it.
       unlinkedGrantIsExplicit: explicitAgentIds.has(agentId),
-      failClosed: false,
+      failClosed: true,
     });
   }
 

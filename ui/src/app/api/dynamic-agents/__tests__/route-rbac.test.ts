@@ -177,8 +177,8 @@ describe("dynamic agents RBAC routes", () => {
     mockRequireResourcePermission.mockResolvedValue(undefined);
     mockRequireAgentPermission.mockResolvedValue(undefined);
     mockCanTransferResourceOwnership.mockResolvedValue(true);
-    mockReconcileAgentRelationships.mockResolvedValue(undefined);
-    mockDeleteAllAgentToolTuples.mockResolvedValue(undefined);
+    mockReconcileAgentRelationships.mockImplementation(async (input: { persist?: () => Promise<void> }) => { await input.persist?.(); });
+    mockDeleteAllAgentToolTuples.mockImplementation(async (_id: string, _context: unknown, persist?: () => Promise<void>) => { await persist?.(); });
     mockCascadeDeleteAutonomousTasksForAgent.mockResolvedValue({ attempted: 0, deleted: 0 });
     mockWriteOpenFgaTuples.mockResolvedValue({
       enabled: true,
@@ -342,7 +342,7 @@ describe("dynamic agents RBAC routes", () => {
     ]);
   });
 
-  it("repairs the all-users default-agent OpenFGA grant before filtering chat-available agents", async () => {
+  it("does not repair default-agent grants while listing chat-available agents", async () => {
     const agents = [
       { _id: "agent-default", name: "Default Agent", enabled: true },
     ];
@@ -369,12 +369,7 @@ describe("dynamic agents RBAC routes", () => {
     const response = await GET(request("/api/dynamic-agents/available"));
 
     expect(response.status).toBe(200);
-    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
-      writes: [
-        { user: "user:*", relation: "user", object: "agent:agent-default" },
-      ],
-      deletes: [],
-    });
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
     expect(mockFilterResourcesByPermission).toHaveBeenCalledWith(
       session,
       agents,
@@ -382,7 +377,7 @@ describe("dynamic agents RBAC routes", () => {
     );
   });
 
-  it("repairs baseline member OpenFGA tuples before requiring chat-available agent view access", async () => {
+  it("does not bootstrap baseline permissions while listing chat-available agents", async () => {
     mockGetCollection.mockImplementation(async (name: string) => {
       if (name === "platform_config") {
         return {
@@ -404,21 +399,7 @@ describe("dynamic agents RBAC routes", () => {
     const response = await GET(request("/api/dynamic-agents/available"));
 
     expect(response.status).toBe(200);
-    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
-      writes: expect.arrayContaining([
-        {
-          user: "user:alice-sub",
-          relation: "member",
-          object: "organization:caipe",
-        },
-        {
-          user: "user:alice-sub",
-          relation: "reader",
-          object: "admin_surface:users",
-        },
-      ]),
-      deletes: [],
-    });
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
     expect(mockRequireRbacPermission).not.toHaveBeenCalledWith(
       session,
       "dynamic_agent",
@@ -426,7 +407,7 @@ describe("dynamic agents RBAC routes", () => {
     );
   });
 
-  it("repairs all-users grants for enabled global agents before chat availability filtering", async () => {
+  it("does not add or revoke public grants while filtering global and team agents", async () => {
     const agents = [
       {
         _id: "global-agent",
@@ -462,17 +443,7 @@ describe("dynamic agents RBAC routes", () => {
     const response = await GET(request("/api/dynamic-agents/available"));
 
     expect(response.status).toBe(200);
-    // Global agents get the wildcard written; non-global, non-default
-    // agents get any stale wildcard revoked (self-healing sweep for the
-    // global → team demote leak — spec 2026-06-04).
-    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
-      writes: [
-        { user: "user:*", relation: "user", object: "agent:global-agent" },
-      ],
-      deletes: [
-        { user: "user:*", relation: "user", object: "agent:team-agent" },
-      ],
-    });
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
     expect(mockFilterResourcesByPermission).toHaveBeenCalledWith(
       session,
       agents,
@@ -518,22 +489,7 @@ describe("dynamic agents RBAC routes", () => {
     const response = await GET(request("/api/dynamic-agents/available"));
 
     expect(response.status).toBe(200);
-    // The platform default keeps its wildcard (written by the default-grant
-    // step) even though it is `team` visibility; only the *other* non-global
-    // agent is swept.
-    const sweepCall = mockWriteOpenFgaTuples.mock.calls.find(
-      ([arg]) =>
-        Array.isArray(arg?.deletes) &&
-        arg.deletes.some(
-          (t: { object?: string }) => t.object === "agent:team-other",
-        ),
-    );
-    expect(sweepCall).toBeDefined();
-    const deletedObjects = (
-      sweepCall![0].deletes as Array<{ object: string }>
-    ).map((t) => t.object);
-    expect(deletedObjects).toContain("agent:team-other");
-    expect(deletedObjects).not.toContain("agent:team-default");
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
   });
 
   it("filters agent editor LLM models through OpenFGA llm_model read checks", async () => {
@@ -673,6 +629,22 @@ describe("dynamic agents RBAC routes", () => {
         owner_subject: "alice-sub",
       }),
     );
+  });
+
+  it.each(["policy", "database"])("does not report a successful create after a %s failure", async failure => {
+    const insertOne = jest.fn().mockResolvedValue({ acknowledged: true });
+    mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue(null), insertOne });
+    if (failure === "policy") mockReconcileAgentRelationships.mockRejectedValueOnce(new Error("PDP unavailable"));
+    else insertOne.mockRejectedValueOnce(new Error("Mongo unavailable"));
+    const { POST } = await import("../route");
+    const response = await POST(request("/api/dynamic-agents", {
+      method: "POST",
+      body: JSON.stringify({ name: "Example Agent", system_prompt: "Example", model: { id: "example-model", provider: "example" }, visibility: "global" }),
+    }));
+    expect(response.status).toBe(500);
+    if (failure === "policy") expect(insertOne).not.toHaveBeenCalled();
+    // The compensating writer owns rollback; never sweep all grants for this ID.
+    expect(mockDeleteAllAgentToolTuples).not.toHaveBeenCalled();
   });
 
   it("creating a global agent resolves and grants the unlinked SA sub", async () => {
@@ -1910,7 +1882,9 @@ describe("dynamic agents RBAC routes", () => {
     // OpenFGA tuples are removed, so a cascade failure (next test) can
     // safely abort with everything still intact.
     expect(mockCascadeDeleteAutonomousTasksForAgent).toHaveBeenCalledWith("agent-1");
-    expect(mockDeleteAllAgentToolTuples).toHaveBeenCalledWith("agent-1");
+    expect(mockDeleteAllAgentToolTuples).toHaveBeenCalledWith("agent-1", expect.objectContaining({
+      caller: { type: "user", id: "alice-sub" },
+    }), expect.any(Function));
     expect(deleteOne).toHaveBeenCalledWith({ _id: "agent-1" });
     const cascadeOrder = mockCascadeDeleteAutonomousTasksForAgent.mock.invocationCallOrder[0];
     const tupleDeleteOrder = mockDeleteAllAgentToolTuples.mock.invocationCallOrder[0];

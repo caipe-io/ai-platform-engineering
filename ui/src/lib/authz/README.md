@@ -108,6 +108,43 @@ separate work. Writes are not replayed and do not inherit the check deadline.
 The platform health route keeps its independent diagnostic probe. Python services
 and the gateway authorization bridge are outside this BFF change.
 
+## Agent grant lifecycle
+
+```text
+Agent create/edit/delete or default change → CAS reconcile → OpenFGA
+                                                ↓
+                                         Save configuration
+                                                ↓ failure
+                                      Compensate changed tuples
+
+Picker GET → read candidates → permission filter (no grant writes)
+```
+
+- Agent lifecycle and default-selection writes use `reconcileTupleDiff`.
+  Interactive mutations include the canonical actor and trace in CAS audit.
+- The optional persistence callback runs after successful tuple writes, including
+  no-op diffs. On a rejected save, the writer attempts to reverse only the tuples
+  actually changed, preserving grants that existed before the request.
+- A public human grant survives while the agent is global **or** the effective
+  platform default. Clearing a database default restores `DEFAULT_AGENT_ID`, if
+  configured. Default selection does not itself grant service-account access.
+- Existing data uses the existing startup agent reconciliation, not picker GET.
+  It now explicitly writes a missing default grant and reports policy failures;
+  it does not interpret a failed default-config read as permission to revoke.
+  Baseline user grants remain owned by login/bootstrap.
+
+For rollout, confirm the startup `Reconciled OpenFGA tuples ... dynamic agent(s)`
+message and no `Dynamic agent OpenFGA reconcile threw` error. If reconciliation
+fails, restore the dependency and rerun it via a controlled BFF restart before
+validating access. A picker refresh intentionally no longer repairs data.
+
+**Limits:** compensation is best-effort, not an atomic Mongo/OpenFGA transaction.
+Crashes, ambiguous save outcomes, overlapping mutations or failed compensation
+can still require operator reconciliation; failures are not reported as success.
+The existing startup sweep is not a complete repair of every orphaned/old team
+relationship. Picker ownership filtering and response/query caches are unchanged;
+their alignment with execution, plus team-membership writers, are the next slice.
+
 ## Isolated agent-use model tests
 
 Start a disposable local OpenFGA server (the chart currently uses v1.15.1):

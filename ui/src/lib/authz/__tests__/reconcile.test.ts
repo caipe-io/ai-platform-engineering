@@ -40,6 +40,25 @@ beforeEach(() => {
 });
 
 describe("reconcileTupleDiff", () => {
+  it("passes the save callback to the compensating writer and audits after success", async () => {
+    const persist = jest.fn(async () => {});
+    mockWriteOpenFgaTupleDiff.mockImplementationOnce(async (_diff, save) => {
+      expect(mockEmitReconcileAudit).not.toHaveBeenCalled();
+      await save();
+      return { enabled: true, writes: 1, deletes: 0 };
+    });
+    await reconcileTupleDiff({ writes: [sampleWrite], deletes: [] }, { source: "agent_update" }, persist);
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(mockEmitReconcileAudit).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a skipped save even for an empty diff when reconciliation is disabled", async () => {
+    const persist = jest.fn(async () => {});
+    mockWriteOpenFgaTupleDiff.mockResolvedValueOnce({ enabled: false, writes: 0, deletes: 0 });
+    await expect(reconcileTupleDiff({ writes: [], deletes: [] }, {}, persist)).rejects.toThrow(OpenFgaReconcileRequiredError);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it("applies writes and invalidates the decision cache on success", async () => {
     const diff = { writes: [sampleWrite], deletes: [] };
 
@@ -102,6 +121,6 @@ describe("reconcileTupleDiff", () => {
       expect.objectContaining({ source: "team_resources" }),
       expect.objectContaining({ outcome: "error", reasonCode: "OpenFGA unavailable" }),
     );
-    expect(mockInvalidateDecisionCache).not.toHaveBeenCalled();
+    expect(mockInvalidateDecisionCache).toHaveBeenCalled();
   });
 });

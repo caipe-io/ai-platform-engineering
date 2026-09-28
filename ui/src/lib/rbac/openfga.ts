@@ -714,12 +714,13 @@ export function chunkOpenFgaDiff(
   return chunks;
 }
 
-export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff): Promise<OpenFgaReconcileResult> {
+export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff, persist?: () => Promise<void>): Promise<OpenFgaReconcileResult> {
   assertWritableRelations(diff);
   if (!isOpenFgaConfigured()) {
     return { enabled: false, writes: 0, deletes: 0 };
   }
   if (diff.writes.length === 0 && diff.deletes.length === 0) {
+    await persist?.();
     return { enabled: true, writes: 0, deletes: 0 };
   }
 
@@ -727,10 +728,11 @@ export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff): Promise<O
   const storeId = await getOpenFgaStoreId();
   const filteredDiff = await filterTupleDiff(storeId, diff);
   if (filteredDiff.writes.length === 0 && filteredDiff.deletes.length === 0) {
+    await persist?.();
     return { enabled: true, writes: 0, deletes: 0 };
   }
 
-  return applyDiffWithCompensation(storeId, filteredDiff);
+  return applyDiffWithCompensation(storeId, filteredDiff, persist);
 }
 
 /**
@@ -744,6 +746,7 @@ export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff): Promise<O
 async function applyDiffWithCompensation(
   storeId: string,
   diff: TeamResourceTupleDiff,
+  persist?: () => Promise<void>,
 ): Promise<OpenFgaReconcileResult> {
   const chunks = chunkOpenFgaDiff(diff);
   const applied: OpenFgaChunkResult[] = [];
@@ -756,6 +759,11 @@ async function applyDiffWithCompensation(
       totalWrites += result.applied.writes.length;
       totalDeletes += result.applied.deletes.length;
     }
+    // Persist the matching resource only after all graph writes succeed.
+    // A rejected save compensates only tuples actually changed by this call,
+    // never pre-existing grants filtered out above. This is best-effort,
+    // not a distributed transaction (process crashes still need reconciliation).
+    await persist?.();
   } catch (err) {
     if (applied.length > 0) {
       await compensateAppliedChunks(storeId, applied).catch(
@@ -911,11 +919,11 @@ async function filterTupleDiff(
   return { writes, deletes };
 }
 
-export async function writeOpenFgaTupleDiff(diff: TeamResourceTupleDiff): Promise<OpenFgaReconcileResult> {
+export async function writeOpenFgaTupleDiff(diff: TeamResourceTupleDiff, persist?: () => Promise<void>): Promise<OpenFgaReconcileResult> {
   if (!isOpenFgaReconciliationEnabled()) {
     return { enabled: false, writes: 0, deletes: 0 };
   }
-  return writeOpenFgaTuples(diff);
+  return writeOpenFgaTuples(diff, persist);
 }
 
 export async function writeUniversalRebacTupleDiff(

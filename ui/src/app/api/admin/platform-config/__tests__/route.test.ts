@@ -42,8 +42,12 @@ jest.mock("@/lib/mongodb", () => ({
   getCollection: (...args: unknown[]) => mockGetCollection(...args),
 }));
 
-jest.mock("@/lib/rbac/openfga", () => ({
-  writeOpenFgaTuples: (...args: unknown[]) => mockWriteOpenFgaTuples(...args),
+jest.mock("@/lib/authz", () => ({
+  reconcileTupleDiff: async (diff: unknown, _context: unknown, persist?: () => Promise<void>) => {
+    const result = await mockWriteOpenFgaTuples(diff);
+    await persist?.();
+    return result;
+  },
 }));
 
 function request(path: string, init?: RequestInit): NextRequest {
@@ -288,6 +292,68 @@ describe("admin platform-config route", () => {
       writes: [],
       deletes: [{ user: "user:*", relation: "user", object: "agent:agent-old" }],
     });
+  });
+
+  it.each(["agent-next", null])("retains the global grant when changing the default to %s", async (next) => {
+    const config = {
+      findOne: jest.fn().mockResolvedValue({ default_agent_id: "agent-old" }),
+      updateOne: jest.fn().mockResolvedValue({ acknowledged: true }),
+    };
+    mockGetCollection.mockImplementation(async (name: string) => name === "platform_config"
+      ? config
+      : { findOne: jest.fn().mockResolvedValue({ _id: "agent-old", visibility: "global" }) });
+    const { PATCH } = await import("../route");
+    await PATCH(request("/api/admin/platform-config", {
+      method: "PATCH",
+      body: JSON.stringify({ default_agent_id: next, acknowledge_public_access: true }),
+    }));
+    if (next) {
+      expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+        writes: [{ user: "user:*", relation: "user", object: "agent:agent-next" }], deletes: [],
+      });
+    } else {
+      expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+    }
+    expect(config.updateOne).toHaveBeenCalled();
+  });
+
+  it("restores the environment default when clearing the database override", async () => {
+    process.env.DEFAULT_AGENT_ID = "agent-env";
+    const config = {
+      findOne: jest.fn().mockResolvedValue({ default_agent_id: "agent-old" }),
+      updateOne: jest.fn().mockResolvedValue({ acknowledged: true }),
+    };
+    mockGetCollection.mockImplementation(async (name: string) => name === "platform_config"
+      ? config : { findOne: jest.fn().mockResolvedValue({ visibility: "team" }) });
+    const { PATCH } = await import("../route");
+    await PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ default_agent_id: null }) }));
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: [{ user: "user:*", relation: "user", object: "agent:agent-env" }],
+      deletes: [{ user: "user:*", relation: "user", object: "agent:agent-old" }],
+    });
+  });
+
+  it("does not persist a default change when CAS fails", async () => {
+    const config = { findOne: jest.fn().mockResolvedValue(null), updateOne: jest.fn() };
+    mockGetCollection.mockResolvedValue(config);
+    mockWriteOpenFgaTuples.mockRejectedValueOnce(new Error("OpenFGA unavailable"));
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request("/api/admin/platform-config", {
+      method: "PATCH", body: JSON.stringify({ default_agent_id: "agent-next", acknowledge_public_access: true }),
+    }))).rejects.toThrow("OpenFGA unavailable");
+    expect(config.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("does not revoke grants or save when the old agent cannot be read", async () => {
+    const config = { findOne: jest.fn().mockResolvedValue({ default_agent_id: "agent-old" }), updateOne: jest.fn() };
+    mockGetCollection.mockImplementation(async (name: string) => name === "platform_config"
+      ? config : { findOne: jest.fn().mockRejectedValue(new Error("Mongo unavailable")) });
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request("/api/admin/platform-config", {
+      method: "PATCH", body: JSON.stringify({ default_agent_id: null }),
+    }))).rejects.toThrow("Mongo unavailable");
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+    expect(config.updateOne).not.toHaveBeenCalled();
   });
 
   it("updates release notes config without clearing default agent", async () => {

@@ -76,9 +76,16 @@ Chat routes → existing agent-use guard → CAS → OpenFGA
 - CAS records the decision. The guard preserves its 401/400/403/503 envelopes
   and passes tracing metadata without emitting a second legacy decision event.
 
-Picker filtering, membership writes, seed identity cleanup and other services
-remain separate migrations. Fresh checks cannot repair a missing relationship
-write or cancel a run that has already started.
+Agent lifecycle/default-selection writes now use CAS. The picker no longer
+creates or removes grants: public access is maintained by configuration changes
+and the existing startup reconciliation. A global agent retains public access
+when it stops being the default. Failed configuration saves trigger best-effort
+compensation of the tuples actually changed; this is not a cross-database
+transaction.
+
+Picker filtering/caching, membership writes, seed identity cleanup and other
+services remain separate migrations. Fresh checks cannot repair a missing
+relationship write or cancel a run that has already started.
 
 Moving remote consumers onto CAS makes BFF latency and availability part of
 their authorization path. Prove that behavior before migrating them. Enforcement

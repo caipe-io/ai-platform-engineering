@@ -46,15 +46,21 @@ function assertReconciliationApplied(
  * Apply an OpenFGA tuple diff through CAS: write to the PDP, invalidate cached
  * decisions, and audit policy mutations or failed attempts. Filtered no-ops
  * do not represent policy changes and stay out of the audit trail.
+ * An optional persist callback saves matching resource metadata after the
+ * graph write; a rejected save triggers best-effort tuple compensation.
+ * Do not use this as a distributed transaction or retry ambiguous writes.
  */
 export async function reconcileTupleDiff(
   diff: TeamResourceTupleDiff,
   ctx: TupleReconcileContext = {},
+  persist?: () => Promise<void>,
 ): Promise<OpenFgaReconcileResult> {
   let result: OpenFgaReconcileResult;
   try {
-    result = await writeOpenFgaTupleDiff(diff);
+    result = persist ? await writeOpenFgaTupleDiff(diff, persist) : await writeOpenFgaTupleDiff(diff);
   } catch (error) {
+    // A partial write/failed compensation may have changed the graph.
+    invalidateDecisionCache();
     emitReconcileAudit(diff, { enabled: true, writes: 0, deletes: 0 }, ctx, {
       outcome: "error",
       reasonCode: error instanceof Error ? error.message : "PDP_WRITE_FAILED",
@@ -63,6 +69,7 @@ export async function reconcileTupleDiff(
   }
 
   try {
+    if (persist && !result.enabled) throw new OpenFgaReconcileRequiredError();
     assertReconciliationApplied(diff, result);
   } catch (error) {
     if (error instanceof OpenFgaReconcileRequiredError) {
