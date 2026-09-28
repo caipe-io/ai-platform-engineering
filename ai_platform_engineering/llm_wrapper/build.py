@@ -33,6 +33,21 @@ from .reasoning import ReasoningEffort, apply_reasoning_effort
 logger = logging.getLogger(__name__)
 
 _BEDROCK_CONVERSE_PROVIDER = BEDROCK_FAMILY_TO_PROVIDER["converse"]
+_BEDROCK_LEGACY_PROVIDER = BEDROCK_FAMILY_TO_PROVIDER["legacy"]
+
+# ChatBedrockConverse and legacy ChatBedrock each independently call
+# bedrock:GetInferenceProfile to resolve an application-inference-profile
+# ARN. ChatAnthropicBedrock does not, but it is also never selected for an
+# ARN model id: resolve_bedrock_client only picks it when the model id string
+# itself contains "anthropic", which an ARN never does.
+_BEDROCK_AIP_PROVIDERS = frozenset({_BEDROCK_CONVERSE_PROVIDER, _BEDROCK_LEGACY_PROVIDER})
+
+# Stands in for a resolved foundation model id when GetInferenceProfile is
+# denied. Must be non-empty: ChatBedrockConverse's own guard is `is None` (so
+# "" would also satisfy it), but legacy ChatBedrock's is a truthiness check
+# (`not base_model_id`) - an empty string would not skip its
+# GetInferenceProfile call on retry, just fail it identically again.
+_UNRESOLVED_BASE_MODEL_ID = "unresolved"
 
 
 class LLMConfigError(ValueError):
@@ -63,17 +78,29 @@ def langchain_provider_for(provider: str, model_id: str | None, enable_cache: bo
     return spec.langchain_provider
 
 
-def _apply_bedrock_base_model_id(lc_provider: str, kwargs: dict[str, Any]) -> None:
-    """Read AWS_BEDROCK_BASE_MODEL_ID for ChatBedrockConverse, if not already set.
+def _is_bedrock_aip(resolved_model: str, lc_provider: str) -> bool:
+    """Whether ``resolved_model`` is an application-inference-profile ARN on a
+    Bedrock client that resolves it via its own ``bedrock:GetInferenceProfile``
+    call (ChatBedrockConverse, legacy ChatBedrock).
 
-    ``base_model_id`` bypasses the ``bedrock:GetInferenceProfile`` call
-    ChatBedrockConverse otherwise makes itself to resolve an
-    application-inference-profile ARN's underlying foundation model. Needed
-    when the IAM role grants ``bedrock:InvokeModel`` but not
-    ``bedrock:GetInferenceProfile``. Only ChatBedrockConverse accepts this
-    field; the legacy and Anthropic Bedrock clients do not.
+    Checked together, not just by provider family, so a global
+    AWS_BEDROCK_BASE_MODEL_ID override meant for one agent's AIP ARN can't
+    leak into another agent on the same family configured with a plain model
+    id - that id needs no resolving and the override would be wrong for it.
     """
-    if lc_provider != _BEDROCK_CONVERSE_PROVIDER or "base_model_id" in kwargs:
+    return lc_provider in _BEDROCK_AIP_PROVIDERS and "application-inference-profile" in resolved_model
+
+
+def _apply_bedrock_base_model_id(resolved_model: str, lc_provider: str, kwargs: dict[str, Any]) -> None:
+    """Read AWS_BEDROCK_BASE_MODEL_ID for Bedrock's IAM-gated clients, if not already set.
+
+    ``base_model_id`` bypasses the ``bedrock:GetInferenceProfile`` call that
+    ChatBedrockConverse and legacy ChatBedrock each make on their own,
+    independently, to resolve an application-inference-profile ARN's
+    underlying foundation model. Needed when the IAM role grants
+    ``bedrock:InvokeModel`` but not ``bedrock:GetInferenceProfile``.
+    """
+    if not _is_bedrock_aip(resolved_model, lc_provider) or "base_model_id" in kwargs:
         return
     base_model_id = os.getenv("AWS_BEDROCK_BASE_MODEL_ID")
     if base_model_id:
@@ -85,17 +112,21 @@ def _init_chat_model_with_aip_fallback(
 ) -> BaseChatModel:
     """Call init_chat_model, degrading gracefully if GetInferenceProfile is denied.
 
-    That API call (see _apply_bedrock_base_model_id) has no try/except inside
-    ChatBedrockConverse, so a denied IAM permission otherwise raises instead of
-    falling back. Retry once with base_model_id="" - the same bypass
+    Neither of the two GetInferenceProfile call sites (see
+    _apply_bedrock_base_model_id) has a try/except, so a denied IAM permission
+    otherwise raises instead of falling back. Retry once with
+    base_model_id=_UNRESOLVED_BASE_MODEL_ID - the same bypass
     AWS_BEDROCK_BASE_MODEL_ID already triggers - so the agent still comes up,
-    with a generic rather than model-specific context window.
+    with a generic rather than model-specific context window and (for the
+    legacy client) Converse auto-detection conservatively left off.
+
+    Upstream has not backported ChatBedrockConverse's approach into
+    ChatBedrock and does not plan to - see the maintainer's reply on
+    https://github.com/langchain-ai/langchain-aws/issues/808#issuecomment-4465324699:
+    "recommend switching to ChatBedrockConverse ... we are winding down
+    support for the InvokeModel API".
     """
-    if (
-        lc_provider != _BEDROCK_CONVERSE_PROVIDER
-        or "application-inference-profile" not in resolved_model
-        or "base_model_id" in kwargs
-    ):
+    if not _is_bedrock_aip(resolved_model, lc_provider) or "base_model_id" in kwargs:
         return init_chat_model(model=resolved_model, model_provider=lc_provider, **kwargs)
 
     try:
@@ -112,7 +143,10 @@ def _init_chat_model_with_aip_fallback(
             resolved_model,
         )
         return init_chat_model(
-            model=resolved_model, model_provider=lc_provider, base_model_id="", **kwargs
+            model=resolved_model,
+            model_provider=lc_provider,
+            base_model_id=_UNRESOLVED_BASE_MODEL_ID,
+            **kwargs,
         )
 
 
@@ -173,7 +207,7 @@ def build_chat_model(
         # does not refuse to construct.
         kwargs.setdefault("api_key", os.getenv("OPENAI_COMPATIBLE_API_KEY", "not-needed"))
 
-    _apply_bedrock_base_model_id(lc_provider, kwargs)
+    _apply_bedrock_base_model_id(resolved_model, lc_provider, kwargs)
 
     try:
         return _init_chat_model_with_aip_fallback(resolved_model, lc_provider, kwargs)

@@ -110,20 +110,31 @@ def _access_denied_error() -> ClientError:
 
 
 class TestBedrockBaseModelId:
-    """AWS_BEDROCK_BASE_MODEL_ID and the GetInferenceProfile fallback (converse only)."""
+    """AWS_BEDROCK_BASE_MODEL_ID and the GetInferenceProfile fallback.
 
-    def test_base_model_id_env_var_passes_through_for_converse(
-        self, captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    Covers both IAM-gated clients: ChatBedrockConverse (enable_cache=True,
+    non-Anthropic model id) and legacy ChatBedrock (enable_cache=False).
+    ChatAnthropicBedrock is excluded deliberately - resolve_bedrock_client
+    only selects it when the model id string contains "anthropic", which an
+    ARN never does, so it can never receive one.
+    """
+
+    @pytest.mark.parametrize("enable_cache", [True, False], ids=["converse", "legacy"])
+    def test_base_model_id_env_var_passes_through_for_an_aip_arn(
+        self, captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch, enable_cache: bool
     ) -> None:
         monkeypatch.setenv("AWS_BEDROCK_BASE_MODEL_ID", "anthropic.claude-sonnet-4-5-v1:0")
-        build_chat_model("aws-bedrock", AIP_MODEL_ID, enable_cache=True)
+        build_chat_model("aws-bedrock", AIP_MODEL_ID, enable_cache=enable_cache)
         assert captured["kwargs"]["base_model_id"] == "anthropic.claude-sonnet-4-5-v1:0"
 
-    def test_base_model_id_env_var_ignored_for_legacy_client(
-        self, captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize("enable_cache", [True, False], ids=["converse", "legacy"])
+    def test_base_model_id_env_var_ignored_for_a_plain_model_id(
+        self, captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch, enable_cache: bool
     ) -> None:
+        # A global override meant for some other agent's AIP ARN must not
+        # leak onto an agent whose model id needs no resolving.
         monkeypatch.setenv("AWS_BEDROCK_BASE_MODEL_ID", "amazon.nova-pro-v1:0")
-        build_chat_model("aws-bedrock", "us.amazon.nova-pro-v1:0", enable_cache=False)
+        build_chat_model("aws-bedrock", "us.amazon.nova-pro-v1:0", enable_cache=enable_cache)
         assert "base_model_id" not in captured["kwargs"]
 
     def test_explicit_base_model_id_kwarg_is_not_overridden(
@@ -133,8 +144,9 @@ class TestBedrockBaseModelId:
         build_chat_model("aws-bedrock", AIP_MODEL_ID, enable_cache=True, base_model_id="from-caller")
         assert captured["kwargs"]["base_model_id"] == "from-caller"
 
-    def test_retries_with_empty_base_model_id_on_access_denied(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize("enable_cache", [True, False], ids=["converse", "legacy"])
+    def test_retries_with_unresolved_base_model_id_on_access_denied(
+        self, monkeypatch: pytest.MonkeyPatch, enable_cache: bool
     ) -> None:
         monkeypatch.delenv("AWS_BEDROCK_BASE_MODEL_ID", raising=False)
         monkeypatch.delenv("AWS_BEDROCK_CLIENT", raising=False)
@@ -147,12 +159,12 @@ class TestBedrockBaseModelId:
             return "chat-model"
 
         monkeypatch.setattr(build_mod, "init_chat_model", _fake)
-        llm = build_chat_model("aws-bedrock", AIP_MODEL_ID, enable_cache=True)
+        llm = build_chat_model("aws-bedrock", AIP_MODEL_ID, enable_cache=enable_cache)
 
         assert llm == "chat-model"
         assert len(calls) == 2
         assert "base_model_id" not in calls[0]
-        assert calls[1]["base_model_id"] == ""
+        assert calls[1]["base_model_id"] == build_mod._UNRESOLVED_BASE_MODEL_ID
 
     def test_non_access_denied_client_error_propagates(
         self, monkeypatch: pytest.MonkeyPatch
@@ -172,10 +184,13 @@ class TestBedrockBaseModelId:
             build_chat_model("aws-bedrock", AIP_MODEL_ID, enable_cache=True)
         assert exc_info.value.response["Error"]["Code"] == "ThrottlingException"
 
-    def test_non_aip_model_id_never_retries(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Converse family (non-Anthropic model id, caching on), but not an
-        # application-inference-profile ARN - exercises the ARN-substring
-        # guard specifically, distinct from the provider-family guard.
+    @pytest.mark.parametrize("enable_cache", [True, False], ids=["converse", "legacy"])
+    def test_non_aip_model_id_never_retries(
+        self, monkeypatch: pytest.MonkeyPatch, enable_cache: bool
+    ) -> None:
+        # Non-Anthropic model id, but not an application-inference-profile
+        # ARN - exercises the ARN-substring guard specifically, distinct from
+        # the provider-family guard.
         monkeypatch.delenv("AWS_BEDROCK_BASE_MODEL_ID", raising=False)
         monkeypatch.delenv("AWS_BEDROCK_CLIENT", raising=False)
         calls: list[dict[str, Any]] = []
@@ -186,7 +201,7 @@ class TestBedrockBaseModelId:
 
         monkeypatch.setattr(build_mod, "init_chat_model", _fake)
         with pytest.raises(ClientError):
-            build_chat_model("aws-bedrock", "us.amazon.nova-pro-v1:0", enable_cache=True)
+            build_chat_model("aws-bedrock", "us.amazon.nova-pro-v1:0", enable_cache=enable_cache)
         assert len(calls) == 1
 
 

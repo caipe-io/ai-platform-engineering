@@ -89,9 +89,14 @@ each image should install only the integrations it uses.
   including the `AWS_BEDROCK_CLIENT` override. Changing it changes cost and
   document handling (spec FR-014, A-006).
 - `build.py` also preserves `AWS_BEDROCK_BASE_MODEL_ID`: for `ChatBedrockConverse`
-  it bypasses the `bedrock:GetInferenceProfile` call that resolves an
-  application-inference-profile ARN's underlying foundation model, needed when
-  the IAM role doesn't grant that permission. That call has no `try`/`except`
-  inside `ChatBedrockConverse` itself, so `build_chat_model` retries once with
-  `base_model_id=""` (the same bypass) if it's denied, rather than failing to
+  and legacy `ChatBedrock` (not `ChatAnthropicBedrock` - an ARN model id never
+  routes there) it bypasses the `bedrock:GetInferenceProfile` call each makes
+  independently to resolve an application-inference-profile ARN's underlying
+  foundation model, needed when the IAM role doesn't grant that permission.
+  Neither call has a `try`/`except` inside `langchain-aws` itself - upstream
+  has said it won't backport `ChatBedrockConverse`'s handling into the legacy
+  client ([langchain-aws#808](https://github.com/langchain-ai/langchain-aws/issues/808#issuecomment-4465324699))
+  - so `build_chat_model` retries once with `base_model_id="unresolved"` (the
+  same bypass, using a non-empty placeholder because the two classes check
+  "is it set" differently) if either is denied, rather than failing to
   construct the model.
