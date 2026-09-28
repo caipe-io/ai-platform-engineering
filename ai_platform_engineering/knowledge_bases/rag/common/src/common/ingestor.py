@@ -20,6 +20,10 @@ dotenv.load_dotenv()
 
 logger = utils.get_logger(__name__)
 
+# A preview's crawl budget is well under 2 minutes; a stalled credential
+# service must fail fast rather than absorb it.
+_CREDENTIAL_SERVICE_TIMEOUT = aiohttp.ClientTimeout(total=15)
+
 
 class Client:
   """
@@ -307,7 +311,7 @@ class Client:
       "Content-Type": "application/json",
     }
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=_CREDENTIAL_SERVICE_TIMEOUT) as session:
       async with session.post(url, json={"secret_ref": secret_ref, "intended_use": intended_use}, headers=headers) as resp:
         if resp.status in (401, 403):
           raise PermissionError(f"Ingestor '{self.ingestor_name}' is not authorized to use credential '{secret_ref}'. Grant it access from the credential's sharing settings.")

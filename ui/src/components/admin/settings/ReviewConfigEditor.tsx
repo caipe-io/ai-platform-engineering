@@ -157,6 +157,7 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
   >([]);
   const [modelsLoading, setModelsLoading] = React.useState(true);
   const [platformLlm, setPlatformLlm] = React.useState<PlatformLlm | null>(null);
+  const [platformLlmLoading, setPlatformLlmLoading] = React.useState(true);
 
   const dirty = JSON.stringify(state) !== JSON.stringify(savedState);
 
@@ -210,6 +211,8 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
         if (!cancelled && llm?.id && llm?.provider) setPlatformLlm(llm as PlatformLlm);
       } catch {
         // Leave the option hidden; an explicit model is still selectable.
+      } finally {
+        if (!cancelled) setPlatformLlmLoading(false);
       }
     })();
     return () => {
@@ -220,14 +223,18 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
   // Default the picker to the first available model when the persisted config
   // didn't pin one. Skipped once a Platform LLM exists, where the better
   // default is to defer to it rather than silently pin an arbitrary model.
+  // Waits for the Platform LLM fetch to settle first: if the model list
+  // resolves before it, deciding early can auto-pin a model that a later
+  // Platform LLM response should have made unnecessary, and nothing then
+  // undoes that pin.
   React.useEffect(() => {
-    if (availableModels.length === 0 || platformLlm) return;
+    if (platformLlmLoading || availableModels.length === 0 || platformLlm) return;
     setState((s) => {
       if (s.model_id && s.model_provider) return s;
       const first = availableModels[0];
       return { ...s, model_id: first.model_id, model_provider: first.provider };
     });
-  }, [availableModels, platformLlm]);
+  }, [availableModels, platformLlm, platformLlmLoading]);
 
   // Load the persisted config (which self-seeds defaults on first read).
   React.useEffect(() => {

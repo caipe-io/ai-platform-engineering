@@ -162,6 +162,15 @@ function normalizePlatformLlm(value: unknown): { id: string; provider: string } 
     );
   }
   const candidate = value as { id?: unknown; provider?: unknown };
+  const idIsStringish = candidate.id == null || typeof candidate.id === 'string';
+  const providerIsStringish = candidate.provider == null || typeof candidate.provider === 'string';
+  if (!idIsStringish || !providerIsStringish) {
+    throw new ApiError(
+      'platform_llm id and provider must be strings',
+      400,
+      'INVALID_PLATFORM_LLM',
+    );
+  }
   const id = typeof candidate.id === 'string' ? candidate.id.trim() : '';
   const provider = typeof candidate.provider === 'string' ? candidate.provider.trim() : '';
   if (!id && !provider) return null;

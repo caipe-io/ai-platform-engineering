@@ -382,6 +382,10 @@ export function PlatformDefaultsSettings({
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading the platform LLM…
           </div>
+        ) : loadError ? (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            {loadError}
+          </div>
         ) : (
           <div className="space-y-4">
             <div className="space-y-2">
