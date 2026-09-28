@@ -60,7 +60,7 @@ WebAuthHeader,
 WebCrawlMode,
 } from "@/types/ingestion-source";
 import type { PendingPublicationRequestView } from "@/types/publication-approval";
-import { Eye, Loader2, Lock, Plus, X } from "lucide-react";
+import { Check, Eye, Loader2, Lock, Plus, X } from "lucide-react";
 import { useEffect,useState } from "react";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { DatasourceAccessFields } from "./DatasourceAccessFields";
@@ -797,6 +797,17 @@ export function IngestionSourceForm({
   const [testingAuthHeaders, setTestingAuthHeaders] = useState(false);
   const [authHeaderTestResult, setAuthHeaderTestResult] =
     useState<AuthHeaderTestResult | null>(null);
+  /** Set only for the two header-screening error codes, so the message can
+   * render next to the headers it concerns instead of the generic banner. */
+  const [authHeaderSaveError, setAuthHeaderSaveError] = useState<string | null>(null);
+
+  // A test result is a transient "here's what just happened" readout, not
+  // something the reader needs to keep acting on — clear it on its own.
+  useEffect(() => {
+    if (!authHeaderTestResult) return;
+    const timer = setTimeout(() => setAuthHeaderTestResult(null), 5_000);
+    return () => clearTimeout(timer);
+  }, [authHeaderTestResult]);
   // Ownership transfer (edit only): changing the owner picker marks a pending
   // transfer, sent as owner_team_slug/confirm_not_member alongside the rest
   // of the PATCH body. Mirrors KbSharingPanel's transfer flow.
@@ -815,6 +826,7 @@ export function IngestionSourceForm({
     setPreviewError(null);
     setError(null);
     setAuthHeaderTestResult(null);
+    setAuthHeaderSaveError(null);
     setCredentialSharingConfirmed(false);
     setCredentialSharingPrompt(false);
     setTransferRequested(false);
@@ -937,6 +949,7 @@ export function IngestionSourceForm({
     if (isReadOnly) return;
     setSaving(true);
     setError(null);
+    setAuthHeaderSaveError(null);
     setTransferNeedsServerConfirm(false);
     // `setState` is async, so a confirm-and-retry can't rely on the freshly-set
     // `transferConfirmedNotMember` — the caller passes the value through opts.
@@ -975,6 +988,13 @@ export function IngestionSourceForm({
         setError(
           err.serverMessage || 'Confirm the ownership transfer to continue.',
         );
+        return;
+      }
+      if (
+        err instanceof RagApiError &&
+        (err.code === "HEADER_CONTAINS_SECRET" || err.code === "HEADER_REJECTED_BY_SCREENING")
+      ) {
+        setAuthHeaderSaveError(err.serverMessage || "A request header was rejected.");
         return;
       }
       const serverMessage = err instanceof RagApiError ? err.serverMessage : undefined;
@@ -1043,6 +1063,7 @@ export function IngestionSourceForm({
 
   const handleAddAuthHeader = () => {
     setAuthHeaderTestResult(null);
+    setAuthHeaderSaveError(null);
     setValues((v) => ({
       ...v,
       auth_headers: [
@@ -1060,6 +1081,7 @@ export function IngestionSourceForm({
 
   const handleUpdateAuthHeader = (index: number, patch: Partial<WebAuthHeader>) => {
     setAuthHeaderTestResult(null);
+    setAuthHeaderSaveError(null);
     setValues((v) => ({
       ...v,
       auth_headers: v.auth_headers.map((header, position) => {
@@ -1083,6 +1105,7 @@ export function IngestionSourceForm({
 
   const handleRemoveAuthHeader = (index: number) => {
     setAuthHeaderTestResult(null);
+    setAuthHeaderSaveError(null);
     setValues((v) => ({
       ...v,
       auth_headers: v.auth_headers.filter((_, position) => position !== index),
@@ -1092,6 +1115,7 @@ export function IngestionSourceForm({
   const handleTestAuthHeaders = async (): Promise<void> => {
     setTestingAuthHeaders(true);
     setAuthHeaderTestResult(null);
+    setAuthHeaderSaveError(null);
     try {
       const preview = buildPreviewPayload(values, isEdit, initial?.source_id);
       const settings = (preview.settings ?? {}) as Record<string, unknown>;
@@ -1128,7 +1152,7 @@ export function IngestionSourceForm({
       }
       setAuthHeaderTestResult({
         ok: true,
-        message: `Fetched ${items.length} page${items.length === 1 ? "" : "s"} and found content.`,
+        message: `Fetched ${items.length} page${items.length === 1 ? "" : "s"} and found content, so headers will likely work for all pages.`,
       });
     } catch (testError) {
       setAuthHeaderTestResult({
@@ -1816,6 +1840,15 @@ export function IngestionSourceForm({
                         </div>
                       )}
 
+                      {authHeaderSaveError && (
+                        <div
+                          role="alert"
+                          className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive"
+                        >
+                          {authHeaderSaveError}
+                        </div>
+                      )}
+
                       {authHeaderPreviewLines.length > 0 && (
                         <div className="space-y-1">
                           <Label className="text-xs text-muted-foreground">
@@ -1886,7 +1919,12 @@ export function IngestionSourceForm({
                                   : "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300",
                               )}
                             >
-                              <p>{authHeaderTestResult.message}</p>
+                              <p className="flex items-start gap-1.5">
+                                {authHeaderTestResult.ok && (
+                                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                )}
+                                <span>{authHeaderTestResult.message}</span>
+                              </p>
                               {authHeaderTestResult.credentialHint && (
                                 <p>{CREDENTIAL_FAILURE_HINT}</p>
                               )}

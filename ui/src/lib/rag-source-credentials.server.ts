@@ -7,6 +7,7 @@
  * ingestor at a credential in the first place.
  */
 
+import { buildUserContextHeader } from "@/lib/da-proxy";
 import { ApiError } from "@/lib/api-error";
 import { recordIngestPreviewGrant } from "@/lib/credentials/ingest-credential-usage.server";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
@@ -25,20 +26,15 @@ function headersFromSettings(settings: unknown): WebAuthHeader[] {
 }
 
 /**
- * Refuses a source whose literal header values carry a credential.
+ * Refuses a source whose literal header values carry a known credential format.
  *
  * The credential store exists so a token never lives in a datasource, which is
- * defeated by pasting one into a static header. Known credential formats always
- * block. The model check that follows is advisory: it adds judgment for what
- * patterns miss, but an unconfigured or unreachable model must not stop a save,
- * so the deterministic layer is what this actually relies on.
+ * defeated by pasting one into a static header. This is the deterministic,
+ * always-on half of screening — fast enough to run on every Test click, not
+ * just on save.
  */
-export async function screenSourceRequestHeaders(input: {
-  settings: unknown;
-  /** Caller session; its access token identifies us to the assistant service. */
-  session: AuthzSession & { accessToken?: unknown };
-}): Promise<void> {
-  const headers = headersFromSettings(input.settings);
+export async function rejectKnownSecretHeaders(settings: unknown): Promise<void> {
+  const headers = headersFromSettings(settings);
   if (headers.length === 0) return;
 
   const known = await findKnownSecretFormats(headers);
@@ -52,13 +48,42 @@ export async function screenSourceRequestHeaders(input: {
       "HEADER_CONTAINS_SECRET",
     );
   }
+}
+
+/**
+ * Full header screening run on save: the deterministic check above, plus an
+ * advisory Platform LLM pass for what known formats miss. An unconfigured or
+ * unreachable model must not stop a save, so the deterministic layer is what
+ * this actually relies on.
+ */
+export async function screenSourceRequestHeaders(input: {
+  settings: unknown;
+  /** Caller session; identifies us to the assistant service. */
+  session: AuthzSession & {
+    accessToken?: unknown;
+    isAuthorized?: unknown;
+    canViewAdmin?: unknown;
+  };
+}): Promise<void> {
+  await rejectKnownSecretHeaders(input.settings);
+
+  const headers = headersFromSettings(input.settings);
+  if (headers.length === 0) return;
 
   const accessToken =
     typeof input.session.accessToken === "string" ? input.session.accessToken : "";
-  const verdict = await screenHeadersWithPlatformLlm(
-    headers,
-    accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-  );
+  const requestHeaders: Record<string, string> = {
+    "X-User-Context": buildUserContextHeader({
+      email: input.session.user?.email ?? null,
+      role: input.session.role,
+      isAuthorized:
+        typeof input.session.isAuthorized === "boolean" ? input.session.isAuthorized : undefined,
+      canViewAdmin:
+        typeof input.session.canViewAdmin === "boolean" ? input.session.canViewAdmin : undefined,
+    }),
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+  };
+  const verdict = await screenHeadersWithPlatformLlm(headers, requestHeaders);
   if (verdict.decision === "reject") {
     throw new ApiError(
       `A request header was rejected by screening: ${verdict.reason}.`,

@@ -45,7 +45,10 @@ import {
   visibleRagCollectionsByDatasource,
 } from "@/lib/rag-collections.server";
 import { prepareRagPublication } from "@/lib/rag-publication-approval.server";
-import { authorizeIngestPreviewCredentials } from "@/lib/rag-source-credentials.server";
+import {
+  authorizeIngestPreviewCredentials,
+  rejectKnownSecretHeaders,
+} from "@/lib/rag-source-credentials.server";
 import { resolveShareableOwnershipWrite } from "@/lib/rbac/shareable-resource";
 import { resolveUserIdentitiesBySubject } from "@/lib/rbac/user-identity-directory";
 import type { RbacScope } from "@/lib/rbac/types";
@@ -1785,10 +1788,9 @@ export async function POST(
       typeof body === "object" &&
       !Array.isArray(body)
     ) {
-      await authorizeIngestPreviewCredentials({
-        session,
-        settings: (body as { settings?: unknown }).settings,
-      });
+      const settings = (body as { settings?: unknown }).settings;
+      await rejectKnownSecretHeaders(settings);
+      await authorizeIngestPreviewCredentials({ session, settings });
     }
 
     if (isMultipart) {
