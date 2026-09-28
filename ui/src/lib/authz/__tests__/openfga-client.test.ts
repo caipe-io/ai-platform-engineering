@@ -52,8 +52,10 @@ it("shares in-flight discovery between CAS and RBAC checks", async () => {
     "http://openfga.example.test:8080/stores/store-primary/check",
   ]);
   for (const [, options] of fetchMock.mock.calls.slice(1)) {
-    expect(JSON.parse(options.body)).toEqual({ tuple_key: tuple });
+    expect(JSON.parse(options.body)).toMatchObject({ tuple_key: tuple });
   }
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body).consistency).toBe("HIGHER_CONSISTENCY");
+  expect(JSON.parse(fetchMock.mock.calls[2][1].body).consistency).toBeUndefined();
 });
 
 it("uses an explicit store without discovery and forwards the CAS trace context", async () => {
