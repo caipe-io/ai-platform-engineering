@@ -2,7 +2,7 @@
 
 ## Access API contract
 
-Foundation routes, with no consumer migration in this change:
+Foundation routes for remote consumers; BFF callers use CAS in process:
 
 | Method and path | Request | Success |
 | --- | --- | --- |
@@ -26,8 +26,9 @@ Foundation routes, with no consumer migration in this change:
 - Grants reuse CAS management checks, public-grant restrictions and audit.
   A successful revoke removes that direct grant; team or other grants may still
   authorize the principal. Resource creation/deletion remains with its owner.
-- All responses have `Cache-Control: no-store`. CAS's internal cache behavior
-  is unchanged; this API does not promise immediate cross-replica revocation.
+- All responses have `Cache-Control: no-store`. Single `agent/use` decisions
+  bypass the BFF decision cache; other actions and queries retain their caches.
+  This API does not promise immediate system-wide revocation.
 
 ### Failure semantics
 
@@ -93,7 +94,34 @@ store for both callers; no operation is automatically replayed. An explicitly
 configured `OPENFGA_STORE_ID` remains authoritative. CAS now propagates an active
 authorization trace, as RBAC already did.
 
-This is transport consolidation, not yet policy consolidation. Cache freshness,
-model selection, timeouts and migration of legacy checks remain separate work.
+The shared agent-use guard now calls CAS in process with the canonical subject;
+it never retries email or enumerates teams. Single `agent/use` checks ignore
+cached batch decisions, send `consistency: HIGHER_CONSISTENCY`, and return
+`ttl_seconds: 0` on a definitive answer. A five-second abort signal covers
+discovery and check response consumption. Shared store discovery also has its
+own five-second timeout, including when initiated by a legacy caller.
+Batch/list queries retain existing caching; do not use them to enforce execution.
+The existing workflow trusted-context policy is unchanged; the guard supplies none.
+
+Other actions, model selection and migration of remaining legacy checks are
+separate work. Writes are not replayed and do not inherit the check deadline.
 The platform health route keeps its independent diagnostic probe. Python services
 and the gateway authorization bridge are outside this BFF change.
+
+## Isolated agent-use model tests
+
+Start a disposable local OpenFGA server (the chart currently uses v1.15.1):
+
+```sh
+openfga run --datastore-engine memory --http-addr 127.0.0.1:18080 --grpc-addr 127.0.0.1:18081 --metrics-enabled=false --playground-enabled=false
+```
+
+From `ui/`, run:
+
+```sh
+OPENFGA_AGENT_USE_TEST_URL=http://127.0.0.1:18080 npm test -- --config jest.openfga.config.js --runInBand
+```
+
+This exercises the real guard, CAS and chart model, with only audit delivery mocked.
+It creates and deletes its own test store. Use an isolated server, never a tunnel
+to a shared deployment. Without the URL, ordinary unit runs skip this suite.
