@@ -2,6 +2,8 @@ import os
 import asyncio
 import inspect
 import time
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, Callable
 from urllib.parse import urlparse
 import aiohttp
@@ -36,11 +38,21 @@ _exponential_backoff = tenacity.wait_exponential(multiplier=1, min=1, max=30)
 
 
 def _wait_for_retry_after(retry_state: tenacity.RetryCallState) -> float:
-  """Honor the server's Retry-After (in seconds, capped at 60) on a 429, else fall back to exponential backoff."""
+  """Honor the server's Retry-After on a 429 (seconds or an HTTP-date, capped at 60), else fall back to exponential backoff."""
   exc = retry_state.outcome.exception() if retry_state.outcome else None
   retry_after = (getattr(exc, "headers", None) or {}).get("Retry-After", "")
   if retry_after.isdigit():
     return min(float(retry_after), 60.0)
+  if retry_after:
+    try:
+      target = parsedate_to_datetime(retry_after)
+      if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+      delay = (target - datetime.now(timezone.utc)).total_seconds()
+    except (TypeError, ValueError):
+      delay = None
+    if delay is not None and delay > 0:
+      return min(delay, 60.0)
   return _exponential_backoff(retry_state)
 
 

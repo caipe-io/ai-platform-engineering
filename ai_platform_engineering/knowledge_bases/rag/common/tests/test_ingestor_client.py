@@ -1,6 +1,8 @@
 """Focused tests for the shared authenticated RAG ingestor client."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -38,9 +40,11 @@ class _FakeIngestSession:
   def __init__(self, statuses: list) -> None:
     self._statuses = list(statuses)
     self.post_count = 0
+    self.payloads = []
 
   def post(self, *args, **kwargs):
     self.post_count += 1
+    self.payloads.append(kwargs["json"]["documents"])
     status = self._statuses.pop(0) if self._statuses else 200
     return _FakeIngestResponse(status)
 
@@ -176,6 +180,11 @@ def test_ingest_batch_splits_and_retries_on_413() -> None:
 
   assert result == {"ok": True}
   assert fake_session.post_count == 3  # 1 rejected batch + 2 split retries
+  assert [[doc["page_content"] for doc in batch] for batch in fake_session.payloads] == [
+    ["a", "b"],
+    ["a"],
+    ["b"],
+  ]
 
 
 def test_ingest_batch_does_not_retry_a_non_transient_error() -> None:
@@ -215,4 +224,23 @@ def test_wait_for_retry_after_caps_a_long_header_at_sixty_seconds() -> None:
 
 def test_wait_for_retry_after_falls_back_to_backoff_without_a_header() -> None:
   exc = _rate_limited_error({})
+  assert _wait_for_retry_after(_FakeRetryState(exc, attempt_number=2)) == 2.0
+
+
+def test_wait_for_retry_after_honors_a_future_http_date() -> None:
+  future = datetime.now(timezone.utc) + timedelta(seconds=10)
+  exc = _rate_limited_error({"Retry-After": format_datetime(future, usegmt=True)})
+  wait = _wait_for_retry_after(_FakeRetryState(exc))
+  assert 8.0 <= wait <= 10.0
+
+
+def test_wait_for_retry_after_caps_a_far_future_http_date_at_sixty_seconds() -> None:
+  future = datetime.now(timezone.utc) + timedelta(hours=1)
+  exc = _rate_limited_error({"Retry-After": format_datetime(future, usegmt=True)})
+  assert _wait_for_retry_after(_FakeRetryState(exc)) == 60.0
+
+
+def test_wait_for_retry_after_falls_back_to_backoff_on_a_past_http_date() -> None:
+  past = datetime.now(timezone.utc) - timedelta(seconds=10)
+  exc = _rate_limited_error({"Retry-After": format_datetime(past, usegmt=True)})
   assert _wait_for_retry_after(_FakeRetryState(exc, attempt_number=2)) == 2.0
