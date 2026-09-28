@@ -142,6 +142,7 @@ class MongoDBService:
         self._db["autonomous_follow_up_chats"].create_index([
             ("task_id", ASCENDING), ("owner_id", ASCENDING), ("state", ASCENDING),
         ])
+        self._db["autonomous_follow_up_copy_attempts"].create_index([("cleanup_after", ASCENDING)])
 
         logger.info("MongoDB indexes ensured")
 

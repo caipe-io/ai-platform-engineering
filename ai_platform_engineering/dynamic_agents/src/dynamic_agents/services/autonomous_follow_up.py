@@ -19,6 +19,13 @@ from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from dynamic_agents.config import Settings
 from dynamic_agents.models import DynamicAgentConfig, UserContext
+from dynamic_agents.services.autonomous_follow_up_cleanup import (
+    ATTEMPTS_COLLECTION,
+    COPY_LEASE,
+    finish_copy_attempt,
+    publish_follow_up_chat,
+    renew_copy_lease,
+)
 from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
 from dynamic_agents.services.mongo import MongoDBService
 
@@ -107,18 +114,6 @@ def copy_run_checkpoint(
     raise HTTPException(409, "The saved context for this run is no longer available.")
 
 
-def _publish_chat(db: Any, record: dict) -> dict:
-    """Idempotently finish publication, including recovery after a process restart."""
-    conversation = record["conversation"]
-    existing = db["conversations"].find_one({"_id": conversation["_id"]})
-    if existing and existing.get("deleted_at"):
-        raise HTTPException(409, "This follow-up chat is in the archive. Restore it before continuing.")
-    db["conversations"].update_one(
-        {"_id": conversation["_id"]}, {"$setOnInsert": conversation}, upsert=True,
-    )
-    return {"conversation_id": conversation["_id"], "run_id": record["run_id"]}
-
-
 def create_follow_up_chat(
     mongo: MongoDBService,
     settings: Settings,
@@ -141,15 +136,33 @@ def create_follow_up_chat(
     registry = db["autonomous_follow_up_chats"]
     existing = registry.find_one({"_id": key})
     if existing and existing.get("state") == "ready":
-        return _publish_chat(db, existing)
+        return publish_follow_up_chat(db, existing)
 
     now = datetime.now(timezone.utc)
-    token = str(uuid4())
+    destination_id = str(uuid4())
+    token = destination_id
+    backend = agent.backend.config if agent.backend else None
+    if backend and backend.fs_namespace:
+        raise HTTPException(409, "This agent uses a shared file namespace; an isolated follow-up is not supported.")
+    checkpoint_collection = (
+        backend.checkpoint_collection if backend and backend.checkpoint_collection
+        else settings.checkpoint_collection
+    )
+    writes_collection = (
+        f"{backend.checkpoint_collection}_writes" if backend and backend.checkpoint_collection
+        else settings.checkpoint_writes_collection
+    )
+    attempt = {
+        "_id": destination_id, "registry_id": key,
+        "checkpoint_collection": checkpoint_collection, "writes_collection": writes_collection,
+        "gridfs_bucket": settings.gridfs_bucket_name,
+        "cleanup_after": now + COPY_LEASE, "writer_stopped": False,
+    }
     try:
         claimed = registry.find_one_and_update(
-            {"_id": key, "$or": [{"state": "failed"}, {"lease_until": {"$lt": now}}]},
+            {"_id": key, "$or": [{"state": "failed"}, {"state": "creating", "lease_until": {"$lte": now}}]},
             {"$set": {
-                "state": "creating", "token": token, "lease_until": now + timedelta(minutes=5),
+                "state": "creating", "token": token, "destination_id": destination_id, "lease_until": now + COPY_LEASE,
                 "owner_id": identity, "task_id": run["task_id"], "run_id": run["run_id"],
             }},
             upsert=True,
@@ -158,24 +171,16 @@ def create_follow_up_chat(
     except DuplicateKeyError:
         existing = registry.find_one({"_id": key})
         if existing and existing.get("state") == "ready":
-            return _publish_chat(db, existing)
+            return publish_follow_up_chat(db, existing)
         raise HTTPException(409, "This follow-up chat is being prepared. Please try again shortly.") from None
     if not claimed:
         raise HTTPException(409, "This follow-up chat is being prepared. Please try again shortly.")
 
-    destination_id = str(uuid4())
+    writes_settled = False
     try:
-        backend = agent.backend.config if agent.backend else None
-        if backend and backend.fs_namespace:
-            raise HTTPException(409, "This agent uses a shared file namespace; an isolated follow-up is not supported.")
-        checkpoint_collection = (
-            backend.checkpoint_collection if backend and backend.checkpoint_collection
-            else settings.checkpoint_collection
-        )
-        writes_collection = (
-            f"{backend.checkpoint_collection}_writes" if backend and backend.checkpoint_collection
-            else settings.checkpoint_writes_collection
-        )
+        # Persist cleanup coordinates before any checkpoint, file, or message.
+        db[ATTEMPTS_COLLECTION].insert_one(attempt)
+        renew_copy_lease(db, attempt)
         saver = MongoDBSaver(
             mongo._client, db_name=settings.mongodb_database,
             checkpoint_collection_name=checkpoint_collection,
@@ -183,6 +188,7 @@ def create_follow_up_chat(
             ttl=backend.checkpoint_ttl if backend else None,
         )
         snapshot_id = copy_run_checkpoint(saver, run["execution_context_id"], destination_id, run["finished_at"])
+        renew_copy_lease(db, attempt)
 
         file_ttl = backend.fs_ttl_seconds if backend and backend.fs_ttl_seconds is not None else settings.default_fs_ttl_seconds
         if settings.max_fs_ttl_seconds and (file_ttl == 0 or file_ttl > settings.max_fs_ttl_seconds):
@@ -192,7 +198,12 @@ def create_follow_up_chat(
         offset = 0
         while files := store.search(source_namespace, limit=100, offset=offset):
             for file in files:
-                store.put((agent.id, destination_id, "filesystem"), file.key, deepcopy(file.value))
+                renew_copy_lease(db, attempt)
+                store.put_with_id(
+                    (agent.id, destination_id, "filesystem"), file.key, deepcopy(file.value),
+                    f"{destination_id}:{uuid4()}",
+                )
+                renew_copy_lease(db, attempt)
             offset += len(files)
 
         source_url = (
@@ -206,6 +217,7 @@ def create_follow_up_chat(
             ("user", run.get("request_prompt") or task.get("prompt") or "Autonomous task"),
             ("assistant", run.get("response_full") or run.get("response_preview") or run.get("error") or "Run finished."),
         ):
+            renew_copy_lease(db, attempt)
             db["messages"].insert_one({
                 "conversation_id": destination_id, "message_id": f"{destination_id}:{role}",
                 "owner_id": identity, "role": role, "content": content,
@@ -228,18 +240,23 @@ def create_follow_up_chat(
             "tags": ["manual-follow-up"], "is_archived": False, "is_pinned": False,
         }
         completed = registry.find_one_and_update(
-            {"_id": key, "token": token, "state": "creating"},
+            {"_id": key, "token": token, "state": "creating", "lease_until": {"$gt": datetime.now(timezone.utc)}},
             {"$set": {"state": "ready", "conversation": conversation}, "$unset": {"lease_until": ""}},
             return_document=ReturnDocument.AFTER,
         )
         if not completed:
             raise HTTPException(409, "Another request prepared this follow-up. Please try again.")
-        return _publish_chat(db, completed)
+        result = publish_follow_up_chat(db, completed)
+        writes_settled = True
+        return result
     except (HTTPException, PyMongoError, ValueError, TypeError, RuntimeError, OSError) as exc:
+        # A disconnected/timed-out Mongo command may still commit on the server
+        # after local cleanup. Keep its tombstone for repeated recovery sweeps.
+        writes_settled = not isinstance(exc, (PyMongoError, OSError))
         if not isinstance(exc, HTTPException):
             logger.exception("Failed to prepare manual chat for task %s run %s", run["task_id"], run["run_id"])
-        # Never revert a ready branch or another request's initialization.
-        registry.update_one(
-            {"_id": key, "token": token, "state": "creating"}, {"$set": {"state": "failed"}},
-        )
         raise
+    finally:
+        # A ready record is recoverable even if publication lost its response.
+        # Failed/expired attempts clean only their unique destination.
+        finish_copy_attempt(db, attempt, writer_stopped=writes_settled)

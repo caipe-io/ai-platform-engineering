@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import dotenv
 
@@ -45,6 +45,7 @@ from dynamic_agents.routes import (
     middleware,
     model_capabilities,
 )
+from dynamic_agents.services.autonomous_follow_up_cleanup import run_copy_cleanup
 from dynamic_agents.services.mongo import get_mongo_service, reset_mongo_service
 from dynamic_agents.services.runtime_cache import RuntimeCapacityError, RuntimeInitError, get_runtime_cache
 
@@ -112,7 +113,13 @@ async def lifespan(app: FastAPI):
         store.ensure_ttl_index()
         logger.info("GridFS TTL index ensured (per-document expireAt)")
 
-    yield
+    copy_cleanup = asyncio.create_task(run_copy_cleanup(mongo))
+    try:
+        yield
+    finally:
+        copy_cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await copy_cleanup
 
     # Cleanup on shutdown
     logger.info("Shutting down Dynamic Agents service...")

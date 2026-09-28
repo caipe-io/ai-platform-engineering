@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Annotated, Any, TypedDict
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 from deepagents import create_deep_agent
@@ -217,7 +217,11 @@ def branch_setup(monkeypatch: pytest.MonkeyPatch) -> tuple:
         "finished_at": datetime(2026, 9, 1, 10, 1, tzinfo=timezone.utc),
         "request_prompt": "Original prompt", "response_full": "Original result",
     }
-    db = {name: MagicMock() for name in ("autonomous_tasks", "autonomous_runs", "autonomous_follow_up_chats", "conversations", "messages")}
+    db = {name: MagicMock() for name in (
+        "autonomous_tasks", "autonomous_runs", "autonomous_follow_up_chats", "conversations", "messages",
+        "autonomous_follow_up_copy_attempts", "checkpoints_conversation", "checkpoint_writes_conversation",
+        "agent_files.files", "agent_files.chunks",
+    )}
     db["autonomous_tasks"].find_one.return_value = task
     db["autonomous_runs"].find_one.return_value = run
     db["conversations"].find_one.return_value = None
@@ -229,6 +233,15 @@ def branch_setup(monkeypatch: pytest.MonkeyPatch) -> tuple:
         return dict(record)
 
     db["autonomous_follow_up_chats"].find_one_and_update.side_effect = claim
+    db["autonomous_follow_up_chats"].find_one.side_effect = lambda *_args: dict(record) if record else None
+
+    def update(query: dict, update: dict) -> SimpleNamespace:
+        if all(record.get(key) == query[key] for key in ("token", "state")):
+            record.update(update["$set"])
+            return SimpleNamespace(matched_count=1)
+        return SimpleNamespace(matched_count=0)
+
+    db["autonomous_follow_up_chats"].update_one.side_effect = update
     agent = DynamicAgentConfig(_id="agent", name="Example agent", system_prompt="Help", owner_id="owner@example.com", model=ModelConfig(id="test", provider="openai"))
     mongo = MagicMock(_db=db)
     mongo.get_agent.return_value = agent
@@ -241,6 +254,7 @@ def branch_setup(monkeypatch: pytest.MonkeyPatch) -> tuple:
     monkeypatch.setattr(service, "copy_run_checkpoint", copy)
     monkeypatch.setattr(routes, "require_autonomous_permission", AsyncMock())
     monkeypatch.setattr(routes, "require_agent_use_permission", AsyncMock())
+    monkeypatch.setattr(routes, "require_org_admin_permission", AsyncMock(side_effect=HTTPException(403, "Access denied")))
     return mongo, task, run, agent, user, copy, record
 
 
@@ -279,7 +293,10 @@ def test_copy_failure_does_not_publish_chat_and_allows_retry(branch_setup: tuple
     with pytest.raises(HTTPException):
         service.create_follow_up_chat(mongo, Settings(), task, run, agent, user)
     mongo._db["conversations"].update_one.assert_not_called()
-    mongo._db["autonomous_follow_up_chats"].update_one.assert_called_once()
+    assert _record["state"] == "failed"
+    destination = _record["destination_id"]
+    mongo._db["checkpoints_conversation"].delete_many.assert_called_once_with({"thread_id": destination})
+    mongo._db["messages"].delete_many.assert_called_once_with({"conversation_id": destination})
 
 
 def test_files_are_copied_into_manual_namespace(branch_setup: tuple, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -290,8 +307,9 @@ def test_files_are_copied_into_manual_namespace(branch_setup: tuple, monkeypatch
     monkeypatch.setattr(service, "MongoDBGridFSStore", lambda **_kwargs: store)
     result = service.create_follow_up_chat(mongo, Settings(), task, run, agent, user)
     store.search.assert_any_call((agent.id, run["execution_context_id"], "filesystem"), limit=100, offset=0)
-    store.put.assert_called_once_with((agent.id, result["conversation_id"], "filesystem"), file.key, file.value)
-    assert store.put.call_args.args[2] is not file.value
+    store.put_with_id.assert_called_once_with((agent.id, result["conversation_id"], "filesystem"), file.key, file.value, ANY)
+    assert store.put_with_id.call_args.args[2] is not file.value
+    assert store.put_with_id.call_args.args[3].startswith(result["conversation_id"] + ":")
 
 
 @pytest.mark.asyncio

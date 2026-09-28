@@ -4,34 +4,47 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from dynamic_agents.auth.auth import UserContext, get_user_context
-from dynamic_agents.auth.authz import require_agent_use_permission, require_autonomous_permission
+from dynamic_agents.auth.authz import (
+    require_agent_use_permission,
+    require_autonomous_permission,
+    require_org_admin_permission,
+)
+from dynamic_agents.auth.follow_up import get_follow_up_user
 from dynamic_agents.config import get_settings
+from dynamic_agents.models import UserContext
 from dynamic_agents.services.autonomous_follow_up import create_follow_up_chat
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
 
 router = APIRouter(prefix="/autonomous", tags=["conversations"])
 
 
-def _owned_task(mongo: MongoDBService, task_id: str, user: UserContext) -> dict:
+async def _require_owner(owner: dict, user: UserContext) -> None:
+    matches = (owner.get("owner_id") or "").strip().lower() == user.email
+    if owner.get("owner_sub"):
+        matches = matches and owner["owner_sub"] == user.sub
+    if not matches:
+        # Admin access is a fresh CAS decision, never a caller-provided flag.
+        await require_org_admin_permission()
+
+
+async def _owned_task(mongo: MongoDBService, task_id: str, user: UserContext) -> dict:
     if mongo._db is None:
         raise HTTPException(503, "Database not connected")
     task = mongo._db[get_settings().autonomous_tasks_collection].find_one({"_id": task_id})
     if not task:
         raise HTTPException(404, "Task not found")
-    if not user.is_admin and (task.get("owner_id") or "").lower() != user.email.lower():
-        raise HTTPException(403, "Access denied")
+    await _require_owner(task, user)
     return task
 
 
 @router.get("/tasks/{task_id}/follow-up-chats")
 async def list_follow_up_chats(
     task_id: str,
-    user: UserContext = Depends(get_user_context),
+    user: UserContext = Depends(get_follow_up_user),
     mongo: MongoDBService = Depends(get_mongo_service),
 ) -> dict[str, str]:
     await require_autonomous_permission()
-    _owned_task(mongo, task_id, user)
+    await _owned_task(mongo, task_id, user)
     records = list(mongo._db["autonomous_follow_up_chats"].find({
         "task_id": task_id, "owner_id": user.email.strip().lower(), "state": "ready",
     }))
@@ -53,16 +66,15 @@ async def list_follow_up_chats(
 async def open_follow_up_chat(
     task_id: str,
     run_id: str,
-    user: UserContext = Depends(get_user_context),
+    user: UserContext = Depends(get_follow_up_user),
     mongo: MongoDBService = Depends(get_mongo_service),
 ) -> dict:
     await require_autonomous_permission()
-    task = _owned_task(mongo, task_id, user)
+    task = await _owned_task(mongo, task_id, user)
     run = mongo._db[get_settings().autonomous_runs_collection].find_one({"_id": run_id, "task_id": task_id})
     if not run:
         raise HTTPException(404, "Run not found")
-    if not user.is_admin and (run.get("owner_id") or "").lower() != user.email.lower():
-        raise HTTPException(403, "Access denied")
+    await _require_owner(run, user)
     if run.get("status") not in {"success", "failed"} or not run.get("finished_at"):
         raise HTTPException(409, "Wait for this run to finish before continuing it.")
     if not run.get("execution_context_id"):

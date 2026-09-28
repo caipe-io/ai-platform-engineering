@@ -226,6 +226,12 @@ The Autonomous page polls active run history every five seconds.
   eligibility, and agent-use permission are checked before creating it. Missing
   snapshots and unfinished tool execution are rejected instead of starting with
   an empty or shared context.
+- Follow-up ownership uses the validated bearer identity; admin access requires
+  a CAS decision. Caller-supplied identity/admin headers are not trusted.
+- Private copies are journaled before writing. Failed or expired attempts are
+  cleaned by destination, including interrupted file uploads. Startup/periodic
+  recovery retries cleanup and finishes publication of completed copies without
+  replacing an existing manual chat.
 
 The UI and Dynamic Agents services must both be updated for manual follow-up
 chats. Dynamic Agents reads the same task/run database as Autonomous Agents;
