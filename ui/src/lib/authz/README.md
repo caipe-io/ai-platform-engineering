@@ -1,5 +1,7 @@
 # BFF authorization and Access API
 
+Ongoing consolidation uses the [CAS integration workflow](../../../../.github/CAS_INTEGRATION.md).
+
 ## Access API contract
 
 Foundation routes for remote consumers; BFF callers use CAS in process:

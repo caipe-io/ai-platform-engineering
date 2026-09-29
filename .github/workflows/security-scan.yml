@@ -27,7 +27,7 @@ description: "Anchore Grype vulnerability scan — filesystem on all events, con
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'prebuild/feat/cas-authz']
   push:
     branches: [main]
   workflow_dispatch:
