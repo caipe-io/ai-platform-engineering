@@ -32,9 +32,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
-      issues: write
-      pull-requests: read
+      contents: read # Check out trusted labeling code and configuration.
+      issues: write # Create missing repository labels and update their metadata.
+      pull-requests: write # Apply size labels to PRs and remove stale size labels.
     steps:
       - name: 📥 Checkout base branch config
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
