@@ -74,8 +74,6 @@ cp deploy/eks/dev-eks-cluster-config.yaml.example dev-eks-cluster-config.yaml
 
 **Required:** update `publicAccessCIDRs` in `dev-eks-cluster-config.yaml` to your VPN or office egress CIDR before continuing. It ships with a non-routable placeholder (`203.0.113.0/24`) that blocks public API access until you replace it, so the example fails closed rather than exposing the control plane.
 
-As a last resort you can set it to `0.0.0.0/0`, which opens the Kubernetes API to all public access. Avoid this for anything beyond a throwaway dev cluster, and never use it in production.
-
 ### Create a KMS key for secrets encryption
 
 The cluster config encrypts Kubernetes secrets at rest using a customer-managed KMS key. Run this block in full each time you create the cluster. It creates a new key and writes its ARN into the config, so it is safe to re-run after a previous cluster has been torn down:
@@ -93,7 +91,8 @@ aws kms create-alias \
   --target-key-id "$KEY_ARN"
 
 # Write the new ARN into the config
-sed -i "s|arn:aws:kms:us-east-2:ACCOUNT_ID:key/KEY_ID|$KEY_ARN|" dev-eks-cluster-config.yaml
+sed -i.bak "s|arn:aws:kms:us-east-2:ACCOUNT_ID:key/KEY_ID|$KEY_ARN|" dev-eks-cluster-config.yaml
+rm dev-eks-cluster-config.yaml.bak
 ```
 
 ### Run eksctl
@@ -175,7 +174,7 @@ By default, Auto Mode places all workloads on its built-in `general-purpose` poo
 
 | NodePool | Workloads | Instance strategy |
 | -------- | --------- | ----------------- |
-| `rag` | `rag-server`, `agent-ontology`, `rag-redis`, `neo4j`, `milvus` (+ its `etcd`/`minio`) | On-demand, memory-optimised (`r5`/`r6i`) |
+| `rag` | `rag-server`, `agent-ontology`, `rag-ingestors`, `rag-redis`, `neo4j`, `milvus` (+ its `etcd`/`minio`) | On-demand, memory-optimised (`r5`/`r6i`) |
 | `general-purpose` *(built-in)* | Dynamic Agents, MCP servers (`mcp-*`), UI, Keycloak, OpenFGA, … | Auto Mode managed |
 
 ```bash
@@ -238,38 +237,13 @@ Open http://localhost:8080. Then deploy CAIPE via the Helm chart (as in Option A
 
 ---
 
-## Step 7 (Recommended): Install AWS Load Balancer Controller
+## Step 7: Configure load balancing
 
-For production-style ingress (e.g. LoadBalancer services), install the AWS Load Balancer Controller:
-
-```bash
-# Create IAM service account for the controller
-eksctl create iamserviceaccount \
-  --cluster=dev-eks-cluster \
-  --namespace=kube-system \
-  --name=aws-load-balancer-controller \
-  --role-name AmazonEKSLoadBalancerControllerRole \
-  --attach-policy-arn=arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess \
-  --approve
-
-# Add the EKS chart repo and install the controller
-helm repo add eks https://aws.github.io/eks-charts
-helm repo update
-
-helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
-  -n kube-system \
-  --set clusterName=dev-eks-cluster \
-  --set serviceAccount.create=false \
-  --set serviceAccount.name=aws-load-balancer-controller \
-  --set 'nodeSelector.karpenter\.sh/nodepool=system' \
-  --set 'tolerations[0].key=CriticalAddonsOnly' \
-  --set 'tolerations[0].operator=Exists' \
-  --set 'tolerations[0].effect=NoSchedule'
-```
-
-The `nodeSelector` + toleration pin the controller to the built-in `system` NodePool, keeping platform add-ons off your workload nodes. This matches AWS's guidance for running critical add-ons on the system pool.
-
-Use your actual cluster name if it’s not `dev-eks-cluster` (match the name in `dev-eks-cluster-config.yaml`).
+EKS Auto Mode includes load balancing for `Service` and `Ingress` resources.
+Follow AWS's [Network Load Balancer guide](https://docs.aws.amazon.com/eks/latest/userguide/auto-configure-nlb.html)
+for `LoadBalancer` services or its [Application Load Balancer guide](https://docs.aws.amazon.com/eks/latest/userguide/auto-configure-alb.html)
+for HTTP ingress. The Auto Mode ALB path uses an `IngressClass` with the
+`eks.amazonaws.com/alb` controller.
 
 ---
 
@@ -305,12 +279,11 @@ Ensure the region in `dev-eks-cluster-config.yaml` matches your AWS CLI default:
 aws configure get region
 ```
 
-### Node group creation fails
+### Nodes remain pending
 
-- Inspect CloudFormation:  
-  `aws cloudformation describe-stack-events --stack-name eksctl-dev-cluster-nodegroup-worker-nodes`
-- Check EC2 limits:  
-  `aws ec2 describe-account-attributes --attribute-names supported-platforms`
+- Inspect the built-in pools: `kubectl get nodepool`
+- Check unschedulable pod events: `kubectl describe pod <pod> -n <namespace>`
+- See [Troubleshoot EKS Auto Mode](https://docs.aws.amazon.com/eks/latest/userguide/auto-troubleshoot.html) for provisioning failures.
 
 ### CloudFormation stack already exists
 

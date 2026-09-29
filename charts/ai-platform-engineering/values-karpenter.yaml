@@ -3,7 +3,7 @@
 # Apply on top of your base values:
 #
 #   helm upgrade --install ai-platform-engineering \
-#     oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \
+#     oci://ghcr.io/caipe-io/charts/ai-platform-engineering \
 #     -f charts/ai-platform-engineering/values.yaml \
 #     -f charts/ai-platform-engineering/values-karpenter.yaml
 #
@@ -17,9 +17,9 @@
 #   the platform services — rides the Auto Mode `general-purpose` pool, which
 #   already bin-packs and consolidates. No custom pool or taint is needed for
 #   them, which keeps scheduling out of the per-tool config path.
-# - PodDisruptionBudgets are enabled so Auto Mode node consolidation does not
-#   take a workload fully offline during voluntary disruptions. They take real
-#   effect once a workload runs >1 replica (bump replicaCount or enable HPA).
+# - PodDisruptionBudgets limit voluntary disruptions to one pod at a time.
+#   A single-replica workload can still be temporarily unavailable during a
+#   drain; use multiple replicas for uninterrupted service.
 #
 # Prerequisite: kubectl apply -f deploy/eks/karpenter/nodepool-rag.yaml
 
@@ -51,6 +51,17 @@ rag-stack:
     podDisruptionBudget:
       enabled: true
 
+  rag-ingestors:
+    nodeSelector:
+      workload-type: rag
+    tolerations:
+      - key: workload-type
+        operator: Equal
+        value: rag
+        effect: NoSchedule
+    podDisruptionBudget:
+      enabled: true
+
   rag-redis:
     nodeSelector:
       workload-type: rag
@@ -69,6 +80,11 @@ rag-stack:
   neo4j:
     nodeSelector:
       workload-type: rag
+    # The RAG chart defaults to gp2, which Auto Mode does not create.
+    volumes:
+      data:
+        dynamic:
+          storageClassName: auto-ebs-sc
     podSpec:
       tolerations:
         - key: workload-type
