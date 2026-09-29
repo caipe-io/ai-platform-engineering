@@ -68,6 +68,18 @@ beforeEach(() => {
         ],
       });
     }
+    if (href === "/api/admin/platform-config") {
+      return jsonResponse({
+        success: true,
+        data: {
+          platform_llm: {
+            id: "global.anthropic.claude-sonnet-4-6",
+            provider: "bedrock",
+          },
+          platform_llm_source: "db",
+        },
+      });
+    }
     if (href.startsWith("/api/review-configs/")) {
       return jsonResponse({
         data: reviewConfig(decodeURIComponent(href.split("/").pop() ?? "agent-system-prompt")),
@@ -124,4 +136,38 @@ it("opens the target named by the subtab URL param on load", async () => {
 
   expect(await screen.findByRole("tab", { name: "Skills" })).toHaveAttribute("aria-selected", "true");
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/review-configs/skill-md"));
+});
+
+it("clears a pinned model with an explicit null so the Platform LLM takes over", async () => {
+  render(<ReviewConfigsTab />);
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith("/api/review-configs/agent-system-prompt"),
+  );
+
+  // Defer this target to the Platform LLM rather than pinning a model.
+  const picker = await screen.findByRole("combobox", { name: "LLM Model" });
+  fireEvent.click(picker);
+  fireEvent.click(await screen.findByRole("option", { name: /Use Platform LLM/i }));
+
+  const header = screen.getByRole("region", { name: "AI Review configurations header" });
+  const save = within(header).getByRole("button", { name: "Save" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+
+  const putCall = await waitFor(() => {
+    const call = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        url === "/api/review-configs/agent-system-prompt" &&
+        (init as RequestInit | undefined)?.method === "PUT",
+    );
+    expect(call).toBeDefined();
+    return call as [string, RequestInit];
+  });
+
+  const payload = JSON.parse(String(putCall[1].body)) as Record<string, unknown>;
+  // `undefined` would be dropped by JSON.stringify and read as "leave it alone",
+  // which silently reverted the picker before this was fixed.
+  expect(payload.model).toBeNull();
+  expect("model" in payload).toBe(true);
 });

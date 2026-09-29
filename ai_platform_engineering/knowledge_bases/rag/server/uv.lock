@@ -357,6 +357,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "redis" },
+    { name = "tenacity" },
 ]
 
 [package.optional-dependencies]
@@ -377,6 +378,7 @@ requires-dist = [
     { name = "pydantic", specifier = "==2.13.4" },
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "redis", specifier = "==8.1.0" },
+    { name = "tenacity", specifier = ">=9,<10" },
 ]
 provides-extras = ["huggingface"]
 
