@@ -41,7 +41,7 @@ def _wait_for_retry_after(retry_state: tenacity.RetryCallState) -> float:
   """Honor the server's Retry-After on a 429 (seconds or an HTTP-date, capped at 60), else fall back to exponential backoff."""
   exc = retry_state.outcome.exception() if retry_state.outcome else None
   retry_after = (getattr(exc, "headers", None) or {}).get("Retry-After", "")
-  if retry_after.isdigit():
+  if retry_after.isascii() and retry_after.isdigit():
     return min(float(retry_after), 60.0)
   if retry_after:
     try:

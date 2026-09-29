@@ -244,3 +244,9 @@ def test_wait_for_retry_after_falls_back_to_backoff_on_a_past_http_date() -> Non
   past = datetime.now(timezone.utc) - timedelta(seconds=10)
   exc = _rate_limited_error({"Retry-After": format_datetime(past, usegmt=True)})
   assert _wait_for_retry_after(_FakeRetryState(exc, attempt_number=2)) == 2.0
+
+
+def test_wait_for_retry_after_falls_back_to_backoff_on_a_non_ascii_digit() -> None:
+  # str.isdigit() is true for Unicode digits like superscript two; float() rejects them.
+  exc = _rate_limited_error({"Retry-After": "²"})
+  assert _wait_for_retry_after(_FakeRetryState(exc, attempt_number=2)) == 2.0
