@@ -6,6 +6,13 @@ sidebar_position: 1
 
 This guide walks you through creating an **Amazon EKS** (Elastic Kubernetes Service) cluster and deploying **CAIPE** (Community AI Platform Engineering) on it. No prior experience with CAIPE or EKS is required.
 
+This guide opts in to **EKS Auto Mode** for a new cluster. Existing EKS clusters
+and Helm installations can keep their current cluster config and chart values.
+Do not apply the Auto Mode storage class or scheduling overlay to an existing
+cluster without planning [volume migration](https://docs.aws.amazon.com/eks/latest/userguide/migrate-auto.html).
+The original managed-node-group example remains at
+`deploy/eks/dev-eks-cluster-config.yaml.example`.
+
 **What is EKS?** EKS is AWS’s managed Kubernetes service. You get a production-ready cluster without managing control-plane nodes yourself. **eksctl** is a simple CLI to create and manage EKS clusters with sensible defaults.
 
 **What you’ll do:** Create an EKS cluster, install ArgoCD (optional, for GitOps-style deploys), then deploy CAIPE using the Helm chart. You’ll need an AWS account and the tools listed below.
@@ -69,7 +76,7 @@ Start from the example file so the KMS ARN placeholder is fresh. Run this each t
 
 ```bash
 # Always start from the example so the ARN placeholder is fresh
-cp deploy/eks/dev-eks-cluster-config.yaml.example dev-eks-cluster-config.yaml
+cp deploy/eks/dev-eks-auto-mode-cluster-config.yaml.example dev-eks-cluster-config.yaml
 ```
 
 **Required:** update `publicAccessCIDRs` in `dev-eks-cluster-config.yaml` to your VPN or office egress CIDR before continuing. It ships with a non-routable placeholder (`203.0.113.0/24`) that blocks public API access until you replace it, so the example fails closed rather than exposing the control plane.
@@ -142,29 +149,39 @@ IAM_USER=USERNAME
 eksctl create accessentry \
   --cluster dev-eks-cluster \
   --principal-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:user/${IAM_USER}" \
-  --kubernetes-group system:masters
+  --kubernetes-groups system:masters
 
 # Grant an IAM role cluster-admin access (e.g. a CI/CD role)
 IAM_ROLE=ROLE_NAME
 eksctl create accessentry \
   --cluster dev-eks-cluster \
   --principal-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:role/${IAM_ROLE}" \
-  --kubernetes-group system:masters
+  --kubernetes-groups system:masters
 ```
 
 Do not edit the `aws-auth` ConfigMap directly, as it has no effect in API auth mode.
 
 ---
 
-## Step 5: Create the default StorageClass
+## Step 5: Create the Auto Mode StorageClass
 
-EKS Auto Mode ships the EBS CSI driver (`ebs.csi.eks.amazonaws.com`) but, by AWS design, **creates no StorageClass**. Apply the repo's default `gp3` class once, right after the cluster is up:
+EKS Auto Mode ships the EBS CSI driver (`ebs.csi.eks.amazonaws.com`) but, by AWS design, **creates no StorageClass**. Apply the repo's `gp3` class once, right after the new cluster is up. The manifest does not change a cluster's default StorageClass:
 
 ```bash
 kubectl apply -f deploy/eks/storage/
 ```
 
-Verify it is registered as the cluster default (`(default)` appears next to the name):
+On a **new Auto Mode cluster with no existing default StorageClass**, explicitly
+make `auto-ebs-sc` the default so chart PVCs without a `storageClassName` can
+bind. On an existing cluster, keep its current default and plan a separate
+volume migration before changing it:
+
+```bash
+kubectl annotate storageclass auto-ebs-sc \
+  storageclass.kubernetes.io/is-default-class=true --overwrite
+```
+
+Verify that `(default)` appears next to `auto-ebs-sc`:
 
 ```bash
 kubectl get storageclass

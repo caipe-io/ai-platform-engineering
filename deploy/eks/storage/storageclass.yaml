@@ -1,4 +1,4 @@
-# Default StorageClass for EKS Auto Mode.
+# StorageClass for EKS Auto Mode. It does not replace an existing default.
 #
 # Based on the AWS reference:
 # https://docs.aws.amazon.com/eks/latest/userguide/create-storage-class.html
@@ -7,9 +7,6 @@ apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: auto-ebs-sc
-  annotations:
-    # Make this the cluster default so PVCs without an explicit class bind here.
-    storageclass.kubernetes.io/is-default-class: "true"
 # Pods needing an auto-provisioned volume are kept off non-Auto nodes.
 allowedTopologies:
   - matchLabelExpressions:

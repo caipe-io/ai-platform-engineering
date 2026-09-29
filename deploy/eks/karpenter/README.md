@@ -15,7 +15,7 @@ The `milvus` vector backend pulls in its own `etcd` and `minio` StatefulSets, wh
 
 ## Prerequisites
 
-- EKS cluster created with `autoModeConfig: enabled: true` (see `deploy/eks/dev-eks-cluster-config.yaml.example`)
+- EKS cluster created with `autoModeConfig: enabled: true` (see `deploy/eks/dev-eks-auto-mode-cluster-config.yaml.example`)
 - `kubectl` configured to talk to the cluster
 
 ## Apply

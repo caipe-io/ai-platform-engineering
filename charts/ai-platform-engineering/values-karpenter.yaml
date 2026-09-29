@@ -134,10 +134,53 @@ dynamic-agents:
   podDisruptionBudget:
     enabled: true
 
-# MCP tool servers (mcp-argocd, mcp-github, ...) need no entries here: the
-# mcp-server chart enables a PodDisruptionBudget by default, which renders only
-# for http-mode servers (stdio servers have no Deployment). New mcp-* tools are
-# covered automatically.
+# Each MCP alias needs an explicit opt-in. The MCP chart leaves PDBs disabled
+# for existing installations, and stdio-mode servers have no Deployment/PDB.
+mcp-argocd:
+  podDisruptionBudget:
+    enabled: true
+mcp-aws:
+  podDisruptionBudget:
+    enabled: true
+mcp-backstage:
+  podDisruptionBudget:
+    enabled: true
+mcp-confluence:
+  podDisruptionBudget:
+    enabled: true
+mcp-github:
+  podDisruptionBudget:
+    enabled: true
+mcp-gitlab:
+  podDisruptionBudget:
+    enabled: true
+mcp-jira:
+  podDisruptionBudget:
+    enabled: true
+mcp-komodor:
+  podDisruptionBudget:
+    enabled: true
+mcp-pagerduty:
+  podDisruptionBudget:
+    enabled: true
+mcp-slack:
+  podDisruptionBudget:
+    enabled: true
+mcp-splunk:
+  podDisruptionBudget:
+    enabled: true
+mcp-victorops:
+  podDisruptionBudget:
+    enabled: true
+mcp-webex:
+  podDisruptionBudget:
+    enabled: true
+mcp-webex-meetings:
+  podDisruptionBudget:
+    enabled: true
+mcp-netutils:
+  podDisruptionBudget:
+    enabled: true
 
 # Platform services
 caipe-ui:
@@ -165,10 +208,12 @@ skill-scanner:
 slack-bot:
   podDisruptionBudget:
     enabled: true
+    maxUnavailable: 1
 
 webex-bot:
   podDisruptionBudget:
     enabled: true
+    maxUnavailable: 1
 
 keycloak:
   podDisruptionBudget:

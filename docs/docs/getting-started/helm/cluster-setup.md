@@ -31,8 +31,10 @@ Your cluster is ready. Jump to [Deploy with Helm →](./setup.md)
 
 ## Option 2 — AWS EKS
 
-Use the [EKS Auto Mode setup guide](../eks/setup.md). It covers the required
-cluster configuration, storage class, and RAG NodePool before Helm deployment.
+For a new Auto Mode cluster, follow the [EKS Auto Mode setup guide](../eks/setup.md).
+It uses a separate cluster config example, storage class, RAG NodePool, and
+Helm values overlay. Existing managed-node-group clusters can continue using
+`deploy/eks/dev-eks-cluster-config.yaml.example` and their current Helm values.
 Auto Mode includes load balancing, so its setup does not require a separate
 AWS Load Balancer Controller install.
 
