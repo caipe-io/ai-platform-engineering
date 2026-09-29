@@ -14,10 +14,12 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- if $.Values.podDisruptionBudget.minAvailable }}
+  {{- if hasKey $.Values.podDisruptionBudget "minAvailable" }}
   minAvailable: {{ $.Values.podDisruptionBudget.minAvailable }}
+  {{- else if hasKey $.Values.podDisruptionBudget "maxUnavailable" }}
+  maxUnavailable: {{ $.Values.podDisruptionBudget.maxUnavailable }}
   {{- else }}
-  maxUnavailable: {{ $.Values.podDisruptionBudget.maxUnavailable | default 1 }}
+  maxUnavailable: 1
   {{- end }}
   selector:
     matchLabels:
