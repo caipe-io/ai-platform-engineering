@@ -18,23 +18,28 @@ const PROVIDER_LABELS: Record<string, string> = {
   pagerduty: "PagerDuty",
 };
 
-export function GitHubWebhookContentTypeNotice() {
+export function WebhookPayloadNotice({ provider }: { provider: string }) {
   return (
     <div
       role="note"
-      aria-label="GitHub content type requirement"
+      aria-label="Webhook payload requirement"
       className="space-y-1 rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-xs text-foreground"
     >
-      <p className="font-medium">Required for GitHub: JSON payloads</p>
+      <p className="font-medium">Required for all webhook providers: JSON payloads</p>
       <p>
-        In GitHub → repository Settings → Webhooks → your webhook, set Content type
-        to <code>application/json</code> and save. Form-encoded payloads
+        Send webhook requests as <code>application/json</code>. Form-encoded payloads
         (<code>application/x-www-form-urlencoded</code>) cannot be read by this
         receiver, so payload filters will not match.
       </p>
+      {provider === "github" && (
+        <p>
+          In GitHub → repository Settings → Webhooks → your webhook, set Content type
+          to <code>application/json</code> and save.
+        </p>
+      )}
       <p>
-        GitHub showing “delivered” confirms receipt, not an agent run. In Recent
-        deliveries, open the delivery’s Response: <code>status: accepted</code>
+        A provider showing “delivered” confirms receipt, not an agent run. Check
+        the delivery response: <code>status: accepted</code>
         {" "}includes a run ID; <code>reason: filter_mismatch</code> means no run was
         created. After correcting the content type, trigger a new event to test.
       </p>
@@ -228,7 +233,7 @@ export function WebhookSetupStep({
       </div>
 
       <ProviderInstructions provider={provider} />
-      {provider === "github" && <GitHubWebhookContentTypeNotice />}
+      <WebhookPayloadNotice provider={provider} />
       <CopyValue label="Webhook URL" value={webhookUrl} />
 
       {!providerIssuesSecret && generatedSecret && (

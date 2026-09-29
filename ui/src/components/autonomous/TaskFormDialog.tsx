@@ -29,7 +29,7 @@ import {
   fromFormState,
   toFormState,
 } from "./formState";
-import { GitHubWebhookContentTypeNotice, WebhookSetupStep } from "./WebhookSetupStep";
+import { WebhookPayloadNotice, WebhookSetupStep } from "./WebhookSetupStep";
 
 export const DEFAULT_WEBHOOK_PROVIDER_OPTIONS: WebhookProvider[] = [
   "github",
@@ -465,7 +465,7 @@ export function TaskFormDialog({
                     ))}
                   </Select>
                 </div>
-                {form.webhookProvider === "github" && <GitHubWebhookContentTypeNotice />}
+                <WebhookPayloadNotice provider={form.webhookProvider} />
                 <div className="space-y-3 rounded-md border border-border p-3">
                   <div className="space-y-1">
                     <Label>Filter deliveries</Label>

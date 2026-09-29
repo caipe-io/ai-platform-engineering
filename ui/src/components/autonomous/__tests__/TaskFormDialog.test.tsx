@@ -4,7 +4,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ComponentProps } from "react";
 
-import { TaskFormDialog } from "@/components/autonomous/TaskFormDialog";
+import { DEFAULT_WEBHOOK_PROVIDER_OPTIONS, TaskFormDialog } from "@/components/autonomous/TaskFormDialog";
 import type { AutonomousTask } from "@/components/autonomous/types";
 
 function existingTask(): AutonomousTask {
@@ -130,26 +130,27 @@ it("configures safe header and payload filters", async () => {
   ));
 });
 
-it("shows the GitHub JSON requirement before creation even with filtering off", () => {
+it.each(DEFAULT_WEBHOOK_PROVIDER_OPTIONS)("shows the JSON requirement before %s creation even with filtering off", (provider) => {
   renderDialog();
   fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: provider } });
 
   expect(screen.getByLabelText(/only run the agent when all conditions match/i)).not.toBeChecked();
-  const notice = screen.getByRole("note", { name: "GitHub content type requirement" });
-  expect(notice).toHaveTextContent("set Content type to application/json");
+  const notice = screen.getByRole("note", { name: "Webhook payload requirement" });
+  expect(notice).toHaveTextContent("Send webhook requests as application/json");
   expect(notice).toHaveTextContent("application/x-www-form-urlencoded");
   expect(notice).toHaveTextContent("payload filters will not match");
   expect(notice).toHaveTextContent("status: accepted");
   expect(notice).toHaveTextContent("reason: filter_mismatch");
 });
 
-it("shows the GitHub JSON requirement when editing an existing webhook", () => {
+it.each(DEFAULT_WEBHOOK_PROVIDER_OPTIONS)("shows the JSON requirement when editing an existing %s webhook", (provider) => {
   renderDialog({ task: {
     ...existingTask(),
-    trigger: { type: "webhook", provider: "github", has_secret: true },
+    trigger: { type: "webhook", provider, has_secret: true },
   } });
 
-  expect(screen.getByRole("note", { name: "GitHub content type requirement" })).toBeVisible();
+  expect(screen.getByRole("note", { name: "Webhook payload requirement" })).toBeVisible();
 });
 
 it.each(["jira", "slack", "pagerduty"])("does not show GitHub-specific guidance for %s", (provider) => {
@@ -157,7 +158,31 @@ it.each(["jira", "slack", "pagerduty"])("does not show GitHub-specific guidance 
   fireEvent.click(screen.getByRole("button", { name: "webhook" }));
   fireEvent.change(screen.getByLabelText("Provider"), { target: { value: provider } });
 
-  expect(screen.queryByRole("note", { name: "GitHub content type requirement" })).not.toBeInTheDocument();
+  const notice = screen.getByRole("note", { name: "Webhook payload requirement" });
+  expect(notice).toBeVisible();
+  expect(notice).not.toHaveTextContent("In GitHub");
+});
+
+it.each(DEFAULT_WEBHOOK_PROVIDER_OPTIONS)("retains JSON guidance in the post-create %s setup step", async (provider) => {
+  const onSubmit = jest.fn(async (task: AutonomousTask) => ({
+    task: {
+      ...task,
+      id: "example-webhook",
+      trigger: { type: "webhook" as const, provider, has_secret: true },
+    },
+    webhookSetupRequired: true,
+  }));
+  renderDialog({ onSubmit });
+  fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Example webhook" } });
+  fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: "Summarize the event" } });
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: provider } });
+  fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+
+  expect(await screen.findByTestId("webhook-setup-step")).toBeInTheDocument();
+  expect(screen.getByRole("note", { name: "Webhook payload requirement" })).toHaveTextContent(
+    "Send webhook requests as application/json",
+  );
 });
 
 it("links GitHub webhook documentation and never accepts filter code", () => {
@@ -215,7 +240,7 @@ it("stays open after GitHub creation and shows the full URL plus one-time secret
   fireEvent.click(screen.getByRole("button", { name: /create task/i }));
 
   expect(await screen.findByTestId("webhook-setup-step")).toBeInTheDocument();
-  expect(screen.getByRole("note", { name: "GitHub content type requirement" })).toHaveTextContent(
+  expect(screen.getByRole("note", { name: "Webhook payload requirement" })).toHaveTextContent(
     "set Content type to application/json",
   );
   expect(screen.getByTestId("webhook-url-value")).toHaveTextContent(
