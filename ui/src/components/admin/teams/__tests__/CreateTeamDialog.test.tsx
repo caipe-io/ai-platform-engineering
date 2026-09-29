@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent,render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CreateTeamDialog } from "../CreateTeamDialog";
@@ -98,6 +98,50 @@ it("searches the full user directory instead of only the loaded first page", asy
   expect(
     screen.queryByRole("button", { name: /alice@example\.com/i }),
   ).not.toBeInTheDocument();
+});
+
+// Regression guard: a failed or malformed response used to leave the prior
+// query's results in place, so MultiSelect kept showing stale matches under
+// a new, non-matching query.
+it("clears stale results when a subsequent search fails or returns malformed data", async () => {
+  const user = userEvent.setup();
+  fetchMock.mockImplementation(async (url: string) => {
+    if (isUsersGet(url)) {
+      if (url.includes("search=zoe")) {
+        return jsonResponse({ users: [{ email: "zoe@example.com" }] });
+      }
+      if (url.includes("search=err")) {
+        throw new Error("network down");
+      }
+      return jsonResponse({ users: [] });
+    }
+    return jsonResponse({ success: true, data: {} });
+  });
+
+  render(
+    <CreateTeamDialog open onOpenChange={jest.fn()} onSuccess={jest.fn()} />,
+  );
+
+  await user.click(
+    screen.getByRole("button", { name: /search and select members/i }),
+  );
+
+  const search = screen.getByPlaceholderText("Search by name or email...");
+  await user.type(search, "zoe");
+  expect(
+    await screen.findByRole("button", { name: /zoe@example\.com/i }),
+  ).toBeInTheDocument();
+
+  // Go straight from "zoe" to a query whose request fails, without passing
+  // through the <2-char empty state, to isolate the failure-clearing path.
+  fireEvent.change(search, { target: { value: "err" } });
+
+  await waitFor(() => {
+    expect(
+      screen.queryByRole("button", { name: /zoe@example\.com/i }),
+    ).not.toBeInTheDocument();
+  });
+  expect(screen.getByText("No users found")).toBeInTheDocument();
 });
 
 // Regression guard: onSearchChange puts MultiSelect into a mode where it no

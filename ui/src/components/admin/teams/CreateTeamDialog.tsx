@@ -79,9 +79,16 @@ export function CreateTeamDialog({
             setMemberSearchResults(
               users.map((u: { email?: string }) => u.email).filter(Boolean)
             );
+          } else {
+            setMemberSearchResults([]);
           }
         })
-        .catch(() => {})
+        .catch((err) => {
+          // Preserve results across an aborted (superseded) request, but
+          // clear them for a real failure so a stale prior-query result
+          // set doesn't linger under the new query.
+          if (err?.name !== "AbortError") setMemberSearchResults([]);
+        })
         .finally(() => {
           // A newer keystroke may have already aborted this request and
           // started its own — don't let this stale request's `finally`

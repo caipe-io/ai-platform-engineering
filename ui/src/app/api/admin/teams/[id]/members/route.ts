@@ -203,8 +203,10 @@ export const GET = withErrorHandler(async (
   // Members are stored with only an email (no name), so a search by name
   // has to be resolved against the identity directory first — Keycloak's
   // own `search` param already matches username/email/first/last name.
-  // Best-effort: if the directory lookup fails, fall back to the plain
-  // email substring match rather than failing the whole roster request.
+  // Best-effort and bounded to the first 50 directory results — a name
+  // match outside that page won't be found. If the directory lookup fails
+  // outright, fall back to the plain email substring match rather than
+  // failing the whole roster request.
   // Gate the extra Keycloak round-trip on a minimum length, matching the
   // client's own debounce threshold — a single-character search wouldn't
   // usefully narrow the directory lookup anyway.
