@@ -78,7 +78,10 @@ it("searches the full user directory instead of only the loaded first page", asy
   );
   await screen.findByRole("button", { name: /alice@example\.com/i });
 
-  await user.type(screen.getByPlaceholderText("Search by email..."), "zoe");
+  await user.type(
+    screen.getByPlaceholderText("Search by name or email..."),
+    "zoe",
+  );
 
   await waitFor(() =>
     expect(fetchMock).toHaveBeenCalledWith(

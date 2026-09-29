@@ -1235,17 +1235,18 @@ export function TeamDetailsDialog({
               </form>
             )}
 
-            {/* Filter the roster by email. Debounced into a server-side
-                query so it works regardless of how large the team is. */}
+            {/* Filter the roster by name or email. Debounced into a
+                server-side query so it works regardless of how large the
+                team is. */}
             <div className="relative">
               <Search className="h-3.5 w-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <Input
-                placeholder="Filter members by email…"
+                placeholder="Filter members by name or email…"
                 value={memberSearch}
                 onChange={(e) => setMemberSearch(e.target.value)}
                 className="pl-8 h-9"
                 type="search"
-                aria-label="Filter members by email"
+                aria-label="Filter members by name or email"
               />
             </div>
 

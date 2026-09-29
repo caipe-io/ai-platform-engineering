@@ -9,6 +9,7 @@ successResponse,
 validateEmail,
 withErrorHandler,
 } from '@/lib/api-middleware';
+import { searchRealmUsers } from '@/lib/rbac/keycloak-admin';
 import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
 import { writeOpenFgaTuples } from '@/lib/rbac/openfga';
 import { requireTeamMembershipManagementPermission } from '@/lib/rbac/team-admin-guards';
@@ -170,9 +171,10 @@ function manualMembershipSource(input: {
 // Returns one page of the team's deduplicated members so the Admin team
 // dialog can show large rosters without loading every membership-source row.
 // Query params: `page` (1-based), `page_size` (1–100, default 25), `search`
-// (case-insensitive email substring). Each member carries `source_types`
-// (e.g. ["okta"]) and `idp_managed` so the UI can badge provenance and lock
-// the remove action for directory-managed members.
+// (case-insensitive, matches email substring or Keycloak-resolved name).
+// Each member carries `source_types` (e.g. ["okta"]) and `idp_managed` so
+// the UI can badge provenance and lock the remove action for
+// directory-managed members.
 export const GET = withErrorHandler(async (
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
@@ -198,11 +200,29 @@ export const GET = withErrorHandler(async (
   const pageSize = Math.min(100, Math.max(1, pageSizeRaw));
   const search = (url.searchParams.get('search') || '').trim();
 
+  // Members are stored with only an email (no name), so a search by name
+  // has to be resolved against the identity directory first — Keycloak's
+  // own `search` param already matches username/email/first/last name.
+  // Best-effort: if the directory lookup fails, fall back to the plain
+  // email substring match rather than failing the whole roster request.
+  let searchMatchedEmails: string[] = [];
+  if (search) {
+    try {
+      const matches = await searchRealmUsers({ search, max: 50 });
+      searchMatchedEmails = matches
+        .map((u) => (typeof u.email === 'string' ? u.email : undefined))
+        .filter((email): email is string => Boolean(email));
+    } catch (err) {
+      console.error('[teams/members] Keycloak name search failed, falling back to email match', err);
+    }
+  }
+
   const { members, total } = teamSlug
     ? await loadActiveTeamMembersPage(teamSlug, {
         page,
         pageSize,
         search,
+        searchMatchedEmails,
         ownerEmail: typeof team.owner_id === 'string' ? team.owner_id : undefined,
       })
     : { members: [], total: 0 };

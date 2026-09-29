@@ -261,6 +261,14 @@ export interface LoadTeamMembersPageOptions extends QueryOptions {
   /** Case-insensitive substring match against `user_email`. */
   search?: string;
   /**
+   * Emails resolved by the caller from a name-or-email directory lookup for
+   * the same `search` term (this store has no access to the identity
+   * directory, so it can't resolve a name to an email itself). Matched
+   * members are OR'd in alongside the `search` substring match on
+   * `user_email`.
+   */
+  searchMatchedEmails?: string[];
+  /**
    * Team owner's email. When provided, the matching member is reported with
    * role `"owner"` and sorted to the very top so it leads page 1.
    */
@@ -285,6 +293,7 @@ export async function loadActiveTeamMembersPage(
   const page = Math.max(1, opts?.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, opts?.pageSize ?? 25));
   const search = (opts?.search ?? "").trim();
+  const searchMatchedEmails = (opts?.searchMatchedEmails ?? []).filter(Boolean);
   const ownerEmail = opts?.ownerEmail?.trim().toLowerCase() || null;
 
   const collection = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
@@ -293,11 +302,25 @@ export async function loadActiveTeamMembersPage(
     team_slug: teamSlug,
     ...buildStatusFilter(opts),
   };
-  if (search) {
+  if (search || searchMatchedEmails.length > 0) {
     // Escape regex metacharacters so a user typing e.g. "a.b" doesn't match
-    // unexpectedly. Email matching only — that's what the UI displays.
-    const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    match.user_email = { $regex: escaped, $options: "i" };
+    // unexpectedly. Members are stored with only an email (no name), so a
+    // search by name is resolved by the caller against the identity
+    // directory into `searchMatchedEmails` and OR'd in here.
+    const clauses: Record<string, unknown>[] = [];
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      clauses.push({ user_email: { $regex: escaped, $options: "i" } });
+    }
+    for (const email of searchMatchedEmails) {
+      const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      clauses.push({ user_email: { $regex: `^${escaped}$`, $options: "i" } });
+    }
+    if (clauses.length === 1) {
+      Object.assign(match, clauses[0]);
+    } else {
+      match.$or = clauses;
+    }
   }
 
   const groupStage = {

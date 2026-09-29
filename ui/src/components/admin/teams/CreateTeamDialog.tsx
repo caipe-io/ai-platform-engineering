@@ -194,7 +194,7 @@ export function CreateTeamDialog({
                 onSearchChange={setMemberSearch}
                 searchLoading={memberSearchLoading}
                 placeholder="Search and select members..."
-                searchPlaceholder="Search by email..."
+                searchPlaceholder="Search by name or email..."
                 emptyLabel="No users found"
                 badgeLabel="members"
                 className="w-full max-w-full"
