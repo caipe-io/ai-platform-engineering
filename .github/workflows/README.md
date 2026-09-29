@@ -18,8 +18,8 @@ See the `.github/workflows/` directory for the full list of CI/CD workflows.
 - **Permissions:** `pull-requests: write` allows PR label updates; `issues: write`
   manages repository label definitions. Checkout needs `contents: read`.
 - **Verification:** check that each processed PR has exactly one `size/*` label.
-  A successful run can still contain API warnings; check the labeling step for
-  `size labeling unavailable` before considering a backfill complete.
+  A successful run can still contain warnings. Review all warnings in the labeling
+  step and verify the resulting labels before considering a backfill complete.
 - **Configuration:** `.github/pr-size/config.json` defines buckets, label metadata,
   and generated-file globs. Changes take effect from the trusted base revision.
 - **Errors:** incomplete file lists and PRs above 3,000 files keep their current
