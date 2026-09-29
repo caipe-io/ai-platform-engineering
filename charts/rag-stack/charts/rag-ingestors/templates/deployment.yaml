@@ -62,6 +62,7 @@ spec:
             {{- $oidc := $rag.ingestorOidc | default dict }}
             {{- $secretRef := $oidc.clientSecretRef | default dict }}
             {{- $customEnv := $ingestor.env | default dict }}
+            {{- $caipeApi := $rag.caipeApi | default dict }}
             {{- $initDelaySeconds := 60 }}
             {{- if hasKey $ingestor "initDelaySeconds" }}
             {{- $initDelaySeconds = $ingestor.initDelaySeconds }}
@@ -120,6 +121,11 @@ spec:
                 secretKeyRef:
                   name: {{ tpl $secretRef.name $ | quote }}
                   key: {{ $secretRef.key | default "INGESTOR_OIDC_CLIENT_SECRET" | quote }}
+            {{- end }}
+
+            {{- if and $caipeApi.url (not (hasKey $customEnv "CAIPE_API_URL")) }}
+            - name: CAIPE_API_URL
+              value: {{ tpl $caipeApi.url $ | quote }}
             {{- end }}
 
             # Custom environment variables from ingestor config

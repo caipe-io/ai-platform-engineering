@@ -85,22 +85,13 @@ beforeEach(() => {
     ],
     min_score: 0.85,
   });
-  // Force the env-default model path so we don't need to mock Mongo.
-  process.env.AI_ASSIST_MODEL_ID = "test-model";
-  process.env.AI_ASSIST_MODEL_PROVIDER = "test-provider";
-});
-
-afterEach(() => {
-  delete process.env.AI_ASSIST_MODEL_ID;
-  delete process.env.AI_ASSIST_MODEL_PROVIDER;
+  // No Platform LLM and no registered models, so resolution reaches the
+  // built-in default unless a test says otherwise.
+  mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue(null) });
 });
 
 describe("/api/ai/review POST — header forwarding to dynamic-agents", () => {
-  it("falls back to Claude Haiku 4.5 when no env, review config, or Mongo model is available", async () => {
-    delete process.env.AI_ASSIST_MODEL_ID;
-    delete process.env.AI_ASSIST_MODEL_PROVIDER;
-    delete process.env.SKILL_AI_MODEL_ID;
-    delete process.env.SKILL_AI_MODEL_PROVIDER;
+  it("falls back to Claude Haiku 4.5 when no platform LLM, review config, or Mongo model is available", async () => {
     mockAuthenticateRequest.mockResolvedValueOnce({
       subject: "admin@example.com",
       email: "admin@example.com",
@@ -109,7 +100,7 @@ describe("/api/ai/review POST — header forwarding to dynamic-agents", () => {
       userContextHeader: "BASE64_USER_CTX",
       bearerToken: "ADMIN_JWT_TOKEN",
     });
-    mockGetCollection.mockRejectedValueOnce(new Error("mongo unavailable"));
+    mockGetCollection.mockRejectedValue(new Error("mongo unavailable"));
     mockFetchAssistantSuggest.mockResolvedValueOnce({
       ok: true,
       content: JSON.stringify({ pass: true, comment: "ok" }),

@@ -2,10 +2,14 @@ import os
 import asyncio
 import inspect
 import time
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, Callable
+from urllib.parse import urlparse
 import aiohttp
+import tenacity
 from common.models.rag import DataSourceInfo, DocumentMetadata, StructuredEntity
-from common.models.server import DocumentIngestRequest, IngestorPingRequest, ExploreDataEntityRequest
+from common.models.server import AuthHeader, DocumentIngestRequest, IngestorPingRequest, ExploreDataEntityRequest
 from common.job_manager import JobStatus, JobInfo
 from common.constants import (
   DATASOURCE_SCHEDULE_CHECK_INTERVAL,
@@ -19,6 +23,37 @@ import dotenv
 dotenv.load_dotenv()
 
 logger = utils.get_logger(__name__)
+
+# A preview's crawl budget is well under 2 minutes; a stalled credential
+# service must fail fast rather than absorb it.
+_CREDENTIAL_SERVICE_TIMEOUT = aiohttp.ClientTimeout(total=15)
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+  """True for a 429 from the RAG server, the only ingest failure this client retries in place."""
+  return isinstance(exc, aiohttp.ClientResponseError) and exc.status == 429
+
+
+_exponential_backoff = tenacity.wait_exponential(multiplier=1, min=1, max=30)
+
+
+def _wait_for_retry_after(retry_state: tenacity.RetryCallState) -> float:
+  """Honor the server's Retry-After on a 429 (seconds or an HTTP-date, capped at 60), else fall back to exponential backoff."""
+  exc = retry_state.outcome.exception() if retry_state.outcome else None
+  retry_after = (getattr(exc, "headers", None) or {}).get("Retry-After", "")
+  if retry_after.isascii() and retry_after.isdigit():
+    return min(float(retry_after), 60.0)
+  if retry_after:
+    try:
+      target = parsedate_to_datetime(retry_after)
+      if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+      delay = (target - datetime.now(timezone.utc)).total_seconds()
+    except (TypeError, ValueError):
+      delay = None
+    if delay is not None and delay > 0:
+      return min(delay, 60.0)
+  return _exponential_backoff(retry_state)
 
 
 class Client:
@@ -52,6 +87,13 @@ class Client:
     self.oidc_discovery_url = os.getenv("INGESTOR_OIDC_DISCOVERY_URL")
     # Scope is optional - if not set, don't send any scope (many providers don't need it for client credentials)
     self.oidc_scope = os.getenv("INGESTOR_OIDC_SCOPE", "")
+
+    # Credential service, used to resolve request headers that reference a stored
+    # credential. Derived from the platform API base so a deployment only has to
+    # say where CAIPE is; CREDENTIAL_API_URL overrides it for a split deployment.
+    caipe_api_url = os.getenv("CAIPE_API_URL", "").rstrip("/")
+    self.credential_api_url = os.getenv("CREDENTIAL_API_URL", "") or (f"{caipe_api_url}/api/credentials" if caipe_api_url else "")
+    self.credential_service_audience = os.getenv("CREDENTIAL_SERVICE_AUDIENCE", "caipe-credential-service")
 
     # Token cache
     self._access_token: Optional[str] = None
@@ -281,6 +323,71 @@ class Client:
       logger.error(f"Ingestor '{self.ingestor_name}': ✗ Unexpected error fetching OAuth2 access token: {e}")
       raise
 
+  async def retrieve_secret(self, secret_ref: str, *, intended_use: str = "internal_service") -> str:
+    """
+    Resolve a credential store reference to its current value.
+
+    The credential service authorizes against this ingestor's own identity, so
+    the datasource owner must have granted it access to the referenced secret.
+    """
+    if not self.credential_api_url:
+      raise RuntimeError("CREDENTIAL_API_URL must be configured to ingest sources that use stored credentials")
+
+    token = await self._get_access_token()
+    url = f"{self.credential_api_url.rstrip('/')}/retrieve"
+    headers = {
+      "Authorization": f"Bearer {token}",
+      "x-caipe-credential-caller": "internal_service",
+      "x-caipe-credential-audience": self.credential_service_audience,
+      "Content-Type": "application/json",
+    }
+
+    async with aiohttp.ClientSession(timeout=_CREDENTIAL_SERVICE_TIMEOUT) as session:
+      async with session.post(url, json={"secret_ref": secret_ref, "intended_use": intended_use}, headers=headers) as resp:
+        if resp.status in (401, 403):
+          raise PermissionError(f"Ingestor '{self.ingestor_name}' is not authorized to use credential '{secret_ref}'. Grant it access from the credential's sharing settings.")
+        resp.raise_for_status()
+        payload = await resp.json()
+
+    data = payload.get("data", payload)
+    credential = data.get("credential")
+    if not isinstance(credential, str) or not credential:
+      raise ValueError(f"Credential service returned no value for '{secret_ref}'")
+    return credential
+
+  async def resolve_auth_headers(self, url: str, auth_headers: Optional[List[AuthHeader]]) -> tuple[Dict[str, str], List[str]]:
+    """
+    Render configured request headers into concrete values.
+
+    Static headers pass through untouched; only those referencing a credential
+    reach the credential service. Returns the header map alongside the credential
+    references used, which are safe to log and let a failed crawl name the
+    credential without exposing its value.
+
+    Refuses to render any header for a non-HTTPS URL: the header goes out on
+    the crawl's very first request, not just on a redirect hop, so a plain-HTTP
+    target would put it on the wire in cleartext by design, not by accident.
+    """
+    if not auth_headers:
+      return {}, []
+
+    if urlparse(url).scheme.lower() != "https":
+      raise ValueError(f"Refusing to send configured request headers over a non-HTTPS URL: {url}")
+
+    rendered: Dict[str, str] = {}
+    labels: List[str] = []
+    for header in auth_headers:
+      if header.secret_ref:
+        rendered[header.header_name] = header.render(await self.retrieve_secret(header.secret_ref))
+        labels.append(header.secret_ref)
+      else:
+        rendered[header.header_name] = header.render()
+
+    if labels:
+      logger.info(f"Resolved {len(labels)} header(s) from credential(s): {', '.join(labels)}")
+    logger.info(f"Applying {len(rendered)} request header(s) to this crawl")
+    return rendered, labels
+
   async def _get_auth_headers(self) -> Dict[str, str]:
     """
     Get authentication headers for RAG server requests.
@@ -445,6 +552,23 @@ class Client:
     # Fallback: Just the entity type
     return f"Structured Entity {entity.entity_type}"
 
+  @tenacity.retry(
+    retry=tenacity.retry_if_exception(_is_rate_limited),
+    wait=_wait_for_retry_after,
+    stop=tenacity.stop_after_attempt(5),
+    reraise=True,
+  )
+  async def _post_ingest_request(self, ingest_request: DocumentIngestRequest) -> Dict[str, Any]:
+    """
+    POST a single ingest request, retrying with exponential backoff on a 429 from the RAG server.
+    """
+    headers = await self._get_auth_headers()
+
+    async with aiohttp.ClientSession() as session:
+      async with session.post(url=f"{self.server_addr}/v1/ingest", headers=headers, json=ingest_request.model_dump()) as resp:
+        resp.raise_for_status()
+        return await resp.json()
+
   async def _ingest_documents_batch(self, job_id: str, datasource_id: str, documents: List[Document], fresh_until: int) -> Dict[str, Any]:
     """
     Internal method to ingest a single batch of documents
@@ -459,12 +583,17 @@ class Client:
     # Create DocumentIngestRequest using Pydantic model
     ingest_request = DocumentIngestRequest(datasource_id=datasource_id, job_id=job_id, ingestor_id=self.ingestor_id, documents=documents, fresh_until=fresh_until)
 
-    headers = await self._get_auth_headers()
-
-    async with aiohttp.ClientSession() as session:
-      async with session.post(url=f"{self.server_addr}/v1/ingest", headers=headers, json=ingest_request.model_dump()) as resp:
-        resp.raise_for_status()
-        return await resp.json()
+    try:
+      return await self._post_ingest_request(ingest_request)
+    except aiohttp.ClientResponseError as e:
+      # 413: the server rejected this batch as too large. Split it and retry as two
+      # smaller batches instead of aborting the whole ingestion job.
+      if e.status == 413 and len(documents) > 1:
+        logger.warning(f"Ingestor '{self.ingestor_name}': server rejected a {len(documents)}-document batch (413), retrying as two smaller batches")
+        mid = len(documents) // 2
+        await self._ingest_documents_batch(job_id, datasource_id, documents[:mid], fresh_until)
+        return await self._ingest_documents_batch(job_id, datasource_id, documents[mid:], fresh_until)
+      raise
 
   async def list_datasources(self, ingestor_id: Optional[str] = None) -> List[DataSourceInfo]:
     """

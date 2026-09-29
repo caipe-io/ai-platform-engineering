@@ -8,7 +8,6 @@
  *   - `systemPrompt`   - locked guidance for the LLM
  *   - `buildUserMessage(ctx)` - turns the typed context bag into the actual
  *     prompt (including any prompt-injection guards for current_value)
- *   - `defaultModel(env)` - per-task model override read from env vars
  *   - `postProcess?(raw)` - optional transformer applied to the model output
  *     before it streams back to the client (e.g. strip code fences)
  *
@@ -66,11 +65,6 @@ export interface AiAssistTaskDef {
   reviewTarget?: string;
   /** Build the user message sent to the model. */
   buildUserMessage: (ctx: AiAssistContext) => string;
-  /**
-   * Resolve the model id+provider for this task. Falls back to the global
-   * default when no per-task override is set.
-   */
-  defaultModel: (env: NodeJS.ProcessEnv) => { id: string; provider: string };
   /** Optional cleanup before streaming back (strip fences etc.). */
   postProcess?: (raw: string) => string;
 }
@@ -78,52 +72,6 @@ export interface AiAssistTaskDef {
 // ---------------------------------------------------------------------------
 // Helpers shared across tasks
 // ---------------------------------------------------------------------------
-
-/**
- * Defaults match what the dynamic-agents service is configured to invoke:
- *
- *   - Provider must be one of cnoe-agent-utils' supported bindings
- *     (`aws-bedrock`, `openai`, `azure-openai`, `anthropic-claude`,
- *     `google-gemini`, `gcp-vertexai`, `groq`).
- *   - For Bedrock, `id` is the **raw Bedrock modelId** (e.g.
- *     `global.anthropic.claude-haiku-4-5-20251001-v1:0`) — NOT a LiteLLM-style
- *     `bedrock/...` prefix. cnoe-agent-utils passes it straight through
- *     to `client.converse(modelId=...)`, and Bedrock rejects the prefix
- *     with `ValidationException: The provided model identifier is invalid`.
- *
- * `aws-bedrock` is the safer default than `openai` because most deployments
- * ship Bedrock credentials; OpenAI requires an explicit `OPENAI_API_KEY`
- * which is often missing in dev. Override with `AI_ASSIST_MODEL_*` env
- * vars (or seed `llm_models` in MongoDB) when a different provider is
- * available — the route prefers Mongo first, then env, then this fallback.
- */
-const GLOBAL_DEFAULT_MODEL_ID = "global.anthropic.claude-haiku-4-5-20251001-v1:0";
-const GLOBAL_DEFAULT_PROVIDER = "aws-bedrock";
-
-/**
- * Read `AI_ASSIST_MODEL_<TASK>_ID` / `AI_ASSIST_MODEL_<TASK>_PROVIDER` with
- * a global fallback. The legacy `SKILL_AI_MODEL_ID` / `SKILL_AI_MODEL_PROVIDER`
- * env vars are honored for the skill-md tasks so existing deployments keep
- * working unchanged after the route refactor.
- */
-function modelFromEnv(
-  env: NodeJS.ProcessEnv,
-  taskKey: string,
-  legacyId?: string,
-  legacyProvider?: string,
-): { id: string; provider: string } {
-  const id =
-    env[`AI_ASSIST_MODEL_${taskKey}_ID`] ||
-    legacyId ||
-    env.AI_ASSIST_MODEL_ID ||
-    GLOBAL_DEFAULT_MODEL_ID;
-  const provider =
-    env[`AI_ASSIST_MODEL_${taskKey}_PROVIDER`] ||
-    legacyProvider ||
-    env.AI_ASSIST_MODEL_PROVIDER ||
-    GLOBAL_DEFAULT_PROVIDER;
-  return { id, provider };
-}
 
 /**
  * Wrap untrusted prior text in tags so prompt-injection inside it can't
@@ -181,7 +129,6 @@ ${quoted("current_description", ctx.current_value)}`);
     }
     return lines.join("\n\n");
   },
-  defaultModel: (env) => modelFromEnv(env, "DESCRIBE_SKILL"),
 };
 
 const SKILL_MD: AiAssistTaskDef = {
@@ -213,13 +160,6 @@ Do not wrap the entire response in markdown code fences.`,
       ? `Now create a SKILL.md.\n\n${lines.join("\n")}`
       : "Now create a SKILL.md based on the metadata above.";
   },
-  defaultModel: (env) =>
-    modelFromEnv(
-      env,
-      "SKILL_MD",
-      env.SKILL_AI_MODEL_ID,
-      env.SKILL_AI_MODEL_PROVIDER,
-    ),
 };
 
 const ENHANCE_SKILL_MD: AiAssistTaskDef = {
@@ -248,13 +188,6 @@ const ENHANCE_SKILL_MD: AiAssistTaskDef = {
       .filter(Boolean)
       .join("\n\n");
   },
-  defaultModel: (env) =>
-    modelFromEnv(
-      env,
-      "ENHANCE_SKILL_MD",
-      env.SKILL_AI_MODEL_ID,
-      env.SKILL_AI_MODEL_PROVIDER,
-    ),
 };
 
 const AGENT_SYSTEM_PROMPT: AiAssistTaskDef = {
@@ -285,7 +218,6 @@ ${quoted("current_system_prompt", ctx.current_value)}`,
       ? lines.join("\n\n")
       : "Draft a generic system prompt for an unspecified agent.";
   },
-  defaultModel: (env) => modelFromEnv(env, "AGENT_SYSTEM_PROMPT"),
 };
 
 const AGENT_DESCRIPTION: AiAssistTaskDef = {
@@ -308,7 +240,6 @@ ${quoted("current_description", ctx.current_value)}`,
       lines.push(`User request: ${ctx.instruction.trim()}`);
     return lines.join("\n\n") || "Draft a generic agent description.";
   },
-  defaultModel: (env) => modelFromEnv(env, "AGENT_DESCRIPTION"),
 };
 
 const CODE_SNIPPET: AiAssistTaskDef = {
@@ -336,7 +267,6 @@ ${quoted("current_code", ctx.current_value)}`,
     }
     return lines.join("\n\n");
   },
-  defaultModel: (env) => modelFromEnv(env, "CODE_SNIPPET"),
   postProcess: stripCodeFences,
 };
 
@@ -359,7 +289,6 @@ ${quoted("current_script", ctx.current_value)}`,
       lines.push(`User request: ${ctx.instruction.trim()}`);
     return lines.join("\n\n") || "Generate a generic helpful shell script.";
   },
-  defaultModel: (env) => modelFromEnv(env, "SHELL_SCRIPT"),
   postProcess: stripCodeFences,
 };
 
