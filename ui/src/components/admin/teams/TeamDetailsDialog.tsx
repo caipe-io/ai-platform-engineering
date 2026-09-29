@@ -1059,9 +1059,9 @@ export function TeamDetailsDialog({
                     <span className="text-sm text-muted-foreground">Name</span>
                     <span className="text-sm font-medium">{currentTeam.name}</span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Description</span>
-                    <span className="text-sm">{currentTeam.description || "—"}</span>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm text-muted-foreground shrink-0">Description</span>
+                    <span className="text-sm text-right">{currentTeam.description || "—"}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">Created by</span>
@@ -1208,15 +1208,17 @@ export function TeamDetailsDialog({
                   </div>
                 )}
                 </div>
-                <Select
-                  value={newMemberRole}
-                  onChange={(e) => setNewMemberRole(e.target.value as "member" | "admin")}
-                  disabled={addingMember}
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                >
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
-                </Select>
+                <div className="w-28 shrink-0">
+                  <Select
+                    value={newMemberRole}
+                    onChange={(e) => setNewMemberRole(e.target.value as "member" | "admin")}
+                    disabled={addingMember}
+                    className="h-9 rounded-md border bg-background px-3 text-sm"
+                  >
+                    <option value="member">Member</option>
+                    <option value="admin">Admin</option>
+                  </Select>
+                </div>
                 <Button
                   type="submit"
                   size="sm"

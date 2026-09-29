@@ -61,4 +61,47 @@ describe("MultiSelect", () => {
 
     expect(onChange).toHaveBeenCalledWith(["converted_to_draft"]);
   });
+
+  it("reports every keystroke via onSearchChange instead of filtering options locally", async () => {
+    const user = userEvent.setup();
+    const onSearchChange = jest.fn();
+
+    render(
+      <MultiSelect
+        options={["alice@example.com"]}
+        selected={[]}
+        onChange={jest.fn()}
+        placeholder="Add members..."
+        onSearchChange={onSearchChange}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /add members/i }));
+    await user.type(screen.getByPlaceholderText("Search..."), "bob");
+
+    await waitFor(() => expect(onSearchChange).toHaveBeenLastCalledWith("bob"));
+
+    // The caller (not this component) owns filtering when onSearchChange is
+    // wired up, so an option that doesn't match the typed query — but was
+    // handed in via `options`, e.g. server-side search results — still shows.
+    expect(screen.getByRole("button", { name: /alice@example.com/i })).toBeInTheDocument();
+  });
+
+  it("shows a searching indicator while an async search is in flight", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MultiSelect
+        options={[]}
+        selected={[]}
+        onChange={jest.fn()}
+        placeholder="Add members..."
+        onSearchChange={jest.fn()}
+        searchLoading
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /add members/i }));
+    expect(screen.getByText("Searching…")).toBeInTheDocument();
+  });
 });
