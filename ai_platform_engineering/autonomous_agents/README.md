@@ -132,6 +132,14 @@ The server generates the task id and therefore the final endpoint:
 secret and returns it once after creation. Slack and PagerDuty issue their own
 secret, which the setup modal requires the user to paste back into CAIPE.
 
+For GitHub, open repository **Settings → Webhooks → your webhook** and set
+**Content type** to `application/json`. Form-encoded bodies
+(`application/x-www-form-urlencoded`) cannot be parsed by the receiver, so payload
+filters do not match. GitHub's successful delivery status confirms receipt, not
+execution: check the delivery's **Response** for `status: accepted` with a run id
+or `reason: filter_mismatch` with no run. After changing the content type, trigger
+a new matching event to test.
+
 Structured filters are applied to authenticated deliveries before deduplication
 or queueing for every provider. Conditions use AND; the exact values within one
 condition use OR. Payload conditions accept bounded dot paths such as

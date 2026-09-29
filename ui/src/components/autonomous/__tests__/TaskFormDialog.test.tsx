@@ -130,6 +130,36 @@ it("configures safe header and payload filters", async () => {
   ));
 });
 
+it("shows the GitHub JSON requirement before creation even with filtering off", () => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+
+  expect(screen.getByLabelText(/only run the agent when all conditions match/i)).not.toBeChecked();
+  const notice = screen.getByRole("note", { name: "GitHub content type requirement" });
+  expect(notice).toHaveTextContent("set Content type to application/json");
+  expect(notice).toHaveTextContent("application/x-www-form-urlencoded");
+  expect(notice).toHaveTextContent("payload filters will not match");
+  expect(notice).toHaveTextContent("status: accepted");
+  expect(notice).toHaveTextContent("reason: filter_mismatch");
+});
+
+it("shows the GitHub JSON requirement when editing an existing webhook", () => {
+  renderDialog({ task: {
+    ...existingTask(),
+    trigger: { type: "webhook", provider: "github", has_secret: true },
+  } });
+
+  expect(screen.getByRole("note", { name: "GitHub content type requirement" })).toBeVisible();
+});
+
+it.each(["jira", "slack", "pagerduty"])("does not show GitHub-specific guidance for %s", (provider) => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: provider } });
+
+  expect(screen.queryByRole("note", { name: "GitHub content type requirement" })).not.toBeInTheDocument();
+});
+
 it("links GitHub webhook documentation and never accepts filter code", () => {
   renderDialog();
   fireEvent.click(screen.getByRole("button", { name: "webhook" }));
@@ -185,6 +215,9 @@ it("stays open after GitHub creation and shows the full URL plus one-time secret
   fireEvent.click(screen.getByRole("button", { name: /create task/i }));
 
   expect(await screen.findByTestId("webhook-setup-step")).toBeInTheDocument();
+  expect(screen.getByRole("note", { name: "GitHub content type requirement" })).toHaveTextContent(
+    "set Content type to application/json",
+  );
   expect(screen.getByTestId("webhook-url-value")).toHaveTextContent(
     "http://localhost/api/v1/hooks/daily-branch-summary-41a9",
   );
