@@ -30,7 +30,7 @@ dependencies = [
 # Adds ~1GB to image size (Chromium browser + dependencies)
 playwright = [
     "scrapy-playwright==0.0.48",
-    "playwright==1.62.0",
+    "playwright==1.63.0",
 ]
 dev = [
     "pytest==9.1.1",
