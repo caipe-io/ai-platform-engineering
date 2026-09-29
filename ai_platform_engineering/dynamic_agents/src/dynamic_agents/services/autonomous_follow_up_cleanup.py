@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from pymongo.errors import PyMongoError
 
+from dynamic_agents.config import get_settings
 from dynamic_agents.services.mongo import MongoDBService
 
 logger = logging.getLogger(__name__)
@@ -17,16 +17,49 @@ COPY_LEASE = timedelta(minutes=5)
 SWEEP_SECONDS = 60
 
 
-def publish_follow_up_chat(db: Any, record: dict) -> dict:
+class FollowUpContextUnavailable(HTTPException):
+    """The ready mapping is stale; an explicit user request may create a new copy."""
+
+
+class FollowUpArchived(HTTPException):
+    """Keep the archived conversation and its mapping until the user restores it."""
+
+
+def _invalidate_ready_copy(db: Any, record: dict) -> None:
+    db["autonomous_follow_up_chats"].update_one(
+        {"_id": record["_id"], "token": record["token"], "state": "ready",
+         "conversation._id": record["conversation"]["_id"]},
+        {"$set": {"state": "failed"}, "$unset": {"conversation": ""}},
+    )
+    raise FollowUpContextUnavailable(409, "This follow-up was removed or its saved context expired.")
+
+
+def publish_follow_up_chat(db: Any, record: dict, *, checkpoint_collection: str | None = None) -> dict:
     """Idempotently publish a completed copy, including after a restart."""
     conversation = record["conversation"]
     existing = db["conversations"].find_one({"_id": conversation["_id"]})
     if existing and existing.get("deleted_at"):
-        raise HTTPException(409, "This follow-up chat is in the archive. Restore it before continuing.")
+        raise FollowUpArchived(409, "This follow-up chat is in the archive. Restore it before continuing.")
+    collection = record.get("checkpoint_collection") or checkpoint_collection or get_settings().checkpoint_collection
+    if not db[collection].find_one({"thread_id": conversation["_id"], "checkpoint_ns": ""}, {"_id": 1}):
+        _invalidate_ready_copy(db, record)
+    result = {"conversation_id": conversation["_id"], "run_id": record["run_id"]}
+    if existing:
+        # Do not upsert a chat another request could be permanently deleting.
+        return result
+    # Only a journaled, unfinished publication may recreate a missing row.
+    # Once published, a missing conversation means it was permanently removed.
+    if not db[ATTEMPTS_COLLECTION].find_one({"_id": conversation["_id"]}, {"_id": 1}):
+        _invalidate_ready_copy(db, record)
+    if not db["autonomous_follow_up_chats"].find_one({
+        "_id": record["_id"], "token": record["token"], "state": "ready",
+        "conversation._id": conversation["_id"],
+    }, {"_id": 1}):
+        raise HTTPException(409, "This follow-up changed during publication. Please try again.")
     db["conversations"].update_one(
         {"_id": conversation["_id"]}, {"$setOnInsert": conversation}, upsert=True,
     )
-    return {"conversation_id": conversation["_id"], "run_id": record["run_id"]}
+    return result
 
 
 def renew_copy_lease(db: Any, attempt: dict) -> None:
@@ -49,6 +82,10 @@ def cleanup_copy_attempt(db: Any, attempt: dict) -> None:
     cleanup removes those late writes even if it subsequently crashes. Never
     TTL these records independently of their copied artifacts.
     """
+    # Validate all deletion coordinates before removing any artifact.
+    for field in ("_id", "registry_id", "checkpoint_collection", "writes_collection", "gridfs_bucket"):
+        if not isinstance(attempt.get(field), str) or not attempt[field]:
+            raise ValueError(f"Invalid follow-up copy journal field: {field}")
     destination = attempt["_id"]
     registry = db["autonomous_follow_up_chats"]
     journal = db[ATTEMPTS_COLLECTION]
@@ -68,15 +105,18 @@ def cleanup_copy_attempt(db: Any, attempt: dict) -> None:
     elif current and current.get("state") == "ready" and current["conversation"]["_id"] == destination:
         # A committed copy must become visible even if the original request
         # died before publication and the user never retries. Preserve archives.
-        if not db["conversations"].find_one({"_id": destination}, {"_id": 1}):
-            try:
-                publish_follow_up_chat(db, current)
-            except HTTPException as exc:
-                # A concurrent request may publish and archive it after our read.
-                if exc.status_code != 409:
-                    raise
-        journal.delete_one({"_id": destination})
-        return
+        try:
+            publish_follow_up_chat(db, current, checkpoint_collection=attempt["checkpoint_collection"])
+        except FollowUpContextUnavailable:
+            # No saved context: revoke the stale mapping and clean the attempt,
+            # never publish an empty chat or re-create a permanently deleted one.
+            pass
+        except FollowUpArchived:
+            journal.delete_one({"_id": destination})
+            return
+        else:
+            journal.delete_one({"_id": destination})
+            return
     # Also preserve published chats if their task/registry was later removed.
     if db["conversations"].find_one({"_id": destination}, {"_id": 1}):
         journal.delete_one({"_id": destination})
@@ -108,7 +148,7 @@ def finish_copy_attempt(db: Any, attempt: dict, *, writer_stopped: bool) -> None
         journal = db[ATTEMPTS_COLLECTION]
         journal.update_one({"_id": attempt["_id"]}, {"$set": {"writer_stopped": writer_stopped}})
         cleanup_copy_attempt(db, {**attempt, "writer_stopped": writer_stopped})
-    except PyMongoError:
+    except Exception:  # noqa: BLE001 — cleanup must not replace the request's result/error
         # The pre-write journal survives database outages and process restarts.
         logger.exception("Follow-up copy cleanup deferred for attempt %s", attempt["_id"])
 
@@ -122,8 +162,14 @@ def reap_copy_attempts(mongo: MongoDBService) -> None:
     }).sort("cleanup_after", 1).limit(100):
         try:
             cleanup_copy_attempt(db, attempt)
-        except PyMongoError:
-            logger.exception("Could not clean follow-up copy attempt %s; will retry", attempt["_id"])
+        except Exception:  # noqa: BLE001 — isolate corrupt records and unexpected storage failures
+            logger.exception("Could not clean follow-up copy attempt %s; will retry", attempt.get("_id"))
+            try:
+                db[ATTEMPTS_COLLECTION].update_one({"_id": {"$eq": attempt["_id"]}}, {"$set": {
+                    "cleanup_after": datetime.now(timezone.utc) + timedelta(seconds=SWEEP_SECONDS),
+                }})
+            except Exception:  # noqa: BLE001 — a retry-bookkeeping failure must not stop this batch
+                logger.exception("Could not defer follow-up copy attempt %s", attempt.get("_id"))
 
 
 async def run_copy_cleanup(mongo: MongoDBService) -> None:
@@ -131,6 +177,6 @@ async def run_copy_cleanup(mongo: MongoDBService) -> None:
     while True:
         try:
             await asyncio.to_thread(reap_copy_attempts, mongo)
-        except PyMongoError:
+        except Exception:  # noqa: BLE001 — supervise the long-lived worker; cancellation still propagates
             logger.exception("Follow-up copy recovery unavailable; will retry")
         await asyncio.sleep(SWEEP_SECONDS)

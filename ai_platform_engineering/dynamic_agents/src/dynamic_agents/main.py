@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 
 import dotenv
 
@@ -117,18 +117,20 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        copy_cleanup.cancel()
-        with suppress(asyncio.CancelledError):
-            await copy_cleanup
-
-    # Cleanup on shutdown
-    logger.info("Shutting down Dynamic Agents service...")
-
-    # Stop sweep and clear agent runtime cache
-    await cache.stop()
-
-    # Disconnect MongoDB
-    mongo.disconnect()
+        logger.info("Shutting down Dynamic Agents service...")
+        try:
+            copy_cleanup.cancel()
+            try:
+                _ = await copy_cleanup
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 — an already-failed worker must not skip shutdown
+                logger.exception("Follow-up recovery worker failed before shutdown")
+        finally:
+            try:
+                await cache.stop()
+            finally:
+                mongo.disconnect()
 
 
 def create_app() -> FastAPI:

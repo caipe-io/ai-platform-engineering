@@ -15,6 +15,7 @@ import hmac
 import json
 import time
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -576,9 +577,14 @@ class TestInitialFireFiltering:
 
         assert exc_info.value.status_code == 404
 
-    async def test_nonmatching_action_is_acknowledged_without_a_run(self, monkeypatch):
+    @pytest.mark.parametrize("provider,signature_header", [
+        ("github", "X-Hub-Signature-256"), ("jira", "X-Hub-Signature"),
+    ])
+    async def test_nonmatching_action_is_acknowledged_without_a_run(self, monkeypatch, provider, signature_header):
         """An authenticated but irrelevant delivery consumes no run capacity."""
         _set_settings(monkeypatch, debug=False)
+        log_info = MagicMock()
+        monkeypatch.setattr(webhooks_route.logger, "info", log_info)
 
         async def unexpected_dispatch(**_kwargs: Any) -> None:
             raise AssertionError("A filter mismatch must not reach dispatch")
@@ -595,11 +601,12 @@ class TestInitialFireFiltering:
             _register(
                 _make_task(
                     secret="task-secret",
+                    provider=provider,
                     webhook_filter=WebhookDeliveryFilter(
                         conditions=[
                             WebhookFilterCondition(
                                 source="header",
-                                field="X-GitHub-Event",
+                                field="X-Webhook-Event",
                                 values=["pull_request"],
                             ),
                             WebhookFilterCondition(source="payload", field="action", values=["closed"]),
@@ -617,9 +624,9 @@ class TestInitialFireFiltering:
                     "/api/v1/hooks/wh-1",
                     content=body,
                     headers={
-                        "X-GitHub-Event": "pull_request",
+                        "X-Webhook-Event": "pull_request",
                         "X-GitHub-Delivery": "delivery-opened",
-                        "X-Hub-Signature-256": _hex_sig("task-secret", body),
+                        signature_header: _hex_sig("task-secret", body),
                     },
                 )
 
@@ -629,6 +636,11 @@ class TestInitialFireFiltering:
                 "reason": "filter_mismatch",
                 "task_id": "wh-1",
             }
+            log_info.assert_any_call(
+                "Ignoring %s delivery that did not match the filter for task '%s'",
+                provider,
+                "wh-1",
+            )
         finally:
             webhook_runtime._webhook_tasks.clear()
 

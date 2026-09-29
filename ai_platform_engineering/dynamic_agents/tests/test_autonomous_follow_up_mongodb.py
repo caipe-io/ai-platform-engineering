@@ -353,3 +353,95 @@ def test_ambiguous_write_committing_after_local_cleanup_is_reaped(
     original_copy(s.saver, "source", attempt["_id"], s.run["finished_at"])
     cleanup.reap_copy_attempts(s.mongo)
     assert s.snapshot() == s.before
+
+
+@pytest.mark.parametrize("delete_checkpoint", [True, False])
+def test_permanently_deleted_follow_up_gets_fresh_context_not_resurrected(
+    copied_run: SimpleNamespace, delete_checkpoint: bool,
+) -> None:
+    s = copied_run
+    old = s.create()["conversation_id"]
+    s.db["conversations"].delete_one({"_id": old})
+    s.db["messages"].delete_many({"conversation_id": old})
+    if delete_checkpoint:
+        s.saver.delete_thread(old)
+    # Also cover deletion in progress: its old checkpoint may still exist.
+    result = s.create()
+    assert result["conversation_id"] != old
+    assert not s.db["conversations"].find_one({"_id": old})
+    state = s.graph.get_state({"configurable": {"thread_id": result["conversation_id"]}}).values
+    assert [message.content for message in state["messages"]] == ["Private prompt", "Private result"]
+    assert s.create() == result
+
+
+def test_deleted_follow_up_with_expired_source_never_opens_empty_chat(copied_run: SimpleNamespace) -> None:
+    s = copied_run
+    old = s.create()["conversation_id"]
+    s.db["conversations"].delete_one({"_id": old})
+    s.db["messages"].delete_many({"conversation_id": old})
+    s.saver.delete_thread(old)
+    s.saver.delete_thread("source")
+    with pytest.raises(HTTPException, match="no longer available") as error:
+        s.create()
+    assert error.value.status_code == 409
+    assert s.db["conversations"].count_documents({}) == 0
+    assert s.db["messages"].count_documents({}) == 0
+
+
+def test_expired_destination_does_not_reset_existing_visible_history(copied_run: SimpleNamespace) -> None:
+    s = copied_run
+    old = s.create()["conversation_id"]
+    s.db["conversations"].update_one({"_id": old}, {"$set": {"title": "My renamed follow-up"}})
+    s.saver.delete_thread(old)
+    result = s.create()
+    assert result["conversation_id"] != old
+    assert s.db["conversations"].find_one({"_id": old})["title"] == "My renamed follow-up"
+    assert s.db["messages"].count_documents({"conversation_id": old}) == 2
+
+
+def test_ready_copy_uses_its_saved_checkpoint_collection(copied_run: SimpleNamespace) -> None:
+    s = copied_run
+    result = s.create()
+    destination = result["conversation_id"]
+    rows = list(s.db[s.settings.checkpoint_collection].find({"thread_id": destination}))
+    s.db["custom_snapshots"].insert_many(rows)
+    s.saver.delete_thread(destination)
+    s.db["autonomous_follow_up_chats"].update_one({}, {"$set": {"checkpoint_collection": "custom_snapshots"}})
+    assert s.create() == result
+
+
+def test_recovery_never_publishes_ready_copy_without_checkpoint(
+    copied_run: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = copied_run
+    with monkeypatch.context() as patch:
+        patch.setattr(service, "publish_follow_up_chat", MagicMock(side_effect=SystemExit("interrupted")))
+        patch.setattr(service, "finish_copy_attempt", lambda *_args, **_kwargs: None)
+        with pytest.raises(SystemExit):
+            s.create()
+    attempt = expire_attempt(s)
+    s.saver.delete_thread(attempt["_id"])
+    cleanup.reap_copy_attempts(s.mongo)
+    assert s.db["conversations"].count_documents({}) == 0
+    assert s.db["messages"].count_documents({}) == 0
+    assert s.db["autonomous_follow_up_chats"].find_one()["state"] == "failed"
+
+
+def test_malformed_journals_are_deferred_without_starving_valid_cleanup(copied_run: SimpleNamespace) -> None:
+    s = copied_run
+    past = datetime.now(timezone.utc) - timedelta(minutes=10)
+    journal = s.db[cleanup.ATTEMPTS_COLLECTION]
+    bad = [{"_id": str(uuid4()), "cleanup_after": past} for _ in range(101)]
+    journal.insert_many(bad)
+    destination = str(uuid4())
+    journal.insert_one({
+        "_id": destination, "registry_id": "failed-copy", "checkpoint_collection": s.settings.checkpoint_collection,
+        "writes_collection": s.settings.checkpoint_writes_collection, "gridfs_bucket": "agent_files",
+        "writer_stopped": True, "cleanup_after": past + timedelta(seconds=1),
+    })
+    s.db[s.settings.checkpoint_collection].insert_one({"thread_id": destination, "private": "partial copy"})
+    cleanup.reap_copy_attempts(s.mongo)
+    cleanup.reap_copy_attempts(s.mongo)
+    assert not journal.find_one({"_id": destination})
+    assert journal.count_documents({"cleanup_after": {"$gt": datetime.now(timezone.utc)}}) == 101
+    assert s.snapshot() == s.before

@@ -22,6 +22,7 @@ from dynamic_agents.models import DynamicAgentConfig, UserContext
 from dynamic_agents.services.autonomous_follow_up_cleanup import (
     ATTEMPTS_COLLECTION,
     COPY_LEASE,
+    FollowUpContextUnavailable,
     finish_copy_attempt,
     publish_follow_up_chat,
     renew_copy_lease,
@@ -134,16 +135,10 @@ def create_follow_up_chat(
     identity = user.email.strip().lower()
     key = str(uuid5(NAMESPACE_URL, f"autonomous-follow-up:{run['task_id']}:{run['run_id']}:{identity}"))
     registry = db["autonomous_follow_up_chats"]
-    existing = registry.find_one({"_id": key})
-    if existing and existing.get("state") == "ready":
-        return publish_follow_up_chat(db, existing)
-
     now = datetime.now(timezone.utc)
     destination_id = str(uuid4())
     token = destination_id
     backend = agent.backend.config if agent.backend else None
-    if backend and backend.fs_namespace:
-        raise HTTPException(409, "This agent uses a shared file namespace; an isolated follow-up is not supported.")
     checkpoint_collection = (
         backend.checkpoint_collection if backend and backend.checkpoint_collection
         else settings.checkpoint_collection
@@ -152,6 +147,16 @@ def create_follow_up_chat(
         f"{backend.checkpoint_collection}_writes" if backend and backend.checkpoint_collection
         else settings.checkpoint_writes_collection
     )
+    existing = registry.find_one({"_id": key})
+    if existing and existing.get("state") == "ready":
+        try:
+            return publish_follow_up_chat(db, existing, checkpoint_collection=checkpoint_collection)
+        except FollowUpContextUnavailable:
+            # Never reuse a deleted/expired destination. Re-copy from the run
+            # into a fresh ID, or fail if the source is no longer available.
+            pass
+    if backend and backend.fs_namespace:
+        raise HTTPException(409, "This agent uses a shared file namespace; an isolated follow-up is not supported.")
     attempt = {
         "_id": destination_id, "registry_id": key,
         "checkpoint_collection": checkpoint_collection, "writes_collection": writes_collection,
@@ -164,6 +169,7 @@ def create_follow_up_chat(
             {"$set": {
                 "state": "creating", "token": token, "destination_id": destination_id, "lease_until": now + COPY_LEASE,
                 "owner_id": identity, "task_id": run["task_id"], "run_id": run["run_id"],
+                "checkpoint_collection": checkpoint_collection,
             }},
             upsert=True,
             return_document=ReturnDocument.AFTER,
@@ -171,7 +177,7 @@ def create_follow_up_chat(
     except DuplicateKeyError:
         existing = registry.find_one({"_id": key})
         if existing and existing.get("state") == "ready":
-            return publish_follow_up_chat(db, existing)
+            return publish_follow_up_chat(db, existing, checkpoint_collection=checkpoint_collection)
         raise HTTPException(409, "This follow-up chat is being prepared. Please try again shortly.") from None
     if not claimed:
         raise HTTPException(409, "This follow-up chat is being prepared. Please try again shortly.")

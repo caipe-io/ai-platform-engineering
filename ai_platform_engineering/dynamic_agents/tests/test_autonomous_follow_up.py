@@ -229,6 +229,7 @@ def branch_setup(monkeypatch: pytest.MonkeyPatch) -> tuple:
     record: dict = {}
 
     def claim(_query: dict, update: dict, **_kwargs: object) -> dict:
+        record["_id"] = _query["_id"]
         record.update(update["$set"])
         return dict(record)
 

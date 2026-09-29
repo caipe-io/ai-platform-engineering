@@ -326,10 +326,11 @@ async def receive_webhook(
     context = _parse_context(body)
     if not _matches_webhook_filter(task, request.headers, context):
         # A valid provider delivery that the task intentionally does not
-        # consume is a successful receipt. Return 200 so GitHub does not retry,
+        # consume is a successful receipt. Return 200 so the provider does not retry,
         # and do not spend dedup-store, queue, run-history, or LLM capacity.
         logger.info(
-            "Ignoring GitHub delivery that did not match the filter for task '%s'",
+            "Ignoring %s delivery that did not match the filter for task '%s'",
+            adapter.provider_id,
             task_id,
         )
         return {
