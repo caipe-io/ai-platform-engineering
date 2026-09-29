@@ -99,3 +99,48 @@ it("searches the full user directory instead of only the loaded first page", asy
     screen.queryByRole("button", { name: /alice@example\.com/i }),
   ).not.toBeInTheDocument();
 });
+
+// Regression guard: onSearchChange puts MultiSelect into a mode where it no
+// longer filters `options` itself — selecting a result must still work.
+it("selects a server-searched result and submits it as a team member", async () => {
+  const user = userEvent.setup();
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (isUsersGet(url)) {
+      if (url.includes("search=zoe")) {
+        return jsonResponse({ users: [{ email: "zoe@example.com" }] });
+      }
+      return jsonResponse({ users: [] });
+    }
+    if (url === "/api/admin/teams" && init?.method === "POST") {
+      return jsonResponse({ success: true, data: {} });
+    }
+    return jsonResponse({ success: true, data: {} });
+  });
+
+  render(
+    <CreateTeamDialog open onOpenChange={jest.fn()} onSuccess={jest.fn()} />,
+  );
+
+  await user.click(
+    screen.getByRole("button", { name: /search and select members/i }),
+  );
+  await user.type(
+    screen.getByPlaceholderText("Search by name or email..."),
+    "zoe",
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /zoe@example\.com/i }),
+  );
+
+  await user.type(screen.getByLabelText(/team name/i), "Platform");
+  await user.click(screen.getByRole("button", { name: /create team/i }));
+
+  await waitFor(() => {
+    const postCall = fetchMock.mock.calls.find(
+      ([url, init]) => url === "/api/admin/teams" && (init as RequestInit)?.method === "POST",
+    );
+    expect(postCall).toBeDefined();
+    const body = JSON.parse((postCall![1] as RequestInit).body as string);
+    expect(body.members).toEqual(["zoe@example.com"]);
+  });
+});

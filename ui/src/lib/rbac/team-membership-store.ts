@@ -93,6 +93,10 @@ function buildStatusFilter(opts: QueryOptions | undefined): Record<string, unkno
   return opts?.includeRemoved ? {} : { status: "active" };
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Load all active members of a single team, deduplicated by identity_key
  * with role escalation applied. Returns an empty array if the team has
@@ -309,12 +313,10 @@ export async function loadActiveTeamMembersPage(
     // directory into `searchMatchedEmails` and OR'd in here.
     const clauses: Record<string, unknown>[] = [];
     if (search) {
-      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      clauses.push({ user_email: { $regex: escaped, $options: "i" } });
+      clauses.push({ user_email: { $regex: escapeRegex(search), $options: "i" } });
     }
     for (const email of searchMatchedEmails) {
-      const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      clauses.push({ user_email: { $regex: `^${escaped}$`, $options: "i" } });
+      clauses.push({ user_email: { $regex: `^${escapeRegex(email)}$`, $options: "i" } });
     }
     if (clauses.length === 1) {
       Object.assign(match, clauses[0]);

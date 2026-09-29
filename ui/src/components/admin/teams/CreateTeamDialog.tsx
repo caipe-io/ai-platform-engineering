@@ -82,7 +82,12 @@ export function CreateTeamDialog({
           }
         })
         .catch(() => {})
-        .finally(() => setMemberSearchLoading(false));
+        .finally(() => {
+          // A newer keystroke may have already aborted this request and
+          // started its own — don't let this stale request's `finally`
+          // clear the loading flag the newer one just set to true.
+          if (!ctrl.signal.aborted) setMemberSearchLoading(false);
+        });
     }, 200);
     return () => {
       clearTimeout(handle);

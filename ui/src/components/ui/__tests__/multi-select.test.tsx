@@ -87,6 +87,26 @@ describe("MultiSelect", () => {
     expect(screen.getByRole("button", { name: /alice@example.com/i })).toBeInTheDocument();
   });
 
+  it("still selects a server-driven option on click when onSearchChange is wired up", async () => {
+    const user = userEvent.setup();
+    const onChange = jest.fn();
+
+    render(
+      <MultiSelect
+        options={["alice@example.com"]}
+        selected={[]}
+        onChange={onChange}
+        placeholder="Add members..."
+        onSearchChange={jest.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /add members/i }));
+    await user.click(screen.getByRole("button", { name: /alice@example.com/i }));
+
+    expect(onChange).toHaveBeenCalledWith(["alice@example.com"]);
+  });
+
   it("shows a searching indicator while an async search is in flight", async () => {
     const user = userEvent.setup();
 

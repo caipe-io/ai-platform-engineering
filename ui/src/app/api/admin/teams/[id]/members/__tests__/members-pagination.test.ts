@@ -198,6 +198,17 @@ describe("GET /api/admin/teams/[id]/members", () => {
     });
   });
 
+  it("skips the Keycloak lookup for a single-character search", async () => {
+    seedTeam();
+    await callGet(`/api/admin/teams/${TEAM_ID}/members?search=a`);
+
+    expect(mockSearchRealmUsers).not.toHaveBeenCalled();
+    expect(mockLoadActiveTeamMembersPage).toHaveBeenCalledWith(
+      "platform",
+      expect.objectContaining({ search: "a", searchMatchedEmails: [] }),
+    );
+  });
+
   it("resolves a search term to matching emails via Keycloak name/email lookup", async () => {
     seedTeam();
     mockSearchRealmUsers.mockResolvedValueOnce([

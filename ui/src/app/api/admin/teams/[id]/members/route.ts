@@ -205,8 +205,11 @@ export const GET = withErrorHandler(async (
   // own `search` param already matches username/email/first/last name.
   // Best-effort: if the directory lookup fails, fall back to the plain
   // email substring match rather than failing the whole roster request.
+  // Gate the extra Keycloak round-trip on a minimum length, matching the
+  // client's own debounce threshold — a single-character search wouldn't
+  // usefully narrow the directory lookup anyway.
   let searchMatchedEmails: string[] = [];
-  if (search) {
+  if (search.length >= 2) {
     try {
       const matches = await searchRealmUsers({ search, max: 50 });
       searchMatchedEmails = matches
