@@ -386,6 +386,7 @@ async function refreshAccessToken(token: {
     // they can use the Docker-internal hostname while OIDC_ISSUER stays
     // browser-facing. See provider config below for full rationale.
     const serverIssuer = process.env.OIDC_DISCOVERY_URL || issuer;
+    const configuredTokenEndpoint = process.env.OIDC_TOKEN_ENDPOINT?.trim();
     const clientId = process.env.OIDC_CLIENT_ID;
     const clientSecret = process.env.OIDC_CLIENT_SECRET;
 
@@ -429,23 +430,28 @@ async function refreshAccessToken(token: {
     // Inner function that performs the actual HTTP exchange.
     // Returns the token data on success, null for graceful races, or throws on real errors.
     const doExchange = async (): Promise<ExchangeResult> => {
-      // Discover the token endpoint from the OIDC issuer's well-known configuration.
-      // Falls back to Keycloak-style path if discovery fails.
+      // Prefer the explicitly configured in-cluster Keycloak token endpoint.
+      // The discovery document may advertise the public endpoint, causing
+      // server-side refreshes to hairpin through the public ALB/WAF.
       let tokenEndpoint: string;
-      try {
-        const wellKnownUrl = `${serverIssuer}/.well-known/openid-configuration`;
-        const discoveryResponse = await fetch(wellKnownUrl, { next: { revalidate: 3600 } });
-        if (discoveryResponse.ok) {
-          const discoveryDoc = await discoveryResponse.json();
-          tokenEndpoint = discoveryDoc.token_endpoint;
-          console.log("[Auth] Token endpoint from OIDC discovery:", tokenEndpoint);
-        } else {
-          console.warn("[Auth] OIDC discovery failed, falling back to Keycloak-style path");
+      if (configuredTokenEndpoint) {
+        tokenEndpoint = configuredTokenEndpoint;
+      } else {
+        try {
+          const wellKnownUrl = `${serverIssuer}/.well-known/openid-configuration`;
+          const discoveryResponse = await fetch(wellKnownUrl, { next: { revalidate: 3600 } });
+          if (discoveryResponse.ok) {
+            const discoveryDoc = await discoveryResponse.json();
+            tokenEndpoint = discoveryDoc.token_endpoint;
+            console.log("[Auth] Token endpoint from OIDC discovery:", tokenEndpoint);
+          } else {
+            console.warn("[Auth] OIDC discovery failed, falling back to Keycloak-style path");
+            tokenEndpoint = `${serverIssuer}/protocol/openid-connect/token`;
+          }
+        } catch (discoveryError) {
+          console.warn("[Auth] OIDC discovery error, falling back to Keycloak-style path:", discoveryError);
           tokenEndpoint = `${serverIssuer}/protocol/openid-connect/token`;
         }
-      } catch (discoveryError) {
-        console.warn("[Auth] OIDC discovery error, falling back to Keycloak-style path:", discoveryError);
-        tokenEndpoint = `${serverIssuer}/protocol/openid-connect/token`;
       }
 
       console.log("[Auth] Refreshing access token...");
@@ -535,6 +541,10 @@ async function refreshAccessToken(token: {
   }
 }
 
+const publicOidcIssuer = process.env.OIDC_ISSUER?.replace(/\/$/, "");
+const internalOidcIssuer = (process.env.OIDC_DISCOVERY_URL || publicOidcIssuer)?.replace(/\/$/, "");
+const internalOidcTokenEndpoint = process.env.OIDC_TOKEN_ENDPOINT?.trim();
+
 export const authOptions: NextAuthOptions = {
   providers: [
     {
@@ -546,21 +556,32 @@ export const authOptions: NextAuthOptions = {
       // browser-facing URL (e.g. http://localhost:7080/realms/caipe) so the
       // "iss" claim in JWTs validates against what the browser was redirected to.
       // Falls back to OIDC_ISSUER when not set (single-URL deployments).
-      wellKnown: process.env.OIDC_DISCOVERY_URL
-        ? `${process.env.OIDC_DISCOVERY_URL}/.well-known/openid-configuration`
+      wellKnown: internalOidcTokenEndpoint
+        ? undefined
+        : process.env.OIDC_DISCOVERY_URL
+          ? `${process.env.OIDC_DISCOVERY_URL}/.well-known/openid-configuration`
         : process.env.OIDC_ISSUER
           ? `${process.env.OIDC_ISSUER}/.well-known/openid-configuration`
           : undefined,
+      issuer: internalOidcTokenEndpoint ? publicOidcIssuer : undefined,
       // Keycloak issues regular refresh tokens for confidential clients
       // without needing offline_access scope. Requesting offline_access
       // requires extra Keycloak config and causes login failures if not
       // enabled on the client/realm. Regular refresh tokens are sufficient.
       authorization: {
+        ...(internalOidcTokenEndpoint ? { url: `${publicOidcIssuer}/protocol/openid-connect/auth` } : {}),
         params: {
           scope: "openid email profile groups",
           ...(process.env.OIDC_IDP_HINT ? { kc_idp_hint: process.env.OIDC_IDP_HINT } : {}),
         }
       },
+      token: internalOidcTokenEndpoint ? { url: internalOidcTokenEndpoint } : undefined,
+      userinfo: internalOidcTokenEndpoint
+        ? { url: `${internalOidcIssuer}/protocol/openid-connect/userinfo` }
+        : undefined,
+      jwks_endpoint: internalOidcTokenEndpoint
+        ? `${internalOidcIssuer}/protocol/openid-connect/certs`
+        : undefined,
       idToken: true,
       checks: ["pkce", "state"],
       clientId: process.env.OIDC_CLIENT_ID,
