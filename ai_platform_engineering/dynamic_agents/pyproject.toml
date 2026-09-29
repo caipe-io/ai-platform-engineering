@@ -21,7 +21,7 @@ dependencies = [
     # JWKS-based JWT validation in dynamic_agents.auth.jwks_validate
     # (vendored from ai_platform_engineering.utils.auth so the DA image
     # does not need to install the entire shared package).
-    "pyjwt[crypto]==2.13.0",
+    "pyjwt[crypto]==2.15.1",
     # S3 attachment store (services/attachment_store.py) uses boto3. Pinned to the
     # version cnoe-agent-utils resolves to so both share one boto3 in the workspace
     # lock; bump this in lockstep with cnoe-agent-utils when it moves.

@@ -28,7 +28,7 @@ dependencies = [
     "pyyaml==6.0.3",
     # Auth & utils
     "python-dotenv==1.2.2",
-    "PyJWT[crypto]==2.13.0",
+    "PyJWT[crypto]==2.15.1",
     "common",
     "pypdf==6.16.2",
 ]

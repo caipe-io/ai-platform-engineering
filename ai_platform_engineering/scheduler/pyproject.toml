@@ -13,7 +13,7 @@ dependencies = [
     "pytz==2026.3.post1",
     "python-dotenv==1.2.2",
     "httpx==0.28.1",
-    "pyjwt[crypto]==2.13.0",
+    "pyjwt[crypto]==2.15.1",
 ]
 
 [project.optional-dependencies]

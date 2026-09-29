@@ -94,5 +94,6 @@ unittest = [
 url = "https://pypi.org/simple/"
 
 [tool.uv]
-override-dependencies = ["protobuf==6.33.5"]
+# cnoe-agent-utils 0.5.0 pins a vulnerable langchain-anthropic release.
+override-dependencies = ["protobuf==6.33.5", "langchain-anthropic==1.4.6"]
 constraint-dependencies = ["pypdf==6.16.2"]
