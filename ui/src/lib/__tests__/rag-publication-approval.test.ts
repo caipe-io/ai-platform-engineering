@@ -233,6 +233,91 @@ describe("legacy RAG publication approval", () => {
       }),
     );
   });
+
+  // Regression: a request whose datasource has no Mongo row yet (e.g. a
+  // local-file upload still ingesting) must not be treated as a full-content
+  // mismatch just because the live "ownership" snapshot can't report content
+  // fields. Only ownership and the search audience are comparable here.
+  function requestWithBasis(overrides: {
+    requestedSearchTeamSlugs: string[];
+    snapshotSearchTeamSlugs: string[];
+  }): PublicationRequestDocument {
+    const base = request("owner-subject");
+    return {
+      ...base,
+      requested_state: {
+        search_team_slugs: overrides.requestedSearchTeamSlugs,
+        search_user_subjects: [],
+      },
+      revision_basis: {
+        source: {
+          source_id: "source-primary",
+          owner_team_slug: null,
+          owner_subject: "owner-subject",
+        },
+        search_team_slugs: overrides.snapshotSearchTeamSlugs,
+        search_user_subjects: [],
+      },
+    };
+  }
+
+  it("requires confirmation (not a hard conflict) when Search grew before a source row exists", async () => {
+    mockReadOpenFgaTuples.mockResolvedValue({
+      tuples: [
+        { key: { object: "knowledge_base:source-primary", relation: "reader", user: "team:reader-team#member" } },
+        { key: { object: "knowledge_base:source-primary", relation: "reader", user: "team:extra-team#member" } },
+      ],
+    });
+    jest.spyOn(global, "fetch").mockResolvedValueOnce(
+      response(200, {
+        datasource_id: "source-primary",
+        owner_team_slug: null,
+        owner_subject: "owner-subject",
+        creator_subject: "creator-subject",
+      }),
+    );
+    const publicationRequest = requestWithBasis({
+      requestedSearchTeamSlugs: ["reader-team"],
+      snapshotSearchTeamSlugs: ["reader-team"],
+    });
+
+    const error = await applyRagPublicationRequest(publicationRequest, "access-token").catch(
+      (caught) => caught,
+    );
+    expect(error).toMatchObject({ code: "PUBLICATION_DRIFT" });
+    expect(error.drift).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "search_team_slugs", after: ["extra-team", "reader-team"] }),
+      ]),
+    );
+  });
+
+  it("applies cleanly with no source row when nothing has actually changed", async () => {
+    mockReadOpenFgaTuples.mockResolvedValue({
+      tuples: [
+        { key: { object: "knowledge_base:source-primary", relation: "reader", user: "team:reader-team#member" } },
+      ],
+    });
+    jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(
+        response(200, {
+          datasource_id: "source-primary",
+          owner_team_slug: null,
+          owner_subject: "owner-subject",
+          creator_subject: "creator-subject",
+        }),
+      )
+      .mockResolvedValueOnce(response(200, { changed: true }));
+    const publicationRequest = requestWithBasis({
+      requestedSearchTeamSlugs: ["reader-team"],
+      snapshotSearchTeamSlugs: ["reader-team"],
+    });
+
+    await expect(
+      applyRagPublicationRequest(publicationRequest, "access-token"),
+    ).resolves.toEqual([]);
+  });
 });
 
 describe("datasource publication change detection", () => {

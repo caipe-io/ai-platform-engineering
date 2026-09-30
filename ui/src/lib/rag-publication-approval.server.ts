@@ -669,7 +669,7 @@ export async function applyRagPublicationRequest(
       ownerUpdate,
     );
     const previousBasis = request.revision_basis;
-    if (!source || !previousBasis) {
+    if (!previousBasis) {
       if (alreadyApplied) return appliedDrift;
       throw withDrift(
         new ApiError(
@@ -681,51 +681,75 @@ export async function applyRagPublicationRequest(
       );
     }
     const previousSource = (previousBasis.source ?? {}) as Record<string, unknown>;
-    const liveSourceProjection = revisionSourceProjection(source);
-    if (
-      String(previousSource.owner_team_slug ?? null) !==
-        String(liveSourceProjection.owner_team_slug ?? null) ||
-      String(previousSource.owner_subject ?? null) !==
-        String(liveSourceProjection.owner_subject ?? null)
-    ) {
-      throw withDrift(
-        new ApiError(
-          "This datasource's owner changed after approval was requested. Review the newer request instead.",
-          409,
-          "PUBLICATION_REVISION_CONFLICT",
-        ),
-        [],
-      );
-    }
-    const softItems: PublicationDriftItem[] = [];
-    const sourceUpdateFields = new Set(Object.keys(sourceUpdate));
-    const fields = new Set([
-      ...Object.keys(previousSource),
-      ...Object.keys(liveSourceProjection),
-    ]);
-    for (const field of fields) {
-      if (
-        field === "source_id" ||
-        field === "source_type" ||
-        field === "owner_team_slug" ||
-        field === "owner_subject"
-      ) {
-        continue;
-      }
-      const item = diffProjectionField(field, previousSource[field], liveSourceProjection[field]);
-      if (!item) continue;
-      softItems.push(
-        sourceUpdateFields.has(field)
-          ? { ...item, will_apply: publicationDriftDisplayValue(sourceUpdate[field]) }
-          : item,
-      );
-    }
     const previousSearchTeams = strings(
       (previousBasis as { search_team_slugs?: unknown }).search_team_slugs,
     );
     const previousSearchUsers = strings(
       (previousBasis as { search_user_subjects?: unknown }).search_user_subjects,
     );
+    const softItems: PublicationDriftItem[] = [];
+    if (source) {
+      const liveSourceProjection = revisionSourceProjection(source);
+      if (
+        String(previousSource.owner_team_slug ?? null) !==
+          String(liveSourceProjection.owner_team_slug ?? null) ||
+        String(previousSource.owner_subject ?? null) !==
+          String(liveSourceProjection.owner_subject ?? null)
+      ) {
+        throw withDrift(
+          new ApiError(
+            "This datasource's owner changed after approval was requested. Review the newer request instead.",
+            409,
+            "PUBLICATION_REVISION_CONFLICT",
+          ),
+          [],
+        );
+      }
+      const sourceUpdateFields = new Set(Object.keys(sourceUpdate));
+      const fields = new Set([
+        ...Object.keys(previousSource),
+        ...Object.keys(liveSourceProjection),
+      ]);
+      for (const field of fields) {
+        if (
+          field === "source_id" ||
+          field === "source_type" ||
+          field === "owner_team_slug" ||
+          field === "owner_subject"
+        ) {
+          continue;
+        }
+        const item = diffProjectionField(field, previousSource[field], liveSourceProjection[field]);
+        if (!item) continue;
+        softItems.push(
+          sourceUpdateFields.has(field)
+            ? { ...item, will_apply: publicationDriftDisplayValue(sourceUpdate[field]) }
+            : item,
+        );
+      }
+    } else {
+      // No Mongo row yet (e.g. a local-file upload still ingesting). Content
+      // fields aren't knowable until a row exists, so only ownership and the
+      // search audience — the fields the RAG server's ownership snapshot can
+      // actually report — are comparable here. Treating a missing row as a
+      // full-content mismatch would hard-conflict every such approval
+      // regardless of whether anything meaningful actually changed.
+      const liveOwnerTeamSlug = ownership?.owner_team_slug ?? null;
+      const liveOwnerSubject = ownership?.owner_subject ?? ownership?.creator_subject ?? null;
+      if (
+        String(previousSource.owner_team_slug ?? null) !== String(liveOwnerTeamSlug) ||
+        String(previousSource.owner_subject ?? null) !== String(liveOwnerSubject)
+      ) {
+        throw withDrift(
+          new ApiError(
+            "This datasource's owner changed after approval was requested. Review the newer request instead.",
+            409,
+            "PUBLICATION_REVISION_CONFLICT",
+          ),
+          [],
+        );
+      }
+    }
     if (
       publicationResourceRevision(previousSearchTeams) !==
       publicationResourceRevision(currentState.search_team_slugs)
