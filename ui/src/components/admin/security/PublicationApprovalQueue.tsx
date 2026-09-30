@@ -33,6 +33,8 @@ import {
 import { useUrlFilterParams } from "@/hooks/use-url-filter-params";
 import { cn } from "@/lib/utils";
 import type {
+  PublicationApprovalRule,
+  PublicationApprovalRuleKey,
   PublicationApprovalSettings,
   PublicationRequestDocument,
 } from "@/types/publication-approval";
@@ -83,6 +85,15 @@ const EMPTY_SETTINGS: PublicationApprovalSettings = {
   trusted_publisher_subjects: [],
   trusted_publisher_team_slugs: [],
   organization_wide_team_slugs: ["everyone"],
+  rules: {
+    rag_collection_sharing: { required: true, team_slugs: [] },
+    rag_collection_datasource_changes: { required: true, team_slugs: [] },
+    rag_collection_ownership_changes: { required: true, team_slugs: [] },
+    rag_datasource_sharing: { required: true, team_slugs: [] },
+    rag_datasource_material_changes: { required: true, team_slugs: [] },
+  },
+  slack_onboarding_team_slugs: [],
+  webex_onboarding_team_slugs: [],
   rag_reviewer_team_slugs: [],
   rag_reviewer_user_subjects: [],
   slack_reviewer_team_slugs: [],
@@ -426,6 +437,85 @@ function PolicySwitch({
   );
 }
 
+/** A single "require approval (on/off)" + "only for these teams" rule row. */
+function ApprovalRuleSetting({
+  rule,
+  label,
+  description,
+  teams,
+  parentDisabled = false,
+  onChange,
+}: {
+  rule: PublicationApprovalRule;
+  label: string;
+  description: string;
+  teams: TeamPickerOption[];
+  parentDisabled?: boolean;
+  onChange: (rule: PublicationApprovalRule) => void;
+}) {
+  return (
+    <div className="space-y-2 border-t border-border/60 pt-4 first:border-t-0 first:pt-0">
+      <PolicySwitch
+        checked={rule.required}
+        label={label}
+        description={description}
+        disabled={parentDisabled}
+        onChange={(value) => onChange({ ...rule, required: value })}
+      />
+      <div className="space-y-1">
+        <Label className="text-xs text-muted-foreground">
+          Only for these teams (leave empty for any team)
+        </Label>
+        <TeamMultiPicker
+          options={teams}
+          selected={rule.team_slugs}
+          disabled={parentDisabled || !rule.required}
+          onChange={(team_slugs) => onChange({ ...rule, team_slugs })}
+          placeholder="Any team"
+          searchPlaceholder="Search teams..."
+          ariaLabel={`${label} team scope`}
+          hideSlugSuffix
+          maxSelections={20}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** The "only for these teams" picker shared by the Slack and Webex onboarding scopes. */
+function TeamScopeFilter({
+  selected,
+  teams,
+  disabled,
+  ariaLabel,
+  onChange,
+}: {
+  selected: string[];
+  teams: TeamPickerOption[];
+  disabled: boolean;
+  ariaLabel: string;
+  onChange: (teamSlugs: string[]) => void;
+}) {
+  return (
+    <div className="space-y-1 border-t border-border/60 pt-4">
+      <Label className="text-xs text-muted-foreground">
+        Only for these teams (leave empty for any team)
+      </Label>
+      <TeamMultiPicker
+        options={teams}
+        selected={selected}
+        disabled={disabled}
+        onChange={onChange}
+        placeholder="Any team"
+        searchPlaceholder="Search teams..."
+        ariaLabel={ariaLabel}
+        hideSlugSuffix
+        maxSelections={20}
+      />
+    </div>
+  );
+}
+
 function NumberSetting({
   id,
   label,
@@ -729,6 +819,13 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
     }));
   };
 
+  const setRule = (key: PublicationApprovalRuleKey, rule: PublicationApprovalRule) => {
+    setSettings((current) => ({
+      ...current,
+      rules: { ...current.rules, [key]: rule },
+    }));
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -998,7 +1095,7 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
                     <div className="space-y-2">
                       <Label>Company-wide audiences</Label>
                       <p className="text-xs text-muted-foreground">
-                        Sharing with these teams always requires review, even when the team is the Owner. Usually includes Everyone.
+                        Sharing with these teams always requires review, even when the team is the Owner and even if a rule below is off. Usually includes Everyone.
                       </p>
                       <TeamMultiPicker
                         options={teams}
@@ -1013,6 +1110,64 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
                         ariaLabel="Company-wide audiences"
                         hideSlugSuffix
                         maxSelections={20}
+                      />
+                    </div>
+
+                    <div className="space-y-3 border-t border-border/60 pt-4">
+                      <div>
+                        <Label>Collections</Label>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Review rules for sharing, datasources, and ownership on RAG collections. Each rule can be scoped to specific teams.
+                        </p>
+                      </div>
+                      <ApprovalRuleSetting
+                        rule={settings.rules.rag_collection_sharing}
+                        label="Review collection sharing"
+                        description="Sharing a collection with a non-owner team."
+                        teams={teams}
+                        parentDisabled={!settings.require_rag_publication_approval}
+                        onChange={(rule) => setRule("rag_collection_sharing", rule)}
+                      />
+                      <ApprovalRuleSetting
+                        rule={settings.rules.rag_collection_datasource_changes}
+                        label="Review datasource changes on shared collections"
+                        description="Adding or removing a datasource on a collection with a broad audience."
+                        teams={teams}
+                        parentDisabled={!settings.require_rag_publication_approval}
+                        onChange={(rule) => setRule("rag_collection_datasource_changes", rule)}
+                      />
+                      <ApprovalRuleSetting
+                        rule={settings.rules.rag_collection_ownership_changes}
+                        label="Review ownership changes on shared collections"
+                        description="Changing owner or maintainer teams on a collection with a broad audience."
+                        teams={teams}
+                        parentDisabled={!settings.require_rag_publication_approval}
+                        onChange={(rule) => setRule("rag_collection_ownership_changes", rule)}
+                      />
+                    </div>
+
+                    <div className="space-y-3 border-t border-border/60 pt-4">
+                      <div>
+                        <Label>Datasources</Label>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Review rules for standalone datasources, outside of a collection.
+                        </p>
+                      </div>
+                      <ApprovalRuleSetting
+                        rule={settings.rules.rag_datasource_sharing}
+                        label="Review datasource sharing"
+                        description="Sharing a datasource with a new team."
+                        teams={teams}
+                        parentDisabled={!settings.require_rag_publication_approval}
+                        onChange={(rule) => setRule("rag_datasource_sharing", rule)}
+                      />
+                      <ApprovalRuleSetting
+                        rule={settings.rules.rag_datasource_material_changes}
+                        label="Review material changes on shared datasources"
+                        description="Changing the content of a datasource that already has a broad audience."
+                        teams={teams}
+                        parentDisabled={!settings.require_rag_publication_approval}
+                        onChange={(rule) => setRule("rag_datasource_material_changes", rule)}
                       />
                     </div>
 
@@ -1246,6 +1401,16 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
                         },
                       }))}
                     />
+                    <TeamScopeFilter
+                      teams={teams}
+                      selected={settings.slack_onboarding_team_slugs}
+                      disabled={!integrations.slack || !settings.require_slack_onboarding_approval}
+                      ariaLabel="Slack onboarding team scope"
+                      onChange={(slackOnboardingTeams) => setSettings((current) => ({
+                        ...current,
+                        slack_onboarding_team_slugs: slackOnboardingTeams,
+                      }))}
+                    />
                   </div>
                 </section>
 
@@ -1313,6 +1478,16 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
                           ...current.thresholds,
                           webex_space_members_without_approval: value,
                         },
+                      }))}
+                    />
+                    <TeamScopeFilter
+                      teams={teams}
+                      selected={settings.webex_onboarding_team_slugs}
+                      disabled={!integrations.webex || !settings.require_webex_onboarding_approval}
+                      ariaLabel="Webex onboarding team scope"
+                      onChange={(webexOnboardingTeams) => setSettings((current) => ({
+                        ...current,
+                        webex_onboarding_team_slugs: webexOnboardingTeams,
                       }))}
                     />
                   </div>

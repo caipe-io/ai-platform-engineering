@@ -476,6 +476,435 @@ describe("publication approval policy", () => {
     expect(plan.approver_team_slugs).toEqual(["slack-reviewers"]);
     expect(plan.risk_facts.organization_wide).toBe(false);
   });
+
+  it("applies a collection team share immediately when the sharing rule is off, but still reviews Everyone", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_collection_sharing: { required: false, team_slugs: [] },
+      },
+    });
+    const teamShare = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: [],
+        global_read: false,
+        source_ids: [],
+      },
+      requestedState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: ["finance-team"],
+        global_read: false,
+        source_ids: [],
+      },
+    });
+    expect(teamShare.requires_approval).toBe(false);
+
+    const everyoneShare = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: [],
+        global_read: false,
+        source_ids: [],
+      },
+      requestedState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: ["everyone"],
+        global_read: false,
+        source_ids: [],
+      },
+    });
+    expect(everyoneShare.requires_approval).toBe(true);
+  });
+
+  it("scopes the collection sharing rule to specific teams", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_collection_sharing: { required: true, team_slugs: ["finance-team"] },
+      },
+    });
+    const base = {
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: [],
+        global_read: false,
+        source_ids: [],
+      },
+    };
+
+    const outOfScope = planRagCollectionPublication({
+      ...base,
+      requestedState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: ["marketing-team"],
+        global_read: false,
+        source_ids: [],
+      },
+    });
+    expect(outOfScope.requires_approval).toBe(false);
+
+    const inScope = planRagCollectionPublication({
+      ...base,
+      requestedState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: ["finance-team"],
+        global_read: false,
+        source_ids: [],
+      },
+    });
+    expect(inScope.requires_approval).toBe(true);
+  });
+
+  it("applies a datasource add to a team-shared collection immediately when the source-changes rule is off, but still reviews Everyone", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_collection_datasource_changes: { required: false, team_slugs: [] },
+      },
+    });
+    const teamShared = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: ["finance-team"],
+        global_read: false,
+        source_ids: ["source-existing"],
+      },
+      requestedState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: ["finance-team"],
+        global_read: false,
+        source_ids: ["source-existing", "source-new"],
+      },
+    });
+    expect(teamShared.requires_approval).toBe(false);
+
+    const everyoneShared = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: ["everyone"],
+        global_read: false,
+        source_ids: ["source-existing"],
+      },
+      requestedState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: ["everyone"],
+        global_read: false,
+        source_ids: ["source-existing", "source-new"],
+      },
+    });
+    expect(everyoneShared.requires_approval).toBe(true);
+  });
+
+  it("scopes datasource-change review to collections shared with Everyone, not any specific team", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_collection_datasource_changes: { required: true, team_slugs: ["everyone"] },
+      },
+    });
+    const stateFor = (readerTeamSlugs: string[]) => ({
+      currentState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: readerTeamSlugs,
+        global_read: false,
+        source_ids: ["source-existing"],
+      },
+      requestedState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: readerTeamSlugs,
+        global_read: false,
+        source_ids: ["source-existing", "source-new"],
+      },
+    });
+
+    const teamOnly = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      ...stateFor(["finance-team"]),
+    });
+    expect(teamOnly.requires_approval).toBe(false);
+
+    const everyoneShared = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      ...stateFor(["everyone"]),
+    });
+    expect(everyoneShared.requires_approval).toBe(true);
+  });
+
+  it("applies a collection ownership change immediately when the ownership rule is off", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_collection_ownership_changes: { required: false, team_slugs: [] },
+      },
+    });
+    const plan = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["current-owner"],
+      currentState: {
+        maintainer_team_slugs: ["current-owner"],
+        reader_team_slugs: ["search-team"],
+        global_read: false,
+        source_ids: ["source-existing"],
+      },
+      requestedState: {
+        maintainer_team_slugs: ["new-owner"],
+        reader_team_slugs: ["search-team"],
+        global_read: false,
+        source_ids: ["source-existing"],
+      },
+    });
+
+    expect(plan.requires_approval).toBe(false);
+  });
+
+  it("scopes the collection ownership-changes rule to specific teams", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_collection_ownership_changes: { required: true, team_slugs: ["finance-team"] },
+      },
+    });
+    const stateFor = (readerTeamSlug: string) => ({
+      currentState: {
+        maintainer_team_slugs: ["current-owner"],
+        reader_team_slugs: [readerTeamSlug],
+        global_read: false,
+        source_ids: ["source-existing"],
+      },
+      requestedState: {
+        maintainer_team_slugs: ["new-owner"],
+        reader_team_slugs: [readerTeamSlug],
+        global_read: false,
+        source_ids: ["source-existing"],
+      },
+    });
+
+    const outOfScope = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["current-owner"],
+      ...stateFor("marketing-team"),
+    });
+    expect(outOfScope.requires_approval).toBe(false);
+
+    const inScope = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["current-owner"],
+      ...stateFor("finance-team"),
+    });
+    expect(inScope.requires_approval).toBe(true);
+  });
+
+  it("scopes datasource sharing review away from a people-only grant", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_datasource_sharing: { required: true, team_slugs: ["finance-team"] },
+      },
+    });
+    const plan = planRagPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: { search_team_slugs: [], search_user_subjects: [] },
+      requestedState: {
+        search_team_slugs: [],
+        search_user_subjects: ["new-person"],
+      },
+      ownerTeamSlug: "owner-team",
+    });
+
+    expect(plan.requires_approval).toBe(false);
+  });
+
+  it("still routes an org-wide datasource share to its delegated reviewers when the sharing rule's scope excludes it", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_datasource_sharing: { required: true, team_slugs: ["finance-team"] },
+      },
+      rag_reviewer_team_delegations: {
+        everyone: ["security-team"],
+      },
+    });
+    const plan = planRagPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: { search_team_slugs: [], search_user_subjects: [] },
+      requestedState: {
+        search_team_slugs: ["everyone"],
+        search_user_subjects: [],
+      },
+      ownerTeamSlug: "owner-team",
+    });
+
+    expect(plan.requires_approval).toBe(true);
+    expect(plan.risk_facts.target_team_slugs).toEqual(["everyone"]);
+    expect(plan.approver_team_slugs).toEqual(["security-team"]);
+  });
+
+  it("applies a material datasource change immediately when the material-changes rule is off, but still reviews Everyone", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_datasource_material_changes: { required: false, team_slugs: [] },
+      },
+    });
+
+    const teamShared = planRagPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: { search_team_slugs: ["other-team"], search_user_subjects: [] },
+      requestedState: { search_team_slugs: ["other-team"], search_user_subjects: [] },
+      ownerTeamSlug: "owner-team",
+      materialChange: true,
+    });
+    expect(teamShared.requires_approval).toBe(false);
+
+    const everyoneShared = planRagPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: { search_team_slugs: ["everyone"], search_user_subjects: [] },
+      requestedState: { search_team_slugs: ["everyone"], search_user_subjects: [] },
+      ownerTeamSlug: "owner-team",
+      materialChange: true,
+    });
+    expect(everyoneShared.requires_approval).toBe(true);
+  });
+
+  it("scopes the datasource material-changes rule to specific teams", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_datasource_material_changes: { required: true, team_slugs: ["finance-team"] },
+      },
+    });
+    const stateFor = (teamSlug: string) => ({
+      currentState: { search_team_slugs: [teamSlug], search_user_subjects: [] },
+      requestedState: { search_team_slugs: [teamSlug], search_user_subjects: [] },
+    });
+
+    const outOfScope = planRagPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      ownerTeamSlug: "owner-team",
+      materialChange: true,
+      ...stateFor("marketing-team"),
+    });
+    expect(outOfScope.requires_approval).toBe(false);
+
+    const inScope = planRagPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      ownerTeamSlug: "owner-team",
+      materialChange: true,
+      ...stateFor("finance-team"),
+    });
+    expect(inScope.requires_approval).toBe(true);
+  });
+
+  it("scopes datasource material-change review away from a people-only broad audience", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_datasource_material_changes: { required: true, team_slugs: ["finance-team"] },
+      },
+    });
+    const plan = planRagPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: { search_team_slugs: [], search_user_subjects: ["some-person"] },
+      requestedState: { search_team_slugs: [], search_user_subjects: ["some-person"] },
+      ownerTeamSlug: "owner-team",
+      materialChange: true,
+    });
+
+    expect(plan.requires_approval).toBe(false);
+  });
+
+  it("does not require Slack review outside the configured onboarding team scope", () => {
+    const policy = settings({
+      slack_onboarding_team_slugs: ["approved-team"],
+    });
+
+    const outOfScope = planConnectorPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      resourceKind: "slack_channel",
+      requestedState: { team_slug: "owner-team" },
+      targetTeamSlug: "owner-team",
+      memberCount: 10_000,
+    });
+    expect(outOfScope.requires_approval).toBe(false);
+
+    const inScope = planConnectorPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["approved-team"],
+      resourceKind: "slack_channel",
+      requestedState: { team_slug: "approved-team" },
+      targetTeamSlug: "approved-team",
+      memberCount: 10_000,
+    });
+    expect(inScope.requires_approval).toBe(true);
+  });
+
+  it("does not require Webex review outside the configured onboarding team scope", () => {
+    const policy = settings({
+      webex_onboarding_team_slugs: ["approved-team"],
+    });
+
+    const outOfScope = planConnectorPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      resourceKind: "webex_space",
+      requestedState: { team_slug: "owner-team" },
+      targetTeamSlug: "owner-team",
+      memberCount: 10_000,
+    });
+    expect(outOfScope.requires_approval).toBe(false);
+
+    const inScope = planConnectorPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["approved-team"],
+      resourceKind: "webex_space",
+      requestedState: { team_slug: "approved-team" },
+      targetTeamSlug: "approved-team",
+      memberCount: 10_000,
+    });
+    expect(inScope.requires_approval).toBe(true);
+  });
 });
 
 describe("publication approval settings", () => {
@@ -525,5 +954,33 @@ describe("publication approval settings", () => {
     expect(normalized.require_rag_publication_approval).toBe(false);
     expect(normalized.require_slack_onboarding_approval).toBe(false);
     expect(normalized.require_webex_onboarding_approval).toBe(false);
+  });
+
+  it("fills in default rules (required, any team) for documents saved before rules existed", () => {
+    const normalized = normalizePublicationApprovalSettings({
+      require_rag_publication_approval: true,
+    });
+
+    expect(normalized.rules).toEqual(
+      DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+    );
+    expect(normalized.slack_onboarding_team_slugs).toEqual([]);
+    expect(normalized.webex_onboarding_team_slugs).toEqual([]);
+  });
+
+  it("normalizes only the rules that are present, keeping others at their defaults", () => {
+    const normalized = normalizePublicationApprovalSettings({
+      rules: {
+        rag_collection_sharing: { required: false, team_slugs: ["Finance-Team"] },
+      },
+    });
+
+    expect(normalized.rules.rag_collection_sharing).toEqual({
+      required: false,
+      team_slugs: ["finance-team"],
+    });
+    expect(normalized.rules.rag_collection_datasource_changes).toEqual(
+      DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules.rag_collection_datasource_changes,
+    );
   });
 });

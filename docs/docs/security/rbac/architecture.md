@@ -193,6 +193,23 @@ request → policy plan → publication_requests(pending)
 - A newer proposal supersedes older pending proposals. Approval acquires a bounded `applying` lease and fails closed on resource-revision drift.
 - Approvers need both the live `policy:publication#can_approve` grant and a current reviewer assignment for the request type. Organization admins remain the fallback approvers.
 - RAG, Slack, and Webex have separate reviewer lists and can be enabled independently. Organization-wide self-approval is disabled by default. Trusted publishers, company-wide audiences, and team-specific reviewers apply only to RAG.
+- **Per-rule team scoping.** Five independent RAG rules, each `{required, team_slugs}`:
+  collection sharing, collection datasource changes, collection ownership
+  changes, datasource sharing, datasource material changes.
+  - Empty `team_slugs` = the rule fires for any team (the default, and the
+    original behavior before scoping existed).
+  - Non-empty `team_slugs` = the rule only fires for those specific teams.
+    Example: scoping collection sharing to `[finance-team]` means sharing
+    with `finance-team` still needs review, but sharing with any other team
+    applies immediately.
+  - Company-wide/organization-wide audience changes are **never** gated by
+    these rules — they always require review while the master RAG switch is
+    on, regardless of any rule's `required` flag or `team_slugs`. Adding a
+    company-wide slug to a rule's `team_slugs` has no effect; that
+    protection is unconditional already.
+  - Slack and Webex onboarding get the same team-scope filter
+    (`slack_onboarding_team_slugs` / `webex_onboarding_team_slugs`)
+    alongside their existing member-threshold gate.
 - Pending counts appear in the header alert menu.
 - Scheduled RAG reload and wholesale stale-chunk replacement are unchanged. Approval governs publication policy and material configuration proposals, not the existing refresh pipeline.
 

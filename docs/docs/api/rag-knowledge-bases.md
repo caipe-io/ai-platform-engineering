@@ -209,10 +209,15 @@ publication and self-service Slack or Webex onboarding.
   company-wide audience requires approval, and its existing access remains
   active until approval.
 - Removing a datasource from a company-wide collection follows the same rule.
-- Adding a person or team outside the Owner scope creates a pending request.
+- Adding a person or team outside the Owner scope creates a pending request,
+  unless the collection- or datasource-sharing rule has been scoped to a
+  specific set of teams and the added team isn't in it (see below).
 - Material datasource changes require renewed approval while broad Search is
   active. These include ownership, source identity, URL/domain, crawl scope,
-  and large estimated-size changes.
+  and large estimated-size changes. Datasource, collection-source, and
+  collection-ownership changes can each be scoped the same way.
+- Company-wide/organization-wide audience changes always require approval
+  while RAG review is on, regardless of any rule's team scope.
 - Slack channels and Webex spaces remain unavailable until their onboarding
   request is approved and applied.
 - Each request stores requested and effective state, the resource revision,
@@ -252,6 +257,19 @@ JSON `note` is recorded in the audit history.
 
 Reads or updates approval policy. Organization-administrator access is
 required.
+
+- Each RAG approval trigger (collection sharing, collection datasource
+  changes, collection ownership changes, datasource sharing, datasource
+  material changes) is an independent rule under
+  `rules.<key>: {required, team_slugs}`.
+- Empty `team_slugs` requires approval for any team, matching pre-scoping
+  behavior. A non-empty list narrows the rule to only the listed teams.
+- Company-wide/organization-wide audience changes are never gated by these
+  rules, so adding a company-wide slug to a rule's `team_slugs` has no
+  effect.
+- Slack and Webex onboarding have their own team-scope lists
+  (`slack_onboarding_team_slugs`, `webex_onboarding_team_slugs`) alongside
+  the existing member-threshold gate.
 
 ### GET `/api/publication-requests/summary`
 

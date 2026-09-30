@@ -62,12 +62,17 @@ jest.mock("@/lib/publication-approval.server", () => ({
   recordAutoApprovedPublication: jest.fn(),
 }));
 
-jest.mock("@/lib/publication-approval-settings", () => ({
-  getPublicationApprovalSettings: jest.fn().mockResolvedValue({
-    require_slack_onboarding_approval: true,
-    require_webex_onboarding_approval: true,
-  }),
-}));
+jest.mock("@/lib/publication-approval-settings", () => {
+  const actual = jest.requireActual("@/lib/publication-approval-settings");
+  return {
+    ...actual,
+    getPublicationApprovalSettings: jest.fn().mockResolvedValue({
+      ...actual.DEFAULT_PUBLICATION_APPROVAL_SETTINGS,
+      require_slack_onboarding_approval: true,
+      require_webex_onboarding_approval: true,
+    }),
+  };
+});
 
 jest.mock("@/lib/rbac/require-openfga", () => ({
   requireAdminSurfaceManage: (...args: unknown[]) =>

@@ -19,6 +19,7 @@ import {
 import { organizationObjectId } from "@/lib/rbac/organization";
 import type {
   PublicationActor,
+  PublicationApprovalRule,
   PublicationApprovalSettings,
   PublicationAuditAction,
   PublicationPolicyPlan,
@@ -242,6 +243,26 @@ function isOrganizationWideTeam(
   );
 }
 
+function teamSlugSetOf(slugs: string[]): Set<string> {
+  return new Set(slugs.map((slug) => slug.trim().toLowerCase()));
+}
+
+/**
+ * A rule fires when its base condition holds (`baseTriggered`) and either it
+ * has no team scope (applies to any team - today's behavior) or one of the
+ * `involvedTeamSlugs` is in its scope.
+ */
+function ruleTriggered(
+  rule: PublicationApprovalRule,
+  baseTriggered: boolean,
+  involvedTeamSlugs: string[],
+): boolean {
+  if (!rule.required || !baseTriggered) return false;
+  if (rule.team_slugs.length === 0) return true;
+  const scope = teamSlugSetOf(rule.team_slugs);
+  return involvedTeamSlugs.some((slug) => scope.has(slug.trim().toLowerCase()));
+}
+
 function isTrustedPublisher(
   requester: PublicationActor,
   requesterTeamSlugs: string[],
@@ -327,29 +348,39 @@ export function planRagPublication(input: RagPublicationPlanInput): PublicationP
   // Organization-wide Search always counts as broad publication, even when
   // the same team is also the management owner. Owner and Search are
   // independent grants; making Everyone the owner must not become an approval
-  // bypass for publishing content to Everyone.
+  // bypass for publishing content to Everyone. Organization-wide audience is
+  // never gated by the per-rule team scope below.
   const newOrganizationWideAudience = addedTeams.some((slug) =>
     isOrganizationWideTeam(slug, input.settings),
   );
-  const hasBroadAudience = removedOrganizationWideTeams.length > 0 ||
-    requested.search_team_slugs.some(
-    (slug) =>
-      slug !== input.ownerTeamSlug || isOrganizationWideTeam(slug, input.settings),
-  ) || requested.search_user_subjects.some((subject) => subject !== input.ownerSubject);
+  const specificAudienceTeams = requested.search_team_slugs.filter(
+    (slug) => !isOrganizationWideTeam(slug, input.settings) && slug !== input.ownerTeamSlug,
+  );
+  const hasSpecificBroadAudience = specificAudienceTeams.length > 0 ||
+    requested.search_user_subjects.some((subject) => subject !== input.ownerSubject);
   const trusted = isTrustedPublisher(
     input.requester,
     input.requesterTeamSlugs,
     input.settings,
   );
-  const materialBroadChange = Boolean(input.materialChange && hasBroadAudience);
+  const sharingTrigger = ruleTriggered(
+    input.settings.rules.rag_datasource_sharing,
+    pendingTeams.length > 0 || pendingUsers.length > 0,
+    pendingTeams,
+  );
+  const materialBroadChange = Boolean(input.materialChange && organizationWide) ||
+    ruleTriggered(
+      input.settings.rules.rag_datasource_material_changes,
+      Boolean(input.materialChange) && hasSpecificBroadAudience,
+      specificAudienceTeams,
+    );
   const requiresApproval =
     input.settings.require_rag_publication_approval &&
     !trusted &&
     (
       newOrganizationWideAudience ||
       removedOrganizationWideTeams.length > 0 ||
-      pendingTeams.length > 0 ||
-      pendingUsers.length > 0 ||
+      sharingTrigger ||
       materialBroadChange
     );
 
@@ -358,8 +389,8 @@ export function planRagPublication(input: RagPublicationPlanInput): PublicationP
   if (removedOrganizationWideTeams.length > 0) {
     reasons.push("organization-wide audience removal");
   }
-  if (pendingTeams.length > 0) reasons.push(`${pendingTeams.length} new team audience${pendingTeams.length === 1 ? "" : "s"}`);
-  if (pendingUsers.length > 0) reasons.push(`${pendingUsers.length} new person audience${pendingUsers.length === 1 ? "" : "s"}`);
+  if (sharingTrigger && pendingTeams.length > 0) reasons.push(`${pendingTeams.length} new team audience${pendingTeams.length === 1 ? "" : "s"}`);
+  if (sharingTrigger && pendingUsers.length > 0) reasons.push(`${pendingUsers.length} new person audience${pendingUsers.length === 1 ? "" : "s"}`);
   if (materialBroadChange) reasons.push("material source change with a broad audience");
   if (trusted) reasons.push("trusted publisher");
 
@@ -376,9 +407,14 @@ export function planRagPublication(input: RagPublicationPlanInput): PublicationP
       }
     : requested;
 
+  // Org-wide teams are always included here, independent of sharingTrigger -
+  // an org-wide audience add always requires approval (see newOrganizationWideAudience
+  // above) even when the sharing rule's team_slugs scope doesn't cover it, and
+  // routing/audit must reflect the real target rather than coming back empty.
   const targetTeamSlugs = Array.from(new Set([
-    ...pendingTeams,
+    ...(sharingTrigger ? pendingTeams : []),
     ...removedOrganizationWideTeams,
+    ...addedTeams.filter((slug) => isOrganizationWideTeam(slug, input.settings)),
   ])).sort();
   const reviewers = reviewerAssignmentsForResource(
     "rag_datasource",
@@ -464,20 +500,43 @@ export function planRagCollectionPublication(
   const newOrganizationWideAudience = newGlobalRead || addedReaders.some(
     (slug) => isOrganizationWideTeam(slug, input.settings),
   );
-  const hasBroadAudience = requested.global_read || requested.reader_team_slugs.some(
+  // Organization-wide audience is never gated by the per-rule team scope
+  // below - it is the one thing the "sharing with Everyone" protection must
+  // always catch.
+  const hasOrganizationWideAudience = requested.global_read ||
+    requested.reader_team_slugs.some((slug) => isOrganizationWideTeam(slug, input.settings));
+  const specificAudienceTeams = requested.reader_team_slugs.filter(
     (slug) =>
-      !currentOwnerTeams.has(slug) ||
-      !requestedOwnerTeams.has(slug) ||
-      isOrganizationWideTeam(slug, input.settings),
+      !isOrganizationWideTeam(slug, input.settings) &&
+      (!currentOwnerTeams.has(slug) || !requestedOwnerTeams.has(slug)),
   );
-  const sourceAdditionPublicationChange = addedSources.length > 0 &&
-    (hasBroadAudience || removedOrganizationWideAudience);
+  const hasSpecificBroadAudience = specificAudienceTeams.length > 0;
+  const pendingReadersTrigger = ruleTriggered(
+    input.settings.rules.rag_collection_sharing,
+    pendingReaders.length > 0,
+    pendingReaders,
+  );
+  const sourceAdditionOrganizationWideTrigger = addedSources.length > 0 &&
+    (hasOrganizationWideAudience || removedOrganizationWideAudience);
+  const sourceAdditionSpecificTrigger = ruleTriggered(
+    input.settings.rules.rag_collection_datasource_changes,
+    addedSources.length > 0 && hasSpecificBroadAudience,
+    specificAudienceTeams,
+  );
+  const sourceAdditionPublicationChange = sourceAdditionOrganizationWideTrigger ||
+    sourceAdditionSpecificTrigger;
   const sourceRemovalPublicationChange = removedSources.length > 0 &&
     currentOrganizationWide;
   const sourcePublicationChange = sourceAdditionPublicationChange ||
     sourceRemovalPublicationChange;
-  const ownershipPublicationChange = ownershipChange &&
-    (hasBroadAudience || removedOrganizationWideAudience);
+  const ownershipOrganizationWideTrigger = ownershipChange &&
+    (hasOrganizationWideAudience || removedOrganizationWideAudience);
+  const ownershipSpecificTrigger = ruleTriggered(
+    input.settings.rules.rag_collection_ownership_changes,
+    ownershipChange && hasSpecificBroadAudience,
+    specificAudienceTeams,
+  );
+  const ownershipPublicationChange = ownershipOrganizationWideTrigger || ownershipSpecificTrigger;
   const trusted = isTrustedPublisher(
     input.requester,
     input.requesterTeamSlugs,
@@ -489,7 +548,7 @@ export function planRagCollectionPublication(
     (
       newOrganizationWideAudience ||
       removedOrganizationWideAudience ||
-      pendingReaders.length > 0 ||
+      pendingReadersTrigger ||
       sourcePublicationChange ||
       ownershipPublicationChange
     );
@@ -524,7 +583,7 @@ export function planRagCollectionPublication(
   if (removedOrganizationWideAudience) {
     reasons.push("organization-wide audience removal");
   }
-  if (pendingReaders.length > 0) {
+  if (pendingReadersTrigger) {
     reasons.push(
       `${pendingReaders.length} new team audience${pendingReaders.length === 1 ? "" : "s"}`,
     );
@@ -545,7 +604,7 @@ export function planRagCollectionPublication(
   if (trusted) reasons.push("trusted publisher");
 
   const targetTeamSlugs = Array.from(new Set([
-    ...pendingReaders,
+    ...(pendingReadersTrigger ? pendingReaders : []),
     ...removedOrganizationWideReaders,
     ...addedReaders.filter((slug) => isOrganizationWideTeam(slug, input.settings)),
     ...(newGlobalRead ? input.settings.organization_wide_team_slugs : []),
@@ -599,7 +658,12 @@ export function planConnectorPublication(
   const reviewEnabled = input.resourceKind === "slack_channel"
     ? input.settings.require_slack_onboarding_approval
     : input.settings.require_webex_onboarding_approval;
-  const requiresApproval = reviewEnabled && thresholdExceeded;
+  const teamScope = input.resourceKind === "slack_channel"
+    ? input.settings.slack_onboarding_team_slugs
+    : input.settings.webex_onboarding_team_slugs;
+  const teamInScope = teamScope.length === 0 ||
+    teamSlugSetOf(teamScope).has(input.targetTeamSlug.trim().toLowerCase());
+  const requiresApproval = reviewEnabled && thresholdExceeded && teamInScope;
   const reasons = [
     ...(!memberCountKnown
       ? ["audience size is unknown"]

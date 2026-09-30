@@ -3,12 +3,36 @@ import { getCollection } from "@/lib/mongodb";
 import type { OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import { resolveUserIdentitiesBySubject } from "@/lib/rbac/user-identity-directory";
 import { reconcileTupleDiff } from "@/lib/authz";
-import type { PublicationApprovalSettings } from "@/types/publication-approval";
+import type {
+  PublicationApprovalRule,
+  PublicationApprovalRuleKey,
+  PublicationApprovalSettings,
+} from "@/types/publication-approval";
 
 export const PUBLICATION_POLICY_ID = "publication";
 export const PUBLICATION_SETTINGS_FIELD = "publication_approval";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
+
+/**
+ * All rules default to `required: true` with an empty team-slug scope, which
+ * reproduces the approval behavior that existed before per-rule scoping was
+ * introduced: any team triggers approval.
+ */
+const PUBLICATION_APPROVAL_RULE_KEYS: PublicationApprovalRuleKey[] = [
+  "rag_collection_sharing",
+  "rag_collection_datasource_changes",
+  "rag_collection_ownership_changes",
+  "rag_datasource_sharing",
+  "rag_datasource_material_changes",
+];
+
+const DEFAULT_PUBLICATION_APPROVAL_RULES: Record<
+  PublicationApprovalRuleKey,
+  PublicationApprovalRule
+> = Object.fromEntries(
+  PUBLICATION_APPROVAL_RULE_KEYS.map((key) => [key, { required: true, team_slugs: [] }]),
+) as Record<PublicationApprovalRuleKey, PublicationApprovalRule>;
 
 export const DEFAULT_PUBLICATION_APPROVAL_SETTINGS: PublicationApprovalSettings = {
   require_rag_publication_approval: true,
@@ -19,6 +43,9 @@ export const DEFAULT_PUBLICATION_APPROVAL_SETTINGS: PublicationApprovalSettings 
   trusted_publisher_subjects: [],
   trusted_publisher_team_slugs: [],
   organization_wide_team_slugs: ["everyone"],
+  rules: DEFAULT_PUBLICATION_APPROVAL_RULES,
+  slack_onboarding_team_slugs: [],
+  webex_onboarding_team_slugs: [],
   rag_reviewer_team_slugs: [],
   rag_reviewer_user_subjects: [],
   slack_reviewer_team_slugs: [],
@@ -63,6 +90,31 @@ function stringList(value: unknown, options: { lowerCase?: boolean } = {}): stri
   return Array.from(new Set(normalized)).slice(0, 200);
 }
 
+function normalizeRule(
+  value: unknown,
+  fallback: PublicationApprovalRule,
+): PublicationApprovalRule {
+  if (!isRecord(value)) return fallback;
+  return {
+    required: booleanValue(value.required, fallback.required),
+    team_slugs: Array.isArray(value.team_slugs)
+      ? stringList(value.team_slugs, { lowerCase: true })
+      : fallback.team_slugs,
+  };
+}
+
+function normalizeRules(
+  value: unknown,
+): Record<PublicationApprovalRuleKey, PublicationApprovalRule> {
+  const source = isRecord(value) ? value : {};
+  return Object.fromEntries(
+    PUBLICATION_APPROVAL_RULE_KEYS.map((key) => [
+      key,
+      normalizeRule(source[key], DEFAULT_PUBLICATION_APPROVAL_RULES[key]),
+    ]),
+  ) as Record<PublicationApprovalRuleKey, PublicationApprovalRule>;
+}
+
 function normalizeDelegations(value: unknown): Record<string, string[]> {
   if (!isRecord(value)) return {};
   const result: Record<string, string[]> = {};
@@ -73,6 +125,27 @@ function normalizeDelegations(value: unknown): Record<string, string[]> {
     if (approvers.length > 0) result[normalizedTarget] = approvers;
   }
   return result;
+}
+
+/**
+ * Merges a partial rules update field-by-field against the previous rule,
+ * not the global default - otherwise PATCHing just `required` on a rule
+ * that already has a `team_slugs` scope would silently reset that scope
+ * back to "any team".
+ */
+function mergeRules(
+  previous: Record<PublicationApprovalRuleKey, PublicationApprovalRule>,
+  value: unknown,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...previous };
+  if (!isRecord(value)) return merged;
+  for (const [key, rawRule] of Object.entries(value)) {
+    const previousRule = previous[key as PublicationApprovalRuleKey];
+    merged[key] = previousRule && isRecord(rawRule)
+      ? { ...previousRule, ...rawRule }
+      : rawRule;
+  }
+  return merged;
 }
 
 function mergeSettingsUpdate(
@@ -89,6 +162,7 @@ function mergeSettingsUpdate(
   return {
     ...previous,
     ...value,
+    rules: mergeRules(previous.rules, value.rules),
     thresholds: {
       ...previous.thresholds,
       ...(isRecord(value.thresholds) ? value.thresholds : {}),
@@ -144,6 +218,13 @@ export function normalizePublicationApprovalSettings(
     )
       ? stringList(source.organization_wide_team_slugs, { lowerCase: true })
       : defaults.organization_wide_team_slugs,
+    rules: normalizeRules(source.rules),
+    slack_onboarding_team_slugs: Array.isArray(source.slack_onboarding_team_slugs)
+      ? stringList(source.slack_onboarding_team_slugs, { lowerCase: true })
+      : defaults.slack_onboarding_team_slugs,
+    webex_onboarding_team_slugs: Array.isArray(source.webex_onboarding_team_slugs)
+      ? stringList(source.webex_onboarding_team_slugs, { lowerCase: true })
+      : defaults.webex_onboarding_team_slugs,
     rag_reviewer_team_slugs: reviewerTeams("rag_reviewer_team_slugs"),
     rag_reviewer_user_subjects: reviewerUsers("rag_reviewer_user_subjects"),
     slack_reviewer_team_slugs: reviewerTeams("slack_reviewer_team_slugs"),
@@ -204,6 +285,9 @@ async function requireExistingPolicyTeams(
     ...allApproverTeams(settings),
     ...settings.trusted_publisher_team_slugs,
     ...settings.organization_wide_team_slugs,
+    ...settings.slack_onboarding_team_slugs,
+    ...settings.webex_onboarding_team_slugs,
+    ...Object.values(settings.rules).flatMap((rule) => rule.team_slugs),
     ...delegationTargets,
   ]));
   if (referenced.length === 0) return;

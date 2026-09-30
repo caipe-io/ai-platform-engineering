@@ -114,6 +114,26 @@ export interface PublicationThresholds {
   webex_space_members_without_approval: number;
 }
 
+/**
+ * A single approval trigger. When `team_slugs` is empty, the rule applies to
+ * any team (today's behavior). When non-empty, the rule only fires when one
+ * of the involved teams (see the matching table in
+ * publication-approval.server.ts) is in this list. Organization-wide
+ * audience changes are never gated by these rules - they always require
+ * approval when the parent switch is on.
+ */
+export interface PublicationApprovalRule {
+  required: boolean;
+  team_slugs: string[];
+}
+
+export type PublicationApprovalRuleKey =
+  | "rag_collection_sharing"
+  | "rag_collection_datasource_changes"
+  | "rag_collection_ownership_changes"
+  | "rag_datasource_sharing"
+  | "rag_datasource_material_changes";
+
 export interface PublicationApprovalSettings {
   require_rag_publication_approval: boolean;
   require_slack_onboarding_approval: boolean;
@@ -123,6 +143,9 @@ export interface PublicationApprovalSettings {
   trusted_publisher_subjects: string[];
   trusted_publisher_team_slugs: string[];
   organization_wide_team_slugs: string[];
+  rules: Record<PublicationApprovalRuleKey, PublicationApprovalRule>;
+  slack_onboarding_team_slugs: string[];
+  webex_onboarding_team_slugs: string[];
   rag_reviewer_team_slugs: string[];
   rag_reviewer_user_subjects: string[];
   slack_reviewer_team_slugs: string[];
