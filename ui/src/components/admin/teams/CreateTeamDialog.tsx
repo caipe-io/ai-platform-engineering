@@ -33,6 +33,7 @@ export function CreateTeamDialog({
   const [memberSearch, setMemberSearch] = useState("");
   const [memberSearchResults, setMemberSearchResults] = useState<string[]>([]);
   const [memberSearchLoading, setMemberSearchLoading] = useState(false);
+  const [memberSearchFailed, setMemberSearchFailed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,9 +66,16 @@ export function CreateTeamDialog({
     if (query.length < 2) {
       setMemberSearchResults([]);
       setMemberSearchLoading(false);
+      setMemberSearchFailed(false);
       return;
     }
     const ctrl = new AbortController();
+    // Clear the prior query's results and error state immediately — since
+    // MultiSelect doesn't filter `options` itself in this mode, a stale
+    // match from the last query would otherwise stay selectable while this
+    // one is still debouncing/in flight.
+    setMemberSearchResults([]);
+    setMemberSearchFailed(false);
     setMemberSearchLoading(true);
     const handle = setTimeout(() => {
       const params = new URLSearchParams({ search: query, pageSize: "50" });
@@ -75,19 +83,21 @@ export function CreateTeamDialog({
         .then((r) => r.json())
         .then((res) => {
           const users = Array.isArray(res?.users) ? res.users : res?.data?.users;
-          if (Array.isArray(users)) {
-            setMemberSearchResults(
-              users.map((u: { email?: string }) => u.email).filter(Boolean)
-            );
-          } else {
-            setMemberSearchResults([]);
-          }
+          setMemberSearchResults(
+            Array.isArray(users)
+              ? users.map((u: { email?: string }) => u.email).filter(Boolean)
+              : []
+          );
         })
         .catch((err) => {
-          // Preserve results across an aborted (superseded) request, but
-          // clear them for a real failure so a stale prior-query result
-          // set doesn't linger under the new query.
-          if (err?.name !== "AbortError") setMemberSearchResults([]);
+          // An aborted request was superseded by a newer query, whose own
+          // effect run already reset the loading/error state above — leave
+          // it alone. A real failure is distinct from "no matches": surface
+          // it as an error rather than silently reporting zero results.
+          if (err?.name === "AbortError") return;
+          console.error("[CreateTeamDialog] Member search failed:", err);
+          setMemberSearchResults([]);
+          setMemberSearchFailed(true);
         })
         .finally(() => {
           // A newer keystroke may have already aborted this request and
@@ -207,7 +217,7 @@ export function CreateTeamDialog({
                 searchLoading={memberSearchLoading}
                 placeholder="Search and select members..."
                 searchPlaceholder="Search by name or email..."
-                emptyLabel="No users found"
+                emptyLabel={memberSearchFailed ? "Search failed — try again" : "No users found"}
                 badgeLabel="members"
                 className="w-full max-w-full"
               />

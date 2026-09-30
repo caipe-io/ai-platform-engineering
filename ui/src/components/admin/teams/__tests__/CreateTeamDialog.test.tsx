@@ -100,20 +100,17 @@ it("searches the full user directory instead of only the loaded first page", asy
   ).not.toBeInTheDocument();
 });
 
-// Regression guard: a failed or malformed response used to leave the prior
-// query's results in place, so MultiSelect kept showing stale matches under
-// a new, non-matching query.
-it("clears stale results when a subsequent search fails or returns malformed data", async () => {
+// Regression guard: MultiSelect doesn't filter `options` itself in
+// server-search mode, so a stale match from the *previous* query used to
+// stay selectable while the new query was still debouncing/in flight.
+it("clears the previous query's results as soon as a new search starts", async () => {
   const user = userEvent.setup();
   fetchMock.mockImplementation(async (url: string) => {
     if (isUsersGet(url)) {
       if (url.includes("search=zoe")) {
         return jsonResponse({ users: [{ email: "zoe@example.com" }] });
       }
-      if (url.includes("search=err")) {
-        throw new Error("network down");
-      }
-      return jsonResponse({ users: [] });
+      return jsonResponse({ users: [{ email: "alice@example.com" }] });
     }
     return jsonResponse({ success: true, data: {} });
   });
@@ -132,16 +129,55 @@ it("clears stale results when a subsequent search fails or returns malformed dat
     await screen.findByRole("button", { name: /zoe@example\.com/i }),
   ).toBeInTheDocument();
 
-  // Go straight from "zoe" to a query whose request fails, without passing
-  // through the <2-char empty state, to isolate the failure-clearing path.
-  fireEvent.change(search, { target: { value: "err" } });
+  // Go straight from "zoe" to "alice" without passing through the <2-char
+  // empty state, and check *before* the new fetch/debounce settles — the
+  // stale "zoe" option must already be gone, not just eventually replaced.
+  fireEvent.change(search, { target: { value: "alice" } });
+  expect(
+    screen.queryByRole("button", { name: /zoe@example\.com/i }),
+  ).not.toBeInTheDocument();
 
-  await waitFor(() => {
-    expect(
-      screen.queryByRole("button", { name: /zoe@example\.com/i }),
-    ).not.toBeInTheDocument();
+  expect(
+    await screen.findByRole("button", { name: /alice@example\.com/i }),
+  ).toBeInTheDocument();
+});
+
+// Regression guard: a failed search used to fall through to the same
+// "No users found" empty state as a genuine zero-match search, misleading
+// the admin into thinking the search completed rather than errored.
+it("shows a distinct failure message and logs the error when a search request fails", async () => {
+  const user = userEvent.setup();
+  const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  fetchMock.mockImplementation(async (url: string) => {
+    if (isUsersGet(url)) {
+      if (url.includes("search=err")) {
+        throw new Error("network down");
+      }
+      return jsonResponse({ users: [] });
+    }
+    return jsonResponse({ success: true, data: {} });
   });
-  expect(screen.getByText("No users found")).toBeInTheDocument();
+
+  render(
+    <CreateTeamDialog open onOpenChange={jest.fn()} onSuccess={jest.fn()} />,
+  );
+
+  await user.click(
+    screen.getByRole("button", { name: /search and select members/i }),
+  );
+  await user.type(
+    screen.getByPlaceholderText("Search by name or email..."),
+    "err",
+  );
+
+  expect(await screen.findByText("Search failed — try again")).toBeInTheDocument();
+  expect(screen.queryByText("No users found")).not.toBeInTheDocument();
+  expect(consoleErrorSpy).toHaveBeenCalledWith(
+    "[CreateTeamDialog] Member search failed:",
+    expect.anything(),
+  );
+
+  consoleErrorSpy.mockRestore();
 });
 
 // Regression guard: onSearchChange puts MultiSelect into a mode where it no
