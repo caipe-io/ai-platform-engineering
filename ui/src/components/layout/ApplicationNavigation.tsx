@@ -204,12 +204,12 @@ function ApplicationNavigationContents({
     !knowledgeHasExplicitCapability;
   const activeArea = activeAreaForPath(pathname);
   const nativeNavigationItems: ApplicationNavigationItem[] =
-    installedNativeExtensionManifests.map((manifest) => ({
+    installedNativeExtensionManifests.filter((manifest) => manifest.navigation).map((manifest) => ({
       key: `native-${manifest.id}`,
-      href: manifest.navigation.href,
-      label: manifest.navigation.label,
+      href: manifest.navigation!.href,
+      label: manifest.navigation!.label,
       icon:
-        manifest.navigation.icon === "book-open" ? BookOpen : LayoutGrid,
+        manifest.navigation!.icon === "book-open" ? BookOpen : LayoutGrid,
     }));
   const projectsClaimedByExtension = installedNativeExtensionManifests.some(
     (manifest) =>

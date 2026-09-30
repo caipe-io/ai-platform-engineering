@@ -80,8 +80,8 @@ export function getApplicationBreadcrumbs(
     return [
       { label: "Home", href: "/" },
       {
-        label: nativeExtension.navigation.label,
-        href: nativeExtension.navigation.href,
+        label: nativeExtension.navigation?.label ?? nativeExtension.displayName,
+        href: nativeExtension.navigation?.href ?? nativeExtension.hostPaths[0],
       },
     ];
   }

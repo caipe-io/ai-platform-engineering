@@ -4,7 +4,7 @@ jest.mock("../manifests.generated", () => ({
       id: "example-app",
       displayName: "Example App",
       description: "Example native extension",
-      contractVersion: "1.0",
+      contractVersion: "1.1",
       hostPaths: ["/example"],
       navigation: {
         label: "Example",
@@ -16,6 +16,7 @@ jest.mock("../manifests.generated", () => ({
         basePath: "/api/agentic-apps/runtime/example-app",
         mounts: ["/api/example"],
       },
+      auth: { mode: "app-scoped-token" },
     },
   ],
 }));
@@ -24,6 +25,7 @@ import {
   nativeExtensionById,
   nativeExtensionForApiPath,
   nativeExtensionForHostPath,
+  nativeExtensionForSlot,
 } from "../runtime";
 
 describe("native extension route ownership", () => {
@@ -47,5 +49,9 @@ describe("native extension route ownership", () => {
       "Example App",
     );
     expect(nativeExtensionById("missing")).toBeNull();
+  });
+
+  it("does not claim undeclared slots", () => {
+    expect(nativeExtensionForSlot("home")).toBeNull();
   });
 });

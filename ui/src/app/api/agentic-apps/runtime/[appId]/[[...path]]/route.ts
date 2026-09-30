@@ -21,6 +21,7 @@ import { mintAgenticAppToken } from "@/lib/agentic-apps/tokens";
 import { ApiError, getAuthenticatedUser } from "@/lib/api-middleware";
 import { DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES } from "@/types/agentic-app";
 import type { AgenticAppAuthMode } from "@/types/agentic-app";
+import { nativeExtensionById } from "@/native-extensions/runtime";
 
 const BLOCKED_RESPONSE_HEADERS = new Set([
   "connection",
@@ -95,12 +96,16 @@ async function proxyAgenticAppRequest(
   if (!app || !app.installation.installed || !app.installation.enabled) {
     return Response.json({ error: "app_not_found" }, { status: 404 });
   }
-
+  const nativeExtension = nativeExtensionById(appId);
+  if (nativeExtension && nativeExtension.auth.mode !== app.manifest.auth.mode) {
+    return Response.json({ error: "native_extension_auth_mismatch" }, { status: 500 });
+  }
   const session = auth.session as Record<string, unknown>;
   if (
     !canLaunchAgenticApp(
       app,
       agenticAppUserContextFromSession(session, auth.user.role),
+      { requireVisible: !nativeExtension },
     )
   ) {
     return Response.json({ error: "app_unauthorized" }, { status: 403 });

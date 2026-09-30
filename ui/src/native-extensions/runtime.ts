@@ -34,3 +34,11 @@ export function nativeExtensionById(
     ) ?? null
   );
 }
+
+export function nativeExtensionForSlot(
+  slot: "home",
+): NativeExtensionManifest | null {
+  return installedNativeExtensionManifests.find(
+    (manifest) => manifest.slots?.includes(slot),
+  ) ?? null;
+}

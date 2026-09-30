@@ -6,14 +6,17 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { HeaderBreadcrumbPortal } from "@/components/layout/HeaderBreadcrumbSlot";
 import { WorkspaceBreadcrumbs } from "@/components/layout/WorkspacePageHeader";
 import { installedNativeExtensions } from "./installed.generated";
+import { isSafeHostHref } from "./navigation";
 import type { NativeExtensionBreadcrumb } from "./types";
 
 export function NativeExtensionHost({
   children,
   extensionId,
+  slot = false,
 }: {
   children?: React.ReactNode;
   extensionId: string;
+  slot?: boolean;
 }): React.ReactElement {
   const router = useRouter();
   const pathname = usePathname();
@@ -33,14 +36,16 @@ export function NativeExtensionHost({
       ? [
           { label: "Home", href: "/" },
           {
-            label: extension.manifest.navigation.label,
-            href: extension.manifest.navigation.href,
+            label: extension.manifest.navigation?.label ?? extension.manifest.displayName,
+            href: extension.manifest.navigation?.href ?? extension.manifest.hostPaths[0],
           },
         ]
       : [],
   );
   const navigate = useCallback(
-    (href: string) => router.push(href, { scroll: false }),
+    (href: string) => {
+      if (isSafeHostHref(href)) router.push(href, { scroll: false });
+    },
     [router],
   );
 
@@ -50,7 +55,7 @@ export function NativeExtensionHost({
     }
   }, [extensionId, pathname, search]);
 
-  if (!extension) {
+  if (!extension || extension.module.contractVersion !== extension.manifest.contractVersion) {
     return (
       <div className="p-6 text-sm text-destructive">
         Native extension is not installed.
@@ -61,9 +66,9 @@ export function NativeExtensionHost({
   const Component = extension.module.Component;
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-native-extension={extensionId}>
-      <HeaderBreadcrumbPortal>
+      {!slot && <HeaderBreadcrumbPortal>
         <WorkspaceBreadcrumbs breadcrumbs={breadcrumbs} portal={false} />
-      </HeaderBreadcrumbPortal>
+      </HeaderBreadcrumbPortal>}
       <Component
         apiBasePath={extension.manifest.api.basePath}
         pathname={pathname}

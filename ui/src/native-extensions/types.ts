@@ -9,9 +9,10 @@ export interface NativeExtensionManifest {
   id: string;
   displayName: string;
   description: string;
-  contractVersion: "1.0";
+  contractVersion: "1.1";
   hostPaths: string[];
-  navigation: {
+  slots?: Array<"home">;
+  navigation?: {
     label: string;
     href: string;
     placement: "after-chat";
@@ -21,6 +22,9 @@ export interface NativeExtensionManifest {
     appId: string;
     basePath: string;
     mounts: string[];
+  };
+  auth: {
+    mode: "app-scoped-token" | "forward-user-access-token";
   };
 }
 
@@ -34,7 +38,7 @@ export interface NativeExtensionProps {
 
 export interface NativeExtensionModule {
   Component: ComponentType<NativeExtensionProps>;
-  contractVersion: "1.0";
+  contractVersion: "1.1";
 }
 
 export interface InstalledNativeExtension {

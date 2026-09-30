@@ -190,6 +190,13 @@ describe("External Apps security contracts", () => {
     ).toBe("http://example-app.example.svc/api/items/with%20space?limit=2");
   });
 
+  it("allows a hidden native app only when visibility is explicitly bypassed, while retaining role checks", () => {
+    const hiddenApp = { ...app, installation: { ...app.installation, visible: false } };
+    expect(canLaunchAgenticApp(hiddenApp, { role: "user" })).toBe(false);
+    expect(canLaunchAgenticApp(hiddenApp, { role: "user" }, { requireVisible: false })).toBe(true);
+    expect(canLaunchAgenticApp(hiddenApp, { role: "viewer" }, { requireVisible: false })).toBe(false);
+  });
+
   it("preserves the mount path and trailing slash for apps using a base path", () => {
     const basePathApp = {
       ...app,
