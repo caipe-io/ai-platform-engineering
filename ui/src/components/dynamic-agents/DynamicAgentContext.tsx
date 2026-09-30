@@ -3,12 +3,15 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
+import { ContextUsageDetails } from "@/components/chat/ContextUsageIndicator";
 import { FileTree } from "@/components/dynamic-agents/FileTree";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
+import type { ContextUsageEventData } from "@/lib/streaming/types";
 import { useChatStore } from "@/store/chat-store";
+import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { motion } from "framer-motion";
 import {
@@ -51,15 +54,27 @@ export function DynamicAgentContext({
   onCollapse,
 }: DynamicAgentContextProps) {
   const { data: session } = useSession();
-  const { clearStreamEvents, conversations } = useChatStore(
+  const { clearStreamEvents, contextUsageByConversation, conversations } = useChatStore(
     useShallow((s) => ({
       clearStreamEvents: s.clearStreamEvents,
+      contextUsageByConversation: s.contextUsageByConversation,
       conversations: s.conversations,
     }))
   );
+  const showContextUsage = useFeatureFlagStore((s) => s.flags.showContextUsage ?? true);
 
   // Get current conversation for download
   const conversation = conversations.find((c) => c.id === conversationId);
+  const storedReasoningEffort = conversation?.metadata?.reasoning_effort;
+  const hasConversationEffortOverride =
+    typeof storedReasoningEffort === "string" &&
+    ["low", "medium", "high", "max"].includes(storedReasoningEffort);
+  const effectiveReasoningEffort = hasConversationEffortOverride
+    ? storedReasoningEffort
+    : (agent?.model?.reasoning_effort ?? "medium");
+  const contextUsage = conversationId
+    ? contextUsageByConversation[conversationId]
+    : undefined;
 
   // Restart runtime handler
   const [isRestarting, setIsRestarting] = useState(false);
@@ -328,6 +343,9 @@ export function DynamicAgentContext({
               onToggleFiles={handleToggleFiles}
               onFileDownload={handleFileDownload}
               getFileContent={handleGetFileContent}
+              contextUsage={showContextUsage ? contextUsage : undefined}
+              reasoningEffort={effectiveReasoningEffort}
+              hasReasoningEffortOverride={hasConversationEffortOverride}
             />
           </div>
         </ScrollArea>
@@ -382,6 +400,9 @@ interface AgentInfoContentProps {
   onToggleFiles?: () => void;
   onFileDownload?: (path: string) => void;
   getFileContent?: (path: string) => Promise<string | null>;
+  contextUsage?: ContextUsageEventData;
+  reasoningEffort: string;
+  hasReasoningEffortOverride: boolean;
 }
 
 function AgentInfoContent({
@@ -400,6 +421,9 @@ function AgentInfoContent({
   onToggleFiles,
   onFileDownload,
   getFileContent,
+  contextUsage,
+  reasoningEffort,
+  hasReasoningEffortOverride,
 }: AgentInfoContentProps) {
   // Count total tools across all MCP servers
   const toolCount = agent?.allowed_tools
@@ -466,6 +490,14 @@ function AgentInfoContent({
           <div className="space-y-0.5">
             <span className="text-xs text-muted-foreground">Visibility</span>
             <p className="font-medium">{visibilityDisplay}</p>
+          </div>
+
+          <div className="space-y-0.5">
+            <span className="text-xs text-muted-foreground">Reasoning effort</span>
+            <p className="font-medium capitalize">{reasoningEffort}</p>
+            <p className="text-[10px] text-muted-foreground">
+              {hasReasoningEffortOverride ? "Chat override" : "Agent default"}
+            </p>
           </div>
 
           {/* MCP Servers */}
@@ -573,6 +605,16 @@ function AgentInfoContent({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* Context Section */}
+      {contextUsage && (
+        <div className="space-y-2 pt-2 border-t border-border/50">
+          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            Context
+          </h4>
+          <ContextUsageDetails usage={contextUsage} />
         </div>
       )}
 

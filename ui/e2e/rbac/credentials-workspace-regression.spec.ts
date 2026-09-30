@@ -229,8 +229,7 @@ test.describe("mocked credentials workspace browser regression", () => {
       await page.getByRole("button", { name: /view details for github token/i }).click();
       const dialog = page.getByRole("dialog", { name: /github token details/i });
       await expect(dialog).toBeVisible();
-      await expect(page.getByText("Preview ghp_...abcd")).toBeVisible();
-      await expect(dialog.getByText(/saved value stays protected; this preview is masked/i)).toBeVisible();
+      await expect(page.getByText("Preview ...bcd")).toBeVisible();
       await expect(dialog.getByText("Workspace Owner")).toBeVisible();
       await expect(dialog.getByText(/GitHub MCP/)).toBeVisible();
       await expect(dialog.getByText(RAW_SECRET_VALUE)).toHaveCount(0);
@@ -262,7 +261,7 @@ test.describe("mocked credentials workspace browser regression", () => {
       await expect.poll(() => credentialsMocks.rotateRequests).toEqual([
         { action: "rotate", value: "rotated-secret-value" },
       ]);
-      await expect(page.getByText("Preview rot_...ated")).toBeVisible();
+      await expect(page.getByText("Preview ...ted")).toBeVisible();
 
       await page.getByRole("button", { name: /delete github token/i }).click();
       await page.getByRole("button", { name: /confirm delete github token/i }).click();

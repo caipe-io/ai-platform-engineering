@@ -206,6 +206,7 @@ const sidebars: SidebarsConfig = {
         { type: 'doc', id: 'repo-ops/ci', label: 'CI Workflows' },
         { type: 'doc', id: 'repo-ops/releases', label: 'How to Cut a Release' },
         { type: 'doc', id: 'repo-ops/issue-triage', label: 'Issue Triage Dashboard' },
+        { type: 'doc', id: 'repo-ops/code-review', label: 'Code Review' },
         {
           type: 'category',
           label: 'Advanced',
@@ -319,6 +320,7 @@ const sidebars: SidebarsConfig = {
               items: [
                 { type: 'doc', id: 'security/rbac/feature-guide', label: 'Feature Guide' },
                 { type: 'doc', id: 'security/rbac/architecture', label: 'Architecture' },
+                { type: 'doc', id: 'security/rbac/access-api', label: 'Access API' },
                 { type: 'doc', id: 'security/rbac/pdp-coverage-audit', label: 'PDP Coverage Audit (BFF /api/*)' },
                 { type: 'doc', id: 'security/rbac/comprehensive-rbac-refactor', label: 'Comprehensive Refactor' },
                 { type: 'doc', id: 'security/rbac/workflows', label: 'Workflows' },

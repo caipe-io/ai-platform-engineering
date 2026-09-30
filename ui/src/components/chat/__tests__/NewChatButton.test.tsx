@@ -7,9 +7,26 @@ jest.mock("@/lib/gradient-themes", () => ({
 }));
 
 jest.mock("@/components/ui/button", () => ({
-  Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
-    <button {...props}>{children}</button>
-  ),
+  Button: ({ children,variant,size,...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    variant?: string;
+    size?: string;
+  }) => {
+    void variant;
+    void size;
+    return <button {...props}>{children}</button>;
+  },
+}));
+
+jest.mock("@/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+const mockToast = jest.fn();
+jest.mock("@/components/ui/toast", () => ({
+  useToast: () => ({ toast: mockToast }),
 }));
 
 jest.mock("lucide-react", () => ({
@@ -18,13 +35,16 @@ jest.mock("lucide-react", () => ({
   Bot: () => <span data-testid="bot-icon" />,
   Loader2: () => <span data-testid="loader-icon" />,
   Search: () => <span data-testid="search-icon" />,
+  Star: () => <span data-testid="star-icon" />,
 }));
 
 const mockFetch = jest.fn();
 const mockResolveUsableChatAgent = jest.fn();
+const mockUpdateWebDefaultAgentId = jest.fn();
 
 jest.mock("@/lib/chat-agent-selection", () => ({
   resolveUsableChatAgent: () => mockResolveUsableChatAgent(),
+  updateWebDefaultAgentId: (agentId: string) => mockUpdateWebDefaultAgentId(agentId),
 }));
 
 import { NewChatButton } from "../NewChatButton";
@@ -32,6 +52,7 @@ import { NewChatButton } from "../NewChatButton";
 beforeEach(() => {
   jest.clearAllMocks();
   global.fetch = mockFetch;
+  mockUpdateWebDefaultAgentId.mockResolvedValue(undefined);
 });
 
 describe("NewChatButton", () => {
@@ -100,5 +121,42 @@ describe("NewChatButton", () => {
     fireEvent.click(mainButton);
 
     expect(onNewChat).toHaveBeenCalledWith("agent-first");
+  });
+
+  it("sets a personal Web default from an agent avatar action", async () => {
+    mockResolveUsableChatAgent.mockResolvedValue({
+      id: "agent-platform",
+      name: "Platform Helper",
+      source: "platform-default",
+    });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { _id: "agent-platform", name: "Platform Helper", enabled: true },
+          { _id: "agent-personal", name: "Personal Helper", enabled: true },
+        ],
+      }),
+    });
+
+    render(<NewChatButton collapsed={false} onNewChat={jest.fn()} />);
+    await screen.findByText("Platform Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Choose an agent" }));
+
+    const defaultAction = await screen.findByRole("button", {
+      name: "Set Personal Helper as Web default agent",
+    });
+    fireEvent.click(defaultAction);
+
+    await waitFor(() => {
+      expect(mockUpdateWebDefaultAgentId).toHaveBeenCalledWith("agent-personal");
+    });
+    expect(mockToast).toHaveBeenCalledWith(
+      "Personal Helper is now your Web default agent.",
+      "success",
+    );
+    expect(screen.getByRole("button", {
+      name: "Personal Helper is your Web default agent",
+    })).toHaveAttribute("aria-pressed", "true");
   });
 });

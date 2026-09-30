@@ -1,3 +1,81 @@
+## 1.3.0-rc.3 (2026-09-24)
+
+## 1.3.0-rc.2 (2026-09-24)
+
+### Feat
+
+- **admin**: improve user identity and access visibility (#2810)
+- **authz**: establish BFF access API foundation (#2807)
+
+### Fix
+
+- **agents**: restore Azure and Bedrock reasoning (#2809)
+
+## 1.3.0-rc.1 (2026-09-23)
+
+### Feat
+
+- **rag**: support Confluence folder and whole-space ingestion (#2805)
+- **agents**: add configurable reasoning effort (#2798)
+
+### Fix
+
+- **auth**: debounce Keycloak sub mapping writes for repeated identity calls (#2800)
+
+## 1.2.0 (2026-09-22)
+
+### Feat
+
+- **rbac**: let owner-team members manage KBs, RAG collections, MCP tools, Webex spaces (#2773)
+- **authz**: reverse-lookup accessible sets instead of checking every catalog candidate (#2793)
+- **chat**: unify conversation history and queued turns (#2778)
+- **chat**: edit messages and rewind conversations (#2781)
+- **chat**: show context remaining before compaction (#2779)
+
+### Fix
+
+- **audit**: audit bulk authorization as one event instead of one per resource (#2777)
+- **insights**: scope conversations across chat surfaces (#2780)
+
+## 1.2.0-rc.4 (2026-09-21)
+
+### Fix
+
+- **helm**: support bridge image pull secrets (#2398)
+- **deps**: bump cnoe-agent-utils 0.4.1 -> 0.4.2 for Sonnet 5 temperature fix (#2776)
+- **ci**: drop unused GitHub App token steps (#2772)
+
+## 1.2.0-rc.3 (2026-09-18)
+
+### Feat
+
+- **jira**: support native ADF in comments and descriptions (#2766)
+
+### Fix
+
+- **ui**: resolve origin scheme mismatch in platform-health audit (#2752)
+- **ci**: allow manual prebuild dispatch for fork PRs
+- **ci**: package canary Helm charts under a valid SemVer placeholder (#2768)
+- **compose**: pull minio from quay.io, not Docker Hub (#2769)
+- **ci**: checkout the real PR head SHA in prebuild builds, not the merge ref
+- **ci**: replace dev auto-tag scheme with canary builds and versioned prebuild tags
+- **rag**: log shutdown-cancellation instead of a silent pass, match rag logger
+
+## 1.1.1-dev.2 (2026-09-17)
+
+### Feat
+
+- **rag**: audit RAG server OpenFGA decisions, grouping allows by subject
+
+### Fix
+
+- **ui**: load release notes from canonical repository (#2761)
+- **rag**: explain the expected CancelledError in stop_allow_rollup_flusher
+- **audit**: fail readiness immediately on shutdown, drop redundant global
+- **audit**: aggregate routine authorization allows into periodic counts
+
+## 1.1.1 (2026-09-16)
+
 ## 1.1.1-dev.1 (2026-09-16)
 
 ## 1.2.0-dev.7 (2026-09-16)
@@ -71,8 +149,6 @@
 
 ## 1.1.0-dev.3 (2026-09-14)
 
-## 1.1.0-rc.2 (2026-09-14)
-
 ### Feat
 
 - **setup-caipe**: enable scheduler + autonomous agents by default (#2681)
@@ -87,8 +163,6 @@
 ## 1.1.0-dev.2 (2026-09-14)
 
 ## 1.1.0-dev.1 (2026-09-14)
-
-## 1.1.0-rc.1 (2026-09-14)
 
 ## 1.0.1-dev.12 (2026-09-14)
 

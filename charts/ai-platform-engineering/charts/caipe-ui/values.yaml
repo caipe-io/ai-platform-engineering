@@ -176,6 +176,14 @@ tolerations: []
 
 affinity: {}
 
+# PodDisruptionBudget: prevents simultaneous eviction of all replicas during voluntary disruptions.
+# Enable in production; leave disabled for local/single-node environments.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
+  annotations: {}
+
 # Non-sensitive application configuration.
 # Each key-value pair is injected as a flat environment variable via ConfigMap (envFrom).
 # For sensitive values (OIDC secrets, MongoDB URI, etc.) use existingSecret or externalSecrets below.

@@ -1,6 +1,7 @@
 from langchain.agents.middleware.context_editing import ContextEditingMiddleware
 from langchain.agents.middleware.model_retry import ModelRetryMiddleware
 
+from dynamic_agents.services.context_usage import ContextUsageMiddleware
 from dynamic_agents.services.middleware import (
     InterruptAwareToolRetryMiddleware,
     ToolResultInvariantMiddleware,
@@ -40,3 +41,4 @@ def test_build_middleware_uses_context_editing_guardrail_by_default():
     assert context_editing.edits[0].trigger == 100_000
     assert context_editing.edits[0].keep == 3
     assert any(isinstance(middleware, ToolResultInvariantMiddleware) for middleware in stack)
+    assert any(isinstance(middleware, ContextUsageMiddleware) for middleware in stack)

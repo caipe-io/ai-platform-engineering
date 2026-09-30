@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from typing import Annotated, Optional, List, Dict, Any, Union
+from typing import Annotated, Optional, List, Dict, Any, Literal, Union
 
 from pydantic import Field
 
@@ -11,7 +11,7 @@ from api.client import make_api_request
 from config import MCP_JIRA_READ_ONLY
 from tools.jira.constants import check_read_only, check_issues_delete_protection
 from utils.field_discovery import get_field_discovery
-from utils.adf import ensure_adf_format
+from utils.adf import prepare_adf_input
 from utils.field_handlers import normalize_field_value
 
 
@@ -137,11 +137,28 @@ async def create_issue(
     project_key: str,
     summary: str,
     issue_type: str = "Task",
-    description: str = "",
+    description: Annotated[
+        Union[str, Dict[str, Any]],
+        Field(
+            description=(
+                "Issue description. Pass a string when description_format is "
+                "'text', or a complete ADF document when it is 'adf'."
+            )
+        ),
+    ] = "",
     assignee: str = None,
     components: list = None,
     additional_fields: dict = None,
-    use_account_id: bool = True
+    use_account_id: bool = True,
+    description_format: Annotated[
+        Literal["text", "adf"],
+        Field(
+            description=(
+                "Format of description. Use 'text' (default) for plain text "
+                "conversion or 'adf' for native Jira formatting."
+            )
+        ),
+    ] = "text",
 ) -> dict:
     """
     Create a Jira issue using the REST API with automatic field discovery and validation.
@@ -156,13 +173,14 @@ async def create_issue(
         project_key: Jira project key (e.g., SCRUM)
         summary: Issue summary/title
         issue_type: Issue type (e.g., Task, Bug)
-        description: Issue description (plain text, will be converted to ADF automatically)
+        description: Plain text or a complete ADF document object.
         assignee: Username or accountId to assign the issue (optional)
         components: List of components names (optional)
         additional_fields: Additional fields as dict (optional)
             Can use field names or IDs. Values will be automatically normalized.
             Example: {"Epic Link": "PROJ-123", "Story Points": 5}
         use_account_id: If True, use 'accountId' for assignee, else 'name' (default True)
+        description_format: ``text`` for plain text or ``adf`` for native rich content.
 
     Returns:
         Response JSON from Jira API or error dict.
@@ -183,7 +201,14 @@ async def create_issue(
 
     # Convert description to ADF format
     if description:
-        fields["description"] = ensure_adf_format(description)
+        try:
+            fields["description"] = prepare_adf_input(
+                description,
+                description_format,
+                field_name="description",
+            )
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
 
     if assignee:
         fields["assignee"] = (
@@ -195,7 +220,13 @@ async def create_issue(
 
     # Process additional_fields with field discovery and normalization
     if additional_fields:
-        normalized_fields = await _normalize_additional_fields(additional_fields, field_discovery)
+        try:
+            normalized_fields = await _normalize_additional_fields(
+                additional_fields,
+                field_discovery,
+            )
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
         fields.update(normalized_fields)
 
     payload = {"fields": fields}
@@ -271,6 +302,15 @@ async def _normalize_additional_fields(
             logger.warning(f"⚠️ Field '{field_name_or_id}' not found, using as-is")
             field_id = field_name_or_id
 
+        if field_id == "description":
+            value_format = "adf" if isinstance(value, dict) else "text"
+            normalized[field_id] = prepare_adf_input(
+                value,
+                value_format,
+                field_name="description",
+            )
+            continue
+
         # Get field schema for normalization
         field_schema = await field_discovery.get_field_schema(field_id)
 
@@ -279,10 +319,6 @@ async def _normalize_additional_fields(
 
         if error:
             logger.warning(f"⚠️ Field normalization warning for '{field_id}': {error}")
-
-        # Special handling for description field (ensure ADF)
-        if field_id == "description" and isinstance(normalized_value, str):
-            normalized_value = ensure_adf_format(normalized_value)
 
         normalized[field_id] = normalized_value
 
@@ -297,7 +333,8 @@ async def batch_create_issues(
                 "- project_key (required): The project key (e.g., 'PROJ')\n"
                 "- summary (required): Issue summary/title\n"
                 "- issue_type (required): Type of issue (e.g., 'Task', 'Bug')\n"
-                "- description (optional): Issue description\n"
+                "- description (optional): Plain text or a complete ADF document\n"
+                "- description_format (optional): 'text' (default) or 'adf'\n"
                 "- assignee (optional): Assignee username or email\n"
                 "- components (optional): Array of component names\n"
                 "Example: [\n"
@@ -380,7 +417,23 @@ async def batch_create_issues(
 
         # Add description with ADF conversion
         if 'description' in issue and issue['description']:
-            fields['description'] = ensure_adf_format(issue['description'])
+            description = issue['description']
+            description_format = issue.get(
+                'description_format',
+                'adf' if isinstance(description, dict) else 'text',
+            )
+            try:
+                fields['description'] = prepare_adf_input(
+                    description,
+                    description_format,
+                    field_name="description",
+                )
+            except ValueError as exc:
+                return json.dumps(
+                    {"success": False, "error": f"Issue {idx}: {exc}"},
+                    indent=2,
+                    ensure_ascii=False,
+                )
 
         # Add assignee if provided
         if 'assignee' in issue and issue['assignee']:
@@ -392,10 +445,20 @@ async def batch_create_issues(
 
         # Process any additional fields with normalization
         additional_fields = {k: v for k, v in issue.items()
-                            if k not in ['project_key', 'summary', 'issue_type', 'description', 'assignee', 'components']}
+                            if k not in ['project_key', 'summary', 'issue_type', 'description', 'description_format', 'assignee', 'components']}
 
         if additional_fields:
-            normalized_fields = await _normalize_additional_fields(additional_fields, field_discovery)
+            try:
+                normalized_fields = await _normalize_additional_fields(
+                    additional_fields,
+                    field_discovery,
+                )
+            except ValueError as exc:
+                return json.dumps(
+                    {"success": False, "error": f"Issue {idx}: {exc}"},
+                    indent=2,
+                    ensure_ascii=False,
+                )
             fields.update(normalized_fields)
 
         formatted_issues.append({"fields": fields})
@@ -497,12 +560,14 @@ async def update_issue(
     field_discovery = get_field_discovery()
 
     # Normalize all fields
-    normalized_fields = await _normalize_additional_fields(fields, field_discovery)
-
-    # Special handling for description - ensure it's in ADF format
-    if "description" in normalized_fields:
-        if isinstance(normalized_fields["description"], str):
-            normalized_fields["description"] = ensure_adf_format(normalized_fields["description"])
+    try:
+        normalized_fields = await _normalize_additional_fields(fields, field_discovery)
+    except ValueError as exc:
+        return json.dumps(
+            {"success": False, "error": str(exc)},
+            indent=2,
+            ensure_ascii=False,
+        )
 
     payload = {
         "fields": normalized_fields

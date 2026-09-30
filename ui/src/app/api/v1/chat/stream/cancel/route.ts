@@ -7,7 +7,10 @@
 
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
 import { NextRequest,NextResponse } from "next/server";
-import { requireConversationWriteAccess } from "../../_conversation-authz";
+import {
+authorizeConversationWriteAccess,
+resolveConversationRuntimeId,
+} from "../../_conversation-authz";
 import {
 authenticateRequest,
 getDynamicAgentsConfig,
@@ -51,11 +54,18 @@ export async function POST(request: NextRequest): Promise<Response> {
   });
   if (authzResponse) return authzResponse;
 
-  const conversationAuthzResponse = await requireConversationWriteAccess(
+  const conversationAuthz = await authorizeConversationWriteAccess(
     authResult,
     String(body.conversation_id),
   );
-  if (conversationAuthzResponse) return conversationAuthzResponse;
+  if (conversationAuthz.denial) return conversationAuthz.denial;
+
+  body = {
+    ...body,
+    conversation_id: await resolveConversationRuntimeId(
+      conversationAuthz.conversation,
+    ),
+  };
 
   // Forward body as-is to DA backend (same path, same body format)
   const backendUrl = `${daConfig.dynamicAgentsUrl}/api/v1/chat/stream/cancel`;

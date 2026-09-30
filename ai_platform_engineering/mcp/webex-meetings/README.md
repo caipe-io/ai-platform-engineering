@@ -52,6 +52,13 @@ best-effort fallback when public `/v1/meetings` rows look stale or expired: it c
 surface Office365/Google-backed future occurrences that the public Webex schedule
 API does not expose as `scheduledMeeting` rows.
 
+When supplied, `from_iso` and exclusive `to_iso` bound the upstream request via
+`startDate` and inclusive `endDate`. Each date edge overlaps by one day because
+User Hub calendars may use local timezones; exact timestamp filtering removes
+the overlap from the returned rows. Without `to_iso`, User Hub chooses its own
+default window. Callers scanning larger ranges should use bounded segments and
+deduplicate occurrences; a response at `max_results` may be incomplete.
+
 The calendar request mirrors the User Hub web client: `meetingListType=All`,
 `hidePastMeeting=false`, and `showMeetings=1`. `showMeetings` asks the feed to
 include meeting entries rather than returning only calendar-shell metadata.

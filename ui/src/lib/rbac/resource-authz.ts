@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api-error";
-import { authorize, authorizeMany, type Action, type Subject } from "@/lib/authz";
+import { authorize, authorizeMany, listAccessible, type Action, type Subject } from "@/lib/authz";
 import type { UniversalRebacResourceType } from "@/types/rbac-universal";
 
 import { type OpenFgaCheckResult, type OpenFgaTupleKey } from "./openfga";
@@ -404,15 +404,23 @@ export async function filterResourcesByPermission<T>(
 
   if (resources.length === 0) return [];
 
+  // The candidate list here is typically the WHOLE catalog (pre-pagination),
+  // so this is "which of these does the subject have access to" — a reverse
+  // lookup, not N per-resource decisions. listAccessible asks the PDP for the
+  // subject's accessible set in one call instead of checking each candidate.
+  // Fails closed (empty) on PDP unavailability, matching the previous
+  // authorizeMany-based behavior — AUTHZ_UNAVAILABLE decisions were never
+  // ALLOW, so they were already filtered out silently.
   const ids = resources.map((resource) => target.id(resource));
-  const results = await authorizeMany(
+  const { accessible } = await listAccessible(
     casSubject,
     resourcePermissionActionToCasAction(target.action),
     target.type,
     ids,
   );
+  const accessibleSet = new Set(accessible);
 
-  return resources.filter((resource) => results.get(target.id(resource))?.decision === "ALLOW");
+  return resources.filter((resource) => accessibleSet.has(target.id(resource)));
 }
 
 export interface McpServerRowPermissions {

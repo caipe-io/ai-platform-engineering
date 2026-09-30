@@ -176,11 +176,28 @@ volumeMounts: []
 #   mountPath: "/etc/foo"
 #   readOnly: true
 
+# Karpenter: to target the `rag` NodePool, set these values or use charts/ai-platform-engineering/values-karpenter.yaml.
+# nodeSelector:
+#   workload-type: rag
+# tolerations:
+#   - key: workload-type
+#     operator: Equal
+#     value: rag
+#     effect: NoSchedule
+
 nodeSelector: {}
 
 tolerations: []
 
 affinity: {}
+
+# PodDisruptionBudget: prevents simultaneous eviction of all replicas during voluntary disruptions.
+# Enable in production; leave disabled for local/single-node environments.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
+  annotations: {}
 
 # Secrets configuration for LLM providers
 secrets:

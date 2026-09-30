@@ -3,12 +3,12 @@
  */
 
 const mockAuthorize = jest.fn();
-const mockAuthorizeMany = jest.fn();
+const mockListAccessible = jest.fn();
 const mockEmitDecisionAudit = jest.fn();
 
 jest.mock("@/lib/authz", () => ({
   authorize: (...a: unknown[]) => mockAuthorize(...a),
-  authorizeMany: (...a: unknown[]) => mockAuthorizeMany(...a),
+  listAccessible: (...a: unknown[]) => mockListAccessible(...a),
 }));
 
 jest.mock("@/lib/authz/audit", () => ({
@@ -103,25 +103,19 @@ describe("filterAccessibleWorkflowConfigs", () => {
   const configs = [{ _id: "wf-a" }, { _id: "wf-b" }, { _id: "wf-c" }];
   const getId = (c: { _id: string }) => c._id;
 
-  it("returns everything for org admins (one batched call avoided)", async () => {
+  it("returns everything for org admins (the reverse lookup is avoided)", async () => {
     mockAuthorize.mockResolvedValueOnce(ALLOW); // org admin
     const out = await filterAccessibleWorkflowConfigs(session, configs, getId, "read");
     expect(out).toEqual(configs);
-    expect(mockAuthorizeMany).not.toHaveBeenCalled();
+    expect(mockListAccessible).not.toHaveBeenCalled();
   });
 
-  it("filters non-admins to the accessible subset via one batch call", async () => {
+  it("filters non-admins to the accessible subset via one reverse-lookup call", async () => {
     mockAuthorize.mockResolvedValueOnce(DENY); // not admin
-    mockAuthorizeMany.mockResolvedValue(
-      new Map([
-        ["wf-a", ALLOW],
-        ["wf-b", DENY],
-        ["wf-c", ALLOW],
-      ]),
-    );
+    mockListAccessible.mockResolvedValue({ accessible: ["wf-a", "wf-c"], reason: "OK" });
     const out = await filterAccessibleWorkflowConfigs(session, configs, getId, "read");
     expect(out).toEqual([{ _id: "wf-a" }, { _id: "wf-c" }]);
-    expect(mockAuthorizeMany).toHaveBeenCalledWith(
+    expect(mockListAccessible).toHaveBeenCalledWith(
       { type: "user", id: "alice" },
       "read",
       "task",
@@ -130,14 +124,9 @@ describe("filterAccessibleWorkflowConfigs", () => {
     );
   });
 
-  it("throws 503 when any batch decision is unavailable", async () => {
+  it("throws 503 (rather than rendering an empty list) when the PDP is unavailable", async () => {
     mockAuthorize.mockResolvedValueOnce(DENY); // not admin
-    mockAuthorizeMany.mockResolvedValue(
-      new Map([
-        ["wf-a", ALLOW],
-        ["wf-b", { decision: "DENY", reason: "AUTHZ_UNAVAILABLE", retriable: true }],
-      ]),
-    );
+    mockListAccessible.mockResolvedValue({ accessible: [], reason: "AUTHZ_UNAVAILABLE" });
     await expect(filterAccessibleWorkflowConfigs(session, configs, getId, "read")).rejects.toMatchObject({
       statusCode: 503,
       code: "AUTHZ_UNAVAILABLE",

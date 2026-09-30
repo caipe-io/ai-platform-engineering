@@ -11,6 +11,10 @@ import {
   withErrorHandler,
 } from '@/lib/api-middleware';
 import type { ConversationAccessLevel } from '@/lib/api-middleware';
+import {
+  reconcileConversationAnalyticsIdentity,
+  reconcileConversationOwnerIdentity,
+} from '@/lib/conversation-owner-identity';
 import { getCollection, isMongoDBConfigured } from '@/lib/mongodb';
 import {
   annotateConversationsWithViewerSharing,
@@ -21,7 +25,7 @@ import {
 import { requireAgentUsePermission } from '@/lib/rbac/openfga-agent-authz';
 import { writeOpenFgaTuples } from '@/lib/rbac/openfga';
 import { buildParticipants } from '@/types/a2a';
-import type { ClientType, Conversation, CreateConversationRequest } from '@/types/mongodb';
+import type { ClientType, Conversation, CreateConversationRequest, User } from '@/types/mongodb';
 import { VALID_CLIENT_TYPES } from '@/types/mongodb';
 import type { Document } from 'mongodb';
 import { NextRequest, NextResponse } from 'next/server';
@@ -180,7 +184,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const clientTypeParam = url.searchParams.get('client_type') as ClientType | null;
   const sourceParam = url.searchParams.get('source');
   const sourceFilter =
-    sourceParam === 'autonomous' || sourceParam === 'web' ? sourceParam : null;
+    sourceParam === 'autonomous' || sourceParam === 'scheduled' ||
+    sourceParam === 'web' || sourceParam === 'api' || sourceParam === 'all'
+      ? sourceParam
+      : null;
 
   // Validate client_type param if provided
   if (clientTypeParam && !VALID_CLIENT_TYPES.includes(clientTypeParam)) {
@@ -232,25 +239,46 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   // Source is a content filter, not an authz primitive — push into $and
   // to narrow results without touching the ownership $or. The previous
   // `delete query.$or` for source=autonomous was an IDOR.
+  // Preserve legacy run classification when filtering server-side, including
+  // conversations written before autonomous provenance became top-level.
+  const autonomousMarkers = [
+    { source: 'autonomous' },
+    { 'metadata.source': 'autonomous' },
+    { title: { $regex: '^\\[Autonomous\\](\\s|$)', $options: 'i' } },
+  ];
   if (sourceFilter === 'autonomous') {
-    query.$and.push({ source: 'autonomous' });
+    query.$and.push({ $or: autonomousMarkers });
+  } else if (sourceFilter === 'api') {
+    query.$and.push({ source: 'api' });
+  } else if (sourceFilter === 'scheduled') {
+    query.$and.push({ $nor: autonomousMarkers });
+    query.$and.push({
+      $or: [
+        { 'metadata.schedule_id': { $exists: true, $ne: '' } },
+        { _id: { $regex: 'sched_[a-z0-9]+', $options: 'i' } },
+      ],
+    });
   } else if (sourceFilter === 'web') {
     query.$and.push({
       source: { $in: ['web', null] } as { $in: (string | null)[] },
     });
+    query.$and.push({
+      $nor: [
+        ...autonomousMarkers,
+        { 'metadata.schedule_id': { $exists: true } },
+        { _id: { $regex: 'sched_[a-z0-9]+', $options: 'i' } },
+      ],
+    });
   } else {
-    // Default ("All") view: include autonomous conversations alongside
-    // regular human chats so the sidebar's "All" filter actually shows
-    // both. Slack and Webex threads are still excluded because they have
-    // their own dedicated UI, and `api` conversations are excluded because
-    // they were created by a direct API caller (e.g. the ask-forge CLI)
-    // with no UI transcript to show — they still count in insights/stats,
-    // which query `conversations`/`messages` directly without this filter.
+    // The explicit All filter includes API chats. The legacy unfiltered view
+    // keeps excluding them for callers that have not adopted the unified list.
     // Slack/Webex are checked on both the legacy `source` field and the
     // newer `client_type` field (Webex is never tagged via `source` — see
     // the `Conversation.source` union in mongodb.ts), mirroring the same
     // dual-field exclusion used in admin/users/activity/[identity]/route.ts.
-    query.$and.push({ source: { $nin: ['slack', 'api'] } });
+    query.$and.push({
+      source: { $nin: sourceFilter === 'all' ? ['slack'] : ['slack', 'api'] },
+    });
     if (clientTypeParam !== 'slack' && clientTypeParam !== 'webex') {
       query.$and.push({ client_type: { $nin: ['slack', 'webex'] } });
     }
@@ -363,6 +391,63 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // implement a service account allowlist — only specific OAuth2 client IDs should be
   // permitted to set owner_id on behalf of users.
   const ownerId = body.owner_id || user.email;
+  const connectorOwnerId = (
+    session.authMethod === 'bearer'
+    && isFirstPartyBotBearer
+    && typeof body.metadata?.owner_connector_id === 'string'
+  )
+    ? body.metadata.owner_connector_id.trim()
+    : '';
+  // Linked Slack/Webex calls carry the human OBO subject even when the
+  // connector has to fall back to its immutable person id for owner_id. The
+  // shared unlinked/service-account path must not stamp its subject or every
+  // unlinked person would collapse into one identity.
+  const canBindOwnerSubject = session.isServiceAccount !== true && (
+    ownerId === user.email
+    || (session.authMethod === 'bearer' && isFirstPartyBotBearer)
+  );
+  const ownerSubject = typeof session.sub === 'string' && session.sub.trim() && canBindOwnerSubject
+    ? session.sub.trim()
+    : null;
+  let analyticsOwnerSubject = ownerSubject;
+
+  // Slack can temporarily use the unlinked service account when identity
+  // exchange is unavailable. An email already present in the user directory
+  // still identifies the person for analytics without granting chat ownership.
+  if (
+    !analyticsOwnerSubject
+    && session.authMethod === 'bearer'
+    && isFirstPartyBotBearer
+    && body.metadata?.owner_is_bot !== true
+    && ownerId.includes('@')
+  ) {
+    const normalizedOwnerEmail = normalizeIdentity(ownerId);
+    const users = await getCollection<User>('users');
+    const knownOwner = await users.findOne(
+      { email: { $in: [...new Set([ownerId, normalizedOwnerEmail])] } },
+      { projection: { keycloak_sub: 1, 'metadata.keycloak_sub': 1 } },
+    );
+    analyticsOwnerSubject = knownOwner?.keycloak_sub?.trim()
+      || knownOwner?.metadata?.keycloak_sub?.trim()
+      || null;
+  }
+
+  // Reconcile provisional identities before an idempotent row is returned or a
+  // linked row is inserted so completed link transitions retain one immutable
+  // analytics key across earlier and later activity.
+  if (ownerSubject) {
+    await reconcileConversationOwnerIdentity(
+      conversations,
+      ownerSubject,
+      [user.email, ownerId, connectorOwnerId],
+    );
+  } else if (analyticsOwnerSubject) {
+    await reconcileConversationAnalyticsIdentity(
+      conversations,
+      analyticsOwnerSubject,
+      [ownerId, connectorOwnerId],
+    );
+  }
 
   // QUAL-8: extract once; reused in both idempotency and new-conversation paths.
   const isSaCaller = session.isServiceAccount === true && typeof session.sub === 'string' && session.sub.trim() !== '';
@@ -413,8 +498,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     title: body.title,
     client_type: effectiveClientType,
     owner_id: ownerId,
-    ...(typeof session.sub === 'string' && session.sub.trim() && ownerId === user.email
-      ? { owner_subject: session.sub.trim(), owner_identity_version: 2 }
+    ...(ownerSubject
+      ? { owner_subject: ownerSubject, owner_identity_version: 2 }
+      : {}),
+    ...(analyticsOwnerSubject
+      ? { owner_canonical_subject: analyticsOwnerSubject, owner_identity_version: 2 }
       : {}),
     ...(body.idempotency_key && { idempotency_key: body.idempotency_key }),
     // Provenance: stamp the SA sub so the audit/reconcile step can find SA-created

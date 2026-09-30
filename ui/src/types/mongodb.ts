@@ -78,6 +78,7 @@ export interface Conversation {
   client_type: ClientType; // Top-level: 'webui' | 'slack' (promoted from metadata)
   owner_id: string; // User email
   owner_subject?: string; // Keycloak subject for schema-versioned ownership checks
+  owner_canonical_subject?: string; // Resolved person identity for cross-surface statistics
   owner_identity_version?: number; // 2 when owner_subject has been normalized
   idempotency_key?: string; // Maps integration-specific identity (e.g. Slack thread_ts) to conversation_id used by UI/checkpoints
   participants: Participant[]; // Agents and users involved in this conversation
@@ -121,27 +122,20 @@ export interface Conversation {
   is_archived: boolean;
   is_pinned: boolean;
   deleted_at?: Date | null; // Soft-delete timestamp; null = not deleted; auto-purged after 7 days
-  // Origin marker. The chat sidebar's "All" view shows both human-typed
-  // and autonomous conversations; `slack` and `api` are excluded from the
-  // default listing because Slack threads have their own dedicated UI and
-  // `api` conversations (e.g. scripts calling /api/chat/conversations +
-  // /api/v1/chat/invoke directly, like the ask-forge CLI) have no UI
-  // transcript to show. The autonomous_agents service writes conversations
-  // with `source: 'autonomous'` so operators can also pivot the sidebar to
-  // "what did the autonomous agent do today?" via the Autonomous filter
-  // chip. Undefined = legacy human-typed conversation. Stats/insights
-  // endpoints intentionally do not filter on `source`, so `api` conversations
-  // are hidden from chat history but still counted there. Webex threads are
-  // excluded from the default listing for the same "has its own dedicated
-  // UI" reason as Slack, but Webex is never tagged via `source` (no
-  // `'webex'` member here) — it is only ever tagged via `client_type`, so
-  // the default-listing query filters `client_type` too.
+  // Origin marker. The chat sidebar groups autonomous and API conversations
+  // separately from browser history. Slack and Webex threads remain excluded
+  // because they have dedicated clients. Undefined = legacy human-typed
+  // conversation. Webex is tagged only through `client_type`, not `source`.
   source?: 'web' | 'slack' | 'autonomous' | 'api';
   // Set when `source === 'autonomous'`: the upstream autonomous task
   // and the specific run that produced this conversation. Lets the
   // run-history UI deep-link from a run row into the chat thread.
   task_id?: string;
   run_id?: string;
+  // Dynamic Agents checkpointer context for the latest autonomous run.
+  // Server-owned: the chat gateway uses it for interactive continuations while
+  // keeping messages under this conversation's stable visible `_id`.
+  execution_context_id?: string;
   /**
    * Set ONLY when the conversation was created by a service account (session.isServiceAccount).
    * Stores the SA's Keycloak sub (session.sub). Used by the audit/reconcile step to
@@ -176,17 +170,26 @@ export interface Message {
     model?: string;
     latency_ms?: number;
     agent_name?: string;
+    agent_id?: string;
     is_final?: boolean;
     timeline_segments?: TimelineSegment[]; // Persisted for plan/thinking/answer reconstruction
     task_id?: string;
+    run_id?: string;
+    kind?: string;
+    execution_context_id?: string;
+    parent_run_id?: string;
     turn_status?: string;
     is_interrupted?: boolean;
-    // Slack linking metadata — set on messages persisted by the Slack bot so
-    // stats/audit views can deep-link back to the source thread.
+    // Integration linking metadata supports scoped stats and source deep links.
     channel_id?: string;
     channel_name?: string;
     thread_ts?: string;
     slack_permalink?: string;
+    webex_space_id?: string;
+    webex_room_id?: string;
+    webex_thread_parent_id?: string;
+    webex_message_id?: string;
+    webex_is_direct?: boolean;
   };
   artifacts?: Artifact[];
   stream_events?: StoredStreamEvent[];
@@ -257,6 +260,7 @@ export interface UserSettings {
     show_thinking_enabled: string;
     auto_scroll_enabled: string;
     show_timestamps_enabled: string;
+    show_context_usage_enabled: string;
     // Per-user opt-out for the post-login release notes notification. When
     // false, the release upgrade dialog/toast is suppressed for this user only
     // (it does not change the platform-wide admin configuration). Defaults to
@@ -313,6 +317,7 @@ export const DEFAULT_USER_SETTINGS: Omit<
     show_thinking_enabled: "true",
     auto_scroll_enabled: "true",
     show_timestamps_enabled: "false",
+    show_context_usage_enabled: "true",
     releaseNotesNotificationsEnabled: true,
   },
   notifications: {
@@ -439,11 +444,16 @@ export interface AddMessageRequest {
     is_interrupted?: boolean;
     task_id?: string;
     timeline_segments?: TimelineSegment[]; // Plan/thinking/answer reconstruction
-    // Slack linking metadata (deep-link back to the source thread)
+    // Integration linking metadata (deep-link back to the source thread)
     channel_id?: string;
     channel_name?: string;
     thread_ts?: string;
     slack_permalink?: string;
+    webex_space_id?: string;
+    webex_room_id?: string;
+    webex_thread_parent_id?: string;
+    webex_message_id?: string;
+    webex_is_direct?: boolean;
   };
   artifacts?: Artifact[];
   stream_events?: StoredStreamEvent[];

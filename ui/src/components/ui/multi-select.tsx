@@ -9,9 +9,11 @@ import { ChevronDown,Plus,Search,X } from "lucide-react";
 import * as React from "react";
 
 interface MultiSelectProps {
-  options: string[];
+  options: readonly string[];
   selected: string[];
   onChange: (selected: string[]) => void;
+  ariaLabel?: string;
+  allowCustom?: boolean;
   formatOption?: (option: string) => string;
   placeholder?: string;
   searchPlaceholder?: string;
@@ -25,6 +27,8 @@ export function MultiSelect({
   options,
   selected,
   onChange,
+  ariaLabel,
+  allowCustom = false,
   formatOption = (option) => option,
   placeholder = "Select...",
   searchPlaceholder = "Search...",
@@ -47,6 +51,10 @@ export function MultiSelect({
   const filtered = normalizedSearch
     ? options.filter((o) => formatOption(o).toLowerCase().includes(normalizedSearch))
     : options;
+  const customOption = allowCustom && normalizedSearch &&
+    !options.includes(normalizedSearch) && !selected.includes(normalizedSearch)
+    ? normalizedSearch
+    : null;
 
   const toggle = (option: string) => {
     onChange(
@@ -66,11 +74,18 @@ export function MultiSelect({
     onChange([]);
   };
 
+  const addCustomOption = () => {
+    if (!customOption || selected.includes(customOption)) return;
+    onChange([...selected, customOption]);
+    setSearch("");
+  };
+
   return (
     <Popover open={open} onOpenChange={(v) => { setOpen(v); if (!v) setSearch(""); }}>
       <PopoverTrigger asChild>
         <button
           type="button"
+          aria-label={ariaLabel}
           className={cn(
             "inline-flex items-center gap-1 h-8 min-w-[140px] max-w-[300px] rounded-md border border-input bg-background px-2 text-xs hover:bg-muted/50 focus:outline-none focus:ring-1 focus:ring-ring",
             className,
@@ -109,7 +124,13 @@ export function MultiSelect({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onInput={(e) => setSearch(e.currentTarget.value)}
-            onKeyDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter" && customOption) {
+                e.preventDefault();
+                addCustomOption();
+              }
+            }}
             placeholder={searchPlaceholder}
             data-testid="multi-select-search"
             className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
@@ -117,7 +138,17 @@ export function MultiSelect({
           />
         </div>
         <div className="max-h-[200px] overflow-y-auto py-1">
-          {filtered.length === 0 ? (
+          {customOption && (
+            <button
+              type="button"
+              onClick={addCustomOption}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-muted/50"
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              Add &quot;{customOption}&quot;
+            </button>
+          )}
+          {filtered.length === 0 && !customOption ? (
             <div className="px-3 py-2 text-xs text-muted-foreground">{emptyLabel}</div>
           ) : (
             filtered.map((option) => {

@@ -211,6 +211,7 @@ def _call_ai(
   escalation_config: Any = None,
   client_context: dict[str, Any] | None = None,
   files: list[dict[str, Any]] | None = None,
+  reasoning_effort: str | None = None,
 ) -> Any:
   """Route to stream_response or invoke_response based on user type."""
   logger.info(f"[{thread_ts}] _call_ai: conv={conversation_id} agent={agent_id} user={user_id} overthink={overthink_config}")
@@ -233,6 +234,7 @@ def _call_ai(
       escalation_config=escalation_config,
       client_context=client_context,
       files=files,
+      reasoning_effort=reasoning_effort,
     )
   else:
     return ai.invoke_response(
@@ -248,4 +250,5 @@ def _call_ai(
       escalation_config=escalation_config,
       client_context=client_context,
       files=files,
+      reasoning_effort=reasoning_effort,
     )

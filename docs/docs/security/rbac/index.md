@@ -8,6 +8,7 @@ This is the canonical reference for how authentication and authorization work in
 |---|---|
 | Explain the feature front to back to CAIPE users, admins, operators, or security reviewers | [Enterprise RBAC and ReBAC Feature Guide](./feature-guide.md) |
 | Understand each component (Keycloak, UI, AgentGateway, Dynamic Agents) and how they're wired | [Architecture](./architecture.md) |
+| Understand the Access API foundation and the target shared authorization boundary | [Access API](./access-api.md) |
 | Get the short end-to-end summary of the Comprehensive RBAC refactor, including Keycloak roles, AgentGateway, and OpenFGA | [Comprehensive RBAC Refactor](./comprehensive-rbac-refactor.md) |
 | Understand how JWT identity and OpenFGA relationship checks work together | [JWT and OpenFGA](./jwt-and-openfga.md) |
 | Understand exactly where OpenFGA union/computed permissions are evaluated, what gets stored vs. computed, and follow a worked end-to-end Probe-button example | [OpenFGA Permission Evaluation](./openfga-permission-evaluation.md) |
