@@ -766,6 +766,100 @@ describe("publication approval policy", () => {
     expect(plan.approver_team_slugs).toEqual(["security-team"]);
   });
 
+  it("still routes a team-scoped material datasource change to its delegated reviewers when the sharing rule doesn't also fire", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_datasource_sharing: { required: true, team_slugs: ["other-team"] },
+        rag_datasource_material_changes: { required: true, team_slugs: ["finance-team"] },
+      },
+      rag_reviewer_team_delegations: {
+        "finance-team": ["finance-reviewers"],
+      },
+    });
+    const plan = planRagPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: { search_team_slugs: ["finance-team"], search_user_subjects: [] },
+      requestedState: { search_team_slugs: ["finance-team"], search_user_subjects: [] },
+      ownerTeamSlug: "owner-team",
+      materialChange: true,
+    });
+
+    expect(plan.requires_approval).toBe(true);
+    expect(plan.risk_facts.target_team_slugs).toEqual(["finance-team"]);
+    expect(plan.approver_team_slugs).toEqual(["finance-reviewers"]);
+  });
+
+  it("still routes a team-scoped collection datasource change to its delegated reviewers when the sharing rule doesn't also fire", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_collection_sharing: { required: true, team_slugs: ["other-team"] },
+        rag_collection_datasource_changes: { required: true, team_slugs: ["finance-team"] },
+      },
+      rag_reviewer_team_delegations: {
+        "finance-team": ["finance-reviewers"],
+      },
+    });
+    const plan = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["owner-team"],
+      currentState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: ["finance-team"],
+        global_read: false,
+        source_ids: ["source-existing"],
+      },
+      requestedState: {
+        maintainer_team_slugs: ["owner-team"],
+        reader_team_slugs: ["finance-team"],
+        global_read: false,
+        source_ids: ["source-existing", "source-new"],
+      },
+    });
+
+    expect(plan.requires_approval).toBe(true);
+    expect(plan.risk_facts.target_team_slugs).toEqual(["finance-team"]);
+    expect(plan.approver_team_slugs).toEqual(["finance-reviewers"]);
+  });
+
+  it("still routes a team-scoped collection ownership change to its delegated reviewers when the sharing rule doesn't also fire", () => {
+    const policy = settings({
+      rules: {
+        ...DEFAULT_PUBLICATION_APPROVAL_SETTINGS.rules,
+        rag_collection_sharing: { required: true, team_slugs: ["other-team"] },
+        rag_collection_ownership_changes: { required: true, team_slugs: ["finance-team"] },
+      },
+      rag_reviewer_team_delegations: {
+        "finance-team": ["finance-reviewers"],
+      },
+    });
+    const plan = planRagCollectionPublication({
+      settings: policy,
+      requester: REQUESTER,
+      requesterTeamSlugs: ["current-owner"],
+      currentState: {
+        maintainer_team_slugs: ["current-owner"],
+        reader_team_slugs: ["finance-team"],
+        global_read: false,
+        source_ids: ["source-existing"],
+      },
+      requestedState: {
+        maintainer_team_slugs: ["new-owner"],
+        reader_team_slugs: ["finance-team"],
+        global_read: false,
+        source_ids: ["source-existing"],
+      },
+    });
+
+    expect(plan.requires_approval).toBe(true);
+    expect(plan.risk_facts.target_team_slugs).toEqual(["finance-team"]);
+    expect(plan.approver_team_slugs).toEqual(["finance-reviewers"]);
+  });
+
   it("applies a material datasource change immediately when the material-changes rule is off, but still reviews Everyone", () => {
     const policy = settings({
       rules: {

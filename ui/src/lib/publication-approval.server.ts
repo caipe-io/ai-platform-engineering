@@ -368,12 +368,13 @@ export function planRagPublication(input: RagPublicationPlanInput): PublicationP
     pendingTeams.length > 0 || pendingUsers.length > 0,
     pendingTeams,
   );
+  const materialSpecificTrigger = ruleTriggered(
+    input.settings.rules.rag_datasource_material_changes,
+    Boolean(input.materialChange) && hasSpecificBroadAudience,
+    specificAudienceTeams,
+  );
   const materialBroadChange = Boolean(input.materialChange && organizationWide) ||
-    ruleTriggered(
-      input.settings.rules.rag_datasource_material_changes,
-      Boolean(input.materialChange) && hasSpecificBroadAudience,
-      specificAudienceTeams,
-    );
+    materialSpecificTrigger;
   const requiresApproval =
     input.settings.require_rag_publication_approval &&
     !trusted &&
@@ -407,12 +408,14 @@ export function planRagPublication(input: RagPublicationPlanInput): PublicationP
       }
     : requested;
 
-  // Org-wide teams are always included here, independent of sharingTrigger -
-  // an org-wide audience add always requires approval (see newOrganizationWideAudience
-  // above) even when the sharing rule's team_slugs scope doesn't cover it, and
-  // routing/audit must reflect the real target rather than coming back empty.
+  // Every trigger that actually required approval must contribute its
+  // involved teams here, independent of whether the *sharing* rule also
+  // fired - otherwise a material change gated only by its own team-scoped
+  // rule (or an org-wide audience add outside the sharing rule's scope)
+  // would require approval but route to no one.
   const targetTeamSlugs = Array.from(new Set([
     ...(sharingTrigger ? pendingTeams : []),
+    ...(materialSpecificTrigger ? specificAudienceTeams : []),
     ...removedOrganizationWideTeams,
     ...addedTeams.filter((slug) => isOrganizationWideTeam(slug, input.settings)),
   ])).sort();
@@ -603,8 +606,14 @@ export function planRagCollectionPublication(
   }
   if (trusted) reasons.push("trusted publisher");
 
+  // Every trigger that actually required approval must contribute its
+  // involved teams here, independent of whether the *sharing* rule also
+  // fired - otherwise a datasource-change or ownership-change gated only by
+  // its own team-scoped rule would require approval but route to no one.
   const targetTeamSlugs = Array.from(new Set([
     ...(pendingReadersTrigger ? pendingReaders : []),
+    ...(sourceAdditionSpecificTrigger ? specificAudienceTeams : []),
+    ...(ownershipSpecificTrigger ? specificAudienceTeams : []),
     ...removedOrganizationWideReaders,
     ...addedReaders.filter((slug) => isOrganizationWideTeam(slug, input.settings)),
     ...(newGlobalRead ? input.settings.organization_wide_team_slugs : []),
