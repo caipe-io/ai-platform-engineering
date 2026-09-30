@@ -23,10 +23,11 @@ that CI missed, they should report it and suggest an automated check where pract
 
 ```mermaid
 flowchart TD
-    PR[PR opened] --> CI[CI checks]
+    PR[Pull request] --> CI[CI checks]
     CI -->|Pass| HUMAN[Maintainer review]
     PR -.-> AI[AI feedback: advisory]
     HUMAN -->|Approve| MERGE[Merge]
+    HUMAN -->|Changes requested| PR
 ```
 
 ## Pull request size
@@ -154,8 +155,8 @@ limitations are recorded in the installation request.
 
 | Item | State |
 |---|---|
-| This policy and checklist | in effect on merge |
-| Pull request size guidance | in effect on merge |
-| Size labels on pull requests | in effect on merge; existing PRs backfilled by manual workflow |
-| Automated first pass | configuration ready on merge — owner assessment and installation pending ([#2804](https://github.com/caipe-io/ai-platform-engineering/issues/2804)) |
-| Backlog triage sweep | not yet — separate task |
+| This policy and checklist | in effect |
+| Pull request size guidance | in effect |
+| Size labels on pull requests | in effect; open PRs backfilled |
+| Automated first pass | 90-day pilot since 2026-09-28; evaluation due 2026-12-27 ([#2804](https://github.com/caipe-io/ai-platform-engineering/issues/2804)) |
+| Backlog triage sweep | not planned; covered by the weekly sweep under [Review capacity](#review-capacity) |
