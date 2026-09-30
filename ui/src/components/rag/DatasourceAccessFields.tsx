@@ -11,6 +11,8 @@ interface DatasourceAccessFieldsProps {
   searchDescription: ReactNode;
   ownerDetails?: ReactNode;
   searchDetails?: ReactNode;
+  /** Rendered below both controls, for notes that apply to access as a whole. */
+  footer?: ReactNode;
   className?: string;
 }
 
@@ -21,6 +23,7 @@ export function DatasourceAccessFields({
   searchDescription,
   ownerDetails,
   searchDetails,
+  footer,
   className,
 }: DatasourceAccessFieldsProps) {
   return (
@@ -57,6 +60,8 @@ export function DatasourceAccessFields({
         </div>
         {searchDetails}
       </div>
+
+      {footer && <div className="border-t border-border/60 pt-4">{footer}</div>}
     </div>
   );
 }

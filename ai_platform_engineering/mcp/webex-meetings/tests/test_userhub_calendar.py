@@ -19,8 +19,19 @@ def test_userhub_calendar_query_requests_meetings_from_requested_start() -> None
         "limit": 500,
         "hidePastMeeting": "false",
         "showMeetings": 1,
-        "startDate": "2026-08-30",
+        "startDate": "2026-08-29",
+        "endDate": "2026-12-01",
     }
+
+
+def test_userhub_calendar_end_date_preserves_exclusive_midnight_bound_with_timezone_overlap() -> None:
+    args = UserHubCalendar(from_iso="2026-09-01T00:00:00Z", to_iso="2026-09-08T00:00:00Z")
+    assert _userhub_calendar_params(args)["startDate"] == "2026-08-31"
+    assert _userhub_calendar_params(args)["endDate"] == "2026-09-08"
+
+
+def test_userhub_calendar_does_not_invent_an_end_date_without_upper_bound() -> None:
+    assert "endDate" not in _userhub_calendar_params(UserHubCalendar())
 
 
 def test_extract_items_accepts_nested_userhub_response() -> None:

@@ -106,6 +106,7 @@ async def test_preview_uses_bounded_real_crawl_without_persisting():
     reload_interval=86400,
   )
   client = MagicMock(ingestor_id="web:primary")
+  client.resolve_auth_headers = AsyncMock(return_value=({}, []))
   pool = MagicMock()
 
   async def crawl(*, request, on_progress, on_documents, timeout):

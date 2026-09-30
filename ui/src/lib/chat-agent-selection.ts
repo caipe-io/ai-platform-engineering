@@ -46,6 +46,25 @@ export async function fetchChatDefaultAgentIds(): Promise<ChatDefaultAgentIds> {
   };
 }
 
+/** Save the signed-in user's personal default for new Web chats. */
+export async function updateWebDefaultAgentId(agentId: string): Promise<void> {
+  const normalized = normalizedAgentId(agentId);
+  if (!normalized) {
+    throw new Error("A valid agent is required");
+  }
+
+  const response = await fetch("/api/user/preferences", {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ web_default_agent_id: normalized }),
+  });
+  const payload = (await response.json()) as ApiEnvelope<unknown>;
+  if (!response.ok || !payload.success) {
+    throw new Error(payload.error || `Failed to save default agent (HTTP ${response.status})`);
+  }
+}
+
 async function fetchAvailableAgents(): Promise<DynamicAgentConfig[]> {
   const payload = await fetchJson<ApiEnvelope<DynamicAgentConfig[]>>(
     "/api/dynamic-agents/available",

@@ -49,6 +49,15 @@ describe("ingestion source id formulas", () => {
     );
   });
 
+  it("uses a distinct infix so a folder and a page can't collide on the same id", () => {
+    expect(
+      confluenceSpaceSourceId("https://confluence.example.com/wiki", "ENG", "123", "folder"),
+    ).toBe("src_confluence___confluence_example_com__ENG__folder__123");
+    expect(
+      confluenceSpaceSourceId("https://confluence.example.com/wiki", "ENG", "123", "folder"),
+    ).not.toBe(confluenceSpaceSourceId("https://confluence.example.com/wiki", "ENG", "123"));
+  });
+
   it("makes page-scoped Confluence ids safe for managed access", () => {
     expect(
       confluenceSpaceSourceId(
@@ -103,15 +112,37 @@ describe("ingestion source id formulas", () => {
       ).toBe("slack-channel-C1");
     });
 
-    it("confluence_space", () => {
+    it("confluence_space, page-scoped", () => {
       expect(
         computeIngestionSourceId({
           source_type: "confluence_space",
           confluence_url: "https://confluence.example.com",
           space_key: "ENG",
-          page_id: "123",
+          content_id: "123",
         }),
       ).toBe("src_confluence___confluence_example_com__ENG__123");
+    });
+
+    it("confluence_space, folder-scoped", () => {
+      expect(
+        computeIngestionSourceId({
+          source_type: "confluence_space",
+          confluence_url: "https://confluence.example.com",
+          space_key: "ENG",
+          content_id: "456",
+          content_kind: "folder",
+        }),
+      ).toBe("src_confluence___confluence_example_com__ENG__folder__456");
+    });
+
+    it("confluence_space, whole-space", () => {
+      expect(
+        computeIngestionSourceId({
+          source_type: "confluence_space",
+          confluence_url: "https://confluence.example.com",
+          space_key: "ENG",
+        }),
+      ).toBe("src_confluence___confluence_example_com__ENG");
     });
 
     it("jira_project", () => {

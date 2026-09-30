@@ -33,6 +33,9 @@ For chart changes, you can test temporary versions before merging:
 - [ ] I have read the [contributing guidelines](CONTRIBUTING.md)
 - [ ] Existing issues have been referenced (where applicable)
 - [ ] I have verified this change is not present in other open pull requests
+- [ ] This PR is under ~500 changed lines of hand-written code, or the description explains why it cannot be split
+- [ ] AI assistance used to produce this change is disclosed in the description
+- [ ] Review suggestions were applied locally, not with the "Commit suggestion" button (it adds a co-author who has not signed off, which fails DCO)
 - [ ] Functionality is documented
 - [ ] New selection controls follow the [selection-control decision table](https://github.com/caipe-io/ai-platform-engineering/blob/main/docs/docs/ui/selection-controls.md), or the custom interaction is justified
 - [ ] All code style checks pass

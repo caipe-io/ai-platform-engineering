@@ -316,7 +316,7 @@ describe("messaging RBAC migration derivation", () => {
       expect(plan.tuples).toEqual(
         expect.arrayContaining([
           {
-            user: "team:platform#admin",
+            user: "team:platform#member",
             relation: "manager",
             object: "webex_space:WEBEX--space-1",
           },

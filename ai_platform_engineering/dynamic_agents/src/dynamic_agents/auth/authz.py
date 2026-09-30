@@ -264,3 +264,8 @@ async def require_autonomous_permission(delegated_user_sub: str | None = None) -
         "organization#automate",
         delegated_user_sub,
     )
+
+
+async def require_org_admin_permission() -> None:
+    """Check the canonical org-manage policy using the caller's bearer."""
+    await _require_action("organization", _organization_key(), "manage", "organization#manage")

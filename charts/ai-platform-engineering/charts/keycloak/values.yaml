@@ -363,8 +363,9 @@ webexTokenExchange:
       property: ""
 
 # ---------- Token exchange for the scheduler runner (RFC 8693 / impersonation) ----------
-# Mirrors tokenExchange above. Used by the BFF to mint a schedule owner's bearer
-# for cron fires. The generated Secret key is KC_SCHEDULER_CLIENT_SECRET.
+# Mirrors tokenExchange above. Used by scheduled and autonomous runners to mint
+# an owner's bearer for unattended execution. The generated Secret key is
+# KC_SCHEDULER_CLIENT_SECRET.
 # When `enabled` is omitted, inherits tokenExchange.enabled.
 schedulerTokenExchange:
   enabled: true
@@ -571,3 +572,11 @@ affinity: {}
 
 volumes: []
 volumeMounts: []
+
+# PodDisruptionBudget: prevents simultaneous eviction of all replicas during voluntary disruptions.
+# Enable in production; leave disabled for local/single-node environments.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
+  annotations: {}

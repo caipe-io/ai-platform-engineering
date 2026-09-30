@@ -230,7 +230,7 @@ wheels = [
 
 [[package]]
 name = "cnoe-agent-utils"
-version = "0.4.2"
+version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
@@ -252,9 +252,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0c/8c/58e196ea112eb88292002080f914d8c9c5229592182390ead4b85307a0d9/cnoe_agent_utils-0.4.2.tar.gz", hash = "sha256:0b45b0d17cb25b4b8824ce5e6153828be96c14ad4f3f9789eba85499c22aa170", size = 246016, upload-time = "2026-09-03T12:26:50.531Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/83/fa34dc9e42f585f4ce423aa97551352123bf6f15023469595112a59c7c8c/cnoe_agent_utils-0.5.1.tar.gz", hash = "sha256:845a70f77c76afb50688a60fc9aa0cfae03bc9f7259f84a838f54e4ea8d92b6f", size = 252473, upload-time = "2026-09-24T16:07:44.647Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/8e/68604c6cdc6816ef7275413e40b523d43012a858b1f275eb02964ff9ee03/cnoe_agent_utils-0.4.2-py3-none-any.whl", hash = "sha256:acbaa04d3798b18d5c43c13e2e7139cfc313cbf8a8aa60ecedc99dbcaac0fad2", size = 63634, upload-time = "2026-09-03T12:26:49.368Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/4c/b84dabb47873a94ac73061e1a213cb6a9b81fcb7d09f58df4ca27cd52b2e/cnoe_agent_utils-0.5.1-py3-none-any.whl", hash = "sha256:c005cdb48738a87ab397710909d7eb94bb2b64d42ce2f3346939e14f55e67f0b", size = 67513, upload-time = "2026-09-24T16:07:43.139Z" },
 ]
 
 [[package]]
@@ -438,7 +438,7 @@ dev = [
 requires-dist = [
     { name = "beautifulsoup4", specifier = "==4.15.0" },
     { name = "boto3", specifier = "==1.43.16" },
-    { name = "cnoe-agent-utils", specifier = "==0.4.2" },
+    { name = "cnoe-agent-utils", specifier = "==0.5.1" },
     { name = "deepagents", specifier = "==0.6.8" },
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "jinja2", specifier = "==3.1.6" },
@@ -447,7 +447,7 @@ requires-dist = [
     { name = "prometheus-client", specifier = "==0.26.0" },
     { name = "pydantic", specifier = "==2.13.4" },
     { name = "pydantic-settings", specifier = "==2.15.0" },
-    { name = "pyjwt", extras = ["crypto"], specifier = "==2.13.0" },
+    { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.1" },
     { name = "pymongo", specifier = "==4.16.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.1.1" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = "==1.4.0" },
@@ -1822,11 +1822,11 @@ wheels = [
 
 [[package]]
 name = "pyjwt"
-version = "2.13.0"
+version = "2.15.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3b/81/58d0ac84e1ef3a3843791d6954d94c0b33d526c75eeb1efbce9d0a4c4077/pyjwt-2.13.0.tar.gz", hash = "sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423", size = 107515, upload-time = "2026-05-21T19:54:36.618Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/ea/5194e52748b0da83d71e082d75496eaec6e58f419f5e184786ded517e6a9/pyjwt-2.15.1.tar.gz", hash = "sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8", size = 121252, upload-time = "2026-09-28T18:40:42.598Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/5e/ecf12fdb62546d64385c158514e9b2b671f7832108ef2ecd2020ce0af2d1/pyjwt-2.13.0-py3-none-any.whl", hash = "sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728", size = 31274, upload-time = "2026-05-21T19:54:35.362Z" },
+    { url = "https://files.pythonhosted.org/packages/50/ca/44de4e75f8aadc457f0634be3b542815078ded46dca30efb960edeecad6e/pyjwt-2.15.1-py3-none-any.whl", hash = "sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193", size = 33860, upload-time = "2026-09-28T18:40:41.429Z" },
 ]
 
 [package.optional-dependencies]

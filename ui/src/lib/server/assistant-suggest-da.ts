@@ -90,7 +90,13 @@ export function formatAssistantSuggestFetchError(
  */
 export async function fetchAssistantSuggest(
   headers: Record<string, string>,
-  body: AssistantSuggestBody
+  body: AssistantSuggestBody,
+  /**
+   * Abort after this many milliseconds. Callers on a user-facing write path
+   * should set one: without it the request inherits Node's default, so an
+   * unresponsive dynamic-agents would hold the caller open indefinitely.
+   */
+  timeoutMs?: number,
 ): Promise<AssistantSuggestSuccess | AssistantSuggestFailure> {
   const url = getDynamicAgentsSuggestUrl();
   let response: Response;
@@ -99,6 +105,7 @@ export async function fetchAssistantSuggest(
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
   } catch (err) {
     return {

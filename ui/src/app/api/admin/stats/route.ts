@@ -185,6 +185,7 @@ function auditServiceBaseUrl(): string {
 // dashboard range wider than 31 days (e.g. the 90d preset) still succeeds —
 // clamped to the most recent 31 days — rather than failing the whole section.
 const AUDIT_MCP_ACTIVITY_MAX_DAYS = 31;
+const AUDIT_MCP_ACTIVITY_TIMEOUT_MS = 5_000;
 
 async function fetchMcpActivityStats(rangeStart: Date, rangeEnd: Date): Promise<ApiStats['mcp_activity']> {
   const cappedSince = new Date(Math.max(rangeStart.getTime(), rangeEnd.getTime() - AUDIT_MCP_ACTIVITY_MAX_DAYS * DAY_MS));
@@ -202,6 +203,7 @@ async function fetchMcpActivityStats(rangeStart: Date, rangeEnd: Date): Promise<
     });
     const response = await fetch(`${auditServiceBaseUrl()}/v1/audit/events?${params.toString()}`, {
       cache: 'no-store',
+      signal: AbortSignal.timeout(AUDIT_MCP_ACTIVITY_TIMEOUT_MS),
     });
     if (!response.ok) {
       console.warn(`Direct MCP Activity: audit-service returned HTTP ${response.status}`);
@@ -310,12 +312,10 @@ function parseRange(searchParams: URLSearchParams): {
   return { rangeStart, rangeEnd, days, bucketUnit, bucketCount };
 }
 
-// ── Human vs. bot identity ──────────────────────────────────────────────────
-// "Top users" should reflect people, not the bot/service identities that own
-// automated Slack posts (alerts, scheduled pipelines, MR bots). Human owners
-// are keyed by email (contain '@'); Slack bot posters surface as bot IDs
-// ("B0…"), the literal "unknown", the Slackbot sentinel, or platform service
-// accounts. We exclude those so the leaderboard is people-only.
+// ── Human vs. automated identity ────────────────────────────────────────────
+// "Top users" defaults to people, while independent filters can opt bot and
+// service-account owners into the lower activity sections. Active-user metrics
+// remain people-only regardless of those display filters.
 const BOT_OWNER_EXACT = ['unknown', 'USLACKBOT'];
 
 async function getBotOwnerIds(conversations: Collection<Document>): Promise<string[]> {
@@ -344,16 +344,41 @@ async function getBotOwnerIds(conversations: Collection<Document>): Promise<stri
   return promise;
 }
 
-/** Mongo match fragment (spread into a $match) that keeps only human owners. */
-const HUMAN_OWNER_MATCH: Record<string, unknown> = {
+const HUMAN_CONVERSATION_OWNER_MATCH: Document = {
+  'metadata.owner_is_bot': { $ne: true },
   $and: [
-    { _id: { $nin: BOT_OWNER_EXACT } },
-    // Bot user IDs are "B" + uppercase/digits (e.g. B04741LSXBJ); real Slack
-    // user IDs start "U"/"W" and web owners are emails, so this only drops bots.
-    { _id: { $not: /^B[A-Z0-9]{6,}$/ } },
-    { _id: { $not: /^service-account-/ } },
+    { owner_id: { $nin: [null, '', ...BOT_OWNER_EXACT] } },
+    { owner_id: { $not: /^B[A-Z0-9]{6,}$/ } },
+    { owner_id: { $not: /^service-account-/ } },
   ],
 };
+
+/**
+ * Stable person key shared by browser, Slack, Webex, and user-authenticated API
+ * conversations. Linked identities use the immutable account subject after
+ * their provisional email or connector-id conversations have been reconciled.
+ * Truly unlinked rows retain their normalized provisional owner id.
+ */
+function canonicalConversationOwner(
+  ownerField = '$owner_id',
+  subjectField = '$owner_subject',
+  canonicalSubjectField = '$owner_canonical_subject',
+): Document {
+  const resolvedSubject = {
+    $cond: [
+      { $ne: [{ $ifNull: [canonicalSubjectField, ''] }, ''] },
+      canonicalSubjectField,
+      subjectField,
+    ],
+  };
+  return {
+    $cond: [
+      { $ne: [{ $ifNull: [resolvedSubject, ''] }, ''] },
+      { $concat: ['subject:', resolvedSubject] },
+      { $toLower: { $ifNull: [ownerField, ''] } },
+    ],
+  };
+}
 
 /** Turn an internal agent id/name into a display label ("agent-gitlab-agent" → "Gitlab Agent"). */
 function humanizeAgentName(raw: string): string {
@@ -473,17 +498,15 @@ async function getAdminStats(request: NextRequest) {
     const channelNames = channelFilter ? channelFilter.split(',').map((c) => c.trim()).filter(Boolean) : [];
     const agentFilter = searchParams.get('agent'); // comma-separated agent ids (dynamic agents)
     const agentIds = agentFilter ? agentFilter.split(',').map((a) => a.trim()).filter(Boolean) : [];
-    // Top-users leaderboard: by default we hide bot/service identities (alert
-    // posters, MR bots, service accounts). `include_bots=true` shows them —
-    // surfaced as a "Show Bot Users" toggle in the UI.
+    // Automated owners are independent filters: an operator may inspect bot
+    // traffic without mixing in service accounts, or vice versa.
     const includeBots = searchParams.get('include_bots') === 'true';
+    const includeServiceAccounts = searchParams.get('include_service_accounts') === 'true';
     const topConversationsPage = parsePositivePage(searchParams, 'top_conversations_page');
     const topMessagesPage = parsePositivePage(searchParams, 'top_messages_page');
     // Populated after the collections are available (below): a no-op $match
-    // spread when bots are included, else a $match that drops bot/service
-    // identities — both those detectable by ID pattern (HUMAN_OWNER_MATCH) and
-    // Slack bot/app owners flagged at ingestion (metadata.owner_is_bot), whose
-    // "U…"-prefixed IDs are indistinguishable from humans.
+    // spread when every automated identity is included, else a $match that
+    // drops the requested identity classes.
     let topUserOwnerMatch: Record<string, unknown>[] = [];
 
     // Build reusable filter fragments for conversations and messages.
@@ -499,21 +522,13 @@ async function getAdminStats(request: NextRequest) {
     const API_CONV_MATCH = { client_type: 'api' };
     const AI_MESSAGE_MATCH: Document = { role: 'assistant' };
 
-    // A non-admin view is always "filtered" — DAU/MAU and daily-user activity
-    // must derive from the scoped conversations, never from the platform-wide
-    // users collection (which would leak global active-user counts).
-    const hasFilters = !!sourceFilter
-      || hasUserFilter
-      || channelNames.length > 0
-      || agentIds.length > 0
-      || !!nonAdminScope;
     const convSourceFilter: Document = {};
     const msgOwnerFilter: Document = {};
     if (sourceFilter === 'web') {
-      // Neither legacy Slack rows, Webex rows, nor API rows (client_type-only,
-      // no legacy `source`) are "web" — exclude all three so none inflate the
-      // Web-only view.
-      convSourceFilter.source = { $nin: ['slack', 'webex'] };
+      // Integration, direct-API, and autonomous rows are not browser chats.
+      // Exclude both modern client_type markers and source-only records so the
+      // Web view remains internally consistent across cards.
+      convSourceFilter.source = { $nin: ['slack', 'webex', 'api', 'autonomous'] };
       convSourceFilter.client_type = { $nin: ['slack', 'webex', 'api'] };
       msgOwnerFilter['metadata.source'] = 'web';
     } else if (sourceFilter === 'slack') {
@@ -731,17 +746,15 @@ async function getAdminStats(request: NextRequest) {
     const messages = await getCollection('messages');
     const workflowRuns = await getCollection('workflow_runs');
 
-    // Bot/service exclusion for the whole "Top Users" section — the block that
+    // Automated-owner exclusion for the whole "Top Users" section — the block that
     // spans both Top-Users leaderboards, Top Agents, Response Time, and Activity
-    // by Hour. Off when the caller opted into "Show bot users". Otherwise drop:
-    //   1. Owners whose ID itself is bot-shaped (HUMAN_OWNER_MATCH / the owner_id
-    //      pattern rules below).
+    // by Hour. Each owner class is omitted unless its matching toggle is on:
+    //   1. Owners whose ID itself is bot- or service-account-shaped.
     //   2. Slack bot/app owners flagged at ingestion (metadata.owner_is_bot) —
     //      e.g. the GitLab app, whose "U…" user ID looks human. Their owner_ids
     //      are collected here and excluded by value.
-    // The Overview cards and activity charts ABOVE the section keep using the
-    // unfiltered convSourceFilter/msgOwnerFilter, so the toggle governs only the
-    // Top Users section.
+    // Overview active-user metrics always use HUMAN_CONVERSATION_OWNER_MATCH;
+    // these display filters govern only this lower activity section.
     const sectionConvMatch: Document = { ...convSourceFilter };
     const sectionMsgMatch: Document = { ...msgOwnerFilter };
     const needsHumanOwnerFilter = (
@@ -750,27 +763,30 @@ async function getAdminStats(request: NextRequest) {
       || includesSection('response_time')
       || includesSection('hourly_heatmap')
     );
-    if (!includeBots && needsHumanOwnerFilter) {
-      const botOwnerIds = await getBotOwnerIds(conversations);
-      // Post-group $match for the leaderboards, which group on owner_id → _id.
-      const humanOwnerMatch = botOwnerIds.length > 0
-        ? { $and: [HUMAN_OWNER_MATCH, { _id: { $nin: botOwnerIds } }] }
-        : HUMAN_OWNER_MATCH;
-      topUserOwnerMatch = [{ $match: humanOwnerMatch }];
-      // Row-level exclusion for the section's non-grouped aggregations (Top
-      // Agents, Response Time, Activity by Hour), which filter documents before
-      // grouping. Same rules as HUMAN_OWNER_MATCH but keyed on the owner_id
-      // field, plus the ingestion-flagged Slack bot/app owners. Documents with
-      // no owner_id (legacy rows) are kept — $nin/$not treat a missing field as
-      // a non-match, so only genuine bot owners are dropped.
-      const ownerFieldExclusion: Record<string, unknown> = {
-        $and: [
+    if (needsHumanOwnerFilter && (!includeBots || !includeServiceAccounts)) {
+      const botOwnerIds = !includeBots ? await getBotOwnerIds(conversations) : [];
+      const groupedOwnerClauses: Record<string, unknown>[] = [];
+      const rowOwnerClauses: Record<string, unknown>[] = [];
+
+      if (!includeBots) {
+        groupedOwnerClauses.push(
+          { _id: { $nin: BOT_OWNER_EXACT } },
+          { _id: { $not: /^B[A-Z0-9]{6,}$/ } },
+          ...(botOwnerIds.length > 0 ? [{ _id: { $nin: botOwnerIds } }] : []),
+        );
+        rowOwnerClauses.push(
           { owner_id: { $nin: BOT_OWNER_EXACT } },
           { owner_id: { $not: /^B[A-Z0-9]{6,}$/ } },
-          { owner_id: { $not: /^service-account-/ } },
           ...(botOwnerIds.length > 0 ? [{ owner_id: { $nin: botOwnerIds } }] : []),
-        ],
-      };
+        );
+      }
+      if (!includeServiceAccounts) {
+        groupedOwnerClauses.push({ _id: { $not: /^service-account-/ } });
+        rowOwnerClauses.push({ owner_id: { $not: /^service-account-/ } });
+      }
+
+      topUserOwnerMatch = [{ $match: { $and: groupedOwnerClauses } }];
+      const ownerFieldExclusion: Document = { $and: rowOwnerClauses };
       andInto(sectionConvMatch, ownerFieldExclusion);
       andInto(sectionMsgMatch, ownerFieldExclusion);
     }
@@ -838,6 +854,8 @@ async function getAdminStats(request: NextRequest) {
     // preset must not quietly show all activity from the last 24h.
     const todayRangeStart = new Date(Math.max(rollingToday.getTime(), rangeStart.getTime()));
     const monthRangeStart = new Date(Math.max(rollingMonth.getTime(), rangeStart.getTime()));
+    const activeIdentityFilter: Document = { ...convSourceFilter };
+    andInto(activeIdentityFilter, HUMAN_CONVERSATION_OWNER_MATCH);
 
     // ═══════════════════════════════════════════════════════════════
     // OVERVIEW STATS (parallel queries for speed)
@@ -862,18 +880,15 @@ async function getAdminStats(request: NextRequest) {
         messagesToday,
         sharedConversations,
       ] = await Promise.all([
-        // Total users is range-aware like the conversation and message totals.
-        // Any dimension filter must derive it from matching conversations;
-        // otherwise agent/source/channel selections would leave this card at
-        // the platform-wide users count. Unfiltered admins retain the existing
-        // last-login activity source.
-        nonAdminScope || hasFilters
-          ? conversations.aggregate([
-              { $match: { updated_at: rangeDateMatch, ...convSourceFilter } },
-              { $group: { _id: '$owner_id' } },
-              { $count: 'total' },
-            ]).toArray().then((r) => r[0]?.total || 0)
-          : users.countDocuments({ last_login: rangeDateMatch }),
+        // Active identities come from conversation activity across every chat
+        // surface. Keycloak last_login only represents browser sign-ins and
+        // therefore omits Slack, Webex, and direct API users. Bot and service
+        // identities are excluded because this card measures people.
+        conversations.aggregate([
+          { $match: { updated_at: rangeDateMatch, ...activeIdentityFilter } },
+          { $group: { _id: canonicalConversationOwner() } },
+          { $count: 'total' },
+        ]).toArray().then((r) => r[0]?.total || 0),
         // Scoped to the selected date range (rangeStart), matching daily_activity
         // and every other range-aware metric below — previously these were
         // always lifetime totals regardless of the selected range.
@@ -882,21 +897,16 @@ async function getAdminStats(request: NextRequest) {
         // msgOwnerFilter also carries metadata.source when explicitly filtered;
         // without a source filter, assistant rows from every source are counted.
         messages.countDocuments({ created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }),
-        // DAU/MAU: derive from conversations when filters are applied, otherwise from users
-        hasFilters
-          ? conversations.aggregate([
-              { $match: { updated_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...convSourceFilter } },
-              { $group: { _id: '$owner_id' } },
-              { $count: 'total' },
-            ]).toArray().then((r) => r[0]?.total || 0)
-          : users.countDocuments({ last_login: { $gte: todayRangeStart, $lte: rangeEnd } }),
-        hasFilters
-          ? conversations.aggregate([
-              { $match: { updated_at: { $gte: monthRangeStart, $lte: rangeEnd }, ...convSourceFilter } },
-              { $group: { _id: '$owner_id' } },
-              { $count: 'total' },
-            ]).toArray().then((r) => r[0]?.total || 0)
-          : users.countDocuments({ last_login: { $gte: monthRangeStart, $lte: rangeEnd } }),
+        conversations.aggregate([
+          { $match: { updated_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...activeIdentityFilter } },
+          { $group: { _id: canonicalConversationOwner() } },
+          { $count: 'total' },
+        ]).toArray().then((r) => r[0]?.total || 0),
+        conversations.aggregate([
+          { $match: { updated_at: { $gte: monthRangeStart, $lte: rangeEnd }, ...activeIdentityFilter } },
+          { $group: { _id: canonicalConversationOwner() } },
+          { $count: 'total' },
+        ]).toArray().then((r) => r[0]?.total || 0),
         conversations.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...convSourceFilter }),
         messages.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }),
         // `andInto` rather than spreading a literal `$or` — the non-admin scope
@@ -1001,16 +1011,11 @@ async function getAdminStats(request: NextRequest) {
     ] = await Promise.all([
       // Daily active users
       includesSection('activity')
-        ? hasFilters
-          ? conversations.aggregate([
-              { $match: { updated_at: rangeDateMatch, ...convSourceFilter } },
-              { $group: { _id: { date: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$updated_at' } }, user: '$owner_id' } } },
-              { $group: { _id: '$_id.date', active_users: { $sum: 1 } } },
-            ]).toArray()
-          : users.aggregate([
-              { $match: { last_login: rangeDateMatch } },
-              { $group: { _id: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$last_login' } }, active_users: { $sum: 1 } } },
-            ]).toArray()
+        ? conversations.aggregate([
+            { $match: { updated_at: rangeDateMatch, ...activeIdentityFilter } },
+            { $group: { _id: { date: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$updated_at' } }, user: canonicalConversationOwner() } } },
+            { $group: { _id: '$_id.date', active_users: { $sum: 1 } } },
+          ]).toArray()
         : Promise.resolve([]),
 
       // Daily conversations
@@ -1030,12 +1035,14 @@ async function getAdminStats(request: NextRequest) {
           ]).toArray()
         : Promise.resolve([]),
 
-      // Top users by conversations. Bots/service accounts are dropped via
-      // HUMAN_OWNER_MATCH unless the caller passed include_bots=true.
+      // Top users by conversations. Automated owners are omitted unless their
+      // corresponding filter is on; owner_subject merges the same linked person
+      // across browser, Slack, Webex, and API conversations before ranking.
       includesSection('top_users')
         ? conversations.aggregate([
             { $match: { created_at: rangeDateMatch, ...convSourceFilter } },
-            { $group: { _id: '$owner_id', count: { $sum: 1 } } },
+            { $group: { _id: canonicalConversationOwner(), owner_id: { $first: '$owner_id' }, count: { $sum: 1 } } },
+            { $project: { _id: '$owner_id', count: 1 } },
             VALID_TOP_USER_OWNER_STAGE,
             ...topUserOwnerMatch,
             { $sort: { count: -1, _id: 1 } },
@@ -1049,9 +1056,14 @@ async function getAdminStats(request: NextRequest) {
         ? messages.aggregate([
             { $match: { created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter } },
             { $lookup: { from: 'conversations', localField: 'conversation_id', foreignField: '_id', as: '_conv' } },
-            { $addFields: { _owner: { $ifNull: ['$owner_id', { $arrayElemAt: ['$_conv.owner_id', 0] }] } } },
+            { $addFields: {
+              _owner: { $ifNull: ['$owner_id', { $arrayElemAt: ['$_conv.owner_id', 0] }] },
+              _ownerSubject: { $arrayElemAt: ['$_conv.owner_subject', 0] },
+              _ownerCanonicalSubject: { $arrayElemAt: ['$_conv.owner_canonical_subject', 0] },
+            } },
             { $match: { _owner: { $ne: null } } },
-            { $group: { _id: '$_owner', count: { $sum: 1 } } },
+            { $group: { _id: canonicalConversationOwner('$_owner', '$_ownerSubject', '$_ownerCanonicalSubject'), owner_id: { $first: '$_owner' }, count: { $sum: 1 } } },
+            { $project: { _id: '$owner_id', count: 1 } },
             VALID_TOP_USER_OWNER_STAGE,
             ...topUserOwnerMatch,
             { $sort: { count: -1, _id: 1 } },
@@ -1066,7 +1078,8 @@ async function getAdminStats(request: NextRequest) {
       includesSection('top_users')
         ? conversations.aggregate([
             { $match: { created_at: rangeDateMatch, ...convSourceFilter } },
-            { $group: { _id: '$owner_id' } },
+            { $group: { _id: canonicalConversationOwner(), owner_id: { $first: '$owner_id' } } },
+            { $project: { _id: '$owner_id' } },
             VALID_TOP_USER_OWNER_STAGE,
             ...topUserOwnerMatch,
             { $count: 'total' },
@@ -1077,9 +1090,14 @@ async function getAdminStats(request: NextRequest) {
         ? messages.aggregate([
             { $match: { created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter } },
             { $lookup: { from: 'conversations', localField: 'conversation_id', foreignField: '_id', as: '_conv' } },
-            { $addFields: { _owner: { $ifNull: ['$owner_id', { $arrayElemAt: ['$_conv.owner_id', 0] }] } } },
+            { $addFields: {
+              _owner: { $ifNull: ['$owner_id', { $arrayElemAt: ['$_conv.owner_id', 0] }] },
+              _ownerSubject: { $arrayElemAt: ['$_conv.owner_subject', 0] },
+              _ownerCanonicalSubject: { $arrayElemAt: ['$_conv.owner_canonical_subject', 0] },
+            } },
             { $match: { _owner: { $ne: null } } },
-            { $group: { _id: '$_owner' } },
+            { $group: { _id: canonicalConversationOwner('$_owner', '$_ownerSubject', '$_ownerCanonicalSubject'), owner_id: { $first: '$_owner' } } },
+            { $project: { _id: '$owner_id' } },
             VALID_TOP_USER_OWNER_STAGE,
             ...topUserOwnerMatch,
             { $count: 'total' },
@@ -1690,7 +1708,7 @@ async function getAdminStats(request: NextRequest) {
             conversations.countDocuments(webexFilter),
             conversations.aggregate([
               { $match: webexFilter },
-              { $group: { _id: '$owner_id' } },
+              { $group: { _id: canonicalConversationOwner() } },
               { $match: { _id: { $nin: [null, ''] } } },
               { $count: 'total' },
             ]).toArray(),
@@ -1700,7 +1718,7 @@ async function getAdminStats(request: NextRequest) {
                 $group: {
                   _id: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$created_at' } },
                   interactions: { $sum: 1 },
-                  unique_users: { $addToSet: '$owner_id' },
+                  unique_users: { $addToSet: canonicalConversationOwner() },
                 },
               },
               { $sort: { _id: 1 } },
@@ -1859,7 +1877,7 @@ async function getAdminStats(request: NextRequest) {
             conversations.countDocuments(apiFilter),
             conversations.aggregate([
               { $match: apiFilter },
-              { $group: { _id: '$owner_id' } },
+              { $group: { _id: canonicalConversationOwner() } },
               { $match: { _id: { $nin: [null, ''] } } },
               { $count: 'total' },
             ]).toArray(),
@@ -1869,7 +1887,7 @@ async function getAdminStats(request: NextRequest) {
                 $group: {
                   _id: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$created_at' } },
                   interactions: { $sum: 1 },
-                  unique_users: { $addToSet: '$owner_id' },
+                  unique_users: { $addToSet: canonicalConversationOwner() },
                 },
               },
               { $sort: { _id: 1 } },

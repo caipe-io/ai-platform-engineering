@@ -713,6 +713,7 @@ services:
       - RAG_SERVER_URL=http://rag-server:9446
       - WEBLOADER_MAX_INGESTION_TASKS=${WEBLOADER_MAX_INGESTION_TASKS:-5}
       - WEBLOADER_CHECK_INTERVAL=${WEBLOADER_CHECK_INTERVAL:-86400}
+      - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
     env_file: [.env]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]

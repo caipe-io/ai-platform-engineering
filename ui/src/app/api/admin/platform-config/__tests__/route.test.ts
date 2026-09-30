@@ -812,4 +812,64 @@ describe("admin platform-config route", () => {
     expect(body.data.rag_default_search_team_slug).toBeNull();
     expect(updateOne.mock.calls[0][1].$set.rag_default_search_team_slug).toBeNull();
   });
+
+  it("rejects non-string platform_llm fields instead of silently clearing the setting", async () => {
+    const updateOne = jest.fn().mockResolvedValue({ acknowledged: true });
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "platform_settings",
+        platform_llm: { id: "existing-model", provider: "aws-bedrock" },
+      }),
+      updateOne,
+    });
+    const { PATCH } = await import("../route");
+
+    await expect(
+      PATCH(
+        request("/api/admin/platform-config", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ platform_llm: { id: 123, provider: 456 } }),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_PLATFORM_LLM" });
+
+    expect(updateOne).not.toHaveBeenCalled();
+  });
+
+  it("saves a valid platform_llm and clears it with an explicit null", async () => {
+    const updateOne = jest.fn().mockResolvedValue({ acknowledged: true });
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({ _id: "platform_settings" }),
+      updateOne,
+    });
+    const { PATCH } = await import("../route");
+
+    const response = await PATCH(
+      request("/api/admin/platform-config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform_llm: { id: "gpt-5.6-luna", provider: "azure-openai" } }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(body.data.platform_llm).toEqual({ id: "gpt-5.6-luna", provider: "azure-openai" });
+    expect(updateOne.mock.calls[0][1].$set.platform_llm).toEqual({
+      id: "gpt-5.6-luna",
+      provider: "azure-openai",
+    });
+
+    const clearResponse = await PATCH(
+      request("/api/admin/platform-config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform_llm: null }),
+      }),
+    );
+    const clearBody = await clearResponse.json();
+
+    expect(clearBody.data.platform_llm).toBeNull();
+    expect(updateOne.mock.calls[1][1].$set.platform_llm).toBeNull();
+  });
 });

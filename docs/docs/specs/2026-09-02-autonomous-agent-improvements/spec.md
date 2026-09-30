@@ -1,3 +1,9 @@
+# Autonomous Agent Improvements
+
+**Feature Branch**: `142552eab5` (`feat(scheduler): min interval restriction`)
+**Created**: 2026-09-02
+**Status**: Implemented — see [Autonomous Agents architecture](../../architecture/autonomous-agents.md) for the current, maintained description of this behavior.
+
 Improve autonomous agent feature and address security concerns:
 
 1. Webhook safety:
