@@ -1,6 +1,8 @@
 import {
   applyRagPublicationRequest,
   changedApprovalGatedSourceUpdate,
+  ragPublicationRevision,
+  ragPublicationRevisionBasis,
 } from "@/lib/rag-publication-approval.server";
 import { publicationResourceRevision } from "@/lib/publication-approval.server";
 import type { IngestionSourceConfig } from "@/types/ingestion-source";
@@ -342,5 +344,216 @@ describe("datasource publication change detection", () => {
     expect(changedApprovalGatedSourceUpdate(webSource, { settings })).toEqual({
       settings,
     });
+  });
+});
+
+describe("drift confirmation for a locally-tracked datasource", () => {
+  const baseSource: IngestionSourceConfig = {
+    source_id: "source-local",
+    source_type: "confluence_space",
+    name: "Local KB",
+    description: "Original description",
+    status: "active",
+    default_chunk_size: 1000,
+    default_chunk_overlap: 200,
+    reload_interval: 86400,
+    config_driven: false,
+    config_import_adopted: false,
+    visibility: "team",
+    shared_with_teams: [],
+    owner_team_slug: "owner-team",
+    search_with_teams: ["reader-team"],
+    search_with_users: [],
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  } as unknown as IngestionSourceConfig;
+
+  const effectiveState = {
+    search_team_slugs: ["reader-team"],
+    search_user_subjects: [],
+  };
+
+  function localRequest(
+    snapshotSource: IngestionSourceConfig,
+  ): PublicationRequestDocument {
+    const basis = ragPublicationRevisionBasis(snapshotSource, effectiveState);
+    return {
+      _id: "request-local",
+      adapter_version: 1,
+      resource: {
+        kind: "rag_datasource",
+        id: snapshotSource.source_id,
+        label: snapshotSource.name,
+      },
+      authorization_policy_id:
+        "publication.rag_datasource.0123456789abcdef01234567.request-local",
+      resource_revision: publicationResourceRevision(basis),
+      revision_basis: basis,
+      requested_state: {
+        search_team_slugs: effectiveState.search_team_slugs,
+        search_user_subjects: effectiveState.search_user_subjects,
+      },
+      effective_state: effectiveState,
+      risk_facts: {
+        organization_wide: false,
+        target_team_slugs: ["reader-team"],
+        reasons: [],
+      },
+      requester: { subject: "requester-subject" },
+      requester_team_slugs: ["owner-team"],
+      approver_team_slugs: ["approver-team"],
+      status: "applying",
+      history: [],
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
+  function mockSourceCollection(
+    liveSource: IngestionSourceConfig,
+  ): { findOne: jest.Mock; findOneAndUpdate: jest.Mock } {
+    const collectionMock = {
+      findOne: jest.fn().mockResolvedValue(liveSource),
+      findOneAndUpdate: jest.fn().mockResolvedValue(liveSource),
+    };
+    mockGetCollection.mockResolvedValueOnce(collectionMock);
+    return collectionMock;
+  }
+
+  it("requires confirmation when the live datasource name changed", async () => {
+    const snapshotSource = baseSource;
+    const liveSource = { ...baseSource, name: "Renamed KB" };
+    mockSourceCollection(liveSource);
+
+    const error = await applyRagPublicationRequest(
+      localRequest(snapshotSource),
+      "access-token",
+    ).catch((caught) => caught);
+
+    expect(error).toMatchObject({ code: "PUBLICATION_DRIFT" });
+    expect(error.drift).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "name", before: "Local KB", after: "Renamed KB" }),
+      ]),
+    );
+  });
+
+  it("requires confirmation and warns before overwriting grown Search teams", async () => {
+    const snapshotSource = baseSource;
+    const liveSource = {
+      ...baseSource,
+      search_with_teams: ["reader-team", "extra-team"],
+    };
+    mockSourceCollection(liveSource);
+
+    const error = await applyRagPublicationRequest(
+      localRequest(snapshotSource),
+      "access-token",
+    ).catch((caught) => caught);
+
+    expect(error).toMatchObject({ code: "PUBLICATION_DRIFT" });
+    expect(error.drift).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "search_team_slugs",
+          after: ["extra-team", "reader-team"],
+          will_apply: ["reader-team"],
+        }),
+      ]),
+    );
+  });
+
+  it("does not treat a reordered projection array as drift", async () => {
+    const snapshotSource = { ...baseSource, page_configs: ["page-a", "page-b"] };
+    const liveSource = { ...baseSource, page_configs: ["page-b", "page-a"] };
+    mockSourceCollection(liveSource);
+
+    await expect(
+      applyRagPublicationRequest(localRequest(snapshotSource), "access-token"),
+    ).resolves.toEqual([]);
+  });
+
+  it("treats a live Owner change as a hard conflict, not a confirmable drift", async () => {
+    const snapshotSource = baseSource;
+    const liveSource = { ...baseSource, owner_team_slug: "different-team" };
+    mockSourceCollection(liveSource);
+
+    await expect(
+      applyRagPublicationRequest(localRequest(snapshotSource), "access-token"),
+    ).rejects.toMatchObject({ code: "PUBLICATION_REVISION_CONFLICT" });
+  });
+
+  it("treats a pre-migration request with no revision snapshot as a hard conflict", async () => {
+    const snapshotSource = baseSource;
+    // Search teams (not just an informational field) must also differ so the
+    // pre-existing "already applied" shortcut doesn't short-circuit first.
+    const liveSource = {
+      ...baseSource,
+      name: "Renamed KB",
+      search_with_teams: ["reader-team", "extra-team"],
+    };
+    mockSourceCollection(liveSource);
+    const requestWithoutBasis = localRequest(snapshotSource);
+    delete requestWithoutBasis.revision_basis;
+
+    await expect(
+      applyRagPublicationRequest(requestWithoutBasis, "access-token"),
+    ).rejects.toMatchObject({ code: "PUBLICATION_REVISION_CONFLICT" });
+  });
+
+  it("applies once the approver acknowledges the exact drift fingerprint", async () => {
+    const snapshotSource = baseSource;
+    const liveSource = { ...baseSource, name: "Renamed KB" };
+    mockSourceCollection(liveSource);
+
+    const firstAttempt = await applyRagPublicationRequest(
+      localRequest(snapshotSource),
+      "access-token",
+    ).catch((caught) => caught);
+    expect(firstAttempt).toMatchObject({ code: "PUBLICATION_DRIFT" });
+
+    mockSourceCollection(liveSource);
+    jest.spyOn(global, "fetch").mockResolvedValue(response(200, { changed: true }));
+
+    await expect(
+      applyRagPublicationRequest(localRequest(snapshotSource), "access-token", {
+        acknowledgedFingerprint: firstAttempt.fingerprint,
+      }),
+    ).resolves.toMatchObject([{ field: "name", before: "Local KB", after: "Renamed KB" }]);
+  });
+
+  it("re-drifts when the fingerprint was acknowledged but the datasource changed again", async () => {
+    const snapshotSource = baseSource;
+    mockSourceCollection({ ...baseSource, name: "Renamed KB" });
+
+    const stale = await applyRagPublicationRequest(
+      localRequest(snapshotSource),
+      "access-token",
+    ).catch((caught) => caught);
+    expect(stale).toMatchObject({ code: "PUBLICATION_DRIFT" });
+
+    mockSourceCollection({ ...baseSource, name: "Renamed Again KB" });
+    const fetchSpy = jest.spyOn(global, "fetch");
+
+    const error = await applyRagPublicationRequest(
+      localRequest(snapshotSource),
+      "access-token",
+      { acknowledgedFingerprint: stale.fingerprint },
+    ).catch((caught) => caught);
+
+    expect(error).toMatchObject({ code: "PUBLICATION_DRIFT" });
+    expect(error.fingerprint).not.toBe(stale.fingerprint);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps the datasource revision hash stable across the basis refactor", () => {
+    // Pinned, not derived from the function under test: `ragPublicationRevision`
+    // is now literally defined as `publicationResourceRevision(ragPublicationRevisionBasis(...))`,
+    // so asserting one against the other can never fail. A hardcoded hash is
+    // the only thing that actually protects in-flight pending requests from a
+    // future accidental change to the basis shape silently hard-conflicting.
+    expect(ragPublicationRevision(baseSource, effectiveState)).toBe(
+      "71e7229a09d9ce2afc74ede693e652a3bde552d0c71aabdd4d9f2cbd9f0480f2",
+    );
   });
 });

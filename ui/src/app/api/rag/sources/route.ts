@@ -44,6 +44,7 @@ import { visibleRagCollectionsByDatasource } from "@/lib/rag-collections.server"
 import {
   prepareRagPublication,
   ragPublicationRevision,
+  ragPublicationRevisionBasis,
 } from "@/lib/rag-publication-approval.server";
 import {
   authorizedSourceSecretRefs,
@@ -784,6 +785,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     publicationRequest = await createPublicationRequest({
       resource: publication.resource,
       resourceRevision: ragPublicationRevision(doc, effectiveSearch),
+      revisionBasis: ragPublicationRevisionBasis(doc, effectiveSearch),
       requestedState: publication.requestedState as unknown as Record<string, unknown>,
       effectiveState: effectiveSearch as unknown as Record<string, unknown>,
       riskFacts: publication.plan.risk_facts,
@@ -799,6 +801,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     await recordAutoApprovedPublication({
       resource: publication.resource,
       resourceRevision: ragPublicationRevision(doc, effectiveSearch),
+      revisionBasis: ragPublicationRevisionBasis(doc, effectiveSearch),
       requestedState: publication.requestedState as unknown as Record<string, unknown>,
       effectiveState: effectiveSearch as unknown as Record<string, unknown>,
       riskFacts: publication.plan.risk_facts,

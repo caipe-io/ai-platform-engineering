@@ -176,6 +176,11 @@ describe("local-file publication approval", () => {
         label: source.name,
       },
       resourceRevision: "ignored",
+      resourceRevisionBasis: {
+        source: { source_id: source.source_id, marker: "from-prepare-rag-publication" },
+        search_team_slugs: [],
+        search_user_subjects: [],
+      },
     }));
     mockCreatePublicationRequest.mockImplementation(async (input) => ({
       _id: "request-1",
@@ -232,6 +237,19 @@ describe("local-file publication approval", () => {
       }),
     );
     expect(mockCreatePublicationRequest).toHaveBeenCalledTimes(1);
+    // Regression: the revision basis stored on the request must be the same
+    // nested shape `prepareRagPublication` computed (which the apply-time
+    // drift check knows how to read), not a hand-rolled flat object that
+    // would make every approval look like the datasource's owner changed.
+    expect(mockCreatePublicationRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revisionBasis: {
+          source: { source_id: SOURCE_ID, marker: "from-prepare-rag-publication" },
+          search_team_slugs: [],
+          search_user_subjects: [],
+        },
+      }),
+    );
   });
 
   it("removes preprovisioned policy and supersedes the request when ingestion fails", async () => {
