@@ -6,7 +6,7 @@ import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 const mockRequireAgentUsePermission = jest.fn().mockResolvedValue(null);
-const mockRequireConversationWriteAccess = jest.fn().mockResolvedValue(null);
+const mockAuthorizeConversationWriteAccess = jest.fn().mockResolvedValue({ denial: null });
 const mockGetCollection = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => ({
@@ -47,8 +47,8 @@ jest.mock("@/lib/rbac/openfga-agent-authz", () => ({
 }));
 
 jest.mock("@/app/api/v1/chat/_conversation-authz", () => ({
-  requireConversationWriteAccess: (...args: unknown[]) =>
-    mockRequireConversationWriteAccess(...args),
+  authorizeConversationWriteAccess: (...args: unknown[]) =>
+    mockAuthorizeConversationWriteAccess(...args),
 }));
 
 import { POST } from "../chat/conversations/[id]/rewind/route";
@@ -85,6 +85,20 @@ describe("POST /api/chat/conversations/[id]/rewind", () => {
 
   afterAll(() => {
     global.fetch = originalFetch;
+  });
+
+  it("does not rewind automated history when the shared authorizer rejects it", async () => {
+    mockAuthorizeConversationWriteAccess.mockResolvedValueOnce({
+      denial: NextResponse.json({ error: "Automated history is read-only" }, { status: 409 }),
+    });
+    global.fetch = jest.fn();
+    const response = await POST(
+      request({ agent_id: "primary-agent", message_id: "run-request" }),
+      { params: Promise.resolve({ id: conversationId }) },
+    );
+    expect(response.status).toBe(409);
+    expect(mockGetCollection).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("rewinds LangGraph and removes the selected turn plus future turns", async () => {

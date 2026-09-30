@@ -33,6 +33,7 @@ from autonomous_agents.services.chat_history import (
     NoopChatHistoryPublisher,
     conversation_id_for_task,
     conversation_id_for_webhook_run,
+    execution_context_id_for_task_run,
 )
 from autonomous_agents.services.dynamic_agents_client import (
     DynamicAgentsAuthorizationRevokedError,
@@ -308,41 +309,43 @@ async def execute_task(
     """
     run_id = run_id or str(uuid.uuid4())
     root_run_id: str | None = None
-    if isinstance(task.trigger, WebhookTrigger):
-        if follow_up is None:
-            # Every initial delivery gets a separate Dynamic Agents context.
-            # The UI groups these by task, but the model/checkpointer must not
-            # inherit state from an unrelated webhook payload.
-            root_run_id = run_id
-            execution_context_id = conversation_id_for_webhook_run(task.id, root_run_id)
+    if follow_up is not None:
+        # A UI follow-up must inherit the explicitly selected run's context,
+        # regardless of whether that run came from cron, interval, manual, or
+        # webhook execution. The stable task chat is only a display grouping.
+        recent_runs = await get_run_store().list_by_task(task.id, limit=500)
+        parent = next(
+            (candidate for candidate in recent_runs if candidate.run_id == follow_up.parent_run_id),
+            None,
+        )
+        if parent is not None and parent.execution_context_id:
+            root_run_id = parent.root_run_id or parent.run_id
+            execution_context_id = parent.execution_context_id
         else:
-            # Follow-ups inherit only the selected parent run's context. Routes
-            # validate parent ownership before enqueueing; this lookup carries
-            # the durable context id through the asynchronous worker boundary.
-            recent_runs = await get_run_store().list_by_task(task.id, limit=500)
-            parent = next(
-                (candidate for candidate in recent_runs if candidate.run_id == follow_up.parent_run_id),
-                None,
+            # Runs created before isolated execution contexts used the stable
+            # per-task conversation id. Preserve that legacy context rather
+            # than silently starting an unrelated conversation.
+            root_run_id = (
+                (parent.root_run_id or parent.run_id)
+                if parent
+                else follow_up.parent_run_id
             )
-            if parent is not None and parent.execution_context_id:
-                root_run_id = parent.root_run_id or parent.run_id
-                execution_context_id = parent.execution_context_id
-            else:
-                # Legacy webhook runs used the per-task context and have no
-                # execution_context_id. Preserve that context for continuations
-                # instead of silently losing the prior conversation state.
-                root_run_id = (
-                    (parent.root_run_id or parent.run_id)
-                    if parent
-                    else follow_up.parent_run_id
-                )
-                execution_context_id = conversation_id_for_task(task.id)
+            execution_context_id = conversation_id_for_task(task.id)
+    elif isinstance(task.trigger, WebhookTrigger):
+        # Every initial delivery gets a separate Dynamic Agents context.
+        # The UI groups these by task, but the model/checkpointer must not
+        # inherit state from an unrelated webhook payload.
+        root_run_id = run_id
+        execution_context_id = conversation_id_for_webhook_run(task.id, root_run_id)
     else:
-        # Scheduled tasks intentionally keep one continuing context per task.
-        execution_context_id = conversation_id_for_task(task.id)
+        # Cron, interval, and manual fires each start with clean model state.
+        # Their results still append to one stable UI conversation below.
+        execution_context_id = execution_context_id_for_task_run(task.id, run_id)
 
     publish_to_chat = task_chat_history_publishing_enabled(task)
-    published_conversation_id = execution_context_id if publish_to_chat else None
+    published_conversation_id = (
+        conversation_id_for_task(task.id) if publish_to_chat else None
+    )
     # Materialise the prompt the agent will actually see. For follow-up
     # runs we splice the operator reply into a clearly-labelled section
     # so the LLM treats it as new instructions rather than confusing it
@@ -360,12 +363,10 @@ async def execute_task(
     # owner_id field was introduced (backward compat).
     from autonomous_agents.config import get_settings as _get_settings
     _owner_email = task.owner_id or _get_settings().dynamic_agents_system_email
-    # Keycloak subject (UUID) of the owner — the identifier OpenFGA/CAS key
-    # subjects by. The dynamic-agents runtime authorizes the run against this
-    # (not the email) so agent-use is decided as the owner, respecting group
-    # sharing and revocation. None for legacy tasks; dynamic-agents then falls
-    # back to the service-principal decision (which will deny unless separately
-    # granted), so such tasks must be recreated to be authorized per-owner.
+    # Keycloak subject (UUID) of the owner — the identifier OpenFGA/CAS and MCP
+    # credential lookup key by. The Dynamic Agents client exchanges its scoped
+    # runner credential for a short-lived owner bearer. When OAuth is enabled,
+    # a legacy task without this field fails closed and must be recreated.
     _owner_sub = task.owner_sub
 
     run = TaskRun(

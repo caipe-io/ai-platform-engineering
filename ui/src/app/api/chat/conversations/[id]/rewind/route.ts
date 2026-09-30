@@ -12,7 +12,7 @@ import { getCollection } from "@/lib/mongodb";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
 import type { Conversation, Message, Turn } from "@/types/mongodb";
 import { NextRequest, NextResponse } from "next/server";
-import { requireConversationWriteAccess } from "@/app/api/v1/chat/_conversation-authz";
+import { authorizeConversationWriteAccess } from "@/app/api/v1/chat/_conversation-authz";
 
 interface RewindRequest {
   agent_id?: string;
@@ -62,11 +62,11 @@ export async function POST(
   });
   if (agentAuthzResponse) return agentAuthzResponse;
 
-  const conversationAuthzResponse = await requireConversationWriteAccess(
+  const conversationAuthz = await authorizeConversationWriteAccess(
     authResult,
     conversationId,
   );
-  if (conversationAuthzResponse) return conversationAuthzResponse;
+  if (conversationAuthz.denial) return conversationAuthz.denial;
 
   const conversations = await getCollection<Conversation>("conversations");
   const conversation = await conversations.findOne({ _id: conversationId });

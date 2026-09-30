@@ -152,6 +152,29 @@ describe("POST /api/chat/conversations agent authorization", () => {
     );
   });
 
+  it.each(["autonomous", "web", "scheduled"])("preserves legacy autonomous classification in the %s filter", async (source) => {
+    const cursor = {
+      sort: jest.fn().mockReturnThis(), skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(), toArray: jest.fn().mockResolvedValue([]),
+    };
+    const find = jest.fn().mockReturnValue(cursor);
+    mockGetCollection.mockResolvedValue({ find, countDocuments: jest.fn().mockResolvedValue(0) });
+    const { GET } = await import("../chat/conversations/route");
+    const response = await GET(new NextRequest(`http://localhost/api/chat/conversations?source=${source}`));
+    expect(response.status).toBe(200);
+    const query = find.mock.calls[0][0];
+    expect(query.$and).toEqual(expect.arrayContaining([
+      expect.objectContaining({ $or: expect.arrayContaining([{ owner_id: "alice@example.com" }]) }),
+      {
+        [source === "autonomous" ? "$or" : "$nor"]: expect.arrayContaining([
+          { source: "autonomous" },
+          { "metadata.source": "autonomous" },
+          { title: { $regex: "^\\[Autonomous\\](\\s|$)", $options: "i" } },
+        ]),
+      },
+    ]));
+  });
+
   it("checks OpenFGA can_use before binding a dynamic agent to a new conversation", async () => {
     const insertOne = jest.fn().mockResolvedValue({ insertedId: "conv-1" });
     mockGetCollection.mockResolvedValue(conversationCollection(insertOne));
