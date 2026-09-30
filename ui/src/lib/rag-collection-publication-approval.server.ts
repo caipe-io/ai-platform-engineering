@@ -326,23 +326,12 @@ export async function applyRagCollectionPublicationRequest(
 
   let skipApply = false;
   if (ragCollectionPublicationRevision(current, currentState) !== request.resource_revision) {
-    if (
-      publicationResourceRevision(currentState) ===
-      publicationResourceRevision(requestState(request))
-    ) {
-      skipApply = true;
-    } else {
-      const previousBasis = request.revision_basis;
-      if (!previousBasis) {
-        throw withDrift(
-          new ApiError(
-            "This knowledge base changed after approval was requested. Review the newer request instead.",
-            409,
-            "PUBLICATION_REVISION_CONFLICT",
-          ),
-          softItems,
-        );
-      }
+    const previousBasis = request.revision_basis;
+    // Check the owner unconditionally, before deciding skipApply — the
+    // revision hash includes owner_subject, so entering this block can be
+    // caused by an owner change alone even when every other field the
+    // skipApply shortcut compares still matches the request.
+    if (previousBasis) {
       const liveOwnerSubject = current.owner_subject ?? null;
       const previousOwnerSubject =
         (previousBasis as { owner_subject?: unknown }).owner_subject ?? null;
@@ -350,6 +339,23 @@ export async function applyRagCollectionPublicationRequest(
         throw withDrift(
           new ApiError(
             "This knowledge base's owner changed after approval was requested. Review the newer request instead.",
+            409,
+            "PUBLICATION_REVISION_CONFLICT",
+          ),
+          softItems,
+        );
+      }
+    }
+    if (
+      publicationResourceRevision(currentState) ===
+      publicationResourceRevision(requestState(request))
+    ) {
+      skipApply = true;
+    } else {
+      if (!previousBasis) {
+        throw withDrift(
+          new ApiError(
+            "This knowledge base changed after approval was requested. Review the newer request instead.",
             409,
             "PUBLICATION_REVISION_CONFLICT",
           ),

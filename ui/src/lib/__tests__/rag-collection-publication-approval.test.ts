@@ -408,6 +408,46 @@ describe("RAG collection publication application", () => {
     ).rejects.toMatchObject({ code: "PUBLICATION_REVISION_CONFLICT" });
   });
 
+  it("treats a live Owner change as a hard conflict even when every other field still matches the request", async () => {
+    // Regression: the owner check must not be skippable via the
+    // already-matches shortcut just because maintainer/reader/global_read/
+    // source_ids happen to still equal what was requested.
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "rag_collections") {
+        return {
+          findOne: jest.fn().mockResolvedValue({
+            ...currentCollection,
+            owner_subject: "different-owner",
+          }),
+        };
+      }
+      if (name === "rag_ingestion_sources") {
+        return {
+          find: jest.fn().mockReturnValue({
+            toArray: jest
+              .fn()
+              .mockResolvedValue([{ source_id: "source-a", revision: "revision-current" }]),
+          }),
+        };
+      }
+      throw new Error(`unexpected collection ${name}`);
+    });
+
+    const request = requestFor({
+      ...ragCollectionPublicationState(currentCollection),
+      source_dependency_revisions: { "source-a": "revision-current" },
+    });
+    request.revision_basis = ragCollectionPublicationRevisionBasis(
+      currentCollection,
+      ragCollectionPublicationState(currentCollection),
+    );
+
+    await expect(
+      applyRagCollectionPublicationRequest(request, { sub: "approver-subject" }),
+    ).rejects.toMatchObject({ code: "PUBLICATION_REVISION_CONFLICT" });
+    expect(mockEnsureReaderTeamsCanSearch).not.toHaveBeenCalled();
+  });
+
   it("treats a pre-migration request with no revision snapshot as a hard conflict", async () => {
     mockGetCollection.mockImplementation(async (name: string) => {
       if (name === "rag_collections") {
