@@ -80,11 +80,16 @@ remains hidden. This visibility exception applies only to compiled native apps.
    or install its immutable `.tgz` artifact. Commit the resulting `package-lock.json`
    in the derived build context; the host build rejects missing integrity data,
    version mismatches, and floating dependency ranges.
+   For tarballs, place the artifact in `ui/native-extension-artifacts/` and
+   install it with `npm install --save-exact ./native-extension-artifacts/<name>.tgz`.
 3. Set `CAIPE_NATIVE_EXTENSION_MODULES` to a comma-separated allowlist of
    packages already installed in the image. This is a build-time selection,
    not a browser-controlled or runtime remote-JavaScript loader.
 4. Run the normal UI build. The prebuild generator validates ownership and
    emits static imports, manifest data, and Tailwind source declarations.
+   Docker builds must pass the package list as the
+   `CAIPE_NATIVE_EXTENSION_MODULES` build arg (a runtime environment variable
+   alone cannot bake the module into the image).
 5. CAIPE rewrites claimed browser paths to its internal native host while the
    public URL stays unchanged. Client navigation keeps the host and extension
    mounted in one React tree.
