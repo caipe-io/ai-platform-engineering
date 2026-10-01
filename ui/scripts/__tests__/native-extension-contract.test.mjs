@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { validateManifest, validateOwnership } from "../native-extension-contract.mjs";
+import { validateBuiltArtifact, validateManifest, validateOwnership, validatePackage } from "../native-extension-contract.mjs";
 
 const example = {
   id: "example-app",
@@ -43,4 +46,44 @@ test("rejects overlapping host paths and slots", () => {
     { moduleName: "a", manifest: { ...example, slots: ["home"] } },
     { moduleName: "b", manifest: { ...example, id: "other", slots: ["home"], hostPaths: ["/other"], api: { ...example.api, mounts: ["/api/other"] } } },
   ]), /overlap/);
+});
+
+test("rejects server exports and lifecycle hooks", () => {
+  const root = mkdtempSync(join(tmpdir(), "native-contract-"));
+  try {
+    const pkg = {
+      name: "example-package", version: "1.0.0",
+      exports: { ".": "./dist/index.mjs", "./manifest": "./manifest.json", "./styles.css": "./dist/index.css" },
+      peerDependencies: { next: "*", "next-auth": "*", "next-themes": "*", react: "*", "react-dom": "*" },
+    };
+    writeFileSync(join(root, "package.json"), JSON.stringify({ ...pkg, exports: { ...pkg.exports, "./server": "./dist/server.mjs" } }));
+    assert.throws(() => validatePackage(root, example), /server or undeclared entry/);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ ...pkg, scripts: { postinstall: "node setup.js" } }));
+    assert.throws(() => validatePackage(root, example), /browser-only/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects server imports, global CSS, and oversized entry bundles", () => {
+  const root = mkdtempSync(join(tmpdir(), "native-artifact-"));
+  try {
+    mkdirSync(join(root, "dist"));
+    const pkg = { name: "example-package", exports: { ".": "./dist/index.mjs", "./styles.css": "./dist/index.css" } };
+    const entry = join(root, "dist", "index.mjs");
+    const css = join(root, "dist", "index.css");
+    writeFileSync(entry, '"use client";\nexport default {};\n');
+    writeFileSync(css, '.example-app { color: red; }');
+    assert.equal(validateBuiltArtifact(root, pkg).entryBytes > 0, true);
+    writeFileSync(entry, '"use client";\nimport { cookies } from "next/headers";');
+    assert.throws(() => validateBuiltArtifact(root, pkg), /server-only module/);
+    writeFileSync(entry, '"use client";\nexport default {};\n');
+    writeFileSync(css, 'body { margin: 0; }');
+    assert.throws(() => validateBuiltArtifact(root, pkg), /unscoped document selector/);
+    writeFileSync(css, '.example-app { color: red; }');
+    writeFileSync(entry, `"use client";\n${" ".repeat(65 * 1024)}`);
+    assert.throws(() => validateBuiltArtifact(root, pkg), /entry exceeds/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

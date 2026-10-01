@@ -96,6 +96,7 @@ describe("External App runtime route", () => {
           "keep-alive": "timeout=5",
           "sec-fetch-dest": "iframe",
           "x-example-app-position": "admin",
+          "x-caipe-roles": "admin",
           "x-untrusted-hop": "remove-me",
         },
       }),
@@ -112,6 +113,7 @@ describe("External App runtime route", () => {
     expect(headers.get("keep-alive")).toBeNull();
     expect(headers.get("x-untrusted-hop")).toBeNull();
     expect(headers.get("x-example-app-position")).toBeNull();
+    expect(headers.get("x-caipe-roles")).toBe("user");
     expect(response.headers.get("x-frame-options")).toBeNull();
 
     fetchMock.mockRestore();
@@ -173,6 +175,21 @@ describe("External App runtime route", () => {
 
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "user_access_token_required" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("does not proxy a disabled installation", async () => {
+    mockGetConfiguredAgenticApp.mockReturnValueOnce({
+      ...configuredApp,
+      installation: { ...configuredApp.installation, enabled: false },
+    });
+    const fetchMock = jest.spyOn(global, "fetch");
+    const response = await GET(
+      new NextRequest("https://host.example/api/agentic-apps/runtime/example-app"),
+      { params: Promise.resolve({ appId: "example-app", path: [] }) },
+    );
+    expect(response.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
     fetchMock.mockRestore();
   });

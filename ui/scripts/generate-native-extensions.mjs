@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  validateBuiltArtifact,
   validateInstalledPin,
   validateManifest,
   validateOwnership,
@@ -26,6 +27,7 @@ const manifests = modules.map((moduleName) => {
   validateManifest(moduleName, manifest);
   const packageRoot = dirname(manifestPath);
   const pkg = validatePackage(packageRoot, manifest);
+  validateBuiltArtifact(packageRoot, pkg);
   if (pkg.name !== moduleName) throw new Error(`${moduleName}: installed package name mismatch`);
   validateInstalledPin(uiRoot, moduleName, pkg.version);
   return { moduleName, manifest };

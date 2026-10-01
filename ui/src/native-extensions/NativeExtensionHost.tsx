@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 
 import { HeaderBreadcrumbPortal } from "@/components/layout/HeaderBreadcrumbSlot";
 import { WorkspaceBreadcrumbs } from "@/components/layout/WorkspacePageHeader";
@@ -74,6 +75,7 @@ export function NativeExtensionHost({
         pathname={pathname}
         search={search}
         navigate={navigate}
+        Link={Link}
         setBreadcrumbs={setBreadcrumbs}
       />
       {children}

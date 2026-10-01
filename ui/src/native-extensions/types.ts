@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import type Link from "next/link";
 
 export interface NativeExtensionBreadcrumb {
   label: string;
@@ -33,6 +34,8 @@ export interface NativeExtensionProps {
   pathname: string;
   search: string;
   navigate: (href: string) => void;
+  /** Use the host router for links; packages must not create a second router. */
+  Link?: typeof Link;
   setBreadcrumbs: (breadcrumbs: NativeExtensionBreadcrumb[]) => void;
 }
 

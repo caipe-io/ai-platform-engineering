@@ -44,6 +44,7 @@ export interface NativeExtensionProps {
   pathname: string;
   search: string;
   navigate(href: string): void;
+  Link?: typeof import("next/link").default;
   setBreadcrumbs(items: Array<{ label: string; href?: string }>): void;
 }
 
@@ -57,6 +58,10 @@ The package must expose `.` for its ESM entry, `./manifest` for the JSON
 manifest, and `./styles.css` for scoped styles. React, React DOM, Next.js,
 NextAuth, and next-themes must remain peer dependencies so the host supplies
 one copy.
+The package may not export a server entry or run install-time code. Its entry
+must be compiled browser JavaScript beginning with `"use client"`; the checker
+rejects server-only imports. App APIs, MCP endpoints, ingestion, and agents
+remain separately deployed services.
 
 `navigation` is optional. An app with owned routes but no navigation item can
 be opened only through an authorized deep link or another host surface. A
@@ -75,7 +80,10 @@ remains hidden. This visibility exception applies only to compiled native apps.
    directory: `node ui/scripts/check-native-extension.mjs <package-directory>`.
    It verifies the manifest, export targets, contract version, and shared
    runtime peer dependencies. Publisher CI should run the same checker against
-   each supported CAIPE host release.
+   each supported CAIPE host release. Checker `1.1.1` also enforces a 64 KiB
+   entry budget, a 2 MiB compiled-JavaScript budget, and rejects document-wide
+   CSS selectors. These are uncompressed publisher gates, not network latency
+   estimates. Apps can lazy-load editor and visualization chunks.
 2. Install a reviewed package at an **exact version** in the derived CAIPE image,
    or install its immutable `.tgz` artifact. Commit the resulting `package-lock.json`
    in the derived build context; the host build rejects missing integrity data,
@@ -92,7 +100,10 @@ remains hidden. This visibility exception applies only to compiled native apps.
    alone cannot bake the module into the image).
 5. CAIPE rewrites claimed browser paths to its internal native host while the
    public URL stays unchanged. Client navigation keeps the host and extension
-   mounted in one React tree.
+   mounted in one React tree. Use the optional host `Link` for ordinary links
+   (or `navigate` for imperative transitions); direct `next/link` is compatible
+   only when it resolves to the host-provided Next singleton. Links to owned
+   routes should use canonical browser paths, including on direct loads.
 
 Package manifests cannot claim CAIPE internal paths. Overlapping route, slot,
 or API claims fail the build. An image rollback restores the prior pinned
@@ -114,6 +125,12 @@ In the default `app-scoped-token` mode the gateway:
 - forwards the stable user subject and trusted roles; and
 - returns decision and correlation IDs.
 
+The gateway is a browser-cookie ingress. It obtains a CAIPE session, ignores
+caller-supplied identity headers, and is not the machine-to-machine API for an
+extension. Bearer clients, webhooks, and MCP callers use an app-owned ingress
+that independently validates their token and scopes. Neither app should treat
+`x-caipe-roles` or another forwarding header as proof of authorization.
+
 Trusted deployments may opt into `forward-user-access-token` when the target
 service validates that token's issuer and audience. The gateway forwards the
 existing access token server-to-server; the native-package contract does not
@@ -124,6 +141,10 @@ remains responsible for resource-level
 authorization, such as OpenFGA checks using the stable user subject. Native
 JavaScript shares the CAIPE document and same-origin privileges, so package
 review is part of the security boundary.
+
+Record the package tarball digest, source commit, CAIPE commit, checker version,
+and image tag in the deployment record. Roll back the entire pinned host image;
+changing runtime enablement cannot roll back compiled JavaScript by itself.
 
 ## Performance marks
 

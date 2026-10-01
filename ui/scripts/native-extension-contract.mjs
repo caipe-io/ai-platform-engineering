@@ -1,7 +1,10 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export const CONTRACT_VERSION = "1.1";
+export const CHECKER_VERSION = "1.1.1";
+export const MAX_ENTRY_BYTES = 64 * 1024;
+export const MAX_JAVASCRIPT_BYTES = 2 * 1024 * 1024;
 const ID = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const RESERVED_HOST_PATHS = [
   "/", "/api", "/_next", "/native-extensions", "/admin", "/agent-builder",
@@ -99,6 +102,12 @@ export function validatePackage(packageRoot, manifest) {
   for (const field of [".", "./manifest", "./styles.css"]) {
     if (typeof pkg.exports?.[field] !== "string") throw new Error(`${pkg.name}: missing export ${field}`);
   }
+  if (Object.keys(pkg.exports).some((field) => ![".", "./manifest", "./styles.css"].includes(field))) {
+    throw new Error(`${pkg.name}: native packages may not export a server or undeclared entry point`);
+  }
+  if (pkg.main || pkg.bin || pkg.scripts?.start || pkg.scripts?.postinstall) {
+    throw new Error(`${pkg.name}: native packages must be browser-only build artifacts`);
+  }
   for (const peer of PEERS) {
     if (!pkg.peerDependencies?.[peer] || pkg.dependencies?.[peer]) {
       throw new Error(`${pkg.name}: ${peer} must be a peer, not a dependency`);
@@ -106,6 +115,38 @@ export function validatePackage(packageRoot, manifest) {
   }
   if (manifest.contractVersion !== CONTRACT_VERSION) throw new Error(`${pkg.name}: incompatible contract version`);
   return pkg;
+}
+
+/** Check the published artifact, not only its source manifest. */
+export function validateBuiltArtifact(packageRoot, pkg) {
+  const entry = join(packageRoot, pkg.exports["."]);
+  const entrySource = readFileSync(entry, "utf8");
+  if (!/^\s*["']use client["'];/.test(entrySource)) {
+    throw new Error(`${pkg.name}: browser entry must start with use client`);
+  }
+  if (statSync(entry).size > MAX_ENTRY_BYTES) {
+    throw new Error(`${pkg.name}: entry exceeds ${MAX_ENTRY_BYTES} bytes`);
+  }
+  const dist = join(packageRoot, "dist");
+  const javascript = readdirSync(dist).filter((file) => /\.(?:mjs|js)$/.test(file));
+  if (javascript.length === 0) throw new Error(`${pkg.name}: no compiled JavaScript found`);
+  let totalBytes = 0;
+  for (const file of javascript) {
+    const path = join(dist, file);
+    totalBytes += statSync(path).size;
+    const source = readFileSync(path, "utf8");
+    if (/(?:from\s*|import\s*\()\s*["'](?:node:|server-only|next\/(?:server|headers|cache)|next-auth\/next)/.test(source)) {
+      throw new Error(`${pkg.name}: ${file} imports a server-only module`);
+    }
+  }
+  if (totalBytes > MAX_JAVASCRIPT_BYTES) {
+    throw new Error(`${pkg.name}: compiled JavaScript exceeds ${MAX_JAVASCRIPT_BYTES} bytes`);
+  }
+  const css = readFileSync(join(packageRoot, pkg.exports["./styles.css"]), "utf8");
+  if (/(?:^|})\s*(?:html|body|:root|\*)\b[^{}]*\{/m.test(css)) {
+    throw new Error(`${pkg.name}: stylesheet contains an unscoped document selector`);
+  }
+  return { entryBytes: statSync(entry).size, javascriptBytes: totalBytes };
 }
 
 export function validateInstalledPin(uiRoot, packageName, installedVersion) {
