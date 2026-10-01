@@ -135,9 +135,10 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.2.38
 | neo4j.neo4j.resources.memory | string | `"2Gi"` |  |
 | neo4j.podSpec.annotations | object | `{}` |  |
 | neo4j.services.neo4j.enabled | bool | `false` |  |
-| neo4j.volumes.data.defaultStorageClass.accessModes[0] | string | `"ReadWriteOnce"` |  |
-| neo4j.volumes.data.defaultStorageClass.requests.storage | string | `"100Gi"` |  |
-| neo4j.volumes.data.mode | string | `"defaultStorageClass"` |  |
+| neo4j.volumes.data.dynamic.accessModes[0] | string | `"ReadWriteOnce"` |  |
+| neo4j.volumes.data.dynamic.requests.storage | string | `"100Gi"` |  |
+| neo4j.volumes.data.dynamic.storageClassName | string | `"gp2"` |  |
+| neo4j.volumes.data.mode | string | `"dynamic"` |  |
 | rag-ingestors.enabled | bool | `false` |  |
 | rag-ingestors.ingestors | list | `[]` |  |
 | rag-ingestors.ragServerUrl | string | `"http://rag-server:9446"` |  |
@@ -208,6 +209,9 @@ helm show values oci://ghcr.io/cnoe-io/charts/rag-stack --version 0.2.38
 | rag-server.webIngestor.resources.requests.ephemeral-storage | string | `"256Mi"` |  |
 | rag-server.webIngestor.resources.requests.memory | string | `"256Mi"` |  |
 | sunnyTesting | bool | `true` |  |
+
+Neo4j uses the existing `gp2` StorageClass by default. To use the cluster's
+default StorageClass instead, set `neo4j.volumes.data.mode=defaultStorageClass`.
 
 ## Dependencies
 
