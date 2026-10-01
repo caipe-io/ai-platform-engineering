@@ -128,8 +128,15 @@ Picker GET → read candidates → permission filter (no grant writes)
   Grants already present before filtering are not included in that cleanup.
 - Agent update/delete and default-setting saves match the snapshot used to
   compute the grant diff. A stale request cannot overwrite a newer version.
-  Failure returns `ACCESS_UPDATE_INCOMPLETE` with a safe support reference;
-  details and cleanup failures stay in server logs. It does not claim rollback.
+  A detected snapshot conflict in direct persistence returns HTTP 409
+  `AGENT_SAVE_CONFLICT` or `PLATFORM_CONFIG_SAVE_CONFLICT` (for example, in
+  storage-only mode, or the default-setting route's empty-diff shortcut).
+  Persistence failures inside the configured OpenFGA writer return HTTP 503
+  `ACCESS_UPDATE_INCOMPLETE`, even for conflicts or diffs filtered to no-ops.
+  This includes the writer's own empty-diff path. The response has a safe support
+  reference; causes and cleanup failures stay in server logs. Do not unwrap a
+  nested 409: successful restrictive cleanup can still leave revoked access
+  missing, so it does not prove rollback or that a blind retry is safe.
 - A public human grant survives while the agent is global **or** the effective
   platform default. Clearing a database default restores `DEFAULT_AGENT_ID`, if
   configured. Default selection does not itself grant service-account access.
@@ -152,6 +159,12 @@ revocations before applying them. The existing `admin/rebac/self-check` API
 supports these actions without restarting the BFF. Do not blindly repair all
 findings or assume a picker refresh repairs data. For rollout, also check the
 startup `Reconciled OpenFGA tuples ... dynamic agent(s)` message and errors.
+
+**CAS integration release gate:** [#2854](https://github.com/caipe-io/ai-platform-engineering/issues/2854)
+tracks durable recovery after process termination between grant writes and
+configuration persistence. Request-local cleanup cannot run after a process is
+killed. Startup/manual repair is not a bounded recovery guarantee; resolve and
+validate this gap before the combined CAS integration is merged to main.
 
 **Limits:** cleanup is best-effort, not an atomic Mongo/OpenFGA transaction.
 Restrictive cleanup may remove an overlapping writer's grant and temporarily

@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { ApiError } from "@/lib/api-error";
 import { OpenFgaMutationError, writeOpenFgaTupleDiff, type OpenFgaTupleKey } from "../openfga";
 
 const originalFetch = global.fetch;
@@ -54,6 +55,28 @@ it("removes additions but never restores revoked access on an uncertain save", a
     .rejects.toThrow(OpenFgaMutationError);
   expect([...graph.values()]).toEqual([tuple("existing")]);
 });
+
+it.each(["AGENT_SAVE_CONFLICT", "PLATFORM_CONFIG_SAVE_CONFLICT"])(
+  "keeps repair-required semantics after cleanup of %s", async code => {
+    const conflict = new ApiError("Saved snapshot changed", 409, code);
+    await expect(writeOpenFgaTupleDiff(diff, async () => { throw conflict; }))
+      .rejects.toMatchObject({
+        statusCode: 503, code: "ACCESS_UPDATE_INCOMPLETE", action: "contact_admin",
+        cause: conflict, message: expect.stringContaining("Reference:"),
+      });
+    // Cleanup succeeded, but the old grant is still revoked: this is not a rollback.
+    expect([...graph.values()]).toEqual([tuple("existing")]);
+  },
+);
+
+it.each(["AGENT_SAVE_CONFLICT", "PLATFORM_CONFIG_SAVE_CONFLICT"])(
+  "preserves the direct-persistence conflict %s without OpenFGA", async code => {
+    delete process.env.OPENFGA_HTTP;
+    const conflict = new ApiError("Saved snapshot changed", 409, code);
+    await expect(writeOpenFgaTupleDiff(diff, async () => { throw conflict; })).rejects.toBe(conflict);
+    expect(global.fetch).not.toHaveBeenCalled();
+  },
+);
 
 it.each([{ writes: [], deletes: [] }, { writes: [tuple("existing")], deletes: [] }])(
   "still saves when the tuple diff is a no-op: %j", async noOp => {

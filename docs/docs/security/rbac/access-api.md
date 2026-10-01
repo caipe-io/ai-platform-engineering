@@ -102,3 +102,9 @@ Request/response types live in `ui/src/lib/authz/access-contract.ts`.
 Next, migrate one complete agent-access journey: its checks, visible-resource
 queries and grant/revoke operations. Verify that selection agrees with execution,
 then remove that journey's obsolete authorization path.
+
+Before the combined CAS integration goes to main, resolve
+[#2854](https://github.com/caipe-io/ai-platform-engineering/issues/2854): interrupted
+cross-store mutations need durable, bounded recovery. A process can die after
+publishing a grant but before saving configuration or running cleanup. Startup
+reconciliation and manual repair do not by themselves close that gap.
