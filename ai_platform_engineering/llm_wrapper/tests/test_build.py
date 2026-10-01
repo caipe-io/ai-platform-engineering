@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -63,9 +64,39 @@ def test_provider_strings_map_to_langchain(
 
 def test_kwargs_pass_through_untouched(captured: dict[str, Any]) -> None:
     sentinel = object()
-    build_chat_model("aws-bedrock", "anthropic.claude-v2", client=sentinel, temperature=1.0)
+    build_chat_model("aws-bedrock", "us.amazon.nova-pro-v1:0", client=sentinel, temperature=1.0)
     assert captured["kwargs"]["client"] is sentinel
     assert captured["kwargs"]["temperature"] == 1.0
+
+
+def test_anthropic_bedrock_uses_sdk_kwargs_instead_of_botocore_clients(captured: dict[str, Any]) -> None:
+    build_chat_model(
+        "aws-bedrock",
+        "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        client=object(),
+        bedrock_client=object(),
+        config=SimpleNamespace(read_timeout=300, connect_timeout=60),
+        reasoning_effort="medium",
+    )
+
+    kwargs = captured["kwargs"]
+    assert "client" not in kwargs
+    assert "bedrock_client" not in kwargs
+    assert "config" not in kwargs
+    assert "reasoning_effort" not in kwargs
+    assert kwargs["timeout"] == 300
+    assert kwargs["thinking"] == {"type": "enabled", "budget_tokens": 4096}
+    assert kwargs["max_tokens"] > kwargs["thinking"]["budget_tokens"]
+
+
+def test_bedrock_converse_keeps_botocore_clients(captured: dict[str, Any]) -> None:
+    client = object()
+    config = object()
+    build_chat_model("aws-bedrock", "us.amazon.nova-pro-v1:0", enable_cache=True, client=client, config=config)
+
+    assert captured["model_provider"] == "bedrock_converse"
+    assert captured["kwargs"]["client"] is client
+    assert captured["kwargs"]["config"] is config
 
 
 def test_openai_compatible_injects_base_url(
@@ -75,6 +106,29 @@ def test_openai_compatible_injects_base_url(
     build_chat_model("openai-compatible", "some-model")
     assert captured["model_provider"] == "openai"
     assert captured["kwargs"]["base_url"] == "http://gateway.internal:4000/v1"
+
+
+def test_openai_uses_legacy_endpoint_without_overriding_explicit_base_url(
+    captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_ENDPOINT", "https://openai.example.com/v1")
+    build_chat_model("openai", "example-model")
+    assert captured["kwargs"]["base_url"] == "https://openai.example.com/v1"
+
+    build_chat_model("openai", "example-model", base_url="https://override.example.com/v1")
+    assert captured["kwargs"]["base_url"] == "https://override.example.com/v1"
+
+
+def test_azure_uses_legacy_provider_settings(captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2025-03-01-preview")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://azure.example.com")
+    monkeypatch.setenv("AZURE_OPENAI_USE_RESPONSES", "true")
+
+    build_chat_model("azure-openai", "example-deployment")
+
+    assert captured["kwargs"]["api_version"] == "2025-03-01-preview"
+    assert captured["kwargs"]["azure_endpoint"] == "https://azure.example.com"
+    assert captured["kwargs"]["use_responses_api"] is True
 
 
 def test_openai_compatible_without_base_url_is_an_actionable_error(

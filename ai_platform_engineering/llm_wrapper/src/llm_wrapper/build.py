@@ -26,7 +26,7 @@ from .providers import (
     resolve_model_id,
     supported_providers,
 )
-from .reasoning import ReasoningEffort, apply_reasoning_effort
+from .reasoning import apply_reasoning_effort
 
 
 class LLMConfigError(ValueError):
@@ -104,6 +104,27 @@ def build_chat_model(
         # the boundary attaches one. Send a placeholder so the OpenAI client
         # does not refuse to construct.
         kwargs.setdefault("api_key", os.getenv("OPENAI_COMPATIBLE_API_KEY", "not-needed"))
+    elif canonical == "openai":
+        if endpoint := os.getenv("OPENAI_ENDPOINT"):
+            kwargs.setdefault("base_url", endpoint)
+    elif canonical == "azure-openai":
+        if api_version := os.getenv("AZURE_OPENAI_API_VERSION"):
+            kwargs.setdefault("api_version", api_version)
+        if endpoint := os.getenv("AZURE_OPENAI_ENDPOINT"):
+            kwargs.setdefault("azure_endpoint", endpoint)
+        if use_responses := os.getenv("AZURE_OPENAI_USE_RESPONSES"):
+            kwargs.setdefault("use_responses_api", use_responses.lower() == "true")
+
+    if lc_provider == "anthropic_bedrock":
+        # This client uses the Anthropic SDK, which creates its own transport.
+        # Boto3 clients and Botocore config would become request parameters.
+        kwargs.pop("client", None)
+        kwargs.pop("bedrock_client", None)
+        config = kwargs.pop("config", None)
+        if config is not None and "timeout" not in kwargs:
+            kwargs["timeout"] = config.read_timeout
+
+    kwargs = apply_reasoning_effort(lc_provider, kwargs.pop("reasoning_effort", None), kwargs)
 
     try:
         return init_chat_model(model=resolved_model, model_provider=lc_provider, **kwargs)

@@ -7,7 +7,7 @@ Spec: [`docs/docs/specs/2026-09-24-remove-cnoe-agent-utils/`](../../docs/docs/sp
 
 ## Why it declares no dependencies
 
-This directory has no `pyproject.toml` and no dependencies of its own. That is
+This directory has a `pyproject.toml` but declares no runtime dependencies. That is
 what lets it be a single shared source without coupling its consumers: each
 consuming package pins the provider integrations *it* ships, and this code just
 imports whatever is installed there.
