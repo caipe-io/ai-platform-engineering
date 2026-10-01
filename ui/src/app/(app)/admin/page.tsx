@@ -107,7 +107,7 @@ type OwnerType = AdminStatsOwnerType;
 const FILTER_REFRESH_STATS_SECTIONS: readonly AdminStatsSection[] = ADMIN_STATS_SECTIONS.filter(
   (section) => section !== 'filters',
 );
-const BOT_FILTER_STATS_SECTIONS: readonly AdminStatsSection[] = [
+const AUTOMATION_FILTER_STATS_SECTIONS: readonly AdminStatsSection[] = [
   'top_users',
   'top_agents',
   'response_time',
@@ -792,6 +792,7 @@ function AdminPage() {
   const statsChannelsFromUrl = commaSeparatedFilter(searchParams.get('statsChannels'));
   const statsAgentsFromUrl = commaSeparatedFilter(searchParams.get('statsAgents'));
   const statsIncludeBotsFromUrl = searchParams.get('statsIncludeBots') === 'true';
+  const statsIncludeServiceAccountsFromUrl = searchParams.get('statsIncludeServiceAccounts') === 'true';
   const [statsChannelFilter, setStatsChannelFilter] = useState<string[]>(statsChannelsFromUrl);
   const [statsChannels, setStatsChannels] = useState<string[]>([]);
   // Store stable agent IDs in URL/state and map them to labels only for the
@@ -799,8 +800,11 @@ function AdminPage() {
   // the scoped agent option list has loaded.
   const [statsAgentFilter, setStatsAgentFilter] = useState<string[]>(statsAgentsFromUrl);
   const [statsAgents, setStatsAgents] = useState<Array<{ id: string; name: string }>>([]);
-  // Top-users leaderboard: hide bot/service identities by default; toggle to show.
+  // The lower activity sections hide automated identities by default. Bots and
+  // service accounts are independent because operators often need one without
+  // the other.
   const [showBotUsers, setShowBotUsers] = useState(statsIncludeBotsFromUrl);
+  const [showServiceAccounts, setShowServiceAccounts] = useState(statsIncludeServiceAccountsFromUrl);
   const [topConversationsPage, setTopConversationsPage] = useState(1);
   const [topMessagesPage, setTopMessagesPage] = useState(1);
   const [loadingTopUsersLeaderboard, setLoadingTopUsersLeaderboard] = useState<
@@ -829,6 +833,7 @@ function AdminPage() {
     searchParams.get('statsChannels'),
     searchParams.get('statsAgents'),
     searchParams.get('statsIncludeBots'),
+    searchParams.get('statsIncludeServiceAccounts'),
   ].map((value) => value ?? '').join('\u0000');
   const [previousInsightsFilterUrlKey, setPreviousInsightsFilterUrlKey] = useState(insightsFilterUrlKey);
 
@@ -844,6 +849,7 @@ function AdminPage() {
     setStatsChannelFilter(statsChannelsFromUrl);
     setStatsAgentFilter(statsAgentsFromUrl);
     setShowBotUsers(statsIncludeBotsFromUrl);
+    setShowServiceAccounts(statsIncludeServiceAccountsFromUrl);
   }
 
   const updateStatsFilterUrl = (overrides: Record<string, string | null> = {}) => {
@@ -851,6 +857,7 @@ function AdminPage() {
       statsChannels: statsChannelFilter.length > 0 ? statsChannelFilter.join(',') : null,
       statsAgents: statsAgentFilter.length > 0 ? statsAgentFilter.join(',') : null,
       statsIncludeBots: showBotUsers ? 'true' : null,
+      statsIncludeServiceAccounts: showServiceAccounts ? 'true' : null,
       ...overrides,
     });
   };
@@ -899,6 +906,7 @@ function AdminPage() {
     }
     if (statsAgentFilter.length > 0) params.set('agent', statsAgentFilter.join(','));
     if (showBotUsers) params.set('include_bots', 'true');
+    if (showServiceAccounts) params.set('include_service_accounts', 'true');
     if (section === 'top_users') {
       params.set('top_conversations_page', String(topConversationsPageRef.current));
       params.set('top_messages_page', String(topMessagesPageRef.current));
@@ -909,6 +917,7 @@ function AdminPage() {
     datePreset,
     selectedStatsFilters,
     showBotUsers,
+    showServiceAccounts,
     simulationTarget,
     sourceFilter,
     statsAgentFilter,
@@ -1114,15 +1123,16 @@ function AdminPage() {
     return () => window.clearTimeout(handle);
   }, [loadStatsSections, resetTopUserPages, statsFilterKey, status]);
 
-  const showBotUsersRef = useRef(showBotUsers);
+  const automatedOwnersFilterRef = useRef(`${showBotUsers}:${showServiceAccounts}`);
   useEffect(() => {
-    if (showBotUsersRef.current === showBotUsers) return;
-    showBotUsersRef.current = showBotUsers;
+    const filterKey = `${showBotUsers}:${showServiceAccounts}`;
+    if (automatedOwnersFilterRef.current === filterKey) return;
+    automatedOwnersFilterRef.current = filterKey;
     if (!visitedTabsRef.current.has('_stats-loaded')) return;
     if (status !== "authenticated" && getConfig('ssoEnabled')) return;
     resetTopUserPages();
-    void loadStatsSections(BOT_FILTER_STATS_SECTIONS);
-  }, [loadStatsSections, resetTopUserPages, showBotUsers, status]);
+    void loadStatsSections(AUTOMATION_FILTER_STATS_SECTIONS);
+  }, [loadStatsSections, resetTopUserPages, showBotUsers, showServiceAccounts, status]);
 
   const loadTopUsersPage = async (
     leaderboard: 'conversations' | 'messages',
@@ -2515,24 +2525,42 @@ function AdminPage() {
                     </AsyncStatsCard>
 
                     {/* Top Users */}
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-3">
                       <h3 className="text-lg font-semibold">Top Users</h3>
-                      <label
-                        className="flex cursor-pointer select-none items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
-                        title="Include bot and service-account identities (alert posters, MR bots) in the leaderboards"
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-input accent-primary"
-                          checked={showBotUsers}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setShowBotUsers(checked);
-                            updateStatsFilterUrl({ statsIncludeBots: checked ? 'true' : null });
-                          }}
-                        />
-                        Show bot users
-                      </label>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <label
+                          className="flex cursor-pointer select-none items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
+                          title="Include bot-owned activity (alert posters and app users) in these rankings and activity metrics"
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-input accent-primary"
+                            checked={showBotUsers}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setShowBotUsers(checked);
+                              updateStatsFilterUrl({ statsIncludeBots: checked ? 'true' : null });
+                            }}
+                          />
+                          Show bot users
+                        </label>
+                        <label
+                          className="flex cursor-pointer select-none items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
+                          title="Include service-account-owned activity in these rankings and activity metrics"
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-input accent-primary"
+                            checked={showServiceAccounts}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setShowServiceAccounts(checked);
+                              updateStatsFilterUrl({ statsIncludeServiceAccounts: checked ? 'true' : null });
+                            }}
+                          />
+                          Show service accounts
+                        </label>
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                       <AsyncStatsCard

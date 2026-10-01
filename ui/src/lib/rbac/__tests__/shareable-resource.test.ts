@@ -94,6 +94,39 @@ describe("buildShareableResourceTupleDiff", () => {
     );
   });
 
+  it("ownerTeamManagerViaMember: writes #member (not #admin) manager for the owner, with no stale delete", () => {
+    const diff = buildShareableResourceTupleDiff({
+      objectType: "data_source",
+      objectId: "ds-1",
+      ownerTeamSlug: "platform",
+      ownerTeamManagerViaMember: true,
+    });
+    // Exact match (not arrayContaining): asserts there is no leftover
+    // `#admin manager` write alongside the `#member` one.
+    expect(diff.writes).toEqual([
+      { user: "team:platform#member", relation: "reader", object: "data_source:ds-1" },
+      { user: "team:platform#member", relation: "manager", object: "data_source:ds-1" },
+    ]);
+    expect(diff.deletes).toEqual([]);
+  });
+
+  it("ownerTeamManagerViaMember: transfer deletes the previous owner's #member manager, not a stale #admin one", () => {
+    const diff = buildShareableResourceTupleDiff({
+      objectType: "data_source",
+      objectId: "ds-1",
+      ownerTeamSlug: "new-team",
+      previousOwnerTeamSlug: "old-team",
+      ownerTeamManagerViaMember: true,
+    });
+    // Exact match: the base `buildTeamGrantTuples` delete for
+    // `team:old-team#admin manager` must be suppressed here, since that
+    // tuple was never written under this override — only `#member` was.
+    expect(diff.deletes).toEqual([
+      { user: "team:old-team#member", relation: "reader", object: "data_source:ds-1" },
+      { user: "team:old-team#member", relation: "manager", object: "data_source:ds-1" },
+    ]);
+  });
+
   it("honors extraMemberRelations (mcp_tool gets reader + user + caller)", () => {
     const diff = buildShareableResourceTupleDiff({
       objectType: "mcp_tool",

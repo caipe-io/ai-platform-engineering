@@ -180,6 +180,15 @@ describe("UserDefaultAgentsPanel",() => {
     ).toBeInTheDocument();
   });
 
+  it("hides defaults for disabled integrations",async () => {
+    installFetchMock({ integrations: { slack: false,webex: false } });
+    render(<UserDefaultAgentsPanel />);
+
+    expect(await screen.findByRole("combobox",{ name: "Web default agent" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox",{ name: "Slack default agent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox",{ name: "Webex default agent" })).not.toBeInTheDocument();
+  });
+
   it("clears one override back to the platform default immediately",async () => {
     const fetchMock = installFetchMock({
       integrations: { slack: true,webex: false },

@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     # Collections
     dynamic_agents_collection: str = "dynamic_agents"
     mcp_servers_collection: str = "mcp_servers"
+    autonomous_tasks_collection: str = "autonomous_tasks"
+    autonomous_runs_collection: str = "autonomous_runs"
 
     # CORS
     cors_origins: list[str] = ["*"]

@@ -12,7 +12,7 @@ const CHANNELS = [
     cta: 'Join the CAIPE community channel',
     href: 'https://cloud-native.slack.com/archives/C08N0AKR52S',
     note: 'Need a CNCF Slack invite?',
-    noteHref: 'https://communityinviter.com/apps/cloud-native/cncf',
+    noteHref: 'https://inviter.co/cncf',
   },
   {
     icon: '📅',
@@ -116,7 +116,7 @@ export default function CommunityPage() {
             <div className={styles.heroButtons}>
               <Link
                 className={styles.primaryBtn}
-                href="https://communityinviter.com/apps/cloud-native/cncf"
+                href="https://inviter.co/cncf"
               >
                 Join CNCF Slack →
               </Link>

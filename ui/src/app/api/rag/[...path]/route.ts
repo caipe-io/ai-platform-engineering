@@ -45,6 +45,10 @@ import {
   visibleRagCollectionsByDatasource,
 } from "@/lib/rag-collections.server";
 import { prepareRagPublication } from "@/lib/rag-publication-approval.server";
+import {
+  authorizeIngestPreviewCredentials,
+  rejectKnownSecretHeaders,
+} from "@/lib/rag-source-credentials.server";
 import { resolveShareableOwnershipWrite } from "@/lib/rbac/shareable-resource";
 import { resolveUserIdentitiesBySubject } from "@/lib/rbac/user-identity-directory";
 import type { RbacScope } from "@/lib/rbac/types";
@@ -659,20 +663,15 @@ async function prepareLocalFilePublication(
   form.set("ownership_preprovisioned", "true");
   form.set("preprovisioned_datasource_id", sourceId);
 
-  const resourceRevision = publicationResourceRevision({
-    source_id: sourceId,
-    owner_team_slug: ownerTeamSlug,
-    owner_subject: ownerTeamSlug ? null : subject,
-    creator_subject: subject,
-    search_team_slugs: effectiveSearch.search_team_slugs,
-    search_user_subjects: effectiveSearch.search_user_subjects,
-  });
+  const revisionBasis = publication.resourceRevisionBasis;
+  const resourceRevision = publicationResourceRevision(revisionBasis);
   let publicationRequest: PublicationRequestDocument | null = null;
   try {
     if (publication.plan.requires_approval) {
       publicationRequest = await createPublicationRequest({
         resource: publication.resource,
         resourceRevision,
+        revisionBasis,
         requestedState: publication.requestedState as unknown as Record<
           string,
           unknown
@@ -691,6 +690,7 @@ async function prepareLocalFilePublication(
       await recordAutoApprovedPublication({
         resource: publication.resource,
         resourceRevision,
+        revisionBasis,
         requestedState: publication.requestedState as unknown as Record<
           string,
           unknown
@@ -1775,6 +1775,19 @@ export async function POST(
     await requireMcpToolCallPermission(session, headers, path, body);
 
     body = await constrainSearchBody(session, headers, path, body);
+
+    // A preview runs before any source exists, so the ingestor cannot yet derive
+    // access from one. Authorize the caller and note the credential briefly.
+    if (
+      INGEST_PATH_SOURCE_TYPES[targetPath] &&
+      body &&
+      typeof body === "object" &&
+      !Array.isArray(body)
+    ) {
+      const settings = (body as { settings?: unknown }).settings;
+      await rejectKnownSecretHeaders(settings);
+      await authorizeIngestPreviewCredentials({ session, settings });
+    }
 
     if (isMultipart) {
       multipartBody = await request.formData();

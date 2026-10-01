@@ -88,6 +88,14 @@ tolerations: []
 
 affinity: {}
 
+# PodDisruptionBudget for HTTP-mode MCP Deployments. Opt in per server or use
+# values-karpenter.yaml when deploying to EKS Auto Mode.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
+  annotations: {}
+
 # Secrets configuration for LLM providers.
 # When used as a subchart, parent global values can override these.
 llmSecrets:

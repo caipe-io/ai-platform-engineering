@@ -86,6 +86,14 @@ function request(body: Record<string, unknown>): NextRequest {
   });
 }
 
+function conversationCollection(insertOne: jest.Mock) {
+  return {
+    findOne: jest.fn(),
+    insertOne,
+    updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+  };
+}
+
 describe("POST /api/chat/conversations agent authorization", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -144,9 +152,32 @@ describe("POST /api/chat/conversations agent authorization", () => {
     );
   });
 
+  it.each(["autonomous", "web", "scheduled"])("preserves legacy autonomous classification in the %s filter", async (source) => {
+    const cursor = {
+      sort: jest.fn().mockReturnThis(), skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(), toArray: jest.fn().mockResolvedValue([]),
+    };
+    const find = jest.fn().mockReturnValue(cursor);
+    mockGetCollection.mockResolvedValue({ find, countDocuments: jest.fn().mockResolvedValue(0) });
+    const { GET } = await import("../chat/conversations/route");
+    const response = await GET(new NextRequest(`http://localhost/api/chat/conversations?source=${source}`));
+    expect(response.status).toBe(200);
+    const query = find.mock.calls[0][0];
+    expect(query.$and).toEqual(expect.arrayContaining([
+      expect.objectContaining({ $or: expect.arrayContaining([{ owner_id: "alice@example.com" }]) }),
+      {
+        [source === "autonomous" ? "$or" : "$nor"]: expect.arrayContaining([
+          { source: "autonomous" },
+          { "metadata.source": "autonomous" },
+          { title: { $regex: "^\\[Autonomous\\](\\s|$)", $options: "i" } },
+        ]),
+      },
+    ]));
+  });
+
   it("checks OpenFGA can_use before binding a dynamic agent to a new conversation", async () => {
     const insertOne = jest.fn().mockResolvedValue({ insertedId: "conv-1" });
-    mockGetCollection.mockResolvedValue({ findOne: jest.fn(), insertOne });
+    mockGetCollection.mockResolvedValue(conversationCollection(insertOne));
     const { POST } = await import("../chat/conversations/route");
 
     const response = await POST(
@@ -172,7 +203,7 @@ describe("POST /api/chat/conversations agent authorization", () => {
 
   it("persists source: 'api' when the caller declares an api origin", async () => {
     const insertOne = jest.fn().mockResolvedValue({ insertedId: "conv-1" });
-    mockGetCollection.mockResolvedValue({ findOne: jest.fn(), insertOne });
+    mockGetCollection.mockResolvedValue(conversationCollection(insertOne));
     const { POST } = await import("../chat/conversations/route");
 
     const response = await POST(
@@ -190,7 +221,7 @@ describe("POST /api/chat/conversations agent authorization", () => {
 
   it("ignores an unrecognized source value from the caller", async () => {
     const insertOne = jest.fn().mockResolvedValue({ insertedId: "conv-1" });
-    mockGetCollection.mockResolvedValue({ findOne: jest.fn(), insertOne });
+    mockGetCollection.mockResolvedValue(conversationCollection(insertOne));
     const { POST } = await import("../chat/conversations/route");
 
     const response = await POST(
@@ -212,7 +243,7 @@ describe("POST /api/chat/conversations agent authorization", () => {
       session: { sub: "external-sub", role: "user", authMethod: "bearer" },
     });
     const insertOne = jest.fn().mockResolvedValue({ insertedId: "conv-1" });
-    mockGetCollection.mockResolvedValue({ findOne: jest.fn(), insertOne });
+    mockGetCollection.mockResolvedValue(conversationCollection(insertOne));
     const { POST } = await import("../chat/conversations/route");
 
     const response = await POST(
@@ -235,7 +266,7 @@ describe("POST /api/chat/conversations agent authorization", () => {
       session: { sub: "slack-bot-sub", role: "user", authMethod: "bearer" },
     });
     const insertOne = jest.fn().mockResolvedValue({ insertedId: "conv-1" });
-    mockGetCollection.mockResolvedValue({ findOne: jest.fn(), insertOne });
+    mockGetCollection.mockResolvedValue(conversationCollection(insertOne));
     const { POST } = await import("../chat/conversations/route");
 
     const response = await POST(
@@ -257,7 +288,7 @@ describe("POST /api/chat/conversations agent authorization", () => {
       session: { sub: "webex-bot-sub", role: "user", authMethod: "bearer" },
     });
     const insertOne = jest.fn().mockResolvedValue({ insertedId: "conv-1" });
-    mockGetCollection.mockResolvedValue({ findOne: jest.fn(), insertOne });
+    mockGetCollection.mockResolvedValue(conversationCollection(insertOne));
     const { POST } = await import("../chat/conversations/route");
 
     const response = await POST(
@@ -276,7 +307,7 @@ describe("POST /api/chat/conversations agent authorization", () => {
     // Default beforeEach fixture has no authMethod set — the genuine
     // session-cookie path — so 'webui' must be trusted as-is.
     const insertOne = jest.fn().mockResolvedValue({ insertedId: "conv-1" });
-    mockGetCollection.mockResolvedValue({ findOne: jest.fn(), insertOne });
+    mockGetCollection.mockResolvedValue(conversationCollection(insertOne));
     const { POST } = await import("../chat/conversations/route");
 
     const response = await POST(
@@ -294,7 +325,7 @@ describe("POST /api/chat/conversations agent authorization", () => {
 
   it("does not create the conversation when OpenFGA denies agent use", async () => {
     const insertOne = jest.fn();
-    mockGetCollection.mockResolvedValue({ findOne: jest.fn(), insertOne });
+    mockGetCollection.mockResolvedValue(conversationCollection(insertOne));
     mockRequireAgentUsePermission.mockResolvedValue(
       NextResponse.json(
         { success: false, error: "Permission denied", code: "agent#use" },

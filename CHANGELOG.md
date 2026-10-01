@@ -1,3 +1,75 @@
+## 1.3.0-rc.4 (2026-10-01)
+
+### Feat
+
+- **publication-approval**: confirm drift instead of superseding on approve (#2849)
+- **eks**: add Auto Mode RAG pool and PodDisruptionBudgets (#1446)
+- **rag**: ingest web pages behind header-based authentication (#2808)
+
+### Fix
+
+- **rag**: correct fetch_document tool name in truncation hint (#2856)
+- **ui**: fix team admin dialog search and layout issues (#2842)
+- **security**: report failed post-release Grype dispatch (#2847)
+- **deps**: resolve current Dependabot alerts (#2845)
+- **caipe-ui**: show session-expired hint for auth-interrupted turns (#1764)
+- **rag**: pin tenacity dependency (#2844)
+- **ci**: grant PR write access for size labeling (#2835)
+- **autonomous**: correct owner token forward to agent and mcp (#2708)
+- **webex-meetings-mcp**: fix timezone issue (#2838)
+- **rag**: retry ingestor POST on 429, split batch on 413 (#2600)
+
+### Refactor
+
+- **authz**: route agent execution through fresh CAS decisions (#2813)
+
+## 1.3.0-rc.3 (2026-09-24)
+
+## 1.3.0-rc.2 (2026-09-24)
+
+### Feat
+
+- **admin**: improve user identity and access visibility (#2810)
+- **authz**: establish BFF access API foundation (#2807)
+
+### Fix
+
+- **agents**: restore Azure and Bedrock reasoning (#2809)
+
+## 1.3.0-rc.1 (2026-09-23)
+
+### Feat
+
+- **rag**: support Confluence folder and whole-space ingestion (#2805)
+- **agents**: add configurable reasoning effort (#2798)
+
+### Fix
+
+- **auth**: debounce Keycloak sub mapping writes for repeated identity calls (#2800)
+
+## 1.2.0 (2026-09-22)
+
+### Feat
+
+- **rbac**: let owner-team members manage KBs, RAG collections, MCP tools, Webex spaces (#2773)
+- **authz**: reverse-lookup accessible sets instead of checking every catalog candidate (#2793)
+- **chat**: unify conversation history and queued turns (#2778)
+- **chat**: edit messages and rewind conversations (#2781)
+- **chat**: show context remaining before compaction (#2779)
+
+### Fix
+
+- **audit**: audit bulk authorization as one event instead of one per resource (#2777)
+- **insights**: scope conversations across chat surfaces (#2780)
+
+## 1.2.0-rc.4 (2026-09-21)
+
+### Fix
+
+- **helm**: support bridge image pull secrets (#2398)
+- **deps**: bump cnoe-agent-utils 0.4.1 -> 0.4.2 for Sonnet 5 temperature fix (#2776)
+- **ci**: drop unused GitHub App token steps (#2772)
+
 ## 1.2.0-rc.3 (2026-09-18)
 
 ### Feat

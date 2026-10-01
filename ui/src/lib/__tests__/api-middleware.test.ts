@@ -204,6 +204,7 @@ import {
   requireAdmin,
   requireRbacPermission,
   clearSessionAuthCacheForTests,
+  _resetKeycloakSubMappingCacheForTests,
   getAuthFromBearerOrSession,
   getAuthenticatedUser,
   withAuth,
@@ -211,6 +212,7 @@ import {
 
 beforeEach(() => {
   clearSessionAuthCacheForTests();
+  _resetKeycloakSubMappingCacheForTests();
 });
 
 describe('ApiError', () => {
@@ -1031,15 +1033,17 @@ describe('getAuthenticatedUser', () => {
 
   it('persists keycloak_sub on the MongoDB user profile', async () => {
     const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 2 });
     mockGetServerSession.mockResolvedValue({
       user: { email: 'user@test.com', name: 'Test User' },
       role: 'user',
       sub: 'test-keycloak-sub',
     });
-    mockGetCollection.mockResolvedValue({
-      findOne: jest.fn().mockResolvedValue(null),
-      updateOne,
-    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users'
+        ? { findOne: jest.fn().mockResolvedValue(null), updateOne }
+        : { updateMany }
+    ));
 
     const req = new Request('http://test.com') as unknown as NextRequest;
     await getAuthenticatedUser(req);
@@ -1054,6 +1058,54 @@ describe('getAuthenticatedUser', () => {
       }),
       { upsert: true }
     );
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        $and: expect.arrayContaining([
+          expect.objectContaining({ $or: expect.any(Array) }),
+          {
+            $or: [
+              { owner_subject: { $exists: false } },
+              { owner_subject: null },
+              { owner_subject: '' },
+              { owner_subject: 'test-keycloak-sub' },
+            ],
+          },
+        ]),
+      }),
+      {
+        $set: {
+          owner_subject: 'test-keycloak-sub',
+          owner_canonical_subject: 'test-keycloak-sub',
+          owner_identity_version: 2,
+        },
+      },
+    );
+  });
+
+  it('reconciles conversations without waiting for the profile write', async () => {
+    let finishProfileWrite: (() => void) | undefined;
+    const updateOne = jest.fn(() => new Promise((resolve) => {
+      finishProfileWrite = () => resolve({ matchedCount: 1 });
+    }));
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'user@example.com', name: 'Test User' },
+      role: 'user',
+      sub: 'test-keycloak-sub',
+    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users' ? { updateOne } : { updateMany }
+    ));
+
+    const req = new Request('http://example.test') as unknown as NextRequest;
+    const authPromise = getAuthenticatedUser(req);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(updateOne).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+
+    finishProfileWrite?.();
+    await authPromise;
   });
 
   it('does not promote MongoDB metadata.role to product admin', async () => {
@@ -1110,6 +1162,66 @@ describe('getAuthenticatedUser', () => {
     await getAuthenticatedUser(makeRequest());
 
     expect(mockGetServerSession).toHaveBeenCalledTimes(2);
+  });
+
+  // Regression test for the smoke-test outage: repeated/concurrent calls with
+  // no cookie (the shape of Bearer-token / service-account traffic, which has
+  // no session-cache protection) must not each re-run the Keycloak sub
+  // mapping + conversation-owner-identity reconciliation writes, or a burst
+  // of concurrent requests from one identity reproduces the Mongo 40333
+  // "concurrent operations on the same resource" contention that took down
+  // dynamic-agents' PDP calls in production.
+  it('dedupes keycloak sub mapping writes across concurrent no-cookie calls for the same identity', async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'sa@test.com', name: 'Service Account' },
+      role: 'user',
+      sub: 'sa-sub',
+    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users' ? { updateOne } : { updateMany }
+    ));
+
+    const makeRequest = () =>
+      new Request('http://test.com/api/admin/slack/channels') as unknown as NextRequest;
+
+    await Promise.all([
+      getAuthenticatedUser(makeRequest()),
+      getAuthenticatedUser(makeRequest()),
+      getAuthenticatedUser(makeRequest()),
+    ]);
+
+    expect(mockGetServerSession).toHaveBeenCalledTimes(3);
+    expect(updateOne).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-runs keycloak sub mapping writes once the dedup window elapses', async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'sa2@test.com', name: 'Service Account 2' },
+      role: 'user',
+      sub: 'sa2-sub',
+    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users' ? { updateOne } : { updateMany }
+    ));
+
+    const makeRequest = () =>
+      new Request('http://test.com/api/admin/slack/channels') as unknown as NextRequest;
+
+    await getAuthenticatedUser(makeRequest());
+    nowSpy.mockReturnValue(10_999);
+    await getAuthenticatedUser(makeRequest());
+    nowSpy.mockReturnValue(11_001);
+    await getAuthenticatedUser(makeRequest());
+
+    expect(updateOne).toHaveBeenCalledTimes(2);
+    expect(updateMany).toHaveBeenCalledTimes(2);
+    nowSpy.mockRestore();
   });
 
   it('refreshes session auth after the cache ttl expires', async () => {

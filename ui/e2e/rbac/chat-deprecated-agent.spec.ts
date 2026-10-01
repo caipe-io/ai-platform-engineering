@@ -73,7 +73,7 @@ async function mockMessages(
     `**/api/chat/conversations/${conversationId}/messages**`,
     async (route) => {
       if (route.request().method() !== "GET") {
-        await route.continue();
+        await route.fallback();
         return;
       }
       await route.fulfill({
@@ -212,7 +212,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator("textarea").first()).not.toBeVisible({ timeout: 3_000 });
+    await expect(page.getByRole("textbox", { name: "Message" })).not.toBeVisible({ timeout: 3_000 });
   });
 
   test("conversation still appears in the sidebar history", async ({ page }) => {
@@ -267,7 +267,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator("textarea").first()).not.toBeVisible({ timeout: 3_000 });
+    await expect(page.getByRole("textbox", { name: "Message" })).not.toBeVisible({ timeout: 3_000 });
   });
 
   test("'Resume with default agent' CTA link is shown in the banner for deleted agent", async ({
@@ -369,7 +369,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
@@ -379,7 +379,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.getByRole("button", { name: /Resume with default agent/i }).click();
 
     await expect(page.getByText("Agent No Longer Available")).not.toBeVisible({ timeout: 8_000 });
-    await expect(page.locator("textarea").first()).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible({ timeout: 8_000 });
   });
 
   test("clicking 'Resume with default agent' dismisses the banner and shows the composer (unlinked)", async ({
@@ -396,7 +396,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.goto(`/chat/${CONV_UNLINKED_ID}`, { waitUntil: "domcontentloaded" });
@@ -406,7 +406,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.getByRole("button", { name: /Resume with default agent/i }).click();
 
     await expect(page.getByText("Agent No Longer Available")).not.toBeVisible({ timeout: 8_000 });
-    await expect(page.locator("textarea").first()).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible({ timeout: 8_000 });
   });
 
   test("PUT /api/chat/conversations/[id] is called with participants when resuming", async ({
@@ -426,7 +426,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
@@ -476,6 +476,6 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator("textarea").first()).not.toBeVisible({ timeout: 3_000 });
+    await expect(page.getByRole("textbox", { name: "Message" })).not.toBeVisible({ timeout: 3_000 });
   });
 });

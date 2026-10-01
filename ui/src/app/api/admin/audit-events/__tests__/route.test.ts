@@ -193,6 +193,49 @@ const docs: TestAuditDoc[] = [
     pdp: "openfga",
   },
   {
+    ts: new Date("2026-05-17T16:59:28.700Z"),
+    type: "cas_decision",
+    tenant_id: "default",
+    subject_hash: "sha256:bulk-subject",
+    subject_ref: "user:bulk-subject",
+    action: "discover",
+    outcome: "allow",
+    correlation_id: "batch:bulk-correlation",
+    source: "cas",
+    reason_code: "OK",
+    resource_ref: "agent:*",
+    resource_type: "agent",
+    component: "cas",
+    pdp: "openfga",
+    batch: true,
+    evaluated_count: 500,
+    allowed_count: 2,
+    denied_count: 498,
+    allowed_ids: ["agent-a", "agent-b"],
+    allowed_truncated: false,
+    denied_reasons: { NO_CAPABILITY: 498 },
+  },
+  {
+    ts: new Date("2026-05-17T16:59:28.800Z"),
+    type: "cas_decision",
+    tenant_id: "default",
+    subject_hash: "sha256:rollup-subject",
+    subject_ref: "user:rollup-subject",
+    action: "read",
+    outcome: "allow",
+    correlation_id: "rollup:rollup-correlation",
+    source: "cas",
+    reason_code: "OK",
+    resource_ref: "agent:rolled-up",
+    resource_type: "agent",
+    resource_id: "rolled-up",
+    component: "cas",
+    pdp: "openfga",
+    count: 37,
+    window_start: new Date("2026-05-17T16:58:28.800Z"),
+    window_end: new Date("2026-05-17T16:59:28.800Z"),
+  },
+  {
     ts: new Date("2026-05-17T16:59:29.000Z"),
     type: "cas_grant",
     tenant_id: "acme",
@@ -310,6 +353,8 @@ describe("GET /api/admin/audit-events", () => {
       "delegate_to_argocd",
       "agent#use",
       "use",
+      "discover",
+      "read",
       "use",
       "use",
     ]);
@@ -320,6 +365,8 @@ describe("GET /api/admin/audit-events", () => {
       "tool_action",
       "agent_delegation",
       "openfga_rebac",
+      "cas_decision",
+      "cas_decision",
       "cas_decision",
       "cas_grant",
       "cas_grant",
@@ -429,8 +476,10 @@ describe("GET /api/admin/audit-events", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.records).toHaveLength(1);
-    expect(body.records[0]).toMatchObject({
+    const workflowRow = body.records.find(
+      (r: { workflow_run_id?: string }) => r.workflow_run_id === "wfrun-20260517165928-abc",
+    );
+    expect(workflowRow).toMatchObject({
       type: "cas_decision",
       outcome: "allow",
       action: "use",
@@ -445,6 +494,31 @@ describe("GET /api/admin/audit-events", () => {
       component: "cas",
       pdp: "openfga",
     });
+  });
+
+  it("preserves aggregate fields on bulk-evaluation and rollup rows", async () => {
+    const { GET } = await import("../route");
+
+    const response = await GET(request("/api/admin/audit-events?type=cas_decision"));
+    const body = await response.json();
+
+    // documentToEvent is an explicit whitelist, so an aggregate field that is
+    // not listed there is silently dropped and the row reads back as a single
+    // decision — in the tab and in downloaded evidence alike.
+    const batchRow = body.records.find((r: { batch?: boolean }) => r.batch === true);
+    expect(batchRow).toMatchObject({
+      batch: true,
+      evaluated_count: 500,
+      allowed_count: 2,
+      denied_count: 498,
+      allowed_ids: ["agent-a", "agent-b"],
+      denied_reasons: { NO_CAPABILITY: 498 },
+    });
+
+    const rollupRow = body.records.find((r: { count?: number }) => r.count === 37);
+    expect(rollupRow).toMatchObject({ count: 37 });
+    expect(rollupRow.window_start).toBe("2026-05-17T16:58:28.800Z");
+    expect(rollupRow.window_end).toBe("2026-05-17T16:59:28.800Z");
   });
 
   it("preserves rows when the audit-service event does not include user_email", async () => {

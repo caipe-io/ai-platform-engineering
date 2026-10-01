@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions, isBootstrapAdmin } from '@/lib/auth-config';
 import { getConfig } from '@/lib/config';
+import { reconcileConversationOwnerIdentity } from '@/lib/conversation-owner-identity';
 import { getCollection } from '@/lib/mongodb';
 import type { Conversation, User } from '@/types/mongodb';
 import type { TeamMembershipSource } from '@/types/identity-group-sync';
@@ -272,6 +273,38 @@ export function clearSessionAuthCacheForTests(): void {
   sessionAuthCache.clear();
 }
 
+// Keycloak subject mapping + conversation-owner-identity reconciliation is
+// idempotent bookkeeping, not per-request state, so it doesn't need to run on
+// every call. The cookie-session path already gets this for free via
+// `sessionAuthCache` (10s TTL keyed by cookie), but the Bearer-token path
+// (service accounts: smoke tests, Slack bot, etc.) authenticates the same
+// static token on every request with no equivalent cache, so it re-ran the
+// full write path — including the `conversations.updateMany` in
+// `reconcileConversationOwnerIdentity` — on every single call. Under bursty
+// concurrent traffic from one service-account identity, that produced
+// `MongoServerError 40333 (Concurrent operations on the same resource)`.
+//
+// Dedup by keycloak sub, independent of auth path: concurrent callers for the
+// same subject join the one in-flight write instead of racing, and callers
+// within the TTL after it settles reuse the same resolved promise instead of
+// re-writing. The in-flight join mirrors `_inflightRefreshes` in
+// `auth-config.ts`, but unlike that map (which deletes its entry as soon as
+// the exchange settles) this one deliberately keeps entries around for the
+// TTL to also debounce non-concurrent repeat calls, so it needs its own
+// bound — mirrors `sessionAuthCache`'s LRU eviction above instead.
+//
+// This is a per-pod in-memory cache: it fully covers today's deployment
+// (`replicaCount: 1` in both dev and prod values), but a burst spread across
+// multiple replicas would only be deduped per-replica if that's ever raised.
+const KEYCLOAK_SUB_MAPPING_DEDUP_TTL_MS = 10_000;
+const MAX_KEYCLOAK_SUB_MAPPING_CACHE_ENTRIES = 500;
+const keycloakSubMappingCache = new Map<string, { promise: Promise<void>; expiresAt: number }>();
+
+/** Reset the Keycloak subject mapping dedup cache (for testing only). */
+export function _resetKeycloakSubMappingCacheForTests(): void {
+  keycloakSubMappingCache.clear();
+}
+
 export function resolveKeycloakSubFromSession(session: { sub?: unknown; accessToken?: unknown }): string | null {
   if (typeof session.sub === 'string' && session.sub.trim()) {
     return session.sub.trim();
@@ -296,32 +329,73 @@ async function persistKeycloakSubMapping(
   const keycloakSub = resolveKeycloakSubFromSession(session);
   if (!keycloakSub) return;
 
-  const now = new Date();
-  try {
-    const users = await getCollection<User>('users');
-    await users.updateOne(
-      { email: user.email },
-      {
-        $set: {
-          keycloak_sub: keycloakSub,
-          'metadata.keycloak_sub': keycloakSub,
-          updated_at: now,
-        },
-        $setOnInsert: {
-          email: user.email,
-          name: user.name,
-          created_at: now,
-          last_login: now,
-          'metadata.sso_provider': 'keycloak',
-          'metadata.sso_id': keycloakSub,
-          'metadata.role': user.role === 'admin' ? 'admin' : 'user',
-        },
-      },
-      { upsert: true }
-    );
-  } catch (error) {
-    console.warn('[Auth] Could not persist Keycloak subject mapping:', error);
+  const cacheKey = `${keycloakSub}:${user.email}`;
+  const cached = keycloakSubMappingCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.promise;
   }
+
+  const promise = runKeycloakSubMappingWrites(keycloakSub, user);
+  while (keycloakSubMappingCache.size >= MAX_KEYCLOAK_SUB_MAPPING_CACHE_ENTRIES) {
+    const oldestKey = keycloakSubMappingCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    keycloakSubMappingCache.delete(oldestKey);
+  }
+  keycloakSubMappingCache.set(cacheKey, {
+    promise,
+    expiresAt: Date.now() + KEYCLOAK_SUB_MAPPING_DEDUP_TTL_MS,
+  });
+  return promise;
+}
+
+async function runKeycloakSubMappingWrites(
+  keycloakSub: string,
+  user: { email: string; name: string; role: string }
+): Promise<void> {
+  const now = new Date();
+  await Promise.all([
+    (async () => {
+      try {
+        const users = await getCollection<User>('users');
+        await users.updateOne(
+          { email: user.email },
+          {
+            $set: {
+              keycloak_sub: keycloakSub,
+              'metadata.keycloak_sub': keycloakSub,
+              updated_at: now,
+            },
+            $setOnInsert: {
+              email: user.email,
+              name: user.name,
+              created_at: now,
+              last_login: now,
+              'metadata.sso_provider': 'keycloak',
+              'metadata.sso_id': keycloakSub,
+              'metadata.role': user.role === 'admin' ? 'admin' : 'user',
+            },
+          },
+          { upsert: true }
+        );
+      } catch (error) {
+        console.warn('[Auth] Could not persist Keycloak subject mapping:', error);
+      }
+    })(),
+    (async () => {
+      try {
+        const conversations = await getCollection<Conversation>('conversations');
+        await reconcileConversationOwnerIdentity(
+          conversations,
+          keycloakSub,
+          [user.email],
+        );
+      } catch (error) {
+        console.warn('[Auth] Could not reconcile conversation owner identity:', error);
+      }
+    })(),
+  ]);
 }
 
 /**

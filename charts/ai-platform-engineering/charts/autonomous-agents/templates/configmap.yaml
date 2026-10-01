@@ -7,6 +7,15 @@ metadata:
 data:
   SUPERVISOR_URL: {{ include "autonomous-agents.supervisorUrl" . | quote }}
   DYNAMIC_AGENTS_URL: {{ include "autonomous-agents.dynamicAgentsUrl" . | quote }}
-  {{- range $key, $value := omit .Values.config "SUPERVISOR_URL" "DYNAMIC_AGENTS_URL" }}
+  {{- if not .Values.enabledWebhookProviders }}
+  {{- fail "autonomous-agents.enabledWebhookProviders must enable at least one provider" }}
+  {{- end }}
+  {{- range $provider := .Values.enabledWebhookProviders }}
+  {{- if not (has $provider (list "github" "jira" "slack" "pagerduty")) }}
+  {{- fail (printf "unsupported autonomous-agents.enabledWebhookProviders value: %s" $provider) }}
+  {{- end }}
+  {{- end }}
+  ENABLED_WEBHOOK_PROVIDERS: {{ .Values.enabledWebhookProviders | toJson | quote }}
+  {{- range $key, $value := omit .Values.config "SUPERVISOR_URL" "DYNAMIC_AGENTS_URL" "ENABLED_WEBHOOK_PROVIDERS" }}
   {{ $key }}: {{ $value | toString | quote }}
   {{- end }}

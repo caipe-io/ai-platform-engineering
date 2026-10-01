@@ -44,7 +44,12 @@ import { visibleRagCollectionsByDatasource } from "@/lib/rag-collections.server"
 import {
   prepareRagPublication,
   ragPublicationRevision,
+  ragPublicationRevisionBasis,
 } from "@/lib/rag-publication-approval.server";
+import {
+  authorizedSourceSecretRefs,
+  screenSourceRequestHeaders,
+} from "@/lib/rag-source-credentials.server";
 import { allowedSourceTypesForIngestorServiceAccount } from "@/lib/rbac/ingestor-service-accounts";
 import { checkOpenFgaTuple } from "@/lib/rbac/openfga";
 import {
@@ -615,6 +620,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     }
   }
 
+  await authorizedSourceSecretRefs(session, body.settings);
+  await screenSourceRequestHeaders({ settings: body.settings, session });
+
   if (body.search_team_slugs !== undefined && !Array.isArray(body.search_team_slugs)) {
     throw new ApiError(
       "search_team_slugs must be an array of team slugs",
@@ -777,6 +785,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     publicationRequest = await createPublicationRequest({
       resource: publication.resource,
       resourceRevision: ragPublicationRevision(doc, effectiveSearch),
+      revisionBasis: ragPublicationRevisionBasis(doc, effectiveSearch),
       requestedState: publication.requestedState as unknown as Record<string, unknown>,
       effectiveState: effectiveSearch as unknown as Record<string, unknown>,
       riskFacts: publication.plan.risk_facts,
@@ -792,6 +801,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     await recordAutoApprovedPublication({
       resource: publication.resource,
       resourceRevision: ragPublicationRevision(doc, effectiveSearch),
+      revisionBasis: ragPublicationRevisionBasis(doc, effectiveSearch),
       requestedState: publication.requestedState as unknown as Record<string, unknown>,
       effectiveState: effectiveSearch as unknown as Record<string, unknown>,
       riskFacts: publication.plan.risk_facts,

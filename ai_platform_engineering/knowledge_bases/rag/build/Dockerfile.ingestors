@@ -91,19 +91,40 @@ ENV PATH="/app/ingestors/.venv/bin:$PATH"
 # Install the Chromium build matching the pinned Playwright client. Wolfi's
 # Chromium package can lag its security fixes, while this browser is released
 # and maintained together with Playwright for both supported architectures.
+# Playwright 1.63 bundles 153.0.8010.12; install the patched 153.0.8010.52
+# Chrome for Testing archives in the same major release for both architectures.
 # These Wolfi libraries provide Chromium's GTK, graphics, font, and NSS runtime
 # without installing Wolfi's separately versioned Chromium package.
+ARG TARGETARCH
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN if [ "$VARIANT" != "slim" ]; then \
         apk add --no-cache \
+            alsa-lib \
             font-opensans \
             fontconfig \
             gtk-3 \
             libnss \
             mesa \
             mesa-glx \
-            nss && \
-        playwright install chromium; \
+            nss \
+            curl \
+            unzip && \
+        playwright install chromium && \
+        case "$TARGETARCH" in \
+            amd64) browser_arch=linux64 ;; \
+            arm64) browser_arch=linux-arm64 ;; \
+            *) echo "Unsupported browser architecture: $TARGETARCH" >&2; exit 1 ;; \
+        esac && \
+        for browser in chrome chrome-headless-shell; do \
+            if [ "$browser" = chrome ]; then browser_dir=chromium-1243; else browser_dir=chromium_headless_shell-1243; fi; \
+            curl -fsSL --retry 3 \
+                "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.52/$browser_arch/$browser-$browser_arch.zip" \
+                -o "/tmp/$browser.zip" && \
+            unzip -oq "/tmp/$browser.zip" -d "/opt/playwright/$browser_dir" && \
+            rm "/tmp/$browser.zip"; \
+        done && \
+        apk del curl unzip && \
+        python3 -c 'from playwright.sync_api import sync_playwright; pw = sync_playwright().start(); browser = pw.chromium.launch(headless=True); assert browser.version == "153.0.8010.52", browser.version; browser.close(); pw.stop()'; \
     fi
 
 # Use a non-root user to run the application

@@ -279,3 +279,18 @@ class TestStreamChatPayload:
     list(client.stream_chat("hi", "conv-1", "agent-1"))
 
     assert "files" not in captured["payload"]
+
+  def test_reasoning_effort_is_forwarded(self, monkeypatch):
+    captured = self._capture_payload(monkeypatch)
+    client = SSEClient("http://example.com")
+
+    list(
+      client.stream_chat(
+        "hi",
+        "conv-1",
+        "agent-1",
+        reasoning_effort="high",
+      )
+    )
+
+    assert captured["payload"]["reasoning_effort"] == "high"

@@ -30,6 +30,10 @@ export function CreateTeamDialog({
   const [description, setDescription] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
   const [userEmails, setUserEmails] = useState<string[]>([]);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberSearchResults, setMemberSearchResults] = useState<string[]>([]);
+  const [memberSearchLoading, setMemberSearchLoading] = useState(false);
+  const [memberSearchFailed, setMemberSearchFailed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +41,8 @@ export function CreateTeamDialog({
     if (!open) return;
     // /api/admin/users returns Keycloak realm users in the shape
     // { users: [{ email, ... }], total, page, pageSize } (no success/data envelope).
+    // This is only the first page, used as the default browse list before
+    // the user types a search query.
     fetch("/api/admin/users?pageSize=100")
       .then((r) => r.json())
       .then((res) => {
@@ -51,6 +57,60 @@ export function CreateTeamDialog({
       })
       .catch(() => {});
   }, [open]);
+
+  // Searching should look up all Keycloak users, not just the first page
+  // loaded above, so it's a debounced server-side query.
+  useEffect(() => {
+    if (!open) return;
+    const query = memberSearch.trim();
+    if (query.length < 2) {
+      setMemberSearchResults([]);
+      setMemberSearchLoading(false);
+      setMemberSearchFailed(false);
+      return;
+    }
+    const ctrl = new AbortController();
+    // Clear the prior query's results and error state immediately — since
+    // MultiSelect doesn't filter `options` itself in this mode, a stale
+    // match from the last query would otherwise stay selectable while this
+    // one is still debouncing/in flight.
+    setMemberSearchResults([]);
+    setMemberSearchFailed(false);
+    setMemberSearchLoading(true);
+    const handle = setTimeout(() => {
+      const params = new URLSearchParams({ search: query, pageSize: "50" });
+      fetch(`/api/admin/users?${params.toString()}`, { signal: ctrl.signal })
+        .then((r) => r.json())
+        .then((res) => {
+          const users = Array.isArray(res?.users) ? res.users : res?.data?.users;
+          setMemberSearchResults(
+            Array.isArray(users)
+              ? users.map((u: { email?: string }) => u.email).filter(Boolean)
+              : []
+          );
+        })
+        .catch((err) => {
+          // An aborted request was superseded by a newer query, whose own
+          // effect run already reset the loading/error state above — leave
+          // it alone. A real failure is distinct from "no matches": surface
+          // it as an error rather than silently reporting zero results.
+          if (err?.name === "AbortError") return;
+          console.error("[CreateTeamDialog] Member search failed:", err);
+          setMemberSearchResults([]);
+          setMemberSearchFailed(true);
+        })
+        .finally(() => {
+          // A newer keystroke may have already aborted this request and
+          // started its own — don't let this stale request's `finally`
+          // clear the loading flag the newer one just set to true.
+          if (!ctrl.signal.aborted) setMemberSearchLoading(false);
+        });
+    }, 200);
+    return () => {
+      clearTimeout(handle);
+      ctrl.abort();
+    };
+  }, [open, memberSearch]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,6 +140,7 @@ export function CreateTeamDialog({
       setTeamName("");
       setDescription("");
       setSelectedMembers([]);
+      setMemberSearch("");
 
       // Close dialog and trigger refresh
       onOpenChange(false);
@@ -97,6 +158,7 @@ export function CreateTeamDialog({
       setTeamName("");
       setDescription("");
       setSelectedMembers([]);
+      setMemberSearch("");
       setError(null);
       onOpenChange(false);
     }
@@ -148,12 +210,14 @@ export function CreateTeamDialog({
                 Members (Optional)
               </Label>
               <MultiSelect
-                options={userEmails}
+                options={memberSearch.trim().length >= 2 ? memberSearchResults : userEmails}
                 selected={selectedMembers}
                 onChange={setSelectedMembers}
+                onSearchChange={setMemberSearch}
+                searchLoading={memberSearchLoading}
                 placeholder="Search and select members..."
-                searchPlaceholder="Search by email..."
-                emptyLabel="No users found"
+                searchPlaceholder="Search by name or email..."
+                emptyLabel={memberSearchFailed ? "Search failed — try again" : "No users found"}
                 badgeLabel="members"
                 className="w-full max-w-full"
               />
