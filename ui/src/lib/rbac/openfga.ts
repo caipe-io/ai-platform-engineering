@@ -1,3 +1,5 @@
+import { randomUUID } from "crypto";
+
 import {
   getOpenFgaStoreId,
   isOpenFgaConfigured,
@@ -680,6 +682,21 @@ export class OpenFgaWriteError extends Error {
   }
 }
 
+/** A save spanning two stores failed; never present it as a confirmed rollback. */
+export class OpenFgaMutationError extends Error {
+  readonly statusCode = 503;
+  readonly code = "ACCESS_UPDATE_INCOMPLETE";
+  readonly action = "contact_admin";
+  readonly reference = randomUUID();
+
+  constructor(cause: unknown) {
+    super("Could not complete the save and permission update. Access may need repair; ask an administrator to check the saved settings before retrying.", { cause });
+    this.name = "OpenFgaMutationError";
+    this.message += ` Reference: ${this.reference}`;
+    console.error("[openfga] mutation incomplete", { reference: this.reference, cause });
+  }
+}
+
 /**
  * Split a diff into ≤`limit`-sized chunks. Writes and deletes share the
  * same per-call budget (the OpenFGA limit counts them together). When
@@ -714,12 +731,14 @@ export function chunkOpenFgaDiff(
   return chunks;
 }
 
-export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff): Promise<OpenFgaReconcileResult> {
+export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff, persist?: () => Promise<void>): Promise<OpenFgaReconcileResult> {
   assertWritableRelations(diff);
   if (!isOpenFgaConfigured()) {
+    await persist?.();
     return { enabled: false, writes: 0, deletes: 0 };
   }
   if (diff.writes.length === 0 && diff.deletes.length === 0) {
+    await persistConfiguration(persist);
     return { enabled: true, writes: 0, deletes: 0 };
   }
 
@@ -727,36 +746,54 @@ export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff): Promise<O
   const storeId = await getOpenFgaStoreId();
   const filteredDiff = await filterTupleDiff(storeId, diff);
   if (filteredDiff.writes.length === 0 && filteredDiff.deletes.length === 0) {
+    await persistConfiguration(persist);
     return { enabled: true, writes: 0, deletes: 0 };
   }
 
-  return applyDiffWithCompensation(storeId, filteredDiff);
+  return applyDiffWithCompensation(storeId, filteredDiff, persist);
 }
 
 /**
  * Apply a diff in ≤limit-sized chunks. Each chunk is its own server-side
- * transaction; on failure we attempt to compensate already-applied chunks so
- * callers see "all-or-nothing" semantics across the full diff. If a chunk
- * fails AND compensation also fails, we surface the original error and log the
- * compensation failure — the caller is responsible for higher-level rollback
- * (e.g. the identity-group-sync reconciler reverts Mongo state on this throw).
+ * transaction. Legacy tuple-only callers retain inverse compensation. Saves
+ * spanning Mongo and OpenFGA use conservative cleanup instead: remove attempted
+ * additions, but never restore revoked access based on an uncertain DB result.
  */
 async function applyDiffWithCompensation(
   storeId: string,
   diff: TeamResourceTupleDiff,
+  persist?: () => Promise<void>,
 ): Promise<OpenFgaReconcileResult> {
   const chunks = chunkOpenFgaDiff(diff);
   const applied: OpenFgaChunkResult[] = [];
   let totalWrites = 0;
   let totalDeletes = 0;
+  const attemptedWrites: OpenFgaTupleKey[] = [];
   try {
     for (const chunk of chunks) {
+      attemptedWrites.push(...chunk.writes);
       const result = await postOpenFgaWriteChunk(storeId, chunk);
       applied.push(result);
       totalWrites += result.applied.writes.length;
       totalDeletes += result.applied.deletes.length;
     }
+    // Persist the matching resource only after all graph writes succeed.
+    // A rejected callback does not prove Mongo rejected the save: its response
+    // may have been lost after commit. Never invert revocations in that case.
+    await persist?.();
   } catch (err) {
+    if (persist) {
+      // Include the failed chunk: a transport failure can hide a committed FGA
+      // write. Filter exact stored keys so absent attempted additions are no-ops.
+      // Existing grants filtered out before this operation are left untouched.
+      try {
+        const cleanup = await filterTupleDiff(storeId, { writes: [], deletes: attemptedWrites });
+        for (const chunk of chunkOpenFgaDiff(cleanup)) await postOpenFgaWriteChunk(storeId, chunk);
+      } catch (cleanupError) {
+        throw new OpenFgaMutationError(new AggregateError([err, cleanupError], "Save and restrictive permission cleanup failed"));
+      }
+      throw new OpenFgaMutationError(err);
+    }
     if (applied.length > 0) {
       await compensateAppliedChunks(storeId, applied).catch(
         (compensationErr) => {
@@ -771,6 +808,14 @@ async function applyDiffWithCompensation(
   }
 
   return { enabled: true, writes: totalWrites, deletes: totalDeletes };
+}
+
+async function persistConfiguration(persist?: () => Promise<void>): Promise<void> {
+  try {
+    await persist?.();
+  } catch (error) {
+    throw new OpenFgaMutationError(error);
+  }
 }
 
 /**
@@ -911,11 +956,17 @@ async function filterTupleDiff(
   return { writes, deletes };
 }
 
-export async function writeOpenFgaTupleDiff(diff: TeamResourceTupleDiff): Promise<OpenFgaReconcileResult> {
+export async function writeOpenFgaTupleDiff(diff: TeamResourceTupleDiff, persist?: () => Promise<void>): Promise<OpenFgaReconcileResult> {
+  // Preserve storage-only callers without interpreting a disabled writer as an
+  // authorization bypass. Route authentication/authorization still runs first.
+  if (!isOpenFgaConfigured()) {
+    await persist?.();
+    return { enabled: false, writes: 0, deletes: 0 };
+  }
   if (!isOpenFgaReconciliationEnabled()) {
     return { enabled: false, writes: 0, deletes: 0 };
   }
-  return writeOpenFgaTuples(diff);
+  return writeOpenFgaTuples(diff, persist);
 }
 
 export async function writeUniversalRebacTupleDiff(

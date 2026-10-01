@@ -110,6 +110,74 @@ separate work. Writes are not replayed and do not inherit the check deadline.
 The platform health route keeps its independent diagnostic probe. Python services
 and the gateway authorization bridge are outside this BFF change.
 
+## Agent grant lifecycle
+
+```text
+Agent create/edit/delete or default change → CAS reconcile → OpenFGA
+                                                ↓
+                                         Save configuration
+                                                ↓ failure
+                                  Restrict access; report repair needed
+
+Picker GET → read candidates → permission filter (no grant writes)
+```
+
+- Agent lifecycle and default-selection writes use `reconcileTupleDiff`.
+  Interactive mutations include the canonical actor and trace in CAS audit.
+- The optional persistence callback runs after successful tuple writes, including
+  no-op diffs. A rejected save may already have committed in Mongo. Cleanup
+  therefore removes attempted new grants but **never restores revoked access**.
+  Grants already present before filtering are not included in that cleanup.
+- Agent update/delete and default-setting saves match the snapshot used to
+  compute the grant diff. A stale request cannot overwrite a newer version.
+  A detected snapshot conflict in direct persistence returns HTTP 409
+  `AGENT_SAVE_CONFLICT` or `PLATFORM_CONFIG_SAVE_CONFLICT` (for example, in
+  storage-only mode, or the default-setting route's empty-diff shortcut).
+  Persistence failures inside the configured OpenFGA writer return HTTP 503
+  `ACCESS_UPDATE_INCOMPLETE`, even for conflicts or diffs filtered to no-ops.
+  This includes the writer's own empty-diff path. The response has a safe support
+  reference; causes and cleanup failures stay in server logs. Do not unwrap a
+  nested 409: successful restrictive cleanup can still leave revoked access
+  missing, so it does not prove rollback or that a blind retry is safe.
+- A public human grant survives while the agent is global **or** the effective
+  platform default. Clearing a database default restores `DEFAULT_AGENT_ID`, if
+  configured. Default selection does not itself grant service-account access.
+- Existing data uses the existing startup agent reconciliation, not picker GET.
+  It now explicitly writes a missing default grant and reports policy failures;
+  it does not interpret a failed default-config read as permission to revoke.
+  Baseline user grants remain owned by login/bootstrap.
+
+Without `OPENFGA_HTTP`, storage-only callbacks still run once; this does not
+bypass route authentication or permission checks or make those routes usable
+without their existing dependencies. If OpenFGA **is configured** but
+`OPENFGA_RECONCILE_ENABLED` is false or invalid, permission-changing saves fail
+with `ACCESS_WRITES_DISABLED`. An unset flag defaults to enabled. A reachable
+authorization service with writes disabled is not a no-authorization mode.
+
+For recovery, stop concurrent edits and restore the failed dependency. Inspect
+the saved configuration and use Admin → RBAC self-check to review missing and
+excess relationships: repair confirmed missing grants and review proposed
+revocations before applying them. The existing `admin/rebac/self-check` API
+supports these actions without restarting the BFF. Do not blindly repair all
+findings or assume a picker refresh repairs data. For rollout, also check the
+startup `Reconciled OpenFGA tuples ... dynamic agent(s)` message and errors.
+
+**CAS integration release gate:** [#2854](https://github.com/caipe-io/ai-platform-engineering/issues/2854)
+tracks durable recovery after process termination between grant writes and
+configuration persistence. Request-local cleanup cannot run after a process is
+killed. Startup/manual repair is not a bounded recovery guarantee; resolve and
+validate this gap before the combined CAS integration is merged to main.
+
+**Limits:** cleanup is best-effort, not an atomic Mongo/OpenFGA transaction.
+Restrictive cleanup may remove an overlapping writer's grant and temporarily
+deny legitimate access. Crashes, failed cleanup, changes spanning default and
+agent records, and writers outside these guarded routes still require explicit
+recovery; snapshot matching is not a distributed lock. A request already in
+progress can observe intermediate grants. Failures are not reported as success.
+The existing startup sweep is not a complete repair of every orphaned/old team
+relationship. Picker ownership filtering and response/query caches are unchanged;
+their alignment with execution, plus team-membership writers, are the next slice.
+
 ## Isolated agent-use model tests
 
 Start a disposable local OpenFGA server (the chart currently uses v1.15.1):

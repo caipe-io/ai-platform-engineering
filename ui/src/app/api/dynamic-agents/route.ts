@@ -5,6 +5,8 @@
  * The gateway owns all config writes — DA is a pure runtime reader.
  */
 
+import { randomUUID } from "crypto";
+
 import {
   ApiError,
   getAuthFromBearerOrSession,
@@ -14,6 +16,8 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { mutationSnapshotFilter } from "@/lib/rbac/mutation-snapshot";
+import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
 import {
   RAG_COLLECTION_ID_PATTERN,
   RAG_COLLECTIONS_COLLECTION,
@@ -838,6 +842,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   await reconcileAgentRelationships({
     agentId,
+    auditContext: {
+      ...createAuthzTraceContext(request.headers.get("traceparent")),
+      caller: { type: session.isServiceAccount === true ? "service_account" : "user", id: String(session.sub) },
+      source: "agent_create",
+    },
     previousAllowedTools: {},
     nextAllowedTools: doc.allowed_tools,
     ownerSubject: doc.owner_subject,
@@ -845,25 +854,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     ownerTeamSlug,
     nextSharedTeamSlugs: sharedTeamSlugs,
     previousSharedTeamSlugs: [],
-    // Encode `visibility === 'global'` as the wildcard `user:* user
-    // agent:<id>` grant so a freshly-created global agent is usable by
-    // every member without waiting for the list-time repair in
-    // available/route.ts. Fresh create has no previous state to revoke.
+    // Public grants are written with configuration, never by picker GET.
+    // Fresh create has no previous visibility state to revoke.
     globalUserAccess: visibility === "global",
+    platformDefaultUserAccess: (await getPlatformDefaultAgentId()) === agentId,
     unlinkedServiceAccountSub,
+    persist: async () => { await collection.insertOne(doc); },
   });
-
-  try {
-    await collection.insertOne(doc);
-  } catch (error) {
-    await deleteAllAgentToolTuples(agentId).catch((cleanupError) => {
-      console.warn(
-        "[dynamic-agents] failed to clean up OpenFGA tuples after create failure:",
-        cleanupError,
-      );
-    });
-    throw error;
-  }
 
   return successResponse(doc, 201);
 });
@@ -1127,8 +1124,14 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       ? await resolveUnlinkedServiceAccountGrantState()
       : { sub: null, explicitAgentIds: new Set<string>() };
 
+  let updated: DynamicAgentConfig | null = null;
   await reconcileAgentRelationships({
     agentId: id,
+    auditContext: {
+      ...createAuthzTraceContext(request.headers.get("traceparent")),
+      caller: { type: session.isServiceAccount === true ? "service_account" : "user", id: String(session.sub) },
+      source: "agent_update",
+    },
     previousAllowedTools: allowedToolsFromAgent(agent),
     nextAllowedTools: finalAllowedTools,
     ownerSubject: agent.owner_subject ?? agent.owner_id,
@@ -1144,22 +1147,21 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     // `currentVisibility` may be the legacy 'private' value on old docs;
     // only an exact 'global' match counts as a previous wildcard grant.
     globalUserAccess: finalVisibility === "global",
+    platformDefaultUserAccess: (await getPlatformDefaultAgentId()) === id,
     previousGlobalUserAccess: currentVisibility === "global",
     unlinkedServiceAccountSub,
     unlinkedGrantIsExplicit: explicitAgentIds.has(id),
+    persist: async () => {
+      updated = await collection.findOneAndUpdate(
+        mutationSnapshotFilter(id, agent) as never,
+        Object.keys(unsetData).length > 0
+          ? { $set: { ...updateData, authz_write_id: randomUUID() }, $unset: unsetData }
+          : { $set: { ...updateData, authz_write_id: randomUUID() } },
+        { returnDocument: "after" },
+      );
+      if (!updated) throw new ApiError("The agent changed during this save. Reload its settings and check access before retrying.", 409, "AGENT_SAVE_CONFLICT");
+    },
   });
-
-  const updated = await collection.findOneAndUpdate(
-    { _id: id },
-    Object.keys(unsetData).length > 0
-      ? { $set: updateData, $unset: unsetData }
-      : { $set: updateData },
-    { returnDocument: "after" },
-  );
-
-  if (!updated) {
-    throw new ApiError("Failed to update agent", 500);
-  }
 
   return successResponse(
     normalizeAgentDoc(updated as unknown as Record<string, unknown>),
@@ -1237,8 +1239,13 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
-  await deleteAllAgentToolTuples(id);
-  await collection.deleteOne({ _id: id });
+  await deleteAllAgentToolTuples(id, {
+    ...createAuthzTraceContext(request.headers.get("traceparent")),
+    caller: { type: session.isServiceAccount === true ? "service_account" : "user", id: String(session.sub) },
+  }, async () => {
+    const result = await collection.deleteOne(mutationSnapshotFilter(id, agent) as never);
+    if (result.deletedCount === 0) throw new ApiError("The agent changed during deletion. Reload its settings and check access before retrying.", 409, "AGENT_SAVE_CONFLICT");
+  });
 
   return successResponse({ deleted: id });
 });
