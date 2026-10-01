@@ -76,8 +76,10 @@ remains hidden. This visibility exception applies only to compiled native apps.
 
 ## Build and routing
 
-1. Build the package and run the host conformance checker against its package
-   directory: `node ui/scripts/check-native-extension.mjs <package-directory>`.
+1. Build the package and run the versioned `@caipe/native-extension-sdk`
+   conformance checker against its package directory:
+   `caipe-native-check <package-directory>`. The equivalent in-tree command is
+   `node ui/scripts/check-native-extension.mjs <package-directory>`.
    It verifies the manifest, export targets, contract version, and shared
    runtime peer dependencies. Publisher CI should run the same checker against
    each supported CAIPE host release. Checker `1.1.1` also enforces a 64 KiB

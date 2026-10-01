@@ -60,9 +60,18 @@ test("rejects server exports and lifecycle hooks", () => {
     assert.throws(() => validatePackage(root, example), /server or undeclared entry/);
     writeFileSync(join(root, "package.json"), JSON.stringify({ ...pkg, scripts: { postinstall: "node setup.js" } }));
     assert.throws(() => validatePackage(root, example), /browser-only/);
+    writeFileSync(join(root, "package.json"), JSON.stringify({ ...pkg, exports: { ...pkg.exports, ".": "./../server.mjs" } }));
+    assert.throws(() => validatePackage(root, example), /unsafe export target/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("rejects colliding API mounts", () => {
+  assert.throws(() => validateOwnership([
+    { moduleName: "a", manifest: example },
+    { moduleName: "b", manifest: { ...example, id: "other", hostPaths: ["/other"], api: { ...example.api, mounts: ["/api/example/subpath"] } } },
+  ]), /overlap/);
 });
 
 test("rejects server imports, global CSS, and oversized entry bundles", () => {
