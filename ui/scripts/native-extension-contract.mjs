@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 export const CONTRACT_VERSION = "1.1";
 export const CHECKER_VERSION = "1.1.1";
@@ -127,12 +127,11 @@ export function validateBuiltArtifact(packageRoot, pkg) {
   if (statSync(entry).size > MAX_ENTRY_BYTES) {
     throw new Error(`${pkg.name}: entry exceeds ${MAX_ENTRY_BYTES} bytes`);
   }
-  const dist = join(packageRoot, "dist");
-  const javascript = readdirSync(dist).filter((file) => /\.(?:mjs|js)$/.test(file));
+  const javascript = compiledJavaScriptFiles(packageRoot);
   if (javascript.length === 0) throw new Error(`${pkg.name}: no compiled JavaScript found`);
   let totalBytes = 0;
   for (const file of javascript) {
-    const path = join(dist, file);
+    const path = join(packageRoot, file);
     totalBytes += statSync(path).size;
     const source = readFileSync(path, "utf8");
     if (/(?:from\s*|import\s*\()\s*["'](?:node:|server-only|next\/(?:server|headers|cache)|next-auth\/next)/.test(source)) {
@@ -147,6 +146,22 @@ export function validateBuiltArtifact(packageRoot, pkg) {
     throw new Error(`${pkg.name}: stylesheet contains an unscoped document selector`);
   }
   return { entryBytes: statSync(entry).size, javascriptBytes: totalBytes };
+}
+
+function compiledJavaScriptFiles(packageRoot) {
+  const files = [];
+  const visit = (directory) => {
+    for (const item of readdirSync(directory, { withFileTypes: true })) {
+      if (item.name === "node_modules" || item.name.startsWith(".")) continue;
+      const path = join(directory, item.name);
+      if (item.isDirectory()) visit(path);
+      else if (item.isFile() && /\.(?:mjs|js)$/.test(item.name)) {
+        files.push(relative(packageRoot, path));
+      }
+    }
+  };
+  visit(packageRoot);
+  return files;
 }
 
 export function validateInstalledPin(uiRoot, packageName, installedVersion) {

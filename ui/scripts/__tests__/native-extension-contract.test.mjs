@@ -87,3 +87,16 @@ test("rejects server imports, global CSS, and oversized entry bundles", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("accepts compiled files at the package root", () => {
+  const root = mkdtempSync(join(tmpdir(), "native-root-artifact-"));
+  try {
+    writeFileSync(join(root, "index.mjs"), '"use client";\nimport "./client.mjs";');
+    writeFileSync(join(root, "client.mjs"), "export const ready = true;");
+    writeFileSync(join(root, "styles.css"), ".example-app { color: red; }");
+    const pkg = { name: "example-package", exports: { ".": "./index.mjs", "./styles.css": "./styles.css" } };
+    assert.equal(validateBuiltArtifact(root, pkg).javascriptBytes > 0, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
