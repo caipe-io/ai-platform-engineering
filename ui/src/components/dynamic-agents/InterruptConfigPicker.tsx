@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { BuiltinToolsConfig,DecisionType,InterruptOn,InterruptToolConfig } from "@/types/dynamic-agent";
@@ -298,6 +299,21 @@ export function InterruptConfigPicker({
           const availableToolOptions = toolOptions.filter((t) => !usedTools.has(t));
           // Also disable "All tools" if another row in same namespace already uses it
           const allToolsTaken = usedTools.has("*");
+          const pickerToolOptions = [
+            {
+              value: "*",
+              label: "All tools",
+              disabled: allToolsTaken && row.tool !== "*",
+            },
+            ...(row.tool !== "*" && !availableToolOptions.includes(row.tool)
+              ? [{ value: row.tool, label: row.tool, disabled: false }]
+              : []),
+            ...availableToolOptions.map((tool) => ({
+              value: tool,
+              label: tool,
+              disabled: false,
+            })),
+          ];
 
           return (
             <div
@@ -311,18 +327,29 @@ export function InterruptConfigPicker({
               {/* Main row */}
               <div className="flex items-center gap-2">
                 {/* Namespace dropdown */}
-                <select
-                  value={row.namespace}
-                  onChange={(e) => handleNamespaceChange(row.id, e.target.value)}
-                  disabled={disabled || locked}
-                  className={cn("h-8 rounded-md border bg-background px-2 text-xs font-mono min-w-[100px]", locked && "text-muted-foreground")}
-                >
-                  {namespaces.map((ns) => (
-                    <option key={ns} value={ns}>
-                      {ns === "builtin" ? "Built-in" : ns}
-                    </option>
-                  ))}
-                </select>
+                <div className="min-w-[100px]">
+                  <SearchablePicker
+                    options={namespaces}
+                    selected={row.namespace}
+                    onSelect={(namespace) =>
+                      handleNamespaceChange(row.id, namespace)
+                    }
+                    getOptionKey={(namespace) => namespace}
+                    getOptionLabel={(namespace) =>
+                      namespace === "builtin" ? "Built-in" : namespace
+                    }
+                    placeholder="Namespace"
+                    searchPlaceholder="Search namespaces..."
+                    emptyLabel="No namespaces available"
+                    ariaLabel="Interrupt namespace"
+                    required
+                    disabled={disabled || locked}
+                    triggerClassName={cn(
+                      "h-8 px-2 text-xs font-mono",
+                      locked && "text-muted-foreground",
+                    )}
+                  />
+                </div>
 
                 {/* Tool dropdown */}
                 {row.namespace !== "builtin" && row.tool !== "*" && probingServers.has(row.namespace) ? (
@@ -330,28 +357,30 @@ export function InterruptConfigPicker({
                     Loading tools…
                   </span>
                 ) : (
-                  <select
-                    value={row.tool}
-                    onChange={(e) => handleToolChange(row.id, e.target.value)}
-                    disabled={disabled || locked}
-                    className={cn("h-8 rounded-md border bg-background px-2 text-xs font-mono min-w-[140px] flex-1", locked && "text-muted-foreground")}
-                  >
-                    <option value="*" disabled={allToolsTaken && row.tool !== "*"}>All tools</option>
-                    {row.namespace !== "builtin" && probingServers.has(row.namespace) && (
-                      <option value="" disabled>Loading tools...</option>
-                    )}
-                    {/* Show current tool even if taken (it's this row's own selection) */}
-                    {row.tool !== "*" && !availableToolOptions.includes(row.tool) && (
-                      <option key={row.tool} value={row.tool}>
-                        {row.tool}
-                      </option>
-                    )}
-                    {availableToolOptions.map((tool) => (
-                      <option key={tool} value={tool}>
-                        {tool}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="min-w-[140px] flex-1">
+                    <SearchablePicker
+                      options={pickerToolOptions}
+                      selected={pickerToolOptions.find(
+                        (option) => option.value === row.tool,
+                      )}
+                      onSelect={(option) =>
+                        handleToolChange(row.id, option.value)
+                      }
+                      getOptionKey={(option) => option.value}
+                      getOptionLabel={(option) => option.label}
+                      isOptionDisabled={(option) => option.disabled}
+                      placeholder="Select a tool"
+                      searchPlaceholder="Search tools..."
+                      emptyLabel="No tools available"
+                      ariaLabel="Interrupt tool"
+                      required
+                      disabled={disabled || locked}
+                      triggerClassName={cn(
+                        "h-8 px-2 text-xs font-mono",
+                        locked && "text-muted-foreground",
+                      )}
+                    />
+                  </div>
                 )}
 
                 {/* Stale warning */}

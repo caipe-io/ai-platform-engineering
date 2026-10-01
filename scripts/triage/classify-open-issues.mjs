@@ -8,7 +8,7 @@
 // Usage:
 //   node scripts/triage/classify-open-issues.mjs [--repo OWNER/NAME] [--out FILE] [--stale-days N]
 //
-// Defaults: --repo cnoe-io/ai-platform-engineering  --out open-issues-classification.html  --stale-days 90
+// Defaults: --repo caipe-io/ai-platform-engineering  --out open-issues-classification.html  --stale-days 90
 //
 // assisted-by Cursor
 
@@ -21,7 +21,7 @@ function arg(name, fallback) {
   const i = argv.indexOf(name);
   return i !== -1 && argv[i + 1] ? argv[i + 1] : fallback;
 }
-const REPO = arg("--repo", "cnoe-io/ai-platform-engineering");
+const REPO = arg("--repo", "caipe-io/ai-platform-engineering");
 const OUT = arg("--out", "open-issues-classification.html");
 const STALE_DAYS = parseInt(arg("--stale-days", "90"), 10);
 const TAGS_N = parseInt(arg("--tags", "10"), 10); // last N final releases for the "Releases by area" view

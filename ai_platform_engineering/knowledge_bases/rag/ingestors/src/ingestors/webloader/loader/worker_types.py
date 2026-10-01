@@ -62,6 +62,12 @@ class CrawlRequest:
   user_agent: str | None = None
   allow_non_public_urls: bool = False
 
+  # Rendered credential values, resolved in the main process and passed in
+  # memory only; never persisted or logged. `auth_credential_labels` carries
+  # the credential names so diagnostics can identify them without their values.
+  resolved_auth_headers: dict[str, str] | None = None
+  auth_credential_labels: list[str] = field(default_factory=list)
+
   # Metadata for document creation
   ingestor_id: str = ""
   datasource_name: str = ""
@@ -120,6 +126,7 @@ class CrawlResult:
 
   # Filtering stats for debugging failed crawls
   urls_found_in_sitemap: int = 0
+  urls_matched_in_sitemap: int = 0
   urls_filtered_external: int = 0
   urls_filtered_pattern: int = 0
   urls_filtered_max_pages: int = 0
@@ -200,9 +207,11 @@ class WorkerMessage:
       "elapsed_seconds": result.elapsed_seconds,
       # Filtering stats for debugging
       "urls_found_in_sitemap": result.urls_found_in_sitemap,
+      "urls_matched_in_sitemap": result.urls_matched_in_sitemap,
       "urls_filtered_external": result.urls_filtered_external,
       "urls_filtered_pattern": result.urls_filtered_pattern,
       "urls_filtered_max_pages": result.urls_filtered_max_pages,
+      "sitemap_url_used": result.sitemap_url_used,
     }
     return cls(type=MessageType.CRAWL_RESULT, payload=payload)
 

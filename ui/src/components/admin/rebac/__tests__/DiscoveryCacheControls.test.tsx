@@ -23,11 +23,13 @@ type FetchInit = RequestInit | undefined;
 
 function mockFetch({
   ttl = 60,
+  webexTtl,
   patch = { success: true },
   refresh = { ok: true, status: 200 },
   onCall,
 }: {
   ttl?: number;
+  webexTtl?: number;
   patch?: { success: boolean; error?: string };
   refresh?: { ok?: boolean; status?: number };
   onCall?: (href: string, init: FetchInit) => void;
@@ -45,7 +47,11 @@ function mockFetch({
         json: () =>
           Promise.resolve({
             success: true,
-            data: { default_agent_id: null, discovery_cache_ttl_minutes: ttl },
+            data: {
+              default_agent_id: null,
+              slack_discovery_cache_ttl_minutes: ttl,
+              webex_discovery_cache_ttl_minutes: webexTtl ?? ttl,
+            },
           }),
       } as Response);
     }
@@ -112,7 +118,7 @@ describe("DiscoveryCacheControls", () => {
       "/api/admin/platform-config",
       expect.objectContaining({
         method: "PATCH",
-        body: JSON.stringify({ discovery_cache_ttl_minutes: 120 }),
+        body: JSON.stringify({ slack_discovery_cache_ttl_minutes: 120 }),
       }),
     );
     expect(await screen.findByText(/saved/i)).toBeInTheDocument();
@@ -136,9 +142,22 @@ describe("DiscoveryCacheControls", () => {
       "/api/admin/platform-config",
       expect.objectContaining({
         method: "PATCH",
-        body: JSON.stringify({ discovery_cache_ttl_minutes: 5000 }),
+        body: JSON.stringify({ slack_discovery_cache_ttl_minutes: 5000 }),
       }),
     );
+  });
+
+  it("loads the TTL for the selected connector", async () => {
+    mockFetch({ ttl: 30, webexTtl: 90 });
+
+    render(<DiscoveryCacheControls provider="webex" isAdmin />);
+    fireEvent.click(screen.getByTestId("discovery-cache-controls-trigger-webex"));
+
+    const input = await screen.findByTestId(
+      "discovery-cache-ttl-input-webex",
+    );
+    await waitFor(() => expect(input).toHaveValue(90));
+    expect(screen.queryByText(/shared between/i)).not.toBeInTheDocument();
   });
 
   it("force refresh hits only the Slack route when provider=slack and fires onAfterRefresh", async () => {

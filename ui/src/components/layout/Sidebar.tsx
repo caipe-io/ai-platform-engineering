@@ -3,49 +3,63 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import { NewChatButton } from "@/components/chat/NewChatButton";
+import { ConversationListSkeleton } from "@/components/chat/ConversationListSkeleton";
 import { RecycleBinDialog } from "@/components/chat/RecycleBinDialog";
 import { ShareButton } from "@/components/chat/ShareButton";
 import { UseCaseBuilderDialog } from "@/components/gallery/UseCaseBuilder";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
+import { autonomousApi } from "@/components/autonomous/api";
+import type { AutonomousTask } from "@/components/autonomous/types";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
+import { getConfig } from "@/lib/config";
+import { getErrorMessage } from "@/lib/error-utils";
 import { getStorageMode } from "@/lib/storage-config";
 import { cn,formatDate,truncateText } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import type { Conversation } from "@/types/a2a";
 import { getAgentId } from "@/types/a2a";
-import { AnimatePresence,motion } from "framer-motion";
+import { motion } from "framer-motion";
 import {
 Archive,
 ArchiveRestore,
+CalendarClock,
 Check,
+ChevronDown,
 ChevronLeft,
 ChevronRight,
+Code2,
 Database,
 HardDrive,
 History,
+Loader2,
 MessageCircleQuestion,
 MessageSquare,
 Pencil,
 Plus,
 Radio,
-RefreshCw,
 Shield,
 Sparkles,
 TrendingUp,
 Users,
+Webhook,
 X
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
+  useCallback,
+  useRef,
   useState,
   useTransition,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 
 interface SidebarProps {
@@ -55,12 +69,120 @@ interface SidebarProps {
   onUseCaseSaved?: () => void;
 }
 
-function getScheduleBadge(conv: Conversation): { label: string; title: string } | null {
+interface ConversationTitleBadge {
+  kind: "autonomous" | "scheduled";
+  label: string;
+  title: string;
+}
+
+type ConversationHistoryFilter = "web" | "scheduled" | "autonomous";
+
+const CONVERSATION_HISTORY_FILTERS: ReadonlyArray<{
+  label: string;
+  value: ConversationHistoryFilter;
+}> = [
+  { label: "Chat", value: "web" },
+  { label: "Scheduled", value: "scheduled" },
+  { label: "Autonomous", value: "autonomous" },
+];
+
+const DEFAULT_SIDEBAR_WIDTH = 320;
+const MIN_SIDEBAR_WIDTH = 320;
+const MAX_SIDEBAR_WIDTH = 500;
+const SIDEBAR_WIDTH_STORAGE_KEY = "caipe-chat-sidebar-width";
+const HISTORY_FILTER_STORAGE_KEY = "caipe-chat-history-tab";
+
+function clampSidebarWidth(width: number): number {
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
+}
+
+function readStoredSidebarWidth(): number {
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (!stored) return DEFAULT_SIDEBAR_WIDTH;
+    const parsed = Number(stored);
+    return Number.isFinite(parsed) ? clampSidebarWidth(parsed) : DEFAULT_SIDEBAR_WIDTH;
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+}
+
+function persistSidebarWidth(width: number): void {
+  try {
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(width));
+  } catch {
+    // Browser storage may be unavailable; resizing still works for this page load.
+  }
+}
+
+function readStoredHistoryFilter(): ConversationHistoryFilter {
+  try {
+    const stored = window.localStorage.getItem(HISTORY_FILTER_STORAGE_KEY);
+    const isSupported = CONVERSATION_HISTORY_FILTERS.some(
+      (filter) => filter.value === stored,
+    );
+    return isSupported ? stored as ConversationHistoryFilter : "web";
+  } catch {
+    return "web";
+  }
+}
+
+function persistHistoryFilter(filter: ConversationHistoryFilter): void {
+  try {
+    window.localStorage.setItem(HISTORY_FILTER_STORAGE_KEY, filter);
+  } catch {
+    // Browser storage may be unavailable; filtering still works for this page load.
+  }
+}
+
+type ConversationListItem =
+  | { kind: "webhook-section" }
+  | {
+      kind: "conversation";
+      conversation: Conversation;
+    }
+  | {
+      kind: "webhook-task";
+      task: AutonomousTask;
+    };
+
+function getAutonomousBadge(conv: Conversation): ConversationTitleBadge | null {
+  const metadataTaskName = conv.metadata?.task_name;
+  const metadataTaskId = conv.metadata?.task_id;
+  const taskId =
+    conv.task_id?.trim() ||
+    (typeof metadataTaskId === "string" ? metadataTaskId.trim() : "");
+  const hasAutonomousSource =
+    conv.source === "autonomous" || conv.metadata?.source === "autonomous";
+  const hasLegacyAutonomousMarkers =
+    /^\[Autonomous\](?:\s|$)/i.test(conv.title);
+
+  // Conversations created before autonomous provenance became a top-level
+  // field may only carry the reserved title prefix. Keep those out of normal
+  // Chat history immediately; the backend also repairs their provenance when
+  // the task is next touched.
+  if (!hasAutonomousSource && !hasLegacyAutonomousMarkers) return null;
+
+  const titleTaskName = conv.title.replace(/^\[Autonomous\]\s*/i, "").trim();
+  const label =
+    typeof metadataTaskName === "string" && metadataTaskName.trim()
+      ? metadataTaskName.trim()
+      : titleTaskName || taskId || "Autonomous";
+
+  return {
+    kind: "autonomous",
+    label,
+    title: taskId ? `Autonomous task ${taskId}: ${label}` : `Autonomous task: ${label}`,
+  };
+}
+
+function getScheduleBadge(conv: Conversation): ConversationTitleBadge | null {
   const scheduleId = conv.metadata?.schedule_id;
   const scheduleTitle = conv.metadata?.schedule_title;
   if (typeof scheduleTitle === "string" && scheduleTitle.trim()) {
     const label = scheduleTitle.trim();
     return {
+      kind: "scheduled",
       label,
       title: typeof scheduleId === "string" && scheduleId.trim()
         ? `Scheduled run ${scheduleId.trim()}: ${label}`
@@ -70,13 +192,25 @@ function getScheduleBadge(conv: Conversation): { label: string; title: string } 
 
   if (typeof scheduleId === "string" && scheduleId.trim()) {
     const label = scheduleId.trim();
-    return { label, title: `Scheduled run ${label}` };
+    return { kind: "scheduled", label, title: `Scheduled run ${label}` };
   }
 
   const legacyMatch = conv.id.match(/sched_[a-z0-9]+/i);
   if (!legacyMatch) return null;
 
-  return { label: legacyMatch[0], title: `Scheduled run ${legacyMatch[0]}` };
+  return {
+    kind: "scheduled",
+    label: legacyMatch[0],
+    title: `Scheduled run ${legacyMatch[0]}`,
+  };
+}
+
+function getConversationRunKind(
+  conv: Conversation,
+): ConversationTitleBadge["kind"] | null {
+  if (getAutonomousBadge(conv)) return "autonomous";
+  if (getScheduleBadge(conv)) return "scheduled";
+  return null;
 }
 
 export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: SidebarProps) {
@@ -89,7 +223,9 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     deleteConversation,
     updateConversationTitle,
     loadConversationsFromServer,
-    loadMessagesFromServer,
+    conversationFilter,
+    conversationHasMore,
+    isLoadingMoreConversations,
     isConversationStreaming,
     hasUnviewedMessages,
     isConversationInputRequired,
@@ -97,52 +233,143 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   const { data: session } = useSession();
   const [useCaseBuilderOpen, setUseCaseBuilderOpen] = useState(false);
   const storageMode = getStorageMode(); // Exclusive storage mode
+  const [isLoadingConversations, setIsLoadingConversations] = useState(
+    activeTab === "chat" && storageMode === "mongodb",
+  );
   const [, startTransition] = useTransition();
-  const [sidebarWidth, setSidebarWidth] = useState(320); // Track sidebar width
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
-  const [isReloading, setIsReloading] = useState(false);
   const [recycleBinOpen, setRecycleBinOpen] = useState(false);
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [renameSavingId, setRenameSavingId] = useState<string | null>(null);
+  const [historyFilter, setHistoryFilter] = useState<ConversationHistoryFilter>('web');
+  const [historyFilterHydrated, setHistoryFilterHydrated] = useState(false);
+  const [webhooksExpanded, setWebhooksExpanded] = useState(false);
+  const [webhookTasks, setWebhookTasks] = useState<AutonomousTask[]>([]);
+  const schedulerEnabled = getConfig("schedulerEnabled");
+  const autonomousEnabled = getConfig("autonomousAgentsEnabled");
+  const availableHistoryFilters = CONVERSATION_HISTORY_FILTERS.filter(
+    (filter) =>
+      (filter.value !== "scheduled" || schedulerEnabled) &&
+      (filter.value !== "autonomous" || autonomousEnabled),
+  );
+  const conversationScrollViewportRef = useRef<HTMLDivElement>(null);
+  const resizeStateRef = useRef<{
+    pointerId: number;
+    startWidth: number;
+    startX: number;
+  } | null>(null);
+  const sidebarWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
   const { toast } = useToast();
+
+  useEffect(() => {
+    const storedWidth = readStoredSidebarWidth();
+    sidebarWidthRef.current = storedWidth;
+    setSidebarWidth(storedWidth);
+    const storedFilter = readStoredHistoryFilter();
+    const unavailable =
+      (storedFilter === "scheduled" && !schedulerEnabled) ||
+      (storedFilter === "autonomous" && !autonomousEnabled);
+    setHistoryFilter(unavailable ? "web" : storedFilter);
+    setHistoryFilterHydrated(true);
+  }, [schedulerEnabled, autonomousEnabled]);
 
   // Agent name lookup for dynamic agent conversations
   const [agentNameMap, setAgentNameMap] = useState<Record<string, string>>({});
+  const [agentNamesLoading, setAgentNamesLoading] = useState(true);
 
   // Load conversations from server when sidebar mounts (MongoDB mode only)
   // Also re-sync when tab becomes visible (user switches back from another browser/tab)
   useEffect(() => {
-    if (activeTab === "chat" && storageMode === 'mongodb') {
+    if (!historyFilterHydrated) return;
+    let cancelled = false;
+    if (
+      activeTab === "chat" &&
+      storageMode === 'mongodb'
+    ) {
       // Always load from server - the loadConversationsFromServer function
       // will merge server data with local cache intelligently
-      loadConversationsFromServer().catch((error) => {
-        console.error('[Sidebar] Failed to load conversations:', error);
-      });
+      setIsLoadingConversations(true);
+      void loadConversationsFromServer({ filter: historyFilter })
+        .catch((error) => {
+          console.error('[Sidebar] Failed to load conversations:', error);
+        })
+        .finally(() => {
+          if (!cancelled) setIsLoadingConversations(false);
+        });
+    } else {
+      setIsLoadingConversations(false);
     }
 
     // Re-sync when user returns to this tab (catches cross-browser deletes)
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && activeTab === "chat" && storageMode === 'mongodb') {
+      if (
+        document.visibilityState === 'visible' &&
+        activeTab === "chat" &&
+        storageMode === 'mongodb'
+      ) {
         console.log('[Sidebar] Tab became visible, re-syncing conversations');
-        loadConversationsFromServer().catch((error) => {
+        loadConversationsFromServer({ filter: historyFilter }).catch((error) => {
           console.error('[Sidebar] Failed to re-sync conversations:', error);
         });
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, storageMode]); // Intentionally exclude loadConversationsFromServer to prevent re-runs
+  }, [activeTab, historyFilter, historyFilterHydrated, storageMode]);
+
+  const handleHistoryFilterChange = useCallback((nextFilter: ConversationHistoryFilter) => {
+    if (conversationScrollViewportRef.current) {
+      conversationScrollViewportRef.current.scrollTop = 0;
+    }
+    setHistoryFilter(nextFilter);
+    persistHistoryFilter(nextFilter);
+  }, []);
+
+  const handleConversationListScroll = useCallback(() => {
+    const viewport = conversationScrollViewportRef.current;
+    if (
+      !viewport ||
+      conversationFilter !== historyFilter ||
+      isLoadingConversations ||
+      !conversationHasMore ||
+      isLoadingMoreConversations
+    ) {
+      return;
+    }
+    if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100) {
+      void loadConversationsFromServer({ filter: conversationFilter, append: true });
+    }
+  }, [
+    conversationFilter,
+    conversationHasMore,
+    historyFilter,
+    isLoadingConversations,
+    isLoadingMoreConversations,
+    loadConversationsFromServer,
+  ]);
+
+  useEffect(() => {
+    const viewport = conversationScrollViewportRef.current;
+    if (!viewport) return;
+    viewport.addEventListener('scroll', handleConversationListScroll, { passive: true });
+    return () => viewport.removeEventListener('scroll', handleConversationListScroll);
+  }, [activeTab, handleConversationListScroll]);
 
   // Fetch dynamic agents for name lookup in conversation list
   useEffect(() => {
+    let cancelled = false;
     const fetchAgents = async () => {
       try {
         const response = await fetch("/api/dynamic-agents/available");
         const data = await response.json();
-        if (data.success && Array.isArray(data.data)) {
+        if (!cancelled && data.success && Array.isArray(data.data)) {
           const map: Record<string, string> = {};
           data.data.forEach((agent: { _id: string; name: string }) => {
             map[agent._id] = agent.name;
@@ -151,56 +378,108 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
         }
       } catch (err) {
         console.error('[Sidebar] Failed to fetch agents for name lookup:', err);
+      } finally {
+        if (!cancelled) setAgentNamesLoading(false);
       }
     };
-    fetchAgents();
+    void fetchAgents();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Handle mouse move for resizing
+  // Webhook runs are intentionally not mirrored into normal chat
+  // conversations. Load the caller's webhook task summaries separately so the
+  // sidebar can expose one stable task timeline without one row per delivery.
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
-      
-      const newWidth = Math.max(320, Math.min(500, e.clientX));
-      setSidebarWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    if (isResizing) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-      return () => {
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-      };
+    let cancelled = false;
+    const ownerEmail = session?.user?.email?.trim().toLowerCase();
+    if (activeTab !== "chat" || !autonomousEnabled || !ownerEmail) {
+      setWebhookTasks([]);
+      return;
     }
+
+    void autonomousApi
+      .listTasks()
+      .then((tasks) => {
+        if (cancelled) return;
+        setWebhookTasks(
+          tasks.filter(
+            (task) =>
+              task.trigger.type === "webhook" &&
+              task.owner_id?.trim().toLowerCase() === ownerEmail,
+          ),
+        );
+      })
+      .catch(() => {
+        // Autonomous may be disabled or unavailable. Conversation history
+        // remains usable; simply omit the optional webhook subsection.
+        if (!cancelled) setWebhookTasks([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, autonomousEnabled, session?.user?.email]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
   }, [isResizing]);
 
-  const handleReloadConversations = async () => {
-    if (isReloading) return;
-    setIsReloading(true);
-    try {
-      console.log('[Sidebar] Manual reload triggered');
-      await loadConversationsFromServer();
-      // Also force-reload the active conversation's messages to pick up
-      // follow-up messages from other devices and refresh stream events
-      if (activeConversationId) {
-        await loadMessagesFromServer(activeConversationId, { force: true });
-      }
-    } catch (error) {
-      console.error('[Sidebar] Failed to reload conversations:', error);
-    } finally {
-      setIsReloading(false);
-    }
-  };
+  const handleResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    resizeStateRef.current = {
+      pointerId: event.pointerId,
+      startWidth: sidebarWidthRef.current,
+      startX: event.clientX,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setIsResizing(true);
+  }, []);
+
+  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    const nextWidth = clampSidebarWidth(
+      resizeState.startWidth + event.clientX - resizeState.startX,
+    );
+    sidebarWidthRef.current = nextWidth;
+    setSidebarWidth(nextWidth);
+  }, []);
+
+  const finishResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    resizeStateRef.current = null;
+    setIsResizing(false);
+    persistSidebarWidth(sidebarWidthRef.current);
+  }, []);
+
+  const handleResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const delta = event.key === "ArrowLeft" ? -16 : 16;
+    const nextWidth = clampSidebarWidth(sidebarWidthRef.current + delta);
+    sidebarWidthRef.current = nextWidth;
+    setSidebarWidth(nextWidth);
+    persistSidebarWidth(nextWidth);
+  }, []);
 
   const handleNewChat = async (agentId?: string) => {
     let resolvedAgentId: string | null = null;
     try {
       resolvedAgentId = agentId?.trim() || await resolveUsableChatAgentId();
+      setHistoryFilter('web');
+      persistHistoryFilter('web');
 
       if (storageMode === 'mongodb') {
         // MongoDB mode: Create conversation on server
@@ -228,6 +507,8 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
         useChatStore.setState((state) => ({
           conversations: [newConversation, ...state.conversations],
           activeConversationId: conversation._id,
+          conversationFilter: 'web',
+          conversationPage: Math.max(state.conversationPage, 1),
         }));
 
         // Small delay to ensure store update propagates before navigation
@@ -297,18 +578,51 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
     }
   };
 
+  const visibleConversations = conversations.filter((conversation) => {
+    const runKind = getConversationRunKind(conversation);
+    if (historyFilter === 'autonomous') return runKind === 'autonomous';
+    if (historyFilter === 'scheduled') return runKind === 'scheduled';
+    if (historyFilter === 'web') return runKind === null && conversation.source !== 'api';
+    return false;
+  });
+  const conversationListItems: ConversationListItem[] = visibleConversations.map(
+    (conversation) => ({ kind: 'conversation', conversation }),
+  );
+  if (historyFilter === 'autonomous' && webhookTasks.length > 0) {
+    conversationListItems.push({ kind: 'webhook-section' });
+    if (webhooksExpanded) {
+      conversationListItems.push(...webhookTasks.map(
+        (task): ConversationListItem => ({ kind: 'webhook-task', task }),
+      ));
+    }
+  }
+
   return (
     <motion.div
       initial={false}
       animate={{ width: collapsed ? 64 : sidebarWidth }}
-      transition={{ duration: 0.2 }}
+      transition={{ duration: isResizing ? 0 : 0.2 }}
       className="relative flex flex-col h-full bg-card/50 backdrop-blur-sm border-r border-border/50 shrink-0 z-10"
     >
       {/* Resize Handle */}
       {!collapsed && (
         <div
-          onMouseDown={() => setIsResizing(true)}
-          className="absolute right-0 top-0 h-full w-1 hover:w-1.5 bg-transparent hover:bg-primary/50 cursor-col-resize transition-all z-20"
+          role="separator"
+          aria-label="Resize chat sidebar"
+          aria-orientation="vertical"
+          aria-valuemin={MIN_SIDEBAR_WIDTH}
+          aria-valuemax={MAX_SIDEBAR_WIDTH}
+          aria-valuenow={sidebarWidth}
+          tabIndex={0}
+          onKeyDown={handleResizeKeyDown}
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={finishResize}
+          onPointerCancel={finishResize}
+          className={cn(
+            "absolute right-0 top-0 z-20 h-full w-1.5 touch-none cursor-col-resize bg-transparent transition-colors hover:bg-primary/50 focus-visible:bg-primary/50 focus-visible:outline-none",
+            isResizing && "bg-primary/60",
+          )}
           title="Drag to resize sidebar"
         />
       )}
@@ -394,38 +708,101 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
 
       {/* Chat History */}
       {activeTab === "chat" && (
-        <div className="flex-1 overflow-hidden flex flex-col min-w-0">
-          {!collapsed && (
-            <div className="px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider shrink-0">
-              <History className="h-3 w-3" />
-              <span className="flex-1">History</span>
-              {storageMode === 'mongodb' && (
-                <TooltipProvider delayDuration={300}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-5 w-5 hover:bg-muted"
-                        onClick={handleReloadConversations}
-                        disabled={isReloading}
-                      >
-                        <RefreshCw className={cn("h-3 w-3", isReloading && "animate-spin")} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="right" sideOffset={4}>
-                      <p className="text-xs">Reload conversations</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+        <Tabs
+          value={historyFilter}
+          onValueChange={(value) => handleHistoryFilterChange(value as ConversationHistoryFilter)}
+          className="flex-1 overflow-hidden flex flex-col min-w-0 min-h-0"
+        >
+          <TabsList
+            aria-label="Conversation views"
+            indicator="none"
+            className={cn(
+              "mx-2 mb-2 flex h-auto shrink-0 border border-border/60 bg-muted/30",
+              collapsed && "sr-only",
+            )}
+          >
+            {availableHistoryFilters.map((tab) => (
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                className="min-w-0 flex-1 px-2 py-1.5 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm"
+              >
+                {tab.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <TabsContent value={historyFilter} className="mt-0 flex flex-1 flex-col min-h-0 min-w-0">
+          <ScrollArea
+            className="flex-1 min-w-0"
+            viewportRef={conversationScrollViewportRef}
+            data-testid="conversation-history-scroll"
+          >
+            {/* Replace tab contents synchronously: exiting headers/rows must not
+                linger over the newly selected history. */}
+            <div key={historyFilter} className="px-2 space-y-1 pb-4">
+              {historyFilter === 'web' && !collapsed && (
+                <div className="flex items-center gap-1.5 px-2 py-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  <History className="h-3.5 w-3.5" />
+                  History
+                </div>
               )}
-            </div>
-          )}
+              {isLoadingConversations && conversationListItems.length === 0 ? (
+                <ConversationListSkeleton collapsed={collapsed} />
+              ) : (
+                <>
+                  {conversationListItems.map((item) => {
+                  if (item.kind === "webhook-section") {
+                    return (
+                      <button
+                        key="webhook-section"
+                        type="button"
+                        aria-expanded={webhooksExpanded}
+                        onClick={() => setWebhooksExpanded((expanded) => !expanded)}
+                        className="flex w-full items-center gap-1.5 px-2 py-2 text-xs font-medium text-muted-foreground"
+                      >
+                        {webhooksExpanded
+                          ? <ChevronDown className="h-3.5 w-3.5" />
+                          : <ChevronRight className="h-3.5 w-3.5" />}
+                        <Webhook className="h-3.5 w-3.5" />
+                        <span>Webhook Runs</span>
+                        <span className="ml-auto tabular-nums">{webhookTasks.length}</span>
+                      </button>
+                    );
+                  }
+                  if (item.kind === "webhook-task") {
+                    const provider =
+                      item.task.trigger.type === "webhook"
+                        ? item.task.trigger.provider ?? "webhook"
+                        : "webhook";
+                    return (
+                      <button
+                        key={`webhook-task-${item.task.id}`}
+                        type="button"
+                        className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-transparent p-2 text-left transition-colors hover:border-orange-500/20 hover:bg-orange-500/5"
+                        onClick={() => {
+                          startTransition(() => {
+                            router.push(`/chat/webhooks/${encodeURIComponent(item.task.id)}`);
+                          });
+                        }}
+                        aria-label={`Open webhook runs for ${item.task.name}`}
+                        data-testid={`webhook-task-${item.task.id}`}
+                      >
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-orange-500/10">
+                          <Webhook className="h-4 w-4 text-orange-600 dark:text-orange-300" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">
+                            {item.task.name}
+                          </span>
+                          <span className="block truncate text-[10px] capitalize text-muted-foreground">
+                            {provider}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  }
 
-          <ScrollArea className="flex-1 min-w-0">
-            <div className="px-2 space-y-1 pb-4">
-              <AnimatePresence mode="popLayout">
-                {conversations.map((conv, index) => {
+                  const conv = item.conversation;
                   const currentUserEmail = session?.user?.email?.trim().toLowerCase();
                   const ownerEmail = conv.owner_id?.trim().toLowerCase();
                   const viewerIsKnownOwner =
@@ -456,7 +833,15 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                   const isLive = isConversationStreaming(conv.id);
                   const isInputRequired = !isLive && isConversationInputRequired(conv.id);
                   const isUnviewed = !isLive && !isInputRequired && hasUnviewedMessages(conv.id);
-                  const scheduleBadge = getScheduleBadge(conv);
+                  const titleBadge = getAutonomousBadge(conv) ?? getScheduleBadge(conv);
+                  const runKind = getConversationRunKind(conv);
+                  const ConversationIcon = conv.source === 'api'
+                    ? Code2
+                    : runKind === 'autonomous'
+                      ? Sparkles
+                      : runKind === 'scheduled'
+                        ? CalendarClock
+                        : MessageSquare;
                   const isEditingTitle = editingConversationId === conv.id;
                   const isSavingTitle = renameSavingId === conv.id;
 
@@ -465,11 +850,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                     key={conv.id}
                     className="group/conv"
                   >
-                    <motion.div
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -10 }}
-                      transition={{ delay: index * 0.02 }}
+                    <div
                       className={cn(
                         "group relative flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-all min-w-0",
                         isLive
@@ -521,13 +902,19 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                         </>
                       ) : (
                         <>
-                          <MessageSquare className={cn(
+                          <ConversationIcon className={cn(
                             "h-4 w-4",
                             isUnviewed
                               ? "text-blue-500"
                               : activeConversationId === conv.id
                                 ? "text-primary"
-                                : "text-muted-foreground"
+                                : conv.source === 'api'
+                                  ? "text-sky-500"
+                                  : runKind === 'autonomous'
+                                    ? "text-violet-500"
+                                    : runKind === 'scheduled'
+                                      ? "text-cyan-500"
+                                      : "text-muted-foreground"
                           )} />
                           {isUnviewed && (
                             <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
@@ -566,19 +953,24 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                 <p className="text-sm font-medium truncate flex-1" title={conv.title}>
                                   {truncateText(conv.title, sidebarWidth > 350 ? 40 : sidebarWidth > 320 ? 25 : 20)}
                                 </p>
-                                {scheduleBadge && (
+                                {titleBadge && (
                                   <span
-                                    className="shrink-0 max-w-[132px] truncate rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-cyan-700 dark:text-cyan-300"
-                                    title={scheduleBadge.title}
+                                    className={cn(
+                                      "shrink-0 max-w-[132px] truncate rounded border px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal",
+                                      titleBadge.kind === "autonomous"
+                                        ? "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+                                        : "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+                                    )}
+                                    title={titleBadge.title}
                                   >
-                                    {truncateText(scheduleBadge.label, sidebarWidth > 350 ? 24 : 18)}
+                                    {truncateText(titleBadge.label, sidebarWidth > 350 ? 24 : 18)}
                                   </span>
                                 )}
                               </>
                             )}
                           </div>
-                          <p className={cn(
-                            "text-xs truncate",
+                          <div className={cn(
+                            "flex min-w-0 items-center text-xs",
                             isLive
                               ? "text-emerald-600 dark:text-emerald-400 font-medium"
                               : isInputRequired
@@ -587,18 +979,32 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                   ? "text-blue-600 dark:text-blue-400 font-medium"
                                   : "text-muted-foreground"
                           )}>
-                            {isLive ? "Live" : isInputRequired ? "Input needed" : isUnviewed ? "New response" : formatDate(conv.updatedAt)}
+                            <span className="shrink-0">
+                              {isLive ? "Live" : isInputRequired ? "Input needed" : isUnviewed ? "New response" : formatDate(conv.updatedAt)}
+                            </span>
                             {/* Dynamic Agent indicator */}
                             {(() => {
                               const agId = getAgentId(conv);
                               if (!agId) return null;
+                              const agentName = agentNameMap[agId];
+                              if (!agentName && agentNamesLoading) {
+                                return (
+                                  <>
+                                    <span className="ml-1.5 text-[10px] text-purple-500 dark:text-purple-400">•</span>
+                                    <Skeleton
+                                      className="ml-1 h-2.5 w-16 shrink-0 rounded-full"
+                                      data-testid="agent-name-skeleton"
+                                    />
+                                  </>
+                                );
+                              }
                               return (
-                                <span className="ml-1.5 text-[10px] text-purple-500 dark:text-purple-400" title={agentNameMap[agId] || 'Unknown Agent'}>
-                                  • {truncateText(agentNameMap[agId] || 'Unknown', 20)}
+                                <span className="ml-1.5 truncate text-[10px] text-purple-500 dark:text-purple-400" title={agentName || 'Unknown Agent'}>
+                                  • {truncateText(agentName || 'Unknown', 20)}
                                 </span>
                               );
                             })()}
-                          </p>
+                          </div>
                         </div>
 
                         <div className="flex items-center gap-0.5 shrink-0">
@@ -715,8 +1121,25 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                 console.log('[Sidebar] Created replacement conversation:', navigateToId);
                               }
 
-                              // Archive the conversation (updates store + server)
-                              await deleteConversation(conv.id);
+                              // Archive the conversation (updates store + server).
+                              // The store rolls the conversation back into the list
+                              // when the server rejects the delete (e.g. a shared
+                              // conversation the viewer does not own), so report the
+                              // failure instead of claiming success — otherwise the
+                              // row silently returns on the next reload.
+                              try {
+                                await deleteConversation(conv.id);
+                              } catch (error) {
+                                toast(
+                                  `Couldn't archive "${archivedTitle}": ${getErrorMessage(error, 'the server rejected the request')}`,
+                                  "error",
+                                  6000,
+                                );
+                                if (navigateToId) {
+                                  router.replace(`/chat/${navigateToId}`);
+                                }
+                                return;
+                              }
 
                               // Show toast
                               if (storageMode === 'mongodb') {
@@ -751,28 +1174,40 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                         </div>
                       </>
                     )}
-                  </motion.div>
                   </div>
-                  );
-                })}
-              </AnimatePresence>
+                  </div>
+                    );
+                  })}
+                </>
+              )}
 
-              {conversations.length === 0 && !collapsed && (
+              {isLoadingMoreConversations && conversationFilter === historyFilter && (
+                <div className="flex justify-center py-3" aria-label="Loading more chats">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              )}
+
+              {!isLoadingConversations && conversationListItems.length === 0 && !collapsed && (
                 <div className="text-center py-8 px-4">
                   <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-muted flex items-center justify-center">
                     <Sparkles className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <p className="text-sm font-medium text-muted-foreground">
-                    No conversations yet
+                    {historyFilter === 'web'
+                      ? 'No conversations yet'
+                      : `No ${historyFilter} runs yet`}
                   </p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
-                    Start a new chat to begin
+                    {historyFilter === 'web'
+                      ? 'Start a new chat to begin'
+                      : 'Runs will appear here when they are available'}
                   </p>
                 </div>
               )}
             </div>
           </ScrollArea>
-        </div>
+          </TabsContent>
+        </Tabs>
       )}
 
       {/* Gallery mode - Use Cases info */}

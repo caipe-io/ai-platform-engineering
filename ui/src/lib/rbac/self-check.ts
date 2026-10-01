@@ -925,7 +925,7 @@ function buildExpectedTuplesAndStaleReferences(
       continue;
     }
     const object = `webex_space:${workspaceId}--${spaceId}`;
-    tuples.push(expected("webex_space_team_mappings", `team:${teamSlug}#admin`, "manager", object));
+    tuples.push(expected("webex_space_team_mappings", `team:${teamSlug}#member`, "manager", object));
     tuples.push(expected("webex_space_team_mappings", `team:${teamSlug}#member`, "user", object));
   }
 

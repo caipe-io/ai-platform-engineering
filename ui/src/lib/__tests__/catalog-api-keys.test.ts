@@ -55,17 +55,58 @@ describe("catalog-api-keys", () => {
     const { key, key_id } = await createCatalogApiKey("owner-a");
     const doc = mockInsertOne.mock.calls[0]![0] as {
       key_hash: string;
+      scopes: string[];
     };
     mockFindOne.mockResolvedValue({
       key_id,
       key_hash: doc.key_hash,
       owner_user_id: "owner-a",
+      scopes: doc.scopes,
       revoked_at: null,
     });
     mockUpdateOne.mockResolvedValue({ modifiedCount: 1 });
 
     const owner = await verifyCatalogApiKey(key);
     expect(owner).toBe("owner-a");
+  });
+
+  it("verifyCatalogApiKey rejects a valid secret without catalog:read scope", async () => {
+    mockInsertOne.mockResolvedValue({ insertedId: "x" });
+    const { createCatalogApiKey, verifyCatalogApiKey } = await import(
+      "@/lib/catalog-api-keys"
+    );
+    const { key, key_id } = await createCatalogApiKey("owner-a");
+    const doc = mockInsertOne.mock.calls[0]![0] as { key_hash: string };
+    mockFindOne.mockResolvedValue({
+      key_id,
+      key_hash: doc.key_hash,
+      owner_user_id: "owner-a",
+      scopes: ["catalog:write"],
+      revoked_at: null,
+    });
+
+    await expect(verifyCatalogApiKey(key)).resolves.toBeNull();
+    expect(mockUpdateOne).not.toHaveBeenCalled();
+  });
+
+  it("verifyCatalogApiKey rejects an expired key", async () => {
+    mockInsertOne.mockResolvedValue({ insertedId: "x" });
+    const { createCatalogApiKey, verifyCatalogApiKey } = await import(
+      "@/lib/catalog-api-keys"
+    );
+    const { key, key_id } = await createCatalogApiKey("owner-a");
+    const doc = mockInsertOne.mock.calls[0]![0] as { key_hash: string };
+    mockFindOne.mockResolvedValue({
+      key_id,
+      key_hash: doc.key_hash,
+      owner_user_id: "owner-a",
+      scopes: ["catalog:read"],
+      expires_at: Date.now() / 1000 - 1,
+      revoked_at: null,
+    });
+
+    await expect(verifyCatalogApiKey(key)).resolves.toBeNull();
+    expect(mockUpdateOne).not.toHaveBeenCalled();
   });
 
   it("revokeCatalogApiKey sets revoked_at", async () => {

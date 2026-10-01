@@ -32,6 +32,10 @@ jest.mock('@/lib/jwt-validation', () => ({
   validateLocalSkillsJWT: jest.fn().mockResolvedValue(null),
 }));
 
+jest.mock('@/lib/catalog-api-keys', () => ({
+  verifyCatalogApiKey: jest.fn().mockResolvedValue(null),
+}));
+
 const mockGetConfig = jest.fn((key: string) => key === 'ssoEnabled');
 jest.mock('@/lib/config', () => ({
   getConfig: (...args: unknown[]) => mockGetConfig(...args),
@@ -54,14 +58,130 @@ const mockGetServerSession = jest.requireMock('next-auth').getServerSession;
 const mockGetCollection = jest.requireMock('@/lib/mongodb').getCollection;
 const mockValidateBearerJWT = jest.requireMock('@/lib/jwt-validation').validateBearerJWT;
 const mockValidateLocalSkillsJWT = jest.requireMock('@/lib/jwt-validation').validateLocalSkillsJWT;
+const mockVerifyCatalogApiKey = jest.requireMock('@/lib/catalog-api-keys').verifyCatalogApiKey;
 const mockCheckOpenFgaTuple = jest.requireMock('@/lib/rbac/openfga').checkOpenFgaTuple;
 const mockCheckPermission = jest.requireMock('@/lib/rbac/keycloak-authz').checkPermission;
 
 beforeEach(() => {
   mockGetConfig.mockImplementation((key: string) => key === 'ssoEnabled');
   mockAuditWrite.mockClear();
+  mockVerifyCatalogApiKey.mockReset().mockResolvedValue(null);
+  mockValidateLocalSkillsJWT.mockReset().mockResolvedValue(null);
   delete process.env.CAIPE_UNSAFE_RBAC_BYPASS;
   delete process.env.CAIPE_SESSION_AUTH_CACHE_TTL_MS;
+});
+
+describe('getAuthFromBearerOrSession scoped credentials', () => {
+  it('rejects an invalid catalog API key', async () => {
+    const request = new Request('http://test.com/api/skills', {
+      headers: { 'X-Caipe-Catalog-Key': 'sk_invalid.secret' },
+    }) as unknown as NextRequest;
+
+    await expect(getAuthFromBearerOrSession(request)).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'CATALOG_KEY_INVALID',
+    });
+    expect(mockVerifyCatalogApiKey).toHaveBeenCalledWith('sk_invalid.secret');
+  });
+
+  it('binds a valid catalog API key to its owner for catalog reads', async () => {
+    mockVerifyCatalogApiKey.mockResolvedValue('owner-sub');
+    const request = new Request('http://test.com/api/skills?include_content=true', {
+      headers: { 'X-Caipe-Catalog-Key': 'sk_valid.secret' },
+    }) as unknown as NextRequest;
+
+    const result = await getAuthFromBearerOrSession(request);
+
+    expect(result.user.email).toBe('owner-sub');
+    expect(result.session).toMatchObject({
+      sub: 'owner-sub',
+      principalType: 'catalog_api_key',
+      authScopes: ['catalog:read'],
+    });
+    expect(result.session).not.toHaveProperty('catalogKey');
+  });
+
+  it.each([
+    ['GET', '/api/credentials/oauth-connectors'],
+    ['GET', '/api/dynamic-agents/available'],
+    ['GET', '/api/mcp-servers'],
+    ['GET', '/api/workflow-configs'],
+    ['POST', '/api/ai/assist'],
+    ['GET', '/api/chat/conversations'],
+    ['PUT', '/api/files/content'],
+    ['POST', '/api/projects'],
+    ['GET', '/api/projects/backstage/lookup'],
+    ['POST', '/api/tome/mcp'],
+  ])('rejects a valid catalog API key on %s %s', async (method, path) => {
+    mockVerifyCatalogApiKey.mockResolvedValue('owner-sub');
+    const request = new Request(`http://test.com${path}`, {
+      method,
+      headers: { 'X-Caipe-Catalog-Key': 'sk_valid.secret' },
+    }) as unknown as NextRequest;
+
+    await expect(getAuthFromBearerOrSession(request)).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'CATALOG_KEY_NOT_ALLOWED',
+    });
+  });
+
+  it('accepts a scoped local skills token only for catalog reads', async () => {
+    mockValidateLocalSkillsJWT.mockResolvedValue({
+      email: 'owner@example.com',
+      name: 'Owner',
+      groups: [],
+      sub: 'owner-sub',
+      tokenType: 'skills_api_key',
+      scopes: ['skills:read'],
+      audience: 'caipe-skills-api',
+      issuer: 'caipe-ui',
+    });
+    const request = new Request('http://test.com/api/skills', {
+      headers: { Authorization: 'Bearer local-token' },
+    }) as unknown as NextRequest;
+
+    const result = await getAuthFromBearerOrSession(request);
+
+    expect(result.session).toMatchObject({
+      sub: 'owner-sub',
+      principalType: 'skills_api_key',
+      authScopes: ['skills:read'],
+    });
+  });
+
+  it.each([
+    ['GET', '/api/credentials/oauth-connectors'],
+    ['GET', '/api/dynamic-agents/available'],
+    ['GET', '/api/mcp-servers'],
+    ['GET', '/api/workflow-configs'],
+    ['POST', '/api/ai/assist'],
+    ['GET', '/api/chat/conversations'],
+    ['PUT', '/api/files/content'],
+    ['POST', '/api/projects'],
+    ['GET', '/api/projects/backstage/lookup'],
+    ['POST', '/api/tome/mcp'],
+  ])('rejects a valid local skills token on %s %s', async (method, path) => {
+    mockValidateLocalSkillsJWT.mockResolvedValue({
+      email: 'owner@example.com',
+      name: 'Owner',
+      groups: [],
+      sub: 'owner-sub',
+      tokenType: 'skills_api_key',
+      scopes: ['skills:read'],
+      audience: 'caipe-skills-api',
+      issuer: 'caipe-ui',
+    });
+    const request = new Request(`http://test.com${path}`, {
+      method,
+      headers: { Authorization: 'Bearer local-token' },
+    }) as unknown as NextRequest;
+
+    await expect(getAuthFromBearerOrSession(request)).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'SKILLS_TOKEN_NOT_ALLOWED',
+    });
+    expect(mockValidateBearerJWT).not.toHaveBeenCalled();
+  });
 });
 
 jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -75,6 +195,7 @@ import {
   validateRequired,
   validateEmail,
   validateUUID,
+  validateConversationId,
   getPaginationParams,
   successResponse,
   paginatedResponse,
@@ -83,6 +204,7 @@ import {
   requireAdmin,
   requireRbacPermission,
   clearSessionAuthCacheForTests,
+  _resetKeycloakSubMappingCacheForTests,
   getAuthFromBearerOrSession,
   getAuthenticatedUser,
   withAuth,
@@ -90,6 +212,7 @@ import {
 
 beforeEach(() => {
   clearSessionAuthCacheForTests();
+  _resetKeycloakSubMappingCacheForTests();
 });
 
 describe('ApiError', () => {
@@ -365,6 +488,34 @@ describe('requireRbacPermission organization ReBAC', () => {
     expect(mockCheckOpenFgaTuple).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['view', 'can_use'],
+    ['query', 'can_search'],
+    ['invoke', 'can_search'],
+    ['kb.query', 'can_search'],
+    ['ingest', 'can_ingest'],
+    ['kb.ingest', 'can_ingest'],
+  ] as const)('maps RAG %s to organization#%s', async (scope, relation) => {
+    process.env.CAIPE_ORG_KEY = 'example-org';
+    mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
+
+    await requireRbacPermission(
+      {
+        accessToken: 'token',
+        sub: 'test-user-subject',
+        user: { email: 'test-user@example.test' },
+      },
+      'rag',
+      scope,
+    );
+
+    expect(mockCheckOpenFgaTuple).toHaveBeenCalledWith({
+      user: 'user:test-user-subject',
+      relation,
+      object: 'organization:example-org',
+    });
+  });
+
   it('does not allow legacy realm role fallback when OpenFGA denies', async () => {
     mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
 
@@ -554,6 +705,23 @@ describe('validateUUID', () => {
 
   it('invalid UUID returns false - invalid chars', () => {
     expect(validateUUID('550e8400-e29b-41d4-a716-44665544000g')).toBe(false);
+  });
+});
+
+describe('validateConversationId', () => {
+  it('accepts UUIDs and legacy URL-safe identifiers', () => {
+    expect(validateConversationId('550e8400-e29b-41d4-a716-446655440000')).toBe(true);
+    expect(validateConversationId('legacy-demo-conversation')).toBe(true);
+    expect(validateConversationId('legacy.chat:thread_42')).toBe(true);
+  });
+
+  it('rejects unsafe, ambiguous, and overlong identifiers', () => {
+    expect(validateConversationId('')).toBe(false);
+    expect(validateConversationId('../conversation')).toBe(false);
+    expect(validateConversationId('conversation?archived=true')).toBe(false);
+    expect(validateConversationId('$conversation')).toBe(false);
+    expect(validateConversationId('conversation with spaces')).toBe(false);
+    expect(validateConversationId('a'.repeat(129))).toBe(false);
   });
 });
 
@@ -865,15 +1033,17 @@ describe('getAuthenticatedUser', () => {
 
   it('persists keycloak_sub on the MongoDB user profile', async () => {
     const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 2 });
     mockGetServerSession.mockResolvedValue({
       user: { email: 'user@test.com', name: 'Test User' },
       role: 'user',
       sub: 'test-keycloak-sub',
     });
-    mockGetCollection.mockResolvedValue({
-      findOne: jest.fn().mockResolvedValue(null),
-      updateOne,
-    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users'
+        ? { findOne: jest.fn().mockResolvedValue(null), updateOne }
+        : { updateMany }
+    ));
 
     const req = new Request('http://test.com') as unknown as NextRequest;
     await getAuthenticatedUser(req);
@@ -888,6 +1058,54 @@ describe('getAuthenticatedUser', () => {
       }),
       { upsert: true }
     );
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        $and: expect.arrayContaining([
+          expect.objectContaining({ $or: expect.any(Array) }),
+          {
+            $or: [
+              { owner_subject: { $exists: false } },
+              { owner_subject: null },
+              { owner_subject: '' },
+              { owner_subject: 'test-keycloak-sub' },
+            ],
+          },
+        ]),
+      }),
+      {
+        $set: {
+          owner_subject: 'test-keycloak-sub',
+          owner_canonical_subject: 'test-keycloak-sub',
+          owner_identity_version: 2,
+        },
+      },
+    );
+  });
+
+  it('reconciles conversations without waiting for the profile write', async () => {
+    let finishProfileWrite: (() => void) | undefined;
+    const updateOne = jest.fn(() => new Promise((resolve) => {
+      finishProfileWrite = () => resolve({ matchedCount: 1 });
+    }));
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'user@example.com', name: 'Test User' },
+      role: 'user',
+      sub: 'test-keycloak-sub',
+    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users' ? { updateOne } : { updateMany }
+    ));
+
+    const req = new Request('http://example.test') as unknown as NextRequest;
+    const authPromise = getAuthenticatedUser(req);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(updateOne).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+
+    finishProfileWrite?.();
+    await authPromise;
   });
 
   it('does not promote MongoDB metadata.role to product admin', async () => {
@@ -944,6 +1162,66 @@ describe('getAuthenticatedUser', () => {
     await getAuthenticatedUser(makeRequest());
 
     expect(mockGetServerSession).toHaveBeenCalledTimes(2);
+  });
+
+  // Regression test for the smoke-test outage: repeated/concurrent calls with
+  // no cookie (the shape of Bearer-token / service-account traffic, which has
+  // no session-cache protection) must not each re-run the Keycloak sub
+  // mapping + conversation-owner-identity reconciliation writes, or a burst
+  // of concurrent requests from one identity reproduces the Mongo 40333
+  // "concurrent operations on the same resource" contention that took down
+  // dynamic-agents' PDP calls in production.
+  it('dedupes keycloak sub mapping writes across concurrent no-cookie calls for the same identity', async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'sa@test.com', name: 'Service Account' },
+      role: 'user',
+      sub: 'sa-sub',
+    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users' ? { updateOne } : { updateMany }
+    ));
+
+    const makeRequest = () =>
+      new Request('http://test.com/api/admin/slack/channels') as unknown as NextRequest;
+
+    await Promise.all([
+      getAuthenticatedUser(makeRequest()),
+      getAuthenticatedUser(makeRequest()),
+      getAuthenticatedUser(makeRequest()),
+    ]);
+
+    expect(mockGetServerSession).toHaveBeenCalledTimes(3);
+    expect(updateOne).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-runs keycloak sub mapping writes once the dedup window elapses', async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'sa2@test.com', name: 'Service Account 2' },
+      role: 'user',
+      sub: 'sa2-sub',
+    });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users' ? { updateOne } : { updateMany }
+    ));
+
+    const makeRequest = () =>
+      new Request('http://test.com/api/admin/slack/channels') as unknown as NextRequest;
+
+    await getAuthenticatedUser(makeRequest());
+    nowSpy.mockReturnValue(10_999);
+    await getAuthenticatedUser(makeRequest());
+    nowSpy.mockReturnValue(11_001);
+    await getAuthenticatedUser(makeRequest());
+
+    expect(updateOne).toHaveBeenCalledTimes(2);
+    expect(updateMany).toHaveBeenCalledTimes(2);
+    nowSpy.mockRestore();
   });
 
   it('refreshes session auth after the cache ttl expires', async () => {
@@ -1138,7 +1416,6 @@ describe('withAuth', () => {
       ['/api/users/me', 'PATCH', 'can_manage_self'],
       ['/api/users/search?q=alice', 'GET', 'can_search_directory'],
       ['/api/auth/my-roles', 'GET', 'can_read_self'],
-      ['/api/auth/slack-link', 'POST', 'can_manage_self'],
       ['/api/settings/preferences', 'GET', 'can_manage_self'],
       ['/api/settings/preferences', 'PATCH', 'can_manage_self'],
       ['/api/feedback', 'POST', 'can_submit_feedback'],
@@ -1200,6 +1477,46 @@ describe('withAuth', () => {
       const relations = calls.map((c) => c[0]?.relation);
       expect(relations).toContain(expectedRelation);
       expect(relations).not.toContain('can_manage');
+    });
+
+    // Regression (2026-07-12): the autonomous-agents proxy is per-user by
+    // design (per-task ownership is enforced by the FastAPI backend via the
+    // X-Authenticated-User-* headers; per-agent access by dynamic-agents/CAS).
+    // `/api/autonomous` had no entry in the legacy policy map, so non-GET
+    // calls fell through to admin_ui#manage — locking every regular member
+    // out of creating autonomous tasks ("You do not have permission to
+    // perform this action.") even when their team held both autonomous
+    // grants. The coarse BFF gate must resolve to the member-level
+    // chat#invoke (can_chat), not an admin capability.
+    it.each([
+      ['/api/autonomous/tasks', 'GET', 'can_chat'],
+      ['/api/autonomous/tasks', 'POST', 'can_chat'],
+      ['/api/autonomous/tasks/task-1', 'PUT', 'can_chat'],
+      ['/api/autonomous/tasks/task-1', 'DELETE', 'can_chat'],
+      ['/api/autonomous/tasks/task-1/run', 'POST', 'can_chat'],
+    ])('lets a member reach %s %s via the member-level %s relation', async (
+      path,
+      method,
+      expectedRelation,
+    ) => {
+      viewerSession();
+      mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
+      mockCheckOpenFgaTuple.mockClear();
+
+      const handler = jest.fn().mockResolvedValue('ok');
+      const req = new Request(`http://test.com${path}`, { method }) as unknown as NextRequest;
+
+      await expect(withAuth(req, handler)).resolves.toBe('ok');
+
+      const calls = mockCheckOpenFgaTuple.mock.calls as Array<[
+        { user: string; relation: string; object: string },
+      ]>;
+      const relations = calls.map((c) => c[0]?.relation);
+      expect(relations).toContain(expectedRelation);
+      // admin_ui#manage → can_manage, admin_ui#view → can_audit: the old
+      // fallthrough relations that must no longer be consulted.
+      expect(relations).not.toContain('can_manage');
+      expect(relations).not.toContain('can_audit');
     });
 
     it('denies a member skill create when OpenFGA has no can_use tuple', async () => {

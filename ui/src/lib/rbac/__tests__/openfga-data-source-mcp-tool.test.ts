@@ -29,7 +29,7 @@ describe("buildDataSourceRelationshipTupleDiff", () => {
     expect(diff.writes).toEqual([
       { user: "user:alice-sub", relation: "owner", object: DS },
       { user: "team:platform#member", relation: "reader", object: DS },
-      { user: "team:platform#admin", relation: "manager", object: DS },
+      { user: "team:platform#member", relation: "manager", object: DS },
     ]);
     expect(diff.deletes).toEqual([]);
   });
@@ -45,7 +45,7 @@ describe("buildDataSourceRelationshipTupleDiff", () => {
     expect(diff.writes).toEqual(
       expect.arrayContaining([
         { user: "team:platform#member", relation: "reader", object: DS },
-        { user: "team:platform#admin", relation: "manager", object: DS },
+        { user: "team:platform#member", relation: "manager", object: DS },
         { user: "team:data-eng#member", relation: "reader", object: DS },
         { user: "team:data-eng#admin", relation: "manager", object: DS },
       ]),
@@ -130,7 +130,7 @@ describe("buildMcpToolRelationshipTupleDiff", () => {
       { user: "team:platform#member", relation: "reader", object: TOOL },
       { user: "team:platform#member", relation: "user", object: TOOL },
       { user: "team:platform#member", relation: "caller", object: TOOL },
-      { user: "team:platform#admin", relation: "manager", object: TOOL },
+      { user: "team:platform#member", relation: "manager", object: TOOL },
     ]);
     expect(diff.deletes).toEqual([]);
   });

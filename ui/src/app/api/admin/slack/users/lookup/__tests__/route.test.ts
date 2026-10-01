@@ -71,7 +71,7 @@ beforeEach(async () => {
   route.__resetSlackUsersLookupCacheForTests();
   const cfg = await import("@/lib/rbac/discovery-cache-config");
   cfg.__resetDiscoveryCacheConfigForTests();
-  delete process.env.DISCOVERY_CACHE_TTL_MINUTES;
+  delete process.env.SLACK_DISCOVERY_CACHE_TTL_MINUTES;
 });
 
 describe("GET /api/admin/slack/users/lookup", () => {

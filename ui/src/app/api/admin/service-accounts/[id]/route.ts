@@ -12,6 +12,11 @@ import { logOpenFgaRebacAuditEvent } from "@/lib/rbac/audit";
 import { getBySub, updateStatus } from "@/lib/service-accounts";
 import { isProtectedServiceAccount } from "@/types/mongodb";
 import { hasOrganizationAdmin } from "@/lib/rbac/platform-admin";
+import { organizationObjectId } from "@/lib/rbac/organization";
+import {
+  listDirectServiceAccountKnowledgeScopes,
+  scopeWriteTuple,
+} from "@/lib/service-account-scopes";
 
 /**
  * GET /api/admin/service-accounts/[id]
@@ -85,7 +90,7 @@ export async function GET(_request: Request, context: RouteContext) {
     }
 
     // Authoritative scopes: read from OpenFGA, not the display snapshot.
-    const [agentObjects, toolObjects] = await Promise.all([
+    const [agentObjects, toolObjects, knowledgeScopes] = await Promise.all([
       listOpenFgaObjects({
         user: `service_account:${id}`,
         relation: "can_use",
@@ -96,6 +101,7 @@ export async function GET(_request: Request, context: RouteContext) {
         relation: "can_call",
         type: "tool",
       }),
+      listDirectServiceAccountKnowledgeScopes(`service_account:${id}`),
     ]);
 
     const scopes = [
@@ -107,6 +113,7 @@ export async function GET(_request: Request, context: RouteContext) {
         type: "tool" as const,
         ref: stripType(object, "tool"),
       })),
+      ...knowledgeScopes,
     ];
 
     return NextResponse.json({
@@ -156,7 +163,10 @@ export async function DELETE(_request: Request, context: RouteContext) {
   } | null;
 
   if (!session?.user?.email || !session.sub) {
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 },
+    );
   }
 
   const { id } = await context.params;
@@ -191,28 +201,48 @@ export async function DELETE(_request: Request, context: RouteContext) {
     // revoked. The UI greys out the control; this is the defense-in-depth check.
     if (isProtectedServiceAccount(doc)) {
       return NextResponse.json(
-        { success: false, error: "This service account is protected and cannot be revoked." },
+        {
+          success: false,
+          error: "This service account is protected and cannot be revoked.",
+        },
         { status: 403 },
       );
     }
     // Already revoked → idempotent success.
     if (doc.status === "revoked") {
-      return NextResponse.json({ success: true, data: { id, status: "revoked" } });
+      return NextResponse.json({
+        success: true,
+        data: { id, status: "revoked" },
+      });
     }
 
     const saSubject = `service_account:${id}`;
 
     // Enumerate every scope tuple from OpenFGA so we delete them all (the
     // snapshot is not authoritative — read live grants).
-    const [agentObjects, toolObjects] = await Promise.all([
-      listOpenFgaObjects({ user: saSubject, relation: "can_use", type: "agent" }),
-      listOpenFgaObjects({ user: saSubject, relation: "can_call", type: "tool" }),
+    const [agentObjects, toolObjects, knowledgeScopes] = await Promise.all([
+      listOpenFgaObjects({
+        user: saSubject,
+        relation: "can_use",
+        type: "agent",
+      }),
+      listOpenFgaObjects({
+        user: saSubject,
+        relation: "can_call",
+        type: "tool",
+      }),
+      listDirectServiceAccountKnowledgeScopes(saSubject),
     ]);
     const tuples: OpenFgaTupleKey[] = [
-      { user: `team:${doc.owning_team_id}#member`, relation: "owner_team", object: saSubject },
+      {
+        user: `team:${doc.owning_team_id}#member`,
+        relation: "owner_team",
+        object: saSubject,
+      },
       // Coarse-gateway baseline written at create (research.md R-9) — remove it
       // on revoke so the dead SA can't pass the mcp_gateway:list gate.
       { user: saSubject, relation: "caller", object: "mcp_gateway:list" },
+      { user: saSubject, relation: "searcher", object: organizationObjectId() },
       ...agentObjects.objects.map((object) => ({
         user: saSubject,
         relation: "user",
@@ -223,6 +253,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
         relation: "caller",
         object,
       })),
+      ...knowledgeScopes.map((scope) => scopeWriteTuple(scope, saSubject)),
     ];
 
     // Ordering rationale (FR-018): kill the CREDENTIAL first. The primary
@@ -251,7 +282,10 @@ export async function DELETE(_request: Request, context: RouteContext) {
       correlationId: `service_account.revoke:${id}:${doc.owning_team_id}`,
     });
 
-    return NextResponse.json({ success: true, data: { id, status: "revoked" } });
+    return NextResponse.json({
+      success: true,
+      data: { id, status: "revoked" },
+    });
   } catch (error) {
     console.error("[service-accounts:revoke] failed:", error);
     return NextResponse.json(

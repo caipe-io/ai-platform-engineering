@@ -44,7 +44,8 @@ function assertReconciliationApplied(
 
 /**
  * Apply an OpenFGA tuple diff through CAS: write to the PDP, invalidate cached
- * decisions, and record a `cas_reconcile` audit event.
+ * decisions, and audit policy mutations or failed attempts. Filtered no-ops
+ * do not represent policy changes and stay out of the audit trail.
  */
 export async function reconcileTupleDiff(
   diff: TeamResourceTupleDiff,
@@ -76,6 +77,8 @@ export async function reconcileTupleDiff(
   if (result.enabled && (result.writes > 0 || result.deletes > 0)) {
     invalidateDecisionCache();
   }
-  emitReconcileAudit(diff, result, ctx);
+  if (result.writes > 0 || result.deletes > 0) {
+    emitReconcileAudit(diff, result, ctx);
+  }
   return result;
 }

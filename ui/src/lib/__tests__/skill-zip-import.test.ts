@@ -59,11 +59,10 @@ describe("parseSkillZip — single skill at the root", () => {
     const cand = result.candidates[0];
     expect(cand.directory).toBe("");
     expect(cand.proposedName).toBe("foo");
-    // Root SKILL.md only claims top-level files (no slash) — nested
-    // files without their own SKILL.md are dropped, by design, so
-    // an outer SKILL.md doesn't accidentally swallow nested skill
-    // directories.
-    expect(Object.keys(cand.ancillaryFiles)).toEqual([]);
+    expect(cand.ancillaryFiles).toEqual({
+      "scripts/run.sh": "#!/bin/bash\necho hi\n",
+      "examples/sample.md": "# Sample",
+    });
   });
 
   it("uses H1 title as proposedName when frontmatter and title differ", async () => {
@@ -99,6 +98,22 @@ describe("parseSkillZip — single skill in a subdirectory", () => {
 });
 
 describe("parseSkillZip — multi-skill bundle", () => {
+  it("keeps root files while leaving a nested skill's files with that skill", async () => {
+    const buf = await makeZip({
+      "SKILL.md": FRONTMATTER("root"),
+      "scripts/root.sh": "root",
+      "skills/nested/SKILL.md": FRONTMATTER("nested"),
+      "skills/nested/scripts/run.sh": "nested",
+    });
+    const result = await parseSkillZip(buf);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const root = result.candidates.find((candidate) => candidate.proposedName === "root")!;
+    const nested = result.candidates.find((candidate) => candidate.proposedName === "nested")!;
+    expect(root.ancillaryFiles).toEqual({ "scripts/root.sh": "root" });
+    expect(nested.ancillaryFiles).toEqual({ "scripts/run.sh": "nested" });
+  });
+
   it("returns one candidate per SKILL.md and groups files per skill", async () => {
     const buf = await makeZip({
       "skills/foo/SKILL.md": FRONTMATTER("foo"),

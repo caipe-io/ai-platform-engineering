@@ -128,7 +128,9 @@ export type AuditEventType =
   | "agent_delegation"
   | "openfga_rebac"
   | "cas_decision"
-  | "cas_grant";
+  | "cas_grant"
+  | "cas_reconcile"
+  | "credential_action";
 
 /** Unified audit event outcome — superset of AuditOutcome for tool/delegation */
 export type UnifiedAuditOutcome = "allow" | "deny" | "success" | "error";
@@ -149,7 +151,7 @@ export interface UnifiedAuditEvent {
   ts: string;
   type: AuditEventType;
   tenant_id: string;
-  subject_hash: string;
+  subject_hash?: string;
   /** Readable subject ref for display (for example user:<sub>). */
   subject_ref?: string;
   /** Canonical subject label for display (for example a user email). */
@@ -190,6 +192,53 @@ export interface UnifiedAuditEvent {
   grantee_display?: string;
   /** CAS grant/revoke: grant | revoke. */
   operation?: "grant" | "revoke";
+  /** CAS reconcile: logical operation that requested the tuple projection. */
+  reconcile_scope?: string;
+  /** CAS reconcile: requested tuple additions before OpenFGA no-op filtering. */
+  requested_writes?: number;
+  /** CAS reconcile: requested tuple removals before OpenFGA no-op filtering. */
+  requested_deletes?: number;
+  /** CAS reconcile: tuple additions actually applied by OpenFGA. */
+  writes?: number;
+  /** CAS reconcile: tuple removals actually applied by OpenFGA. */
+  deletes?: number;
+  /**
+   * Decisions summarized by this row. Present only on aggregated allow rollups
+   * (routine allows are counted rather than stored per-decision); absent means
+   * one decision. Denials are never aggregated.
+   */
+  count?: number;
+  /** Aggregated allow rollup: start of the summarized window. */
+  window_start?: string;
+  /** Aggregated allow rollup: end of the summarized window. */
+  window_end?: string;
+  /** RAG per-subject rollup: every distinct resource touched in the window. */
+  resources?: Array<{ action?: string; resource_ref?: string; count?: number }>;
+  /**
+   * True when this row summarizes one bulk evaluation (a list filter) rather
+   * than a single access decision. The per-resource outcome is in the counts
+   * below, not in `outcome`.
+   */
+  batch?: boolean;
+  /**
+   * True when this row is a list-objects reverse lookup rather than N
+   * per-candidate checks (`batch`) or a single decision. No per-candidate
+   * decision was made at all — the counts below describe an intersection
+   * with the PDP's returned accessible set, not N evaluated outcomes.
+   */
+  list_objects?: boolean;
+  /** Bulk evaluation: resources evaluated by the filter. */
+  evaluated_count?: number;
+  /** Bulk evaluation: how many were accessible. */
+  allowed_count?: number;
+  /** Bulk evaluation: how many were not. */
+  denied_count?: number;
+  /** Bulk evaluation: the accessible ids, capped — see `allowed_truncated`. */
+  allowed_ids?: string[];
+  /** True when `allowed_ids` was capped and does not list every id. */
+  allowed_truncated?: boolean;
+  /** Bulk evaluation: denial reason → count. */
+  denied_reasons?: Record<string, number>;
 }
 
 /** Admin dashboard tab keys for RBAC-based visibility */
@@ -211,6 +260,7 @@ export type AdminTabKey =
   | "action_audit"
   | "openfga"
   | "migrations"
+  | "approvals"
   | "service_accounts";
 
 /** Per-tab visibility gates returned by GET /api/rbac/admin-tab-gates */
@@ -234,6 +284,7 @@ export type IntegrationPanelModesMap = Partial<
  */
 export type KbTabKey =
   | "search"
+  | "collections"
   | "data_sources"
   | "graph"
   | "mcp_tools";
@@ -244,6 +295,13 @@ export type KbTabKey =
  */
 export interface KbTabGatesMap {
   search: boolean;
+  /** Reusable RAG collections; available to readers and source authors. */
+  collections?: boolean;
+  /**
+   * Merged "Data Sources" tab (ingestion source config + post-ingestion
+   * status live in one view). True iff the caller has a readable KB, a
+   * readable `ingestion_source` config row, OR holds `organization#can_ingest`.
+   */
   data_sources: boolean;
   graph: boolean;
   mcp_tools: boolean;

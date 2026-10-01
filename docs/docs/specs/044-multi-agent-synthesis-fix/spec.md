@@ -17,7 +17,7 @@ Fixed an issue where the supervisor's final answer only contained the last sub-a
 
 ## Motivation
 
-When a user query required multiple agents (e.g., "get apps for CAIPE, search for CAIPE in RAG, look for info for cnoe-io/ai-platform-engineering"), the system would:
+When a user query required multiple agents (e.g., "get apps for CAIPE, search for CAIPE in RAG, look for info for caipe-io/ai-platform-engineering"), the system would:
 
 1. Stream content from ALL agents correctly (user sees all results)
 2. But return only the LAST agent's response as the final answer
@@ -44,7 +44,7 @@ The `_get_final_content()` method would then return only the first agent's conte
 
 ## Testing Strategy
 
-Tested with query: "get apps for CAIPE, search for CAIPE in RAG, look for info for cnoe-io/ai-platform-engineering"
+Tested with query: "get apps for CAIPE, search for CAIPE in RAG, look for info for caipe-io/ai-platform-engineering"
 
 Expected result: Final answer contains synthesized summary from all three agents (ArgoCD, RAG, GitHub).
 

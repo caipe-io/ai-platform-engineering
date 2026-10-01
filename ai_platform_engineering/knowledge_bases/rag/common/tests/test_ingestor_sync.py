@@ -11,7 +11,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from common.constants import DEFAULT_RELOAD_INTERVAL, MIN_RELOAD_INTERVAL
+from common.constants import (
+  DATASOURCE_SCHEDULE_CHECK_INTERVAL,
+  DEFAULT_RELOAD_INTERVAL,
+  MIN_RELOAD_INTERVAL,
+)
 from common.ingestor import IngestorBuilder
 from common.models.rag import DataSourceInfo
 
@@ -174,6 +178,82 @@ class TestCalculateNextSyncTime:
     assert has_ds is False
 
   @pytest.mark.asyncio
+  async def test_datasource_schedule_uses_internal_retry_on_client_error(self):
+    builder = IngestorBuilder().schedule_from_datasources()
+    builder._last_sync_time = int(time.time())
+    client = _mock_client([])
+    client.list_datasources = AsyncMock(side_effect=Exception("connection error"))
+
+    sleep_time, has_ds = await builder._calculate_next_sync_time(client)
+
+    assert sleep_time == DATASOURCE_SCHEDULE_CHECK_INTERVAL
+    assert has_ds is False
+
+  @pytest.mark.asyncio
+  async def test_datasource_schedule_rechecks_before_a_long_interval_is_due(self):
+    now = int(time.time())
+    datasource = _make_datasource(
+      last_updated=now,
+      reload_interval=DEFAULT_RELOAD_INTERVAL,
+    )
+    builder = IngestorBuilder().schedule_from_datasources()
+    builder._last_sync_time = now
+
+    sleep_time, has_ds = await builder._calculate_next_sync_time(
+      _mock_client([datasource])
+    )
+
+    assert sleep_time == DATASOURCE_SCHEDULE_CHECK_INTERVAL
+    assert has_ds is True
+    assert builder._schedule_check_only is True
+
+  @pytest.mark.asyncio
+  async def test_datasource_schedule_runs_once_at_worker_startup(self):
+    now = int(time.time())
+    datasource = _make_datasource(
+      last_updated=now,
+      reload_interval=DEFAULT_RELOAD_INTERVAL,
+    )
+    builder = IngestorBuilder().schedule_from_datasources()
+
+    sleep_time, has_ds = await builder._calculate_next_sync_time(
+      _mock_client([datasource])
+    )
+
+    assert sleep_time == 0
+    assert has_ds is True
+    assert builder._schedule_check_only is False
+
+  @pytest.mark.asyncio
+  async def test_datasource_schedule_waits_until_due_without_connector_check(self):
+    now = int(time.time())
+    datasource = _make_datasource(
+      last_updated=now - 30,
+      reload_interval=MIN_RELOAD_INTERVAL,
+    )
+    builder = IngestorBuilder().schedule_from_datasources()
+    builder._last_sync_time = now - 30
+
+    sleep_time, has_ds = await builder._calculate_next_sync_time(
+      _mock_client([datasource])
+    )
+
+    assert 25 <= sleep_time <= 30
+    assert has_ds is True
+    assert builder._schedule_check_only is False
+
+  @pytest.mark.asyncio
+  async def test_datasource_schedule_without_sources_retries_internally(self):
+    builder = IngestorBuilder().schedule_from_datasources()
+    builder._last_sync_time = int(time.time()) - 10_000
+
+    sleep_time, has_ds = await builder._calculate_next_sync_time(_mock_client([]))
+
+    assert sleep_time == DATASOURCE_SCHEDULE_CHECK_INTERVAL
+    assert has_ds is False
+    assert builder._schedule_check_only is True
+
+  @pytest.mark.asyncio
   async def test_datasource_empty_metadata_dict_uses_default(self):
     """metadata={} (no reload_interval key) should use DEFAULT_RELOAD_INTERVAL."""
     now = int(time.time())
@@ -334,6 +414,41 @@ class TestCalculateNextSyncTime:
 
 class TestTightLoopSafeguard:
   """Tests for the tight-loop safeguard in the main loop."""
+
+  @pytest.mark.asyncio
+  async def test_metadata_recheck_does_not_run_connector_sync(self):
+    builder = IngestorBuilder().schedule_from_datasources()
+    builder._name = "test"
+    builder._type = "test"
+    builder._description = "test"
+    builder._metadata = {}
+    builder._sync_function = AsyncMock()
+    builder._last_sync_time = int(time.time())
+
+    mock_client = _mock_client([])
+    mock_client.initialize = AsyncMock()
+    mock_client.shutdown = AsyncMock()
+    calculate_calls = 0
+
+    async def calculate_next_sync(_client):
+      nonlocal calculate_calls
+      calculate_calls += 1
+      if calculate_calls == 1:
+        builder._schedule_check_only = True
+        return (DATASOURCE_SCHEDULE_CHECK_INTERVAL, False)
+      raise RuntimeError("stop after metadata recheck")
+
+    with patch("common.ingestor.Client", return_value=mock_client):
+      with patch.object(
+        builder,
+        "_calculate_next_sync_time",
+        side_effect=calculate_next_sync,
+      ):
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+          with pytest.raises(RuntimeError, match="stop after metadata recheck"):
+            await builder._run_ingestor()
+
+    builder._sync_function.assert_not_awaited()
 
   @pytest.mark.asyncio
   async def test_safeguard_backs_off_when_sync_too_recent(self):

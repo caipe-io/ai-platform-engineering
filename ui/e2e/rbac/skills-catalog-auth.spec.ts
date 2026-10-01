@@ -1,9 +1,9 @@
 /**
- * Regression: skills catalog API returned 0 skills for non-browser callers.
+ * Regression: catalog credentials escaped their intended API boundary.
  *
- * Root cause: both the X-Caipe-Catalog-Key path and the local skills JWT path
- * in getAuthFromBearerOrSession returned a session without `sub`, causing
- * filterSkillsByOpenFga to short-circuit to [] for every request.
+ * Catalog API keys must be verified and bound to their real owner. Local
+ * skills JWTs must preserve their constrained claims. Both credential types
+ * may read `/api/skills` and must be rejected by unrelated APIs.
  *
  * These tests run against a live stack and require:
  *   RUN_RBAC_E2E=1            — standard RBAC e2e gate
@@ -44,39 +44,25 @@ test.describe("Skills catalog API — auth subject regression", () => {
     // Before the fix this was always 0.
     expect(body.meta.total).toBeGreaterThan(0);
 
-    // Hub skills require the isCatalogKey bypass to fire.  If the subject
-    // string comparison was wrong ("catalog-key-user@local" vs the actual
-    // "user:catalog-key-user@local" the route passes), hub skills would be
-    // filtered out by OpenFGA and only default filesystem skills would appear.
+    // The key is bound to its real owner subject and uses normal OpenFGA reads.
     const sources = new Set(body.skills.map((s) => s.source));
     expect(sources.has("hub")).toBe(true);
     expect(sources.has("default")).toBe(true);
   });
 
-  test("catalog API key does not expose private agent_skills (no visibility field)", async ({
+  test("catalog API key is rejected outside the catalog read route", async ({
     request,
   }) => {
-    // The catalog key bypass only returns default + hub + *global* agent_skills.
-    // Private / team-scoped agent_skills must not appear in a machine-caller
-    // response even if the key is accepted.
     const env = rbacEnvOrSkip();
 
     const apiKey = process.env.CAIPE_CATALOG_API_KEY;
     test.skip(!apiKey, "CAIPE_CATALOG_API_KEY not set — skipping catalog key regression.");
 
-    const resp = await request.get(`${env.baseUrl}/api/skills?source=agent_skills`, {
+    const resp = await request.get(`${env.baseUrl}/api/mcp-servers`, {
       headers: { "X-Caipe-Catalog-Key": apiKey! },
     });
 
-    expect(resp.ok()).toBe(true);
-    const body = (await resp.json()) as {
-      skills: Array<{ source: string; visibility?: string }>;
-    };
-
-    // Every agent_skill returned must be explicitly visibility:global.
-    for (const skill of body.skills) {
-      expect(skill.visibility ?? "global").toBe("global");
-    }
+    expect(resp.status()).toBe(403);
   });
 
   // ---------------------------------------------------------------------------
@@ -124,6 +110,23 @@ test.describe("Skills catalog API — auth subject regression", () => {
     // Default skills pass through without OpenFGA for any authenticated user.
     const sources = new Set(body.skills.map((s) => s.source));
     expect(sources.has("default")).toBe(true);
+
+    const blockedResp = await page.request.get(`${env.baseUrl}/api/mcp-servers`, {
+      headers: { Authorization: `Bearer ${token}` },
+      ignoreHTTPSErrors: true,
+    });
+    expect(blockedResp.status()).toBe(403);
+  });
+
+  test("invalid catalog API key returns 401 and cannot mint a token", async ({ request }) => {
+    const env = rbacEnvOrSkip();
+    const headers = { "X-Caipe-Catalog-Key": "sk_invalid.invalid-secret" };
+
+    const skillsResp = await request.get(`${env.baseUrl}/api/skills`, { headers });
+    expect(skillsResp.status()).toBe(401);
+
+    const tokenResp = await request.post(`${env.baseUrl}/api/skills/token`, { headers });
+    expect(tokenResp.status()).toBe(401);
   });
 
   // ---------------------------------------------------------------------------

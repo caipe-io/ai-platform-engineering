@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the Webex personal-DM command dispatcher (spec 2026-05-24 T153)."""
 

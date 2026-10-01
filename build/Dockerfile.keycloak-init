@@ -25,14 +25,18 @@
 FROM cgr.dev/chainguard/wolfi-base:latest
 
 RUN for i in 1 2 3; do \
-      apk add --no-cache python-3.13 curl ca-certificates-bundle grep sed gawk && break; \
+      apk add --no-cache python-3.14 curl ca-certificates-bundle grep sed gawk && break; \
       [ $i -lt 3 ] && sleep $((i * 5)); \
     done && \
     rm -rf /var/cache/apk/*
 
 # Non-root by default. The init scripts only read from /scripts (mounted RO
 # via ConfigMap or bind-mount) and talk to Keycloak over HTTP — no local
-# file writes. Wolfi ships a `nonroot` user (uid 65532) for exactly this.
-USER nonroot
+# file writes. Wolfi's `nonroot` account is uid/gid 65532.
+#
+# Declared numerically, not as `nonroot`: kubelet cannot resolve a named image
+# user, so it refuses to start the container under runAsNonRoot without an
+# explicit numeric UID.
+USER 65532:65532
 
 ENTRYPOINT ["/bin/sh"]

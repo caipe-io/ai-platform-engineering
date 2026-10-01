@@ -1,12 +1,6 @@
 version = 1
 revision = 3
-requires-python = ">=3.13, <4.0"
-resolution-markers = [
-    "python_full_version >= '3.14' and platform_python_implementation != 'PyPy'",
-    "python_full_version < '3.14' and platform_python_implementation != 'PyPy'",
-    "python_full_version >= '3.14' and platform_python_implementation == 'PyPy'",
-    "python_full_version < '3.14' and platform_python_implementation == 'PyPy'",
-]
+requires-python = "==3.14.*"
 
 [[package]]
 name = "agent-github"

@@ -387,9 +387,15 @@ export async function runKeycloakRbacStartupMigration(input: {
       counts.unlinked_sa_status =
         unlinkedSa.status === "created" ? 2 : unlinkedSa.status === "noop" ? 1 : 0;
       warnings.push(...unlinkedSa.warnings);
+      if (unlinkedSa.sa_sub) {
+        const { reconcileExistingUnlinkedKnowledgeAccess } = await import(
+          "@/lib/rbac/unlinked-knowledge-access"
+        );
+        await reconcileExistingUnlinkedKnowledgeAccess();
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      warnings.push(`unlinked SA bootstrap failed: ${message}`);
+      warnings.push(`unlinked SA bootstrap/access reconciliation failed: ${message}`);
     }
 
     // Backfill any missing `service_account:<sub> writer conversation:<id>` tuples

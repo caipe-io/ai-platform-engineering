@@ -2,6 +2,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { chooseSearchablePickerOption } from "./_helpers";
 import { openAddMcpServerEditor } from "./_mcp-browser-fixtures";
 import {
   fulfillJson,
@@ -11,8 +12,8 @@ import {
 } from "./_mocked-rbac";
 
 const adminSession = {
-  email: "sraradhy@cisco.com",
-  name: "Sri Aradhyula",
+  email: "user@example.com",
+  name: "Example User",
   role: "admin" as const,
   canViewAdmin: true,
 };
@@ -66,6 +67,7 @@ const platformTeam = {
   agent_count: 1,
   tool_count: 1,
   tool_wildcard: false,
+  can_manage: true,
 };
 
 const visibilityTeam = {
@@ -81,6 +83,7 @@ const visibilityTeam = {
   kb_count: 3,
   tool_count: 2,
   tool_wildcard: false,
+  can_manage: true,
 };
 
 const wildcardTeam = {
@@ -96,6 +99,7 @@ const wildcardTeam = {
   kb_count: 0,
   tool_count: 0,
   tool_wildcard: true,
+  can_manage: true,
 };
 
 type TeamResourcePutBody = {
@@ -240,7 +244,12 @@ async function openTeamDialogFromChip(page: Page, teamName: string, chipLabel: s
   await expect(card).toBeVisible();
   await card.getByRole("button", { name: chipLabel }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByRole("dialog").getByText(teamName)).toBeVisible();
+  // Match the dialog heading specifically: the team name also appears in
+  // capability-toggle descriptions (e.g. AutomationCapabilityToggle), so a
+  // plain getByText(teamName) resolves to >1 element and trips strict mode.
+  await expect(
+    page.getByRole("dialog").getByRole("heading", { name: teamName }),
+  ).toBeVisible();
   return card;
 }
 
@@ -689,7 +698,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
       },
     ]);
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
 
     const card = teamCard(page, visibilityTeam.name);
     await expect(card).toBeVisible();
@@ -737,7 +746,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
       },
     ]);
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
     const resourcesResponses: string[] = [];
     page.on("response", (response) => {
       const url = new URL(response.url());
@@ -787,7 +796,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
       },
     ]);
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
     await openTeamDialogFromChip(page, visibilityTeam.name, /2\s+Agents/i);
 
     const kbAgentInputs = resourceRow(page, "KB Agent").locator("input");
@@ -849,7 +858,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
       },
     ]);
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
     await openTeamDialogFromChip(page, visibilityTeam.name, /2\s+Agents/i);
 
     await page.getByRole("button", { name: "Skills", exact: true }).click();
@@ -892,7 +901,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
       },
     ]);
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
     await teamCard(page, visibilityTeam.name).getByRole("button", { name: /Manage team/i }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
 
@@ -929,7 +938,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
       },
     ]);
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
     const card = teamCard(page, wildcardTeam.name);
     await expect(card.getByRole("button", { name: /\*\s+MCPs/i })).toBeVisible();
 
@@ -980,7 +989,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
       },
     ]);
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
     await openTeamDialogFromChip(page, wildcardTeam.name, /\*\s+MCPs/i);
 
     await expect(page.getByLabel(/All MCP servers \(wildcard\)/i)).toBeChecked();
@@ -1028,7 +1037,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
       },
     );
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
     await openTeamDialogFromChip(page, visibilityTeam.name, /2\s+Agents/i);
 
     await expect(page.getByText("OpenFGA list-objects failed")).toBeVisible();
@@ -1062,7 +1071,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
       },
     );
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
     await teamCard(page, visibilityTeam.name).getByRole("button", { name: /Manage team/i }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.getByRole("button", { name: "Agents", exact: true }).click();
@@ -1104,7 +1113,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
       ],
     );
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
     await teamCard(page, visibilityTeam.name).getByRole("button", { name: /Manage team/i }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.getByRole("button", { name: "Agents", exact: true }).click();
@@ -1130,7 +1139,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
   test("team resources save sends the full selected MCP tool list for drift repair", async ({ page }) => {
     const mocks = await installTeamResourceMocks(page);
 
-    await page.goto("/admin?cat=people&tab=teams", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/people/teams", { waitUntil: "domcontentloaded" });
     await expect(page.getByText(platformTeam.name)).toBeVisible();
 
     await page.getByRole("button", { name: /1\s+MCPs/i }).click();
@@ -1228,14 +1237,21 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
     });
 
     await page.getByRole("button", { name: "Add Credential" }).click();
-    await expect(page.getByLabel(/^Secret$/).first()).toContainText("Jira token");
     await expect(page.getByLabel(/Credential header/i).first()).toHaveValue("X-CAIPE-Provider-Token");
-    await page.getByLabel(/^Secret$/).first().selectOption(secretIds.jira);
+    await chooseSearchablePickerOption(
+      page,
+      page.getByLabel(/^Secret$/).first(),
+      "Jira token",
+    );
 
     await page.getByRole("button", { name: "Add Credential" }).click();
     await page.getByLabel(/Credential target/i).nth(1).selectOption("env");
     await page.getByLabel(/Credential name/i).fill("JIRA_TOKEN");
-    await page.getByLabel(/^Secret$/).nth(1).selectOption(secretIds.pagerduty);
+    await chooseSearchablePickerOption(
+      page,
+      page.getByLabel(/^Secret$/).nth(1),
+      "PagerDuty token",
+    );
 
     await page.getByRole("button", { name: "Create Server" }).click();
 
@@ -1296,7 +1312,11 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
 
     await page.getByRole("button", { name: "Add Credential" }).click();
     await page.getByLabel(/Credential header/i).selectOption("X-CAIPE-Provider-Token");
-    await page.getByLabel(/^Secret$/).selectOption("secret-netutils-token");
+    await chooseSearchablePickerOption(
+      page,
+      page.getByLabel(/^Secret$/),
+      "Netutils token",
+    );
     await expect(page.getByText("Preview net_...oken")).toBeVisible();
 
     await page.getByRole("button", { name: "Create Server" }).click();
@@ -1419,7 +1439,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
     await page.goto("/knowledge-bases/ingest", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Data Sources", level: 1 })).toBeVisible();
 
-    await page.getByRole("button", { name: "File" }).click();
+    await page.getByTitle("Upload files").click();
     const fileInput = page.locator('input[type="file"]');
     await fileInput.setInputFiles([
       {
@@ -1439,7 +1459,7 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
         response.request().method() === "POST" &&
         new URL(response.url()).pathname === "/api/rag/v1/ingest/local-file",
     );
-    await page.getByRole("button", { name: /^Ingest$/ }).click();
+    await page.getByRole("button", { name: /^Ingest 2 files$/ }).click();
     expect((await uploadResponse).status()).toBe(202);
 
     await expect.poll(() => mocks.uploadRequests.length).toBe(1);
@@ -1452,5 +1472,31 @@ test.describe("mocked MCP OpenFGA tuple browser regression", () => {
     expect(mocks.uploadRequests[0].body).toContain("10000");
     expect(mocks.uploadRequests[0].body).toContain('name="chunk_overlap"');
     expect(mocks.uploadRequests[0].body).toContain("2000");
+  });
+
+  test("uses the shared workspace navigation for Knowledge Bases", async ({ page }) => {
+    await installRagFileIngestMocks(page);
+
+    await page.goto("/knowledge-bases/ingest", { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "Data Sources", level: 1 })).toBeVisible();
+
+    const navigation = page.getByRole("navigation", { name: "Knowledge Base sections" });
+    const activeItem = navigation.getByRole("link", { name: /Data Sources/ });
+    await expect(navigation).toBeVisible();
+    await expect(activeItem).toHaveAttribute("aria-current", "page");
+    await expect(activeItem).toHaveClass(/workspace-navigation-active/);
+    await expect(page.getByText("Navigation", { exact: true })).toHaveCount(0);
+
+    const breadcrumb = page.getByRole("navigation",{ name: "Breadcrumb" });
+    await expect(breadcrumb.getByRole("link",{ name: "Home" })).toHaveAttribute("href","/");
+    await expect(breadcrumb.getByRole("link",{ name: "Knowledge Bases" })).toHaveAttribute(
+      "href",
+      "/knowledge-bases/search",
+    );
+    await expect(breadcrumb.getByRole("link",{ name: "Data Sources" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(page.getByRole("button", { name: /Knowledge Base navigation/ })).toHaveCount(0);
   });
 });

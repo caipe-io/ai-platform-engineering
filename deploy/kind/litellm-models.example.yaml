@@ -1,0 +1,47 @@
+# Extra models to onboard into the in-cluster LiteLLM proxy.
+#
+#   ./setup-caipe.sh --litellm-models=this-file.yaml --litellm-upstream-env=keys.env
+#
+# Each entry is a raw LiteLLM model_list item, authored at column 0. setup-caipe.sh
+# re-indents and appends these to the generated litellm-config on every run, so
+# they persist across re-runs (unlike `kubectl edit cm litellm-config`).
+#
+# Agents call the alias in `model_name`; RAG uses whatever EMBEDDINGS_MODEL /
+# llm-secret OPENAI_MODEL_NAME point at. Name an embedding alias exactly
+# `text-embedding-3-large` etc. so rag-server's dimension map resolves it
+# (otherwise set EMBEDDINGS_DIMENSIONS on rag-server).
+#
+# `api_key: "os.environ/<KEY>"` reads <KEY> from litellm-upstream-secret — supply
+# it via --litellm-upstream-env (a KEY=VALUE .env), never inline here.
+
+# ── Front one upstream LiteLLM / OpenAI-compatible gateway (one key, N models) ──
+- model_name: "bedrock-haiku"
+  litellm_params:
+    model: "openai/bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    api_base: "https://your-litellm-gateway.example.com/v1"
+    api_key: "os.environ/GATEWAY_API_KEY"
+
+- model_name: "gemma4"
+  litellm_params:
+    model: "openai/onprem/gemma4"
+    api_base: "https://your-litellm-gateway.example.com/v1"
+    api_key: "os.environ/GATEWAY_API_KEY"
+
+- model_name: "text-embedding-3-large"
+  litellm_params:
+    model: "openai/azure/text-embedding-3-large"
+    api_base: "https://your-litellm-gateway.example.com/v1"
+    api_key: "os.environ/GATEWAY_API_KEY"
+
+# ── Or talk to a provider directly ──
+# - model_name: "claude"
+#   litellm_params:
+#     model: "anthropic/claude-sonnet-4"
+#     api_key: "os.environ/ANTHROPIC_API_KEY"
+#
+# - model_name: "gpt-4o"
+#   litellm_params:
+#     model: "azure/my-gpt4o-deployment"
+#     api_base: "os.environ/AZURE_OPENAI_ENDPOINT"
+#     api_key: "os.environ/AZURE_OPENAI_API_KEY"
+#     api_version: "2024-10-21"

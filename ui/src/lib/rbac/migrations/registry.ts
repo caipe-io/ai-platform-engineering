@@ -67,6 +67,10 @@ import {
   TEAM_KB_OWNERSHIP_COLLECTION,
   type DropTeamKbOwnershipInputs,
 } from "./drop-team-kb-ownership";
+import {
+  ZIP_IMPORT_OWNER_BACKFILL_CONFIRMATION,
+  ZIP_IMPORT_OWNER_BACKFILL_MIGRATION_ID,
+} from "./zip-import-owner-backfill";
 import { schemaAreasNeedingVersionBootstrap } from "./schema-bootstrap";
 export {
   getUnclassifiedSchemaAreas,
@@ -159,6 +163,16 @@ export const ADMIN_SURFACE_SLACK_ADMIN_GRANT_MIGRATION_ID =
 // reconciliation existed. Idempotent.
 export const KNOWLEDGE_BASE_SHARED_TEAM_GRANTS_MIGRATION_ID =
   "knowledge_base_shared_team_grants_backfill_v1";
+// Follow-up to `knowledge_base_shared_team_grants_backfill_v1` (schema_area
+// `team_kb_ownership`, v2). That migration already ran to completion in every
+// real environment before the owner-team-manages-via-member change, so its
+// `to_version` gate silently skips re-running it even though the tuple body
+// it emits changed from `team:<slug>#admin manager` to `team:<slug>#member
+// manager`. This migration reuses the same (already-fixed) derive function
+// under a new id/version so `team_kb_ownership` rows that predate the fix get
+// the corrected grant. Idempotent, additive-only — see `deriveKnowledgeBaseSharedTeamGrantsPlan`.
+export const KNOWLEDGE_BASE_OWNER_TEAM_MEMBER_MANAGER_MIGRATION_ID =
+  "knowledge_base_shared_team_grants_backfill_v2";
 // `data_source_grants_backfill_v1` mirrors every existing
 // `knowledge_base:<id>` tuple in OpenFGA as a `data_source:<id>`
 // tuple, so day-zero behavior of "if you can read the KB you can read
@@ -179,6 +193,14 @@ export const DATA_SOURCE_GRANTS_BACKFILL_MIGRATION_ID =
 // assisted-by Cursor claude-opus-4-7
 export const MCP_TOOL_GRANTS_BACKFILL_MIGRATION_ID =
   "mcp_tool_grants_backfill_v1";
+// Follow-up to `mcp_tool_grants_backfill_v1` (schema_area `team_rag_tools`,
+// v2) for the same reason as `knowledge_base_shared_team_grants_backfill_v2`
+// above: the v1 migration already completed everywhere before the
+// owner-team-manages-via-member change, so `team_rag_tools` rows that predate
+// the fix never get the corrected `team:<slug>#member manager` grant without
+// this. Reuses the already-fixed `deriveMcpToolGrantsBackfillPlan`.
+export const MCP_TOOL_OWNER_TEAM_MEMBER_MANAGER_MIGRATION_ID =
+  "mcp_tool_grants_backfill_v2";
 // `parent_kb_inheritance_backfill_v1` writes one
 // `data_source:<id> parent_kb knowledge_base:<id>` inheritance edge per
 // existing datasource (spec 2026-06-03-unified-shareable-resource-rbac, US4).
@@ -381,6 +403,21 @@ export const MIGRATION_DEFINITIONS: MigrationDefinition[] = [
     implemented: true,
   },
   {
+    id: KNOWLEDGE_BASE_OWNER_TEAM_MEMBER_MANAGER_MIGRATION_ID,
+    release: RELEASE_060,
+    schema_area: "team_kb_ownership",
+    from_version: 2,
+    to_version: 3,
+    kind: "explicit",
+    title: "Knowledge Base owner-team manager grant: admin-only to any member",
+    description:
+      "Re-walks every `team_kb_ownership` Mongo doc and rewrites the owner team's manager grant from `team:<slug>#admin manager knowledge_base:<id>` to `team:<slug>#member manager knowledge_base:<id>`, so any owner-team member (not just its admins) gets the Manage/gear-icon affordance. `knowledge_base_shared_team_grants_backfill_v1` already completed in every existing environment before this behavior change, so its `to_version` gate would otherwise silently skip re-running it. Idempotent.",
+    confirmation: "MIGRATE team_kb_ownership TO v3",
+    required: true,
+    implemented: true,
+    dependencies: [KNOWLEDGE_BASE_SHARED_TEAM_GRANTS_MIGRATION_ID],
+  },
+  {
     id: DATA_SOURCE_GRANTS_BACKFILL_MIGRATION_ID,
     release: RELEASE_051,
     schema_area: "openfga_tuples",
@@ -407,6 +444,21 @@ export const MIGRATION_DEFINITIONS: MigrationDefinition[] = [
     confirmation: "MIGRATE team_rag_tools TO mcp_tool_v1",
     required: true,
     implemented: true,
+  },
+  {
+    id: MCP_TOOL_OWNER_TEAM_MEMBER_MANAGER_MIGRATION_ID,
+    release: RELEASE_060,
+    schema_area: "team_rag_tools",
+    from_version: 2,
+    to_version: 3,
+    kind: "explicit",
+    title: "mcp_tool owner-team manager grant: admin-only to any member",
+    description:
+      "Re-walks Mongo `team_rag_tools` and rewrites the owner team's manager grant from `team:<slug>#admin manager mcp_tool:<tool_id>` to `team:<slug>#member manager mcp_tool:<tool_id>`, so any owner-team member (not just its admins) can manage the custom RAG tool. `mcp_tool_grants_backfill_v1` already completed in every existing environment before this behavior change, so its `to_version` gate would otherwise silently skip re-running it. Idempotent.",
+    confirmation: "MIGRATE team_rag_tools TO mcp_tool_v2",
+    required: true,
+    implemented: true,
+    dependencies: [MCP_TOOL_GRANTS_BACKFILL_MIGRATION_ID],
   },
   {
     id: PARENT_KB_INHERITANCE_BACKFILL_MIGRATION_ID,
@@ -450,6 +502,21 @@ export const MIGRATION_DEFINITIONS: MigrationDefinition[] = [
     confirmation: "MIGRATE agent_skills TO v2",
     required: true,
     implemented: true,
+  },
+  {
+    id: ZIP_IMPORT_OWNER_BACKFILL_MIGRATION_ID,
+    release: RELEASE_060,
+    schema_area: "agent_skills",
+    from_version: 2,
+    to_version: 3,
+    kind: "explicit",
+    title: "ZIP-imported skill owner backfill",
+    description:
+      "Writes missing owner and creator tuples for existing non-system skills created by ZIP import. It does not alter team, writer, manager, or global grants.",
+    confirmation: ZIP_IMPORT_OWNER_BACKFILL_CONFIRMATION,
+    required: true,
+    implemented: true,
+    dependencies: [AGENT_SKILL_OPENFGA_RECONCILE_MIGRATION_ID],
   },
   {
     id: TEAM_TOOL_WILDCARD_SLASH_MIGRATION_ID,
@@ -1429,7 +1496,7 @@ export function deriveKnowledgeBaseSharedTeamGrantsPlan(
         object: `knowledge_base:${kbId}`,
       });
       tuples.push({
-        user: `team:${slug}#admin`,
+        user: `team:${slug}#member`,
         relation: "manager",
         object: `knowledge_base:${kbId}`,
       });
@@ -1711,7 +1778,7 @@ export function deriveMcpToolGrantsBackfillPlan(
       // `caller` → can_call: required so members can actually INVOKE the tool
       // (the `user` relation only grants can_use, not can_call).
       tuples.push({ user: `team:${slug}#member`, relation: "caller", object });
-      tuples.push({ user: `team:${slug}#admin`, relation: "manager", object });
+      tuples.push({ user: `team:${slug}#member`, relation: "manager", object });
       perRowResolved = true;
     }
     if (perRowResolved) {
@@ -1853,7 +1920,7 @@ export function deriveMessagingRebacPlan(input: {
       if (!botId) {
         legacyRoutesRequiringBotAssignment += 1;
         warnings.push(
-          `Skipping legacy Webex route for ${workspaceId}--${resourceOwnerId}; assign a bot in the Webex Legacy migration tab.`,
+          `Skipping legacy Webex route for ${workspaceId}--${resourceOwnerId}; set bot_id on the route to migrate it.`,
         );
         continue;
       }
@@ -2170,11 +2237,6 @@ const MESSAGING_REBAC_INDEX_SPECS: NonNullable<MigrationRuntimePlan["indexes"]> 
     collection: "webex_space_grants",
     keys: { workspace_id: 1, space_id: 1, "resource.type": 1, "resource.id": 1, status: 1 },
     options: { name: "webex_space_grant_lookup" },
-  },
-  {
-    collection: "webex_link_nonces",
-    keys: { expires_at: 1 },
-    options: { expireAfterSeconds: 0, name: "webex_link_nonce_expiry" },
   },
 ];
 
@@ -3040,7 +3102,10 @@ export async function planMigration(migrationId: string, now = new Date().toISOS
     const subjects = await loadOrgAdminSubjects();
     return deriveAdminSurfaceSlackAdminGrantPlan(subjects);
   }
-  if (migrationId === KNOWLEDGE_BASE_SHARED_TEAM_GRANTS_MIGRATION_ID) {
+  if (
+    migrationId === KNOWLEDGE_BASE_SHARED_TEAM_GRANTS_MIGRATION_ID ||
+    migrationId === KNOWLEDGE_BASE_OWNER_TEAM_MEMBER_MANAGER_MIGRATION_ID
+  ) {
     const { ownershipDocs, teamSlugByMongoId } =
       await loadKnowledgeBaseSharedTeamGrantsInputs();
     return deriveKnowledgeBaseSharedTeamGrantsPlan(ownershipDocs, teamSlugByMongoId);
@@ -3049,7 +3114,10 @@ export async function planMigration(migrationId: string, now = new Date().toISOS
     const tuples = await loadKnowledgeBaseTuples();
     return deriveDataSourceGrantsBackfillPlan(tuples);
   }
-  if (migrationId === MCP_TOOL_GRANTS_BACKFILL_MIGRATION_ID) {
+  if (
+    migrationId === MCP_TOOL_GRANTS_BACKFILL_MIGRATION_ID ||
+    migrationId === MCP_TOOL_OWNER_TEAM_MEMBER_MANAGER_MIGRATION_ID
+  ) {
     const { ownershipDocs, teamSlugByMongoId } = await loadMcpToolGrantsBackfillInputs();
     return deriveMcpToolGrantsBackfillPlan(ownershipDocs, teamSlugByMongoId);
   }
@@ -3067,6 +3135,12 @@ export async function planMigration(migrationId: string, now = new Date().toISOS
       "./agent-skill-openfga-reconcile"
     );
     return planAgentSkillOpenFgaReconcileMigration();
+  }
+  if (migrationId === ZIP_IMPORT_OWNER_BACKFILL_MIGRATION_ID) {
+    const { planZipImportOwnerBackfillMigration } = await import(
+      "./zip-import-owner-backfill"
+    );
+    return planZipImportOwnerBackfillMigration();
   }
   if (migrationId === TEAM_TOOL_WILDCARD_SLASH_MIGRATION_ID) {
     const { teams, toolTuples } = await loadTeamToolWildcardInputs();
@@ -3369,6 +3443,21 @@ export async function applyMigration(input: {
       await import("./agent-skill-openfga-reconcile");
     const plan = await planAgentSkillOpenFgaReconcileMigration();
     const result = await applyAgentSkillOpenFgaReconcileMigration({
+      plan,
+      actor: input.actor,
+      now,
+    });
+    await recordCompletedMigration({ definition, result, now, actor: input.actor });
+    return result;
+  }
+
+  if (input.migrationId === ZIP_IMPORT_OWNER_BACKFILL_MIGRATION_ID) {
+    const {
+      planZipImportOwnerBackfillMigration,
+      applyZipImportOwnerBackfillMigration,
+    } = await import("./zip-import-owner-backfill");
+    const plan = await planZipImportOwnerBackfillMigration();
+    const result = await applyZipImportOwnerBackfillMigration({
       plan,
       actor: input.actor,
       now,

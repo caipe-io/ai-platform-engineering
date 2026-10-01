@@ -100,7 +100,7 @@ sequenceDiagram
 
 **Real code references**:
 
-- Route uses [`withAuth`](https://github.com/cnoe-io/ai-platform-engineering/blob/main/ui/src/lib/api-middleware.ts) — see `ui/src/lib/api-middleware.ts:139` (already exists)
+- Route uses [`withAuth`](https://github.com/caipe-io/ai-platform-engineering/blob/main/ui/src/lib/api-middleware.ts) — see `ui/src/lib/api-middleware.ts:139` (already exists)
 - `requireRbacPermission` body — `ui/src/lib/api-middleware.ts:345` (already exists)
 - `checkPermission` body — `ui/src/lib/rbac/keycloak-authz.ts:51` (already exists)
 - `logAuthzDecision` body — `ui/src/lib/rbac/audit.ts:107` (already exists)

@@ -25,13 +25,25 @@ const mockDeleteAllMcpToolRelationshipTuples = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
-    constructor(message: string, public statusCode = 500, public code?: string) {
+    constructor(
+      message: string,
+      public statusCode = 500,
+      public code?: string,
+    ) {
       super(message);
     }
   }
   return {
     ApiError,
-    requireRbacPermission: (...args: unknown[]) => mockRequireRbacPermission(...args),
+    getAuthFromBearerOrSession: async () => {
+      const { getServerSession } = jest.requireMock("next-auth") as {
+        getServerSession: jest.Mock;
+      };
+      const session = await getServerSession();
+      return { session, user: session?.user };
+    },
+    requireRbacPermission: (...args: unknown[]) =>
+      mockRequireRbacPermission(...args),
     handleApiError: (error: unknown) =>
       Response.json(
         {
@@ -44,8 +56,10 @@ jest.mock("@/lib/api-middleware", () => {
 });
 
 jest.mock("@/lib/rbac/resource-authz", () => ({
-  requireResourcePermission: (...args: unknown[]) => mockRequireResourcePermission(...args),
-  filterResourcesByPermission: (...args: unknown[]) => mockFilterResourcesByPermission(...args),
+  requireResourcePermission: (...args: unknown[]) =>
+    mockRequireResourcePermission(...args),
+  filterResourcesByPermission: (...args: unknown[]) =>
+    mockFilterResourcesByPermission(...args),
 }));
 
 jest.mock("@/lib/rbac/openfga", () => ({
@@ -75,7 +89,11 @@ beforeEach(() => {
   mockRequireResourcePermission.mockResolvedValue(undefined);
   // Default: not org admin, and can_call denied unless a test allows it.
   mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
-  mockDeleteAllMcpToolRelationshipTuples.mockResolvedValue({ enabled: true, writes: 0, deletes: 3 });
+  mockDeleteAllMcpToolRelationshipTuples.mockResolvedValue({
+    enabled: true,
+    writes: 0,
+    deletes: 3,
+  });
 });
 
 function ragRequest(path: string, init?: RequestInit): NextRequest {
@@ -121,8 +139,11 @@ describe("POST /v1/mcp/invoke — can_call gate", () => {
     mockCustomToolsList(["infra-search"]);
     // Holds the org search capability (so the search gate passes) but lacks
     // can_call on this specific tool → denied at the per-tool gate.
-    mockCheckOpenFgaTuple.mockImplementation(async (tuple: { relation: string }) =>
-      tuple.relation === "can_search" ? { allowed: true } : { allowed: false },
+    mockCheckOpenFgaTuple.mockImplementation(
+      async (tuple: { relation: string }) =>
+        tuple.relation === "can_search"
+          ? { allowed: true }
+          : { allowed: false },
     );
 
     const { POST } = await import("@/app/api/rag/[...path]/route");
@@ -142,11 +163,13 @@ describe("POST /v1/mcp/invoke — can_call gate", () => {
   it("allows a member invoking a custom tool they can_call", async () => {
     await asUser("alice-sub");
     mockCustomToolsList(["infra-search"]);
-    mockCheckOpenFgaTuple.mockImplementation(async (tuple: { relation: string; object: string }) =>
-      tuple.relation === "can_search" ||
-      (tuple.relation === "can_call" && tuple.object === "mcp_tool:infra-search")
-        ? { allowed: true }
-        : { allowed: false },
+    mockCheckOpenFgaTuple.mockImplementation(
+      async (tuple: { relation: string; object: string }) =>
+        tuple.relation === "can_search" ||
+        (tuple.relation === "can_call" &&
+          tuple.object === "mcp_tool:infra-search")
+          ? { allowed: true }
+          : { allowed: false },
     );
 
     const { POST } = await import("@/app/api/rag/[...path]/route");
@@ -166,8 +189,11 @@ describe("POST /v1/mcp/invoke — can_call gate", () => {
     mockCustomToolsList(["infra-search"]); // 'search' is NOT in the custom list
     // can_call would deny, but the built-in must not be gated by the per-tool
     // gate. The caller holds the org search capability so the search gate passes.
-    mockCheckOpenFgaTuple.mockImplementation(async (tuple: { relation: string }) =>
-      tuple.relation === "can_search" ? { allowed: true } : { allowed: false },
+    mockCheckOpenFgaTuple.mockImplementation(
+      async (tuple: { relation: string }) =>
+        tuple.relation === "can_search"
+          ? { allowed: true }
+          : { allowed: false },
     );
 
     const { POST } = await import("@/app/api/rag/[...path]/route");
@@ -186,10 +212,11 @@ describe("POST /v1/mcp/invoke — can_call gate", () => {
     await asUser("admin-sub");
     mockCustomToolsList(["infra-search"]);
     // Org-admin check (can_manage on organization) returns true; can_call denied.
-    mockCheckOpenFgaTuple.mockImplementation(async (tuple: { relation: string; object: string }) =>
-      tuple.relation === "can_manage" && tuple.object === "organization:caipe"
-        ? { allowed: true }
-        : { allowed: false },
+    mockCheckOpenFgaTuple.mockImplementation(
+      async (tuple: { relation: string; object: string }) =>
+        tuple.relation === "can_manage" && tuple.object === "organization:caipe"
+          ? { allowed: true }
+          : { allowed: false },
     );
 
     const { POST } = await import("@/app/api/rag/[...path]/route");
@@ -213,18 +240,29 @@ describe("POST /v1/mcp/invoke — can_call gate", () => {
     global.fetch = jest.fn((url: string | URL) => {
       const u = String(url);
       if (u.includes("/v1/mcp/custom-tools")) {
-        return Promise.resolve({ ok: false, status: 500, json: async () => ({}) } as Response);
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          json: async () => ({}),
+        } as Response);
       }
       forward();
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) } as Response);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+      } as Response);
     }) as jest.Mock;
     // The caller HOLDS the org `can_search` capability (so we pass the outer
     // search-capability gate and actually reach the fail-closed path under test),
     // but every narrower grant is denied. The custom-tools listing error must
     // then DENY with 503 (call_unavailable) rather than forward — a transient
     // listing error cannot be used to bypass `can_call`.
-    mockCheckOpenFgaTuple.mockImplementation(async (tuple: { relation: string }) =>
-      tuple.relation === "can_search" ? { allowed: true } : { allowed: false },
+    mockCheckOpenFgaTuple.mockImplementation(
+      async (tuple: { relation: string }) =>
+        tuple.relation === "can_search"
+          ? { allowed: true }
+          : { allowed: false },
     );
 
     const { POST } = await import("@/app/api/rag/[...path]/route");
@@ -253,8 +291,9 @@ describe("search capability gate (spec 2026-06-03-explicit-search-capability)", 
     mockCustomToolsList(["caipe_kb"]);
     // The reported leak: caller can_call (e.g. org-wide share) but their team
     // has no search capability → must be denied at the search gate.
-    mockCheckOpenFgaTuple.mockImplementation(async (tuple: { relation: string }) =>
-      tuple.relation === "can_call" ? { allowed: true } : { allowed: false },
+    mockCheckOpenFgaTuple.mockImplementation(
+      async (tuple: { relation: string }) =>
+        tuple.relation === "can_call" ? { allowed: true } : { allowed: false },
     );
 
     const { POST } = await import("@/app/api/rag/[...path]/route");
@@ -293,7 +332,11 @@ describe("search capability gate (spec 2026-06-03-explicit-search-capability)", 
     await asUser("generic-sub");
     mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
     global.fetch = jest.fn(() =>
-      Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response),
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => [],
+      } as Response),
     ) as jest.Mock;
 
     const { POST } = await import("@/app/api/rag/[...path]/route");
@@ -311,13 +354,18 @@ describe("search capability gate (spec 2026-06-03-explicit-search-capability)", 
 
   it("org admins bypass the search gate on /v1/query", async () => {
     await asUser("admin-sub");
-    mockCheckOpenFgaTuple.mockImplementation(async (tuple: { relation: string; object: string }) =>
-      tuple.relation === "can_manage" && tuple.object === "organization:caipe"
-        ? { allowed: true }
-        : { allowed: false },
+    mockCheckOpenFgaTuple.mockImplementation(
+      async (tuple: { relation: string; object: string }) =>
+        tuple.relation === "can_manage" && tuple.object === "organization:caipe"
+          ? { allowed: true }
+          : { allowed: false },
     );
     global.fetch = jest.fn(() =>
-      Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response),
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => [],
+      } as Response),
     ) as jest.Mock;
 
     const { POST } = await import("@/app/api/rag/[...path]/route");
@@ -337,15 +385,27 @@ describe("DELETE /v1/mcp/custom-tools/<id> — orphan tuple cleanup", () => {
   it("removes all mcp_tool:<id> grants after a successful upstream delete", async () => {
     await asUser("alice-sub");
     global.fetch = jest.fn(() =>
-      Promise.resolve({ ok: true, status: 204, json: async () => ({}) } as Response),
+      Promise.resolve({
+        ok: true,
+        status: 204,
+        json: async () => ({}),
+      } as Response),
     ) as jest.Mock;
 
     const { DELETE } = await import("@/app/api/rag/[...path]/route");
     const res = await DELETE(
-      ragRequest("/api/rag/v1/mcp/custom-tools/infra-search", { method: "DELETE" }),
-      { params: Promise.resolve({ path: ["v1", "mcp", "custom-tools", "infra-search"] }) },
+      ragRequest("/api/rag/v1/mcp/custom-tools/infra-search", {
+        method: "DELETE",
+      }),
+      {
+        params: Promise.resolve({
+          path: ["v1", "mcp", "custom-tools", "infra-search"],
+        }),
+      },
     );
     expect(res.status).toBe(204);
-    expect(mockDeleteAllMcpToolRelationshipTuples).toHaveBeenCalledWith("infra-search");
+    expect(mockDeleteAllMcpToolRelationshipTuples).toHaveBeenCalledWith(
+      "infra-search",
+    );
   });
 });

@@ -161,8 +161,7 @@ beforeEach(() => {
   mockGetServerSession.mockResolvedValue(adminSession());
   mockCheckPermission.mockResolvedValue({ allowed: true, reason: "OK" });
   mockRequireBaselineAdminSurfaceRead.mockResolvedValue(undefined);
-  // hasAdminView is probed via requireRbacPermission(admin_ui, view) →
-  // checkPermission. Default allow so the admin sees the unscoped list.
+  // Platform-wide visibility is probed with the actual admin capability.
   mockLoadTeamMemberCounts.mockResolvedValue(new Map());
   mockLoadTeamIdpSourceTypes.mockResolvedValue(new Map());
   mockCheckOpenFgaTuple.mockImplementation(
@@ -280,7 +279,11 @@ describe("GET /api/admin/teams pagination", () => {
       async (tuple: { user: string; relation: string; object: string }) => ({
         allowed:
           (tuple.user === "user:admin-sub" && tuple.relation === "can_manage")
-          || (tuple.user === "user:target-admin" && tuple.relation === "can_audit"),
+          || (
+            tuple.user === "user:target-admin"
+            && tuple.relation === "can_manage"
+            && tuple.object === "admin_surface:teams"
+          ),
       }),
     );
 
@@ -294,5 +297,35 @@ describe("GET /api/admin/teams pagination", () => {
       expect.objectContaining({ slug: expect.anything() }),
     ]));
     expect(mockListOpenFgaObjects).not.toHaveBeenCalled();
+  });
+
+  it("keeps Everyone read-only for a scoped team admin", async () => {
+    seedTeamsCollection([teamRow("everyone"), teamRow("platform")], 2);
+    mockGetServerSession.mockResolvedValue({
+      user: { email: "member@example.com", name: "Member" },
+      role: "user",
+      sub: "member-sub",
+      accessToken: accessTokenWithRoles(["chat_user"]),
+    });
+    mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
+    mockListOpenFgaObjects.mockImplementation(
+      async (query: { relation: string }) => ({
+        objects:
+          query.relation === "member" || query.relation === "admin"
+            ? ["team:everyone", "team:platform"]
+            : [],
+      }),
+    );
+
+    const { body } = await callGet("/api/admin/teams?page=1&page_size=24");
+    const bySlug = new Map(
+      body.data.teams.map((team: { slug: string; can_manage: boolean }) => [
+        team.slug,
+        team.can_manage,
+      ]),
+    );
+
+    expect(bySlug.get("everyone")).toBe(false);
+    expect(bySlug.get("platform")).toBe(true);
   });
 });

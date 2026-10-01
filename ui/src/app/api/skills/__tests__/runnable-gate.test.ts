@@ -81,11 +81,10 @@ describe("filterSkillsByOpenFga", () => {
     expect(filtered).toEqual([]);
   });
 
-  // Regression: catalog API key (X-Caipe-Catalog-Key) previously returned a
-  // session with no `sub`, hitting the null-subject guard and returning [].
-  // The fix gives the key a stable synthetic subject + a dedicated read path.
-  it("catalog API key subject returns global skills in read mode without OpenFGA", async () => {
-    const check = jest.fn(async () => ({ allowed: false }));
+  it("a catalog credential owner uses the same OpenFGA reads as its real user", async () => {
+    const check = jest.fn(async (tuple) => ({
+      allowed: tuple.object === "skill:hub-skill-1" || tuple.object === "skill:agent-global",
+    }));
     const skills: CatalogSkill[] = [
       { ...baseSkill, id: "builtin-1", source: "default" },
       { ...baseSkill, id: "hub-skill-1", source: "hub" },
@@ -94,26 +93,21 @@ describe("filterSkillsByOpenFga", () => {
       { ...baseSkill, id: "agent-team", source: "agent_skills", visibility: "team" } as CatalogSkill,
     ];
 
-    // The route handler prepends "user:" to session.sub before calling here,
-    // so the subject arriving at filterSkillsByOpenFga is "user:<sub>".
     const filtered = await filterSkillsByOpenFga(skills, {
-      subject: "user:catalog-key-user@local",
+      subject: "user:owner-sub",
       mode: "read",
       check,
     });
 
-    // default + hub + global agent_skills; team/personal agent_skills excluded
     expect(filtered.map((s) => s.id)).toEqual(["builtin-1", "hub-skill-1", "agent-global"]);
-    expect(check).not.toHaveBeenCalled();
+    expect(check).toHaveBeenCalled();
   });
 
-  it("catalog API key subject cannot use skills without an OpenFGA can_use tuple", async () => {
-    // The catalog key has no can_use tuple in OpenFGA, so even default
-    // skills are blocked when the caller requests content (use mode).
+  it("catalog credential owners cannot use skills without an OpenFGA can_use tuple", async () => {
     const filtered = await filterSkillsByOpenFga(
       [{ ...baseSkill, id: "builtin-1", source: "default" }],
       {
-        subject: "user:catalog-key-user@local",
+        subject: "user:owner-sub",
         mode: "use",
         check: async () => ({ allowed: false }),
       },
@@ -124,7 +118,7 @@ describe("filterSkillsByOpenFga", () => {
 
   // Regression: local skills JWT (HS256 from /api/skills/token) previously
   // returned session: { role: 'user' } with no `sub`, hitting the null guard.
-  // The fix adds sub: localIdentity.email so OpenFGA checks use real identity.
+  // The fix preserves the signed identity-provider subject.
   it("local skills JWT subject resolves OpenFGA tuples for agent_skills", async () => {
     const filtered = await filterSkillsByOpenFga(
       [
@@ -132,7 +126,7 @@ describe("filterSkillsByOpenFga", () => {
         { ...baseSkill, id: "my-custom-skill", source: "agent_skills" },
       ],
       {
-        subject: "user:sraradhy@cisco.com",
+        subject: "user:owner-sub",
         mode: "read",
         check: async (tuple) => ({ allowed: tuple.object === "skill:my-custom-skill" }),
       },

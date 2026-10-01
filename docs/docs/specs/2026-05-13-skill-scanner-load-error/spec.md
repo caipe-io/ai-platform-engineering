@@ -3,7 +3,7 @@
 **Feature Branch**: `prebuild/fix/skill-scanner-load-error`
 **Created**: 2026-05-13
 **Status**: Draft
-**Input**: User description: "fix https://github.com/cnoe-io/ai-platform-engineering/issues/1391"
+**Input**: User description: "fix https://github.com/caipe-io/ai-platform-engineering/issues/1391"
 
 ## User Scenarios & Testing *(mandatory)*
 

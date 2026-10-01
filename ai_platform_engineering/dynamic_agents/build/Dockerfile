@@ -4,7 +4,7 @@
 # =============================================================================
 # Stage 1: Builder - Install dependencies with uv
 # =============================================================================
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:0.12.6-python3.14-trixie-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 
@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # triggering a GetInferenceProfile API call that fails when the IAM role only
 # grants bedrock:InvokeModel / bedrock-runtime:Converse on the AIP ARN.
 # Remove this patch once langchain-aws fixes _as_converse to forward base_model_id.
-RUN BEDROCK_PY=".venv/lib/python3.13/site-packages/langchain_aws/chat_models/bedrock.py" && \
+RUN BEDROCK_PY=".venv/lib/python3.14/site-packages/langchain_aws/chat_models/bedrock.py" && \
     grep -q 'guardrail_config=(self.guardrails if self._guardrails_enabled else None),  # type: ignore\[call-arg\]' "$BEDROCK_PY" || \
         { echo "ERROR: langchain_aws patch target not found — upstream may have changed. Review dynamic_agents/build/Dockerfile patch."; exit 1; } && \
     sed -i 's/guardrail_config=(self.guardrails if self._guardrails_enabled else None),  # type: ignore\[call-arg\]/guardrail_config=(self.guardrails if self._guardrails_enabled else None),  # type: ignore[call-arg]\n            base_model_id=self.base_model_id,/' "$BEDROCK_PY" && \
@@ -48,10 +48,8 @@ RUN find /app/dynamic_agents/.venv -type d -name "__pycache__" -exec rm -rf {} +
 # =============================================================================
 # Stage 2: Runtime - Minimal secure image
 # =============================================================================
-# Wolfi (Chainguard) base: continuously patched, glibc-based packages with ~0
-# CVEs. Replaces python:3.13-slim-bookworm to eliminate the Debian
-# system-package CVEs (perl-base, libtiff6, krb5, systemd, libgcrypt20, etc.)
-# and the base interpreter/pip CVEs. Mirrors build/agents/Dockerfile.a2a.
+# Wolfi provides a minimal, continuously patched glibc runtime while preserving
+# compatibility with the manylinux wheels installed by the builder stage.
 FROM cgr.dev/chainguard/wolfi-base
 
 # Override APK repo to public Wolfi OS packages (no auth required).
@@ -59,23 +57,23 @@ FROM cgr.dev/chainguard/wolfi-base
 # requires Chainguard credentials; packages.wolfi.dev/os is free and public.
 RUN echo "https://packages.wolfi.dev/os" > /etc/apk/repositories
 
-# glibc-based Python 3.13 (matches the builder ABI so manylinux wheels load
+# glibc-based Python 3.14 (matches the builder ABI so manylinux wheels load
 # correctly). `curl` is kept for the curl builtin tool; `ca-certificates-bundle`
 # ensures outbound TLS (Bedrock/LLM) works; `shadow` provides useradd/groupadd.
 # Retry to tolerate transient mirror blips.
 RUN for i in 1 2 3; do \
-        apk add --no-cache python-3.13 ca-certificates-bundle curl shadow && break; \
+        apk add --no-cache python-3.14 ca-certificates-bundle curl shadow && break; \
         [ $i -lt 3 ] && sleep $((i * 10)); \
     done && \
     apk upgrade --no-cache
 
-# The builder stage (uv:python3.13-bookworm-slim) places Python at
-# /usr/local/bin/python3.13; Wolfi places it at /usr/bin/python3.13. These
+# The builder stage places Python at
+# /usr/local/bin/python3.14; Wolfi places it at /usr/bin/python3.14. These
 # symlinks keep the venv's internal python symlinks valid in the final image.
 RUN mkdir -p /usr/local/bin \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python3.13 \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python3 \
-    && ln -sf /usr/bin/python3.13 /usr/local/bin/python
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python3.14 \
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python3 \
+    && ln -sf /usr/bin/python3.14 /usr/local/bin/python
 
 # Create non-root user (UID/GID 1001 for Kubernetes compatibility)
 RUN groupadd -g 1001 app && useradd -u 1001 -g app -m app

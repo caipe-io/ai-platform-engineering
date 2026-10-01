@@ -11,6 +11,7 @@ DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { Loader2 } from "lucide-react";
 import React,{ useEffect,useState } from "react";
 
@@ -111,22 +112,28 @@ export function GroupRoleMappingDialog({
               <Label htmlFor="idpAlias">
                 Identity Provider <span className="text-destructive">*</span>
               </Label>
-              <select
+              <SearchablePicker
                 id="idpAlias"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                value={selectedIdp}
-                onChange={(e) => setSelectedIdp(e.target.value)}
+                options={idpAliases}
+                selected={idpAliases.find((idp) => idp.alias === selectedIdp)}
+                onSelect={(idp) => setSelectedIdp(idp.alias)}
+                getOptionKey={(idp) => idp.alias}
+                getOptionLabel={(idp) =>
+                  `${idp.displayName || idp.alias} (${idp.providerId})`
+                }
+                getSearchText={(idp) => [
+                  idp.alias,
+                  idp.displayName ?? "",
+                  idp.providerId,
+                ]}
+                placeholder="Select an identity provider"
+                searchPlaceholder="Search identity providers..."
+                emptyLabel="No identity providers configured"
+                ariaLabel="Identity Provider"
+                required
                 disabled={loading || idpAliases.length === 0}
-              >
-                {idpAliases.length === 0 && (
-                  <option value="">No identity providers configured</option>
-                )}
-                {idpAliases.map((idp) => (
-                  <option key={idp.alias} value={idp.alias}>
-                    {idp.displayName || idp.alias} ({idp.providerId})
-                  </option>
-                ))}
-              </select>
+                triggerClassName="h-10"
+              />
             </div>
 
             <div className="space-y-2">
@@ -151,22 +158,21 @@ export function GroupRoleMappingDialog({
               <Label htmlFor="targetRole">
                 Target Role <span className="text-destructive">*</span>
               </Label>
-              <select
+              <SearchablePicker
                 id="targetRole"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                value={selectedRole}
-                onChange={(e) => setSelectedRole(e.target.value)}
+                options={roles}
+                selected={roles.find((role) => role.name === selectedRole)}
+                onSelect={(role) => setSelectedRole(role.name)}
+                getOptionKey={(role) => role.name}
+                getOptionLabel={(role) => role.name}
+                placeholder="Select a target role"
+                searchPlaceholder="Search roles..."
+                emptyLabel="No roles available"
+                ariaLabel="Target Role"
+                required
                 disabled={loading || roles.length === 0}
-              >
-                {roles.length === 0 && (
-                  <option value="">No roles available</option>
-                )}
-                {roles.map((role) => (
-                  <option key={role.name} value={role.name}>
-                    {role.name}
-                  </option>
-                ))}
-              </select>
+                triggerClassName="h-10"
+              />
             </div>
 
             {error && (

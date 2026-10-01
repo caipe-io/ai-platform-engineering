@@ -76,7 +76,7 @@ test.describe("RBAC e2e — credential team sharing", () => {
     });
 
     await signIn(page, env);
-    await page.goto("/credentials#secrets", { waitUntil: "domcontentloaded" });
+    await page.goto("/credentials/secrets", { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByRole("heading", { name: "Saved Secrets" })).toBeVisible({
@@ -92,16 +92,14 @@ test.describe("RBAC e2e — credential team sharing", () => {
     await expect(panel.getByLabel("Team access")).toContainText("Platform Team");
     await expect(panel.getByLabel("Team access")).toContainText("team:platform-team");
 
-    await panel.getByRole("button", { name: /team access/i }).click();
-    await page.getByLabel("Search teams...").fill("observ");
+    await panel.getByRole("combobox", { name: /team access/i }).click();
     await page.getByRole("option", { name: /Observability Team.*team:observability-team/i }).click();
     await panel.getByRole("button", { name: /grant access/i }).click();
     await expect.poll(() => pendingShares.map((share) => share.teamId)).toContain(
       "observability-team",
     );
 
-    await panel.getByRole("button", { name: /team access/i }).click();
-    await page.getByLabel("Search teams...").fill("security");
+    await panel.getByRole("combobox", { name: /team access/i }).click();
     await page.getByRole("option", { name: /Security Team.*team:security-team/i }).click();
     await panel.getByRole("button", { name: /grant access/i }).click();
     await expect.poll(() => pendingShares.map((share) => `${share.action}:${share.teamId}`).sort()).toEqual([
@@ -120,8 +118,7 @@ test.describe("RBAC e2e — credential team sharing", () => {
     await expect(panel.getByText(/Could not update sharing/i)).toHaveCount(0);
     await expect(panel.getByLabel("Team access")).toContainText(/Observability Team|Security Team/);
 
-    await panel.getByRole("button", { name: /team access/i }).click();
-    await page.getByLabel("Search teams...").fill("platform");
+    await panel.getByRole("combobox", { name: /team access/i }).click();
     await page.getByRole("option", { name: /Platform Team.*team:platform-team/i }).click();
     await panel.getByRole("button", { name: /revoke access/i }).click();
     await expect.poll(() => pendingShares.map((share) => `${share.action}:${share.teamId}`)).toContain(

@@ -12,6 +12,7 @@ const baseTeam: Team = {
   owner_id: "owner@example.com",
   created_at: new Date("2026-01-01"),
   updated_at: new Date("2026-01-01"),
+  can_manage: true,
   members: [
     {
       user_id: "owner@example.com",
@@ -25,6 +26,49 @@ const baseTeam: Team = {
     },
   ],
 };
+
+it("renders team details read-only when can_manage is false", () => {
+  render(
+    <TeamDetailsDialog
+      team={{ ...baseTeam, can_manage: false, created_by: "bootstrap" }}
+      mode="details"
+      open
+      onOpenChange={jest.fn()}
+      onTeamUpdated={jest.fn()}
+    />,
+  );
+
+  expect(screen.getByText("Created by")).toBeInTheDocument();
+  expect(screen.getByText("System")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Edit$/i })).not.toBeInTheDocument();
+});
+
+it("shows a read-only member roster without mutation controls", async () => {
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (isMembersGet(url, init)) {
+      return membersPayload([
+        { user_email: "member@example.com", role: "member" },
+      ]);
+    }
+    return jsonResponse({ success: true, data: { team: baseTeam } });
+  });
+
+  render(
+    <TeamDetailsDialog
+      team={{ ...baseTeam, can_manage: false }}
+      mode="members"
+      open
+      onOpenChange={jest.fn()}
+      onTeamUpdated={jest.fn()}
+    />,
+  );
+
+  expect(await screen.findByText("member@example.com")).toBeInTheDocument();
+  expect(screen.queryByPlaceholderText(/Search by name or email/i)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /^Remove member@example.com$/i }),
+  ).not.toBeInTheDocument();
+});
 
 function jsonResponse(payload: unknown): Response {
   return {

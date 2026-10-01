@@ -4,7 +4,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: "ghcr.io/cnoe-io/caipe-scheduler"
+  repository: "ghcr.io/caipe-io/caipe-scheduler"
   pullPolicy: "Always"
   tag: ""
 
@@ -13,7 +13,7 @@ image:
 # time; user-controlled fields are limited to schedule, timezone, and SCHEDULE_ID.
 cronRunner:
   image:
-    repository: "ghcr.io/cnoe-io/caipe-cron-runner"
+    repository: "ghcr.io/caipe-io/caipe-cron-runner"
     pullPolicy: "IfNotPresent"
     tag: ""
   # Resource limits per cron-runner pod. Kept tight - the runner makes 2-3 HTTP calls and exits.
@@ -139,6 +139,8 @@ auth:
 limits:
   maxSchedulesPerOwner: 50
   maxMessageChars: 2000
+  # -- Minimum permitted gap, in seconds, between recurring cron fires.
+  minimumScheduleIntervalSeconds: 1800
 
 # Delayed one-off fire dispatcher. These support scheduler-managed domain
 # retries without teaching the scheduler domain-specific behavior.

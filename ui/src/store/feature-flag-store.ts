@@ -3,7 +3,7 @@ import { create } from "zustand";
 
 const STORAGE_KEY = "caipe-feature-flags";
 
-export type FeatureFlagIcon = "Brain" | "Bug" | "Eye" | "ArrowDownToLine" | "Clock";
+export type FeatureFlagIcon = "Brain" | "Bug" | "Eye" | "ArrowDownToLine" | "Clock" | "Gauge";
 export type FeatureFlagCategory = "ai" | "chat" | "developer";
 
 export const CATEGORY_LABELS: Record<FeatureFlagCategory, string> = {
@@ -23,8 +23,6 @@ export interface FeatureFlag {
   defaultValue: boolean;
   /** MongoDB preferences field name used for server sync */
   preferencesKey: string;
-  /** URL to documentation page (opened when the info button is clicked) */
-  docsUrl?: string;
 }
 
 export const FEATURE_FLAGS: FeatureFlag[] = [
@@ -38,7 +36,6 @@ export const FEATURE_FLAGS: FeatureFlag[] = [
     category: "ai",
     defaultValue: true,
     preferencesKey: "memory_enabled",
-    docsUrl: "/docs/features/cross-thread-memory",
   },
   {
     id: "showThinking",
@@ -74,6 +71,17 @@ export const FEATURE_FLAGS: FeatureFlag[] = [
     preferencesKey: "show_timestamps_enabled",
   },
   {
+    id: "showContextUsage",
+    label: "Show Context Usage",
+    description: "Show context remaining when automatic compaction is near",
+    detail:
+      "Shows a subtle percentage below Send when less than 30% of the active agent context remains. Detailed token usage appears under Advanced in Agent Info.",
+    icon: "Gauge",
+    category: "chat",
+    defaultValue: true,
+    preferencesKey: "show_context_usage_enabled",
+  },
+  {
     id: "debug",
     label: "Debug Mode",
     description: "Verbose logging in browser console",
@@ -89,8 +97,10 @@ export const FEATURE_FLAGS: FeatureFlag[] = [
 interface FeatureFlagState {
   flags: Record<string, boolean>;
   initialized: boolean;
+  touched: Record<string,boolean>;
 
   initialize: () => void;
+  setEnabled: (id: string,value: boolean) => void;
   toggle: (id: string) => void;
   isEnabled: (id: string) => boolean;
 }
@@ -126,24 +136,16 @@ function writeToLocalStorage(flags: Record<string, boolean>): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(flags));
 }
 
-let syncTimer: ReturnType<typeof setTimeout> | null = null;
-
-function syncToServer(flags: Record<string, boolean>): void {
-  if (syncTimer) clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => {
-    const prefs: Record<string, string> = {};
-    for (const flag of FEATURE_FLAGS) {
-      prefs[flag.preferencesKey] = String(flags[flag.id] ?? flag.defaultValue);
-    }
-    apiClient.updatePreferences(prefs).catch(() => {
-      /* server unavailable -- localStorage still works */
-    });
-  }, 500);
+export async function persistFeatureFlag(id: string,value: boolean): Promise<void> {
+  const flag = FEATURE_FLAGS.find((candidate) => candidate.id === id);
+  if (!flag) throw new Error(`Unknown preference: ${id}`);
+  await apiClient.updatePreferences({ [flag.preferencesKey]: String(value) });
 }
 
 export const useFeatureFlagStore = create<FeatureFlagState>((set, get) => ({
   flags: getDefaults(),
   initialized: false,
+  touched: {},
 
   initialize: () => {
     if (get().initialized) return;
@@ -156,8 +158,10 @@ export const useFeatureFlagStore = create<FeatureFlagState>((set, get) => ({
         if (!settings?.preferences) return;
         const prefs = settings.preferences;
         const updated = { ...get().flags };
+        const touched = get().touched;
         let changed = false;
         for (const flag of FEATURE_FLAGS) {
+          if (touched[flag.id]) continue;
           const serverVal = prefs[flag.preferencesKey as keyof typeof prefs];
           if (typeof serverVal === "string") {
             const boolVal = serverVal === "true";
@@ -172,17 +176,27 @@ export const useFeatureFlagStore = create<FeatureFlagState>((set, get) => ({
           set({ flags: updated });
         }
       })
-      .catch(() => {
-        /* server unavailable */
+      .catch((error: unknown) => {
+        console.warn("[feature-flags] Account preferences could not be loaded",error);
       });
+  },
+
+  setEnabled: (id: string,value: boolean) => {
+    const current = get().flags;
+    const next = { ...current,[id]: value };
+    writeToLocalStorage(next);
+    set((state) => ({ flags: next,touched: { ...state.touched,[id]: true } }));
   },
 
   toggle: (id: string) => {
     const current = get().flags;
-    const next = { ...current, [id]: !current[id] };
+    const value = !current[id];
+    const next = { ...current,[id]: value };
     writeToLocalStorage(next);
-    set({ flags: next });
-    syncToServer(next);
+    set((state) => ({ flags: next,touched: { ...state.touched,[id]: true } }));
+    void persistFeatureFlag(id,value).catch((error: unknown) => {
+      console.warn(`[feature-flags] Could not sync ${id}`,error);
+    });
   },
 
   isEnabled: (id: string) => {

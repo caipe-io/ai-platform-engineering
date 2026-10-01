@@ -261,7 +261,9 @@ test.describe("mocked RBAC e2e — WorkflowRunCard HITL inline form", () => {
 
     // Field labels should be visible
     await expect(page.getByText("Key Type")).toBeVisible();
-    await expect(page.getByText("Model")).toBeVisible();
+    await expect(
+      page.locator("label").filter({ hasText: /^Model\*?$/ }),
+    ).toBeVisible();
 
     // Submit button should be present
     await expect(page.getByRole("button", { name: /submit/i })).toBeVisible();
@@ -380,7 +382,6 @@ test.describe("mocked RBAC e2e — WorkflowRunCard HITL inline form", () => {
     };
 
     let resumeCallBody: unknown = null;
-    let pollCount = 0;
 
     await installChatWorkflowMocks(page, env, waitingRun);
 
@@ -393,8 +394,7 @@ test.describe("mocked RBAC e2e — WorkflowRunCard HITL inline form", () => {
     await page.route("**/api/workflow-runs**", async (route) => {
       const url = new URL(route.request().url());
       if (route.request().method() === "GET" && url.searchParams.get("run_id") === RUN_ID) {
-        pollCount++;
-        const fixture = pollCount > 1 ? resumedRun : waitingRun;
+        const fixture = resumeCallBody ? resumedRun : waitingRun;
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -402,7 +402,7 @@ test.describe("mocked RBAC e2e — WorkflowRunCard HITL inline form", () => {
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await installTestSession(page, env, {
@@ -419,7 +419,7 @@ test.describe("mocked RBAC e2e — WorkflowRunCard HITL inline form", () => {
     await expect(page.getByText("Confirm to proceed")).toBeVisible();
 
     // Fill in the confirmation field
-    await page.getByLabel("Confirmation").fill("yes");
+    await page.getByPlaceholder("Enter confirmation...").fill("yes");
 
     // Submit
     await page.getByRole("button", { name: /submit/i }).click();
@@ -432,7 +432,7 @@ test.describe("mocked RBAC e2e — WorkflowRunCard HITL inline form", () => {
 
     // After resume, card transitions to running state (form disappears)
     await expect(page.getByText("Confirm to proceed")).not.toBeVisible({ timeout: 5000 });
-    await expect(page.getByText("Running")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("Running", { exact: true })).toBeVisible({ timeout: 5000 });
   });
 
   test("shows normal compact card for running workflow (no form)", async ({ page }) => {
@@ -471,8 +471,8 @@ test.describe("mocked RBAC e2e — WorkflowRunCard HITL inline form", () => {
     await expectChatComposerReady(page);
 
     // Compact card shown
-    await expect(page.getByText("Global SRE workflow")).toBeVisible();
-    await expect(page.getByText("Running")).toBeVisible();
+    await expect(page.getByText("Global SRE workflow", { exact: true })).toBeVisible();
+    await expect(page.getByText("Running", { exact: true })).toBeVisible();
 
     // No input form visible
     await expect(page.getByRole("button", { name: /submit/i })).not.toBeVisible();

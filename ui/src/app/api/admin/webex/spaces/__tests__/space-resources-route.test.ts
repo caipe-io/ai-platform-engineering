@@ -9,6 +9,7 @@ const mockCheckPermission = jest.fn();
 const mockCheckOpenFgaTuple = jest.fn();
 const mockCheckUniversalRebacRelationship = jest.fn();
 const mockReadOpenFgaTuples = jest.fn();
+const mockListOpenFgaObjects = jest.fn();
 const mockWriteOpenFgaTuples = jest.fn();
 const mockDeleteExactOpenFgaTuples = jest.fn();
 const mockAuditQuery = jest.fn();
@@ -34,6 +35,7 @@ jest.mock("@/lib/rbac/openfga", () => ({
   checkUniversalRebacRelationship: (...args: unknown[]) =>
     mockCheckUniversalRebacRelationship(...args),
   readOpenFgaTuples: (...args: unknown[]) => mockReadOpenFgaTuples(...args),
+  listOpenFgaObjects: (...args: unknown[]) => mockListOpenFgaObjects(...args),
   writeOpenFgaTuples: (...args: unknown[]) => mockWriteOpenFgaTuples(...args),
   deleteExactOpenFgaTuples: (...args: unknown[]) => mockDeleteExactOpenFgaTuples(...args),
 }));
@@ -160,6 +162,10 @@ function matchesFilter(row: Record<string, unknown>, filter: Record<string, unkn
 function createMockCollection(rows: Record<string, unknown>[]) {
   return {
     rows,
+    insertOne: jest.fn(async (row: Record<string, unknown>) => {
+      rows.push(row);
+      return { acknowledged: true };
+    }),
     find: jest.fn((filter: Record<string, unknown> = {}) => {
       const matching = rows.filter((row) => matchesFilter(row, filter));
       return {
@@ -239,13 +245,40 @@ beforeEach(() => {
   mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
   mockCheckUniversalRebacRelationship.mockResolvedValue({ allowed: true });
   mockReadOpenFgaTuples.mockResolvedValue({ tuples: [], continuationToken: undefined });
+  mockListOpenFgaObjects.mockResolvedValue({ objects: [] });
   mockWriteOpenFgaTuples.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
   mockDeleteExactOpenFgaTuples.mockResolvedValue({ enabled: true, deletes: 0 });
   // Phase 3 (spec 2026-05-24-derive-team-from-channel): no team
   // client-scope mock to reset — the helper is gone.
   mockEnsureWebexBotOboPermissions.mockResolvedValue(undefined);
-  mockCallWebexBotAdmin.mockResolvedValue({ reloaded: "space" });
+  mockCallWebexBotAdmin.mockImplementation(
+    async (path: string, options?: { body?: { bot_id?: string; space_id?: string } }) => {
+      if (path === "/admin/webex/spaces/inspect") {
+        const requestedSpaceId = options?.body?.space_id ?? spaceId;
+        const decoded = Buffer.from(requestedSpaceId, "base64").toString("utf8");
+        const canonicalSpaceId = decoded.startsWith("ciscospark://us/ROOM/")
+          ? decoded.slice("ciscospark://us/ROOM/".length)
+          : requestedSpaceId;
+        return {
+          bot_id: options?.body?.bot_id ?? "primary",
+          space_id: canonicalSpaceId,
+          space_name:
+            canonicalSpaceId === "6f91b070-531a-11f1-926d-6fd3c20dfdc4"
+              ? "Grid Test"
+              : "Incident Room",
+          member_count: 10,
+        };
+      }
+      return { reloaded: "space" };
+    },
+  );
   mockCollections[RBAC_COLLECTION_NAMES.webexSpaceGrants] = createMockCollection([]);
+  mockCollections.platform_config = createMockCollection([
+    {
+      _id: "platform_settings",
+      publication_approval: { require_webex_onboarding_approval: false },
+    },
+  ]);
 });
 
 afterEach(() => {
@@ -594,7 +627,7 @@ describe("Webex space ReBAC resource APIs", () => {
           workspace_id: "Cisco",
           bot_id: "primary",
           space_id: publicRoomId,
-          space_name: "Grid Test",
+          space_name: "Incident Room",
           team_slug: "platform",
           agent_id: "agent-sri-demo-agent",
         }),

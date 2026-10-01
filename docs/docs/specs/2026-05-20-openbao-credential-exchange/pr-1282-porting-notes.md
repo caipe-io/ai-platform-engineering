@@ -1,6 +1,6 @@
 # PR #1282 Selective Porting Notes
 
-Source PR: https://github.com/cnoe-io/ai-platform-engineering/pull/1282
+Source PR: https://github.com/caipe-io/ai-platform-engineering/pull/1282
 Title: Feature/caipe security UI v2
 Author: Matt Shooshtari DevOps Alchemist (`cpumanaz`)
 Commit author used in PR: Matthew Shooshtari (`mshoosht-cisco`) `mshoosht@cisco.com`

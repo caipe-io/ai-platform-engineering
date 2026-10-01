@@ -26,6 +26,7 @@ export function TooltipProvider({
 
 interface TooltipProps {
   children: React.ReactNode;
+  className?: string;
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -59,6 +60,7 @@ const TooltipStateContext = React.createContext<{
 
 export function Tooltip({
   children,
+  className,
   open: controlledOpen,
   defaultOpen = false,
   onOpenChange,
@@ -119,7 +121,7 @@ export function Tooltip({
           const firstChild = node?.firstElementChild;
           triggerRef.current = firstChild instanceof HTMLElement ? firstChild : node;
         }}
-        className="relative inline-block"
+        className={cn("relative inline-block",className)}
       >
         {children}
       </span>

@@ -5,20 +5,20 @@ sidebar_position: 4
 # CAIPE CLI
 
 :::caution Refactor in Progress
-The CLI is under active development. Track progress in [PR #1184](https://github.com/cnoe-io/ai-platform-engineering/pull/1184). Commands, flags, and installation paths may change before the final merge.
+The CLI is under active development. Track progress in [PR #1184](https://github.com/caipe-io/ai-platform-engineering/pull/1184). Commands, flags, and installation paths may change before the final merge.
 :::
 
 
 AI-assisted coding, workflows, and platform engineering from the terminal.
 
-CAIPE CLI is a TypeScript/Bun CLI that connects to a CAIPE server via the A2A or AG-UI streaming protocol. It provides an interactive chat REPL, headless mode for CI/CD pipelines, skill management, and secure credential storage.
+CAIPE CLI is a TypeScript/Bun CLI that connects to a CAIPE server through the AG-UI streaming protocol. It provides an interactive chat REPL, headless mode for CI/CD pipelines, skill management, and secure credential storage.
 
 ## Installation
 
 ### Quick install (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cnoe-io/ai-platform-engineering/main/cli/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/cli/install.sh | sh
 ```
 
 Installs the correct binary for your platform (macOS/Linux, arm64/x64) to `/usr/local/bin/caipe`.
@@ -36,7 +36,7 @@ npm install -g caipe
 ### Build from source
 
 ```bash
-git clone https://github.com/cnoe-io/ai-platform-engineering.git
+git clone https://github.com/caipe-io/ai-platform-engineering.git
 cd ai-platform-engineering/cli
 bun install
 npm run compile   # produces dist/caipe (Bun single-file binary)
@@ -91,7 +91,7 @@ caipe
 
 The chat REPL provides:
 
-- **Streaming responses** via A2A or AG-UI Server-Sent Events
+- **Streaming responses** via AG-UI Server-Sent Events
 - **Slash commands** — type `/` for a picker: `/clear`, `/compact`, `/login`, `/skills`, `/agents`, `/help`, `/exit`
 - **Readline keybindings** — `Ctrl+A/E`, `Ctrl+B/F`, `Alt+B/F`, `Ctrl+U/K/W`, `Ctrl+D`
 - **Input history** — `Up/Down` or `Ctrl+P/N`
@@ -110,7 +110,7 @@ caipe chat --headless --prompt "Explain the deployment architecture"
 caipe chat --headless --prompt-file question.txt --output json
 
 # Multi-turn via stdin
-echo -e "Hello\nWhat is A2A?" | caipe chat --headless --interactive-stdin
+echo -e "Hello\nWhat can this agent do?" | caipe chat --headless --interactive-stdin
 
 # With explicit token
 caipe chat --headless --token "$JWT" --prompt "status check"
@@ -129,4 +129,4 @@ Settings are stored in `~/.config/caipe/settings.json`.
 
 ## Source
 
-[`cli/` directory in ai-platform-engineering](https://github.com/cnoe-io/ai-platform-engineering/tree/main/cli)
+[`cli/` directory in ai-platform-engineering](https://github.com/caipe-io/ai-platform-engineering/tree/main/cli)

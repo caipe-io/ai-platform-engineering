@@ -10,9 +10,10 @@ list/batch response. The single-entity neighborhood endpoint additionally
 403s on the *starting* entity, since fetching one specific entity by ID is
 more like a by-ID content read than a list.
 
-``/v1/graph/explore/entity_type`` and the whole ``/v1/graph/explore/ontology/*``
-family are intentionally left unfiltered (schema/type-level metadata, not
-per-datasource instance data) and are not covered here.
+The deployment-global ontology has no datasource provenance. Its endpoints
+therefore require unrestricted datasource access, while the shared
+``/v1/graph/explore/entity_type`` endpoint derives scoped type names from the
+provenance-tagged data graph.
 
 The TestClient is used WITHOUT a ``with`` block so the app lifespan (Milvus /
 Redis / Neo4j connections) is not triggered.
@@ -20,10 +21,13 @@ Redis / Neo4j connections) is not triggered.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from common.models.rag import StructuredEntity, StructuredEntityId
 from common.models.graph import Relation
@@ -69,6 +73,9 @@ def _wire(monkeypatch: pytest.MonkeyPatch):
     restapi.app.dependency_overrides[require_authenticated_user] = _user
     graph_db = AsyncMock()
     monkeypatch.setattr(restapi, "data_graph_db", graph_db, raising=False)
+    # These tests isolate per-datasource graph filtering. The coarse RAG search
+    # capability is exercised separately by the endpoint authorization tests.
+    monkeypatch.setattr(restapi, "authorize_search", AsyncMock(return_value=None))
     yield graph_db
     restapi.app.dependency_overrides.clear()
 
@@ -80,6 +87,165 @@ def _restrict_to(monkeypatch: pytest.MonkeyPatch, accessible: list[str] | None) 
         return accessible
 
     monkeypatch.setattr(restapi, "_get_accessible_datasource_ids_for_request", _resolved, raising=False)
+
+
+# ---------------------------------------------------------------------------
+# Entity types and the global ontology
+# ---------------------------------------------------------------------------
+
+
+def test_entity_types_use_scoped_data_graph_for_restricted_caller(
+    client: TestClient,
+    _wire,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    ontology_db = AsyncMock()
+    ontology_db.get_all_entity_types.return_value = ["PrivateType", "Service"]
+    monkeypatch.setattr(restapi, "ontology_graph_db", ontology_db, raising=False)
+    _wire.get_all_entity_types.return_value = ["Service"]
+    _restrict_to(monkeypatch, ["primary-ds"])
+
+    response = client.get("/v1/graph/explore/entity_type")
+
+    assert response.status_code == 200
+    assert response.json() == ["Service"]
+    _wire.get_all_entity_types.assert_awaited_once_with(datasource_ids=["primary-ds"])
+    ontology_db.get_all_entity_types.assert_not_awaited()
+
+
+def test_entity_types_use_ontology_for_unrestricted_caller(
+    client: TestClient,
+    _wire,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    ontology_db = AsyncMock()
+    ontology_db.get_all_entity_types.return_value = ["Incident", "Service"]
+    monkeypatch.setattr(restapi, "ontology_graph_db", ontology_db, raising=False)
+    _restrict_to(monkeypatch, None)
+
+    response = client.get("/v1/graph/explore/entity_type")
+
+    assert response.status_code == 200
+    assert response.json() == ["Incident", "Service"]
+    ontology_db.get_all_entity_types.assert_awaited_once_with()
+    _wire.get_all_entity_types.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("GET", "/v1/graph/explore/ontology/entities/batch", None),
+        ("GET", "/v1/graph/explore/ontology/relations/batch", None),
+        (
+            "POST",
+            "/v1/graph/explore/ontology/entity/neighborhood",
+            {"entity_type": "Service", "entity_pk": "service-1", "depth": 1},
+        ),
+        ("GET", "/v1/graph/explore/ontology/entity/start", None),
+        ("GET", "/v1/graph/explore/ontology/stats", None),
+    ],
+)
+def test_global_ontology_endpoints_deny_bounded_callers(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    path: str,
+    payload: dict | None,
+):
+    ontology_db = AsyncMock()
+    monkeypatch.setattr(restapi, "ontology_graph_db", ontology_db, raising=False)
+    _restrict_to(monkeypatch, ["primary-ds"])
+
+    response = client.request(method, path, json=payload)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == (
+        "Ontology graph access requires unrestricted datasource access"
+    )
+    ontology_db.fetch_entities_batch.assert_not_awaited()
+    ontology_db.fetch_relations_batch.assert_not_awaited()
+    ontology_db.explore_neighborhood.assert_not_awaited()
+    ontology_db.fetch_random_entities.assert_not_awaited()
+    ontology_db.get_graph_stats.assert_not_awaited()
+
+
+def test_global_ontology_endpoint_allows_unrestricted_caller(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    ontology_db = AsyncMock()
+    ontology_db.get_graph_stats.return_value = {"node_count": 2, "relation_count": 1}
+    monkeypatch.setattr(restapi, "ontology_graph_db", ontology_db, raising=False)
+    _restrict_to(monkeypatch, None)
+
+    response = client.get("/v1/graph/explore/ontology/stats")
+
+    assert response.status_code == 200
+    assert response.json() == {"node_count": 2, "relation_count": 1}
+    ontology_db.get_graph_stats.assert_awaited_once_with()
+
+
+def test_ontology_agent_status_denies_bounded_callers(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def _authenticated(*args, **kwargs):
+        return _user()
+
+    _restrict_to(monkeypatch, ["primary-ds"])
+    monkeypatch.setattr(restapi, "require_authenticated_user", _authenticated)
+    monkeypatch.setattr(restapi, "get_auth_manager", object)
+    monkeypatch.setattr(restapi, "graph_rag_enabled", True)
+    upstream = AsyncMock()
+    monkeypatch.setattr(restapi, "ontology_agent_client", upstream)
+
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/v1/graph/ontology/agent/status",
+            "raw_path": b"/v1/graph/ontology/agent/status",
+            "query_string": b"",
+            "headers": [],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+            "root_path": "",
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(restapi._reverse_proxy(request))
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == (
+        "Ontology graph access requires unrestricted datasource access"
+    )
+    upstream.send.assert_not_awaited()
+
+
+def test_public_healthz_does_not_disclose_runtime_or_index_metadata(
+    client: TestClient,
+    _wire,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _wire.database_type = "neo4j"
+    _wire.query_language = "cypher"
+    _wire.tenant_label = "data"
+    ontology_db = AsyncMock()
+    ontology_db.database_type = "neo4j"
+    ontology_db.query_language = "cypher"
+    ontology_db.tenant_label = "ontology"
+    monkeypatch.setattr(restapi, "ontology_graph_db", ontology_db, raising=False)
+    monkeypatch.setattr(restapi, "graph_rag_enabled", True)
+
+    response = client.get("/healthz")
+
+    # This unit fixture does not initialize every readiness dependency; the
+    # disclosure contract is identical for healthy and unhealthy responses.
+    assert response.status_code in (200, 503)
+    assert response.json()["config"] == {"graph_rag_enabled": True}
+    _wire.get_all_entity_types.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -102,14 +268,14 @@ def test_entities_batch_filters_out_inaccessible_datasource(client: TestClient, 
     assert body["entities"][0]["all_properties"]["id"] == "e1"
 
 
-def test_entities_batch_keeps_untagged_entities(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
+def test_entities_batch_drops_untagged_entities(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
     _restrict_to(monkeypatch, ["primary-ds"])
     _wire.fetch_entities_batch.return_value = [_entity("e1", None)]
 
     response = client.get("/v1/graph/explore/data/entities/batch")
 
     assert response.status_code == 200
-    assert response.json()["count"] == 1
+    assert response.json()["count"] == 0
 
 
 def test_entities_batch_unrestricted_when_accessible_is_none(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
@@ -172,13 +338,7 @@ def test_relations_batch_unrestricted_when_accessible_is_none(client: TestClient
 def test_neighborhood_denies_inaccessible_start_entity(client: TestClient, _wire, monkeypatch: pytest.MonkeyPatch):
     start = _entity("e1", "secondary-ds")
     _wire.explore_neighborhood.return_value = {"entity": start, "entities": [start], "relations": []}
-
-    async def _deny(*args, **kwargs):
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=403, detail="Access denied for this datasource")
-
-    monkeypatch.setattr(restapi, "check_datasource_access", _deny, raising=False)
+    _restrict_to(monkeypatch, ["primary-ds"])
 
     response = client.post(
         "/v1/graph/explore/data/entity/neighborhood",
@@ -267,4 +427,4 @@ def test_random_start_nodes_unrestricted_fetches_exact_count(client: TestClient,
     response = client.get("/v1/graph/explore/data/entity/start", params={"n": 5})
 
     assert response.status_code == 200
-    _wire.fetch_random_entities.assert_awaited_once_with(count=5)
+    _wire.fetch_random_entities.assert_awaited_once_with(count=5, datasource_ids=None)

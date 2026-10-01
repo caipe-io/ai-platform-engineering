@@ -550,21 +550,6 @@ export interface SkillRunStats {
   avg_duration_ms: number | null;
 }
 
-export interface SkillMetricsPersonal {
-  total_skills: number;
-  by_visibility: { private: number; team: number; global: number };
-  by_category: Array<{ category: string; count: number }>;
-  recent_skills: Array<{
-    id: string;
-    name: string;
-    visibility: SkillVisibility;
-    category: string;
-    created_at: string;
-  }>;
-  run_stats: SkillRunStats[];
-  daily_created: Array<{ date: string; count: number }>;
-}
-
 export interface SkillMetricsAdmin {
   total_skills: number;
   system_skills: number;

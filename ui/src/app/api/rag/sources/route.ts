@@ -17,13 +17,51 @@ import {
   successResponse,
   withErrorHandler,
 } from "@/lib/api-middleware";
-import {
-  computeIngestionSourceId,
-  type IngestionSourceIdentity,
-} from "@/lib/ingestion-source-id";
+import { computeIngestionSourceId } from "@/lib/ingestion-source-id";
 import { getCollection } from "@/lib/mongodb";
-import { reconcileIngestionSourceRelationships } from "@/lib/rbac/openfga-owned-resources-reconcile";
+import {
+  getRagServerUrl,
+  triggerIngestion,
+} from "@/lib/rag-source-ingestion.server";
+import {
+  extractIngestionSourceTypeFields,
+  optionalBoolean,
+  optionalInteger,
+  optionalWebSettings,
+  validateSourceSpecificInputFields,
+} from "@/lib/ingestion-source-config";
+import {
+  createPublicationRequest,
+  recordAutoApprovedPublication,
+  type RagPublicationState,
+} from "@/lib/publication-approval.server";
+import { getRagDefaultSearchTeamSlug } from "@/lib/rag-settings";
+import {
+  enforceRagIngestorLimits,
+  getRagIngestorLimits,
+} from "@/lib/rag-ingestor-limits.server";
+import { visibleRagCollectionsByDatasource } from "@/lib/rag-collections.server";
+import {
+  prepareRagPublication,
+  ragPublicationRevision,
+  ragPublicationRevisionBasis,
+} from "@/lib/rag-publication-approval.server";
+import {
+  authorizedSourceSecretRefs,
+  screenSourceRequestHeaders,
+} from "@/lib/rag-source-credentials.server";
+import { allowedSourceTypesForIngestorServiceAccount } from "@/lib/rbac/ingestor-service-accounts";
+import { checkOpenFgaTuple } from "@/lib/rbac/openfga";
+import {
+  deleteAllDataSourceRelationshipTuples,
+  deleteAllIngestionSourceRelationshipTuples,
+  deleteAllKnowledgeBaseRelationshipTuples,
+  reconcileDataSourceRelationships,
+  reconcileIngestionSourceRelationships,
+  reconcileKnowledgeBaseRelationships,
+} from "@/lib/rbac/openfga-owned-resources-reconcile";
 import { caipeOrgKey } from "@/lib/rbac/organization";
+import { resolveUserIdentitiesBySubject } from "@/lib/rbac/user-identity-directory";
 import {
   filterResourcesByPermission,
   requireResourcePermission,
@@ -36,17 +74,10 @@ import { NextRequest } from "next/server";
 
 const COLLECTION_NAME = "rag_ingestion_sources";
 
-const INGESTION_SOURCE_TYPES: readonly IngestionSourceType[] = [
-  "slack_channel",
-  "confluence_space",
-  "jira_project",
-  "web_url",
-  "webex_space",
-];
-
 const DEFAULT_CHUNK_SIZE = 10000;
 const DEFAULT_CHUNK_OVERLAP = 2000;
 const DEFAULT_RELOAD_INTERVAL = 86400;
+const OPENFGA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
 
 interface TeamOwnershipDoc {
   _id?: unknown;
@@ -77,6 +108,21 @@ async function canManageOrganization(
   }
 }
 
+async function canIngestForOrganization(
+  session: Parameters<typeof requireResourcePermission>[0],
+): Promise<boolean> {
+  try {
+    await requireResourcePermission(session, {
+      type: "organization",
+      id: caipeOrgKey(),
+      action: "ingest",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function canUseTeamSlug(
   session: Parameters<typeof requireResourcePermission>[0],
   teamSlug: string,
@@ -95,71 +141,223 @@ async function canUseTeamSlug(
 }
 
 /**
- * Resolve type-specific identity fields required to derive `source_id`, and
- * validate that all required fields for the declared `source_type` are
- * present. Returns `null` if `source_type` is missing/unknown.
+ * Explicit "data source author" capability check (spec 2026-06-03), mirroring
+ * the RAG server's `_team_holds_ingest_capability_filter` /
+ * `authorize_datasource_create` (rbac.py) — team membership on the owner
+ * team alone is not enough to create a new source; the team must also hold
+ * `team:<slug>#member -> ingestor -> organization:<key>`, granted only by an
+ * org admin via `PUT /api/admin/teams/[id]/ingest-capability`. Without this
+ * gate, any member of ANY team the caller belongs to could author a source
+ * scoped to that team.
  */
-function extractSourceIdentity(
-  body: Record<string, unknown>,
-): { identity: IngestionSourceIdentity; fields: Record<string, unknown> } | null {
-  const sourceType = body.source_type as IngestionSourceType | undefined;
-  if (!sourceType || !INGESTION_SOURCE_TYPES.includes(sourceType)) return null;
-
-  switch (sourceType) {
-    case "slack_channel": {
-      const channelId = normalizeString(body.channel_id);
-      if (!channelId) return null;
-      return {
-        identity: { source_type: "slack_channel", channel_id: channelId },
-        fields: {
-          source_type: sourceType,
-          channel_id: channelId,
-          lookback_days: body.lookback_days as number | undefined,
-          include_bots: body.include_bots as boolean | undefined,
-        },
-      };
-    }
-    case "confluence_space": {
-      const confluenceUrl = normalizeString(body.confluence_url);
-      const spaceKey = normalizeString(body.space_key);
-      if (!confluenceUrl || !spaceKey) return null;
-      return {
-        identity: { source_type: "confluence_space", confluence_url: confluenceUrl, space_key: spaceKey },
-        fields: { source_type: sourceType, confluence_url: confluenceUrl, space_key: spaceKey },
-      };
-    }
-    case "jira_project": {
-      const projectKey = normalizeString(body.project_key);
-      const sourceSlug = normalizeString(body.source_slug);
-      if (!projectKey || !sourceSlug) return null;
-      return {
-        identity: { source_type: "jira_project", project_key: projectKey, source_slug: sourceSlug },
-        fields: {
-          source_type: sourceType,
-          project_key: projectKey,
-          source_slug: sourceSlug,
-          jql: normalizeString(body.jql) ?? "",
-          include_comments: body.include_comments as boolean | undefined,
-        },
-      };
-    }
-    case "web_url": {
-      const url = normalizeString(body.url);
-      if (!url) return null;
-      return {
-        identity: { source_type: "web_url", url },
-        fields: { source_type: sourceType, url },
-      };
-    }
-    case "webex_space": {
-      const spaceId = normalizeString(body.space_id);
-      if (!spaceId) return null;
-      return {
-        identity: { source_type: "webex_space", space_id: spaceId },
-        fields: { source_type: sourceType, space_id: spaceId },
-      };
-    }
+async function teamHoldsIngestCapability(teamSlug: string): Promise<boolean> {
+  try {
+    const decision = await checkOpenFgaTuple({
+      user: `team:${teamSlug}#member`,
+      relation: "ingestor",
+      object: `organization:${caipeOrgKey()}`,
+    });
+    return decision.allowed;
+  } catch {
+    return false;
   }
+}
+
+/**
+ * Check whether the RAG server already has a datasource under this exact id
+ * (Redis `DataSourceInfo`) — e.g. adopted by a prior migrate run, or
+ * ingested directly via env config before this DB-backed path existed. A
+ * Mongo-only collision check misses these, so `computeIngestionSourceId`
+ * could otherwise silently collide with live data on the RAG server.
+ *
+ * Uses the privileged `/v1/datasource/{id}/exists` endpoint (existence only,
+ * no metadata) rather than `/v1/datasources`, which filters to the caller's
+ * accessible set — a caller can't collide-check against a datasource they
+ * can't read via that list, but they can still create it and inherit access
+ * to its existing data. Fails CLOSED: any error blocks creation rather than
+ * silently allowing a potential collision through.
+ */
+async function ragServerHasDatasource(
+  accessToken: string | undefined,
+  sourceId: string,
+  ownerTeamSlug: string | null,
+): Promise<boolean> {
+  if (!accessToken) {
+    throw new ApiError(
+      "Unable to verify source id availability. Please try again.",
+      503,
+      "COLLISION_CHECK_UNAVAILABLE",
+    );
+  }
+  try {
+    const target = new URL(
+      `${getRagServerUrl()}/v1/datasource/${encodeURIComponent(sourceId)}/exists`,
+    );
+    if (ownerTeamSlug) target.searchParams.set("owner_team_slug", ownerTeamSlug);
+    const response = await fetch(target, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    if (!response.ok) {
+      throw new ApiError(
+        "Unable to verify source id availability. Please try again.",
+        503,
+        "COLLISION_CHECK_UNAVAILABLE",
+      );
+    }
+    const data = (await response.json()) as { exists?: boolean };
+    return data.exists === true;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "Unable to verify source id availability. Please try again.",
+      503,
+      "COLLISION_CHECK_UNAVAILABLE",
+    );
+  }
+}
+
+/**
+ * UI-only/advisory flag for whether the caller can manage this source — the
+ * PATCH/DELETE routes' own `can_manage` check remains authoritative.
+ */
+async function canManageSource(
+  session: Parameters<typeof requireResourcePermission>[0],
+  sourceId: string,
+): Promise<boolean> {
+  try {
+    await requireResourcePermission(
+      session,
+      { type: "ingestion_source", id: sourceId, action: "manage" },
+      { bypassForOrgAdmin: true },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface CreateIngestionSourceInput {
+  sourceId: string;
+  fields: Record<string, unknown>;
+  name: string;
+  description: string;
+  ownerTeamSlug: string | null;
+  sharedWithTeams: string[];
+  /** Explicit query/search grants, independent from management ownership. */
+  searchWithTeams?: string[];
+  /** Explicit individual query/search grants (Keycloak subjects). */
+  searchWithUsers?: string[];
+  creatorSubject: string | null;
+  ownerSubject: string | null;
+  /** Initial Search owner. Independent from source management. */
+  searchOwnerTeamSlug?: string | null;
+  /** Initial Search shares. Independent from source management. */
+  searchSharedWithTeams?: string[];
+  /** Personal owner of the searchable KB (normally the source creator). */
+  searchOwnerSubject?: string | null;
+  /** Persisted recovery hint even when an adoption caller owns policy writes. */
+  recordedSearchOwnerTeamSlug?: string | null;
+  defaultChunkSize?: number;
+  defaultChunkOverlap?: number;
+  reloadInterval?: number;
+  configDriven?: boolean;
+  configImportAdopted?: boolean;
+  visibility?: string;
+}
+
+/**
+ * Insert a source-management config row and establish its independent initial
+ * Search Access policy. Later edits can reconcile either policy without
+ * treating search-only teams as source managers.
+ */
+export async function createIngestionSource(
+  input: CreateIngestionSourceInput,
+): Promise<IngestionSourceConfig> {
+  const now = new Date().toISOString();
+  const doc = {
+    source_id: input.sourceId,
+    ...input.fields,
+    name: input.name,
+    description: input.description,
+    status: "pending",
+    default_chunk_size: input.defaultChunkSize ?? DEFAULT_CHUNK_SIZE,
+    default_chunk_overlap: input.defaultChunkOverlap ?? DEFAULT_CHUNK_OVERLAP,
+    reload_interval: input.reloadInterval ?? DEFAULT_RELOAD_INTERVAL,
+    config_driven: input.configDriven ?? false,
+    config_import_adopted: input.configImportAdopted ?? false,
+    visibility: input.visibility ?? "team",
+    creator_subject: input.creatorSubject ?? undefined,
+    owner_subject: input.ownerSubject ?? undefined,
+    owner_team_slug: input.ownerTeamSlug ?? undefined,
+    search_owner_team_slug:
+      input.recordedSearchOwnerTeamSlug ?? input.searchOwnerTeamSlug ?? undefined,
+    search_with_teams: input.searchWithTeams ?? input.searchSharedWithTeams ?? [],
+    search_with_users: input.searchWithUsers ?? [],
+    shared_with_teams: input.sharedWithTeams,
+    created_at: now,
+    updated_at: now,
+  } as unknown as IngestionSourceConfig;
+
+  const collection = await getCollection<IngestionSourceConfig>(COLLECTION_NAME);
+  await collection.insertOne(doc as never);
+
+  try {
+    await reconcileIngestionSourceRelationships({
+      sourceId: input.sourceId,
+      creatorSubject: doc.creator_subject,
+      ownerSubject: doc.owner_subject,
+      ownerTeamSlug: input.ownerTeamSlug,
+      nextSharedTeamSlugs: input.sharedWithTeams,
+      previousSharedTeamSlugs: [],
+      globalUserAccess: false,
+    });
+
+    // Undefined means an adoption caller already reconciled the policy of an
+    // existing datasource. A concrete value provisions a brand-new KB.
+    if (input.searchOwnerTeamSlug !== undefined) {
+      await reconcileKnowledgeBaseRelationships({
+        knowledgeBaseId: input.sourceId,
+        creatorSubject: doc.creator_subject,
+        // `null` is meaningful: a team-managed source has no implicit
+        // personal query owner. `undefined` keeps the legacy create default.
+        ownerSubject:
+          input.searchOwnerSubject === undefined
+            ? doc.creator_subject
+            : input.searchOwnerSubject,
+        ownerTeamSlug: input.searchOwnerTeamSlug,
+        nextSharedTeamSlugs:
+          input.searchWithTeams ?? input.searchSharedWithTeams ?? [],
+        previousSharedTeamSlugs: [],
+        nextSharedUserSubjects: input.searchWithUsers ?? [],
+        previousSharedUserSubjects: [],
+      });
+      await reconcileDataSourceRelationships({
+        dataSourceId: input.sourceId,
+        parentKnowledgeBaseId: input.sourceId,
+      });
+    }
+  } catch (error) {
+    // Keep failed creates retryable. Exact query cleanup is safe only for a
+    // normal create, where collision detection proved the objects were new.
+    const cleanups: Promise<unknown>[] = [
+      deleteAllIngestionSourceRelationshipTuples(input.sourceId),
+      collection.deleteOne({ source_id: input.sourceId } as never),
+    ];
+    if (input.searchOwnerTeamSlug !== undefined) {
+      cleanups.push(
+        deleteAllKnowledgeBaseRelationshipTuples(input.sourceId),
+        deleteAllDataSourceRelationshipTuples(input.sourceId),
+      );
+    }
+    await Promise.allSettled(cleanups);
+    throw error;
+  }
+
+  return doc;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -174,26 +372,103 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const ownerTeamSlug = searchParams.get("owner_team_slug");
   const limitParam = Number.parseInt(searchParams.get("limit") ?? "", 10);
   const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 200;
+  const offsetParam = Number.parseInt(searchParams.get("offset") ?? "", 10);
+  const offset = Number.isFinite(offsetParam) && offsetParam > 0 ? offsetParam : 0;
+
+  // Recognized ingestor service accounts (RAG_INGESTOR_SERVICE_ACCOUNTS) are
+  // scoped by identity, not by OpenFGA per-resource tuples: force
+  // source_type to the intersection of the SA's declared allow-list and any
+  // explicitly requested type, so a query param can only narrow, never
+  // widen, the SA's scope. Skip the OpenFGA filter below entirely for this
+  // caller — its scope is fully determined by the forced query.
+  const ingestorAllowedTypes = allowedSourceTypesForIngestorServiceAccount(session);
 
   const query: Record<string, unknown> = {};
-  if (sourceType) query.source_type = sourceType;
+  if (ingestorAllowedTypes) {
+    const requestedTypes: IngestionSourceType[] = sourceType
+      ? [sourceType as IngestionSourceType]
+      : Array.from(ingestorAllowedTypes);
+    const effectiveTypes = requestedTypes.filter((t) => ingestorAllowedTypes.has(t));
+    query.source_type = effectiveTypes.length === 1 ? effectiveTypes[0] : { $in: effectiveTypes };
+  } else if (sourceType) {
+    query.source_type = sourceType;
+  }
   if (ownerTeamSlug) query.owner_team_slug = ownerTeamSlug;
 
   const collection = await getCollection<IngestionSourceConfig>(COLLECTION_NAME);
-  const results = await collection
+  const cursor = collection
     .find(query as never)
-    .sort({ updated_at: -1 })
-    .limit(limit)
-    .toArray();
+    .sort({ updated_at: -1, source_id: 1 });
+  if (offset > 0) cursor.skip(offset);
+  const results = await cursor.limit(limit).toArray();
 
-  const visibleResults = await filterResourcesByPermission(
-    session,
-    results,
-    { type: "ingestion_source", action: "read", id: (source) => source.source_id },
-    { bypassForOrgAdmin: true },
+  const visibleResults = ingestorAllowedTypes
+    ? results
+    : await filterResourcesByPermission(
+        session,
+        results,
+        { type: "ingestion_source", action: "read", id: (source) => source.source_id },
+        { bypassForOrgAdmin: true },
+      );
+
+  const sourceSubjects = Array.from(new Set(visibleResults.flatMap((source) => [
+    source.owner_subject,
+    source.creator_subject,
+    ...((source.search_with_users ?? []) as string[]),
+  ].filter((subject): subject is string => typeof subject === "string" && Boolean(subject.trim())))));
+  const identityBySubject = await resolveUserIdentitiesBySubject(sourceSubjects).catch(() => new Map());
+
+  const sourcesWithPermissions = await Promise.all(
+    visibleResults.map(async (source) => {
+      const effectiveOwnerSubject = source.owner_team_slug
+        ? null
+        : source.owner_subject ?? source.creator_subject ?? null;
+      return {
+        ...source,
+        ...(effectiveOwnerSubject
+          ? {
+              owner_subject: effectiveOwnerSubject,
+              owner_display_name:
+                identityBySubject.get(effectiveOwnerSubject)?.display_name ?? "Unknown user",
+              owner_email: identityBySubject.get(effectiveOwnerSubject)?.email ?? null,
+            }
+          : {}),
+        ...(source.creator_subject
+          ? {
+              creator_display_name:
+                identityBySubject.get(source.creator_subject)?.display_name ?? "Unknown user",
+              creator_email: identityBySubject.get(source.creator_subject)?.email ?? null,
+            }
+          : {}),
+        search_user_display_names: (source.search_with_users ?? []).map(
+          (subject) => identityBySubject.get(subject)?.display_name ?? "Unknown user",
+        ),
+        _permissions: { can_manage: await canManageSource(session, source.source_id) },
+      };
+    }),
   );
 
-  return successResponse({ sources: visibleResults });
+  // Ingestor service accounts are identity-scoped transports, not interactive
+  // collection readers. Their forced source-type allow-list is the complete
+  // authorization boundary, so do not perform (or expose) collection lookups.
+  const collectionLabels = ingestorAllowedTypes
+    ? new Map<string, string[]>()
+    : await visibleRagCollectionsByDatasource(
+        session,
+        sourcesWithPermissions.map((source) => source.source_id),
+      ).catch(() => new Map());
+  return successResponse({
+    sources: sourcesWithPermissions.map((source) => ({
+      ...source,
+      rag_collections: collectionLabels.get(source.source_id) ?? [],
+    })),
+    pagination: {
+      offset,
+      limit,
+      has_more: results.length === limit,
+      next_offset: results.length === limit ? offset + limit : null,
+    },
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -202,8 +477,19 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const { session } = await getAuthFromBearerOrSession(request);
+  const ingestorLimits = await getRagIngestorLimits();
 
-  const rawBody = (await request.json()) as Record<string, unknown>;
+  let rawBody: Record<string, unknown>;
+  try {
+    const parsed = await request.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new ApiError("Request body must be an object", 400, "INVALID_SOURCE_PAYLOAD");
+    }
+    rawBody = parsed as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError("Invalid JSON body", 400, "INVALID_JSON");
+  }
   // config_driven/visibility are server-controlled on this path; never
   // accept caller-supplied values for either.
   const body = { ...rawBody };
@@ -214,8 +500,72 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!name) {
     throw new ApiError("name is required", 400, "INVALID_SOURCE_PAYLOAD");
   }
+  if (name.length > 120) {
+    throw new ApiError("name must not exceed 120 characters", 400, "INVALID_SOURCE_PAYLOAD");
+  }
+  if (body.description !== undefined && typeof body.description !== "string") {
+    throw new ApiError("description must be a string", 400, "INVALID_SOURCE_PAYLOAD");
+  }
+  if (typeof body.description === "string" && body.description.length > 2000) {
+    throw new ApiError(
+      "description must not exceed 2000 characters",
+      400,
+      "INVALID_SOURCE_PAYLOAD",
+    );
+  }
+  validateSourceSpecificInputFields(body);
+  const defaultChunkSize = optionalInteger(
+    body.default_chunk_size,
+    "default_chunk_size",
+    100,
+    100000,
+  ) ?? DEFAULT_CHUNK_SIZE;
+  const defaultChunkOverlap = optionalInteger(
+    body.default_chunk_overlap,
+    "default_chunk_overlap",
+    0,
+    10000,
+  ) ?? DEFAULT_CHUNK_OVERLAP;
+  if (defaultChunkOverlap >= defaultChunkSize) {
+    throw new ApiError(
+      "default_chunk_overlap must be smaller than default_chunk_size",
+      400,
+      "INVALID_SOURCE_PAYLOAD",
+    );
+  }
+  const reloadInterval = optionalInteger(
+    body.reload_interval,
+    "reload_interval",
+    60,
+  );
+  if (reloadInterval === undefined) {
+    throw new ApiError(
+      "reload_interval is required",
+      400,
+      "INVALID_SOURCE_PAYLOAD",
+    );
+  }
+  body.default_chunk_size = defaultChunkSize;
+  body.default_chunk_overlap = defaultChunkOverlap;
+  body.reload_interval = reloadInterval;
+  if (body.source_type === "slack_channel") {
+    body.lookback_days = optionalInteger(body.lookback_days, "lookback_days", 0) ?? 30;
+    body.include_bots = optionalBoolean(body.include_bots, "include_bots") ?? false;
+  } else if (body.source_type === "webex_space") {
+    body.include_bots = optionalBoolean(body.include_bots, "include_bots") ?? false;
+  } else if (body.source_type === "jira_project") {
+    body.include_comments = optionalBoolean(body.include_comments, "include_comments") ?? true;
+    body.include_links = optionalBoolean(body.include_links, "include_links") ?? true;
+    if (!normalizeString(body.jql)) {
+      throw new ApiError("jql is required", 400, "INVALID_SOURCE_PAYLOAD");
+    }
+  } else if (body.source_type === "confluence_space") {
+    body.get_child_pages = optionalBoolean(body.get_child_pages, "get_child_pages") ?? false;
+  } else if (body.source_type === "web_url") {
+    body.settings = optionalWebSettings(body.settings) ?? { crawl_mode: "single" };
+  }
 
-  const extracted = extractSourceIdentity(body);
+  const extracted = extractIngestionSourceTypeFields(body);
   if (!extracted) {
     throw new ApiError(
       "source_type is missing/unknown, or a required identity field for the declared source_type is missing",
@@ -225,32 +575,148 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
 
   const ownerTeamSlug = normalizeString(body.owner_team_slug);
-  if (!ownerTeamSlug) {
-    throw new ApiError("owner_team_slug is required", 400, "INVALID_SOURCE_PAYLOAD");
-  }
-  const ownerTeam = await loadOwnerTeam(ownerTeamSlug);
-  if (!ownerTeam) {
-    throw new ApiError("Owner team not found", 404, "OWNER_TEAM_NOT_FOUND");
-  }
-  const canUseOwner =
-    (await canUseTeamSlug(session, ownerTeamSlug)) || (await canManageOrganization(session));
-  if (!canUseOwner) {
+  if (ownerTeamSlug && !OPENFGA_ID_PATTERN.test(ownerTeamSlug)) {
     throw new ApiError(
-      "You must belong to the owner team to create this source",
-      403,
-      "FORBIDDEN_OWNER_TEAM",
+      "owner_team_slug must be a valid team slug or null",
+      400,
+      "INVALID_SOURCE_PAYLOAD",
     );
   }
+  const isOrgAdmin = await canManageOrganization(session);
+  if (!isOrgAdmin && !(await canIngestForOrganization(session))) {
+    throw new ApiError(
+      "You do not have permission to create RAG data sources",
+      403,
+      "FORBIDDEN_INGEST_CAPABILITY",
+    );
+  }
+  if (ownerTeamSlug) {
+    const ownerTeam = await loadOwnerTeam(ownerTeamSlug);
+    if (!ownerTeam) {
+      throw new ApiError("Owner team not found", 404, "OWNER_TEAM_NOT_FOUND");
+    }
+  }
+  if (!isOrgAdmin && ownerTeamSlug) {
+    const [canUseOwner, ownerTeamOptedIn] = await Promise.all([
+      canUseTeamSlug(session, ownerTeamSlug),
+      teamHoldsIngestCapability(ownerTeamSlug),
+    ]);
+    if (!canUseOwner) {
+      throw new ApiError(
+        "You must belong to the owner team to create this source",
+        403,
+        "FORBIDDEN_OWNER_TEAM",
+      );
+    }
+    // Mirrors the RAG server's `authorize_datasource_create` (rbac.py):
+    // team membership alone is not enough — the owner team must also hold
+    // the org-admin-granted "data-source author" capability.
+    if (!ownerTeamOptedIn) {
+      throw new ApiError(
+        "You are not allowed to create a data source for this team. You must be a member of a team that has the data-source author capability.",
+        403,
+        "FORBIDDEN_INGEST_CAPABILITY",
+      );
+    }
+  }
 
-  const sharedWithTeamsRaw = Array.isArray(body.shared_with_teams)
-    ? (body.shared_with_teams as unknown[]).filter((v): v is string => typeof v === "string")
-    : [];
-  const sharedWithTeams = sharedWithTeamsRaw.filter((slug) => slug !== ownerTeamSlug);
+  await authorizedSourceSecretRefs(session, body.settings);
+  await screenSourceRequestHeaders({ settings: body.settings, session });
+
+  if (body.search_team_slugs !== undefined && !Array.isArray(body.search_team_slugs)) {
+    throw new ApiError(
+      "search_team_slugs must be an array of team slugs",
+      400,
+      "INVALID_SOURCE_PAYLOAD",
+    );
+  }
+  const configuredDefaultSearchTeam =
+    body.search_team_slugs === undefined && ingestorLimits.shared.max_search_teams > 0
+      ? await getRagDefaultSearchTeamSlug()
+      : null;
+  const searchTeamSlugs = Array.from(
+    new Set(
+      (
+        (body.search_team_slugs as unknown[] | undefined) ??
+        (configuredDefaultSearchTeam ? [configuredDefaultSearchTeam] : [])
+      ).map((value) => {
+        const slug = normalizeString(value);
+        if (!slug) {
+          throw new ApiError("search_team_slugs must contain team slugs", 400, "INVALID_SOURCE_PAYLOAD");
+        }
+        if (!OPENFGA_ID_PATTERN.test(slug)) {
+          throw new ApiError("search_team_slugs must contain valid team slugs", 400, "INVALID_SOURCE_PAYLOAD");
+        }
+        return slug;
+      }),
+    ),
+  );
+  if (searchTeamSlugs.length > ingestorLimits.shared.max_search_teams) {
+    throw new ApiError(
+      `A source cannot grant search access to more than ${ingestorLimits.shared.max_search_teams} teams`,
+      400,
+      "RAG_INGESTOR_LIMIT_EXCEEDED",
+    );
+  }
+  const resolvedSearchTeams = await Promise.all(
+    searchTeamSlugs.map((slug) => loadOwnerTeam(slug)),
+  );
+  if (resolvedSearchTeams.some((team) => !team)) {
+    throw new ApiError("One or more search teams do not exist", 404, "SEARCH_TEAM_NOT_FOUND");
+  }
+
+  if (body.search_user_subjects !== undefined && !Array.isArray(body.search_user_subjects)) {
+    throw new ApiError(
+      "search_user_subjects must be an array of user subjects",
+      400,
+      "INVALID_SOURCE_PAYLOAD",
+    );
+  }
+  const searchUserSubjects = Array.from(new Set(
+    ((body.search_user_subjects as unknown[] | undefined) ?? []).map((value) => {
+      const subject = normalizeString(value);
+      if (!subject || !OPENFGA_ID_PATTERN.test(subject)) {
+        throw new ApiError(
+          "search_user_subjects must contain valid user subjects",
+          400,
+          "INVALID_SOURCE_PAYLOAD",
+        );
+      }
+      return subject;
+    }),
+  ));
+  if (searchUserSubjects.length > 50) {
+    throw new ApiError(
+      "A source cannot grant search access to more than 50 people",
+      400,
+      "RAG_INGESTOR_LIMIT_EXCEEDED",
+    );
+  }
+  const searchUsers = await resolveUserIdentitiesBySubject(searchUserSubjects);
+  if (searchUserSubjects.some((subject) => !searchUsers.has(subject))) {
+    throw new ApiError("One or more search users do not exist", 404, "SEARCH_USER_NOT_FOUND");
+  }
+
+  enforceRagIngestorLimits(
+    extracted.identity.source_type,
+    { ...body, search_team_slugs: searchTeamSlugs },
+    ingestorLimits,
+  );
 
   const sourceId = computeIngestionSourceId(extracted.identity);
+  if (!OPENFGA_ID_PATTERN.test(sourceId)) {
+    throw new ApiError(
+      "The source identity produces an id that cannot be represented in the authorization model",
+      400,
+      "INVALID_SOURCE_ID",
+    );
+  }
   const collection = await getCollection<IngestionSourceConfig>(COLLECTION_NAME);
-  const existing = await collection.findOne({ source_id: sourceId } as never);
-  if (existing) {
+  const [existing, ragServerHasId] = await Promise.all([
+    collection.findOne({ source_id: sourceId } as never),
+    ragServerHasDatasource(session.accessToken, sourceId, ownerTeamSlug),
+  ]);
+  if (existing || ragServerHasId) {
     throw new ApiError(
       `A source with id "${sourceId}" already exists`,
       409,
@@ -258,38 +724,146 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
-  const now = new Date().toISOString();
-  const doc = {
+  const creatorSubject = normalizeString(session.sub);
+  const draftSource = {
     source_id: sourceId,
     ...extracted.fields,
     name,
     description: normalizeString(body.description) ?? "",
     status: "pending",
-    default_chunk_size: (body.default_chunk_size as number) ?? DEFAULT_CHUNK_SIZE,
-    default_chunk_overlap: (body.default_chunk_overlap as number) ?? DEFAULT_CHUNK_OVERLAP,
-    reload_interval: (body.reload_interval as number) ?? DEFAULT_RELOAD_INTERVAL,
+    default_chunk_size: defaultChunkSize,
+    default_chunk_overlap: defaultChunkOverlap,
+    reload_interval: reloadInterval,
     config_driven: false,
     config_import_adopted: false,
     visibility: "team",
-    creator_subject: normalizeString(session.sub) ?? undefined,
-    owner_subject: normalizeString(session.sub) ?? undefined,
-    owner_team_slug: ownerTeamSlug,
-    shared_with_teams: sharedWithTeams,
-    created_at: now,
-    updated_at: now,
+    creator_subject: creatorSubject ?? undefined,
+    owner_subject: ownerTeamSlug ? undefined : creatorSubject ?? undefined,
+    owner_team_slug: ownerTeamSlug ?? undefined,
+    search_with_teams: [],
+    search_with_users: [],
+    shared_with_teams: [],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   } as unknown as IngestionSourceConfig;
-
-  await reconcileIngestionSourceRelationships({
+  const publication = await prepareRagPublication({
+    session,
+    source: draftSource,
+    currentSearchTeamSlugs: [],
+    currentSearchUserSubjects: [],
+    requestedSearchTeamSlugs: searchTeamSlugs,
+    requestedSearchUserSubjects: searchUserSubjects,
+  });
+  const effectiveSearch = publication.plan.effective_state as unknown as RagPublicationState;
+  const doc = await createIngestionSource({
     sourceId,
-    creatorSubject: doc.creator_subject,
-    ownerSubject: doc.owner_subject,
+    fields: extracted.fields,
+    name,
+    description: normalizeString(body.description) ?? "",
     ownerTeamSlug,
-    nextSharedTeamSlugs: sharedWithTeams,
-    previousSharedTeamSlugs: [],
-    globalUserAccess: false,
+    // Management is intentionally singular: personal owner OR one owner
+    // team. Search grants are the independent multi-team control below.
+    sharedWithTeams: [],
+    searchWithTeams: effectiveSearch.search_team_slugs,
+    searchWithUsers: effectiveSearch.search_user_subjects,
+    creatorSubject,
+    ownerSubject: ownerTeamSlug ? null : creatorSubject,
+    // A personal source implicitly belongs to its creator in the query graph.
+    // Once management is assigned to a team, query access is only the
+    // separately selected Search Access teams.
+    searchOwnerSubject: ownerTeamSlug ? null : creatorSubject,
+    searchOwnerTeamSlug: null,
+    recordedSearchOwnerTeamSlug: null,
+    searchSharedWithTeams: effectiveSearch.search_team_slugs,
+    defaultChunkSize,
+    defaultChunkOverlap,
+    reloadInterval,
   });
 
-  await collection.insertOne(doc as never);
+  let publicationRequest: Awaited<ReturnType<typeof createPublicationRequest>> | null = null;
+  if (publication.plan.requires_approval) {
+    publicationRequest = await createPublicationRequest({
+      resource: publication.resource,
+      resourceRevision: ragPublicationRevision(doc, effectiveSearch),
+      revisionBasis: ragPublicationRevisionBasis(doc, effectiveSearch),
+      requestedState: publication.requestedState as unknown as Record<string, unknown>,
+      effectiveState: effectiveSearch as unknown as Record<string, unknown>,
+      riskFacts: publication.plan.risk_facts,
+      requester: publication.actor,
+      requesterTeamSlugs: publication.requesterTeamSlugs,
+      approverTeamSlugs: publication.plan.approver_team_slugs,
+      approverUserSubjects: publication.plan.approver_user_subjects,
+    });
+  } else if (
+    publication.plan.risk_facts.added_team_slugs?.length ||
+    publication.plan.risk_facts.added_user_subjects?.length
+  ) {
+    await recordAutoApprovedPublication({
+      resource: publication.resource,
+      resourceRevision: ragPublicationRevision(doc, effectiveSearch),
+      revisionBasis: ragPublicationRevisionBasis(doc, effectiveSearch),
+      requestedState: publication.requestedState as unknown as Record<string, unknown>,
+      effectiveState: effectiveSearch as unknown as Record<string, unknown>,
+      riskFacts: publication.plan.risk_facts,
+      requester: publication.actor,
+      requesterTeamSlugs: publication.requesterTeamSlugs,
+      approverTeamSlugs: publication.plan.approver_team_slugs,
+      approverUserSubjects: publication.plan.approver_user_subjects,
+    });
+  }
 
-  return successResponse(doc, 201);
+  // Start ingestion immediately through the shared RAG trigger path. Retain
+  // an explicit failure state so the row remains visible
+  // and retryable instead of silently sitting in "pending" forever.
+  const collectionForStatus = await getCollection<IngestionSourceConfig>(COLLECTION_NAME);
+  try {
+    const trigger = await triggerIngestion(doc, session.accessToken, ownerTeamSlug);
+    const statusUpdate = {
+      status: "ingesting",
+      ingestion_job_id: trigger.job_id,
+      updated_at: new Date().toISOString(),
+    };
+    await collectionForStatus.updateOne(
+      { source_id: sourceId } as never,
+      { $set: statusUpdate, $unset: { last_error: "" } } as never,
+    );
+    return successResponse({
+      ...doc,
+      ...statusUpdate,
+      ...(publicationRequest
+        ? {
+            _publication_request: {
+              id: publicationRequest._id,
+              status: publicationRequest.status,
+              reason: publication.plan.reason,
+            },
+          }
+        : {}),
+    }, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to start ingestion";
+    const failureUpdate = {
+      status: "failed",
+      last_error: message.slice(0, 2000),
+      updated_at: new Date().toISOString(),
+    };
+    await collectionForStatus.updateOne(
+      { source_id: sourceId } as never,
+      { $set: failureUpdate } as never,
+    );
+    console.error(`[rag/sources] Failed to trigger ingestion for ${sourceId}:`, error);
+    return successResponse({
+      ...doc,
+      ...failureUpdate,
+      ...(publicationRequest
+        ? {
+            _publication_request: {
+              id: publicationRequest._id,
+              status: publicationRequest.status,
+              reason: publication.plan.reason,
+            },
+          }
+        : {}),
+    }, 201);
+  }
 });

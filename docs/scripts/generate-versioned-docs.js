@@ -39,7 +39,7 @@ const VERSIONS_CONFIG_JSON = path.join(DOCS_DIR, 'versions-config.json');
 const NODE_MODULES = path.join(DOCS_DIR, 'node_modules');
 
 // Docs content lives at repo `docs/docs/`; links are authored relative to that.
-const GITHUB_BASE = 'https://github.com/cnoe-io/ai-platform-engineering';
+const GITHUB_BASE = 'https://github.com/caipe-io/ai-platform-engineering';
 const DOC_CONTENT_ROOT = '/docs/docs';
 
 function run(cmd, opts = {}) {
@@ -58,8 +58,17 @@ function runOut(cmd, opts = {}) {
 // Those never resolve to a docs route, so Docusaurus reports them as broken.
 // Since the content is immutable (it comes from a tag), we rewrite any link that
 // resolves outside `docs/docs/` into an absolute GitHub URL pinned to that
-// version's tag. Intra-docs links are left untouched.
+// version's tag. Intra-docs links are left untouched. Root-absolute links into
+// the docs site need a version prefix when the snapshot is not the latest one.
 // ---------------------------------------------------------------------------
+
+function rewriteVersionedDocsTarget(target, tag, isVersionedRoute) {
+  if (!isVersionedRoute || !target.startsWith('/docs/')) return null;
+
+  const targetPath = target.slice('/docs/'.length);
+  if (!targetPath || targetPath.startsWith(`${tag}/`)) return null;
+  return `/docs/${tag}/${targetPath}`;
+}
 
 function rewriteEscapingTarget(target, fileDirRepoRel, tag) {
   if (!target) return null;
@@ -83,13 +92,19 @@ function rewriteEscapingTarget(target, fileDirRepoRel, tag) {
   return `${GITHUB_BASE}/${kind}/${tag}/${repoPath}${anchor}`;
 }
 
-function sanitizeFileLinks(absFile, fileDirRepoRel, tag) {
+function sanitizeFileLinks(absFile, fileDirRepoRel, tag, isVersionedRoute) {
   const original = fs.readFileSync(absFile, 'utf8');
   let changed = false;
 
   // Inline links: ](target) and ](target "title")
   const inlineRe = /\]\(\s*([^)\s]+?)(\s+"[^"]*"|\s+'[^']*')?\s*\)/g;
   let updated = original.replace(inlineRe, (match, target, title) => {
+    const versionedTarget = rewriteVersionedDocsTarget(target, tag, isVersionedRoute);
+    if (versionedTarget) {
+      changed = true;
+      return `](${versionedTarget}${title || ''})`;
+    }
+
     const next = rewriteEscapingTarget(target, fileDirRepoRel, tag);
     if (!next) return match;
     changed = true;
@@ -99,6 +114,12 @@ function sanitizeFileLinks(absFile, fileDirRepoRel, tag) {
   // Reference-style definitions: [label]: target
   const refRe = /^(\s*\[[^\]]+\]:\s*)(\S+)(.*)$/gm;
   updated = updated.replace(refRe, (match, prefix, target, rest) => {
+    const versionedTarget = rewriteVersionedDocsTarget(target, tag, isVersionedRoute);
+    if (versionedTarget) {
+      changed = true;
+      return `${prefix}${versionedTarget}${rest}`;
+    }
+
     const next = rewriteEscapingTarget(target, fileDirRepoRel, tag);
     if (!next) return match;
     changed = true;
@@ -109,7 +130,7 @@ function sanitizeFileLinks(absFile, fileDirRepoRel, tag) {
   return changed;
 }
 
-function sanitizeVersionLinks(versionDir, tag) {
+function sanitizeVersionLinks(versionDir, tag, isVersionedRoute) {
   let count = 0;
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -122,13 +143,31 @@ function sanitizeVersionLinks(versionDir, tag) {
           'docs/docs',
           path.dirname(relWithinVersion).split(path.sep).join('/')
         );
-        if (sanitizeFileLinks(abs, fileDirRepoRel, tag)) count += 1;
+        if (sanitizeFileLinks(abs, fileDirRepoRel, tag, isVersionedRoute)) count += 1;
+        if (sanitizeLegacyDocLinks(abs)) count += 1;
         if (sanitizeMdxBreakingPatterns(abs)) count += 1;
       }
     }
   };
   walk(versionDir);
   return count;
+}
+
+// Keep links in frozen snapshots usable when older docs point at anchors or
+// routes that no longer exist in the corresponding snapshot.
+function sanitizeLegacyDocLinks(absFile) {
+  let content = fs.readFileSync(absFile, 'utf8');
+  const original = content;
+
+  content = content
+    .replace(/(\]\(\.\/creating-an-agent)#(?:understanding-the-template|step-1-clone-the-template|step-4-implement-the-agent-logic)(\))/g, '$1$2')
+    .replace(/(\]\(\.\.\/getting-started\/user-interfaces\.md)#agent-chat-cli(\))/g, '$1$2')
+    .replace(/(\]\(\.\/architecture\.md)#key-environment-variables-2(\))/g, '$1#key-environment-variables$2')
+    .replace(/\]\(\/docs\/(?:[^/]+\/)?getting-started\/helm\/setup(?:#argocd|\.md)?\)/g, '](../helm/setup)');
+
+  if (content === original) return false;
+  fs.writeFileSync(absFile, content);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +267,7 @@ if (!fs.existsSync(NODE_MODULES)) {
 
 let versions = JSON.parse(fs.readFileSync(PUBLISHED_JSON, 'utf8'));
 versions = [...new Set(versions)].sort(compareVersionsDesc);
+const latestPublishedVersion = versions[0];
 
 if (versions.length === 0) {
   console.log('No published versions listed; nothing to generate. Building current docs only.');
@@ -284,7 +324,7 @@ try {
       if (fs.existsSync(wtSidebarFile)) {
         fs.cpSync(wtSidebarFile, path.join(VERSIONED_SIDEBARS_DIR, `version-${tag}-sidebars.json`));
       }
-      const fixed = sanitizeVersionLinks(destVersionDir, tag);
+      const fixed = sanitizeVersionLinks(destVersionDir, tag, tag !== latestPublishedVersion);
       console.log(`    captured version-${tag}${fixed ? ` (rewrote source links in ${fixed} file(s))` : ''}`);
     } finally {
       run(`git -C "${REPO_ROOT}" worktree remove --force "${worktree}"`);

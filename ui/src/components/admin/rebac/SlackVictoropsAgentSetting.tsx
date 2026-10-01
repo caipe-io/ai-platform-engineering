@@ -13,6 +13,7 @@ import { SaveButton } from "@/components/admin/shared/SaveButton";
 import { AgentPicker,type AgentPickerOption } from "@/components/ui/agent-picker";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toast";
+import { loadAllDynamicAgents } from "@/lib/dynamic-agent-list";
 
 interface DynamicAgentOption {
   _id: string;
@@ -33,23 +34,8 @@ export function SlackVictoropsAgentSetting({ disabled = false }: { disabled?: bo
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const loadAllAgents = async (): Promise<DynamicAgentOption[]> => {
-        const items: DynamicAgentOption[] = [];
-        let page = 1;
-        let hasMore = true;
-        while (hasMore) {
-          const agentsRes = await fetch(`/api/dynamic-agents?enabled_only=true&page=${page}&page_size=100`)
-            .then((r) => r.json())
-            .catch(() => ({ data: { items: [] } }));
-          const pageItems: DynamicAgentOption[] = agentsRes?.data?.items ?? agentsRes?.items ?? [];
-          items.push(...pageItems);
-          hasMore = Boolean(agentsRes?.data?.has_more ?? agentsRes?.has_more);
-          page += 1;
-        }
-        return items;
-      };
       const [items, configRes] = await Promise.all([
-        loadAllAgents(),
+        loadAllDynamicAgents<DynamicAgentOption>({ enabledOnly: true }).catch(() => []),
         fetch("/api/admin/platform-config").then((r) => r.json()).catch(() => ({ success: false })),
       ]);
       if (cancelled) return;

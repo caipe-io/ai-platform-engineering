@@ -1,3 +1,8 @@
+# Explicitly exclude local Webex MCP virtualenvs. Docker on Windows may error
+# while walking the lib64 symlink before the generic venv patterns apply.
+ai_platform_engineering/agents/webex/mcp/.venv/
+ai_platform_engineering/agents/webex/mcp/.venv/**
+
 # Exclude heavy agent implementations but keep essential files
 ai_platform_engineering/agents/*/agent_*/**
 !ai_platform_engineering/agents/*/agent_*/agentcard.py
@@ -59,11 +64,7 @@ volumes/**
 **/volumes
 **/volumes/
 **/volumes/**
-docker-compose/volumes
-docker-compose/volumes/
-docker-compose/volumes/**
 docs/**
-workshop/**
 
 # Python virtual environment - exclude ALL venv directories
 .venv/

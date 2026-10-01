@@ -1,5 +1,5 @@
 import { ApiError } from "@/lib/api-error";
-import { authorize, authorizeMany, type Action, type Subject } from "@/lib/authz";
+import { authorize, authorizeMany, listAccessible, type Action, type Subject } from "@/lib/authz";
 import type { UniversalRebacResourceType } from "@/types/rbac-universal";
 
 import { type OpenFgaCheckResult, type OpenFgaTupleKey } from "./openfga";
@@ -39,6 +39,7 @@ export interface ResourceAuthzSession {
    * matches the relationships those callers are granted in OpenFGA.
    */
   isServiceAccount?: boolean;
+  principalType?: 'oidc_user' | 'service_account' | 'catalog_api_key' | 'skills_api_key';
 }
 
 export interface ResourcePermissionOptions {
@@ -65,6 +66,9 @@ function isOrgAdminBypassKillSwitchEnabled(): boolean {
 }
 
 function casSubjectFromSession(session: ResourceAuthzSession): Subject | null {
+  if (session.principalType === 'catalog_api_key' || session.principalType === 'skills_api_key') {
+    return null;
+  }
   if (typeof session.sub !== "string" || !session.sub.trim()) return null;
   const id = session.sub.trim();
   return { type: session.isServiceAccount === true ? "service_account" : "user", id };
@@ -217,6 +221,9 @@ export function resourceObject(type: UniversalRebacResourceType, id: string): st
 }
 
 export function subjectFromSession(session: ResourceAuthzSession): string | null {
+  if (session.principalType === 'catalog_api_key' || session.principalType === 'skills_api_key') {
+    return null;
+  }
   if (typeof session.sub !== "string" || !session.sub.trim()) return null;
   const sub = session.sub.trim();
   // Service-account (client-credentials) callers are graphed under the
@@ -397,15 +404,23 @@ export async function filterResourcesByPermission<T>(
 
   if (resources.length === 0) return [];
 
+  // The candidate list here is typically the WHOLE catalog (pre-pagination),
+  // so this is "which of these does the subject have access to" — a reverse
+  // lookup, not N per-resource decisions. listAccessible asks the PDP for the
+  // subject's accessible set in one call instead of checking each candidate.
+  // Fails closed (empty) on PDP unavailability, matching the previous
+  // authorizeMany-based behavior — AUTHZ_UNAVAILABLE decisions were never
+  // ALLOW, so they were already filtered out silently.
   const ids = resources.map((resource) => target.id(resource));
-  const results = await authorizeMany(
+  const { accessible } = await listAccessible(
     casSubject,
     resourcePermissionActionToCasAction(target.action),
     target.type,
     ids,
   );
+  const accessibleSet = new Set(accessible);
 
-  return resources.filter((resource) => results.get(target.id(resource))?.decision === "ALLOW");
+  return resources.filter((resource) => accessibleSet.has(target.id(resource)));
 }
 
 export interface McpServerRowPermissions {

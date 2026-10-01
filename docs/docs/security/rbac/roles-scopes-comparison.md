@@ -459,9 +459,9 @@ sequenceDiagram
     Note right of KC: active_team is platform-eng
     Bot->>Bot: Verify returned active_team matches requested
     Note over Bot: Mismatch raises OboExchangeError
-    Note over Bot: Request is hard-rejected before A2A
+    Note over Bot: Request is hard-rejected before the agent request
 
-    Bot->>SUP: A2A call + Bearer JWT
+    Bot->>SUP: Agent request + Bearer JWT
     SUP->>AGW: Forward Bearer JWT (per-request)
     AGW->>AGW: jwtAuth verifies, ext_authz calls OpenFGA
     Note over AGW: OpenFGA checks user/team/resource tuples
@@ -504,7 +504,7 @@ sequenceDiagram
     Note right of KC: plus tool_user roles
     Note right of KC: active_team is the personal sentinel
 
-    Bot->>SUP: A2A call + Bearer JWT
+    Bot->>SUP: Agent request + Bearer JWT
     SUP->>AGW: Forward Bearer JWT
     AGW->>AGW: jwtAuth, then ext_authz calls OpenFGA
     Note over AGW: Personal sentinel maps to user-scoped relationships

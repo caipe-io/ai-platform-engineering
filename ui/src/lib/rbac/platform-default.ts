@@ -1,6 +1,6 @@
 // Tiny helper that reads `platform_config.default_agent_id` so we can
 // protect the invariant "platform default agent stays usable" — i.e.
-// admins can't quietly delete or demote it from outside Admin → Settings.
+// admins can't quietly delete or demote it outside Settings → Platform settings → Defaults.
 //
 // Intentionally uncached for v1: the only callers are the dynamic-agent
 // PUT/DELETE handlers, which already hit Mongo for the agent doc, so the

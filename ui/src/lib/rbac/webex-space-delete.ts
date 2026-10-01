@@ -25,6 +25,7 @@ export const WEBEX_SPACE_USABLE_OBJECT_TYPES = [
   "mcp_server",
   "tool",
   "knowledge_base",
+  "rag_collection",
   "data_source",
   "mcp_tool",
   "document",

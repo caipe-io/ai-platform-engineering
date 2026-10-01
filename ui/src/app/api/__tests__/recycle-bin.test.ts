@@ -18,7 +18,7 @@
  * - Trash listing with auto-purge of 7-day-old conversations
  * - Normal listing excludes soft-deleted conversations
  * - Ownership enforcement
- * - UUID validation
+ * - UUID and legacy conversation identifier validation
  */
 
 import { NextRequest } from 'next/server';
@@ -135,6 +135,7 @@ function makeConversation(overrides: unknown = {}) {
 // ============================================================================
 
 import { DELETE } from '../chat/conversations/[id]/route';
+import { POST as TOGGLE_ARCHIVE } from '../chat/conversations/[id]/archive/route';
 import { POST as RESTORE } from '../chat/conversations/[id]/restore/route';
 import { GET as GET_TRASH } from '../chat/conversations/trash/route';
 import { GET as GET_CONVERSATIONS } from '../chat/conversations/route';
@@ -237,13 +238,57 @@ describe('Archive API', () => {
       expect(res.status).toBe(403);
     });
 
-    it('returns 400 for invalid UUID', async () => {
-      const req = makeRequest('http://localhost:3000/api/chat/conversations/not-a-uuid', {
+    it('soft-deletes a legacy conversation identifier', async () => {
+      const legacyId = 'legacy-demo-conversation';
+      const conv = makeConversation({ _id: legacyId });
+      const convCollection = createMockCollection();
+      convCollection.findOne.mockResolvedValue(conv);
+      mockCollections['conversations'] = convCollection;
+
+      const req = makeRequest(`http://localhost:3000/api/chat/conversations/${legacyId}`, {
         method: 'DELETE',
       });
 
-      const res = await DELETE(req, { params: Promise.resolve({ id: 'not-a-uuid' }) });
+      const res = await DELETE(req, { params: Promise.resolve({ id: legacyId }) });
+
+      expect(res.status).toBe(200);
+      expect(convCollection.updateOne).toHaveBeenCalledWith(
+        { _id: legacyId },
+        { $set: expect.objectContaining({ is_archived: true, deleted_at: expect.any(Date) }) },
+      );
+    });
+
+    it('returns 400 for an unsafe conversation identifier', async () => {
+      const invalidId = 'conversation?permanent=true';
+      const req = makeRequest('http://localhost:3000/api/chat/conversations/invalid', {
+        method: 'DELETE',
+      });
+
+      const res = await DELETE(req, { params: Promise.resolve({ id: invalidId }) });
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe('POST /api/chat/conversations/[id]/archive', () => {
+    it('toggles archive for a legacy conversation identifier', async () => {
+      const legacyId = 'legacy-demo-conversation';
+      const conv = makeConversation({ _id: legacyId });
+      const convCollection = createMockCollection();
+      convCollection.findOne
+        .mockResolvedValueOnce(conv)
+        .mockResolvedValueOnce({ ...conv, is_archived: true });
+      mockCollections['conversations'] = convCollection;
+
+      const req = makeRequest(`http://localhost:3000/api/chat/conversations/${legacyId}/archive`, {
+        method: 'POST',
+      });
+      const res = await TOGGLE_ARCHIVE(req, { params: Promise.resolve({ id: legacyId }) });
+
+      expect(res.status).toBe(200);
+      expect(convCollection.updateOne).toHaveBeenCalledWith(
+        { _id: legacyId },
+        { $set: expect.objectContaining({ is_archived: true, updated_at: expect.any(Date) }) },
+      );
     });
   });
 
@@ -453,6 +498,14 @@ describe('Archive API', () => {
   // --------------------------------------------------------------------------
 
   describe('GET /api/chat/conversations — excludes soft-deleted', () => {
+    // Both current and legacy task histories belong in the Autonomous tab,
+    // without changing the separate ownership and soft-delete constraints.
+    const autonomousMarkers = [
+      { source: 'autonomous' },
+      { 'metadata.source': 'autonomous' },
+      { title: { $regex: '^\\[Autonomous\\](\\s|$)', $options: 'i' } },
+    ];
+
     it('does not include soft-deleted conversations in normal listing', async () => {
       const activeConv = makeConversation({ title: 'Active conv', deleted_at: null });
       const convCollection = createMockCollection();
@@ -485,6 +538,169 @@ describe('Archive API', () => {
             $or: [{ deleted_at: null }, { deleted_at: { $exists: false } }],
           }),
         ])
+      );
+    });
+
+    it('default listing includes autonomous conversations but excludes Slack and API', async () => {
+      const convCollection = createMockCollection();
+      convCollection.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      mockCollections['conversations'] = convCollection;
+
+      const req = makeRequest('http://localhost:3000/api/chat/conversations');
+      await GET_CONVERSATIONS(req);
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      // Source filter lives in $and alongside the ownership $or.
+      expect(findCall.$and).toEqual(
+        expect.arrayContaining([{ source: { $nin: ['slack', 'api'] } }]),
+      );
+    });
+
+    it('?source=autonomous narrows to current and legacy autonomous conversations', async () => {
+      const convCollection = createMockCollection();
+      convCollection.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      mockCollections['conversations'] = convCollection;
+
+      const req = makeRequest('http://localhost:3000/api/chat/conversations?source=autonomous');
+      await GET_CONVERSATIONS(req);
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      expect(findCall.$and).toEqual(
+        expect.arrayContaining([{ $or: autonomousMarkers }]),
+      );
+    });
+
+    it('?source=api narrows to API-originated conversations', async () => {
+      const convCollection = createMockCollection();
+      convCollection.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      mockCollections['conversations'] = convCollection;
+
+      const req = makeRequest('http://localhost:3000/api/chat/conversations?source=api');
+      await GET_CONVERSATIONS(req);
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      expect(findCall.$and).toEqual(
+        expect.arrayContaining([{ source: 'api' }]),
+      );
+    });
+
+    it('?source=all includes API chats while excluding Slack and Webex', async () => {
+      const convCollection = createMockCollection();
+      mockCollections['conversations'] = convCollection;
+
+      await GET_CONVERSATIONS(
+        makeRequest('http://localhost:3000/api/chat/conversations?source=all'),
+      );
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      expect(findCall.$and).toEqual(expect.arrayContaining([
+        { source: { $nin: ['slack'] } },
+        { client_type: { $nin: ['slack', 'webex'] } },
+      ]));
+    });
+
+    it('?source=web excludes scheduled and current or legacy autonomous runs from normal chat history', async () => {
+      const convCollection = createMockCollection();
+      mockCollections['conversations'] = convCollection;
+
+      await GET_CONVERSATIONS(
+        makeRequest('http://localhost:3000/api/chat/conversations?source=web'),
+      );
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      expect(findCall.$and).toEqual(expect.arrayContaining([
+        { source: { $in: ['web', null] } },
+        {
+          $nor: [
+            ...autonomousMarkers,
+            { 'metadata.schedule_id': { $exists: true } },
+            { _id: { $regex: 'sched_[a-z0-9]+', $options: 'i' } },
+          ],
+        },
+      ]));
+    });
+
+    it('?source=scheduled matches scheduled metadata and IDs while excluding current and legacy autonomous runs', async () => {
+      const convCollection = createMockCollection();
+      mockCollections['conversations'] = convCollection;
+
+      await GET_CONVERSATIONS(
+        makeRequest('http://localhost:3000/api/chat/conversations?source=scheduled'),
+      );
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      expect(findCall.$and).toEqual(expect.arrayContaining([
+        { $nor: autonomousMarkers },
+        {
+          $or: [
+            { 'metadata.schedule_id': { $exists: true, $ne: '' } },
+            { _id: { $regex: 'sched_[a-z0-9]+', $options: 'i' } },
+          ],
+        },
+      ]));
+    });
+
+    it('?source=autonomous does NOT bypass owner scoping (IDOR regression)', async () => {
+      // Pre-fix the autonomous branch did `delete query.$or`, leaking
+      // every user's autonomous conversations to any authed caller.
+      const convCollection = createMockCollection();
+      convCollection.find.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          skip: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      mockCollections['conversations'] = convCollection;
+
+      const req = makeRequest('http://localhost:3000/api/chat/conversations?source=autonomous');
+      await GET_CONVERSATIONS(req);
+
+      const findCall = convCollection.find.mock.calls[0][0];
+      // Ownership scope ($or) must be present inside the $and candidate
+      // filters and non-empty.
+      expect(findCall.$and).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            $or: expect.arrayContaining([
+              { owner_id: 'user@example.com' },
+              { 'sharing.shared_with': 'user@example.com' },
+              { 'sharing.shared_with_teams.0': { $exists: true } },
+            ]),
+          }),
+        ]),
+      );
+      // Source narrow must live inside $and (top-level `query.source`
+      // would also work but is structurally easier to regress).
+      expect(findCall.source).toBeUndefined();
+      expect(findCall.$and).toEqual(
+        expect.arrayContaining([{ $or: autonomousMarkers }]),
       );
     });
   });

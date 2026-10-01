@@ -119,7 +119,7 @@ cause this investigation identified.
 | `scripts/agent_fix.py` | Patched `agent.py` with the two-line fix |
 | `scripts/agent_executor_fix.py` | Original `agent_executor.py` (unmodified, for reference) |
 | `setup-caipe.sh` (repo root) | Deployment script managing ConfigMaps and patches |
-| Upstream repo | [ai-platform-engineering](https://github.com/cnoe-io/ai-platform-engineering) |
+| Upstream repo | [ai-platform-engineering](https://github.com/caipe-io/ai-platform-engineering) |
 
 
 ## Related

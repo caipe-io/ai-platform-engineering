@@ -26,6 +26,50 @@ describe("ingestion source id formulas", () => {
     );
   });
 
+  it("uses the root page id to distinguish sources in the same Confluence space", () => {
+    expect(
+      confluenceSpaceSourceId(
+        "https://confluence.example.com/wiki",
+        "ENG",
+        "123",
+      ),
+    ).toBe("src_confluence___confluence_example_com__ENG__123");
+    expect(
+      confluenceSpaceSourceId(
+        "https://confluence.example.com/wiki",
+        "ENG",
+        "456",
+      ),
+    ).not.toBe(
+      confluenceSpaceSourceId(
+        "https://confluence.example.com/wiki",
+        "ENG",
+        "123",
+      ),
+    );
+  });
+
+  it("uses a distinct infix so a folder and a page can't collide on the same id", () => {
+    expect(
+      confluenceSpaceSourceId("https://confluence.example.com/wiki", "ENG", "123", "folder"),
+    ).toBe("src_confluence___confluence_example_com__ENG__folder__123");
+    expect(
+      confluenceSpaceSourceId("https://confluence.example.com/wiki", "ENG", "123", "folder"),
+    ).not.toBe(confluenceSpaceSourceId("https://confluence.example.com/wiki", "ENG", "123"));
+  });
+
+  it("makes page-scoped Confluence ids safe for managed access", () => {
+    expect(
+      confluenceSpaceSourceId(
+        "https://confluence.example.com:8090/wiki",
+        "Control Plane",
+        "123",
+      ),
+    ).toBe(
+      "src_confluence___confluence_example_com_8090__Control_Plane__123",
+    );
+  });
+
   it("webex_space matches `webex-space-{space_id}` (ingestors/webex/ingestor.py:425)", () => {
     expect(webexSpaceSourceId("abc123")).toBe("webex-space-abc123");
   });
@@ -68,7 +112,30 @@ describe("ingestion source id formulas", () => {
       ).toBe("slack-channel-C1");
     });
 
-    it("confluence_space", () => {
+    it("confluence_space, page-scoped", () => {
+      expect(
+        computeIngestionSourceId({
+          source_type: "confluence_space",
+          confluence_url: "https://confluence.example.com",
+          space_key: "ENG",
+          content_id: "123",
+        }),
+      ).toBe("src_confluence___confluence_example_com__ENG__123");
+    });
+
+    it("confluence_space, folder-scoped", () => {
+      expect(
+        computeIngestionSourceId({
+          source_type: "confluence_space",
+          confluence_url: "https://confluence.example.com",
+          space_key: "ENG",
+          content_id: "456",
+          content_kind: "folder",
+        }),
+      ).toBe("src_confluence___confluence_example_com__ENG__folder__456");
+    });
+
+    it("confluence_space, whole-space", () => {
       expect(
         computeIngestionSourceId({
           source_type: "confluence_space",

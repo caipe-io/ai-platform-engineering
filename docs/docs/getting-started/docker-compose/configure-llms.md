@@ -6,7 +6,7 @@ sidebar_position: 3
 
 CAIPE leverages the [`cnoe-io/cnoe-agent-utils`](https://github.com/cnoe-io/cnoe-agent-utils) utility library to configure the `LLMFactory` class, enabling dynamic switching between LLM providers.
 
-> Refer to the [.env.example](https://github.com/cnoe-io/ai-platform-engineering/blob/main/.env.example) file for sample environment variable configurations.
+> Refer to the [.env.example](https://github.com/caipe-io/ai-platform-engineering/blob/main/.env.example) file for sample environment variable configurations.
 
 ## 🧑‍💻 LLM Provider Usage
 

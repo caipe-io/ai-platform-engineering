@@ -89,8 +89,41 @@
   --animate-reveal-ltr: revealLtr 0.25s ease-out forwards;
 }
 
-/* Dark mode via class or data-theme attribute */
-@variant dark (&:where(.dark, [data-theme]));
+/*
+ * Dark mode only applies to dark palettes. Matching a bare [data-theme]
+ * attribute also classified Light and Legacy Light as dark, so dark: utility
+ * classes fought the light palette whenever either light theme was selected.
+ */
+@variant dark (&:where(.dark, [data-theme="dark"], [data-theme="midnight"], [data-theme="nord"], [data-theme="tokyo"], [data-theme="cyberpunk"], [data-theme="tron"], [data-theme="matrix"]));
+
+/*
+ * next-themes cannot infer whether custom theme ids are light or dark. Keep
+ * native controls, scrollbars, and browser-painted surfaces aligned with the
+ * selected CAIPE palette instead of leaving a stale inline color-scheme from
+ * the previously selected theme.
+ */
+:root,
+:root:is(
+  [data-theme="dark"],
+  [data-theme="midnight"],
+  [data-theme="nord"],
+  [data-theme="tokyo"],
+  [data-theme="cyberpunk"],
+  [data-theme="tron"],
+  [data-theme="matrix"]
+) {
+  color-scheme: dark;
+}
+
+:root:is([data-theme="light"], [data-theme="legacy-light"]) {
+  color-scheme: light;
+}
+
+/* Preserve Next.js client transitions while giving immediate route feedback. */
+html[data-navigation-pending="true"],
+html[data-navigation-pending="true"] * {
+  cursor: progress !important;
+}
 
 /* ========================================
    THEME SYSTEM - Multiple Dark & Light Themes
@@ -193,11 +226,37 @@
 }
 
 /* ========================================
-   LIGHT THEME - Clean & Professional
-   For bright environments
+   LIGHT THEME - Soft neutral canvas
+   Keeps white surfaces distinct without glare
    ======================================== */
 .light,
 [data-theme="light"] {
+  --background: 220 18% 94%;
+  --foreground: 224 71% 4%;
+  --card: 0 0% 100%;
+  --card-foreground: 224 71% 4%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 224 71% 4%;
+  --primary: 173 80% 35%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 224 71% 4%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 9% 46%;
+  --accent: 220 14% 96%;
+  --accent-foreground: 224 71% 4%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 173 80% 35%;
+}
+
+/* ========================================
+   LEGACY LIGHT THEME - Original bright palette
+   Available for comparison with the current Light theme
+   ======================================== */
+[data-theme="legacy-light"] {
   --background: 0 0% 99%;
   --foreground: 224 71% 4%;
   --card: 0 0% 100%;
@@ -415,6 +474,15 @@
     @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 
+  /* Text-entry controls use their border as the focus indicator. A surrounding
+     halo obscures adjacent labels and duplicates the field boundary. */
+  input:not(:disabled):not([type="button"]):not([type="checkbox"]):not([type="color"]):not([type="file"]):not([type="image"]):not([type="radio"]):not([type="range"]):not([type="reset"]):not([type="submit"]):focus-visible,
+  textarea:not(:disabled):focus-visible,
+  select:not(:disabled):focus-visible {
+    border-color: hsl(var(--foreground) / 50%);
+    box-shadow: none;
+  }
+
   /* Ensure proper text truncation for all fonts (except Source Sans which handles it naturally) */
   /* These fonts have wider character widths and need explicit constraints */
   [data-font-family="inter"] .truncate,
@@ -451,81 +519,27 @@
     -webkit-text-fill-color: transparent;
   }
 
-  /* One-shot brand flourish using the active gradient theme. */
+  /* The wordmark rests on the theme's first color. Each letter independently
+     eases toward the second theme color when the pointer reaches it. */
   .brand-name {
-    display: inline-block;
-    background-image: linear-gradient(
-      90deg,
-      var(--gradient-from) 0%,
-      var(--gradient-to) 33.333%,
-      var(--gradient-from) 33.334%,
-      color-mix(in srgb, var(--gradient-from) 70%, white) 43%,
-      color-mix(in srgb, var(--gradient-to) 58%, white) 50%,
-      var(--gradient-to) 66.666%,
-      var(--gradient-from) 66.667%,
-      var(--gradient-to) 100%
-    );
-    background-position: 100% 50%;
-    background-repeat: no-repeat;
-    background-size: 300% 100%;
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
+    display: inline-flex;
+    color: var(--gradient-from);
   }
 
-  .brand-sparkle {
+  .brand-letter {
+    color: var(--gradient-from);
+    transition: color 1.8s cubic-bezier(0.4, 0, 1, 1);
+  }
+
+  .brand-letter:hover {
     color: var(--gradient-to);
-    opacity: 0;
-    transform: translate3d(-0.2rem, 0.2rem, 0) scale(0.35) rotate(-30deg);
-    transform-origin: center;
-  }
-
-  .brand-link:is(:hover, :focus-visible) .brand-name {
-    animation: brand-gradient-sweep 1050ms cubic-bezier(0.4, 0, 0.2, 1) both;
-  }
-
-  .brand-link:is(:hover, :focus-visible) .brand-sparkle {
-    animation: brand-sparkle-finish 1250ms cubic-bezier(0.4, 0, 0.2, 1) both;
-  }
-
-  @keyframes brand-gradient-sweep {
-    0% {
-      background-position: 100% 50%;
-      filter: brightness(1);
-    }
-    68% {
-      filter: brightness(1.16);
-    }
-    100% {
-      background-position: 0% 50%;
-      filter: brightness(1);
-    }
-  }
-
-  @keyframes brand-sparkle-finish {
-    0%, 64% {
-      opacity: 0;
-      transform: translate3d(-0.2rem, 0.2rem, 0) scale(0.35) rotate(-30deg);
-    }
-    76% {
-      opacity: 1;
-      transform: translate3d(0, 0, 0) scale(1.15) rotate(8deg);
-      filter: drop-shadow(0 0 0.3rem color-mix(in srgb, var(--gradient-to) 70%, transparent));
-    }
-    88% {
-      opacity: 0.9;
-      transform: translate3d(0.1rem, -0.1rem, 0) scale(0.85) rotate(20deg);
-    }
-    100% {
-      opacity: 0;
-      transform: translate3d(0.2rem, -0.2rem, 0) scale(0.45) rotate(35deg);
-    }
+    transition-duration: 160ms;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .brand-link:is(:hover, :focus-visible) .brand-name,
-    .brand-link:is(:hover, :focus-visible) .brand-sparkle {
-      animation: none;
+    .brand-letter {
+      transition: none;
     }
   }
 
@@ -842,6 +856,123 @@ pre code.hljs {
   pointer-events: none;
 }
 
+/* Light uses a quiet tonal hierarchy inspired by semantic surface
+   roles. These selectors are intentionally scoped so Legacy Light and every
+   dark theme keep their existing appearance. */
+[data-theme="light"] .app-shell-canvas {
+  background-color: hsl(var(--background));
+  background-image:
+    radial-gradient(
+      circle at 16% 4%,
+      color-mix(in srgb, var(--gradient-from) 7%, transparent) 0%,
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 86% 10%,
+      color-mix(in srgb, var(--gradient-to) 6%, transparent) 0%,
+      transparent 34%
+    );
+}
+
+[data-theme="light"] .app-navigation-surface {
+  background:
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--gradient-from) 4%, transparent),
+      color-mix(in srgb, var(--gradient-to) 3%, transparent)
+    ),
+    hsl(var(--card) / 84%);
+}
+
+[data-theme="light"] .home-hero-surface {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--gradient-from) 5%, transparent),
+      color-mix(in srgb, var(--gradient-to) 3%, transparent)
+    ),
+    hsl(var(--card) / 72%);
+  border-color: color-mix(in srgb, var(--gradient-from) 10%, hsl(var(--border)));
+}
+
+/* A static, palette-aware AI cue gives the primary home prompt enough visual
+   weight to lead the page without competing with the greeting banner. */
+.home-composer-prompt-icon {
+  color: color-mix(in srgb, var(--gradient-from) 82%, hsl(var(--foreground)));
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--gradient-from) 18%, transparent),
+      color-mix(in srgb, var(--gradient-to) 14%, transparent)
+    ),
+    hsl(var(--card) / 72%);
+  border: 1px solid color-mix(in srgb, var(--gradient-from) 24%, hsl(var(--border)));
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--gradient-from) 14%, transparent);
+}
+
+.home-composer-prompt::after {
+  content: "";
+  display: block;
+  width: 3.25rem;
+  height: 2px;
+  margin-top: 0.4rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--gradient-from), var(--gradient-to));
+  opacity: 0.82;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--gradient-from) 20%, transparent);
+}
+
+/* The composer is an interactive surface, so its emphasis follows the
+   semantic color theme. The independently selected brand gradient remains
+   reserved for the decorative prompt cue above it. */
+.home-composer-field {
+  background: linear-gradient(
+    140deg,
+    color-mix(in srgb, hsl(var(--primary)) 6%, hsl(var(--background))),
+    color-mix(in srgb, hsl(var(--primary)) 2%, hsl(var(--background)))
+  );
+  border-color: color-mix(in srgb, hsl(var(--primary)) 45%, hsl(var(--border)));
+  box-shadow: 0 12px 28px hsl(var(--primary) / 8%);
+}
+
+[data-theme="light"] .home-composer-field {
+  background: linear-gradient(
+    140deg,
+    color-mix(in srgb, hsl(var(--primary)) 7%, hsl(var(--card))),
+    color-mix(in srgb, hsl(var(--primary)) 2%, hsl(var(--card)))
+  );
+  border-color: color-mix(in srgb, hsl(var(--primary)) 48%, hsl(var(--border)));
+  box-shadow:
+    inset 0 1px rgb(255 255 255 / 72%),
+    0 12px 28px hsl(var(--primary) / 8%);
+}
+
+[data-theme="light"] .home-quick-start-tabs {
+  background: hsl(var(--card) / 62%);
+  border: 1px solid hsl(var(--border) / 76%);
+}
+
+[data-theme="light"] .home-quick-start-indicator {
+  background: color-mix(in srgb, var(--gradient-from) 12%, hsl(var(--card)));
+  border-color: color-mix(in srgb, var(--gradient-from) 20%, hsl(var(--border)));
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--gradient-from) 10%, transparent);
+}
+
+[data-theme="light"] .home-quick-start-panel {
+  background: hsl(var(--card) / 56%);
+}
+
+[data-theme="light"] .home-quick-start-card {
+  background: color-mix(in srgb, var(--quick-start-accent) 4%, hsl(var(--card)));
+  border-color: color-mix(in srgb, var(--quick-start-accent) 13%, hsl(var(--border)));
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+[data-theme="light"] .home-quick-start-card:hover {
+  background: color-mix(in srgb, var(--quick-start-accent) 7%, hsl(var(--card)));
+  border-color: color-mix(in srgb, var(--quick-start-accent) 24%, hsl(var(--border)));
+}
+
 /* ========================================
    GRADIENT THEME UTILITIES
    ======================================== */
@@ -863,6 +994,182 @@ pre code.hljs {
 
 .gradient-primary-br {
   background: linear-gradient(to bottom right, var(--gradient-from), var(--gradient-to));
+}
+
+/* Time-aware sky light for the Home welcome banner. The layered gradients are
+   deliberately static: the palette follows local time without flashing or
+   competing with the page content. */
+.welcome-banner {
+  --welcome-sky-start: #123c68;
+  --welcome-sky-mid: #5f4f9e;
+  --welcome-sky-end: #d26b72;
+  --welcome-orb: rgb(255 219 153 / 58%);
+  --welcome-orb-core: rgb(255 244 210 / 96%);
+  --welcome-text: rgb(255 255 255 / 96%);
+  --welcome-icon-surface: rgb(255 255 255 / 13%);
+  --welcome-icon-border: rgb(255 255 255 / 20%);
+  --welcome-action-surface: rgb(255 255 255 / 12%);
+  --welcome-action-hover: rgb(255 255 255 / 20%);
+  /* Preserve the time-of-day sky while drawing a restrained tint from the
+     independently selected CAIPE accent gradient. */
+  --welcome-sky-tinted-start: color-mix(in srgb, var(--welcome-sky-start) 82%, var(--gradient-from));
+  --welcome-sky-tinted-mid: color-mix(in srgb, var(--welcome-sky-mid) 86%, var(--gradient-to));
+  --welcome-sky-tinted-end: color-mix(in srgb, var(--welcome-sky-end) 82%, var(--gradient-to));
+  background:
+    radial-gradient(circle at 88% 45%, var(--welcome-orb) 0%, transparent 25%),
+    radial-gradient(ellipse at 36% -80%, rgb(255 255 255 / 18%) 0%, transparent 52%),
+    linear-gradient(
+      112deg,
+      var(--welcome-sky-tinted-start) 0%,
+      var(--welcome-sky-tinted-mid) 54%,
+      var(--welcome-sky-tinted-end) 100%
+    );
+  border: 1px solid rgb(255 255 255 / 10%);
+  box-shadow:
+    0 6px 18px color-mix(in srgb, var(--welcome-sky-tinted-mid) 9%, transparent),
+    inset 0 1px rgb(255 255 255 / 10%);
+}
+
+.welcome-banner::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 7%;
+  width: 5rem;
+  height: 5rem;
+  transform: translateY(-50%);
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    var(--welcome-orb-core) 0 5%,
+    var(--welcome-orb) 6%,
+    transparent 64%
+  );
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.welcome-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(105deg, rgb(255 255 255 / 8%), transparent 24%, transparent 76%, rgb(255 255 255 / 5%)),
+    radial-gradient(circle at 72% 120%, rgb(126 249 239 / 13%), transparent 34%);
+  pointer-events: none;
+}
+
+.welcome-banner[data-sun-phase="dawn"] {
+  --welcome-sky-start: #253d67;
+  --welcome-sky-mid: #9f5f79;
+  --welcome-sky-end: #e99269;
+  --welcome-orb: rgb(255 197 125 / 62%);
+  --welcome-orb-core: rgb(255 236 186 / 98%);
+}
+
+.welcome-banner[data-sun-phase="day"] {
+  --welcome-sky-start: #087c89;
+  --welcome-sky-mid: #397dc6;
+  --welcome-sky-end: #6656b8;
+  --welcome-orb: rgb(178 239 255 / 55%);
+  --welcome-orb-core: rgb(235 252 255 / 98%);
+}
+
+.welcome-banner[data-sun-phase="sunset"] {
+  --welcome-sky-start: #482b6d;
+  --welcome-sky-mid: #a44372;
+  --welcome-sky-end: #e27b5f;
+  --welcome-orb: rgb(255 164 113 / 64%);
+  --welcome-orb-core: rgb(255 226 173 / 98%);
+}
+
+.welcome-banner[data-sun-phase="night"] {
+  --welcome-sky-start: #08162f;
+  --welcome-sky-mid: #172d5b;
+  --welcome-sky-end: #35255f;
+  --welcome-orb: rgb(109 207 255 / 32%);
+  --welcome-orb-core: rgb(213 245 255 / 92%);
+}
+
+.welcome-banner-title {
+  color: var(--welcome-text);
+  text-shadow: 0 1px 8px rgb(5 11 30 / 18%);
+}
+
+.welcome-banner-icon {
+  color: var(--welcome-text);
+  background: var(--welcome-icon-surface);
+  border: 1px solid var(--welcome-icon-border);
+  box-shadow: inset 0 1px rgb(255 255 255 / 12%);
+}
+
+.welcome-banner-action {
+  color: var(--welcome-text);
+  background: var(--welcome-action-surface);
+}
+
+.welcome-banner-action:hover {
+  background: var(--welcome-action-hover);
+}
+
+:is([data-theme="light"], [data-theme="legacy-light"]) .welcome-banner {
+  --welcome-text: rgb(31 41 69 / 94%);
+  --welcome-icon-surface: rgb(255 255 255 / 46%);
+  --welcome-icon-border: rgb(49 61 96 / 12%);
+  --welcome-action-surface: rgb(255 255 255 / 36%);
+  --welcome-action-hover: rgb(255 255 255 / 58%);
+  border-color: rgb(54 68 102 / 10%);
+  box-shadow:
+    0 5px 16px color-mix(in srgb, var(--welcome-sky-mid) 8%, transparent),
+    inset 0 1px rgb(255 255 255 / 46%);
+}
+
+:is([data-theme="light"], [data-theme="legacy-light"]) .welcome-banner[data-sun-phase="dawn"] {
+  --welcome-sky-start: #fff2df;
+  --welcome-sky-mid: #ffd8cf;
+  --welcome-sky-end: #dfe8ff;
+  --welcome-orb: rgb(255 180 101 / 34%);
+  --welcome-orb-core: rgb(255 218 145 / 82%);
+}
+
+:is([data-theme="light"], [data-theme="legacy-light"]) .welcome-banner[data-sun-phase="day"] {
+  --welcome-sky-start: #d9f7f2;
+  --welcome-sky-mid: #d6eaff;
+  --welcome-sky-end: #e9e2ff;
+  --welcome-orb: rgb(103 196 255 / 24%);
+  --welcome-orb-core: rgb(255 255 255 / 94%);
+}
+
+:is([data-theme="light"], [data-theme="legacy-light"]) .welcome-banner[data-sun-phase="sunset"] {
+  --welcome-sky-start: #f7e6ff;
+  --welcome-sky-mid: #ffd8de;
+  --welcome-sky-end: #ffe5c7;
+  --welcome-orb: rgb(255 151 103 / 28%);
+  --welcome-orb-core: rgb(255 228 171 / 90%);
+}
+
+:is([data-theme="light"], [data-theme="legacy-light"]) .welcome-banner[data-sun-phase="night"] {
+  --welcome-sky-start: #e6edff;
+  --welcome-sky-mid: #dce4ff;
+  --welcome-sky-end: #eee6ff;
+  --welcome-orb: rgb(110 151 255 / 19%);
+  --welcome-orb-core: rgb(245 249 255 / 94%);
+}
+
+/* Restrained brand-gradient selection for workspace navigation. The first
+   layer supplies a quiet tinted surface; the second becomes the border. */
+.workspace-navigation-active {
+  background:
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--gradient-from) 14%, transparent),
+      color-mix(in srgb, var(--gradient-to) 10%, transparent)
+    ) padding-box,
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--gradient-from) 48%, transparent),
+      color-mix(in srgb, var(--gradient-to) 48%, transparent)
+    ) border-box;
 }
 
 /* Text gradient using theme colors */

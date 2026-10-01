@@ -10,10 +10,6 @@ withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
 import { requireSkillPermission } from "@/lib/rbac/resource-authz";
-import {
-readSkillSharedTeamSlugsFromOpenFga,
-reconcileSkillTeamShares,
-} from "@/lib/rbac/skill-team-grants";
 import { isSkillScannerConfigured,scanSkillContent } from "@/lib/skill-scan";
 import { recordScanEvent } from "@/lib/skill-scan-history";
 import type { AgentSkill } from "@/types/agent-skill";
@@ -74,27 +70,6 @@ export const POST = withErrorHandler(
 
       if (!userCanModifyAgentSkill(existing)) {
         throw new ApiError("You don't have permission to scan this skill", 403);
-      }
-
-      // Skills created before owner tuples were written on create may lack `can_write`
-      // in OpenFGA. Reconcile owner (no-op team diff) before the PDP check.
-      const ownerSubject =
-        typeof session?.sub === "string" && session.sub.trim() ? session.sub.trim() : null;
-      const teamRefs = await readSkillSharedTeamSlugsFromOpenFga(id);
-      if (ownerSubject) {
-        try {
-          await reconcileSkillTeamShares({
-            skillId: id,
-            ownerSubject,
-            previousTeamRefs: teamRefs,
-            nextTeamRefs: teamRefs,
-          });
-        } catch (error) {
-          console.warn(
-            "[ScanSkill] Failed to reconcile owner FGA tuple before scan:",
-            error instanceof Error ? error.message : String(error),
-          );
-        }
       }
 
       // Same gate as PUT / file-write: `can_write` on the skill (not `can_manage`).

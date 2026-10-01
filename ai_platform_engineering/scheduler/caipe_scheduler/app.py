@@ -10,6 +10,7 @@ Endpoints:
   GET    /v1/schedules/{id}/one-off-runs - list one-off fires
   GET    /v1/internal/schedules/{id}    - cron-runner schedule lookup
   POST   /v1/schedules/{id}/runs        - cron-runner reports last run
+  GET    /v1/settings                   - non-sensitive deployed scheduler limits
   GET    /healthz
 """
 
@@ -141,6 +142,19 @@ def healthz() -> dict[str, str]:
   return {"status": "ok"}
 
 
+@app.get(
+  "/v1/settings",
+  dependencies=[Depends(require_service_token)],
+)
+def runtime_settings(
+  settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, int]:
+  """Return non-sensitive scheduler constraints used by client UIs."""
+  return {
+    "minimum_schedule_interval_seconds": settings.minimum_schedule_interval_seconds,
+  }
+
+
 @app.post(
   "/v1/admin/reconcile-cronjobs",
   response_model=CronJobReconcileResponse,
@@ -176,7 +190,7 @@ def create_schedule(
   settings: Annotated[Settings, Depends(get_settings)],
   caller: Annotated[CallerIdentity, Depends(require_caller_identity)],
 ) -> ScheduleCreateResponse:
-  validate_cron(body.cron)
+  validate_cron(body.cron, settings.minimum_schedule_interval_seconds)
   validate_tz(body.tz)
   validate_message(body.message_template, settings.max_message_chars)
 
@@ -287,7 +301,7 @@ def patch_schedule(
 
   patch = body.model_dump(exclude_unset=True, exclude_none=False)
   if "cron" in patch and patch["cron"] is not None:
-    validate_cron(patch["cron"])
+    validate_cron(patch["cron"], settings.minimum_schedule_interval_seconds)
   if "tz" in patch and patch["tz"] is not None:
     validate_tz(patch["tz"])
   if "message_template" in patch and patch["message_template"] is not None:

@@ -75,6 +75,9 @@ describe('getServerConfig', () => {
         'CAIPE_UNSAFE_RBAC_BYPASS',
         'DEFAULT_FONT_SIZE', 'DEFAULT_FONT_FAMILY',
         'DEFAULT_THEME', 'DEFAULT_GRADIENT_THEME',
+        'AUTONOMOUS_AGENTS_ENABLED', 'ENABLE_AUTONOMOUS_AGENTS',
+        'PROJECTS_ENABLED',
+        'PROVIDE_FEEDBACK_ENABLED',
       );
       delete process.env.MONGODB_URI;
       delete process.env.MONGODB_DATABASE;
@@ -108,6 +111,7 @@ describe('getServerConfig', () => {
       expect(cfg.allowDevAdminWhenSsoDisabled).toBe(false);
       expect(cfg.unsafeRbacBypassEnabled).toBe(false);
       expect(cfg.auditLogsEnabled).toBe(false);
+      expect(cfg.autonomousAgentsEnabled).toBe(false);
       expect(cfg.actionAuditEnabled).toBe(true);
       expect(cfg.storageMode).toBe('localStorage');
     });
@@ -123,6 +127,7 @@ describe('getServerConfig', () => {
     it('should return default ticket integration values', () => {
       const cfg = getServerConfig();
       expect(cfg.reportProblemEnabled).toBe(true);
+      expect(cfg.provideFeedbackEnabled).toBe(false);
       expect(cfg.jiraTicketEnabled).toBe(false);
       expect(cfg.jiraTicketProject).toBeNull();
       expect(cfg.jiraTicketLabel).toBe('caipe-reported');
@@ -143,14 +148,17 @@ describe('getServerConfig', () => {
         'gradientFrom', 'gradientTo', 'logoStyle', 'spinnerColor',
         'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
         'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
-        'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
+        'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
         'allowBuiltinSkillMutation',
         'auditLogsEnabled',
         'actionAuditEnabled',
         'auditLogBackend',
         'defaultFontSize', 'defaultFontFamily', 'defaultTheme', 'defaultGradientTheme',
         'dynamicAgentsUrl',
+        'autonomousAgentsEnabled',
+        'agenticAppsEnabled',
         'reportProblemEnabled',
+        'provideFeedbackEnabled',
         'jiraTicketEnabled', 'jiraTicketProject', 'jiraTicketLabel',
         'githubTicketEnabled', 'githubTicketRepo', 'githubTicketLabel',
         'ticketEnabled', 'ticketProvider',
@@ -165,12 +173,46 @@ describe('getServerConfig', () => {
     });
   });
 
+  describe('projectsEnabled', () => {
+    beforeEach(() => clearEnv('PROJECTS_ENABLED'));
+
+    it('should default to false', () => {
+      expect(getServerConfig().projectsEnabled).toBe(false);
+    });
+
+    it('should be true when PROJECTS_ENABLED=true', () => {
+      process.env.PROJECTS_ENABLED = 'true';
+      expect(getServerConfig().projectsEnabled).toBe(true);
+    });
+
+    it('should remain false for non-true values', () => {
+      process.env.PROJECTS_ENABLED = '1';
+      expect(getServerConfig().projectsEnabled).toBe(false);
+    });
+  });
+
   // ---------- Custom env vars (new names) ----------
 
   describe('custom env vars (clean names)', () => {
     it('should read SSO_ENABLED=true', () => {
       process.env.SSO_ENABLED = 'true';
       expect(getServerConfig().ssoEnabled).toBe(true);
+    });
+
+    it('should read AUTONOMOUS_AGENTS_ENABLED=true', () => {
+      process.env.AUTONOMOUS_AGENTS_ENABLED = 'true';
+      expect(getServerConfig().autonomousAgentsEnabled).toBe(true);
+    });
+
+    it('should read ENABLE_AUTONOMOUS_AGENTS=true as a compose-friendly alias', () => {
+      process.env.ENABLE_AUTONOMOUS_AGENTS = 'true';
+      expect(getServerConfig().autonomousAgentsEnabled).toBe(true);
+    });
+
+    it('should let ENABLE_AUTONOMOUS_AGENTS=false override the legacy UI alias', () => {
+      process.env.ENABLE_AUTONOMOUS_AGENTS = 'false';
+      process.env.AUTONOMOUS_AGENTS_ENABLED = 'true';
+      expect(getServerConfig().autonomousAgentsEnabled).toBe(false);
     });
 
     it('should read CAIPE_CREDENTIALS_ENABLED=true', () => {
@@ -293,12 +335,11 @@ describe('getServerConfig', () => {
     });
   });
 
-  // ---------- Ticket Integration ----------
-
   describe('ticket integration env vars', () => {
     beforeEach(() => {
       clearEnv(
         'REPORT_PROBLEM_ENABLED',
+        'PROVIDE_FEEDBACK_ENABLED',
         'JIRA_TICKET_ENABLED', 'JIRA_TICKET_PROJECT', 'JIRA_TICKET_LABEL',
         'GITHUB_TICKET_ENABLED', 'GITHUB_TICKET_REPO', 'GITHUB_TICKET_LABEL',
       );
@@ -356,6 +397,12 @@ describe('getServerConfig', () => {
     it('should enable report problem by default', () => {
       const cfg = getServerConfig();
       expect(cfg.reportProblemEnabled).toBe(true);
+    });
+
+    it('should keep the header feedback shortcut opt-in', () => {
+      expect(getServerConfig().provideFeedbackEnabled).toBe(false);
+      process.env.PROVIDE_FEEDBACK_ENABLED = 'true';
+      expect(getServerConfig().provideFeedbackEnabled).toBe(true);
     });
 
     it('should derive ticketEnabled=false when no provider is enabled', () => {
@@ -594,7 +641,7 @@ describe('getServerConfig', () => {
       expect(getServerConfig().defaultTheme).toBe('dark');
     });
 
-    it.each(['light', 'dark', 'system', 'midnight', 'nord', 'tokyo', 'cyberpunk', 'tron', 'matrix'] as const)(
+    it.each(['light', 'legacy-light', 'dark', 'system', 'midnight', 'nord', 'tokyo', 'cyberpunk', 'tron', 'matrix'] as const)(
       'should accept valid value "%s"',
       (theme) => {
         process.env.DEFAULT_THEME = theme;
@@ -867,14 +914,17 @@ describe('getClientConfigScript (XSS safety)', () => {
       'gradientFrom', 'gradientTo', 'logoStyle', 'spinnerColor',
       'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
       'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
-      'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
+      'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
       'allowBuiltinSkillMutation',
       'auditLogsEnabled',
       'actionAuditEnabled',
       'auditLogBackend',
       'defaultFontSize', 'defaultFontFamily', 'defaultTheme', 'defaultGradientTheme',
       'dynamicAgentsUrl',
+      'autonomousAgentsEnabled',
+      'agenticAppsEnabled',
       'reportProblemEnabled',
+      'provideFeedbackEnabled',
       'jiraTicketEnabled', 'jiraTicketProject', 'jiraTicketLabel',
       'githubTicketEnabled', 'githubTicketRepo', 'githubTicketLabel',
       'ticketEnabled', 'ticketProvider',

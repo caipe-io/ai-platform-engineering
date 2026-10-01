@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +36,7 @@ _PARQUET_INDEX_FIELDS = (
 )
 _AUDIT_KEY_TS_RE = re.compile(r"audit-(\d{8}T\d{6}Z)-")
 _KEY_TIME_PRUNE_TOLERANCE = timedelta(minutes=2)
+_S3_IO_MAX_WORKERS = 16
 
 
 def _format_bytes(value: int) -> str:
@@ -344,6 +346,10 @@ class LocalAuditStore:
             return
 
 
+class S3RetentionError(Exception):
+    """Raised when an S3 lifecycle-rule update fails (e.g. missing IAM permissions)."""
+
+
 class S3AuditStore:
     """S3-backed audit store using minute-partitioned Parquet objects."""
 
@@ -441,10 +447,17 @@ class S3AuditStore:
         except Exception:  # noqa: BLE001
             rules = []
         rules.append(new_rule)
-        self._client.put_bucket_lifecycle_configuration(
-            Bucket=self.bucket,
-            LifecycleConfiguration={"Rules": rules},
-        )
+        try:
+            self._client.put_bucket_lifecycle_configuration(
+                Bucket=self.bucket,
+                LifecycleConfiguration={"Rules": rules},
+            )
+        except Exception as exc:  # noqa: BLE001
+            reason = getattr(exc, "response", {}).get("Error", {}).get("Message") or str(exc)
+            raise S3RetentionError(
+                f"Failed to update S3 lifecycle rule (check S3 permissions, e.g. "
+                f"s3:PutLifecycleConfiguration on bucket {self.bucket}): {reason}"
+            ) from exc
 
     def storage_usage(self, *, max_objects: int = 10_000) -> dict[str, Any]:
         """Return approximate storage usage under this prefix.
@@ -501,28 +514,45 @@ class S3AuditStore:
         return f"s3://{self.bucket}/{key}"
 
     def query(self, query: AuditQuery) -> QueryResult:
+        keys = [
+            key
+            for key in self._keys_for_range(query.since, query.until, query.time_resolution)
+            if self._key_may_overlap(key, query)
+        ]
+
         matches: list[dict[str, Any]] = []
-        for key in self._keys_for_range(query.since, query.until, query.time_resolution):
-            if not self._key_may_overlap(key, query):
-                continue
-            for record in self._read_object(key):
-                if _record_matches(record, query):
-                    matches.append(record)
+        if keys:
+            workers = max(1, min(_S3_IO_MAX_WORKERS, len(keys)))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                for records in executor.map(self._read_object, keys):
+                    for record in records:
+                        if _record_matches(record, query):
+                            matches.append(record)
 
         matches.sort(key=_record_sort_key, reverse=True)
         total = len(matches)
         return QueryResult(records=matches[: query.limit], total=total, truncated=total > query.limit)
 
-    def _keys_for_range(self, since: datetime, until: datetime, time_resolution: str = "auto") -> Iterable[str]:
+    def _keys_for_range(self, since: datetime, until: datetime, time_resolution: str = "auto") -> list[str]:
         resolution = self._resolve_time_resolution(since, until, time_resolution)
-        seen: set[str] = set()
+        prefixes = list(self._prefixes_for_range(since, until, resolution))
+        if not prefixes:
+            return []
 
-        for prefix, delimiter in self._prefixes_for_range(since, until, resolution):
-            for key in self._list_parquet_keys(prefix, delimiter=delimiter):
-                if key in seen:
-                    continue
-                seen.add(key)
-                yield key
+        seen: set[str] = set()
+        ordered_keys: list[str] = []
+        workers = max(1, min(_S3_IO_MAX_WORKERS, len(prefixes)))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(self._list_parquet_keys, prefix, delimiter=delimiter)
+                for prefix, delimiter in prefixes
+            ]
+            for future in futures:
+                for key in future.result():
+                    if key not in seen:
+                        seen.add(key)
+                        ordered_keys.append(key)
+        return ordered_keys
 
     def _resolve_time_resolution(self, since: datetime, until: datetime, requested: str) -> str:
         value = requested.strip().lower()
@@ -562,7 +592,8 @@ class S3AuditStore:
         prefix = "/".join(part for part in (self.prefix, *parts) if part)
         return f"{prefix}/" if prefix else ""
 
-    def _list_parquet_keys(self, prefix: str, *, delimiter: str | None = None) -> Iterable[str]:
+    def _list_parquet_keys(self, prefix: str, *, delimiter: str | None = None) -> list[str]:
+        keys: list[str] = []
         token: str | None = None
         while True:
             kwargs: dict[str, Any] = {"Bucket": self.bucket, "Prefix": prefix}
@@ -574,12 +605,13 @@ class S3AuditStore:
             for item in response.get("Contents", []):
                 key = item.get("Key")
                 if isinstance(key, str) and key.endswith(".parquet"):
-                    yield key
+                    keys.append(key)
             if not response.get("IsTruncated"):
                 break
             token = response.get("NextContinuationToken")
             if not token:
                 break
+        return keys
 
     def _key_may_overlap(self, key: str, query: AuditQuery) -> bool:
         key_dt = _parse_key_datetime(key)
@@ -591,14 +623,13 @@ class S3AuditStore:
             <= query.until + _KEY_TIME_PRUNE_TOLERANCE
         )
 
-    def _read_object(self, key: str) -> Iterable[dict[str, Any]]:
+    def _read_object(self, key: str) -> list[dict[str, Any]]:
         try:
             response = self._client.get_object(Bucket=self.bucket, Key=key)
             body = response["Body"].read()
-            records = self._from_parquet_bytes(body)
+            return list(self._from_parquet_bytes(body))
         except Exception:
-            return
-        yield from records
+            return []
 
     def _to_parquet_bytes(self, records: list[dict[str, Any]]) -> bytes:
         import pyarrow as pa  # type: ignore[import-untyped]

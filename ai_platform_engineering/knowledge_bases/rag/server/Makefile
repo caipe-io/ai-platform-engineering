@@ -99,17 +99,17 @@ build-docker-a2a:            ## Build A2A Docker image
 	docker build -t $(AGENT_DIR_NAME):a2a-latest -f docker/Dockerfile.a2a .
 
 build-docker-a2a-tag:        ## Tag A2A Docker image
-	docker tag $(AGENT_DIR_NAME):a2a-latest ghcr.io/cnoe-io/$(AGENT_DIR_NAME):a2a-latest
+	docker tag $(AGENT_DIR_NAME):a2a-latest ghcr.io/caipe-io/$(AGENT_DIR_NAME):a2a-latest
 
 build-docker-a2a-push:       ## Push A2A Docker image
-	docker push ghcr.io/cnoe-io/$(AGENT_DIR_NAME):a2a-latest
+	docker push ghcr.io/caipe-io/$(AGENT_DIR_NAME):a2a-latest
 
 build-docker-a2a-tag-and-push: ## Tag and push A2A Docker image
 	@$(MAKE) build-docker-a2a build-docker-a2a-tag build-docker-a2a-push
 
 run-docker-a2a: ## Run the A2A agent in Docker
 	@A2A_AGENT_PORT=$$(grep A2A_AGENT_PORT .env | cut -d '=' -f2); \
-	LOCAL_A2A_AGENT_IMAGE=$${A2A_AGENT_IMAGE:-ghcr.io/cnoe-io/$(AGENT_DIR_NAME):a2a-latest}; \
+	LOCAL_A2A_AGENT_IMAGE=$${A2A_AGENT_IMAGE:-ghcr.io/caipe-io/$(AGENT_DIR_NAME):a2a-latest}; \
 	LOCAL_A2A_AGENT_PORT=$${A2A_AGENT_PORT:-8000}; \
 	echo "==================================================================="; \
 	echo "                      A2A AGENT DOCKER RUN                         "; \

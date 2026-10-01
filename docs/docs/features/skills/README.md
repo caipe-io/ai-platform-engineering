@@ -10,6 +10,19 @@ A CAIPE skill is a reusable `SKILL.md` file that describes one focused
 capability such as reviewing a pull request, preparing a release, or
 investigating an incident.
 
+## What you can do
+
+- **Find a procedure:** browse the Skills Gallery and read its description and
+  scan status before using it.
+- **Use it in Chat:** attach an approved skill to an agent in Agent Builder.
+- **Make it yours:** clone or import a skill, edit its instructions, and keep a
+  version that fits your team's process.
+- **Share it safely:** use scanning to identify prompt injection or unsafe tool
+  behavior before the skill reaches an agent.
+
+The Gallery is for skills used inside CAIPE. The Skills Gateway is for
+installing catalog skills into supported coding agents outside the CAIPE UI.
+
 ## Where Skills Are Used
 
 | Surface | Purpose |
@@ -27,6 +40,22 @@ investigating an incident.
 | Agent skill | Editable skill created in the UI | MongoDB `agent_skills` |
 | Skill hub | External GitHub/GitLab source crawled into CAIPE | MongoDB `skill_hubs`, `hub_skills` |
 | Scanner | Optional prompt-injection and unsafe-tool scanner | `SKILL_SCANNER_URL` sidecar |
+
+## Legacy Agentic Workflows URLs
+
+The retired `/agent-builder` page was an older **Agentic Workflows** UI over
+the same `AgentSkill` records used by Skills. It was not the supported
+**Agents → New Agent** wizard.
+
+| Legacy URL | Canonical destination |
+|---|---|
+| `/agent-builder` | `/skills` |
+| `/agent-builder/history` | `/skills` |
+
+Both legacy URLs redirect to the Skills Gallery so existing bookmarks do not
+fail. Persisted `agent_skills`, favorites, workflow run records, APIs, stores,
+and authorization rules remain unchanged. Use `/dynamic-agents` to create or
+edit an agent, and `/workflows` to author multi-agent workflows.
 
 ## Use Skills In CAIPE
 

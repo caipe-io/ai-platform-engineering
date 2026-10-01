@@ -93,6 +93,94 @@ async def test_service_account_token_sends_service_account_subject(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_service_account_delegates_decision_to_owner_subject(monkeypatch):
+    """Unattended (autonomous) runs: a service-account bearer that supplies the
+    owner's sub must have the decision evaluated on the OWNER (user:<sub>), not
+    the service account — so group-shared agents and revocation work. The
+    forwarded bearer is still the service account's (CAS binds the cross-subject
+    evaluation via can_audit on that caller)."""
+    from dynamic_agents.auth import authz
+
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://cas")
+    posts: list = []
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client(posts, _Resp(200, {"decision": "ALLOW"})))
+
+    token = _fake_jwt({"sub": "sa-sub", "preferred_username": "service-account-caipe-platform"})
+    token_ref = current_user_token.set(token)
+    try:
+        await authz.require_agent_use_permission("agent-1", delegated_user_sub="owner-uuid")
+    finally:
+        current_user_token.reset(token_ref)
+
+    assert posts
+    _url, _headers, body = posts[-1]
+    assert body["subject"] == {"type": "user", "id": "owner-uuid"}
+
+
+@pytest.mark.asyncio
+async def test_user_bearer_cannot_delegate_to_another_subject(monkeypatch):
+    """A user (interactive) bearer may never assert a different subject: the
+    delegation branch is gated on the bearer being a service account, so the
+    decision stays bound to the user's own sub even if a delegated sub is
+    passed."""
+    from dynamic_agents.auth import authz
+
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://cas")
+    posts: list = []
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client(posts, _Resp(200, {"decision": "ALLOW"})))
+
+    token_ref = current_user_token.set(_fake_jwt({"sub": "alice-sub"}))
+    try:
+        await authz.require_agent_use_permission("agent-1", delegated_user_sub="victim-uuid")
+    finally:
+        current_user_token.reset(token_ref)
+
+    assert posts[-1][2]["subject"] == {"type": "user", "id": "alice-sub"}
+
+
+@pytest.mark.asyncio
+async def test_invalid_delegated_subject_returns_400_without_calling_cas(monkeypatch):
+    from dynamic_agents.auth import authz
+
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://cas")
+
+    def must_not_construct(*a, **k):
+        raise AssertionError("CAS must not be called for an invalid delegated subject")
+
+    monkeypatch.setattr(authz.httpx, "AsyncClient", must_not_construct)
+    token = _fake_jwt({"sub": "sa-sub", "preferred_username": "service-account-caipe-platform"})
+    token_ref = current_user_token.set(token)
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await authz.require_agent_use_permission("agent-1", delegated_user_sub="bad/sub")
+    finally:
+        current_user_token.reset(token_ref)
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "invalid_delegated_subject"
+
+
+@pytest.mark.asyncio
+async def test_service_account_without_delegated_sub_stays_service_account(monkeypatch):
+    """A service-account bearer with no owner sub (e.g. a legacy task) is still
+    evaluated as the service account — the delegation is opt-in, so behaviour is
+    unchanged when no owner is asserted."""
+    from dynamic_agents.auth import authz
+
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://cas")
+    posts: list = []
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client(posts, _Resp(200, {"decision": "ALLOW"})))
+
+    token = _fake_jwt({"sub": "sa-sub", "preferred_username": "service-account-caipe-platform"})
+    token_ref = current_user_token.set(token)
+    try:
+        await authz.require_agent_use_permission("agent-1")
+    finally:
+        current_user_token.reset(token_ref)
+
+    assert posts[-1][2]["subject"] == {"type": "service_account", "id": "sa-sub"}
+
+
+@pytest.mark.asyncio
 async def test_strips_trailing_slash_from_service_url(monkeypatch):
     from dynamic_agents.auth import authz
 

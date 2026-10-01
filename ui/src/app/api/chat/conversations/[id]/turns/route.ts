@@ -20,7 +20,7 @@ paginatedResponse,
 requireConversationAccess,
 successResponse,
 validateRequired,
-validateUUID,
+validateConversationId,
 withAuth,
 withErrorHandler,
 } from "@/lib/api-middleware";
@@ -39,7 +39,7 @@ export const GET = withErrorHandler(
     return withAuth(request, async (req, user, session) => {
       const { id: conversationId } = await context.params;
 
-      if (!validateUUID(conversationId)) {
+      if (!validateConversationId(conversationId)) {
         throw new ApiError("Invalid conversation ID format", 400);
       }
 
@@ -88,7 +88,7 @@ export const POST = withErrorHandler(
       const { id: conversationId } = await context.params;
       const body: UpsertTurnRequest = await request.json();
 
-      if (!validateUUID(conversationId)) {
+      if (!validateConversationId(conversationId)) {
         throw new ApiError("Invalid conversation ID format", 400);
       }
 

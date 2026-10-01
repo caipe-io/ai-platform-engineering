@@ -119,6 +119,21 @@ afterEach(() => {
   delete process.env.WEBEX_WORKSPACE_ALIAS;
 });
 
+async function putWebexSpaces(spaces: unknown[]) {
+  const { PUT } = await import("../webex-spaces/route");
+  return PUT(
+    new NextRequest(`http://localhost:3000/api/admin/teams/${teamId}/webex-spaces`, {
+      method: "PUT",
+      headers: {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ spaces }),
+    }),
+    { params: Promise.resolve({ id: teamId }) }
+  );
+}
+
 describe("PUT /api/admin/teams/[id]/webex-spaces", () => {
   it("upserts by webex_space_id and team_id and rejects cross-team conflicts", async () => {
     mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings].rows.push({
@@ -127,42 +142,120 @@ describe("PUT /api/admin/teams/[id]/webex-spaces", () => {
       active: true,
     });
 
-    const { PUT } = await import("../webex-spaces/route");
-    const conflict = await PUT(
-      new NextRequest(`http://localhost:3000/api/admin/teams/${teamId}/webex-spaces`, {
-        method: "PUT",
-        headers: {
-          Authorization: "Bearer test-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          spaces: [{ webex_space_id: "space-taken", space_name: "Taken Space" }],
-        }),
-      }),
-      { params: Promise.resolve({ id: teamId }) }
-    );
+    const conflict = await putWebexSpaces([
+      { webex_space_id: "space-taken", space_name: "Taken Space", bot_id: "primary" },
+    ]);
     expect(conflict.status).toBe(409);
 
-    const ok = await PUT(
-      new NextRequest(`http://localhost:3000/api/admin/teams/${teamId}/webex-spaces`, {
-        method: "PUT",
-        headers: {
-          Authorization: "Bearer test-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          spaces: [{ webex_space_id: "space-new", space_name: "New Space" }],
-        }),
-      }),
-      { params: Promise.resolve({ id: teamId }) }
-    );
+    const ok = await putWebexSpaces([
+      { webex_space_id: "space-new", space_name: "New Space", bot_id: "primary" },
+    ]);
     expect(ok.status).toBe(200);
     expect(
       mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings].updateOne
     ).toHaveBeenCalledWith(
       { webex_space_id: "space-new", team_id: teamId },
-      expect.any(Object),
+      expect.objectContaining({ $set: expect.objectContaining({ bot_id: "primary" }) }),
       { upsert: true }
     );
+  });
+
+  // The single-space team route falls back to resolving the old team by
+  // team_id when team_slug is missing on the mapping doc, so every upsert
+  // here must also persist team_slug — otherwise a space last assigned via
+  // this bulk route can never have its stale OpenFGA grant revoked.
+  it("writes team_slug alongside team_id on every upsert", async () => {
+    const res = await putWebexSpaces([
+      { webex_space_id: "space-new", space_name: "New Space", bot_id: "primary" },
+    ]);
+    expect(res.status).toBe(200);
+    expect(
+      mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings].updateOne
+    ).toHaveBeenCalledWith(
+      { webex_space_id: "space-new", team_id: teamId },
+      expect.objectContaining({ $set: expect.objectContaining({ team_id: teamId, team_slug: "team-a" }) }),
+      { upsert: true }
+    );
+  });
+
+  // space_team_resolver.py filters `webex_space_team_mappings` on `bot_id`
+  // (added for multi-bot support). A mapping written without it can never be
+  // resolved at runtime, so a brand-new space must supply bot_id explicitly —
+  // there's nothing on record yet to fall back to.
+  it("rejects a brand-new space assignment with no bot_id", async () => {
+    const res = await putWebexSpaces([{ webex_space_id: "space-new", space_name: "New Space" }]);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/bot_id is required/i);
+    expect(
+      mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings].updateOne
+    ).not.toHaveBeenCalled();
+  });
+
+  it("preserves the existing mapping's bot_id when re-saving without supplying it", async () => {
+    mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings].rows.push({
+      webex_space_id: "space-existing",
+      team_id: teamId,
+      bot_id: "primary",
+      active: true,
+    });
+
+    const res = await putWebexSpaces([
+      { webex_space_id: "space-existing", space_name: "Existing Space" },
+    ]);
+    expect(res.status).toBe(200);
+    expect(
+      mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings].updateOne
+    ).toHaveBeenCalledWith(
+      { webex_space_id: "space-existing", team_id: teamId },
+      expect.objectContaining({ $set: expect.objectContaining({ bot_id: "primary" }) }),
+      { upsert: true }
+    );
+  });
+
+  it("lets an explicit bot_id override the previously stored one", async () => {
+    mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings].rows.push({
+      webex_space_id: "space-existing",
+      team_id: teamId,
+      bot_id: "primary",
+      active: true,
+    });
+
+    const res = await putWebexSpaces([
+      { webex_space_id: "space-existing", space_name: "Existing Space", bot_id: "secondary" },
+    ]);
+    expect(res.status).toBe(200);
+    expect(
+      mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings].updateOne
+    ).toHaveBeenCalledWith(
+      { webex_space_id: "space-existing", team_id: teamId },
+      expect.objectContaining({ $set: expect.objectContaining({ bot_id: "secondary" }) }),
+      { upsert: true }
+    );
+  });
+});
+
+describe("GET /api/admin/teams/[id]/webex-spaces", () => {
+  it("round-trips the stored bot_id", async () => {
+    mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings].rows.push({
+      webex_space_id: "space-existing",
+      team_id: teamId,
+      bot_id: "primary",
+      space_name: "Existing Space",
+      active: true,
+    });
+
+    const { GET } = await import("../webex-spaces/route");
+    const res = await GET(
+      new NextRequest(`http://localhost:3000/api/admin/teams/${teamId}/webex-spaces`, {
+        headers: { Authorization: "Bearer test-token" },
+      }),
+      { params: Promise.resolve({ id: teamId }) }
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.spaces).toEqual([
+      expect.objectContaining({ webex_space_id: "space-existing", bot_id: "primary" }),
+    ]);
   });
 });

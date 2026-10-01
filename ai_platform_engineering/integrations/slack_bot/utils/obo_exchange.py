@@ -167,7 +167,7 @@ async def impersonate_service_account(
         aud                = caipe-platform
 
     Because ``preferred_username`` starts with ``service-account-``, all three
-    enforcement layers (BFF ``jwt-validation.ts``, DA ``openfga_authz.py``,
+    enforcement layers (BFF ``jwt-validation.ts``, DA ``authz.py``,
     bridge ``main.py``) namespace the subject as ``service_account:<sub>``
     rather than ``user:<sub>``.  The absent ``client_id`` claim in the
     impersonated token does **not** affect detection.

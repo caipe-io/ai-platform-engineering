@@ -12,7 +12,7 @@
  * fallback identity is returned.
  */
 
-import { createRemoteJWKSet,errors as joseErrors,jwtVerify,SignJWT,type JWTPayload } from 'jose';
+import { createRemoteJWKSet,decodeProtectedHeader,errors as joseErrors,jwtVerify,SignJWT,type JWTPayload } from 'jose';
 
 import {
 getSafeNextAuthSecret,
@@ -42,6 +42,25 @@ export interface JWTIdentity {
    * the same tenant the cookie-session callers do.
    */
   org?: string;
+}
+
+export const LOCAL_SKILLS_TOKEN_ISSUER = 'caipe-ui';
+export const LOCAL_SKILLS_TOKEN_AUDIENCE = 'caipe-skills-api';
+const LOCAL_SKILLS_TOKEN_SCOPE = 'skills:read';
+
+export interface LocalSkillsJWTIdentity extends JWTIdentity {
+  sub: string;
+  tokenType: 'skills_api_key';
+  scopes: ['skills:read'];
+  issuer: typeof LOCAL_SKILLS_TOKEN_ISSUER;
+  audience: typeof LOCAL_SKILLS_TOKEN_AUDIENCE;
+}
+
+export class LocalSkillsJWTValidationError extends Error {
+  constructor(readonly reason: 'expired' | 'invalid') {
+    super(reason === 'expired' ? 'Local skills token expired' : 'Invalid local skills token');
+    this.name = 'LocalSkillsJWTValidationError';
+  }
 }
 
 let _cachedJWKS: ReturnType<typeof createRemoteJWKSet> | null = null;
@@ -301,15 +320,17 @@ function parseExpiry(expiresIn: string): number {
  *
  * The token is scoped to `skills:read` and always gets `role: 'user'`.
  *
- * @param email  User email (becomes `sub` claim)
+ * @param email  User email stored as descriptive identity metadata.
  * @param name   User display name
  * @param expiresIn  Validity period, e.g. "30d", "60d", "90d" (default "90d", max 90d)
+ * @param subject Stable identity-provider subject; defaults to email for compatibility.
  * @returns Signed JWT string
  */
 export async function signLocalSkillsToken(
   email: string,
   name: string,
   expiresIn: string = '90d',
+  subject: string = email,
 ): Promise<string> {
   const key = getLocalSigningKey();
   const expSeconds = parseExpiry(expiresIn);
@@ -318,10 +339,12 @@ export async function signLocalSkillsToken(
     email,
     name,
     type: 'skills_api_key',
-    scope: 'skills:read',
+    scope: LOCAL_SKILLS_TOKEN_SCOPE,
   })
     .setProtectedHeader({ alg: 'HS256' })
-    .setSubject(email)
+    .setIssuer(LOCAL_SKILLS_TOKEN_ISSUER)
+    .setAudience(LOCAL_SKILLS_TOKEN_AUDIENCE)
+    .setSubject(subject)
     .setIssuedAt()
     .setExpirationTime(Math.floor(Date.now() / 1000) + expSeconds)
     .sign(key);
@@ -330,57 +353,78 @@ export async function signLocalSkillsToken(
 /**
  * Validate a local skills API token.
  *
- * @returns JWTIdentity if the token is a valid local skills token, or null if
- *          it is not a local token (so the caller should fall through to OIDC).
- * @throws  Error if the token IS a local skills token but is expired.
+ * @returns A typed, scope-preserving identity when the token is valid, or null
+ *          when it is not an HS256 local-token candidate.
+ * @throws  LocalSkillsJWTValidationError when an HS256 candidate is expired,
+ *          invalid, or does not carry the exact required claims.
  */
 export async function validateLocalSkillsJWT(
   token: string,
-): Promise<JWTIdentity | null> {
+): Promise<LocalSkillsJWTIdentity | null> {
+  try {
+    if (decodeProtectedHeader(token).alg !== 'HS256') {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
   const secret = process.env.SKILLS_API_SECRET || process.env.NEXTAUTH_SECRET;
   if (!secret) {
     return null; // No secret configured — cannot be a local token
   }
-  // R4: in strict mode, refuse to validate skills tokens against a
-  // known dev-placeholder secret. The token MAY have been minted by an
-  // attacker who knows the leaked placeholder; treating it as invalid
-  // here is the right failure (the caller falls through to OIDC).
+  // R4: in strict mode, refuse to validate skills tokens against a known
+  // dev-placeholder secret. Do not fall through to OIDC: this is already an
+  // HS256 local-token candidate and must fail with a stable 401.
   if (isStrictSecretMode() && KNOWN_NEXTAUTH_PLACEHOLDERS.has(secret.trim())) {
-    // Loud-but-not-fatal: log so an operator searching logs sees this
-    // even when the BFF is otherwise quiet, but DON'T throw — that
-    // would 5xx the whole request when the right move is to fall back
-    // to OIDC.
     console.error(
       "[NextAuthSecretGuard] Refusing to validate skills token against a known " +
         "dev placeholder NEXTAUTH_SECRET in strict mode. Rotate the secret."
     );
-    return null;
+    throw new LocalSkillsJWTValidationError('invalid');
   }
 
   const key = new TextEncoder().encode(secret);
 
   try {
-    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] });
+    const { payload } = await jwtVerify(token, key, {
+      algorithms: ['HS256'],
+      issuer: LOCAL_SKILLS_TOKEN_ISSUER,
+      audience: LOCAL_SKILLS_TOKEN_AUDIENCE,
+    });
 
-    // Only accept tokens explicitly marked as local skills tokens
-    if (payload.type !== 'skills_api_key') {
-      return null;
+    if (
+      payload.type !== 'skills_api_key' ||
+      payload.scope !== LOCAL_SKILLS_TOKEN_SCOPE ||
+      typeof payload.sub !== 'string' ||
+      !payload.sub.trim()
+    ) {
+      throw new LocalSkillsJWTValidationError('invalid');
     }
 
     const email =
-      (payload.email as string) ||
-      (payload.sub as string) ||
-      'unknown';
+      (typeof payload.email === 'string' && payload.email.trim()) ||
+      payload.sub.trim();
 
-    const name = (payload.name as string) || email;
+    const name = (typeof payload.name === 'string' && payload.name.trim()) || email;
 
-    return { email, name, groups: [] };
+    return {
+      email,
+      name,
+      groups: [],
+      sub: payload.sub.trim(),
+      tokenType: 'skills_api_key',
+      scopes: [LOCAL_SKILLS_TOKEN_SCOPE],
+      issuer: LOCAL_SKILLS_TOKEN_ISSUER,
+      audience: LOCAL_SKILLS_TOKEN_AUDIENCE,
+    };
   } catch (err) {
-    if (err instanceof joseErrors.JWTExpired) {
-      // It IS a local token, but expired — don't fall through to OIDC
-      throw new Error('Skills API token has expired. Please generate a new one.');
+    if (err instanceof LocalSkillsJWTValidationError) {
+      throw err;
     }
-    // Signature mismatch or other error — not a local token, fall through
-    return null;
+    if (err instanceof joseErrors.JWTExpired) {
+      throw new LocalSkillsJWTValidationError('expired');
+    }
+    throw new LocalSkillsJWTValidationError('invalid');
   }
 }

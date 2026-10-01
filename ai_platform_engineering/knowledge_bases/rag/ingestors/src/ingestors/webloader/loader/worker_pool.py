@@ -229,9 +229,11 @@ class ScrapyWorkerPool:
               errors=msg.payload.get("errors", []),
               elapsed_seconds=msg.payload.get("elapsed_seconds", 0),
               urls_found_in_sitemap=msg.payload.get("urls_found_in_sitemap", 0),
+              urls_matched_in_sitemap=msg.payload.get("urls_matched_in_sitemap", 0),
               urls_filtered_external=msg.payload.get("urls_filtered_external", 0),
               urls_filtered_pattern=msg.payload.get("urls_filtered_pattern", 0),
               urls_filtered_max_pages=msg.payload.get("urls_filtered_max_pages", 0),
+              sitemap_url_used=msg.payload.get("sitemap_url_used"),
             )
 
             if not pending.future.done():
