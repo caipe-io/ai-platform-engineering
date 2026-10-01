@@ -87,10 +87,13 @@ any other OpenAI-compatible endpoint:
 
 ```bash
 export LLM_PROVIDER=openai-compatible
-export OPENAI_COMPATIBLE_BASE_URL=http://litellm-proxy:4000/v1
+export OPENAI_COMPATIBLE_BASE_URL=https://llm-gateway.example.com/v1
 export OPENAI_COMPATIBLE_API_KEY=<key>
 export OPENAI_COMPATIBLE_MODEL=<model the gateway exposes>
 ```
+
+Use HTTPS when sending a gateway credential. For an HTTP development endpoint,
+keep the gateway on an isolated local network and use a placeholder key.
 
 There is deliberately **no in-process LiteLLM provider**. `langchain-litellm`
 was considered and dropped: it occupies no niche the other two paths leave

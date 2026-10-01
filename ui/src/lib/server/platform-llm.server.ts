@@ -74,11 +74,14 @@ async function readFirstRegisteredModel(): Promise<LlmModelRef | null> {
 export async function resolveLlmModel(
   /** A model pinned on the feature's own config, e.g. an AI Review target. */
   configModel?: { id?: string; provider?: string } | null,
+  /** Feature fallback used after platform and registered models. */
+  fallbackModel?: { id?: string; provider?: string } | null,
 ): Promise<LlmModelRef> {
   return (
     toModelRef(configModel) ??
     (await readPlatformLlm()) ??
     (await readFirstRegisteredModel()) ??
+    toModelRef(fallbackModel) ??
     GLOBAL_DEFAULT_MODEL
   );
 }
