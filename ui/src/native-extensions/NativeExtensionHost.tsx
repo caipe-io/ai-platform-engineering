@@ -65,7 +65,7 @@ export function NativeExtensionHost({
 
   const Component = extension.module.Component;
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-native-extension={extensionId}>
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto" data-native-extension={extensionId}>
       {!slot && <HeaderBreadcrumbPortal>
         <WorkspaceBreadcrumbs breadcrumbs={breadcrumbs} portal={false} />
       </HeaderBreadcrumbPortal>}
