@@ -1,0 +1,8 @@
+[
+  {"name": "ctx200_reference", "max_context_chars": 200, "answer_mode": "reference"},
+  {"name": "ctx4000_reference", "max_context_chars": 4000, "answer_mode": "reference"},
+  {"name": "ctx8000_reference", "max_context_chars": 8000, "answer_mode": "reference"},
+  {"name": "ctx200_generate", "max_context_chars": 200, "answer_mode": "generate"},
+  {"name": "ctx4000_generate", "max_context_chars": 4000, "answer_mode": "generate"},
+  {"name": "ctx8000_generate", "max_context_chars": 8000, "answer_mode": "generate"}
+]

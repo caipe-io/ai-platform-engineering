@@ -15,6 +15,7 @@ class Role:
 
   READONLY = "readonly"
   INGESTONLY = "ingestonly"
+  EVALUATOR = "evaluator"
   ADMIN = "admin"
 
 

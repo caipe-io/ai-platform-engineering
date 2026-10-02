@@ -273,6 +273,31 @@
       }
     },
     {
+      "clientId": "caipe-evaluator-obo",
+      "name": "CAIPE Evaluator OBO",
+      "description": "Confidential client scoped to evaluator submitter impersonation (token-exchange requested_subject via RFC 8693). Used by the RAG Evaluator background worker to mint submitter bearers.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "caipe-evaluator-obo-dev-secret",
+      "bearerOnly": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles",
+        "groups",
+        "org"
+      ],
+      "attributes": {
+        "oidc.token.exchange.enabled": "true"
+      }
+    },
+    {
       "clientId": "caipe-webex-bot-admin",
       "name": "CAIPE Webex Bot Admin Audience",
       "description": "Audience target for Web UI BFF tokens calling the Webex bot admin API (JWT aud=caipe-webex-bot-admin)",
