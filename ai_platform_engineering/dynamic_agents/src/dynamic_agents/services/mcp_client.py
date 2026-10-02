@@ -601,6 +601,10 @@ async def resolve_mcp_credential_refs(
             if source.name.lower() == "authorization" and not credential.lower().startswith("bearer "):
                 header_value = f"Bearer {credential}"
             resolved["headers"] = {**resolved.get("headers", {}), source.name: header_value}
+            if source.kind == "caller_token" and "Authorization" not in resolved["headers"]:
+                resolved["headers"]["Authorization"] = (
+                    credential if credential.lower().startswith("bearer ") else f"Bearer {credential}"
+                )
 
     return resolved
 
@@ -623,7 +627,7 @@ async def resolve_mcp_connections_credential_refs(
     from ``connections`` and recorded in ``failures`` with structured reasons.
     """
 
-    if credential_client is None or not _use_impersonation_tokens():
+    if not _use_impersonation_tokens():
         return McpCredentialResolutionResult(connections=dict(connections))
 
     server_map = {server.id: server for server in servers}
@@ -632,6 +636,12 @@ async def resolve_mcp_connections_credential_refs(
     for server_id, config in connections.items():
         server = server_map.get(server_id)
         if server is None:
+            resolved[server_id] = config
+            continue
+        if credential_client is None and not any(
+            source.kind == "caller_token" and source.fallback_client_credentials
+            for source in server.credential_sources
+        ):
             resolved[server_id] = config
             continue
         try:

@@ -17,6 +17,7 @@ const mockRetrieve = jest.fn();
 const mockRefreshConnection = jest.fn();
 const mockListConnections = jest.fn();
 const mockIsCredentialFeatureEnabled = jest.fn();
+const mockIsDevAnonymousAuthEnabled = jest.fn();
 const mockWriteOpenFgaTuples = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
@@ -75,6 +76,10 @@ jest.mock("@/lib/feature-flags/credentials", () => ({
   isCredentialFeatureEnabled: (...args: unknown[]) => mockIsCredentialFeatureEnabled(...args),
 }));
 
+jest.mock("@/lib/auth/dev-auth-provider", () => ({
+  isDevAnonymousAuthEnabled: () => mockIsDevAnonymousAuthEnabled(),
+}));
+
 function request(body: Record<string, unknown>, headers?: HeadersInit): NextRequest {
   return new NextRequest(new URL("/api/mcp-servers/test-tool", "http://localhost:3000"), {
     method: "POST",
@@ -103,6 +108,7 @@ describe("POST /api/mcp-servers/test-tool", () => {
       refreshConnection: mockRefreshConnection,
     });
     mockIsCredentialFeatureEnabled.mockReturnValue(true);
+    mockIsDevAnonymousAuthEnabled.mockReturnValue(false);
     mockListConnections.mockResolvedValue([]);
     mockRetrieve.mockResolvedValue({ credential: "argocd-provider-token" });
     mockWriteOpenFgaTuples.mockResolvedValue({ enabled: true, writes: 2, deletes: 0 });
@@ -111,6 +117,9 @@ describe("POST /api/mcp-servers/test-tool", () => {
   afterEach(() => {
     delete process.env.AGENT_GATEWAY_URL;
     delete process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET;
+    delete process.env.INGESTOR_OIDC_DISCOVERY_URL;
+    delete process.env.INGESTOR_OIDC_CLIENT_ID;
+    delete process.env.INGESTOR_OIDC_CLIENT_SECRET;
   });
 
   it("sends user auth to AgentGateway and provider auth as X-CAIPE-Provider-Token", async () => {
@@ -209,6 +218,88 @@ describe("POST /api/mcp-servers/test-tool", () => {
           object: "tool:mcp-test-argocd/*",
         }),
       ],
+    });
+  });
+
+  it("grants and revokes test-tool access for the minted local service account", async () => {
+    const serviceToken = `header.${Buffer.from(
+      JSON.stringify({ sub: "service-account-sub" }),
+    ).toString("base64url")}.signature`;
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      session: { sub: "anonymous-local-dev", role: "admin" },
+    });
+    mockIsDevAnonymousAuthEnabled.mockReturnValue(true);
+    process.env.INGESTOR_OIDC_DISCOVERY_URL =
+      "http://keycloak:7080/realms/caipe/.well-known/openid-configuration";
+    process.env.INGESTOR_OIDC_CLIENT_ID = "caipe-platform";
+    process.env.INGESTOR_OIDC_CLIENT_SECRET = "secret";
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "knowledge-base",
+        name: "Knowledge Base",
+        transport: "http",
+        endpoint: "http://agentgateway:4000/mcp/knowledge-base",
+        source: "agentgateway",
+        enabled: true,
+        credential_sources: [],
+      }),
+    });
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({ access_token: serviceToken, expires_in: 300 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: "initialize-1", result: {} }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "mcp-session-id": "mcp-session-1",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: "tools-call-1",
+            result: { content: [{ type: "text", text: "ok" }] },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ) as unknown as typeof fetch;
+
+    const { POST } = await import("../route");
+
+    const response = await POST(
+      request({ serverId: "knowledge-base", toolName: "search", params: { query: "test" } }),
+    );
+
+    expect(response.status).toBe(200);
+    const diagnosticWrites = [
+      {
+        user: "service_account:service-account-sub",
+        relation: "caller",
+        object: "mcp_gateway:list",
+      },
+      {
+        user: "service_account:service-account-sub",
+        relation: "user",
+        object: expect.stringMatching(/^agent:mcp-test-knowledge-base-/),
+      },
+      {
+        user: expect.stringMatching(/^agent:mcp-test-knowledge-base-/),
+        relation: "caller",
+        object: "tool:knowledge-base/*",
+      },
+    ];
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: diagnosticWrites,
+      deletes: [],
+    });
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+      writes: [],
+      deletes: diagnosticWrites,
     });
   });
 

@@ -19,9 +19,14 @@ const mockRefreshConnection = jest.fn();
 const mockListConnections = jest.fn();
 const mockGetConnection = jest.fn();
 const mockIsCredentialFeatureEnabled = jest.fn();
+const mockIsDevAnonymousAuthEnabled = jest.fn();
 
 jest.mock("@/lib/credentials/retrieval-service-factory", () => ({
   getCredentialRetrievalService: (...args: unknown[]) => mockGetCredentialRetrievalService(...args),
+}));
+
+jest.mock("@/lib/auth/dev-auth-provider", () => ({
+  isDevAnonymousAuthEnabled: () => mockIsDevAnonymousAuthEnabled(),
 }));
 
 jest.mock("@/lib/credentials/oauth-service-factory", () => ({
@@ -45,6 +50,10 @@ describe("mcp-credential-headers", () => {
     delete process.env.MCP_SERVICE_OIDC_TOKEN_URL;
     delete process.env.MCP_SERVICE_OIDC_CLIENT_ID;
     delete process.env.MCP_SERVICE_OIDC_CLIENT_SECRET;
+    delete process.env.INGESTOR_OIDC_DISCOVERY_URL;
+    delete process.env.INGESTOR_OIDC_ISSUER;
+    delete process.env.INGESTOR_OIDC_CLIENT_ID;
+    delete process.env.INGESTOR_OIDC_CLIENT_SECRET;
     mockGetCredentialRetrievalService.mockResolvedValue({ retrieve: mockRetrieve });
     mockGetProviderConnectionService.mockResolvedValue({
       listConnections: mockListConnections,
@@ -52,6 +61,7 @@ describe("mcp-credential-headers", () => {
       refreshConnection: mockRefreshConnection,
     });
     mockIsCredentialFeatureEnabled.mockReturnValue(true);
+    mockIsDevAnonymousAuthEnabled.mockReturnValue(false);
     mockRetrieve.mockResolvedValue({ credential: "secret-token" });
     _resetMcpCredentialHeaderTokenCacheForTests();
     mockListConnections.mockResolvedValue([
@@ -70,6 +80,10 @@ describe("mcp-credential-headers", () => {
     delete process.env.MCP_SERVICE_OIDC_TOKEN_URL;
     delete process.env.MCP_SERVICE_OIDC_CLIENT_ID;
     delete process.env.MCP_SERVICE_OIDC_CLIENT_SECRET;
+    delete process.env.INGESTOR_OIDC_DISCOVERY_URL;
+    delete process.env.INGESTOR_OIDC_ISSUER;
+    delete process.env.INGESTOR_OIDC_CLIENT_ID;
+    delete process.env.INGESTOR_OIDC_CLIENT_SECRET;
   });
 
   it("exchanges provider_connection credentials onto X-CAIPE-Provider-Token for AgentGateway", async () => {
@@ -218,6 +232,66 @@ describe("mcp-credential-headers", () => {
         origin: "client_credentials",
       }),
     ]);
+  });
+
+  it("uses the internal discovery endpoint for anonymous local AgentGateway authentication", async () => {
+    process.env.INGESTOR_OIDC_DISCOVERY_URL =
+      "http://keycloak:7080/realms/caipe/.well-known/openid-configuration";
+    process.env.INGESTOR_OIDC_ISSUER = "http://localhost:7080/realms/caipe";
+    process.env.INGESTOR_OIDC_CLIENT_ID = "caipe-platform";
+    process.env.INGESTOR_OIDC_CLIENT_SECRET = "secret";
+    mockIsDevAnonymousAuthEnabled.mockReturnValue(true);
+    const fetchMock = jest.fn().mockResolvedValue(
+      Response.json({
+        access_token: `header.${Buffer.from(JSON.stringify({ sub: "service-account-sub" })).toString("base64url")}.signature`,
+        expires_in: 300,
+      }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const request = new NextRequest("http://localhost:3000/api/mcp-servers/probe", { method: "POST" });
+    const resolution = await resolveMcpHeaderCredentials({
+      request,
+      session: { sub: "anonymous-local-dev" },
+      viaAgentGateway: true,
+      server: {
+        _id: "netutils",
+        id: "netutils",
+        name: "Netutils",
+        transport: "http",
+        enabled: true,
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://keycloak:7080/realms/caipe/protocol/openid-connect/token",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(resolution.headers.Authorization).toMatch(/^Bearer header\./);
+    expect(resolution.sources).toEqual([]);
+    expect(resolution.authorizationSubject).toEqual({
+      type: "service_account",
+      id: "service-account-sub",
+    });
+  });
+
+  it("still requires a user token outside explicit anonymous local mode", async () => {
+    const request = new NextRequest("http://localhost:3000/api/mcp-servers/probe", { method: "POST" });
+
+    await expect(
+      resolveMcpHeaderCredentials({
+        request,
+        session: { sub: "user-sub" },
+        viaAgentGateway: true,
+        server: {
+          _id: "netutils",
+          id: "netutils",
+          name: "Netutils",
+          transport: "http",
+          enabled: true,
+        },
+      }),
+    ).rejects.toThrow("MCP_AUTH_REQUIRED");
   });
 
   it("detects nested application failures in MCP tool payloads", () => {

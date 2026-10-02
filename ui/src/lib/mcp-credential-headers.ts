@@ -10,6 +10,7 @@ import {
   isMcpCredentialUnavailableError,
   resolveProviderConnectionCredential,
 } from "@/lib/mcp-credential-resolution";
+import { isDevAnonymousAuthEnabled } from "@/lib/auth/dev-auth-provider";
 import type { MCPCredentialSource, MCPServerConfig } from "@/types/dynamic-agent";
 import type { NextRequest } from "next/server";
 import type { ResourceAuthzSession } from "@/lib/rbac/resource-authz";
@@ -34,6 +35,10 @@ export interface McpCredentialSourceDebug {
 export interface McpCredentialResolution {
   headers: Record<string, string>;
   sources: McpCredentialSourceDebug[];
+  authorizationSubject?: {
+    type: "service_account";
+    id: string;
+  };
 }
 
 interface ServiceTokenCacheEntry {
@@ -97,6 +102,7 @@ function serviceTokenConfig(): { tokenUrl: string; clientId: string; clientSecre
   const tokenUrl =
     process.env.MCP_SERVICE_OIDC_TOKEN_URL?.trim() ||
     process.env.OAUTH2_TOKEN_URL?.trim() ||
+    tokenEndpointFromIssuer(process.env.INGESTOR_OIDC_DISCOVERY_URL) ||
     tokenEndpointFromIssuer(process.env.INGESTOR_OIDC_ISSUER) ||
     tokenEndpointFromIssuer(process.env.OIDC_DISCOVERY_URL) ||
     tokenEndpointFromIssuer(process.env.OIDC_ISSUER) ||
@@ -165,6 +171,18 @@ async function mintServiceClientCredentialsToken(): Promise<string | null> {
 
 function asBearerToken(value: string): string {
   return value.toLowerCase().startsWith("bearer ") ? value : `Bearer ${value}`;
+}
+
+function serviceAccountSubjectFromToken(value: string): string | null {
+  const token = value.replace(/^Bearer\s+/i, "");
+  const payload = token.split(".")[1];
+  if (!payload) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { sub?: unknown };
+    return typeof claims.sub === "string" && claims.sub.trim() ? claims.sub.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 async function resolveSourceCredential(
@@ -306,6 +324,7 @@ export async function resolveMcpHeaderCredentials(input: {
   const retrievalCaller = input.retrievalCaller ?? "mcp-http-server-client";
   const callerAuthorization = userAuthorizationHeader(input.request, input.session);
   let agentGatewayServiceAuthorization: string | null = null;
+  let agentGatewayServiceSubject: string | null = null;
 
   for (const source of input.server.credential_sources ?? []) {
     const resolved = await resolveSourceCredential(
@@ -332,10 +351,22 @@ export async function resolveMcpHeaderCredentials(input: {
     );
     if (source.kind === "caller_token" && resolved.origin === "client_credentials") {
       agentGatewayServiceAuthorization = asBearerToken(resolved.credential);
+      agentGatewayServiceSubject = serviceAccountSubjectFromToken(resolved.credential);
     }
   }
 
   if (input.viaAgentGateway) {
+    // Local no-SSO mode still exercises AgentGateway's real JWT validation
+    // path. Use the configured platform client only for that explicit dev
+    // mode; production callers must continue to supply their own user token.
+    if (!callerAuthorization && !agentGatewayServiceAuthorization && isDevAnonymousAuthEnabled()) {
+      const minted = await mintServiceClientCredentialsToken();
+      if (minted) {
+        agentGatewayServiceAuthorization = asBearerToken(minted);
+        agentGatewayServiceSubject = serviceAccountSubjectFromToken(minted);
+      }
+    }
+
     const authorization = callerAuthorization ?? agentGatewayServiceAuthorization;
     if (!authorization) {
       throw new Error("MCP_AUTH_REQUIRED");
@@ -343,7 +374,13 @@ export async function resolveMcpHeaderCredentials(input: {
     headers.Authorization = authorization;
   }
 
-  return { headers, sources };
+  return {
+    headers,
+    sources,
+    ...(agentGatewayServiceSubject
+      ? { authorizationSubject: { type: "service_account" as const, id: agentGatewayServiceSubject } }
+      : {}),
+  };
 }
 
 export function _resetMcpCredentialHeaderTokenCacheForTests(): void {
