@@ -67,6 +67,7 @@ class Settings:
     read_default_limit: int = 1_000
     read_max_limit: int = 10_000
     read_max_days: int = 31
+    read_concurrency: int = 2
     verbosity: str = "minimal"
 
     @classmethod
@@ -95,5 +96,6 @@ class Settings:
             read_default_limit=_int_env("AUDIT_SERVICE_READ_DEFAULT_LIMIT", 1_000),
             read_max_limit=_int_env("AUDIT_SERVICE_READ_MAX_LIMIT", 10_000),
             read_max_days=_int_env("AUDIT_SERVICE_READ_MAX_DAYS", 31),
+            read_concurrency=_int_env("AUDIT_SERVICE_READ_CONCURRENCY", 2),
             verbosity=os.getenv("AUDIT_LOG_VERBOSITY", "minimal").strip().lower(),
         )

@@ -16,6 +16,7 @@ from ai_platform_engineering.audit_service.queue_service import AuditQueueServic
 from ai_platform_engineering.audit_service.storage import (
     AuditQuery,
     LocalAuditStore,
+    QueryResult,
     S3AuditStore,
     S3RetentionError,
 )
@@ -142,6 +143,22 @@ def _normalize_payload(payload: Any) -> list[dict[str, Any]]:
     return events
 
 
+async def _query_with_slot(
+    store: LocalAuditStore | S3AuditStore,
+    query: AuditQuery,
+    slots: asyncio.Semaphore,
+) -> QueryResult:
+    # Cancelling the await does not stop the storage thread. Retain the slot
+    # until that thread exits, so disconnects cannot bypass the reader limit.
+    async with slots:
+        task = asyncio.create_task(asyncio.to_thread(store.query, query))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     if settings.backend == "local":
@@ -167,6 +184,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.audit_store = store
         app.state.audit_queue = queue_service
         app.state.audit_settings = settings
+        app.state.audit_read_slots = asyncio.Semaphore(settings.read_concurrency)
         cleanup_task: asyncio.Task[None] | None = None
         if isinstance(store, LocalAuditStore):
             await _purge_local_retention(store, settings.local_retention_days)
@@ -298,7 +316,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             tool_name=tool_name,
             user_email=user_email,
         )
-        result = await asyncio.to_thread(store.query, audit_query)
+        result = await _query_with_slot(store, audit_query, request.app.state.audit_read_slots)
         return QueryResponse(records=result.records, total=result.total, limit=query_limit, truncated=result.truncated)
 
     @app.get("/v1/audit/verbosity")
