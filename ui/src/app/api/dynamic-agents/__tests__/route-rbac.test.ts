@@ -1073,6 +1073,49 @@ describe("dynamic agents RBAC routes", () => {
     expect(updateDoc).not.toHaveProperty("$unset");
   });
 
+  it("rejects a concurrent prompt edit using the value read by the MCP caller", async () => {
+    const existingAgent = {
+      _id: "agent-example",
+      name: "Example agent",
+      system_prompt: "First version",
+      owner_team_slug: "primary",
+      owner_subject: "test-user",
+      shared_with_teams: [],
+      allowed_tools: {},
+      visibility: "team",
+    };
+    const findOneAndUpdate = jest.fn().mockResolvedValue(null);
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "dynamic_agents") {
+        return { findOne: jest.fn().mockResolvedValue(existingAgent), findOneAndUpdate };
+      }
+      if (name === "teams") {
+        return { find: jest.fn().mockReturnValue({
+          project: jest.fn().mockReturnThis(),
+          toArray: jest.fn().mockResolvedValue([]),
+        }) };
+      }
+      throw new Error(`unexpected collection ${name}`);
+    });
+
+    const { PUT } = await import("../route");
+    const response = await PUT(request("/api/dynamic-agents?id=agent-example", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        system_prompt: "Third version",
+        expected_system_prompt: "First version",
+      }),
+    }));
+
+    expect(response.status).toBe(409);
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: "agent-example", system_prompt: "First version" },
+      expect.objectContaining({ $set: expect.objectContaining({ system_prompt: "Third version" }) }),
+      expect.any(Object),
+    );
+  });
+
   it("sets datasource_ids without touching an untouched rag_collection_ids field", async () => {
     const existingAgent = {
       _id: "agent-existing",
