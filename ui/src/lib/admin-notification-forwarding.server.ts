@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api-error";
+import { getConfig } from "@/lib/config";
 import { getCollection } from "@/lib/mongodb";
 import { originFromNextAuthUrl } from "@/lib/request-origin";
 import { callSlackBotAdmin } from "@/lib/slack-bot-admin";
@@ -19,7 +20,7 @@ const SLACK_TEXT_MAX_LENGTH = 4000;
 const SEVERITY_EMOJI: Record<InAppNotificationSeverity, string> = {
   info: ":information_source:",
   success: ":white_check_mark:",
-  warning: ":warning:",
+  warning: ":bell:",
   error: ":rotating_light:",
 };
 
@@ -186,7 +187,7 @@ export function formatAdminNotificationSlackText(
   if (input.sourceLabel?.trim()) lines.push(`_Source: ${escapeSlackText(input.sourceLabel.trim())}_`);
 
   const link = absoluteNotificationLink(input.href);
-  if (link) lines.push(`<${link}|Open in CAIPE>`);
+  if (link) lines.push(`<${link}|Open in ${escapeSlackText(getConfig("appName"))}>`);
 
   const text = lines.filter(Boolean).join("\n");
   return text.length > SLACK_TEXT_MAX_LENGTH ? text.slice(0, SLACK_TEXT_MAX_LENGTH) : text;

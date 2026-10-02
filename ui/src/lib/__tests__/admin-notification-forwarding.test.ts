@@ -21,6 +21,7 @@ import {
 beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.NEXTAUTH_URL;
+  delete process.env.APP_NAME;
 });
 
 describe("normalizeAdminNotificationForwardingConfig", () => {
@@ -164,7 +165,7 @@ describe("formatAdminNotificationSlackText", () => {
     for (const [severity, emoji] of [
       ["info", ":information_source:"],
       ["success", ":white_check_mark:"],
-      ["warning", ":warning:"],
+      ["warning", ":bell:"],
       ["error", ":rotating_light:"],
     ] as const) {
       const text = formatAdminNotificationSlackText(
@@ -209,6 +210,16 @@ describe("formatAdminNotificationSlackText", () => {
     expect(text).toContain(
       "<https://caipe.example.com/admin/security/approvals?request=abc|Open in CAIPE>",
     );
+  });
+
+  it("uses the configured APP_NAME in the link text", () => {
+    process.env.NEXTAUTH_URL = "https://caipe.example.com";
+    process.env.APP_NAME = "Forge";
+    const text = formatAdminNotificationSlackText(
+      { title: "t", message: "m", severity: "info", href: "/admin/x" },
+      baseConfig,
+    );
+    expect(text).toContain("|Open in Forge>");
   });
 
   it("omits the link line when NEXTAUTH_URL is unset, rather than linking to localhost", () => {

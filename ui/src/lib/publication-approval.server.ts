@@ -58,7 +58,9 @@ async function notifyPublicationRequestCreated(
       recipientTeamSlugs: request.approver_team_slugs,
       recipientOrganizationAdmins: true,
       title: "Approval needed",
-      message: `${actorDisplayName(request.requester)} submitted a publication request.`,
+      message: `${actorDisplayName(request.requester)} requested to publish "${request.resource.label}"${
+        request.risk_facts.reasons.length > 0 ? ` — ${request.risk_facts.reasons.join(", ")}` : ""
+      }.`,
       href: `/admin/security/approvals?request=${encodeURIComponent(request._id)}`,
       severity: "warning",
     });
