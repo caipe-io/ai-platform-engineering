@@ -1031,6 +1031,26 @@ describe('getAuthenticatedUser', () => {
     expect(result.session).toBeDefined();
   });
 
+  it('accepts a configured bootstrap admin when an older session has stale authorization', async () => {
+    process.env.BOOTSTRAP_ADMIN_EMAILS = 'bootstrap@example.com';
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'bootstrap@example.com', name: 'Bootstrap Admin' },
+      role: 'admin',
+      isAuthorized: false,
+    });
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(null),
+    });
+
+    const req = new Request('http://test.com') as unknown as NextRequest;
+    const result = await getAuthenticatedUser(req);
+
+    expect(result.user).toMatchObject({
+      email: 'bootstrap@example.com',
+      role: 'admin',
+    });
+  });
+
   it('persists keycloak_sub on the MongoDB user profile', async () => {
     const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
     const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 2 });
