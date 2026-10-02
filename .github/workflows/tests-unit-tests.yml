@@ -116,6 +116,66 @@ jobs:
   #           ai_platform_engineering/knowledge_bases/rag/server/coverage.xml
   #           ai_platform_engineering/knowledge_bases/rag/server/htmlcov/
 
+  run-llm-wrapper-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v6
+        with:
+          python-version: "3.14"
+      - name: Install UV
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Run llm-wrapper tests
+        run: |
+          cd ai_platform_engineering/llm_wrapper
+          /home/runner/.local/bin/uv venv
+          /home/runner/.local/bin/uv sync --group dev
+          /home/runner/.local/bin/uv run pytest -v
+
+      # llm_wrapper declares no dependencies so that a consumer can take a
+      # subset -- a sandboxed harness worker needs the provider map, the Bedrock
+      # classifier and the reasoning translation, but not `build`, which is the
+      # only module that imports LangChain. That property is only real if it is
+      # tested, so these two suites run against a bare interpreter.
+      - name: Verify the dependency-free modules import without LangChain
+        run: |
+          cd ai_platform_engineering/llm_wrapper
+          python -m pip install --quiet pytest
+          PYTHONPATH=src python -m pytest \
+            tests/test_providers.py \
+            tests/test_bedrock_family.py -q
+
+  run-dynamic-agents-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v6
+        with:
+          python-version: "3.14"
+      - name: Install UV
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      # This suite ran in no CI job before. The remaining deselections fail
+      # identically on main and are unrelated to LLM construction; they are
+      # tracked separately rather than fixed here, so that adding the gate does
+      # not also mean changing authz, credential and router behaviour.
+      # Tracked in #2829; remove each deselection as it is fixed.
+      - name: Run dynamic-agents tests
+        run: |
+          cd ai_platform_engineering/dynamic_agents
+          /home/runner/.local/bin/uv venv
+          /home/runner/.local/bin/uv sync --extra dev
+          /home/runner/.local/bin/uv run pytest -v \
+            --deselect tests/test_mongo_credential_sources_self_heal.py::test_get_server_injects_builtin_when_empty_list \
+            --deselect tests/test_runtime_reader_contract.py::test_dynamic_agents_service_does_not_ship_agent_crud_router
+
   run-autonomous-agents-tests:
     runs-on: ubuntu-latest
     steps:
@@ -144,4 +204,3 @@ jobs:
           path: |
             ai_platform_engineering/autonomous_agents/coverage.xml
         continue-on-error: true
-

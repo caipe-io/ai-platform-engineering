@@ -21,8 +21,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
-from cnoe_agent_utils.llm_factory import resolve_bedrock_client
-from cnoe_agent_utils.tracing import TracingManager
 from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
@@ -34,6 +32,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
+from llm_wrapper.bedrock_family import resolve_bedrock_client
 from pymongo import MongoClient
 
 from dynamic_agents.config import Settings, get_settings
@@ -89,6 +88,7 @@ from dynamic_agents.services.model_capabilities import (
     get_model_capabilities,
 )
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.tracing import TracingManager
 
 if TYPE_CHECKING:
     from dynamic_agents.services.mongo import MongoDBService

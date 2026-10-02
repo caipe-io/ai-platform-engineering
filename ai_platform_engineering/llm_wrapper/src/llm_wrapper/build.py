@@ -1,0 +1,237 @@
+"""Construct a LangChain chat model from CAIPE provider configuration.
+
+Thin wrapper over ``langchain.chat_models.init_chat_model``. It returns
+provider-native ``BaseChatModel`` instances, so the agent middleware stack,
+provider-specific kwargs, and shared-transport injection all keep working
+unchanged.
+
+Single shared source, imported directly. See README.md.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+from langchain.chat_models import init_chat_model
+from langchain_core.language_models import BaseChatModel
+
+from .bedrock_family import BEDROCK_FAMILY_TO_PROVIDER, resolve_bedrock_client
+from .providers import (
+    OPENAI_COMPATIBLE,
+    PROVIDERS,
+    is_bedrock,
+    model_env_var,
+    normalize,
+    resolve_model_id,
+    supported_providers,
+)
+from .reasoning import apply_reasoning_effort
+
+logger = logging.getLogger(__name__)
+
+_BEDROCK_CONVERSE_PROVIDER = BEDROCK_FAMILY_TO_PROVIDER["converse"]
+_BEDROCK_LEGACY_PROVIDER = BEDROCK_FAMILY_TO_PROVIDER["legacy"]
+
+# ChatBedrockConverse and legacy ChatBedrock each independently call
+# bedrock:GetInferenceProfile to resolve an application-inference-profile
+# ARN. ChatAnthropicBedrock does not, but it is also never selected for an
+# ARN model id: resolve_bedrock_client only picks it when the model id string
+# itself contains "anthropic", which an ARN never does.
+_BEDROCK_AIP_PROVIDERS = frozenset({_BEDROCK_CONVERSE_PROVIDER, _BEDROCK_LEGACY_PROVIDER})
+
+# Stands in for a resolved foundation model id when GetInferenceProfile is
+# denied. Must be non-empty: ChatBedrockConverse's own guard is `is None` (so
+# "" would also satisfy it), but legacy ChatBedrock's is a truthiness check
+# (`not base_model_id`) - an empty string would not skip its
+# GetInferenceProfile call on retry, just fail it identically again.
+_UNRESOLVED_BASE_MODEL_ID = "unresolved"
+
+
+class LLMConfigError(ValueError):
+    """Raised when provider configuration cannot produce a usable model.
+
+    Distinct from the generic ``ValueError`` that ``init_chat_model`` raises so
+    callers can translate it into an actionable message rather than surfacing a
+    raw provider error (spec FR-008).
+    """
+
+
+def langchain_provider_for(provider: str, model_id: str | None, enable_cache: bool = False) -> str:
+    """Return the ``init_chat_model`` provider string for a CAIPE provider.
+
+    Bedrock resolves per-model to one of three client families; every other
+    provider is a fixed mapping.
+    """
+    canonical = normalize(provider)
+    if is_bedrock(canonical):
+        family = resolve_bedrock_client(model_id or "", enable_cache=enable_cache)
+        return BEDROCK_FAMILY_TO_PROVIDER[family]
+    spec = PROVIDERS.get(canonical)
+    if spec is None:
+        allowed = ", ".join(sorted(supported_providers()))
+        raise LLMConfigError(
+            f"Unsupported LLM provider {provider!r}. Expected one of: {allowed}."
+        )
+    return spec.langchain_provider
+
+
+def _is_bedrock_aip(resolved_model: str, lc_provider: str) -> bool:
+    """Whether ``resolved_model`` is an application-inference-profile ARN on a
+    Bedrock client that resolves it via its own ``bedrock:GetInferenceProfile``
+    call (ChatBedrockConverse, legacy ChatBedrock).
+
+    Checked together, not just by provider family, so a global
+    AWS_BEDROCK_BASE_MODEL_ID override meant for one agent's AIP ARN can't
+    leak into another agent on the same family configured with a plain model
+    id - that id needs no resolving and the override would be wrong for it.
+    """
+    return lc_provider in _BEDROCK_AIP_PROVIDERS and "application-inference-profile" in resolved_model
+
+
+def _apply_bedrock_base_model_id(resolved_model: str, lc_provider: str, kwargs: dict[str, Any]) -> None:
+    """Read AWS_BEDROCK_BASE_MODEL_ID for Bedrock's IAM-gated clients, if not already set.
+
+    ``base_model_id`` bypasses the ``bedrock:GetInferenceProfile`` call that
+    ChatBedrockConverse and legacy ChatBedrock each make on their own,
+    independently, to resolve an application-inference-profile ARN's
+    underlying foundation model. Needed when the IAM role grants
+    ``bedrock:InvokeModel`` but not ``bedrock:GetInferenceProfile``.
+    """
+    if not _is_bedrock_aip(resolved_model, lc_provider) or "base_model_id" in kwargs:
+        return
+    base_model_id = os.getenv("AWS_BEDROCK_BASE_MODEL_ID")
+    if base_model_id:
+        kwargs["base_model_id"] = base_model_id
+
+
+def _init_chat_model_with_aip_fallback(
+    resolved_model: str, lc_provider: str, kwargs: dict[str, Any]
+) -> BaseChatModel:
+    """Call init_chat_model, degrading gracefully if GetInferenceProfile is denied.
+
+    Neither of the two GetInferenceProfile call sites (see
+    _apply_bedrock_base_model_id) has a try/except, so a denied IAM permission
+    otherwise raises instead of falling back. Retry once with
+    base_model_id=_UNRESOLVED_BASE_MODEL_ID - the same bypass
+    AWS_BEDROCK_BASE_MODEL_ID already triggers - so the agent still comes up,
+    with a generic rather than model-specific context window and (for the
+    legacy client) Converse auto-detection conservatively left off.
+
+    Upstream has not backported ChatBedrockConverse's approach into
+    ChatBedrock and does not plan to - see the maintainer's reply on
+    https://github.com/langchain-ai/langchain-aws/issues/808#issuecomment-4465324699:
+    "recommend switching to ChatBedrockConverse ... we are winding down
+    support for the InvokeModel API".
+    """
+    if not _is_bedrock_aip(resolved_model, lc_provider) or "base_model_id" in kwargs:
+        return init_chat_model(model=resolved_model, model_provider=lc_provider, **kwargs)
+
+    # Non-Bedrock consumers of the shared wrapper do not install botocore.
+    from botocore.exceptions import ClientError
+
+    try:
+        return init_chat_model(model=resolved_model, model_provider=lc_provider, **kwargs)
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code", "")
+        if error_code not in {"AccessDeniedException", "AccessDenied"}:
+            raise
+        logger.warning(
+            "bedrock:GetInferenceProfile denied for %s; continuing without a resolved "
+            "base model (context-window auto-detection falls back to a generic "
+            "default). Grant the permission, or set AWS_BEDROCK_BASE_MODEL_ID to the "
+            "underlying foundation model ID, to restore it.",
+            resolved_model,
+        )
+        return init_chat_model(
+            model=resolved_model,
+            model_provider=lc_provider,
+            base_model_id=_UNRESOLVED_BASE_MODEL_ID,
+            **kwargs,
+        )
+
+
+def build_chat_model(
+    provider: str,
+    model_id: str | None = None,
+    *,
+    enable_cache: bool = False,
+    **kwargs: Any,
+) -> BaseChatModel:
+    """Build a chat model for ``provider``.
+
+    Args:
+        provider: A CAIPE public provider string, e.g. ``aws-bedrock``.
+        model_id: Explicit model id. When ``None`` the provider's environment
+            variable is read.
+        enable_cache: Whether prompt caching is wanted. Only affects Bedrock,
+            where it selects the Converse client over the legacy one.
+        **kwargs: Passed through to the underlying chat model -- shared
+            transport clients, timeouts, reasoning effort, and so on.
+
+    Returns:
+        A provider-native ``BaseChatModel``.
+
+    Raises:
+        LLMConfigError: The provider is unknown, no model id is available, or
+            the provider rejected the configuration.
+    """
+    canonical = normalize(provider)
+    resolved_model = resolve_model_id(canonical, model_id)
+    if not resolved_model:
+        raise LLMConfigError(
+            f"No model id for provider {provider!r}. Set {model_env_var(canonical)} "
+            f"or choose a model for this agent in the admin UI."
+        )
+
+    lc_provider = langchain_provider_for(canonical, resolved_model, enable_cache=enable_cache)
+
+    if canonical == OPENAI_COMPATIBLE:
+        base_url = os.getenv("OPENAI_COMPATIBLE_BASE_URL")
+        if not base_url:
+            raise LLMConfigError(
+                "OPENAI_COMPATIBLE_BASE_URL is required for the "
+                f"{OPENAI_COMPATIBLE!r} provider."
+            )
+        kwargs.setdefault("base_url", base_url)
+        # A sandboxed runtime reaches its egress boundary without a credential;
+        # the boundary attaches one. Send a placeholder so the OpenAI client
+        # does not refuse to construct.
+        kwargs.setdefault("api_key", os.getenv("OPENAI_COMPATIBLE_API_KEY", "not-needed"))
+    elif canonical == "openai":
+        if endpoint := os.getenv("OPENAI_ENDPOINT"):
+            kwargs.setdefault("base_url", endpoint)
+    elif canonical == "azure-openai":
+        if api_version := os.getenv("AZURE_OPENAI_API_VERSION"):
+            kwargs.setdefault("api_version", api_version)
+        if endpoint := os.getenv("AZURE_OPENAI_ENDPOINT"):
+            kwargs.setdefault("azure_endpoint", endpoint)
+        if use_responses := os.getenv("AZURE_OPENAI_USE_RESPONSES"):
+            kwargs.setdefault("use_responses_api", use_responses.lower() == "true")
+
+    if lc_provider == "anthropic_bedrock":
+        # This client uses the Anthropic SDK, which creates its own transport.
+        # Boto3 clients and Botocore config would become request parameters.
+        kwargs.pop("client", None)
+        kwargs.pop("bedrock_client", None)
+        config = kwargs.pop("config", None)
+        if config is not None and "timeout" not in kwargs:
+            kwargs["timeout"] = config.read_timeout
+
+    kwargs = apply_reasoning_effort(lc_provider, kwargs.pop("reasoning_effort", None), kwargs)
+
+    _apply_bedrock_base_model_id(resolved_model, lc_provider, kwargs)
+
+    try:
+        return _init_chat_model_with_aip_fallback(resolved_model, lc_provider, kwargs)
+    except ImportError as exc:
+        raise LLMConfigError(
+            f"Provider {provider!r} needs an integration package that is not installed "
+            f"in this image ({exc}). Use an image built with that provider, or pick a "
+            f"provider this deployment ships."
+        ) from exc
+    except ValueError as exc:
+        raise LLMConfigError(
+            f"Cannot initialize LLM (provider={provider!r}, model={resolved_model!r}): {exc}"
+        ) from exc
