@@ -782,6 +782,31 @@ describe('TokenExpiryGuard', () => {
   })
 
   // ─────────────────────────────────────────────────────────────────────
+  // Proactive keepalive
+  // ─────────────────────────────────────────────────────────────────────
+
+  describe('proactive keepalive', () => {
+    it('should not schedule force-refresh for a session that already has an error', () => {
+      const setIntervalSpy = jest.spyOn(global, 'setInterval')
+      mockUseSession.mockReturnValue({
+        data: {
+          user: { name: 'Test User', email: 'test@example.com' },
+          expiresAt: Math.floor(Date.now() / 1000) + 3600,
+          hasRefreshToken: true,
+          error: 'RefreshTokenExpired',
+        } as unknown,
+        status: 'authenticated',
+        update: mockUpdateSession,
+      })
+
+      render(<TokenExpiryGuard />)
+
+      expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 6 * 60 * 60 * 1000)
+      expect(mockUpdateSession).not.toHaveBeenCalled()
+    })
+  })
+
+  // ─────────────────────────────────────────────────────────────────────
   // Warning hidden when token is refreshed (else-if branch)
   // ─────────────────────────────────────────────────────────────────────
 
