@@ -906,6 +906,18 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   }
   await requireAgentWritePermission(session, id);
 
+  // MCP prompt replacement supplies this precondition so its read/diff/write
+  // sequence cannot overwrite a prompt changed by another editor.
+  const expectedPrompt = body.expected_system_prompt;
+  if (expectedPrompt !== undefined) {
+    if (typeof expectedPrompt !== "string" || typeof body.system_prompt !== "string") {
+      throw new ApiError("expected_system_prompt requires a system_prompt update", 400);
+    }
+    if ((agent.system_prompt ?? "") !== expectedPrompt) {
+      throw new ApiError("Agent prompt changed since it was read; fetch it again", 409);
+    }
+  }
+
   // Config-driven guard
   if (agent.config_driven) {
     throw new ApiError(
@@ -1150,7 +1162,9 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   });
 
   const updated = await collection.findOneAndUpdate(
-    { _id: id },
+    expectedPrompt === undefined
+      ? { _id: id }
+      : { _id: id, system_prompt: expectedPrompt === "" ? { $in: ["", null] } : expectedPrompt },
     Object.keys(unsetData).length > 0
       ? { $set: updateData, $unset: unsetData }
       : { $set: updateData },
@@ -1158,6 +1172,9 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   );
 
   if (!updated) {
+    if (expectedPrompt !== undefined) {
+      throw new ApiError("Agent prompt changed since it was read; fetch it again", 409);
+    }
     throw new ApiError("Failed to update agent", 500);
   }
 
