@@ -211,6 +211,16 @@ describe("formatAdminNotificationSlackText", () => {
     );
   });
 
+  it("omits the link line when NEXTAUTH_URL is unset, rather than linking to localhost", () => {
+    delete process.env.NEXTAUTH_URL;
+    const text = formatAdminNotificationSlackText(
+      { title: "t", message: "m", severity: "info", href: "/admin/security/approvals?request=abc" },
+      baseConfig,
+    );
+    expect(text).not.toContain("localhost");
+    expect(text).not.toContain("Open in CAIPE");
+  });
+
   it("omits the link line when there is no href", () => {
     const text = formatAdminNotificationSlackText(
       { title: "t", message: "m", severity: "info" },

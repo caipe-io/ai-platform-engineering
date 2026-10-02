@@ -148,7 +148,7 @@ export function SlackAdminNotificationForwardingSetting({ disabled = false }: { 
     ? [selectedChannelOption, ...channelOptions]
     : channelOptions;
 
-  const controlsDisabled = disabled || saving || !enabled;
+  const controlsDisabled = disabled || saving;
 
   return (
     <div className="rounded-md border bg-background/50 p-3 space-y-3">

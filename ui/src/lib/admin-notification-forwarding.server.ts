@@ -153,8 +153,10 @@ function slackMention(id: string): string {
 
 function absoluteNotificationLink(href: string | undefined): string | null {
   if (!href) return null;
+  const origin = originFromNextAuthUrl();
+  if (!origin) return null;
   try {
-    return new URL(href, originFromNextAuthUrl() || "http://localhost:3000").toString();
+    return new URL(href, origin).toString();
   } catch {
     return null;
   }
