@@ -99,6 +99,32 @@ function envPort(name: string, defaultPort: number): number {
   return Number(raw) || defaultPort;
 }
 
+function databaseEndpoint(): { host: string; port: number } {
+  const configuredHost = envValue("MONGODB_HOST");
+  const configuredPort = envValue("MONGODB_PORT");
+  if (configuredHost || configuredPort) {
+    return {
+      host: configuredHost ?? "caipe-documentdb",
+      port: envPort("MONGODB_PORT", 10260),
+    };
+  }
+
+  const uri = envValue("MONGODB_URI");
+  if (uri) {
+    try {
+      const parsed = new URL(uri);
+      return {
+        host: parsed.hostname || "caipe-documentdb",
+        port: Number(parsed.port) || 10260,
+      };
+    } catch {
+      // Fall through to the bundled DocumentDB defaults for malformed URIs.
+    }
+  }
+
+  return { host: "caipe-documentdb", port: 10260 };
+}
+
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/$/, "");
 }
@@ -654,10 +680,9 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
     }),
     probeTcpDiagnostic({
       id: "caipe-mongodb",
-      label: "MongoDB",
+      label: "MongoDB-compatible database",
       group: "storage",
-      host: envValue("MONGODB_HOST") || "caipe-mongodb",
-      port: envPort("MONGODB_PORT", 27017),
+      ...databaseEndpoint(),
     }),
     probeHttpDiagnostic({
       id: "audit-service",

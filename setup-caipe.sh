@@ -239,7 +239,7 @@ TLS_SELF_SIGNED=false   # true when setup generates the cert (no --tls-cert)
 ENV_FILE=""
 UI_ENV_FILE=""
 COMPOSE_ENV_FILE=""
-COMPOSE_PROFILES_DEFAULT="mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor"
+COMPOSE_PROFILES_DEFAULT="mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-documentdb,web_ingestor"
 USE_DOCKER_COMPOSE=false
 # Chat-bot surfaces (the slack-bot / webex-bot deployments — distinct from the
 # slack/webex MCP agents). Default OFF; enabled via --slack-bot / --webex-bot,
@@ -3189,18 +3189,18 @@ _choose_database_provider() {
 
   if [[ -z "${DATABASE_PROVIDER:-}" ]]; then
     if $NON_INTERACTIVE; then
-      DATABASE_PROVIDER="mongodb"
+      DATABASE_PROVIDER="documentdb"
     else
       echo ""
       echo -e "  ${BOLD}Choose the document database${NC}"
-      echo -e "    ${CYAN}1)${NC} MongoDB ${DIM}(default)${NC}"
-      echo -e "    ${CYAN}2)${NC} DocumentDB ${DIM}(MIT-licensed, PostgreSQL-backed)${NC}"
+      echo -e "    ${CYAN}1)${NC} DocumentDB ${DIM}(default; MIT-licensed, PostgreSQL-backed)${NC}"
+      echo -e "    ${CYAN}2)${NC} MongoDB"
       prompt "Select database [1]: "
       local choice
       tty_read -r choice
       case "${choice:-1}" in
-        1|mongodb|mongo) DATABASE_PROVIDER="mongodb" ;;
-        2|documentdb|docdb) DATABASE_PROVIDER="documentdb" ;;
+        1|documentdb|docdb) DATABASE_PROVIDER="documentdb" ;;
+        2|mongodb|mongo) DATABASE_PROVIDER="mongodb" ;;
         *) err "Unknown database provider '${choice}'"; exit 1 ;;
       esac
     fi
@@ -3215,13 +3215,13 @@ _choose_database_provider() {
 }
 
 _database_service_name() {
-  [[ "${DATABASE_PROVIDER:-mongodb}" == "documentdb" ]] \
+  [[ "${DATABASE_PROVIDER:-documentdb}" == "documentdb" ]] \
     && echo "caipe-documentdb" \
     || echo "caipe-mongodb"
 }
 
 _database_secret_name() {
-  [[ "${DATABASE_PROVIDER:-mongodb}" == "documentdb" ]] \
+  [[ "${DATABASE_PROVIDER:-documentdb}" == "documentdb" ]] \
     && echo "caipe-documentdb-credentials" \
     || echo "caipe-mongodb-credentials"
 }
@@ -3231,7 +3231,7 @@ _database_uri() {
   local username="${2:-admin}"
   local service
   service=$(_database_service_name)
-  if [[ "${DATABASE_PROVIDER:-mongodb}" == "documentdb" ]]; then
+  if [[ "${DATABASE_PROVIDER:-documentdb}" == "documentdb" ]]; then
     echo "mongodb://${username}:${password}@${service}:10260/caipe?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true"
   else
     echo "mongodb://${username}:${password}@${service}:27017/caipe?authSource=caipe"
@@ -4474,10 +4474,10 @@ post_deploy_patches() {
     fi
   fi
 
-  # ── 7. MongoDB for dynamic-agents ──
+  # ── 7. MongoDB-compatible database for dynamic-agents ──
   # The dynamic-agents chart defaults MONGODB_URI to localhost:27017 (no-op
-  # default). Setup deploys a bitnami/mongodb instance (if none exists) and
-  # patches the ConfigMap with the real cluster URI.
+  # default). Setup deploys the selected database provider (if none exists)
+  # and patches the ConfigMap with the real cluster URI.
   _ensure_dynamic_agents_mongodb
 
   # ── 9. Domain-scoped Keycloak SSO setup ──
@@ -5279,7 +5279,7 @@ PGINIT
 
 _resolve_mongodb_password() {
   local existing_pw secret_name provider
-  provider="${DATABASE_PROVIDER:-mongodb}"
+  provider="${DATABASE_PROVIDER:-documentdb}"
   if [[ "$provider" == "documentdb" ]]; then
     secret_name="caipe-documentdb-credentials"
   else
@@ -5373,9 +5373,22 @@ _ensure_dynamic_agents_mongodb() {
     fi
     if ! kubectl get statefulset "${mongo_svc}" -n caipe &>/dev/null; then
       step "Deploying DocumentDB for dynamic-agents"
-      helm upgrade --install "${mongo_svc}" \
-        oci://ghcr.io/cnoe-io/charts/caipe-ui-mongodb \
-        --version "$CAIPE_CHART_VERSION" \
+      local db_chart_tmp db_chart
+      db_chart_tmp=$(mktemp -d /tmp/caipe-documentdb-chart-XXXXXX)
+      db_chart="${db_chart_tmp}/ai-platform-engineering/charts/caipe-ui-mongodb"
+      if ! helm pull "$CAIPE_OCI_REPO" \
+          --version "$CAIPE_CHART_VERSION" \
+          --untar --untardir "$db_chart_tmp" &>/dev/null; then
+        rm -rf "$db_chart_tmp"
+        err "Could not download the CAIPE chart package needed for the DocumentDB subchart"
+        return 1
+      fi
+      if [[ ! -f "${db_chart}/Chart.yaml" ]]; then
+        rm -rf "$db_chart_tmp"
+        err "CAIPE chart package does not contain the caipe-ui-mongodb subchart"
+        return 1
+      fi
+      if ! helm upgrade --install "${mongo_svc}" "$db_chart" \
         -n caipe \
         --set provider=documentdb \
         --set fullnameOverride="${mongo_svc}" \
@@ -5384,8 +5397,17 @@ _ensure_dynamic_agents_mongodb() {
         --set "auth.rootPassword=${MONGODB_ROOT_PASSWORD}" \
         --set "auth.database=caipe" \
         --set persistence.size=2Gi \
-        --timeout 5m &>/dev/null
-      kubectl rollout status statefulset/"${mongo_svc}" -n caipe --timeout=300s &>/dev/null
+        --timeout 5m &>/dev/null; then
+        rm -rf "$db_chart_tmp"
+        err "DocumentDB Helm install failed"
+        return 1
+      fi
+      if ! kubectl rollout status statefulset/"${mongo_svc}" -n caipe --timeout=300s &>/dev/null; then
+        rm -rf "$db_chart_tmp"
+        err "DocumentDB StatefulSet did not become ready"
+        return 1
+      fi
+      rm -rf "$db_chart_tmp"
       log "DocumentDB deployed (${mongo_svc})"
     else
       log "DocumentDB already present (${mongo_svc}) — skipping install"
@@ -8239,9 +8261,19 @@ cmd_docker_compose() {
     if [[ ",$COMPOSE_PROFILES," != *,caipe-documentdb,* ]]; then
       COMPOSE_PROFILES="${COMPOSE_PROFILES},caipe-documentdb"
     fi
-    local compose_db_password compose_db_username
-    compose_db_password=$(_env_get "$env_file" MONGODB_ROOT_PASSWORD)
-    compose_db_username=$(_env_get "$env_file" MONGODB_ROOT_USERNAME)
+  else
+    COMPOSE_PROFILES=$(echo "$COMPOSE_PROFILES" | sed 's/caipe-documentdb/caipe-mongodb/g')
+    if [[ ",$COMPOSE_PROFILES," != *,caipe-mongodb,* ]]; then
+      COMPOSE_PROFILES="${COMPOSE_PROFILES},caipe-mongodb"
+    fi
+  fi
+  local compose_db_password compose_db_username configured_db_uri
+  compose_db_password=$(_env_get "$env_file" MONGODB_ROOT_PASSWORD)
+  compose_db_username=$(_env_get "$env_file" MONGODB_ROOT_USERNAME)
+  configured_db_uri=$(_env_get "$env_file" MONGODB_URI)
+  # Refresh the bundled URI when it is absent or still points at one of the
+  # in-stack providers. Preserve an explicitly configured external URI.
+  if [[ -z "$configured_db_uri" || "$configured_db_uri" == *"@caipe-documentdb:"* || "$configured_db_uri" == *"@caipe-mongodb:"* ]]; then
     compose_db_password="${compose_db_password:-$(openssl rand -hex 24)}"
     compose_db_username="${compose_db_username:-admin}"
     export MONGODB_ROOT_PASSWORD="$compose_db_password"
@@ -8563,7 +8595,7 @@ _save_caipe_config() {
 cluster_context: "$(kubectl config current-context 2>/dev/null || echo '')"
 chart_version: "${CAIPE_CHART_VERSION:-}"
 llm_provider: "${LLM_PROVIDER:-}"
-database_provider: "${DATABASE_PROVIDER:-mongodb}"
+database_provider: "${DATABASE_PROVIDER:-documentdb}"
 enable_ollama: "${ENABLE_OLLAMA:-false}"
 ollama_model: "${OLLAMA_MODEL:-qwen3:0.6b}"
 embeddings_provider: "${EMBEDDINGS_PROVIDER:-}"
@@ -9145,7 +9177,7 @@ Options:
                         `api_key: "os.environ/<KEY>"` refs in --litellm-models resolve.
   --persistence      Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --no-persistence   Accepted for compatibility; dynamic-agent persistence uses MongoDB
-  --database=NAME    MongoDB-compatible database: mongodb (default) or documentdb
+  --database=NAME    MongoDB-compatible database: documentdb (default) or mongodb
   --slack-bot        Deploy the Slack bot surface (slack-bot subchart). Auto-enabled when
                      --env-file sets ENABLE_SLACK_BOT/ENABLE_SLACK; needs SLACK_BOT_TOKEN etc.
   --no-slack-bot     Skip the Slack bot surface (overrides the env-file value)
@@ -9254,7 +9286,7 @@ Environment variables (all optional):
   ENABLE_AUTONOMOUS_AGENTS  Autonomous cron/interval/webhook agents
                           (default: true; ENABLE_AUTONOMOUS_AGENTS=false to skip).
                           Together these add ~4-5 pods.
-  DATABASE_PROVIDER       Persistence provider: mongodb (default) or documentdb
+  DATABASE_PROVIDER       Persistence provider: documentdb (default) or mongodb
   DOCUMENTDB_IMAGE_TAG    DocumentDB Local image tag (default: pg17-0.113.0)
   AGENTGATEWAY_VERSION    AgentGateway Helm chart version (default: v2.2.1)
 

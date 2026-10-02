@@ -1,7 +1,7 @@
 # CAIPE UI
 
 Next.js BFF and web UI for CAIPE. The UI talks to Dynamic Agents through
-server-side API routes, manages MongoDB-backed chat state, and exposes admin
+server-side API routes, manages MongoDB-compatible chat state, and exposes admin
 surfaces for models, MCP servers, skills, credentials, RBAC, audit logs, and
 platform health.
 
@@ -49,7 +49,7 @@ npm run build
 For Docker Compose:
 
 ```bash
-COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-mongodb docker compose -f ../docker-compose.dev.yaml up --build
+COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-documentdb docker compose -f ../docker-compose.dev.yaml up --build
 ```
 
 ## App Structure
