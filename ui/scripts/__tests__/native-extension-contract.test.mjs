@@ -25,6 +25,13 @@ test("accepts an internal route without navigation", () => {
   assert.equal(validateManifest("internal", internal).id, "example-app");
 });
 
+test("validates an optional native assistant claim", () => {
+  const assistant = { agentId: "agent-example", label: "Ask Example", name: "Example Assistant" };
+  assert.equal(validateManifest("assistant", { ...example, assistant }).assistant.agentId, "agent-example");
+  assert.throws(() => validateManifest("assistant", { ...example, assistant: { ...assistant, agentId: "../other" } }), /assistant/);
+  assert.throws(() => validateManifest("assistant", { ...example, assistant: { ...assistant, route: "/chat" } }), /assistant/);
+});
+
 test("accepts a route-less app in a declared slot", () => {
   const internal = { ...example, navigation: undefined };
   assert.equal(validateManifest("slot", { ...internal, hostPaths: [], slots: ["home"] }).id, "example-app");

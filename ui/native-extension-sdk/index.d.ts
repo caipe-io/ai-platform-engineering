@@ -19,6 +19,11 @@ export interface NativeExtensionManifest {
     placement: "after-chat";
     icon?: "book-open" | "layout-grid";
   };
+  assistant?: {
+    agentId: string;
+    label: string;
+    name: string;
+  };
   api: {
     appId: string;
     basePath: string;

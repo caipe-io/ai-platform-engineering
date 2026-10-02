@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 export const CONTRACT_VERSION = "1.1";
-export const CHECKER_VERSION = "1.1.1";
+export const CHECKER_VERSION = "1.1.2";
 export const MAX_ENTRY_BYTES = 64 * 1024;
 export const MAX_JAVASCRIPT_BYTES = 2 * 1024 * 1024;
 const ID = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -59,6 +59,16 @@ export function validateManifest(moduleName, manifest) {
       fail("navigation must reference an owned route and use a supported placement/icon");
     }
   }
+  if (manifest.assistant !== undefined) {
+    const assistant = manifest.assistant;
+    if (!assistant || typeof assistant !== "object" || Array.isArray(assistant)
+      || typeof assistant.agentId !== "string" || !ID.test(assistant.agentId)
+      || typeof assistant.label !== "string" || !assistant.label.trim() || assistant.label.length > 48
+      || typeof assistant.name !== "string" || !assistant.name.trim() || assistant.name.length > 80
+      || Object.keys(assistant).some((key) => !["agentId", "label", "name"].includes(key))) {
+      fail("assistant must declare a valid agentId, label, and name");
+    }
+  }
   const api = manifest.api;
   if (!api || api.appId !== manifest.id || api.basePath !== `/api/agentic-apps/runtime/${manifest.id}`
     || !Array.isArray(api.mounts) || api.mounts.some((path) => !validPath(path) || !path.startsWith("/api/")
@@ -69,7 +79,7 @@ export function validateManifest(moduleName, manifest) {
   if (!["app-scoped-token", "forward-user-access-token"].includes(manifest.auth?.mode)) {
     fail("auth.mode must explicitly declare app-scoped-token or forward-user-access-token");
   }
-  if (Object.keys(manifest).some((key) => !["id", "displayName", "description", "contractVersion", "hostPaths", "slots", "navigation", "api", "auth"].includes(key))) {
+  if (Object.keys(manifest).some((key) => !["id", "displayName", "description", "contractVersion", "hostPaths", "slots", "navigation", "assistant", "api", "auth"].includes(key))) {
     fail("unknown manifest field");
   }
   return manifest;

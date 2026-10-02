@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import { HeaderBreadcrumbPortal } from "@/components/layout/HeaderBreadcrumbSlot";
 import { WorkspaceBreadcrumbs } from "@/components/layout/WorkspacePageHeader";
+import { NativeExtensionAssistant } from "./NativeExtensionAssistant";
 import { installedNativeExtensions } from "./installed.generated";
 import { isSafeHostHref } from "./navigation";
 import type { NativeExtensionBreadcrumb } from "./types";
@@ -78,6 +79,13 @@ export function NativeExtensionHost({
         Link={Link}
         setBreadcrumbs={setBreadcrumbs}
       />
+      {!slot && extension.manifest.assistant && (
+        <NativeExtensionAssistant
+          assistant={extension.manifest.assistant}
+          extensionId={extensionId}
+          pathname={pathname}
+        />
+      )}
       {children}
     </div>
   );
