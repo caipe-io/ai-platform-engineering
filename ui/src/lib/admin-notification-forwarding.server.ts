@@ -144,8 +144,17 @@ export async function getAdminNotificationForwardingConfig(): Promise<AdminNotif
   return normalizeAdminNotificationForwardingConfig(doc.slack_admin_notification_forwarding);
 }
 
+// Slack mrkdwn has no character-escaping syntax, so `*`/`_`/`~`/backtick in
+// untrusted text (a requester's display name, a resource label) would
+// otherwise render as bold/italic/strikethrough/code. A zero-width space
+// right after each marker breaks Slack's pair-matching without changing how
+// the text visibly reads.
 function escapeSlackText(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/([*_~`])/g, "$1\u200b");
 }
 
 function slackMention(id: string): string {

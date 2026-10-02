@@ -196,6 +196,21 @@ describe("formatAdminNotificationSlackText", () => {
     expect(text).toContain("x &gt; y &amp; z");
   });
 
+  it("neutralizes Slack mrkdwn emphasis/code markers in untrusted text", () => {
+    const text = formatAdminNotificationSlackText(
+      { title: "t", message: "*bold* _italic_ ~strike~ `code`", severity: "info" },
+      baseConfig,
+    );
+    // The visible characters are unchanged, but a zero-width space breaks
+    // Slack's pair-matching so a resource label or display name can't
+    // forge bold/italic/strikethrough/code formatting.
+    expect(text).not.toContain("*bold*");
+    expect(text).not.toContain("_italic_");
+    expect(text).not.toContain("~strike~");
+    expect(text).not.toContain("`code`");
+    expect(text.replace(/\u200b/g, "")).toContain("*bold* _italic_ ~strike~ `code`");
+  });
+
   it("appends an absolute link built from NEXTAUTH_URL", () => {
     process.env.NEXTAUTH_URL = "https://caipe.example.com";
     const text = formatAdminNotificationSlackText(
