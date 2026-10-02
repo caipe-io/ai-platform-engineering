@@ -366,6 +366,7 @@ async def process_channel_ingestion(
         "last_ts": newest_ts,
         "workspace_url": workspace_url,
         "lookback_days": ingest_request.lookback_days,
+        "synced_lookback_days": ingest_request.lookback_days,
         "include_bots": ingest_request.include_bots,
       }
     )
@@ -418,6 +419,13 @@ async def reload_datasource(
     channel_name = metadata.get("channel_name", channel_id)
     lookback_days = metadata.get("lookback_days", 30)
     last_ts = metadata.get("last_ts")
+    synced_lookback_days = metadata.get("synced_lookback_days")
+    if synced_lookback_days is not None and synced_lookback_days != lookback_days:
+      logger.info(
+        f"lookback_days changed from {synced_lookback_days} to {lookback_days} "
+        f"for #{channel_name}, resetting last_ts for full re-sync"
+      )
+      last_ts = None
     include_bots = metadata.get("include_bots", False)
     workspace_url = metadata.get("workspace_url") or os.environ.get("SLACK_WORKSPACE_URL", "https://slack.com")
 
@@ -445,7 +453,11 @@ async def reload_datasource(
     )
 
     datasource_info.last_updated = int(time.time())
-    datasource_info.metadata = {**metadata, "last_ts": newest_ts if newest_ts else last_ts}
+    datasource_info.metadata = {
+      **metadata,
+      "last_ts": newest_ts if newest_ts else last_ts,
+      "synced_lookback_days": lookback_days,
+    }
     await client.upsert_datasource(datasource_info)
 
     if not messages:
