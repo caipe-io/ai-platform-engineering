@@ -161,6 +161,15 @@ it("renders the fetched config", async () => {
   );
 });
 
+it("renders nothing for a viewer who lacks access to this setting", async () => {
+  mockFetch({ configStatus: 403 });
+
+  const { container } = renderSetting();
+
+  await waitFor(() => expect(container.textContent).toBe(""));
+  expect(screen.queryByRole("switch", { name: /enable forwarding/i })).not.toBeInTheDocument();
+});
+
 it("marks the setting dirty after toggling and selecting a channel, then saves the right payload", async () => {
   mockFetch({});
   renderSetting();

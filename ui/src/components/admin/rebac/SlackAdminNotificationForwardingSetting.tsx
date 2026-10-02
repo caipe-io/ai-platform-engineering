@@ -43,6 +43,7 @@ export function SlackAdminNotificationForwardingSetting({ disabled = false }: { 
   const [savedPingUserIds, setSavedPingUserIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
 
   const [channelQuery, setChannelQuery] = useState("");
   const [channelOptions, setChannelOptions] = useState<ChannelOption[]>([]);
@@ -54,6 +55,11 @@ export function SlackAdminNotificationForwardingSetting({ disabled = false }: { 
     (async () => {
       try {
         const res = await fetch("/api/admin/slack/admin-notification-forwarding");
+        if (cancelled) return;
+        if (res.status === 403) {
+          setForbidden(true);
+          return;
+        }
         const data = await res.json().catch(() => ({ success: false }));
         if (cancelled) return;
         if (data?.success && data.data) {
@@ -149,6 +155,13 @@ export function SlackAdminNotificationForwardingSetting({ disabled = false }: { 
     : channelOptions;
 
   const controlsDisabled = disabled || saving;
+
+  // This setting's GET requires platform-admin access even though the
+  // surrounding Advanced tab only requires admin_surface:slack management —
+  // a lesser permission a team could theoretically hold. Render nothing
+  // rather than an editable-looking form a non-admin viewer can't actually
+  // read or save.
+  if (forbidden) return null;
 
   return (
     <div className="rounded-md border bg-background/50 p-3 space-y-3">
