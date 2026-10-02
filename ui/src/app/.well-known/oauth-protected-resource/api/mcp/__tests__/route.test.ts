@@ -23,7 +23,18 @@ const ORIGINAL_ENV = process.env;
 describe("GET /.well-known/oauth-protected-resource/api/mcp", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env = { ...ORIGINAL_ENV };
+    process.env = { ...ORIGINAL_ENV, NEXTAUTH_URL: "http://localhost:3000" };
+  });
+
+  it("ignores X-Forwarded-Host in the advertised resource", async () => {
+    mockIsPlatformMcpEnabled.mockReturnValue(true);
+    process.env.OIDC_ISSUER = "https://idp.example.test";
+    const { GET } = await import("../route");
+    const response = await GET(new NextRequest("https://attacker.example.test/.well-known/oauth-protected-resource/api/mcp", {
+      headers: { "x-forwarded-host": "attacker.example.test" },
+    }));
+
+    expect((await response.json()).resource).toBe("http://localhost:3000/api/mcp");
   });
 
   afterAll(() => {

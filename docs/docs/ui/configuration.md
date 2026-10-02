@@ -12,10 +12,18 @@ sidebar_position: 3
 | `MONGODB_URI` | Yes for persistence | MongoDB connection string |
 | `MONGODB_DATABASE` | No | MongoDB database name, default `caipe` |
 | `NEXTAUTH_URL` | Yes when auth enabled | Public UI URL for auth callbacks |
+| `CAIPE_MCP_ENABLED` | No | Expose the Platform MCP endpoint when `true`; defaults to `false` |
+| `CAIPE_MCP_INTERNAL_ORIGIN` | No | Fixed HTTP(S) origin for MCP calls back into the UI; defaults to `NEXTAUTH_URL` |
 | `NEXTAUTH_SECRET` | Yes when auth enabled | Session encryption secret |
 | `SSO_ENABLED` | No | Enable SSO flow |
 | `SKIP_AUTH` | No | Local development auth bypass |
 | `RAG_SERVER_URL` | No | RAG backend URL |
+
+When Platform MCP is enabled, set `NEXTAUTH_URL` to the public UI origin.
+The endpoint uses that value for OAuth discovery and never derives URLs from
+incoming host headers. Set `CAIPE_MCP_INTERNAL_ORIGIN` to a fixed UI origin
+reachable from the server if requests should avoid the public ingress. OAuth
+discovery also requires `OIDC_ISSUER`.
 
 ## Local Development
 

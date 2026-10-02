@@ -1,7 +1,5 @@
 "use client";
 
-// assisted-by claude code claude-sonnet-5
-
 import { AlertTriangle, Plug } from "lucide-react";
 import { useState } from "react";
 
@@ -35,12 +33,6 @@ import { cn } from "@/lib/utils";
  * user; there is no separate long-lived token to generate, copy, or
  * revoke. See discussions #2818 for the full rationale.
  */
-
-function originOf(): string {
-  return typeof window !== "undefined"
-    ? window.location.origin
-    : "https://your-caipe-instance.example.com";
-}
 
 function CodeBlock({ text, label }: { text: string; label: string }) {
   return (
@@ -189,7 +181,8 @@ function ConnectDialogBody({ endpoint }: { endpoint: string }) {
 export function PlatformMcpConnectCard({ readOnly = false }: { readOnly?: boolean }) {
   const [open, setOpen] = useState(false);
   const enabled = getConfig("platformMcpEnabled");
-  const endpoint = `${originOf()}/api/mcp`;
+  // Radix mounts dialog content only after it opens in the browser.
+  const endpoint = open ? `${window.location.origin}/api/mcp` : "";
 
   return (
     <Card>
@@ -199,7 +192,7 @@ export function PlatformMcpConnectCard({ readOnly = false }: { readOnly?: boolea
             <Plug className="h-4 w-4" />
             Connect via MCP
             <Badge variant="secondary" className="text-[10px] font-normal">
-              Agents: read &amp; write
+              Agent tools
             </Badge>
           </CardTitle>
           <CardDescription>

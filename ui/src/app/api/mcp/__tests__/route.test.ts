@@ -15,11 +15,13 @@
  */
 
 import { NextRequest } from "next/server";
+import { ApiError } from "@/lib/api-error";
 
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockIsPlatformMcpEnabled = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => ({
+  ApiError: jest.requireActual("@/lib/api-error").ApiError,
   getAuthFromBearerOrSession: (...args: unknown[]) =>
     mockGetAuthFromBearerOrSession(...args),
 }));
@@ -40,11 +42,19 @@ const user = { email: "dana@example.com", name: "Dana", role: "user" };
 const session = { sub: "dana-sub", authMethod: "bearer", principalType: "oidc_user" };
 
 describe("POST /api/mcp", () => {
+  const originalEnv = process.env;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env = { ...originalEnv, NEXTAUTH_URL: "http://localhost:3000" };
+    delete process.env.CAIPE_MCP_INTERNAL_ORIGIN;
     mockIsPlatformMcpEnabled.mockReturnValue(true);
     mockGetAuthFromBearerOrSession.mockResolvedValue({ user, session });
     global.fetch = jest.fn() as unknown as typeof fetch;
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
   it("404s without a WWW-Authenticate hint when the feature is disabled", async () => {
@@ -58,7 +68,7 @@ describe("POST /api/mcp", () => {
   });
 
   it("401s with an RFC 9728 resource_metadata pointer when unauthenticated", async () => {
-    mockGetAuthFromBearerOrSession.mockRejectedValue(new Error("no session"));
+    mockGetAuthFromBearerOrSession.mockRejectedValue(new ApiError("no session", 401));
     const { POST } = await import("../route");
 
     const response = await POST(jsonRequest({ jsonrpc: "2.0", id: 1, method: "ping" }));
@@ -67,6 +77,23 @@ describe("POST /api/mcp", () => {
     expect(response.headers.get("WWW-Authenticate")).toContain(
       "resource_metadata=\"http://localhost:3000/.well-known/oauth-protected-resource/api/mcp\"",
     );
+  });
+
+  it("passes through authorization failures without an OAuth challenge", async () => {
+    mockGetAuthFromBearerOrSession.mockRejectedValue(new ApiError("Forbidden", 403));
+    const { POST } = await import("../route");
+    const response = await POST(jsonRequest({ jsonrpc: "2.0", id: 1, method: "ping" }));
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get("WWW-Authenticate")).toBeNull();
+  });
+
+  it("does not disguise infrastructure errors as authentication failures", async () => {
+    mockGetAuthFromBearerOrSession.mockRejectedValue(new Error("JWKS unavailable"));
+    const { POST } = await import("../route");
+
+    await expect(POST(jsonRequest({ jsonrpc: "2.0", id: 1, method: "ping" })))
+      .rejects.toThrow("JWKS unavailable");
   });
 
   it("answers initialize with protocol version, tools capability, and server info", async () => {
@@ -78,10 +105,63 @@ describe("POST /api/mcp", () => {
     const body = await response.json();
 
     expect(body.result).toMatchObject({
-      protocolVersion: expect.any(String),
+      protocolVersion: "2024-11-05",
       capabilities: { tools: {} },
       serverInfo: { name: "caipe" },
     });
+  });
+
+  it("returns its supported protocol version for a newer client request", async () => {
+    const { POST } = await import("../route");
+    const response = await POST(jsonRequest({
+      jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2099-01-01" },
+    }));
+    expect((await response.json()).result.protocolVersion).toBe("2024-11-05");
+  });
+
+  it("ignores request and proxy hosts when forwarding credentials", async () => {
+    process.env.CAIPE_MCP_INTERNAL_ORIGIN = "http://127.0.0.1:3000";
+    (global.fetch as jest.Mock).mockResolvedValue({
+      status: 200, text: async () => JSON.stringify({ success: true, data: [] }),
+    });
+    const { POST } = await import("../route");
+    const request = new NextRequest("https://attacker.example.test/api/mcp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer test-token",
+        "x-forwarded-host": "attacker.example.test",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "tools/call",
+        params: { name: "caipe_agent_list", arguments: {} },
+      }),
+    });
+    await POST(request);
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:3000/api/dynamic-agents",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer test-token" }) }),
+    );
+  });
+
+  it("rejects a missing fixed origin before authentication or forwarding", async () => {
+    delete process.env.NEXTAUTH_URL;
+    const { POST } = await import("../route");
+    const response = await POST(jsonRequest({ jsonrpc: "2.0", id: 1, method: "ping" }));
+
+    expect(response.status).toBe(503);
+    expect(mockGetAuthFromBearerOrSession).not.toHaveBeenCalled();
+  });
+
+  it("returns Invalid Request for an empty batch and retains a null id", async () => {
+    const { POST } = await import("../route");
+    const empty = await POST(jsonRequest([]));
+    expect(empty.status).toBe(400);
+    expect((await empty.json()).error.code).toBe(-32600);
+
+    const withNullId = await POST(jsonRequest({ jsonrpc: "2.0", id: null, method: "ping" }));
+    expect((await withNullId.json()).result).toEqual({});
   });
 
   it("lists exactly the Phase 1 + Phase 2 tools", async () => {
@@ -362,7 +442,10 @@ describe("POST /api/mcp", () => {
         "http://localhost:3000/api/dynamic-agents?id=a1",
         expect.objectContaining({
           method: "PUT",
-          body: JSON.stringify({ system_prompt: "Be terse and cite sources." }),
+          body: JSON.stringify({
+            system_prompt: "Be terse and cite sources.",
+            expected_system_prompt: "Be terse.",
+          }),
         }),
       );
       const text = body.result.content[0].text;
