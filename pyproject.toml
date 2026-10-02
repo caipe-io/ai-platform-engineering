@@ -28,7 +28,7 @@ dependencies = [
     "langmem==0.0.30",
     "prometheus-client==0.26.0",
     "pydantic==2.13.4",
-    "pyjwt==2.15.0",
+    "pyjwt==2.15.1",
     "requests==2.34.2",
     # Dynamic agents are built on the upstream deepagents library.
     "deepagents==0.6.8",
