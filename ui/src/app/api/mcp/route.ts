@@ -1,7 +1,7 @@
 // CAIPE Platform MCP server — exposes CAIPE's own administrative surface
 // (Phase 1: agent discovery; Phase 2: agent lifecycle writes) to MCP
 // clients (Claude Code, Claude Desktop, Cursor, or another CAIPE agent)
-// over the Streamable-HTTP transport (JSON-RPC 2.0 on a single POST).
+// as JSON-RPC 2.0 over a single HTTP POST.
 //
 //   POST /api/mcp   { jsonrpc, id, method, params }
 //
@@ -33,10 +33,9 @@
 //     or service account whose forwarded credentials it's using. A fake
 //     check here would be worse than an honest gap. caipe_agent_set_prompt
 //     says so in its own description instead of silently allowing it.
-//   - Creation quotas (Q2): agent creation is already gated by
-//     `requireResourcePermission(can_create_agent)` (real team-ownership
-//     friction, not "anyone can spam-create"), but there is no numeric
-//     rate limit. Not invented here ahead of that design call.
+//   - Creation quotas (Q2): global creation requires organization manage
+//     permission; team creation requires membership in the owner team.
+//     Neither path has a numeric rate limit.
 // Revision history / restore (the "immutable agent record" this needs for
 // a real undo) is tracked separately as issue #2824 — independently useful
 // for the web UI, not MCP-specific, and out of scope for this PR.
@@ -45,8 +44,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getAuthFromBearerOrSession } from "@/lib/api-middleware";
+import { ApiError, getAuthFromBearerOrSession } from "@/lib/api-middleware";
 import { isPlatformMcpEnabled } from "@/lib/mcp/guard";
+import { internalMcpOrigin, publicMcpOrigin } from "@/lib/mcp/origin";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +61,18 @@ interface RpcRequest {
   id?: string | number | null;
   method: string;
   params?: Record<string, unknown>;
+}
+
+function isRpcRequest(value: unknown): value is RpcRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const rpc = value as Record<string, unknown>;
+  return rpc.jsonrpc === "2.0" &&
+    typeof rpc.method === "string" &&
+    (rpc.id === undefined || rpc.id === null ||
+      typeof rpc.id === "string" ||
+      (typeof rpc.id === "number" && Number.isFinite(rpc.id))) &&
+    (rpc.params === undefined ||
+      (rpc.params !== null && typeof rpc.params === "object" && !Array.isArray(rpc.params)));
 }
 
 function rpcResult(id: RpcRequest["id"], result: unknown) {
@@ -116,16 +128,6 @@ function finiteJsonResponse(payload: unknown, status = 200): NextResponse {
 
 // --- internal route forwarding ----------------------------------------------
 
-/** Origin to reach our own API routes from inside the route handler. Defaults
- *  to the request's own origin; override with CAIPE_MCP_INTERNAL_ORIGIN to
- *  hit the app directly (e.g. skip an ingress hop) in a given deployment. */
-function selfOrigin(request: NextRequest): string {
-  return (process.env.CAIPE_MCP_INTERNAL_ORIGIN || new URL(request.url).origin).replace(
-    /\/$/,
-    "",
-  );
-}
-
 /** Forward the caller's own credentials so the target route re-authenticates
  *  as the same principal — per-resource RBAC stays identical to the web UI. */
 function forwardHeaders(request: NextRequest): Record<string, string> {
@@ -144,7 +146,7 @@ type Forward = (
 ) => Promise<{ status: number; json: unknown; text: string }>;
 
 function makeForward(request: NextRequest): Forward {
-  const origin = selfOrigin(request);
+  const origin = internalMcpOrigin();
   const headers = forwardHeaders(request);
   return async (method, path, body) => {
     const res = await fetch(`${origin}${path}`, {
@@ -198,7 +200,7 @@ function schema(
 const MAX_DIFF_CELLS = 4_000_000;
 
 /**
- * Minimal unified line diff (no dependency — this is the only caller).
+ * Minimal line diff (no dependency — this is the only caller).
  * Classic LCS via dynamic programming, then a straight backtrack into
  * `- removed` / `+ added` / `  unchanged` lines. No context windowing:
  * prompts are short enough that showing every line is more useful than a
@@ -448,7 +450,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "caipe_agent_set_prompt",
     description:
-      "Replace a CAIPE dynamic agent's system_prompt and return a unified diff of the " +
+      "Replace a CAIPE dynamic agent's system_prompt and return a line diff of the " +
       "change. Rejected for system or config-driven agents. There is no persisted revision " +
       "history yet (github.com/caipe-io/ai-platform-engineering issue #2824) — read the " +
       "returned diff before trusting the write; there is nothing to restore from if it's " +
@@ -474,6 +476,7 @@ const TOOLS: ToolDef[] = [
       await ensureOk(
         await ctx.fwd("PUT", `/api/dynamic-agents?id=${encodeURIComponent(agentId)}`, {
           system_prompt: nextPrompt,
+          expected_system_prompt: previousPrompt,
         }),
         "update agent prompt",
       );
@@ -508,9 +511,8 @@ const TOOLS_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 async function dispatch(rpc: RpcRequest, ctx: ToolContext) {
   switch (rpc.method) {
     case "initialize": {
-      const requested = (rpc.params?.protocolVersion as string) || PROTOCOL_VERSION;
       return rpcResult(rpc.id, {
-        protocolVersion: requested,
+        protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: SERVER_INFO,
       });
@@ -548,28 +550,17 @@ async function dispatch(rpc: RpcRequest, ctx: ToolContext) {
 
 /** RFC 9728 protected-resource metadata URL a client should fetch after a 401,
  *  to discover the authorization server and self-register (RFC 7591 DCR). */
-function resourceMetadataUrl(request: NextRequest): string {
-  const configured = process.env.NEXTAUTH_URL;
-  let origin: string;
-  try {
-    origin = configured ? new URL(configured).origin : new URL(request.url).origin;
-  } catch {
-    origin = new URL(request.url).origin;
-  }
-  const xfHost = request.headers.get("x-forwarded-host");
-  if (!configured && xfHost) {
-    origin = `${request.headers.get("x-forwarded-proto") || "https"}://${xfHost}`;
-  }
-  return `${origin}/.well-known/oauth-protected-resource/api/mcp`;
+function resourceMetadataUrl(): string {
+  return `${publicMcpOrigin()}/.well-known/oauth-protected-resource/api/mcp`;
 }
 
-function unauthorizedResponse(request: NextRequest): NextResponse {
+function unauthorizedResponse(): NextResponse {
   return NextResponse.json(
     rpcError(null, -32001, "Unauthorized: authenticate, or provide a valid bearer token."),
     {
       status: 401,
       headers: {
-        "WWW-Authenticate": `Bearer realm="caipe-mcp", resource_metadata="${resourceMetadataUrl(request)}"`,
+        "WWW-Authenticate": `Bearer realm="caipe-mcp", resource_metadata="${resourceMetadataUrl()}"`,
       },
     },
   );
@@ -582,12 +573,25 @@ export async function POST(request: NextRequest) {
     return new NextResponse("Not found", { status: 404 });
   }
 
+  // Check the deployment-owned destinations before accepting credentials.
+  try {
+    publicMcpOrigin();
+    internalMcpOrigin();
+  } catch (error) {
+    console.error("Platform MCP origin configuration error:", error);
+    return finiteJsonResponse(rpcError(null, -32000, "Platform MCP is misconfigured"), 503);
+  }
+
   let auth: { user: { email: string; name: string; role: string }; session: Record<string, unknown> };
   try {
     const resolved = await getAuthFromBearerOrSession(request);
     auth = { user: resolved.user, session: resolved.session as Record<string, unknown> };
-  } catch {
-    return unauthorizedResponse(request);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.statusCode === 401) return unauthorizedResponse();
+      return finiteJsonResponse(rpcError(null, -32000, error.message), error.statusCode);
+    }
+    throw error;
   }
 
   let payload: unknown;
@@ -602,16 +606,23 @@ export async function POST(request: NextRequest) {
 
   // Support JSON-RPC batches as well as single requests.
   const isBatch = Array.isArray(payload);
-  const items = (isBatch ? payload : [payload]) as RpcRequest[];
+  const items: unknown[] = isBatch ? payload as unknown[] : [payload];
+
+  if (items.length === 0) {
+    return finiteJsonResponse(rpcError(null, -32600, "Invalid Request"), 400);
+  }
 
   const responses = [];
   for (const rpc of items) {
-    if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string") {
-      responses.push(rpcError(rpc?.id ?? null, -32600, "Invalid Request"));
+    if (!isRpcRequest(rpc)) {
+      const candidate = rpc && typeof rpc === "object" ? (rpc as Record<string, unknown>).id : null;
+      const id = typeof candidate === "string" ||
+        (typeof candidate === "number" && Number.isFinite(candidate)) ? candidate : null;
+      responses.push(rpcError(id, -32600, "Invalid Request"));
       continue;
     }
-    // Notifications (no id, e.g. notifications/initialized) get no response.
-    const isNotification = rpc.id === undefined || rpc.id === null;
+    // Only an absent id is a notification. JSON-RPC permits id: null.
+    const isNotification = rpc.id === undefined;
     const res = await dispatch(rpc, ctx);
     if (!isNotification) responses.push(res);
   }
@@ -623,14 +634,4 @@ export async function POST(request: NextRequest) {
     });
   }
   return finiteJsonResponse(isBatch ? responses : responses[0]);
-}
-
-// Exported for tests and for a future REST/OpenAPI facade over the same
-// tool registry (mirroring the pattern this route's own header describes).
-export function getPlatformMcpTools(): readonly ToolDef[] {
-  return TOOLS;
-}
-
-export function getPlatformMcpTool(name: string): ToolDef | undefined {
-  return TOOLS_BY_NAME.get(name);
 }
