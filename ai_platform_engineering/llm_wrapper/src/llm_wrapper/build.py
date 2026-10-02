@@ -14,7 +14,6 @@ import logging
 import os
 from typing import Any
 
-from botocore.exceptions import ClientError
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
@@ -128,6 +127,9 @@ def _init_chat_model_with_aip_fallback(
     """
     if not _is_bedrock_aip(resolved_model, lc_provider) or "base_model_id" in kwargs:
         return init_chat_model(model=resolved_model, model_provider=lc_provider, **kwargs)
+
+    # Non-Bedrock consumers of the shared wrapper do not install botocore.
+    from botocore.exceptions import ClientError
 
     try:
         return init_chat_model(model=resolved_model, model_provider=lc_provider, **kwargs)

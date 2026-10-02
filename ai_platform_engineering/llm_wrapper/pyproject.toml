@@ -18,6 +18,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "botocore==1.43.16",
     "langchain==1.4.1",
     "langchain-core==1.6.3",
     "pytest==9.1.1",

@@ -1293,6 +1293,7 @@ source = { editable = "../llm_wrapper" }
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "botocore", specifier = "==1.43.16" },
     { name = "langchain", specifier = "==1.4.1" },
     { name = "langchain-core", specifier = "==1.6.3" },
     { name = "pytest", specifier = "==9.1.1" },
