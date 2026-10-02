@@ -173,7 +173,6 @@ jobs:
           /home/runner/.local/bin/uv venv
           /home/runner/.local/bin/uv sync --extra dev
           /home/runner/.local/bin/uv run pytest -v \
-            --deselect tests/test_mongo_credential_sources_self_heal.py::test_get_server_injects_builtin_when_empty_list \
             --deselect tests/test_runtime_reader_contract.py::test_dynamic_agents_service_does_not_ship_agent_crud_router
 
   run-autonomous-agents-tests:

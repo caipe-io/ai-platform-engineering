@@ -6,8 +6,8 @@ AgentGateway discovery historically persisted ``mcp_servers`` documents
 without ``credential_sources``; transform-based gateway routes then emitted an
 empty Bearer and the upstream returned 401 (most visibly ``knowledge-base``).
 ``get_server`` / ``get_servers_by_ids`` fill the built-in sources at read time
-for known servers when the stored value is absent/empty, without overwriting an
-operator-customized list.
+for known servers when the stored value is absent, without overwriting an
+operator-customized list or an explicit empty list.
 """
 
 from __future__ import annotations
@@ -75,15 +75,15 @@ def test_get_server_injects_builtin_when_missing():
     assert server.credential_sources[0].fallback_client_credentials is True
 
 
-def test_get_server_injects_builtin_when_empty_list():
-    """An explicit empty credential_sources is treated as missing and healed."""
+def test_get_server_preserves_explicit_empty_sources():
+    """An explicit empty list means the operator cleared credentials."""
     service = _make_service()
     _mock_servers(service, find_one=_kb_doc(credential_sources=[]))
 
     server = service.get_server("knowledge-base")
 
-    assert server.credential_sources
-    assert server.credential_sources[0].kind == "caller_token"
+    assert server is not None
+    assert server.credential_sources == []
 
 
 def test_get_server_preserves_operator_customized_sources():
