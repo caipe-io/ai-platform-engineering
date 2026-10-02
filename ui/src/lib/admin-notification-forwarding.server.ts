@@ -1,10 +1,15 @@
 import { ApiError } from "@/lib/api-error";
 import { getCollection } from "@/lib/mongodb";
-import { PLATFORM_CONFIG_ID } from "@/lib/platform-default-agent";
 import { originFromNextAuthUrl } from "@/lib/request-origin";
 import { callSlackBotAdmin } from "@/lib/slack-bot-admin";
 import type { AdminNotificationForwardingConfig } from "@/types/admin-notification-forwarding";
 import type { InAppNotificationSeverity } from "@/types/in-app-notification";
+
+// Not imported from @/lib/platform-default-agent: that module pulls in
+// @/lib/api-middleware -> next/server, which breaks in test environments
+// without the Fetch API globals (same reason rbac/onboarding-defaults.ts and
+// server/platform-llm.server.ts each keep their own copy of this literal).
+const PLATFORM_CONFIG_ID = "platform_settings";
 
 const CHANNEL_ID_PATTERN = /^[CG][A-Z0-9]{8,}$/;
 const USER_ID_PATTERN = /^[UWS][A-Z0-9]{8,}$/;
