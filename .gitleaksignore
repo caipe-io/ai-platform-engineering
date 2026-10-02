@@ -7,3 +7,6 @@
 60cd0b008ef043f22943a9e0f3b303611fc6ce1c:ui/src/lib/__tests__/api-middleware.test.ts:generic-api-key:610
 60cd0b008ef043f22943a9e0f3b303611fc6ce1c:ui/src/lib/__tests__/api-middleware.test.ts:generic-api-key:611
 3ea533d987b2c0690ba32faed84746a2c0ddd145:ai_platform_engineering/agents/jira/mcp/tests/test_client.py:generic-api-key:220
+da7ad6adcffe1eeac8cf036d2768de7945429c97:ui/src/lib/server/__tests__/request-header-screening.test.ts:gitlab-pat:33
+da7ad6adcffe1eeac8cf036d2768de7945429c97:ui/src/lib/server/__tests__/request-header-screening.test.ts:gitlab-runner-authentication-token:34
+da7ad6adcffe1eeac8cf036d2768de7945429c97:ui/src/lib/server/__tests__/request-header-screening.test.ts:gitlab-pat:52

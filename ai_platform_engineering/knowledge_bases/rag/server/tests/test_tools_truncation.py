@@ -119,7 +119,7 @@ class TestTruncationMarkers:
       response = await search_fn(query="test query", limit=10, thought="test")
 
     out = response["semantic_results"]
-    marker_count = sum(1 for r in out if "[Content truncated. Use fetch_document" in r["text_content"])
+    marker_count = sum(1 for r in out if "[Content truncated. Use knowledge-base_fetch_document" in r["text_content"])
     assert marker_count == 5, (
       f"Expected one marker per truncated result (5), got {marker_count}. "
       "Old code with `truncation_markers_shown < 2` would return 2."
@@ -144,7 +144,7 @@ class TestTruncationMarkers:
       response = await search_fn(query="test", limit=20, thought="")
 
     out = response["semantic_results"]
-    marker_count = sum(1 for r in out if "[Content truncated. Use fetch_document" in r["text_content"])
+    marker_count = sum(1 for r in out if "[Content truncated. Use knowledge-base_fetch_document" in r["text_content"])
     assert marker_count == 10, (
       f"Expected 10 markers, got {marker_count}. "
       "Old code (truncation_markers_shown < 2) would return exactly 2."
@@ -221,7 +221,7 @@ class TestTruncationMarkers:
       response = await search_fn(query="test", limit=5, thought="")
 
     text = response["semantic_results"][0]["text_content"]
-    expected = "[Content truncated. Use fetch_document with document_id='my-doc-id' to get full content if needed.]"
+    expected = "[Content truncated. Use knowledge-base_fetch_document with document_id='my-doc-id' to get full content if needed.]"
     assert expected in text, (
       f"Exact marker format not found.\nExpected: {expected}\nGot (last 200 chars): {text[-200:]}"
     )

@@ -498,6 +498,20 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | mcp-pagerduty.mcp.mode | string | `"http"` |  |
 | mcp-pagerduty.mcp.port | int | `8000` |  |
 | mcp-pagerduty.nameOverride | string | `"mcp-pagerduty"` |  |
+| mcp-sharepoint.mcp.agentgateway.enabled | bool | `true` |  |
+| mcp-sharepoint.mcp.agentgateway.id | string | `"sharepoint"` |  |
+| mcp-sharepoint.mcp.agentgateway.pathPrefix | string | `"/mcp/sharepoint"` |  |
+| mcp-sharepoint.mcp.agentgateway.protocol | string | `"StreamableHTTP"` |  |
+| mcp-sharepoint.mcp.env.MCP_AUTH_MODE | string | `"none"` |  |
+| mcp-sharepoint.mcp.image.pullPolicy | string | `"IfNotPresent"` |  |
+| mcp-sharepoint.mcp.image.repository | string | `"ghcr.io/caipe-io/mcp-sharepoint"` |  |
+| mcp-sharepoint.mcp.image.tag | string | `""` |  |
+| mcp-sharepoint.mcp.mode | string | `"http"` |  |
+| mcp-sharepoint.mcp.port | int | `8000` |  |
+| mcp-sharepoint.mcpSecrets.create | bool | `false` |  |
+| mcp-sharepoint.mcpSecrets.requiresSecret | bool | `true` |  |
+| mcp-sharepoint.mcpSecrets.secretName | string | `"mcp-sharepoint-secret"` |  |
+| mcp-sharepoint.nameOverride | string | `"mcp-sharepoint"` |  |
 | mcp-slack.image.pullPolicy | string | `"IfNotPresent"` |  |
 | mcp-slack.image.repository | string | `"ghcr.io/cnoe-io/agent-slack"` |  |
 | mcp-slack.mcp.agentgateway.enabled | bool | `false` |  |
@@ -710,6 +724,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | tags.mcp-komodor | bool | `false` |  |
 | tags.mcp-netutils | bool | `false` |  |
 | tags.mcp-pagerduty | bool | `false` |  |
+| tags.mcp-sharepoint | bool | `false` |  |
 | tags.mcp-slack | bool | `false` |  |
 | tags.mcp-splunk | bool | `false` |  |
 | tags.mcp-victorops | bool | `false` |  |
@@ -767,6 +782,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | mcp-jira (mcp-server) | `1.1.1` | tags: mcp-jira, complete |
 | mcp-komodor (mcp-server) | `1.1.1` | tags: mcp-komodor, complete |
 | mcp-pagerduty (mcp-server) | `1.1.1` | tags: mcp-pagerduty, complete |
+| mcp-sharepoint (mcp-server) | `1.1.1` | tags: mcp-sharepoint |
 | mcp-slack (mcp-server) | `1.1.1` | tags: mcp-slack, complete |
 | mcp-splunk (mcp-server) | `1.1.1` | tags: mcp-splunk, complete |
 | mcp-victorops (mcp-server) | `1.1.1` | tags: mcp-victorops |

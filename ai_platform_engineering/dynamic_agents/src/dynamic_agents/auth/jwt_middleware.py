@@ -82,6 +82,7 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
+        request.state.verified_bearer_claims = None
         if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
             return await call_next(request)
 
@@ -111,6 +112,7 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
                         media_type="application/json",
                     )
                 token = raw
+                request.state.verified_bearer_claims = claims
                 # The legacy team-claim log field was removed by spec
                 # 2026-05-24-derive-team-from-channel Phase 2.8: team is
                 # not carried on the JWT. Triage of "wrong team" now

@@ -20,6 +20,7 @@ The Helm chart can deploy MCP servers with `mcp-*` aliases:
 | `mcp-jira` | Jira issue operations |
 | `mcp-komodor` | Kubernetes troubleshooting |
 | `mcp-pagerduty` | PagerDuty incident data |
+| `mcp-sharepoint` | Read-only SharePoint site, document-library, and list access |
 | `mcp-slack` | Slack workspace operations |
 | `mcp-splunk` | Splunk search and observability |
 | `mcp-victorops` | VictorOps incident data |

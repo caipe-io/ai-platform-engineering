@@ -157,6 +157,13 @@ binds:
           targets:
           - name: pagerduty
             mcp: { host: http://mcp-pagerduty:8000/mcp }
+    - matches: [{ path: { pathPrefix: /mcp/sharepoint } }]
+      policies: *mcpAuthzPolicy
+      backends:
+      - mcp:
+          targets:
+          - name: sharepoint
+            mcp: { host: http://mcp-sharepoint:8000/mcp }
     # Knowledge-base (RAG) enforces its own Keycloak/OIDC auth on /mcp. Dynamic
     # Agents forwards the caller's user JWT (for per-user RAG group RBAC), or a
     # caipe-platform service token in non-user contexts, on X-CAIPE-Provider-Token;
