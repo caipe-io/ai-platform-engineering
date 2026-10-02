@@ -162,7 +162,7 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
 
-      # This suite ran in no CI job before. The three deselections below fail
+      # This suite ran in no CI job before. The remaining deselections fail
       # identically on main and are unrelated to LLM construction; they are
       # tracked separately rather than fixed here, so that adding the gate does
       # not also mean changing authz, credential and router behaviour.
@@ -173,7 +173,6 @@ jobs:
           /home/runner/.local/bin/uv venv
           /home/runner/.local/bin/uv sync --extra dev
           /home/runner/.local/bin/uv run pytest -v \
-            --deselect tests/test_authz.py::test_invalid_agent_id_returns_400_without_calling_cas \
             --deselect tests/test_mongo_credential_sources_self_heal.py::test_get_server_injects_builtin_when_empty_list \
             --deselect tests/test_runtime_reader_contract.py::test_dynamic_agents_service_does_not_ship_agent_crud_router
 
@@ -205,4 +204,3 @@ jobs:
           path: |
             ai_platform_engineering/autonomous_agents/coverage.xml
         continue-on-error: true
-
