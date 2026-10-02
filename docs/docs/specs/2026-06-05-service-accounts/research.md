@@ -187,7 +187,7 @@ team), **NOT `isAdmin`**. Real control is per-action owning-team authorization o
 - **Non-admins already reach the admin page.** `admin/page.tsx` is wrapped only in `<AuthGuard>`
   (authentication, not admin role) — `page.tsx:3228-3232`. `useAdminRole` docstring + behaviour
   confirm: *"All authenticated users can view the Admin dashboard (read-only)."* `isAdmin` only
-  gates write affordances (Create Team button, role edits, simulation "View as", `ai_review`). So
+  gates write affordances (Create Team button, role edits, user impersonation, `ai_review`). So
   **no page-level gating change is needed** — a non-admin team member can already land here.
 - **Tab visibility is data-driven** via `tabGateValues[gateKey]` (`page.tsx:496-523`), fed by
   `gates` from `GET /api/rbac/admin-tab-gates`. A category/tab renders iff its `gateKey` is `true`.

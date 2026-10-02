@@ -411,16 +411,21 @@ should match the member baseline for `organization:<org>#can_use`,
 checks such as `organization:<org>#can_manage` should drift from the member
 baseline but match the admin baseline.
 
-Use the subtle **View as** control beside the Admin heading to
-preview the Admin console as a real OpenFGA principal. The modal searches users by
-email/name/Keycloak subject and teams by name/slug, with a `member`/`admin`
-userset relation for team previews. The preview is read-only: tab visibility is
-evaluated as the selected `user:<sub>` or `team:<slug>#relation`, but the browser
-session remains the signed-in admin and all mutation controls are disabled.
-Configured Slack channels, Webex spaces, Statistics, and Feedback are scoped to
-that same simulated subject, including concrete resources it owns or receives
-through a team grant. Use this to answer "what would this manager see?" before granting
-or revoking relationships in Access Manager.
+Use **Admin → Teams & Users → Users**, open a user, and click **Impersonate
+user** to inspect an enabled human user's application experience. The signed-in
+administrator must be listed in `ADMIN_ALLOW_IMPERSONATION` and must be a
+bootstrap or OpenFGA Super Admin; leaving the variable empty disables the
+button. In realms with an enabled IdP broker, the target must have a federated
+identity link; Keycloak shells created from Slack/Webex activity are not
+eligible until linked. The target must also meet `OIDC_REQUIRED_GROUP` when that
+sign-in gate is configured. The session is application-enforced read-only:
+views and OpenFGA-filtered reads use the target identity, while mutations,
+starting chats, tool runs, connected credentials, and connector linking are
+denied. The warning bar at the top of every application page shows the active
+target and exits by signing out, requiring a fresh administrator login. Audit
+rows created by the Web UI backend carry `impersonation=true`, the
+administrator as the actor, the selected user as the subject, and the
+impersonation start time.
 
 Use **Admin → Security & Policy → OpenFGA ReBAC → Policy Graph** to inspect the
 same relationships visually without starting from the full tuple blast radius.

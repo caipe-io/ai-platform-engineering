@@ -1,11 +1,9 @@
 import { NextRequest } from "next/server";
 
-import { ApiError,getAuthFromBearerOrSession,successResponse,withErrorHandler } from "@/lib/api-middleware";
+import { getAuthFromBearerOrSession,successResponse,withErrorHandler } from "@/lib/api-middleware";
 import { getAuditReader } from "@/lib/audit/reader";
 import { getCollection } from "@/lib/mongodb";
-import { parseAdminSimulation } from "@/lib/rbac/admin-simulator";
 import { checkOpenFgaTuple,writeOpenFgaTuples } from "@/lib/rbac/openfga";
-import { hasOrganizationAdmin } from "@/lib/rbac/platform-admin";
 import { requireAdminSurfaceManage } from "@/lib/rbac/require-openfga";
 import { subjectFromSession } from "@/lib/rbac/resource-authz";
 import { slackChannelTeamVisibilityRelationships } from "@/lib/rbac/slack-channel-rebac";
@@ -160,22 +158,16 @@ async function slackChannelAccess(
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
     const { session } = await getAuthFromBearerOrSession(request);
-    const simulation = parseAdminSimulation(request.nextUrl.searchParams);
-    if (simulation.active && !(await hasOrganizationAdmin(session))) {
-      throw new ApiError("Simulation requires organization admin access", 403);
-    }
-    const subject = simulation.subject?.openfga_user ?? subjectFromSession(session);
+    const subject = subjectFromSession(session);
     // `?health=1` opts the caller in to a per-row diagnostics summary
     // (warnings count + OpenFGA reachability + last runtime error
     // timestamp). Computed in parallel server-side so a workspace with
     // dozens of channels stays under one round-trip from the UI's
     // perspective.
     const includeHealth = request.nextUrl.searchParams.get("health") === "1";
-    const canManageSlackSurface = simulation.active
-      ? false
-      : await requireAdminSurfaceManage(session, "slack")
-          .then(() => true)
-          .catch(() => false);
+    const canManageSlackSurface = await requireAdminSurfaceManage(session, "slack")
+      .then(() => true)
+      .catch(() => false);
     const mappings = await getCollection<ChannelTeamMappingDoc>("channel_team_mappings");
     const mappingRows = await mappings
       .find({ active: { $ne: false } } as never)
@@ -223,7 +215,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
               workspaceId,
               row.slack_channel_id,
               row.team_slug,
-              !simulation.active,
+              true,
             )
           : { canRead: false, canManage: false };
         // A Slack surface admin can see every channel row, including

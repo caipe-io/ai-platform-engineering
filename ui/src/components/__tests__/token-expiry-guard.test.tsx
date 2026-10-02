@@ -629,6 +629,26 @@ describe('TokenExpiryGuard', () => {
       })
     })
 
+    it('should require a clean sign-in when the impersonation token is missing', async () => {
+      jest.useRealTimers()
+
+      mockUseSession.mockReturnValue({
+        data: {
+          user: { name: 'Test User', email: 'test@example.com' },
+          error: 'ImpersonationTokenMissing',
+        } as unknown,
+        status: 'authenticated',
+        update: mockUpdateSession,
+      })
+
+      render(<TokenExpiryGuard />)
+
+      await waitFor(() => {
+        expect(mockSessionStorage.setItem).toHaveBeenCalledWith('token-expiry-handling', 'true')
+        expect(screen.getByText(/sign-in needed/i)).toBeInTheDocument()
+      })
+    })
+
     it('should set token-expiry-handling flag when the server-side access token cache is missing', async () => {
       jest.useRealTimers()
 

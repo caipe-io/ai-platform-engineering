@@ -220,6 +220,7 @@ cliClient:
 #                   ExternalSecret which `init-idp` reads as
 #                   KEYCLOAK_PLATFORM_CLIENT_SECRET and PUTs into Keycloak.
 platformClient:
+  clientId: "caipe-platform"
   secretRef: ""
   secretKey: "OIDC_CLIENT_SECRET"
   externalSecret:

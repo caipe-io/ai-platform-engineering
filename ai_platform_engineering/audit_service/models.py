@@ -28,7 +28,10 @@ class AuditEvent(BaseModel):
     tenant_id: str | None = None
     subject_hash: str | None = None
     subject_ref: str | None = None
+    actor_hash: str | None = None
     actor_ref: str | None = None
+    impersonation: bool | None = None
+    impersonation_started_at: datetime | str | None = None
     action: str | None = None
     outcome: str | None = None
     reason_code: str | None = None

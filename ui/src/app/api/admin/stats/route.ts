@@ -6,10 +6,6 @@ successResponse,
 withErrorHandler,
 } from '@/lib/api-middleware';
 import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
-import {
-resolveAuthorizedAdminSimulationScope,
-simulationSubjectCanManageAdminSurface,
-} from '@/lib/rbac/admin-simulation-server';
 import { resolveInsightsUserFilter } from '@/lib/rbac/insights-user-filter';
 import { requireAdminSurfaceManage } from '@/lib/rbac/require-openfga';
 import { getAgentsByIds, getAllAgents, getOwnedAgentConversationIds, getOwnedAgents, getReadableSlackChannelNames, getReadableWebexSpaceIds, type OwnedAgent } from '@/lib/rbac/user-insights-scope';
@@ -446,10 +442,10 @@ async function getAdminStats(request: NextRequest) {
   const includesSection = (section: AdminStatsSection): boolean => (
     requestedSection === 'all' || requestedSection === section
   );
-  const simulationScope = await resolveAuthorizedAdminSimulationScope(searchParams, session);
-  const isFullAdmin = simulationScope
-    ? await simulationSubjectCanManageAdminSurface(simulationScope, 'stats')
-    : await requireAdminSurfaceManage(session, 'stats').then(() => true, () => false);
+  const isFullAdmin = await requireAdminSurfaceManage(session, 'stats').then(
+    () => true,
+    () => false,
+  );
 
   // Non-admin: scope to their readable Slack channels, their readable Webex
   // spaces, their own web conversations, AND the agents they own (directly or
@@ -458,14 +454,10 @@ async function getAdminStats(request: NextRequest) {
   // theirs.
   let nonAdminScope: { channelNames: string[]; ownerEmail: string; ownedAgents: OwnedAgent[]; sub: string; webexSpaceIds: string[] } | null = null;
   if (!isFullAdmin) {
-    const openfgaUser = simulationScope?.openfgaUser ?? (
-      typeof session.sub === 'string' && session.sub.trim()
-        ? `user:${session.sub.trim()}`
-        : ''
-    );
-    const email = simulationScope?.ownerEmail ?? (
-      typeof session.user?.email === 'string' ? session.user.email.trim() : ''
-    );
+    const openfgaUser = typeof session.sub === 'string' && session.sub.trim()
+      ? `user:${session.sub.trim()}`
+      : '';
+    const email = typeof session.user?.email === 'string' ? session.user.email.trim() : '';
     if (!openfgaUser && !email) {
       return NextResponse.json(
         { success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' },

@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth-config";
-import { ApiError } from "@/lib/api-error";
 import { reconcileTupleDiff } from "@/lib/authz";
 import {
   batchCheckOpenFgaTuples,
@@ -16,7 +15,6 @@ import {
   getServiceAccountTokenUrl,
 } from "@/lib/rbac/keycloak-admin";
 import { logOpenFgaRebacAuditEvent } from "@/lib/rbac/audit";
-import { resolveAuthorizedAdminSimulationScope } from "@/lib/rbac/admin-simulation-server";
 import { hasOrganizationAdmin } from "@/lib/rbac/platform-admin";
 import { organizationObjectId } from "@/lib/rbac/organization";
 import {
@@ -178,36 +176,11 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  let simulationScope;
-  try {
-    simulationScope = await resolveAuthorizedAdminSimulationScope(
-      request.nextUrl.searchParams,
-      session,
-    );
-  } catch (error) {
-    if (error instanceof ApiError) {
-      return NextResponse.json(
-        { success: false, error: error.message },
-        { status: error.statusCode },
-      );
-    }
-    throw error;
-  }
-  const effectiveSubject =
-    simulationScope?.openfgaUser ?? `user:${session.sub}`;
-  // Org admins (real, session-backed) see every team's SAs unless a preview
-  // subject narrows the view. `hasOrganizationAdmin` works for both Bearer
+  const effectiveSubject = `user:${session.sub}`;
+  // `hasOrganizationAdmin` works for both Bearer
   // and session-cookie callers — unlike the stale `session.role === "admin"`
   // check this replaces, which was always false for Bearer callers.
-  const isAdmin = simulationScope
-    ? await checkOpenFgaTuple({
-        user: effectiveSubject,
-        relation: "can_manage",
-        object: organizationObjectId(),
-      })
-        .then((decision) => decision.allowed)
-        .catch(() => false)
-    : await hasOrganizationAdmin(session);
+  const isAdmin = await hasOrganizationAdmin(session);
 
   const searchParams = new URL(request.url).searchParams;
   const includeRevoked = searchParams.get("include_revoked") === "true";
@@ -227,23 +200,15 @@ export async function GET(request: NextRequest) {
   const search = (searchParams.get("search") || "").trim();
 
   try {
-    // `null` means "unbounded" (org admin, no team/preview narrowing) — every
+    // `null` means "unbounded" (org admin) — every
     // team's SAs are visible. Any other value bounds the query to those teams.
     let owningTeamIds: string[] | null;
 
     if (teamFilter && isAdmin) {
       // Admins can see SAs for any team — no membership intersection needed.
       owningTeamIds = [teamFilter];
-    } else if (simulationScope?.subjectType === "team") {
-      // A team userset preview represents membership in that selected team.
-      // Keep the list bounded to it instead of asking OpenFGA to infer a
-      // user's team memberships from a userset subject.
-      owningTeamIds = [simulationScope.subjectId];
-      if (teamFilter && teamFilter !== simulationScope.subjectId) {
-        owningTeamIds = [];
-      }
-    } else if (isAdmin && !simulationScope) {
-      // Org admin, no team filter, no preview subject: the full org-wide view.
+    } else if (isAdmin) {
+      // Org admin with no team filter gets the full org-wide view.
       owningTeamIds = null;
     } else {
       // Visibility boundary: the caller's own team memberships (FR-021).

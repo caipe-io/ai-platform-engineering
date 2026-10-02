@@ -4,9 +4,10 @@ export interface UserIdentityInfo {
   fetchedAt: string;
   sessions: Array<{ id: string; start?: number; lastAccess?: number }>;
   federatedIdentities: Array<{ identityProvider: string; userId: string; userName: string }>;
+  federationRequired?: boolean;
   realmRoles: string[];
   lastAccess: number | null;
-  unavailable: Array<"sessions" | "federatedIdentities" | "realmRoles">;
+  unavailable: Array<"sessions" | "federatedIdentities" | "identityProviders" | "realmRoles">;
 }
 
 export interface UserMembershipSourceInfo {

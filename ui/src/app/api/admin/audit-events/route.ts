@@ -67,6 +67,8 @@ interface AuditEventDocument {
   trace_url?: string;
   actor_hash?: string;
   actor_ref?: string;
+  impersonation?: boolean;
+  impersonation_started_at?: Date | string;
   caller_ref?: string;
   grantee_ref?: string;
   operation?: "grant" | "revoke";
@@ -404,6 +406,8 @@ function documentToEvent(doc: AuditEventDocument): UnifiedAuditEvent {
     source: normalizeAuditSource(doc.source, doc.source_system),
     actor_hash: doc.actor_hash,
     actor_ref: doc.actor_ref,
+    impersonation: doc.impersonation,
+    impersonation_started_at: toIsoOrUndefined(doc.impersonation_started_at),
     caller_ref: doc.caller_ref,
     grantee_ref: doc.grantee_ref,
     operation: doc.operation,

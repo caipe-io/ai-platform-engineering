@@ -3,12 +3,19 @@
 import { TeamPicker, type TeamPickerOption } from "@/components/ui/team-picker";
 import { UserIdentityDetails, UserMembershipSources } from "./UserIdentityDetails";
 import type { UserIdentityInfo, UserMembershipSourceInfo } from "@/types/admin-user-identity";
+import { Button } from "@/components/ui/button";
 import {
-  withAdminSimulationParams,
-  type AdminSimulationQueryTarget,
-} from "@/lib/rbac/admin-simulation-query";
-import { ChevronDown, Loader2 } from "lucide-react";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useChatStore } from "@/store/chat-store";
+import { ChevronDown, Loader2, ShieldAlert, UserRoundCog } from "lucide-react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -17,7 +24,6 @@ export interface UserDetailModalProps {
   onClose: () => void;
   onSaved: () => void;
   readOnly?: boolean;
-  simulationTarget?: AdminSimulationQueryTarget | null;
   /** Pre-loaded team list from the parent page — skips the /api/admin/teams fetch. */
   teamOptions?: Array<{ teamId: string; label: string }>;
 }
@@ -174,16 +180,18 @@ export function UserDetailModal({
   onClose,
   onSaved,
   readOnly = false,
-  simulationTarget = null,
   teamOptions: teamOptionsProp,
 }: UserDetailModalProps) {
-  const { update: updateSession } = useSession();
+  const { data: session, update: updateSession } = useSession();
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   // Profile section
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [user, setUser] = useState<ProfileUser | null>(null);
   const profileRequest = useRef(0);
+  const [canImpersonate, setCanImpersonate] = useState(false);
+  const [confirmingImpersonation, setConfirmingImpersonation] = useState(false);
   // Team picker options — use prop if provided, otherwise fetch
   const [teamOptionsLoading, setTeamOptionsLoading] = useState(!readOnly && !teamOptionsProp);
   const [teamOptionsFetched, setTeamOptionsFetched] = useState<
@@ -204,20 +212,14 @@ export function UserDetailModal({
   const [identityLoading, setIdentityLoading] = useState(true);
   const [identityError, setIdentityError] = useState<string | null>(null);
   const identityRequest = useRef(0);
-  const withPreviewScope = useCallback(
-    (path: string) => withAdminSimulationParams(path, simulationTarget),
-    [simulationTarget],
-  );
 
   const refreshProfile = useCallback(async () => {
     const requestId = ++profileRequest.current;
     setProfileError(null);
-    const res = await fetch(
-      withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}`),
-    );
+    const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`);
     const json = (await readJson(res)) as {
       success?: boolean;
-      data?: { user?: ProfileUser };
+      data?: { user?: ProfileUser; canImpersonate?: boolean };
       error?: string;
     } | null;
     if (!res.ok || !json?.success || !json.data?.user) {
@@ -227,8 +229,11 @@ export function UserDetailModal({
           : null) || `Failed to load user (${res.status})`
       );
     }
-    if (requestId === profileRequest.current) setUser(json.data.user);
-  }, [userId, withPreviewScope]);
+    if (requestId === profileRequest.current) {
+      setUser(json.data.user);
+      setCanImpersonate(json.data.canImpersonate === true);
+    }
+  }, [userId]);
 
   const loadTeams = useCallback(async () => {
     if (teamOptionsProp) return; // parent already supplied the list
@@ -261,7 +266,7 @@ export function UserDetailModal({
     setIdentity(null);
     try {
       const res = await fetch(
-        withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}/identity`),
+        `/api/admin/users/${encodeURIComponent(userId)}/identity`,
       );
       const json = (await readJson(res)) as {
         success?: boolean;
@@ -277,7 +282,7 @@ export function UserDetailModal({
     } finally {
       if (requestId === identityRequest.current) setIdentityLoading(false);
     }
-  }, [userId, withPreviewScope]);
+  }, [userId]);
 
   const loadAccess = useCallback(async () => {
     const requestId = ++accessRequest.current;
@@ -285,7 +290,7 @@ export function UserDetailModal({
     setAccessLoading(true);
     try {
       const res = await fetch(
-        withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}/access`),
+        `/api/admin/users/${encodeURIComponent(userId)}/access`,
       );
       const json = (await readJson(res)) as {
         success?: boolean;
@@ -304,7 +309,7 @@ export function UserDetailModal({
     } finally {
       if (requestId === accessRequest.current) setAccessLoading(false);
     }
-  }, [userId, withPreviewScope]);
+  }, [userId]);
 
   useEffect(() => {
     setMounted(true);
@@ -316,11 +321,11 @@ export function UserDetailModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !confirmingImpersonation) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [confirmingImpersonation, onClose]);
 
   // Fire all three loads in parallel — each section shows its own spinner
   // rather than blocking the whole modal behind one top-level spinner.
@@ -330,6 +335,8 @@ export function UserDetailModal({
     setProfileLoading(true);
     setProfileError(null);
     setUser(null);
+    setCanImpersonate(false);
+    setConfirmingImpersonation(false);
     setAccess(null);
     setAccessLoading(true);
     setAccessError(null);
@@ -426,6 +433,14 @@ export function UserDetailModal({
     if (feds.length === 0) return "No broker link reported";
     return feds.map((f) => f.identityProvider).join(", ") || "Not reported";
   }, [identity]);
+  const canImpersonateLinkedUser = !identityLoading
+    && identity != null
+    && !identity.unavailable?.includes("federatedIdentities")
+    && !identity.unavailable?.includes("identityProviders")
+    && (
+      identity.federationRequired === false
+      || identity.federatedIdentities.length > 0
+    );
 
   const accessTotal = useMemo(() => {
     if (!access) return 0;
@@ -449,6 +464,30 @@ export function UserDetailModal({
     user?.createdAt != null && user.createdAt > 0
       ? formatTs(user.createdAt)
       : "—";
+
+  const startImpersonation = async (): Promise<void> => {
+    if (!user || !user.enabled || user.id === session?.sub || session?.impersonation) return;
+    setActionError(null);
+    setBusy("impersonation");
+    try {
+      const nextSession = await updateSession({
+        impersonation: { action: "start", targetSub: user.id },
+      });
+      if (!nextSession?.impersonation) {
+        throw new Error(nextSession?.impersonationNotice || "Unable to start impersonation");
+      }
+      useChatStore.getState().clearAllConversations();
+      setConfirmingImpersonation(false);
+      onClose();
+      router.replace("/");
+      router.refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Unable to start impersonation");
+      setConfirmingImpersonation(false);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const toggleEnabled = () => {
     if (!user) return;
@@ -582,6 +621,38 @@ export function UserDetailModal({
                 </div>
               </div>
               <div className="flex items-center gap-3 shrink-0">
+                {!readOnly && canImpersonate && !session?.impersonation ? (
+                  <button
+                    type="button"
+                    disabled={
+                      !user.enabled
+                      || user.id === session?.sub
+                      || identityLoading
+                      || !canImpersonateLinkedUser
+                      || busy != null
+                    }
+                    onClick={() => setConfirmingImpersonation(true)}
+                    title={
+                      !user.enabled
+                        ? "Only enabled users can be impersonated"
+                        : user.id === session?.sub
+                          ? "You cannot impersonate your own account"
+                          : identityLoading
+                            ? "Checking identity-provider link"
+                            : !canImpersonateLinkedUser
+                              ? "This user has not completed a supported web sign-in"
+                              : "Impersonate this user"
+                    }
+                    className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === "impersonation" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    ) : (
+                      <UserRoundCog className="h-4 w-4" aria-hidden />
+                    )}
+                    Impersonate user
+                  </button>
+                ) : null}
                 <span className="text-sm text-muted-foreground">Account</span>
                 <button
                   type="button"
@@ -887,5 +958,54 @@ export function UserDetailModal({
 
   if (!mounted) return null;
 
-  return createPortal(modalInner, document.body);
+  return createPortal(
+    <>
+      {modalInner}
+      <Dialog
+        open={confirmingImpersonation}
+        onOpenChange={(open) => {
+          if (!open && busy !== "impersonation") setConfirmingImpersonation(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Impersonate {fullName}?</DialogTitle>
+            <DialogDescription>
+              You will view the application as {user?.email}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+            <div className="flex gap-3">
+              <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <div>
+                <p className="font-medium">Read-only troubleshooting session</p>
+                <p className="mt-1 text-amber-900/80 dark:text-amber-100/80">
+                  You can view what this user sees, but cannot make changes, start chats,
+                  run tools, or use connected credentials.
+                </p>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy === "impersonation"}
+              onClick={() => setConfirmingImpersonation(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={busy === "impersonation"}
+              onClick={() => void startImpersonation()}
+            >
+              {busy === "impersonation" ? "Starting…" : "Start impersonation"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>,
+    document.body,
+  );
 }

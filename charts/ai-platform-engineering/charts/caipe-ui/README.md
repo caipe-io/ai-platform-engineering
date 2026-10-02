@@ -64,6 +64,7 @@ helm show values oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0
 | config.AGENT_GATEWAY_ADMIN_URL | string | `""` |  |
 | config.AGENT_GATEWAY_URL | string | `""` |  |
 | config.ALLOW_KEYCLOAK_ADMIN_PASSWORD_FALLBACK | string | `""` |  |
+| config.ADMIN_ALLOW_IMPERSONATION | string | `""` | Explicit bootstrap or Super Admin email allowlist for read-only user impersonation. Empty disables user impersonation. |
 | config.APP_NAME | string | `"CAIPE"` |  |
 | config.BOOTSTRAP_ADMIN_EMAILS | string | `""` |  |
 | config.BUILTIN_SKILL_IDS | string | `"none"` |  |

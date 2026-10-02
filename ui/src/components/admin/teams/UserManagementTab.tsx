@@ -4,10 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Select } from "@/components/ui/select";
-import {
-  withAdminSimulationParams,
-  type AdminSimulationQueryTarget,
-} from "@/lib/rbac/admin-simulation-query";
 import { AlertCircle,ChevronLeft,ChevronRight,Loader2 } from "lucide-react";
 import { usePathname,useRouter,useSearchParams } from "next/navigation";
 import {
@@ -41,6 +37,7 @@ interface AdminUserRow {
   attributes: Record<string, string[]>;
   slack_link_status?: "linked" | "unlinked";
   webex_link_status?: "linked" | "unlinked";
+  last_sign_in?: number | null;
 }
 
 interface TeamListItem {
@@ -51,7 +48,6 @@ interface TeamListItem {
 
 export interface UserManagementTabProps {
   onSelectUser: (userId: string) => void;
-  simulationTarget?: AdminSimulationQueryTarget | null;
 }
 
 function parseListParam(raw: string | null): string[] {
@@ -84,18 +80,22 @@ function webexStatusForUser(u: AdminUserRow): "linked" | "unlinked" {
   return v != null && String(v).trim() !== "" ? "linked" : "unlinked";
 }
 
+function formatLastSignIn(timestamp: number | null | undefined): string {
+  if (timestamp === null) return "Never";
+  if (timestamp === undefined || timestamp <= 0) return "Unknown";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
+}
+
 export function UserManagementTab({
   onSelectUser,
-  simulationTarget = null,
 }: UserManagementTabProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const skipSearchDraftSyncRef = useRef(false);
-  const withPreviewScope = useCallback(
-    (path: string) => withAdminSimulationParams(path, simulationTarget),
-    [simulationTarget],
-  );
 
   const page = Math.max(
     1,
@@ -195,7 +195,7 @@ export function UserManagementTab({
     setTeams([]);
     (async () => {
       try {
-        const res = await fetch(withPreviewScope("/api/admin/teams"));
+        const res = await fetch("/api/admin/teams");
         const json = await res.json();
         if (!json.success) return;
         if (!cancelled) {
@@ -208,7 +208,7 @@ export function UserManagementTab({
     return () => {
       cancelled = true;
     };
-  }, [withPreviewScope]);
+  }, []);
 
 
   // The shared MultiSelect works on plain string options, while `teamsFilter`
@@ -245,6 +245,7 @@ export function UserManagementTab({
         const qs = new URLSearchParams();
         qs.set("page", String(page));
         qs.set("pageSize", String(PAGE_SIZE));
+        qs.set("includeLastSignIn", "true");
         const q = searchFromUrl.trim();
         if (q) qs.set("search", q);
         if (teamsFilter.length >= 1) qs.set("team", teamsFilter[0]);
@@ -257,7 +258,7 @@ export function UserManagementTab({
         if (enabledFilter === "enabled") qs.set("enabled", "true");
         if (enabledFilter === "disabled") qs.set("enabled", "false");
 
-        const res = await fetch(withPreviewScope(`/api/admin/users?${qs.toString()}`));
+        const res = await fetch(`/api/admin/users?${qs.toString()}`);
         const data = await res.json();
         if (!res.ok) {
           throw new Error(
@@ -292,7 +293,6 @@ export function UserManagementTab({
     slackFilter,
     webexFilter,
     enabledFilter,
-    withPreviewScope,
   ]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -395,13 +395,14 @@ export function UserManagementTab({
                 <th className="px-4 py-3">Email</th>
                 <th className="px-4 py-3">Slack</th>
                 <th className="px-4 py-3">Webex</th>
+                <th className="px-4 py-3">Last sign in</th>
                 <th className="px-4 py-3 w-20">Enabled</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-16 text-center">
+                  <td colSpan={6} className="px-4 py-16 text-center">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <Loader2 className="h-8 w-8 animate-spin" />
                       <span>Loading…</span>
@@ -411,7 +412,7 @@ export function UserManagementTab({
               ) : users.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="px-4 py-12 text-center text-muted-foreground"
                   >
                     No users match the current filters.
@@ -458,6 +459,9 @@ export function UserManagementTab({
                             Unlinked
                           </span>
                         )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-muted-foreground">
+                        {formatLastSignIn(u.last_sign_in)}
                       </td>
                       <td className="px-4 py-2.5">
                         <span className="flex items-center gap-1.5">

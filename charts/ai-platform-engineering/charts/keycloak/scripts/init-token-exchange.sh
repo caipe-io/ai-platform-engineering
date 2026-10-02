@@ -17,6 +17,8 @@
 # Optional:
 #   KC_REALM           – realm name (default: caipe)
 #   KC_BOT_CLIENT_ID   – bot client-id (default: caipe-slack-bot)
+#   KC_UI_IMPERSONATION_CLIENT_ID – UI service client (default: caipe-platform)
+#   CAIPE_PLATFORM_AUDIENCE – exchanged-token audience (default: caipe-platform)
 #   KC_SSL_REQUIRED    – realm sslRequired (default: none for dev)
 # -------------------------------------------------------------------
 set -eu
@@ -24,6 +26,7 @@ set -eu
 REALM="${KC_REALM:-caipe}"
 KC_URL="${KC_URL:-http://localhost:7080}"
 BOT_CLIENT_ID="${KC_BOT_CLIENT_ID:-caipe-slack-bot}"
+UI_IMPERSONATION_CLIENT_ID="${KC_UI_IMPERSONATION_CLIENT_ID:-caipe-platform}"
 SSL_REQ="${KC_SSL_REQUIRED:-none}"
 ADMIN_USER="${KEYCLOAK_ADMIN:-${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}}"
 ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}}"
@@ -200,6 +203,14 @@ if [ -z "${BOT_INTERNAL_ID}" ]; then
   exit 1
 fi
 echo "${TAG}   Client internal ID: ${BOT_INTERNAL_ID}"
+
+UI_CLIENTS_RESP=$(curl -sf -H "${AUTH}" \
+  "${KC_URL}/admin/realms/${REALM}/clients?clientId=${UI_IMPERSONATION_CLIENT_ID}" 2>/dev/null || echo "[]")
+UI_IMPERSONATION_INTERNAL_ID=$(json_field "${UI_CLIENTS_RESP}" "id")
+if [ -z "${UI_IMPERSONATION_INTERNAL_ID}" ]; then
+  echo "${TAG} ERROR: UI impersonation client '${UI_IMPERSONATION_CLIENT_ID}' not found in realm '${REALM}'" >&2
+  exit 1
+fi
 
 # ------------------------------------------------------------------
 # 4. Ensure fullScopeAllowed = true
@@ -415,6 +426,7 @@ ensure_service_account_impersonation_role() {
 }
 
 ensure_service_account_impersonation_role "${BOT_CLIENT_ID}" "${BOT_INTERNAL_ID}"
+ensure_service_account_impersonation_role "${UI_IMPERSONATION_CLIENT_ID}" "${UI_IMPERSONATION_INTERNAL_ID}" "false"
 
 if [ -n "${WEBEX_BOT_CLIENT_ID}" ]; then
   if [ -z "${WEBEX_INTERNAL_ID:-}" ]; then
@@ -599,6 +611,34 @@ else
       exit 1
     }
   fi
+
+  # The UI uses the existing confidential platform client only after the BFF
+  # verifies that the initiating browser session is an organization admin.
+  echo "${TAG} Enabling user impersonation for '${UI_IMPERSONATION_CLIENT_ID}' ..."
+  UI_MGMT=$(curl -sf -H "${AUTH}" \
+    "${KC_URL}/admin/realms/${REALM}/clients/${UI_IMPERSONATION_INTERNAL_ID}/management/permissions" 2>/dev/null || echo '{"enabled":false}')
+  if [ "$(json_bool "${UI_MGMT}" "enabled")" != "true" ]; then
+    UI_MGMT=$(curl -sf -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
+      "${KC_URL}/admin/realms/${REALM}/clients/${UI_IMPERSONATION_INTERNAL_ID}/management/permissions" \
+      -d '{"enabled":true}' 2>/dev/null || echo '{}')
+  fi
+  UI_TOKEN_EXCHANGE_PERM_ID=$(echo "${UI_MGMT}" | grep -o '"token-exchange" *: *"[^"]*"' | sed 's/.*"\([^"]*\)"/\1/' | head -1)
+  UI_POLICY_NAME="caipe-ui-user-impersonation"
+  UI_POLICIES=$(curl -sf -H "${AUTH}" \
+    "${KC_URL}/admin/realms/${REALM}/clients/${RM_CLIENT_ID}/authz/resource-server/policy?name=${UI_POLICY_NAME}&max=1" 2>/dev/null || echo '[]')
+  UI_POLICY_ID=$(json_field "${UI_POLICIES}" "id")
+  if [ -z "${UI_POLICY_ID}" ]; then
+    UI_POLICY_RESP=$(curl -sf -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+      "${KC_URL}/admin/realms/${REALM}/clients/${RM_CLIENT_ID}/authz/resource-server/policy/client" \
+      -d "{\"name\":\"${UI_POLICY_NAME}\",\"description\":\"Allow the CAIPE UI to exchange tokens for administrator-selected users\",\"logic\":\"POSITIVE\",\"clients\":[\"${UI_IMPERSONATION_INTERNAL_ID}\"]}" 2>/dev/null || echo '{}')
+    UI_POLICY_ID=$(json_field "${UI_POLICY_RESP}" "id")
+  fi
+  if [ -z "${UI_TOKEN_EXCHANGE_PERM_ID}" ] || [ -z "${IMPERSONATE_PERM_ID}" ] || [ -z "${UI_POLICY_ID}" ]; then
+    echo "${TAG} ERROR: UI user impersonation permissions could not be resolved." >&2
+    exit 1
+  fi
+  attach_policy_to_scope_permission "${RM_CLIENT_ID}" "${UI_TOKEN_EXCHANGE_PERM_ID}" "${UI_POLICY_ID}" "UI token-exchange permission" || exit 1
+  attach_policy_to_scope_permission "${RM_CLIENT_ID}" "${IMPERSONATE_PERM_ID}" "${UI_POLICY_ID}" "UI users.impersonate permission" || exit 1
 fi
 
 # ------------------------------------------------------------------
@@ -671,6 +711,7 @@ if [ -n "${RM_CLIENT_ID:-}" ]; then
       _attach_bot_to_obo_target "caipe-slack-bot-token-exchange-policy" "${BOT_INTERNAL_ID:-}" "caipe-slack-bot"
       _attach_bot_to_obo_target "caipe-webex-bot-token-exchange-policy" "${WEBEX_INTERNAL_ID:-}" "caipe-webex-bot"
       _attach_bot_to_obo_target "caipe-scheduler-runner-token-exchange-policy" "${SCHEDULER_INTERNAL_ID:-}" "caipe-scheduler-runner"
+      _attach_bot_to_obo_target "caipe-ui-user-impersonation" "${UI_IMPERSONATION_INTERNAL_ID:-}" "caipe-platform UI"
     fi
   fi
 fi

@@ -29,6 +29,7 @@ describe("admin route registry", () => {
     );
     expect(findAdminDestinationByPath("/admin/security/ai-review/")?.id).toBe("ai-review");
     expect(findAdminDestinationByPath("/admin/security/audit")?.id).toBe("audit");
+    expect(findAdminDestinationByPath("/admin/security/impersonation")).toBeUndefined();
     expect(findAdminDestinationByPath("/admin/security/access-operations")?.id).toBe("access-operations");
     expect(findAdminDestinationByPath("/admin/security/rbac-audit")).toBeUndefined();
     expect(findAdminDestinationByPath("/admin/security/access-explorer")).toBeUndefined();

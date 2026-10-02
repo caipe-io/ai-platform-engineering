@@ -127,7 +127,7 @@ warning. Choose another agent or remove the platform default.
 - Any signed-in user can manage personal preferences and inspect their own
   account and access information.
 - Only admins can see or change Platform settings.
-- Admin View as remains read-only for operational and policy controls.
+- Explicitly allowlisted Super Admins can open an eligible human user under **Teams & Users → Users** and start a read-only troubleshooting session. Unlinked Keycloak shell users are excluded when the realm uses an external identity provider, configured OIDC sign-in group requirements still apply, and exit requires a fresh sign-in.
 - Sensitive session and token values remain concealed until explicitly opened.
 
 ## Related pages

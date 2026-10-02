@@ -3,6 +3,8 @@
 import type { Session } from "next-auth";
 import { SessionProvider } from "next-auth/react";
 
+import { SessionIdentityBoundary } from "@/components/session-identity-boundary";
+
 interface AuthProviderProps {
   children: React.ReactNode;
   session?: Session | null;
@@ -20,6 +22,7 @@ export function AuthProvider({ children, session }: AuthProviderProps) {
       // Background tabs throttle timers, so refetchInterval alone isn't enough.
       refetchOnWindowFocus={true}
     >
+      <SessionIdentityBoundary />
       {children}
     </SessionProvider>
   );

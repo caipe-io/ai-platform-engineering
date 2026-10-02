@@ -100,60 +100,6 @@ describe('useAdminTabGates', () => {
     expect(result.current.error).toBeNull();
   });
 
-  it('appends simulation params when viewing as a real team userset', async () => {
-    mockUseSession.mockReturnValue({
-      data: { accessToken: 'tok-sim' },
-      status: 'authenticated',
-    });
-
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        gates: {
-          users: true,
-          teams: true,
-          roles: false,
-          identity_group_sync: false,
-          slack: true,
-          webex: false,
-          skills: true,
-          feedback: false,
-          stats: false,
-          metrics: true,
-          health: true,
-          audit_logs: false,
-          action_audit: false,
-          openfga: false,
-          migrations: false,
-        },
-        simulation: {
-          active: true,
-          readonly: true,
-          subject: {
-            type: 'team',
-            id: 'platform',
-            relation: 'admin',
-            openfga_user: 'team:platform#admin',
-          },
-        },
-      }),
-    });
-
-    const { result } = renderHook(() =>
-      useAdminTabGates({ type: 'team', id: 'platform', relation: 'admin' })
-    );
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    expect(global.fetch).toHaveBeenCalledWith(
-      '/api/rbac/admin-tab-gates?simulate_type=team&simulate_id=platform&simulate_relation=admin'
-    );
-    expect(result.current.simulation?.subject?.openfga_user).toBe('team:platform#admin');
-    expect(result.current.visibleTabs).toContain('slack');
-  });
-
   it('sets error and fail-closed gates on HTTP error', async () => {
     mockUseSession.mockReturnValue({
       data: { accessToken: 'tok2' },

@@ -2,6 +2,7 @@
 
 // assisted-by Codex Codex-sonnet-4-6
 
+import { ImpersonationBanner } from "@/components/auth/ImpersonationBanner";
 import { Button } from "@/components/ui/button";
 import { config } from "@/lib/config";
 import { motion } from "framer-motion";
@@ -12,13 +13,15 @@ export default function UnauthorizedPage() {
   const requiredGroup = config.oidcRequiredGroup;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="max-w-md w-full"
-      >
+    <div className="flex min-h-screen flex-col bg-background">
+      <ImpersonationBanner />
+      <div className="flex flex-1 items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="max-w-md w-full"
+        >
         <div className="bg-card border border-border rounded-2xl p-8 shadow-xl">
           {/* Icon */}
           <div className="flex justify-center mb-6">
@@ -96,7 +99,8 @@ export default function UnauthorizedPage() {
         <p className="text-center text-xs text-muted-foreground mt-6">
           {config.appName} - {config.tagline}
         </p>
-      </motion.div>
+        </motion.div>
+      </div>
     </div>
   );
 }

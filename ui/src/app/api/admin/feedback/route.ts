@@ -11,10 +11,6 @@ withErrorHandler,
 } from '@/lib/api-middleware';
 import { getConfig } from '@/lib/config';
 import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
-import {
-resolveAuthorizedAdminSimulationScope,
-simulationSubjectCanManageAdminSurface,
-} from '@/lib/rbac/admin-simulation-server';
 import { resolveInsightsUserFilter } from '@/lib/rbac/insights-user-filter';
 import { getOwnedAgentConversationIds, getOwnedAgents, getReadableSlackChannelNames } from '@/lib/rbac/user-insights-scope';
 import type { Conversation } from '@/types/mongodb';
@@ -58,26 +54,19 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const { session } = await getAuthFromBearerOrSession(request);
   const { searchParams } = request.nextUrl;
-  const simulationScope = await resolveAuthorizedAdminSimulationScope(searchParams, session);
-  const isFullAdmin = simulationScope
-    ? await simulationSubjectCanManageAdminSurface(simulationScope, 'feedback')
-    : await requireRbacPermission(session, 'admin_ui', 'view').then(
-        () => true,
-        () => false
-      );
+  const isFullAdmin = await requireRbacPermission(session, 'admin_ui', 'view').then(
+    () => true,
+    () => false
+  );
 
   let scopedChannelNames: string[] | null = null;
   let scopedOwnerEmail: string | null = null;
   let scopedOwnedAgentConvIds: string[] | null = null;
   if (!isFullAdmin) {
-    const openfgaUser = simulationScope?.openfgaUser ?? (
-      typeof session.sub === 'string' && session.sub.trim()
-        ? `user:${session.sub.trim()}`
-        : ''
-    );
-    const email = simulationScope?.ownerEmail ?? (
-      typeof session.user?.email === 'string' ? session.user.email.trim() : ''
-    );
+    const openfgaUser = typeof session.sub === 'string' && session.sub.trim()
+      ? `user:${session.sub.trim()}`
+      : '';
+    const email = typeof session.user?.email === 'string' ? session.user.email.trim() : '';
     if (!openfgaUser) {
       return NextResponse.json(
         { success: false, error: 'Unauthorized', code: 'UNAUTHORIZED' },

@@ -1,6 +1,7 @@
 "use client";
 
 import { AppHeader } from "@/components/layout/AppHeader";
+import { ImpersonationBanner } from "@/components/auth/ImpersonationBanner";
 import {
   ApplicationNavigationDrawer,
   ApplicationNavigationRail,
@@ -37,6 +38,7 @@ export function AppLayoutClient({
         <div className="app-shell-canvas flex h-dvh overflow-hidden bg-background noise-overlay">
           <ApplicationNavigationRail />
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <ImpersonationBanner />
             <AppHeader />
             <LiveStreamBanner />
             <div className="flex min-h-0 flex-1 flex-col">

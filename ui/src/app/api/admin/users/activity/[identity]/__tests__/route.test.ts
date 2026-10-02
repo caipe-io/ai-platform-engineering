@@ -9,9 +9,6 @@ const mockGetAuth = jest.fn();
 const mockRequireAdminSurfaceManage = jest.fn();
 const mockRequireBaselineAdminSurfaceRead = jest.fn();
 const mockHasOrganizationAdmin = jest.fn();
-const mockResolveSimulationScope = jest.fn();
-const mockSimulationCanManage = jest.fn();
-const mockSimulationCanAudit = jest.fn();
 const mockGetDirectSharingAccessConversationIds = jest.fn();
 const mockGetReadableMessagingConversationScope = jest.fn();
 const mockGetReadableConversationIds = jest.fn();
@@ -37,15 +34,6 @@ jest.mock("@/lib/api-middleware", () => {
     getAuthFromBearerOrSession: (...args: unknown[]) => mockGetAuth(...args),
   };
 });
-
-jest.mock("@/lib/rbac/admin-simulation-server", () => ({
-  resolveAuthorizedAdminSimulationScope: (...args: unknown[]) =>
-    mockResolveSimulationScope(...args),
-  simulationSubjectCanManageAdminSurface: (...args: unknown[]) =>
-    mockSimulationCanManage(...args),
-  simulationSubjectCanAuditOrganization: (...args: unknown[]) =>
-    mockSimulationCanAudit(...args),
-}));
 
 jest.mock("@/lib/rbac/conversation-implicit-authz", () => ({
   getDirectSharingAccessConversationIds: (...args: unknown[]) =>
@@ -159,9 +147,6 @@ beforeEach(() => {
   mockRequireAdminSurfaceManage.mockResolvedValue(undefined);
   mockRequireBaselineAdminSurfaceRead.mockResolvedValue(undefined);
   mockHasOrganizationAdmin.mockResolvedValue(true);
-  mockResolveSimulationScope.mockResolvedValue(null);
-  mockSimulationCanManage.mockResolvedValue(true);
-  mockSimulationCanAudit.mockResolvedValue(true);
   mockGetDirectSharingAccessConversationIds.mockResolvedValue([]);
   mockGetReadableMessagingConversationScope.mockResolvedValue({
     slackChannelIds: [],
@@ -713,57 +698,4 @@ describe("GET /api/admin/users/activity/[identity]", () => {
     ]);
   });
 
-  it("does not let a scoped preview subject widen itself to another user's activity", async () => {
-    mockResolveSimulationScope.mockResolvedValue({
-      openfgaUser: "user:preview-sub",
-      ownerEmail: "preview@example.com",
-      subjectType: "user",
-      subjectId: "preview-sub",
-    });
-    mockSimulationCanManage.mockResolvedValue(false);
-    mockSimulationCanAudit.mockResolvedValue(false);
-    mockCountConversations.mockResolvedValue(0);
-    mockAggregateFeedback
-      .mockReset()
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce([]);
-    mockFindFeedback
-      .mockReset()
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce([]);
-    mockFindConversations
-      .mockReset()
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce([]);
-    const { GET } = await import("../route");
-    const { request: req,context } = request(
-      "test-user@example.com",
-      "?simulate_type=user&simulate_id=preview-sub",
-    );
-
-    const response = await GET(req, context);
-
-    expect(response.status).toBe(403);
-    expect(mockRequireBaselineAdminSurfaceRead).not.toHaveBeenCalled();
-    expect(mockFindConversations.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({
-        $and: expect.arrayContaining([
-          expect.objectContaining({
-            $or: expect.arrayContaining([
-              expect.objectContaining({
-                $and: expect.arrayContaining([
-                  expect.objectContaining({
-                    $or: expect.arrayContaining([
-                      { owner_id: "preview@example.com" },
-                      { "sharing.shared_with": "preview@example.com" },
-                    ]),
-                  }),
-                ]),
-              }),
-            ]),
-          }),
-        ]),
-      }),
-    );
-  });
 });

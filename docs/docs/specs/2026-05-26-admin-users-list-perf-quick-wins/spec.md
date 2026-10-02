@@ -38,7 +38,7 @@ Consumers of `/api/admin/users` and what they actually read:
 | `TeamDetailsDialog` add-member typeahead | **No** |
 | `RebacGraphFilters` user search | **No** |
 | `OpenFgaRebacTab` user search | **No** |
-| Simulation user search (`view as`) | **No** |
+| Impersonation user search (separate endpoint) | **No** |
 
 The only thing that reads the role fields is the route's own Jest test. The user **detail** modal/panel fetches roles separately via `/api/admin/users/[id]/roles` and `/api/admin/users/[id]/role` — those endpoints are unchanged.
 

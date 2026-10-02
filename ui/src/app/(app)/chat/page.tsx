@@ -51,7 +51,7 @@ function ChatRedirectPage() {
       const state = useChatStore.getState();
       const { conversations: currentConversations, activeConversationId } = state;
       const lastActiveConversationId = activeConversationId ?? getLastActiveConversationId();
-      const userEmail = session?.user?.email;
+      const userEmail = session?.user?.email?.trim().toLowerCase();
 
       // Only consider conversations OWNED by the current user for auto-redirect.
       // The API returns shared conversations in the same list; picking one
@@ -59,15 +59,19 @@ function ChatRedirectPage() {
       // causing all their messages to share the same backend context.
       // In localStorage mode, owner_id is unset — include those conversations.
       const ownedConversations = userEmail
-        ? currentConversations.filter((c) => !c.owner_id || c.owner_id === userEmail)
+        ? currentConversations.filter(
+            (c) => !c.owner_id || c.owner_id.trim().toLowerCase() === userEmail,
+          )
         : currentConversations;
 
-      // 1. Resume the last active conversation when it still exists in the loaded list.
-      // Prefer owned entries for auto-pick below, but an explicit last-active id from
-      // this browser should win to avoid spawning duplicate empty chats on /chat.
+      // 1. Resume the last active conversation only when it belongs to the
+      // effective user. Admin audit access makes other users' conversations
+      // readable, but it must not turn them into the admin's default chat.
       if (lastActiveConversationId) {
-        const stillExists = currentConversations.some((c) => c.id === lastActiveConversationId);
-        if (stillExists) {
+        const ownedConversationStillExists = ownedConversations.some(
+          (c) => c.id === lastActiveConversationId,
+        );
+        if (ownedConversationStillExists) {
           router.replace(`/chat/${lastActiveConversationId}`);
           return;
         }

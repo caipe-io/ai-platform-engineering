@@ -1,16 +1,23 @@
 // assisted-by Codex Codex-sonnet-4-6
 const mockFindOne = jest.fn();
 const mockUpdateOne = jest.fn();
+const mockDeleteOne = jest.fn();
 
 jest.mock("../mongodb", () => ({
   isMongoDBConfigured: true,
   getCollection: jest.fn(async () => ({
     findOne: mockFindOne,
     updateOne: mockUpdateOne,
+    deleteOne: mockDeleteOne,
   })),
 }));
 
-import { getStoredTokens, resetTokenStore, storeTokens } from "../auth-token-store";
+import {
+  deleteStoredTokens,
+  getStoredTokens,
+  resetTokenStore,
+  storeTokens,
+} from "../auth-token-store";
 
 describe("auth-token-store", () => {
   beforeEach(() => {
@@ -18,6 +25,7 @@ describe("auth-token-store", () => {
     resetTokenStore();
     mockFindOne.mockReset();
     mockUpdateOne.mockReset();
+    mockDeleteOne.mockReset();
   });
 
   afterEach(() => {
@@ -63,5 +71,15 @@ describe("auth-token-store", () => {
     mockFindOne.mockClear();
     await expect(getStoredTokens("user-2")).resolves.toEqual(tokens);
     expect(mockFindOne).not.toHaveBeenCalled();
+  });
+
+  it("deletes tokens from both cache levels", async () => {
+    await storeTokens("impersonation:one", { accessToken: "target-token" });
+
+    await deleteStoredTokens("impersonation:one");
+
+    expect(mockDeleteOne).toHaveBeenCalledWith({ _id: "impersonation:one" });
+    mockFindOne.mockResolvedValue(null);
+    await expect(getStoredTokens("impersonation:one")).resolves.toBeUndefined();
   });
 });

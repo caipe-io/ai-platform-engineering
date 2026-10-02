@@ -21,6 +21,7 @@ import {
   emitReconcileAudit,
   flushAllowRollups,
 } from "../audit";
+import { setAuditImpersonationContext } from "@/lib/audit/impersonation-context";
 
 const subject = { type: "user" as const, id: "alice" };
 const resource = { type: "agent" as const, id: "platform-engineer" };
@@ -35,6 +36,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockGetAuditBackend.mockReturnValue({ write: mockWrite });
   delete process.env.AUDIT_FULL_FIDELITY_ALLOWS;
+  setAuditImpersonationContext(undefined);
 });
 
 describe("buildDecisionEvent — UnifiedAuditEvent conformance", () => {
@@ -132,6 +134,24 @@ describe("emitDecisionAudit — allow aggregation", () => {
     expect(row.correlation_id).toMatch(/^rollup:/);
     expect(row.window_start).toBeDefined();
     expect(row.window_end).toBeDefined();
+  });
+
+  it("retains impersonation attribution when an allow rollup flushes later", () => {
+    setAuditImpersonationContext({
+      actorSub: "admin-sub",
+      startedAt: "2026-09-23T12:00:00.000Z",
+    });
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    setAuditImpersonationContext(undefined);
+
+    flushAllowRollups();
+
+    expect(mockWrite).toHaveBeenCalledWith(expect.objectContaining({
+      subject_ref: "user:alice",
+      actor_ref: "user:admin-sub",
+      impersonation: true,
+      impersonation_started_at: "2026-09-23T12:00:00.000Z",
+    }));
   });
 
   it("keeps distinct subjects and resources in separate rows", () => {

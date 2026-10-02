@@ -180,9 +180,13 @@ function ApplicationNavigationContents({
   } = useChatStore();
   const chatHref = React.useMemo(
     () => hydrated
-      ? resolveChatNavigationPath({ conversations,activeConversationId })
+      ? resolveChatNavigationPath({
+          conversations,
+          activeConversationId,
+          ownerId: session?.user?.email,
+        })
       : "/chat",
-    [activeConversationId,conversations,hydrated],
+    [activeConversationId,conversations,hydrated,session?.user?.email],
   );
   const storageMode = config.storageMode;
   const knowledgeHasExplicitCapability =

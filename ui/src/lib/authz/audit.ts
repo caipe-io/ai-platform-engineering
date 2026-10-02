@@ -17,6 +17,10 @@
 import { createHash, randomUUID } from "crypto";
 
 import { getAuditBackend } from "@/lib/audit";
+import {
+  withAuditImpersonationActor,
+  withoutAuditImpersonationContext,
+} from "@/lib/audit/impersonation-context";
 
 import type {
   Action,
@@ -43,6 +47,10 @@ export interface CasDecisionEvent {
   tenant_id: string;
   subject_hash: string;
   subject_ref: string;
+  actor_hash?: string;
+  actor_ref?: string;
+  impersonation?: boolean;
+  impersonation_started_at?: string;
   action: Action;
   outcome: "allow" | "deny";
   reason_code: AuthorizeResult["reason"];
@@ -121,7 +129,7 @@ function hashSubject(id: string): string {
 
 function writeAuditEvent(event: Record<string, unknown>): void {
   try {
-    getAuditBackend().write(event);
+    getAuditBackend().write(withAuditImpersonationActor(event));
   } catch (err) {
     console.warn("[cas/audit] Failed to enqueue audit event:", err);
   }
@@ -199,6 +207,8 @@ function rollupKey(event: CasDecisionEvent): string {
     event.reason_code,
     event.decision_via ?? "",
     event.workflow_run_id ?? "",
+    event.actor_ref ?? "",
+    event.impersonation_started_at ?? "",
   ]);
 }
 
@@ -223,16 +233,27 @@ export function flushAllowRollups(): void {
 }
 
 function recordAllow(event: CasDecisionEvent): void {
-  const key = rollupKey(event);
+  const attributedEvent = withAuditImpersonationActor(
+    event as unknown as Record<string, unknown>,
+  ) as unknown as CasDecisionEvent;
+  const key = rollupKey(attributedEvent);
   const existing = allowRollups.get(key);
   if (existing) {
     existing.count += 1;
-    existing.windowEnd = event.ts;
+    existing.windowEnd = attributedEvent.ts;
   } else {
-    allowRollups.set(key, { sample: event, count: 1, windowStart: event.ts, windowEnd: event.ts });
+    allowRollups.set(key, {
+      sample: attributedEvent,
+      count: 1,
+      windowStart: attributedEvent.ts,
+      windowEnd: attributedEvent.ts,
+    });
   }
   if (!allowFlushTimer) {
-    allowFlushTimer = setInterval(() => flushAllowRollups(), ALLOW_ROLLUP_FLUSH_MS);
+    allowFlushTimer = setInterval(
+      () => withoutAuditImpersonationContext(flushAllowRollups),
+      ALLOW_ROLLUP_FLUSH_MS,
+    );
     if (allowFlushTimer.unref) allowFlushTimer.unref();
   }
 }

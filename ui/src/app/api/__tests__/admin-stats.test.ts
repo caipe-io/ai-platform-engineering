@@ -57,11 +57,6 @@ jest.mock('@/lib/rbac/openfga', () => ({
   checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
 }));
 
-const mockGetRealmUserByIdOrNull = jest.fn();
-jest.mock('@/lib/rbac/keycloak-admin', () => ({
-  getRealmUserByIdOrNull: (...args: unknown[]) => mockGetRealmUserByIdOrNull(...args),
-}));
-
 // Non-admins are scoped via getReadableSlackChannelNames / getReadableWebexSpaceIds;
 // mock so tests can drive which Slack channels / Webex spaces a non-admin can see.
 const mockGetReadableSlackChannelNames = jest.fn<Promise<string[]>, [string]>();
@@ -211,8 +206,6 @@ function resetMocks() {
   mockGetReadableSlackChannelNames.mockResolvedValue([]);
   mockGetReadableWebexSpaceIds.mockReset();
   mockGetReadableWebexSpaceIds.mockResolvedValue([]);
-  mockGetRealmUserByIdOrNull.mockReset();
-  mockGetRealmUserByIdOrNull.mockResolvedValue(null);
   mockGetOwnedAgents.mockReset();
   mockGetOwnedAgents.mockResolvedValue([]);
   mockGetOwnedAgentConversationIds.mockReset();
@@ -1760,38 +1753,6 @@ describe('GET /api/admin/stats — non-admin scoping', () => {
     expect(hasUserEmailScope).toBe(false);
   });
 
-  it('scopes an admin access preview to the selected user rather than the admin session', async () => {
-    mockGetServerSession.mockResolvedValue(adminSession());
-    mockGetRealmUserByIdOrNull.mockResolvedValue({
-      id: 'target-sub',
-      email: 'target@example.com',
-    });
-    mockGetReadableSlackChannelNames.mockResolvedValue(['target-channel']);
-    const { convCol } = setupNonAdminCollections();
-
-    const res = await GET(makeRequest(
-      '/api/admin/stats?simulate_type=user&simulate_id=target-sub'
-    ));
-
-    expect(res.status).toBe(200);
-    expect(mockGetRealmUserByIdOrNull).toHaveBeenCalledWith('target-sub');
-    expect(mockGetReadableSlackChannelNames).toHaveBeenCalledWith('user:target-sub');
-    const filters = convCol.countDocuments.mock.calls.map((call: unknown[]) => JSON.stringify(call[0] ?? {}));
-    expect(filters.some((filter: string) => filter.includes('target@example.com'))).toBe(true);
-    expect(filters.every((filter: string) => !filter.includes('admin@example.com'))).toBe(true);
-  });
-
-  it('rejects access-preview parameters from a non-admin caller', async () => {
-    mockGetServerSession.mockResolvedValue(userSession());
-    setupNonAdminCollections();
-
-    const res = await GET(makeRequest(
-      '/api/admin/stats?simulate_type=user&simulate_id=target-sub'
-    ));
-
-    expect(res.status).toBe(403);
-  });
-
   // ──────────────────────────────────────────────────────────────────────
   // Leak boundary: every aggregate in the payload must respect the scope, not
   // just the conversation counts. Each test below pins one query family that
@@ -2472,7 +2433,9 @@ describe('GET /api/admin/stats — Direct MCP Activity', () => {
     setupAdminWithCollections();
     // Timestamped now so the rows land inside the requested range's day buckets.
     const now = new Date();
-    const todayKey = now.toISOString().split('T')[0];
+    const localDayStart = new Date(now);
+    localDayStart.setHours(0, 0, 0, 0);
+    const todayKey = localDayStart.toISOString().split('T')[0];
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({

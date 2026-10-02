@@ -16,6 +16,7 @@ interface NewChatButtonProps {
 }
 
 export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
+  const [mounted, setMounted] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [agents, setAgents] = useState<DynamicAgentConfig[]>([]);
   const [loading, setLoading] = useState(false);
@@ -29,6 +30,12 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
   const [userDefaultAgentId, setUserDefaultAgentId] = useState<string | null>(null);
   const [savingDefaultAgentId, setSavingDefaultAgentId] = useState<string | null>(null);
   const { toast } = useToast();
+
+  // Keep the server markup and the first browser render identical. Once event
+  // handlers are attached, disable chat creation until agent resolution ends.
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Resolve the same usable agent as the Home composer: personal Web default,
   // platform default, then the first accessible agent. Keeping this selection
@@ -123,6 +130,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
   }, [dropdownOpen]);
 
   const handleMainClick = () => {
+    if (!defaultAgentResolved) return;
     // Route to the configured default agent (undefined → resolved downstream).
     onNewChat(defaultAgentId ?? undefined);
   };
@@ -181,7 +189,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
     return (
       <Button
         onClick={handleMainClick}
-        disabled={!defaultAgentResolved}
+        disabled={mounted && !defaultAgentResolved}
         className="w-full px-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow"
         variant="ghost"
         size="icon"
@@ -198,7 +206,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
         {/* Main button area */}
         <Button
           onClick={handleMainClick}
-          disabled={!defaultAgentResolved}
+          disabled={mounted && !defaultAgentResolved}
           className={cn(
             "flex-1 gap-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow",
             "rounded-r-none border-r-0"

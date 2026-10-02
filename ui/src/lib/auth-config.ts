@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { decodeJwt } from "jose";
 import type { NextAuthOptions } from "next-auth";
 
@@ -336,7 +337,80 @@ const _inflightRefreshes = new Map<string, Promise<ExchangeResult>>();
 //     tokens AES-256-GCM encrypted at rest (key derived from NEXTAUTH_SECRET).
 //
 // See: https://github.com/caipe-io/ai-platform-engineering/issues/1986
-import { getStoredTokens, storeTokens, resetTokenStore } from './auth-token-store';
+import {
+  deleteStoredTokens,
+  getStoredTokens,
+  resetTokenStore,
+  storeTokens,
+} from './auth-token-store';
+
+interface ImpersonationJwtState {
+  storeKey: string;
+  targetSub: string;
+  targetName: string;
+  targetEmail: string;
+  targetUsername: string;
+  expiresAt: number;
+  startedAt: string;
+  isAuthorized: boolean;
+  canViewAdmin: boolean;
+  role: 'admin' | 'user';
+  org?: string;
+}
+
+const IMPERSONATION_RENEWAL_WINDOW_SECONDS = 120;
+
+type ImpersonationUpdate = {
+  action?: "start" | "stop" | "dismiss-notice";
+  targetSub?: string;
+};
+
+function readImpersonationUpdate(value: unknown): ImpersonationUpdate | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = (value as Record<string, unknown>).impersonation;
+  if (!raw || typeof raw !== "object") return null;
+  const action = (raw as Record<string, unknown>).action;
+  const targetSub = (raw as Record<string, unknown>).targetSub;
+  if (action !== "start" && action !== "stop" && action !== "dismiss-notice") return null;
+  return {
+    action,
+    targetSub: typeof targetSub === "string" ? targetSub.trim() : undefined,
+  };
+}
+
+function auditImpersonation(
+  token: Record<string, unknown>,
+  targetSub: string,
+  targetEmail: string | undefined,
+  operation: "start" | "stop",
+  outcome: "allow" | "deny",
+  startedAt?: string,
+): void {
+  void import("@/lib/rbac/audit")
+    .then(({ logAuthzDecision }) => {
+      logAuthzDecision({
+        tenantId: typeof token.org === "string" ? token.org : "unknown",
+        sub: targetSub,
+        actorSub: typeof token.sub === "string" ? token.sub : undefined,
+        subjectRef: `user:${targetSub}`,
+        impersonationStartedAt: startedAt,
+        resource: "admin_ui",
+        scope: "admin",
+        outcome,
+        reasonCode: outcome === "allow" ? "OK" : "DENY_NO_CAPABILITY",
+        pdp: "local",
+        resourceRef: `impersonation:${operation}:user:${targetSub}`,
+        email: targetEmail,
+      });
+    })
+    .catch((error) => console.error("[Auth] Failed to audit impersonation:", error));
+}
+
+async function clearImpersonation(token: Record<string, unknown>): Promise<void> {
+  const current = token.impersonation as ImpersonationJwtState | undefined;
+  if (current?.storeKey) await deleteStoredTokens(current.storeKey);
+  delete token.impersonation;
+}
 
 // Claim groups are only needed for in-process authorization checks and are
 // re-populated on login and every token refresh. They stay in L1 only.
@@ -601,6 +675,157 @@ export const authOptions: NextAuthOptions = {
         delete token.idToken;
       }
 
+      const impersonationUpdate = trigger === "update"
+        ? readImpersonationUpdate(updateData)
+        : null;
+      if (impersonationUpdate?.action === "dismiss-notice") {
+        delete token.impersonationNotice;
+      }
+      if (impersonationUpdate?.action === "stop") {
+        const current = token.impersonation as ImpersonationJwtState | undefined;
+        if (current) {
+          auditImpersonation(
+            token as Record<string, unknown>,
+            current.targetSub,
+            current.targetEmail,
+            "stop",
+            "allow",
+            current.startedAt,
+          );
+        }
+        await clearImpersonation(token as Record<string, unknown>);
+        delete token.impersonationNotice;
+      }
+      if (impersonationUpdate?.action === "start") {
+        const targetSub = impersonationUpdate.targetSub;
+        try {
+          if (!targetSub) throw new Error("Select a user to impersonate");
+          if (token.impersonation) {
+            throw new Error("Exit the current impersonation before starting another one");
+          }
+          if (!token.sub || targetSub === token.sub) {
+            throw new Error("You cannot impersonate your own account");
+          }
+          const { canStartUserImpersonation } = await import("@/lib/auth/impersonation-policy");
+          const actorCanImpersonate = await canStartUserImpersonation({
+            sub: token.sub,
+            user: { email: typeof token.email === "string" ? token.email : undefined },
+          });
+          if (!actorCanImpersonate) {
+            throw new Error("User impersonation is not enabled for this administrator");
+          }
+
+          const { mintImpersonatedUserToken } = await import("@/lib/auth/user-impersonation");
+          const minted = await mintImpersonatedUserToken(targetSub);
+          const groups = extractGroups(minted.claims);
+          const isAuthorized = hasRequiredGroup(groups);
+          if (!isAuthorized) {
+            throw new Error(
+              `The selected user does not belong to the required access group "${REQUIRED_GROUP}"`,
+            );
+          }
+          const isAdmin = isBootstrapAdmin(minted.target.email) || isAdminUser(groups);
+          await import("@/lib/rbac/login-openfga-bootstrap")
+            .then(({ reconcileLoginOpenFgaAccess }) =>
+              reconcileLoginOpenFgaAccess({
+                subject: minted.target.sub,
+                email: minted.target.email,
+                isAuthorized,
+                isAdmin,
+              })
+            )
+            .catch((error) => {
+              console.warn("[Auth] Impersonated user OpenFGA bootstrap failed:", error);
+            });
+          const storeKey = `impersonation:${randomUUID()}`;
+          const startedAt = new Date().toISOString();
+          await storeTokens(storeKey, { accessToken: minted.accessToken });
+          await clearImpersonation(token as Record<string, unknown>);
+          token.impersonation = {
+            storeKey,
+            targetSub: minted.target.sub,
+            targetName: minted.target.name,
+            targetEmail: minted.target.email,
+            targetUsername: minted.target.username,
+            expiresAt: minted.expiresAt,
+            startedAt,
+            isAuthorized,
+            canViewAdmin: canViewAdminDashboard(groups),
+            role: isAdmin ? "admin" : "user",
+            org: typeof minted.claims.org === "string" ? minted.claims.org : undefined,
+          } satisfies ImpersonationJwtState;
+          delete token.impersonationNotice;
+          auditImpersonation(
+            token as Record<string, unknown>,
+            targetSub,
+            minted.target.email,
+            "start",
+            "allow",
+            startedAt,
+          );
+        } catch (error) {
+          console.error("[Auth] User impersonation failed:", error);
+          token.impersonationNotice = error instanceof Error
+            ? error.message
+            : "User impersonation failed";
+          auditImpersonation(
+            token as Record<string, unknown>,
+            targetSub || "unknown",
+            undefined,
+            "start",
+            "deny",
+          );
+        }
+      }
+
+      const activeImpersonation = token.impersonation as ImpersonationJwtState | undefined;
+      if (activeImpersonation) {
+        try {
+          const stored = await getStoredTokens(activeImpersonation.storeKey);
+          const now = Math.floor(Date.now() / 1000);
+          if (
+            !stored?.accessToken
+            || activeImpersonation.expiresAt - now < IMPERSONATION_RENEWAL_WINDOW_SECONDS
+          ) {
+            const { canStartUserImpersonation } = await import("@/lib/auth/impersonation-policy");
+            const actorCanContinue = await canStartUserImpersonation({
+              sub: token.sub,
+              user: { email: typeof token.email === "string" ? token.email : undefined },
+            });
+            if (!actorCanContinue) {
+              throw new Error("The administrator is no longer allowed to impersonate users");
+            }
+            const { mintImpersonatedUserToken } = await import("@/lib/auth/user-impersonation");
+            const minted = await mintImpersonatedUserToken(activeImpersonation.targetSub);
+            const groups = extractGroups(minted.claims);
+            if (!hasRequiredGroup(groups)) {
+              throw new Error("The selected user no longer meets the sign-in access requirements");
+            }
+            await storeTokens(activeImpersonation.storeKey, {
+              accessToken: minted.accessToken,
+            });
+            token.impersonation = {
+              ...activeImpersonation,
+              targetName: minted.target.name,
+              targetEmail: minted.target.email,
+              targetUsername: minted.target.username,
+              expiresAt: minted.expiresAt,
+              isAuthorized: hasRequiredGroup(groups),
+              canViewAdmin: canViewAdminDashboard(groups),
+              role: isBootstrapAdmin(minted.target.email) || isAdminUser(groups)
+                ? "admin"
+                : "user",
+              org: typeof minted.claims.org === "string" ? minted.claims.org : undefined,
+            } satisfies ImpersonationJwtState;
+          }
+        } catch (error) {
+          console.error("[Auth] Active impersonation ended:", error);
+          await clearImpersonation(token as Record<string, unknown>);
+          token.impersonationNotice =
+            "Impersonation ended because its authorization could not be renewed.";
+        }
+      }
+
       // Force-refresh when admin changes roles/permissions and calls
       // update({ forceRefresh: true }) from the client.
       if (
@@ -854,7 +1079,57 @@ export const authOptions: NextAuthOptions = {
       // Organization claim is tenant context only; authorization is OpenFGA-backed.
       session.org = token.org as string | undefined;
 
+      session.impersonationNotice = token.impersonationNotice as string | undefined;
+      const impersonation = token.impersonation as ImpersonationJwtState | undefined;
+      if (impersonation) {
+        const targetTokens = await getStoredTokens(impersonation.storeKey);
+        session.impersonation = {
+          actor: {
+            sub: token.sub as string,
+            name: typeof token.name === "string" ? token.name : undefined,
+            email: typeof token.email === "string" ? token.email : undefined,
+          },
+          target: {
+            sub: impersonation.targetSub,
+            name: impersonation.targetName,
+            email: impersonation.targetEmail,
+            username: impersonation.targetUsername,
+          },
+          startedAt: impersonation.startedAt,
+        };
+        session.impersonatedBySub = token.sub as string;
+        session.sub = impersonation.targetSub;
+        session.user = {
+          ...session.user,
+          name: impersonation.targetName,
+          email: impersonation.targetEmail,
+        };
+        session.accessToken = targetTokens?.accessToken;
+        session.isAuthorized = impersonation.isAuthorized;
+        session.canViewAdmin = impersonation.canViewAdmin;
+        session.role = impersonation.role;
+        session.org = impersonation.org;
+        if (!targetTokens?.accessToken) {
+          session.error = "ImpersonationTokenMissing";
+        }
+      }
+
       return session;
+    },
+  },
+  events: {
+    async signOut({ token }) {
+      const impersonation = token?.impersonation as ImpersonationJwtState | undefined;
+      if (!impersonation) return;
+      auditImpersonation(
+        token as Record<string, unknown>,
+        impersonation.targetSub,
+        impersonation.targetEmail,
+        "stop",
+        "allow",
+        impersonation.startedAt,
+      );
+      await clearImpersonation(token as Record<string, unknown>);
     },
   },
   pages: {
@@ -970,6 +1245,13 @@ declare module "next-auth" {
     canViewAdmin?: boolean; // Whether user can view admin dashboard (read-only)
     canAccessDynamicAgents?: boolean; // Legacy context flag; OpenFGA authorizes agents
     org?: string;           // Tenant identifier from org claim (FR-020)
+    impersonatedBySub?: string;
+    impersonation?: {
+      actor: { sub: string; name?: string; email?: string };
+      target: { sub: string; name: string; email: string; username: string };
+      startedAt: string;
+    };
+    impersonationNotice?: string;
   }
 }
 
@@ -987,5 +1269,7 @@ declare module "next-auth/jwt" {
     groupsCheckedAt?: number; // Unix timestamp of last group re-evaluation
     refreshSuppressedUntil?: number; // Unix timestamp — skip refresh attempts until this time (set after graceful invalid_grant)
     org?: string;           // Tenant identifier from org claim (FR-020)
+    impersonation?: ImpersonationJwtState;
+    impersonationNotice?: string;
   }
 }

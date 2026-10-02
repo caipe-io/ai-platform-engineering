@@ -1,8 +1,6 @@
-import { ApiError } from "@/lib/api-middleware";
 import { authOptions,isBootstrapAdmin } from "@/lib/auth-config";
 import { getConfig } from "@/lib/config";
 import { getCollection } from "@/lib/mongodb";
-import { parseAdminSimulation } from "@/lib/rbac/admin-simulator";
 import {
 adminSurfaceObject,
 BASELINE_ADMIN_SURFACES,
@@ -13,7 +11,6 @@ import { batchCheckOpenFgaTuples,checkOpenFgaTuple,listOpenFgaObjects,writeOpenF
 import type { OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import { openFgaResourceObject } from "@/lib/rbac/openfga-resource-ids";
 import { organizationObjectId } from "@/lib/rbac/organization";
-import { getRealmUserByIdOrNull } from "@/lib/rbac/keycloak-admin";
 import { slackChannelSubjectId } from "@/lib/rbac/slack-channel-grant-store";
 import {
 createJsonResponseCacheStore,
@@ -309,14 +306,14 @@ export async function GET(request?: NextRequest) {
   if (!request) {
     return getAdminTabGates();
   }
-  return withJsonResponseCache(request, adminTabGatesCache, () => getAdminTabGates(request), {
+  return withJsonResponseCache(request, adminTabGatesCache, () => getAdminTabGates(), {
     ttlMs: envTtlMs("ADMIN_TAB_GATES_CACHE_TTL_MS", 10_000),
     cacheableStatus: (status) => status === 200 || status === 401 || status === 403,
     maxEntries: 512,
   });
 }
 
-async function getAdminTabGates(request?: NextRequest) {
+async function getAdminTabGates() {
   const session = (await getServerSession(authOptions)) as {
     accessToken?: string;
     sub?: string;
@@ -329,89 +326,12 @@ async function getAdminTabGates(request?: NextRequest) {
   }
 
   const isAdmin = await hasOrganizationAdmin(session);
-  let simulation;
-  try {
-    const searchParams = request ? new URL(request.url).searchParams : new URLSearchParams();
-    simulation = parseAdminSimulation(searchParams);
-  } catch (error) {
-    if (error instanceof ApiError) {
-      return NextResponse.json({ error: error.message }, { status: error.statusCode });
-    }
-    throw error;
-  }
-
-  if (simulation.active && !isAdmin) {
-    return NextResponse.json(
-      { error: "Simulation requires organization admin access" },
-      { status: 403 }
-    );
-  }
-
-  // A simulation URL only contains the stable Keycloak subject. Resolve the
-  // canonical identity here so the client can render a human name after a
-  // refresh instead of falling back to the opaque UUID. A raw OpenFGA id is
-  // still supported; failed lookups intentionally keep the id fallback.
-  let simulatedBaselineObjects = new Set<string>();
-  if (simulation.subject?.type === "user") {
-    const simulatedSubject = simulation.subject;
-    const [profile, realmUser] = await Promise.all([
-      getBaselineFgaProfile(),
-      getRealmUserByIdOrNull(simulatedSubject.id).catch((error) => {
-        console.warn("[AdminTabGates] Failed to resolve simulated user identity", {
-          userId: simulatedSubject.id,
-          error,
-        });
-        return null;
-      }),
-    ]);
-    simulatedBaselineObjects = new Set(
-      baselineBootstrapTuples(simulatedSubject.id, false, profile)
-        .filter((tuple) => tuple.relation === "reader")
-        .map((tuple) => tuple.object),
-    );
-
-    if (realmUser) {
-      const firstName = String(realmUser.firstName ?? "").trim();
-      const lastName = String(realmUser.lastName ?? "").trim();
-      const email = String(realmUser.email ?? "").trim();
-      const username = String(realmUser.username ?? "").trim();
-      const displayName = [firstName, lastName].filter(Boolean).join(" ") || username || email;
-      simulation = {
-        ...simulation,
-        subject: {
-          ...simulatedSubject,
-          ...(displayName ? { display_name: displayName } : {}),
-          ...(email ? { email } : {}),
-        },
-      };
-    }
-  }
-
-  const simulatedUser = simulation.subject?.openfga_user;
   const currentSubject = getSessionSubject(session);
   const currentUser = currentSubject ? `user:${currentSubject}` : undefined;
   const bootstrapAdmin = isBootstrapAdmin(session.user.email ?? "");
-  const simulatedOrganizationAdmin = simulatedUser
-    ? await checkTupleAllowed({
-        user: simulatedUser,
-        relation: "can_manage",
-        object: organizationObjectId(),
-      })
-    : false;
 
-  if (simulation.subject) {
-    simulation = {
-      ...simulation,
-      subject: {
-        ...simulation.subject,
-        organization_admin: simulatedOrganizationAdmin,
-      },
-    };
-  }
-
-  // ── Common (non-simulated) path: resolve all primary checks in one batch ──
-  // Simulated-user path falls through to the per-check evaluateTab() below.
-  if (!simulatedUser && currentUser) {
+  // Resolve all primary checks in one batch for the authenticated user.
+  if (currentUser) {
     // Build the batch: one entry per tab that issues a single /check call.
     // Tabs without an FGA primary check (credentials → isAdmin,
     // service_accounts → listOpenFgaObjects) are excluded from the batch and
@@ -537,41 +457,29 @@ async function getAdminTabGates(request?: NextRequest) {
       gates,
       (tab) => bootstrapAdmin || (integrationSurfaceManage.get(tab) ?? false),
     );
-    return NextResponse.json({ gates, simulation, integration_panel_modes: integrationPanelModes });
+    return NextResponse.json({ gates, integration_panel_modes: integrationPanelModes });
   }
 
-  // ── Simulated-user path: per-check parallel fan-out (low frequency) ────────
+  // Sessions without a stable subject fail closed except for explicit
+  // bootstrap-admin capabilities tied to the authenticated email.
   async function evaluateTab(tab: AdminTabKey): Promise<boolean> {
-    const actor = simulatedUser ?? currentUser;
+    const actor = currentUser;
     let allowed: boolean;
 
     if (tab === "dynamic_agent_conversations") {
-      if (simulatedUser) {
-        allowed = simulatedOrganizationAdmin || await hasDynamicAgentConversationsRead(simulatedUser);
-      } else {
-        allowed = isAdmin || (actor ? await hasDynamicAgentConversationsRead(actor) : false);
-      }
+      allowed = isAdmin || (actor ? await hasDynamicAgentConversationsRead(actor) : false);
     } else if (tab === "approvals") {
       allowed = Boolean(actor);
-    } else if (tab === "service_accounts" && simulatedUser) {
-      allowed = simulatedOrganizationAdmin || await isMemberOfAnyTeam(simulatedUser);
     } else {
       allowed =
         tab === "credentials"
-          ? simulatedUser
-            ? simulatedOrganizationAdmin
-            : isAdmin
+          ? isAdmin
           : BASELINE_TABS.has(tab) && actor
-            ? simulatedBaselineObjects.has(adminSurfaceObject(tab)) ||
-              await hasBaselineAdminSurfaceRead(actor, tab)
-            : simulatedUser
-              ? await hasAdminSurfaceManage(simulatedUser, tab)
-              : bootstrapAdmin || (actor ? await hasAdminSurfaceManage(actor, tab) : false);
+            ? await hasBaselineAdminSurfaceRead(actor, tab)
+            : bootstrapAdmin || (actor ? await hasAdminSurfaceManage(actor, tab) : false);
     }
 
-    const supportsSimulatedResourceScope =
-      !simulatedUser || tab === "slack" || tab === "webex";
-    if (!allowed && actor && supportsSimulatedResourceScope) {
+    if (!allowed && actor) {
       allowed = await hasResourceScopedIntegrationAccess(actor, tab);
     }
 
@@ -585,7 +493,7 @@ async function getAdminTabGates(request?: NextRequest) {
 
   const [tabResults] = await Promise.all([
     Promise.all(ALL_TABS.map(evaluateTab)),
-    currentSubject && !simulatedUser
+    currentSubject
       ? repairCurrentUserBaseline(currentSubject, isAdmin)
       : Promise.resolve(),
   ]);
@@ -593,18 +501,18 @@ async function getAdminTabGates(request?: NextRequest) {
   const gates: AdminTabGatesMap = {} as AdminTabGatesMap;
   ALL_TABS.forEach((tab, i) => { gates[tab] = tabResults[i]; });
 
-  const actor = simulatedUser ?? currentUser;
+  const actor = currentUser;
   const integrationPanelModes: IntegrationPanelModesMap = {};
   if (actor) {
     await Promise.all(
       INTEGRATION_PANEL_TABS.map(async (tab) => {
         if (!gates[tab]) return;
         const surfaceManage =
-          (!simulatedUser && bootstrapAdmin) || (await hasAdminSurfaceManage(actor, tab));
+          bootstrapAdmin || (await hasAdminSurfaceManage(actor, tab));
         integrationPanelModes[tab] = surfaceManage ? "full" : "self_service";
       }),
     );
   }
 
-  return NextResponse.json({ gates, simulation, integration_panel_modes: integrationPanelModes });
+  return NextResponse.json({ gates, integration_panel_modes: integrationPanelModes });
 }

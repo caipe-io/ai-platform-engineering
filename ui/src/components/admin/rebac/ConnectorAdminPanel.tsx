@@ -15,7 +15,6 @@ Dialog,DialogContent,DialogDescription,DialogFooter,DialogHeader,DialogTitle,
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { useUrlFilterParams } from "@/hooks/use-url-filter-params";
-import { withQueryParam } from "@/lib/rbac/admin-simulation-query";
 import { Tooltip,TooltipContent,TooltipTrigger } from "@/components/ui/tooltip";
 import { useSubtabParam } from "@/hooks/use-subtab-param";
 import { cn } from "@/lib/utils";
@@ -41,6 +40,13 @@ type PanelView = "channels" | "onboard" | "direct" | "advanced";
 const PANEL_VIEWS: readonly PanelView[] = ["channels", "onboard", "direct", "advanced"];
 type SyncModalMode = "preview" | "apply";
 type SyncModalStatus = "idle" | "loading" | "success" | "error";
+
+function withQueryParam(path: string, key: string, value: string): string {
+  const [base, query = ""] = path.split("?", 2);
+  const params = new URLSearchParams(query);
+  params.set(key, value);
+  return `${base}?${params.toString()}`;
+}
 
 function HelpTooltip({ label, children }: { label: string; children: React.ReactNode }) {
   return (

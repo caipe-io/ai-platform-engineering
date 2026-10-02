@@ -322,6 +322,30 @@ class AttachmentRehydrationMiddleware(AgentMiddleware):
         return await handler(request.override(messages=messages))
 
 
+class TransientModelRetryMiddleware(ModelRetryMiddleware):
+    """Retry transient model failures without delaying terminal client errors."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        retry_on = kwargs.pop("retry_on", (Exception,))
+
+        def retry_transient_error(exc: Exception) -> bool:
+            status_code = getattr(exc, "status_code", None)
+            if not isinstance(status_code, int):
+                response = getattr(exc, "response", None)
+                status_code = getattr(response, "status_code", None)
+            if (
+                isinstance(status_code, int)
+                and 400 <= status_code < 500
+                and status_code not in {408, 409, 429}
+            ):
+                return False
+            if callable(retry_on):
+                return retry_on(exc)
+            return isinstance(exc, retry_on)
+
+        super().__init__(retry_on=retry_transient_error, **kwargs)
+
+
 class InterruptAwareToolRetryMiddleware(ToolRetryMiddleware):
     """Retry ordinary tool failures without swallowing LangGraph control flow.
 
@@ -372,7 +396,7 @@ class MiddlewareSpec:
 # then optional add-ons.
 MIDDLEWARE_REGISTRY: dict[str, MiddlewareSpec] = {
     "model_retry": MiddlewareSpec(
-        cls=ModelRetryMiddleware,
+        cls=TransientModelRetryMiddleware,
         default_params={"max_retries": 5, "backoff_factor": 2.0, "on_failure": "error"},
         enabled_by_default=True,
         allow_multiple=False,

@@ -124,7 +124,7 @@ describe("Chat Redirect Page", () => {
     expect(oldSpinner).not.toBeInTheDocument();
   });
 
-  it("redirects to the persisted last active conversation after reload", async () => {
+  it("ignores a persisted last active conversation owned by another user", async () => {
     mockGetLastActiveConversationId.mockReturnValue("conv-2");
     mockConversations = [
       {
@@ -135,6 +135,27 @@ describe("Chat Redirect Page", () => {
       {
         id: "conv-2",
         owner_id: "other@example.com",
+        updatedAt: new Date("2026-05-18T08:00:00Z"),
+      },
+    ];
+
+    render(<Chat />);
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/chat/conv-1"));
+    expect(mockCreateConversation).not.toHaveBeenCalled();
+  });
+
+  it("redirects to a persisted last active conversation owned by the user", async () => {
+    mockGetLastActiveConversationId.mockReturnValue("conv-2");
+    mockConversations = [
+      {
+        id: "conv-1",
+        owner_id: "test@example.com",
+        updatedAt: new Date("2026-05-18T09:00:00Z"),
+      },
+      {
+        id: "conv-2",
+        owner_id: "test@example.com",
         updatedAt: new Date("2026-05-18T08:00:00Z"),
       },
     ];

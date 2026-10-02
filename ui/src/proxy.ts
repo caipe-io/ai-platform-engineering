@@ -1,8 +1,55 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getToken } from "next-auth/jwt";
 
 import { AGENTIC_APP_PUBLIC_BASE, AGENTIC_APP_RUNTIME_BASE } from "@/lib/agentic-apps/runtime";
 
 const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+const SESSION_COOKIE_NAME = "next-auth.session-token";
+const IMPERSONATION_EXIT_PATHS = new Set([
+  "/api/auth/session",
+  "/api/auth/signout",
+]);
+
+function isCredentialPath(pathname: string): boolean {
+  return pathname.startsWith("/api/credentials")
+    || pathname.startsWith("/api/auth/webex-link");
+}
+
+function isReadOnlyMethod(method: string): boolean {
+  return method === "GET" || method === "HEAD" || method === "OPTIONS";
+}
+
+async function blockImpersonatedMutation(
+  request: NextRequest,
+): Promise<NextResponse | null> {
+  const { pathname } = request.nextUrl;
+  const method = request.method.toUpperCase();
+  if (isReadOnlyMethod(method) && !isCredentialPath(pathname)) return null;
+  if (IMPERSONATION_EXIT_PATHS.has(pathname)) return null;
+
+  const hasSessionCookie = request.cookies.has(SESSION_COOKIE_NAME)
+    || request.cookies.has(`__Secure-${SESSION_COOKIE_NAME}`);
+  if (!hasSessionCookie) return null;
+
+  const token = await getToken({
+    req: request,
+    secret: process.env.NEXTAUTH_SECRET,
+    cookieName: request.cookies.has(SESSION_COOKIE_NAME)
+      ? SESSION_COOKIE_NAME
+      : `__Secure-${SESSION_COOKIE_NAME}`,
+  });
+  if (!token?.impersonation) return null;
+
+  return NextResponse.json(
+    {
+      success: false,
+      error: "Impersonation is read-only. Exit impersonation and sign in as yourself to perform this action.",
+      code: "IMPERSONATION_READ_ONLY",
+    },
+    { status: 403 },
+  );
+}
 
 /**
  * Keep the canonical browser URL at /apps/<id> while routing the embedded
@@ -14,7 +61,10 @@ const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
  * document navigation, rather than client-side routing, so applications can
  * build once for /apps/<id>/ without exposing their private origin.
  */
-export function proxy(request: NextRequest): NextResponse {
+export async function proxy(request: NextRequest): Promise<NextResponse> {
+  const blocked = await blockImpersonatedMutation(request);
+  if (blocked) return blocked;
+
   const { pathname } = request.nextUrl;
   const appPath = parseAgenticAppPath(pathname);
 
@@ -33,7 +83,7 @@ export function proxy(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ["/apps/:path*"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
 
 function parseAgenticAppPath(pathname: string): string | null {

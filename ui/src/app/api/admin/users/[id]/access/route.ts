@@ -12,7 +12,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
-import { requireAdminSimulationUserProfileRead } from "@/lib/rbac/admin-simulation-server";
+import { requireUserProfileRead } from "@/lib/rbac/require-openfga";
 import { getRealmUserById } from "@/lib/rbac/keycloak-admin";
 import { getRbacCollection } from "@/lib/rbac/mongo-collections";
 import { listOpenFgaObjects } from "@/lib/rbac/openfga";
@@ -120,11 +120,7 @@ export const GET = withErrorHandler(
 
     const { session } = await getAuthFromBearerOrSession(request);
     const { id } = await context.params;
-    await requireAdminSimulationUserProfileRead(
-      new URL(request.url).searchParams,
-      session,
-      id,
-    );
+    await requireUserProfileRead(session, id);
 
     const teamsResult: AccessVia[] = [];
     const agents = new AccessAccumulator();

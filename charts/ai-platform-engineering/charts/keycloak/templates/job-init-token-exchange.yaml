@@ -55,6 +55,10 @@ spec:
               value: {{ .Values.realm.name | quote }}
             - name: KC_BOT_CLIENT_ID
               value: {{ .Values.tokenExchange.botClientId | quote }}
+            - name: KC_UI_IMPERSONATION_CLIENT_ID
+              value: {{ .Values.platformClient.clientId | default "caipe-platform" | quote }}
+            - name: CAIPE_PLATFORM_AUDIENCE
+              value: {{ .Values.platformClient.clientId | default "caipe-platform" | quote }}
             - name: KC_SSL_REQUIRED
               value: {{ .Values.realm.sslRequired | quote }}
             {{- /* Public CLI client (caipe-cli / forge-cli) — reconciled
