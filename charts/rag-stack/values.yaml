@@ -231,9 +231,21 @@ neo4j:
 
   volumes:
     data:
+      # Keep the existing gp2-backed dynamic volume as the default so upgrades
+      # preserve the current StorageClass selection. Set mode to
+      # "defaultStorageClass" to use the cluster's default StorageClass.
       mode: "dynamic"
       dynamic:
         storageClassName: gp2
+        accessModes:
+          - ReadWriteOnce
+        requests:
+          storage: 100Gi
+      defaultStorageClass:
+        accessModes:
+          - ReadWriteOnce
+        requests:
+          storage: 100Gi
 
 # RAG Redis configuration
 rag-redis:
