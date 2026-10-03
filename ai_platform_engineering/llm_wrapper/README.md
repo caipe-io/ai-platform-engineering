@@ -115,15 +115,17 @@ put a broad routing library in an agent-serving process, which FR-024 forbids.
 - `bedrock_family.py` preserves `cnoe_agent_utils` 0.5.0 behaviour exactly,
   including the `AWS_BEDROCK_CLIENT` override. Changing it changes cost and
   document handling (spec FR-014, A-006).
-- `build.py` also preserves `AWS_BEDROCK_BASE_MODEL_ID`: for `ChatBedrockConverse`
-  and legacy `ChatBedrock` (not `ChatAnthropicBedrock` - an ARN model id never
-  routes there) it bypasses the `bedrock:GetInferenceProfile` call each makes
-  independently to resolve an application-inference-profile ARN's underlying
-  foundation model, needed when the IAM role doesn't grant that permission.
-  Neither call has a `try`/`except` inside `langchain-aws` itself - upstream
-  has said it won't backport `ChatBedrockConverse`'s handling into the legacy
-  client ([langchain-aws#808](https://github.com/langchain-ai/langchain-aws/issues/808#issuecomment-4465324699))
-  - so `build_chat_model` retries once with `base_model_id="unresolved"` (the
-  same bypass, using a non-empty placeholder because the two classes check
-  "is it set" differently) if either is denied, rather than failing to
-  construct the model.
+- Bedrock inference-profile ARNs need both the foundation model and native provider.
+  `build.py` resolves them before constructing Converse or legacy clients and
+  retains the original ARN for inference requests. `AWS_BEDROCK_BASE_MODEL_ID`
+  (or an explicit `base_model_id`/`base_model`) bypasses discovery and supplies
+  the native provider. This applies to application and system profile ARNs.
+- If `bedrock:GetInferenceProfile` is denied and no base model is configured,
+  construction raises an actionable `LLMConfigError`. Set
+  `AWS_BEDROCK_BASE_MODEL_ID` to the profile's actual foundation model ID or
+  grant discovery permission. An unknown placeholder cannot choose a valid
+  provider or request format.
+- Anthropic thinking requires `max_tokens > 1024`. Smaller explicit limits
+  fail configuration validation; valid explicit limits are preserved. When
+  no output limit is supplied, the wrapper adds response headroom above the
+  thinking budget.

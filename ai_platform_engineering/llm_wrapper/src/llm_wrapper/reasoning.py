@@ -82,6 +82,8 @@ def apply_reasoning_effort(
     kwargs.pop("reasoning_effort", None)
 
     if langchain_provider in {"anthropic", "anthropic_bedrock", "bedrock_converse", "bedrock"}:
+        if kwargs.get("max_tokens") is not None and kwargs["max_tokens"] <= THINKING_MIN_BUDGET:
+            raise ValueError("Thinking requires max_tokens > 1024; increase the limit or disable reasoning_effort.")
         budget = clamp_thinking_budget(THINKING_BUDGETS[effort], kwargs.get("max_tokens"))
         kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
         if kwargs.get("max_tokens") is None:
