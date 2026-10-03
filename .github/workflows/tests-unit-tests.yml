@@ -15,6 +15,7 @@ on:
   pull_request:
     branches:
       - main
+      - prebuild/feat/cas-authz
     paths:
       - 'ai_platform_engineering/**'
       - 'tests/**'
@@ -144,4 +145,3 @@ jobs:
           path: |
             ai_platform_engineering/autonomous_agents/coverage.xml
         continue-on-error: true
-

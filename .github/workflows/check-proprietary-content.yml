@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - develop
+      - prebuild/feat/cas-authz
 
 permissions:
   contents: read

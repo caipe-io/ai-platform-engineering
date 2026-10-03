@@ -1,7 +1,7 @@
 # GitHub Actions workflow — RBAC tests
 #
 # Strategy (chosen 2026-04-22 in /speckit.implement Phase 4 dialogue):
-#   - PR (any branch → main / release/*): run the cheap lane only
+#   - PR (to main / release/* / CAS integration): run the cheap lane only
 #       * make test-rbac-lint   (matrix linter + realm-config validator + requireAdmin guard)
 #       * make test-rbac-jest   (Jest matrix-driver)
 #       * make test-rbac-pytest (pytest matrix-driver, helper-unit, parity)
@@ -26,6 +26,7 @@ on:
     branches:
       - main
       - "release/**"
+      - "prebuild/feat/cas-authz"
     paths:
       - 'ai_platform_engineering/utils/auth/**'
       - 'ui/src/lib/rbac/**'

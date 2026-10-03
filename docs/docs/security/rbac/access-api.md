@@ -76,9 +76,18 @@ Chat routes → existing agent-use guard → CAS → OpenFGA
 - CAS records the decision. The guard preserves its 401/400/403/503 envelopes
   and passes tracing metadata without emitting a second legacy decision event.
 
-Picker filtering, membership writes, seed identity cleanup and other services
-remain separate migrations. Fresh checks cannot repair a missing relationship
-write or cancel a run that has already started.
+Agent lifecycle/default-selection writes now use CAS. The picker no longer
+creates or removes grants: public access is maintained by configuration changes
+and the existing startup reconciliation. A global agent retains public access
+when it stops being the default. Failed configuration saves trigger best-effort
+restrictive cleanup: remove attempted new grants, never restore revoked access
+on an uncertain database result. Guarded saves reject stale snapshots; failures
+include a support reference and may require admin repair. This is not a
+cross-database transaction. See the [CAS README](https://github.com/caipe-io/ai-platform-engineering/blob/main/ui/src/lib/authz/README.md#agent-grant-lifecycle) for configuration and recovery limits.
+
+Picker filtering/caching, membership writes, seed identity cleanup and other
+services remain separate migrations. Fresh checks cannot repair a missing
+relationship write or cancel a run that has already started.
 
 Moving remote consumers onto CAS makes BFF latency and availability part of
 their authorization path. Prove that behavior before migrating them. Enforcement
@@ -93,3 +102,9 @@ Request/response types live in `ui/src/lib/authz/access-contract.ts`.
 Next, migrate one complete agent-access journey: its checks, visible-resource
 queries and grant/revoke operations. Verify that selection agrees with execution,
 then remove that journey's obsolete authorization path.
+
+Before the combined CAS integration goes to main, resolve
+[#2854](https://github.com/caipe-io/ai-platform-engineering/issues/2854): interrupted
+cross-store mutations need durable, bounded recovery. A process can die after
+publishing a grant but before saving configuration or running cleanup. Startup
+reconciliation and manual repair do not by themselves close that gap.

@@ -3,7 +3,10 @@
 
 // assisted-by claude code claude-sonnet-4-6
 
+import { randomUUID } from 'crypto';
+
 import { ApiError,requireRbacPermission,withAuth,withErrorHandler } from '@/lib/api-middleware';
+import { mutationSnapshotFilter } from '@/lib/rbac/mutation-snapshot';
 import { getCollection } from '@/lib/mongodb';
 import {
 normalizePlatformDefaultAgentId,
@@ -17,7 +20,10 @@ MAX_DISCOVERY_CACHE_TTL_MINUTES,
 MIN_DISCOVERY_CACHE_TTL_MINUTES,
 normalizeDiscoveryCacheTtlMinutes,
 } from '@/lib/rbac/discovery-cache-config';
-import { writeOpenFgaTuples,type OpenFgaTupleKey } from '@/lib/rbac/openfga';
+import { reconcileTupleDiff, type TupleReconcileContext } from '@/lib/authz';
+import { createAuthzTraceContext } from '@/lib/rbac/authz-tracing';
+import type { OpenFgaTupleKey } from '@/lib/rbac/openfga';
+import type { DynamicAgentConfig } from '@/types/dynamic-agent';
 import { requireResourcePermission } from '@/lib/rbac/resource-authz';
 import {
 createJsonResponseCacheStore,
@@ -195,11 +201,21 @@ function defaultAgentTuple(agentId: string): OpenFgaTupleKey {
   return { user: 'user:*', relation: 'user', object: `agent:${agentId}` };
 }
 
-async function reconcileDefaultAgentGrant(previousAgentId: string | null, nextAgentId: string | null): Promise<void> {
+async function reconcileDefaultAgentGrant(previousAgentId: string | null, nextAgentId: string | null, context: TupleReconcileContext, persist: () => Promise<void>): Promise<void> {
   const writes = nextAgentId ? [defaultAgentTuple(nextAgentId)] : [];
-  const deletes = previousAgentId && previousAgentId !== nextAgentId ? [defaultAgentTuple(previousAgentId)] : [];
-  if (writes.length === 0 && deletes.length === 0) return;
-  await writeOpenFgaTuples({ writes, deletes });
+  const deletes: OpenFgaTupleKey[] = [];
+  if (previousAgentId && previousAgentId !== nextAgentId) {
+    const agents = await getCollection<DynamicAgentConfig>('dynamic_agents');
+    const previousAgent = await agents.findOne({ _id: previousAgentId });
+    // Both global visibility and default selection justify the same tuple.
+    // Removing one reason must not remove access justified by the other.
+    if (previousAgent?.visibility !== 'global') deletes.push(defaultAgentTuple(previousAgentId));
+  }
+  if (writes.length === 0 && deletes.length === 0) {
+    await persist();
+    return;
+  }
+  await reconcileTupleDiff({ writes, deletes }, { ...context, source: 'platform_default_agent' }, persist);
 }
 
 // Release notes is a single platform-wide on/off switch. The announcement
@@ -414,15 +430,17 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
     const previousDoc = hasDefaultAgentUpdate
       ? await col.findOne({ _id: PLATFORM_CONFIG_ID } as never)
       : null;
-    const previousDefaultAgentId = normalizePlatformDefaultAgentId(previousDoc?.default_agent_id);
+    const envDefaultAgentId = hasDefaultAgentUpdate ? normalizePlatformDefaultAgentId(process.env.DEFAULT_AGENT_ID) : null;
+    const previousDefaultAgentId = normalizePlatformDefaultAgentId(previousDoc?.default_agent_id) ?? envDefaultAgentId;
+    const effectiveNextDefaultAgentId = nextDefaultAgentId ?? envDefaultAgentId;
     const defaultAgentChanged = hasDefaultAgentUpdate && previousDefaultAgentId !== nextDefaultAgentId;
 
     // Selecting a non-null default agent grants `user:*` `can_use` on it,
     // i.e. every signed-in user can chat with that agent. Require an
     // explicit ack from the caller so scripts/curl/MCP tools can't flip
-    // an agent public by accident. Clearing the default (next=null) is
-    // safe — we just revoke the previous wildcard — so we don't require
-    // the ack there.
+    // an agent public by accident. Clearing the default (next=null)
+    // returns to the deployment's environment default, if any. Otherwise
+    // only a non-global previous default loses its public grant.
     if (defaultAgentChanged && nextDefaultAgentId !== null) {
       if (body.acknowledge_public_access !== true) {
         throw new ApiError(
@@ -433,12 +451,31 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       }
     }
 
+    const persist = async () => {
+      if (!hasDefaultAgentUpdate) {
+        await col.updateOne({ _id: PLATFORM_CONFIG_ID } as never, { $set: update }, { upsert: true });
+        return;
+      }
+      // For a missing document, upsert uses the unique _id to reject a racing
+      // creation rather than replacing its settings. Existing saves must match
+      // the exact snapshot used to derive their grant changes.
+      const result = await col.updateOne(
+        mutationSnapshotFilter(PLATFORM_CONFIG_ID, previousDoc) as never,
+        { $set: { ...update, authz_write_id: randomUUID() } },
+        { upsert: previousDoc === null },
+      );
+      if (result.matchedCount === 0 && !result.upsertedCount) {
+        throw new ApiError('Platform settings changed during this save. Reload them and check access before retrying.', 409, 'PLATFORM_CONFIG_SAVE_CONFLICT');
+      }
+    };
     if (hasDefaultAgentUpdate) {
-      await reconcileDefaultAgentGrant(previousDefaultAgentId, nextDefaultAgentId);
+      await reconcileDefaultAgentGrant(previousDefaultAgentId, effectiveNextDefaultAgentId, {
+        ...createAuthzTraceContext(request.headers.get('traceparent')),
+        caller: { type: session.isServiceAccount === true ? 'service_account' : 'user', id: String(session.sub) },
+      }, persist);
       if (defaultAgentChanged) {
-        // No shared audit helper exists in this codebase yet; emit a
-        // structured console line so existing log shippers (loki, etc.)
-        // can grep on `[AUDIT] platform_default_agent_changed`.
+        // Retain the configuration-change log; CAS separately audits the
+        // relationship mutation with the canonical caller and trace.
         console.info(
           '[AUDIT] platform_default_agent_changed',
           JSON.stringify({
@@ -449,14 +486,9 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
           }),
         );
       }
+    } else {
+      await persist();
     }
-    await col.updateOne(
-      { _id: PLATFORM_CONFIG_ID } as never,
-      {
-        $set: update,
-      },
-      { upsert: true },
-    );
     platformConfigCache.responses.clear();
     platformConfigCache.inflight.clear();
 
