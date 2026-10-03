@@ -627,12 +627,14 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
         />
       )}
       {/* Collapse Toggle */}
-      <div className="flex items-center justify-end p-2 h-12 shrink-0">
+      <div className="absolute right-0 top-3 z-30 translate-x-1/2">
         <Button
           variant="ghost"
           size="icon"
           onClick={() => onCollapse(!collapsed)}
-          className="h-8 w-8 hover:bg-muted shrink-0"
+          aria-label={collapsed ? "Expand conversation history" : "Collapse conversation history"}
+          aria-expanded={!collapsed}
+          className="h-6 w-6 rounded-full border border-border/50 bg-background shadow-sm hover:bg-muted"
         >
           {collapsed ? (
             <ChevronRight className="h-4 w-4" />
@@ -644,7 +646,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
 
       {/* New Chat Button */}
       {activeTab === "chat" && (
-        <div className="px-2 pb-2 shrink-0">
+        <div className="p-2 shrink-0">
           <NewChatButton
             collapsed={collapsed}
             onNewChat={handleNewChat}
@@ -1074,9 +1076,9 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                               <div
                                 className={cn(
                                   "transition-opacity",
-                                  activeConversationId === conv.id || hasSharingConfig || isSharedWithViewer
+                                  hasSharingConfig || isSharedWithViewer
                                     ? "opacity-100"
-                                    : "opacity-0 group-hover:opacity-100",
+                                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
                                 )}
                               >
                                 <ShareButton
