@@ -1,7 +1,7 @@
 """Chat endpoint for Dynamic Agents with SSE streaming."""
 
 import logging
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, aclosing
 from typing import Any, AsyncGenerator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -312,16 +312,19 @@ async def _generate_sse_events(
         )
 
         # Stream response with trace_id for Langfuse tracing
-        async for frame in runtime.stream(
-            message,
-            session_id,
-            user.email,
-            trace_id,
-            encoder,
-            files=files,
-            turn_id=turn_id,
-        ):
-            yield frame
+        async with aclosing(
+            runtime.stream(
+                message,
+                session_id,
+                user.email,
+                trace_id,
+                encoder,
+                files=files,
+                turn_id=turn_id,
+            )
+        ) as frames:
+            async for frame in frames:
+                yield frame
 
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity: {e}")
@@ -468,8 +471,9 @@ async def _generate_resume_sse_events(
         )
 
         # Resume streaming with form data
-        async for frame in runtime.resume(session_id, user.email, resume_data, trace_id, encoder):
-            yield frame
+        async with aclosing(runtime.resume(session_id, user.email, resume_data, trace_id, encoder)) as frames:
+            async for frame in frames:
+                yield frame
 
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity: {e}")
