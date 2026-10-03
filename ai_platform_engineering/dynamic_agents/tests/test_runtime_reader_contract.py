@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import importlib.util
+from dynamic_agents.routes.agents import router
 
 
-def test_dynamic_agents_service_does_not_ship_agent_crud_router() -> None:
-    """The BFF owns agent configuration writes; DA only serves runtime routes."""
-
-    assert importlib.util.find_spec("dynamic_agents.routes.agents") is None
+def test_dynamic_agents_agent_routes_are_probe_only() -> None:
+    """The BFF owns configuration CRUD; the runtime exposes only a probe."""
+    assert [(route.path, route.methods) for route in router.routes] == [
+        ("/agents/{agent_id}/probe", {"GET"}),
+    ]
