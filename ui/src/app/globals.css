@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../native-extensions/styles.generated.css";
 @plugin "tailwindcss-animate";
 @plugin "@tailwindcss/typography";
 

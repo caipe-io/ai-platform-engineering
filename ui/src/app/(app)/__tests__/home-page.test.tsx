@@ -39,7 +39,7 @@ jest.mock('@/store/home-widgets-store', () => ({
     selector({ initialize: mockInitialize }),
 }))
 
-import HomePage from '../page'
+import { HomePageClient as HomePage } from '../home-page-client'
 
 describe('HomePage', () => {
   beforeEach(() => {

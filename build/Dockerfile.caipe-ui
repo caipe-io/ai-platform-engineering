@@ -13,6 +13,7 @@ WORKDIR /app
 
 # Install dependencies with cache and network resilience
 COPY ui/package.json ui/package-lock.json* ui/yarn.lock* ui/pnpm-lock.yaml* ./
+COPY ui/native-extension-artifacts/ ./native-extension-artifacts/
 
 # Configure npm for better network resilience. The cache mount keeps downloaded
 # tarballs on the host between local Docker builds without baking them into the
@@ -55,6 +56,7 @@ ARG IMAGE_TAG=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE
 ARG CAIPE_UI_FAST_BUILD=false
+ARG CAIPE_NATIVE_EXTENSION_MODULES=""
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY ui .
@@ -62,6 +64,7 @@ COPY ui .
 # Disable telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV CAIPE_UI_FAST_BUILD=${CAIPE_UI_FAST_BUILD}
+ENV CAIPE_NATIVE_EXTENSION_MODULES=${CAIPE_NATIVE_EXTENSION_MODULES}
 
 # Create version info file
 RUN BUILD_DATE_VALUE="${BUILD_DATE}"; \

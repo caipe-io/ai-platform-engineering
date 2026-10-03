@@ -70,7 +70,28 @@ Routes outside `/apps` remain unframeable. The Apps surface and private runtime
 route permit only same-origin framing so registered applications can render in
 the host shell without allowing cross-origin embedding.
 
-## Trust boundary
+## Authentication modes
+
+The manifest selects one of two server-side Bearer-token modes:
+
+| Mode | Intended use | Upstream validation |
+| --- | --- | --- |
+| `app-scoped-token` | Default for independently operated or less-trusted apps | Verify CAIPE's short-lived app JWT, audience, app ID, and scopes. |
+| `forward-user-access-token` | Trusted first-party apps that need the user's existing OIDC/OpenFGA identity | Verify the original access token with the OIDC issuer's JWKS, issuer, audience, and expiry checks. |
+
+The default is `app-scoped-token` when `auth` is omitted. Direct forwarding is
+an explicit trust decision: the runtime receives the same access token held by
+CAIPE's server-side session, including all permissions granted to that token.
+Use it only for a first-party runtime on a private origin. The token is never
+returned to the extension's browser code.
+
+In both modes the gateway discards any browser-supplied `Authorization`,
+cookies, and `X-CAIPE-*` values. It creates the upstream `Authorization` header
+from the authenticated server session and identifies the selected contract in
+the host-controlled `X-CAIPE-Auth-Mode` header. Applications must validate the
+Bearer token; the routing headers are not standalone proof of identity.
+
+## App-scoped token trust boundary
 
 The app-scoped JWT is the authoritative identity contract:
 
@@ -90,9 +111,9 @@ identity headers, all `X-CAIPE-*` headers, and destination-specific identity
 headers before adding its own values. `X-CAIPE-*` response/request hints are
 useful for logs, but an app must authorize only after verifying the Bearer JWT.
 
-The signing key is symmetric in this first contract. Set a dedicated
+The app-scoped signing key is symmetric in this first contract. Set a dedicated
 `AGENTIC_APP_TOKEN_SECRET` of at least 32 random bytes in both the CAIPE UI and
-each registered app. Do not reuse `NEXTAUTH_SECRET`. Because this first slice
+each app using `app-scoped-token`. Do not reuse `NEXTAUTH_SECRET`. Because this first slice
 uses one verifier secret, every registered runtime that receives it is inside
 the same token-signing trust boundary. Per-app keys or host-only asymmetric
 signing with JWKS are required before treating runtimes as mutually untrusted.
@@ -125,6 +146,9 @@ agentic_apps:
         displayName: Example App
         description: Example independently deployed application.
         apiVersion: "1.0"
+        auth:
+          # Optional; this is the default and preserves least privilege.
+          mode: app-scoped-token
         runtime:
           kind: proxied-next-zone
           origin: http://example-app.example.svc.cluster.local
@@ -218,7 +242,7 @@ grant every declared app scope when `requiredScopes` is omitted.
 
 ## Application requirements
 
-The external application must:
+An application using `app-scoped-token` must:
 
 1. Be reachable from the CAIPE UI pod at the configured private HTTP(S) origin.
 2. Serve browser traffic beneath the same-origin gateway prefix supplied in
@@ -231,6 +255,11 @@ The external application must:
 5. Require the appropriate `scp` value for every operation.
 6. Avoid session cookies; the gateway deliberately removes them.
 7. Keep its own resource model and fine-grained domain authorization.
+
+An application using `forward-user-access-token` replaces steps 3–5 with
+standard OIDC access-token validation against the configured issuer. It should
+use the validated `sub` as its stable OpenFGA subject and keep the access token
+server-side for any downstream user-delegated authorization call.
 
 This first runtime contract is tested for base-path-capable SPAs and ordinary
 HTTP assets/fetches. Host launch links use full document navigation. An embedded

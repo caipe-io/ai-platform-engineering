@@ -1,4 +1,7 @@
 export type AgenticAppRuntimeKind = "proxied-next-zone";
+export type AgenticAppAuthMode =
+  | "app-scoped-token"
+  | "forward-user-access-token";
 
 export const DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
 export const MAX_AGENTIC_APP_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
@@ -18,6 +21,9 @@ export interface AgenticAppManifest {
   displayName: string;
   description: string;
   apiVersion: "1.0";
+  auth: {
+    mode: AgenticAppAuthMode;
+  };
   runtime: {
     kind: AgenticAppRuntimeKind;
     origin?: string;

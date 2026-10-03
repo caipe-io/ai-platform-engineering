@@ -1,4 +1,7 @@
 env-config.js
+src/native-extensions/*.generated.css
+src/native-extensions/*.generated.ts
+src/native-extensions/*.generated.tsx
 
 # Test coverage reports
 coverage/
