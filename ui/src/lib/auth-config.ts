@@ -535,32 +535,63 @@ async function refreshAccessToken(token: {
   }
 }
 
+// OIDC_DISCOVERY_URL is the server-side realm URL. OIDC_ISSUER is the URL the
+// browser and issued tokens use. They differ for the --no-ingress SSH path:
+// the browser reaches localhost:7080 through SSH, while the UI pod reaches
+// caipe-keycloak:8080 inside the cluster.
+const browserOidcIssuer = process.env.OIDC_ISSUER?.replace(/\/+$/, "");
+const serverOidcIssuer = (process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER)?.replace(/\/+$/, "");
+const hasSplitOidcEndpoints = Boolean(browserOidcIssuer && serverOidcIssuer && browserOidcIssuer !== serverOidcIssuer);
+
 export const authOptions: NextAuthOptions = {
   providers: [
     {
       id: "oidc",
       name: "SSO",
       type: "oauth",
+      ...(browserOidcIssuer ? { issuer: browserOidcIssuer } : {}),
       // OIDC_DISCOVERY_URL lets server-side discovery use a Docker-internal URL
       // (e.g. http://keycloak:7080/realms/caipe) while OIDC_ISSUER stays as the
       // browser-facing URL (e.g. http://localhost:7080/realms/caipe) so the
       // "iss" claim in JWTs validates against what the browser was redirected to.
       // Falls back to OIDC_ISSUER when not set (single-URL deployments).
-      wellKnown: process.env.OIDC_DISCOVERY_URL
-        ? `${process.env.OIDC_DISCOVERY_URL}/.well-known/openid-configuration`
-        : process.env.OIDC_ISSUER
-          ? `${process.env.OIDC_ISSUER}/.well-known/openid-configuration`
-          : undefined,
+      // When the browser and server use different OIDC origins, do not feed
+      // NextAuth discovery metadata with the internal issuer. openid-client
+      // validates the metadata issuer and would reject it before redirecting
+      // the browser. The explicit endpoints below preserve the split while
+      // single-origin deployments continue to use discovery.
+      wellKnown: !hasSplitOidcEndpoints && (process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER)
+        ? `${process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER}/.well-known/openid-configuration`
+        : undefined,
       // Keycloak issues regular refresh tokens for confidential clients
       // without needing offline_access scope. Requesting offline_access
       // requires extra Keycloak config and causes login failures if not
       // enabled on the client/realm. Regular refresh tokens are sufficient.
       authorization: {
+        ...(browserOidcIssuer
+          ? { url: `${browserOidcIssuer}/protocol/openid-connect/auth` }
+          : {}),
         params: {
           scope: "openid email profile groups",
           ...(process.env.OIDC_IDP_HINT ? { kc_idp_hint: process.env.OIDC_IDP_HINT } : {}),
         }
       },
+      // Keep the callback's token and profile calls on the in-cluster URL when
+      // discovery is served by an internal Keycloak service. Without explicit
+      // endpoints NextAuth follows the internal URLs from discovery, which is
+      // correct for the pod but makes the browser redirect to an unresolvable
+      // Kubernetes service name in SSH port-forward mode.
+      ...(serverOidcIssuer
+        ? {
+            jwks_endpoint: `${serverOidcIssuer}/protocol/openid-connect/certs`,
+            token: {
+              url: `${serverOidcIssuer}/protocol/openid-connect/token`,
+            },
+            userinfo: {
+              url: `${serverOidcIssuer}/protocol/openid-connect/userinfo`,
+            },
+          }
+        : {}),
       idToken: true,
       checks: ["pkce", "state"],
       clientId: process.env.OIDC_CLIENT_ID,

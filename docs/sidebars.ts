@@ -23,6 +23,10 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'getting-started/quick-start',
         },
+        {
+          type: 'doc',
+          id: 'getting-started/first-agent',
+        },
       ],
     },
     {

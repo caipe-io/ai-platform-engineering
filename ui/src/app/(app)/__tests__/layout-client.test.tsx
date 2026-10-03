@@ -28,6 +28,14 @@ jest.mock("@/components/layout/LiveStreamBanner", () => ({
   LiveStreamBanner: () => <div data-testid="live-stream-banner" />,
 }));
 
+jest.mock("@/components/admin/settings/SetupWizard", () => ({
+  SetupWizardGate: () => null,
+}));
+
+jest.mock("@/components/onboarding/ProductTour", () => ({
+  ProductTourGate: () => null,
+}));
+
 jest.mock("@/hooks/use-user-init", () => ({
   useUserInit: jest.fn(),
 }));

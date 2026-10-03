@@ -87,4 +87,8 @@ caipe-scheduler
 ```
 
 For dev without a real cluster, `kubernetes.config.load_kube_config()` is
-attempted - point your `KUBECONFIG` at a kind/minikube cluster.
+attempted - point your `KUBECONFIG` at a kind/minikube cluster. Docker Compose
+uses `SCHEDULER_BACKEND=local` instead: schedules remain in MongoDB and are
+dispatched by the scheduler process directly to the CAIPE chat API, so a local
+Kubernetes cluster is not required. Kubernetes deployments keep the default
+`SCHEDULER_BACKEND=kubernetes` CronJob implementation.

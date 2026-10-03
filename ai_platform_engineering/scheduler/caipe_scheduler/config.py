@@ -8,6 +8,10 @@ from pydantic import BaseModel, Field
 
 
 class Settings(BaseModel):
+  # ``kubernetes`` is the production backend. ``local`` is used by the
+  # Docker Compose first-install path, where a Kubernetes API is not present.
+  scheduler_backend: str = Field(default_factory=lambda: os.environ.get("SCHEDULER_BACKEND", "kubernetes").lower())
+
   # Mongo
   mongodb_uri: str = Field(
     default_factory=lambda: os.environ.get(

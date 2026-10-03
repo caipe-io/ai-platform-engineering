@@ -68,6 +68,14 @@ interface DiagnosticProbeResult {
   remediation?: DiagnosticProbeRemediation;
 }
 
+interface PlatformComponentResult {
+  id: string;
+  label: string;
+  status: CapabilityStatus;
+  detail: string;
+  version: string | null;
+}
+
 const HTTP_TIMEOUT_MS = 3000;
 const TCP_TIMEOUT_MS = 2000;
 const healthCache = createJsonResponseCacheStore();
@@ -578,6 +586,10 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
   const dynamicAgentsUrl = trimTrailingSlash(
     envValue("DYNAMIC_AGENTS_URL") || envValue("DA_SERVER_BASE_URL") || "http://dynamic-agents:8001",
   );
+  const schedulerUrl = trimTrailingSlash(envValue("SCHEDULER_URL") || "http://caipe-scheduler:8080");
+  const autonomousAgentsUrl = trimTrailingSlash(
+    envValue("AUTONOMOUS_AGENTS_URL") || "http://autonomous-agents:8002",
+  );
   const agentgatewayAdminUrl = trimTrailingSlash(
     envValue("AGENTGATEWAY_ADMIN_CONFIG_URL") || "http://agentgateway:15000/config",
   );
@@ -585,6 +597,7 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
     envValue("AGENTGATEWAY_TARGETS_URL") || "http://caipe-ui:3000/api/internal/agentgateway/mcp-targets";
   const agentgatewayTargetsToken =
     envValue("AGENTGATEWAY_TARGETS_TOKEN") || "agentgateway-config-bridge-dev-token";
+  const config = getServerConfig();
 
   const probes = await Promise.all([
     probeHttpDiagnostic({
@@ -627,6 +640,32 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
         description: "Check dynamic agents service logs and dependencies.",
       },
     }),
+    ...(config.schedulerEnabled
+      ? [probeHttpDiagnostic({
+          id: "scheduler",
+          label: "CAIPE Agent Scheduler",
+          group: "runtime",
+          target: `${schedulerUrl}/healthz`,
+          remediation: {
+            label: "Schedules",
+            href: "/schedules",
+            description: "Check the scheduler service and schedule configuration.",
+          },
+        })]
+      : []),
+    ...(config.autonomousAgentsEnabled
+      ? [probeHttpDiagnostic({
+          id: "autonomous-agents",
+          label: "CAIPE Autonomous Agents Scheduler",
+          group: "runtime",
+          target: `${autonomousAgentsUrl}/health`,
+          remediation: {
+            label: "Autonomous Agents",
+            href: "/autonomous",
+            description: "Check the autonomous-agents service and runtime dependencies.",
+          },
+        })]
+      : []),
     probeHttpDiagnostic({
       id: "agentgateway-config-bridge",
       label: "AgentGateway Config Bridge",
@@ -739,6 +778,101 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
   );
 
   return probes;
+}
+
+function diagnosticStatus(status: DiagnosticProbeStatus | undefined): CapabilityStatus {
+  if (status === "healthy") return "healthy";
+  if (status === "warning") return "degraded";
+  return status === "down" ? "down" : "disabled";
+}
+
+function buildPlatformComponents(
+  capabilities: CapabilityResult[],
+  probes: DiagnosticProbeResult[] | undefined,
+): PlatformComponentResult[] {
+  const capabilityById = new Map(capabilities.map((capability) => [capability.id, capability]));
+  const probeById = new Map(probes?.map((probe) => [probe.id, probe]) ?? []);
+  const fromProbe = (
+    id: string,
+    label: string,
+    probeId: string,
+    fallback?: CapabilityResult,
+  ): PlatformComponentResult => {
+    const probe = probeById.get(probeId);
+    return {
+      id,
+      label,
+      status: probe ? diagnosticStatus(probe.status) : fallback?.status ?? "disabled",
+      detail: probe?.detail ?? fallback?.detail ?? "Not detected in this deployment",
+      version: componentVersion(id),
+    };
+  };
+
+  const tracingEnabled = !envExplicitlyDisabled("ENABLE_TRACING") && Boolean(envValue("ENABLE_TRACING"));
+  const tracingEndpoint = envValue("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
+  const litellmEndpoint = envValue("LITELLM_API_BASE");
+  const config = getServerConfig();
+
+  const optionalServiceFromProbe = (
+    id: string,
+    label: string,
+    probeId: string,
+    enabled: boolean,
+    disabledDetail: string,
+  ): PlatformComponentResult => {
+    const probe = probeById.get(probeId);
+    return {
+      id,
+      label,
+      status: probe ? diagnosticStatus(probe.status) : enabled ? "degraded" : "disabled",
+      detail: probe?.detail ?? (enabled ? "Health check not available" : disabledDetail),
+      version: componentVersion(id),
+    };
+  };
+
+  return [
+    {
+      id: "caipe-ui",
+      label: "CAIPE UI",
+      status: "healthy",
+      detail: "This setup experience is running",
+      version: componentVersion("caipe-ui"),
+    },
+    fromProbe("keycloak", "Keycloak", "keycloak", capabilityById.get("authentication")),
+    fromProbe("openfga", "OpenFGA", "openfga"),
+    fromProbe("caipe-agent-harness", "CAIPE Agent Harness", "dynamic-agents-runtime", capabilityById.get("dynamic-agents")),
+    optionalServiceFromProbe(
+      "scheduler",
+      "CAIPE Agent Scheduler",
+      "scheduler",
+      config.schedulerEnabled,
+      "Not installed. Enable SCHEDULER_ENABLED and the scheduler service in deployment configuration.",
+    ),
+    optionalServiceFromProbe(
+      "autonomous-agents",
+      "CAIPE Autonomous Agents Scheduler",
+      "autonomous-agents",
+      config.autonomousAgentsEnabled,
+      "Not installed. Enable ENABLE_AUTONOMOUS_AGENTS and the autonomous-agents service in deployment configuration.",
+    ),
+    fromProbe("agentgateway", "AgentGateway", "agentgateway"),
+    {
+      id: "otel-tracing",
+      label: "OTel Tracing",
+      status: tracingEnabled && tracingEndpoint ? "healthy" : tracingEnabled ? "degraded" : "disabled",
+      detail: tracingEnabled
+        ? tracingEndpoint ? "Tracing exporter configured" : "Enabled without an OTLP endpoint"
+        : "Tracing is disabled",
+      version: componentVersion("otel-tracing"),
+    },
+    {
+      id: "litellm",
+      label: "LiteLLM",
+      status: litellmEndpoint ? "healthy" : "disabled",
+      detail: litellmEndpoint ? "OpenAI-compatible endpoint configured" : "No LiteLLM endpoint configured",
+      version: componentVersion("litellm"),
+    },
+  ];
 }
 
 function numberField(value: unknown): number | null {
@@ -1113,6 +1247,7 @@ async function getPlatformHealth(request: NextRequest): Promise<NextResponse> {
   );
   const status = requiredDown ? "down" : degraded > 0 ? "degraded" : "healthy";
   const probes = includeDiagnostics ? await buildDiagnosticProbes() : undefined;
+  const components = buildPlatformComponents(capabilities, probes);
   const probeDown = probes?.filter((probe) => probe.status === "down").length ?? 0;
   const probeWarning = probes?.filter((probe) => probe.status === "warning").length ?? 0;
   const probeSummary = probes
@@ -1136,6 +1271,7 @@ async function getPlatformHealth(request: NextRequest): Promise<NextResponse> {
         disabled,
       },
       capabilities,
+      components,
       ...(probes ? { probes, probe_summary: probeSummary } : {}),
     },
     { status: requiredDown ? 503 : 200 },

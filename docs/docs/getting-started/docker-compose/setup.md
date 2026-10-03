@@ -81,6 +81,21 @@ controls who can query their content independently from source management.
 Change the YAML and restart the UI to update or remove them. Connector
 credentials remain in `.env` or the deployment secret store.
 
+External Apps are enabled by default with an empty deployment-owned catalog.
+Add packages and installations to `config/agentic-apps.yaml`, or point
+`AGENTIC_APPS_CONFIG_FILE` at another catalog file, then restart the UI.
+
+Schedules are not available in the Docker Compose path. The scheduler creates
+Kubernetes CronJobs, so use the local KinD/Kubernetes path when scheduled runs
+are required:
+
+```bash
+./setup-caipe.sh --create-cluster --no-ingress --port-forward-mode
+```
+
+The installer enables the scheduler and External Apps by default in that path;
+use `ENABLE_SCHEDULER=false` or `--no-apps` for an intentional opt-out.
+
 ## Start
 
 ```bash
@@ -89,6 +104,27 @@ docker compose up
 
 Open the UI at **http://localhost:3000**. The Dynamic Agents API is exposed at
 **http://localhost:8100** and is also proxied through the UI API routes.
+
+### First-time setup wizard
+
+On a new deployment, the setup wizard checks the runtime and walks an admin
+through a first working agent:
+
+1. Select or add an LLM model and verify provider access.
+2. Choose a starter recipe.
+3. Connect optional user credentials such as GitHub or Notion. OAuth
+   connectors must be configured by the operator before they appear.
+4. Add a remote MCP server from the catalog, or configure a custom endpoint,
+   then select the server for the starter agent.
+5. Optionally enable a knowledge base and platform capabilities.
+6. Create the agent and run the end-to-end smoke test.
+
+The wizard never stores OAuth tokens in its setup state. Connections remain in
+the credential service and can be relinked from **Credentials → Connected
+Apps**. The current catalog uses operator-configured OAuth connectors;
+arbitrary custom endpoints still require their authentication to be configured
+in the MCP editor. Generic dynamic client registration (DCR) is not yet
+assumed for custom endpoints.
 
 To update `.env` to the latest published CAIPE release before starting Compose:
 

@@ -30,6 +30,7 @@ from caipe_scheduler.auth import CallerIdentity, authenticate_caller
 from caipe_scheduler.config import Settings, get_settings
 from caipe_scheduler.dispatcher import OneOffDispatcher
 from caipe_scheduler.k8s import CronJobOps, cronjob_name_for
+from caipe_scheduler.local_dispatcher import LocalScheduleDispatcher
 from caipe_scheduler.models import (
   CronJobReconcileRequest,
   CronJobReconcileResponse,
@@ -56,6 +57,7 @@ log = logging.getLogger(__name__)
 _store: ScheduleStore | None = None
 _k8s: CronJobOps | None = None
 _dispatcher: OneOffDispatcher | None = None
+_local_dispatcher: LocalScheduleDispatcher | None = None
 
 
 def get_store(settings: Annotated[Settings, Depends(get_settings)]) -> ScheduleStore:
@@ -108,12 +110,16 @@ def get_owned_schedule(
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-  global _dispatcher
+  global _dispatcher, _local_dispatcher
   settings = get_settings()
   store = get_store(settings)
   k8s = get_k8s(settings)
-  reconcile_cronjobs_on_startup(store=store, k8s=k8s, settings=settings)
-  if settings.one_off_dispatch_enabled:
+  if settings.scheduler_backend == "local":
+    _local_dispatcher = LocalScheduleDispatcher(store=store, settings=settings)
+    _local_dispatcher.start()
+  else:
+    reconcile_cronjobs_on_startup(store=store, k8s=k8s, settings=settings)
+  if settings.scheduler_backend != "local" and settings.one_off_dispatch_enabled:
     _dispatcher = OneOffDispatcher(
       store=store,
       k8s=k8s,
@@ -126,12 +132,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
   try:
     yield
   finally:
+    if _local_dispatcher is not None:
+      _local_dispatcher.stop()
+      _local_dispatcher = None
     if _dispatcher is not None:
       _dispatcher.stop()
       _dispatcher = None
 
 
 app = FastAPI(title="CAIPE Scheduler", version="0.1.0", lifespan=lifespan)
+
+
+def wake_dispatcher() -> None:
+  if _local_dispatcher is not None:
+    _local_dispatcher.wake()
+  if _dispatcher is not None:
+    _dispatcher.wake()
 
 
 # - routes -
@@ -387,8 +403,7 @@ def create_schedule_one_off_run(
     "retry_limit": body.retry_limit,
   }
   created = store.create_one_off_run(doc)
-  if _dispatcher is not None:
-    _dispatcher.wake()
+  wake_dispatcher()
   return ScheduleOneOffRun.model_validate(created)
 
 

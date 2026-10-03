@@ -33,6 +33,7 @@ describe("admin route registry", () => {
     expect(findAdminDestinationByPath("/admin/security/rbac-audit")).toBeUndefined();
     expect(findAdminDestinationByPath("/admin/security/access-explorer")).toBeUndefined();
     expect(findAdminDestinationByPath("/admin/configuration/defaults")?.id).toBe("defaults");
+    expect(findAdminDestinationByPath("/admin/configuration/setup-wizard")?.id).toBe("setup-wizard");
     expect(findAdminDestinationByPath("/admin/configuration/announcements")?.id).toBe("announcements");
     expect(findAdminDestinationByPath("/admin/platform/defaults")).toBeUndefined();
     expect(findAdminDestinationByPath("/admin/platform/autonomous")).toBeUndefined();

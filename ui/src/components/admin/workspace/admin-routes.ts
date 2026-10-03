@@ -15,6 +15,7 @@ import {
   Shield,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   TrendingUp,
   User,
   Users,
@@ -33,6 +34,7 @@ export type AdminCategoryKey =
 
 export type AdminDestinationId =
   | "defaults"
+  | "setup-wizard"
   | "announcements"
   | "agents"
   | "autonomous"
@@ -111,6 +113,14 @@ export const ADMIN_CATEGORIES: AdminCategoryDefinition[] = [
     label: "Platform configuration",
     icon: SlidersHorizontal,
     destinations: [
+      {
+        id: "setup-wizard",
+        href: "/admin/configuration/setup-wizard",
+        label: "Setup Wizard",
+        description: "Review readiness and create or re-test a first working agent.",
+        icon: Sparkles,
+        gateKey: "platform_settings",
+      },
       {
         id: "defaults",
         href: "/admin/configuration/defaults",

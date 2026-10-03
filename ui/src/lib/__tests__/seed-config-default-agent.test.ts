@@ -107,6 +107,26 @@ describe("bootstrapDefaultDynamicAgentIfEmpty", () => {
     });
   });
 
+  it("uses the first config-driven model for a fresh Hello World agent", async () => {
+    mockCollection.countDocuments.mockResolvedValue(0);
+    mockCollection.findOne.mockResolvedValue({
+      model_id: "bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0",
+      provider: "openai",
+    });
+    mockCollection.insertOne.mockResolvedValue({ insertedId: HELLO_WORLD_AGENT_ID });
+
+    await bootstrapDefaultDynamicAgentIfEmpty();
+
+    expect(mockCollection.insertOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: {
+          id: "bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0",
+          provider: "openai",
+        },
+      }),
+    );
+  });
+
   it("is a no-op when any dynamic agent already exists", async () => {
     mockCollection.countDocuments.mockResolvedValue(1);
 

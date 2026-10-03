@@ -31,7 +31,7 @@ NC='\033[0m'
 
 # ─── State ───────────────────────────────────────────────────────────────────
 CLUSTER_NAME=""
-ENABLE_RAG=false
+ENABLE_RAG="${ENABLE_RAG:-true}"
 ENABLE_TRACING=false
 # Dynamic-agent runtime persistence uses a MongoDB-compatible database.
 # The persistence flags are accepted below for CLI compatibility.
@@ -39,13 +39,18 @@ ENABLE_PERSISTENCE="${ENABLE_PERSISTENCE:-true}"
 DATABASE_PROVIDER="${DATABASE_PROVIDER:-}"
 DOCUMENTDB_IMAGE_TAG="${DOCUMENTDB_IMAGE_TAG:-pg17-0.113.0}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
-OPENAI_ENDPOINT="https://api.openai.com/v1"
-OPENAI_MODEL_NAME="gpt-5.2"
+# Keep the fallback values, but do not let them mask values recovered from an
+# existing llm-secret during an upgrade. An explicitly supplied environment or
+# CLI value must continue to win over the deployed secret.
+_OPENAI_ENDPOINT_EXPLICIT="${OPENAI_ENDPOINT:+set}"
+_OPENAI_MODEL_NAME_EXPLICIT="${OPENAI_MODEL_NAME:+set}"
+OPENAI_ENDPOINT="${OPENAI_ENDPOINT:-https://api.openai.com/v1}"
+OPENAI_MODEL_NAME="${OPENAI_MODEL_NAME:-gpt-5.2}"
 LITELLM_ENDPOINT="${LITELLM_ENDPOINT:-}"
 LITELLM_API_KEY="${LITELLM_API_KEY:-}"
 LITELLM_MODEL_NAME="${LITELLM_MODEL_NAME:-gpt-oss-20B}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
-ANTHROPIC_MODEL_NAME="claude-haiku-4-5-20251001"
+ANTHROPIC_MODEL_NAME="${ANTHROPIC_MODEL_NAME:-claude-haiku-4-5-20251001}"
 AWS_BEDROCK_MODEL_ID="${AWS_BEDROCK_MODEL_ID:-global.anthropic.claude-haiku-4-5-20251001-v1:0}"
 AWS_BEDROCK_PROVIDER="${AWS_BEDROCK_PROVIDER:-anthropic}"
 AWS_REGION="${AWS_REGION:-us-east-2}"
@@ -99,6 +104,26 @@ ENABLE_RBAC_RUNTIME="${ENABLE_RBAC_RUNTIME:-true}"
 # / ENABLE_AUTONOMOUS_AGENTS=false on a memory-constrained host.
 ENABLE_SCHEDULER="${ENABLE_SCHEDULER:-true}"
 ENABLE_AUTONOMOUS_AGENTS="${ENABLE_AUTONOMOUS_AGENTS:-true}"
+# External Apps is enabled with an empty deployment-owned catalog. This makes
+# the Apps surface available for the setup wizard without inventing or
+# registering a vendor app; operators can add catalog entries later.
+ENABLE_AGENTIC_APPS="${ENABLE_AGENTIC_APPS:-true}"
+# The runtime services are part of the default install, so expose their UI
+# capabilities by default as well. Operators on constrained hosts can still
+# opt out explicitly with DYNAMIC_AGENTS_ENABLED=false,
+# WORKFLOW_RUNNER_ENABLED=false, or WORKFLOWS_ENABLED=false.
+_DYNAMIC_AGENTS_ENABLED_EXPLICIT="${DYNAMIC_AGENTS_ENABLED:+set}"
+_WORKFLOW_RUNNER_ENABLED_EXPLICIT="${WORKFLOW_RUNNER_ENABLED:+set}"
+_WORKFLOWS_ENABLED_EXPLICIT="${WORKFLOWS_ENABLED:+set}"
+DYNAMIC_AGENTS_ENABLED="${DYNAMIC_AGENTS_ENABLED:-true}"
+WORKFLOW_RUNNER_ENABLED="${WORKFLOW_RUNNER_ENABLED:-true}"
+WORKFLOWS_ENABLED="${WORKFLOWS_ENABLED:-true}"
+# First-install setup wizard: default ON. Operators that fully seed their
+# platform declaratively can set ENABLE_SETUP_WIZARD=false or pass
+# --no-setup-wizard to suppress the first-admin prompt.
+_ENABLE_SETUP_WIZARD_EXPLICIT=false
+[[ -n "${ENABLE_SETUP_WIZARD+x}" ]] && _ENABLE_SETUP_WIZARD_EXPLICIT=true
+ENABLE_SETUP_WIZARD="${ENABLE_SETUP_WIZARD:-true}"
 # Keycloak bootstrap admin password (master realm). The keycloak subchart
 # requires an explicit value — generated admin passwords are disabled because
 # Keycloak persists the bootstrap admin in its database. Resolved/persisted by
@@ -116,8 +141,9 @@ GITHUB_SOCIAL_CLIENT_SECRET="${GITHUB_SOCIAL_CLIENT_SECRET:-}"
 # Local Keycloak admin login (no upstream IdP / no Cisco SSO). The default
 # in-chart Keycloak install ships no human users, so without this nobody could
 # sign in unless an upstream IdP (Duo/Okta) was brokered. When the RBAC runtime
-# is on with a DNS domain and no upstream IdP is configured, we create a single
-# realm user with a password and grant it org-admin (BOOTSTRAP_ADMIN_EMAILS) so
+# is on with an ingress or local port-forward mode and no upstream IdP is
+# configured, we create a single realm user with a password and grant it
+# org-admin (BOOTSTRAP_ADMIN_EMAILS) so
 # RBAC/auth can be exercised end-to-end with zero external identity setup.
 # Disable with --no-local-admin. The password is generated and persisted in the
 # caipe-local-admin Secret (idempotent re-runs) unless LOCAL_ADMIN_PASSWORD is set.
@@ -233,13 +259,17 @@ ENABLE_INGRESS="${ENABLE_INGRESS:-true}"
 # out-of-the-box on any laptop without /etc/hosts edits.
 CAIPE_DOMAIN_DEFAULT="${CAIPE_DOMAIN_DEFAULT:-caipe.localtest.me}"
 CAIPE_DOMAIN=""
+# Local port-forward mode keeps the deployment HTTP-only and makes the browser-
+# facing OIDC issuer use the local forwarded ports. This is enabled by
+# --no-ingress and can be selected explicitly for installs reached through SSH.
+PORT_FORWARD_MODE="${CAIPE_PORT_FORWARD_MODE:-false}"
 TLS_CERT_FILE=""
 TLS_KEY_FILE=""
 TLS_SELF_SIGNED=false   # true when setup generates the cert (no --tls-cert)
 ENV_FILE=""
 UI_ENV_FILE=""
 COMPOSE_ENV_FILE=""
-COMPOSE_PROFILES_DEFAULT="mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor"
+COMPOSE_PROFILES_DEFAULT="mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor,autonomous-agents"
 USE_DOCKER_COMPOSE=false
 # Chat-bot surfaces (the slack-bot / webex-bot deployments — distinct from the
 # slack/webex MCP agents). Default OFF; enabled via --slack-bot / --webex-bot,
@@ -253,6 +283,7 @@ ENABLE_WEBEX_BOT="${ENABLE_WEBEX_BOT:-false}"
 # explicit CLI choice wins over the env-file auto-enable. Empty = no CLI flag given.
 _SLACK_BOT_FORCED=""
 _WEBEX_BOT_FORCED=""
+_RAG_FORCED=""
 # Agents selected interactively or via CAIPE_SELECTED_AGENTS; empty means all
 # defaults are used (non-interactive path).
 SELECTED_AGENTS=()
@@ -1280,8 +1311,14 @@ collect_credentials() {
           ;;
         *)
           [[ -z "${OPENAI_API_KEY:-}" ]]   && OPENAI_API_KEY=$(_sv OPENAI_API_KEY)
-          [[ -z "${OPENAI_ENDPOINT:-}" ]]  && OPENAI_ENDPOINT=$(_sv OPENAI_ENDPOINT)
-          [[ -z "${OPENAI_MODEL_NAME:-}" ]] && OPENAI_MODEL_NAME=$(_sv OPENAI_MODEL_NAME)
+          if [[ -z "${_OPENAI_ENDPOINT_EXPLICIT:-}" ]]; then
+            local _detected_endpoint; _detected_endpoint=$(_sv OPENAI_ENDPOINT)
+            [[ -n "$_detected_endpoint" ]] && OPENAI_ENDPOINT="$_detected_endpoint"
+          fi
+          if [[ -z "${_OPENAI_MODEL_NAME_EXPLICIT:-}" ]]; then
+            local _detected_model; _detected_model=$(_sv OPENAI_MODEL_NAME)
+            [[ -n "$_detected_model" ]] && OPENAI_MODEL_NAME="$_detected_model"
+          fi
           ;;
       esac
       [[ -n "${LLM_PROVIDER:-}" ]] && log "Loaded LLM config from existing cluster secret (provider: ${LLM_PROVIDER})"
@@ -2414,6 +2451,28 @@ _choose_agents() {
   log "Selected agents: ${SELECTED_AGENTS[*]}"
 }
 
+_discover_gateway_embedding_model() {
+  # A custom OpenAI-compatible gateway may expose a different embedding model
+  # namespace than OpenAI's public API. Discover an allowed embedding model so
+  # a LiteLLM-backed chat configuration does not fail RAG startup with a 403.
+  [[ "${EMBEDDINGS_PROVIDER:-openai}" == "openai" ]] || return 0
+  [[ -z "${_EMBEDDINGS_MODEL_EXPLICIT:-}" ]] || return 0
+  [[ -n "${OPENAI_API_KEY:-}" ]] || return 0
+  [[ -n "${OPENAI_ENDPOINT:-}" && "${OPENAI_ENDPOINT%/}" != "https://api.openai.com/v1" ]] || return 0
+
+  local _models_json _gateway_embedding_model
+  _models_json=$(curl -fsS --max-time 10 \
+    -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+    "${OPENAI_ENDPOINT%/}/models" 2>/dev/null || true)
+  [[ -n "$_models_json" ]] || return 0
+  _gateway_embedding_model=$(echo "$_models_json" | jq -r \
+    '[.data[]?.id | select(test("embedding"; "i"))] | first // empty' 2>/dev/null || true)
+  if [[ -n "$_gateway_embedding_model" ]]; then
+    EMBEDDINGS_MODEL="$_gateway_embedding_model"
+    log "Detected gateway embeddings model: ${EMBEDDINGS_MODEL}"
+  fi
+}
+
 choose_features() {
   step "Feature selection"
 
@@ -2585,10 +2644,18 @@ choose_features() {
     fi
   fi
 
-  if ! $ENABLE_RAG; then
-    if ask_yn "Enable RAG (knowledge base retrieval)?" "n"; then
+  if [[ -z "$_RAG_FORCED" ]]; then
+    if ask_yn "Enable RAG (knowledge base retrieval)?" "y"; then
       ENABLE_RAG=true
       log "RAG enabled"
+    else
+      ENABLE_RAG=false
+      log "RAG skipped"
+    fi
+  fi
+
+  if $ENABLE_RAG; then
+    _discover_gateway_embedding_model
 
       # Anthropic-aware note: Anthropic does not ship a native embeddings
       # model. Their official recommendation is Voyage AI. We surface that
@@ -2890,9 +2957,6 @@ choose_features() {
       else
         log "Graph RAG disabled (vector-only RAG)"
       fi
-    else
-      log "RAG skipped"
-    fi
   fi
 
   # ── Agent selection ───────────────────────────────────────────────────
@@ -3440,6 +3504,7 @@ provision_ui_secret() {
     MONGODB_URI MONGODB_DATABASE MONGODB_ROOT_USERNAME MONGODB_ROOT_PASSWORD
     RAG_SERVER_URL PROMETHEUS_URL
     LANGFUSE_SECRET_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_HOST
+    AGENTIC_APP_TOKEN_SECRET
     RBAC_CLIENT_CREDENTIALS_ROLE
   )
 
@@ -3447,7 +3512,7 @@ provision_ui_secret() {
 
   # When a public domain is set, override localhost-defaulted secrets with
   # the correct values for a k8s deployment.
-  if [[ -n "$CAIPE_DOMAIN" ]]; then
+  if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" ]]; then
     local _patches=()
     _patches+=("{\"op\":\"add\",\"path\":\"/data/NEXTAUTH_URL\",\"value\":\"$(echo -n "https://${CAIPE_DOMAIN}" | base64 -w0)\"}")
     # RAG BFF: Next.js server-side calls use the in-cluster service, not localhost
@@ -3459,7 +3524,8 @@ provision_ui_secret() {
     # BASE; the app appends /.well-known/openid-configuration). Also clear the
     # Cisco-specific OIDC_REQUIRED_GROUP=backstage-access copied from the dev env
     # file so any authenticated Keycloak user is admitted (chart default = empty).
-    if $ENABLE_RBAC_RUNTIME && [[ ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if $ENABLE_RBAC_RUNTIME && $ENABLE_INGRESS \
+        && [[ ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       _patches+=("{\"op\":\"add\",\"path\":\"/data/OIDC_ISSUER\",\"value\":\"$(echo -n "https://${CAIPE_DOMAIN}/realms/caipe" | base64 -w0)\"}")
       _patches+=("{\"op\":\"add\",\"path\":\"/data/OIDC_DISCOVERY_URL\",\"value\":\"$(echo -n "http://caipe-keycloak:8080/realms/caipe" | base64 -w0)\"}")
       _patches+=("{\"op\":\"add\",\"path\":\"/data/OIDC_REQUIRED_GROUP\",\"value\":\"$(echo -n "" | base64 -w0)\"}")
@@ -3468,7 +3534,8 @@ provision_ui_secret() {
       -p="[$(IFS=,; echo "${_patches[*]}")]" 2>/dev/null || true
     log "NEXTAUTH_URL overridden to https://${CAIPE_DOMAIN}"
     log "RAG_SERVER_URL overridden to http://rag-server:${RAG_SERVER_PORT} (cluster service)"
-    if $ENABLE_RBAC_RUNTIME && [[ ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if $ENABLE_RBAC_RUNTIME && $ENABLE_INGRESS \
+        && [[ ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       log "OIDC issuer -> https://${CAIPE_DOMAIN}/realms/caipe (discovery via in-cluster caipe-keycloak; group gate cleared)"
     fi
   fi
@@ -3477,7 +3544,7 @@ provision_ui_secret() {
   HELM_UI_SECRET_ARGS+=(--set "caipe-ui.existingSecret=caipe-ui-secret")
 
   # Also pass SSO_ENABLED via Helm env so it takes effect at runtime
-  if [[ -n "$CAIPE_DOMAIN" ]]; then
+  if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" ]]; then
     HELM_UI_SECRET_ARGS+=(--set "caipe-ui.env.SSO_ENABLED=true")
   fi
 
@@ -3912,6 +3979,23 @@ create_namespace_and_secrets() {
       --dry-run=client -o yaml | kubectl apply -f - &>/dev/null
     HELM_UI_SECRET_ARGS+=(--set "caipe-ui.existingSecret=caipe-ui-secret")
     log "caipe-ui-secret ready (NextAuth secret + caipe-ui client id/secret; default SSO)"
+  fi
+
+  # External Apps uses a dedicated HMAC signing key for short-lived runtime
+  # tokens. Keep it in the existing UI Secret, preserving a supplied value or
+  # a previously generated value across idempotent installer runs.
+  if $ENABLE_AGENTIC_APPS && $ENABLE_RBAC_RUNTIME; then
+    local _agentic_app_token
+    _agentic_app_token=$(kubectl get secret caipe-ui-secret -n caipe \
+      -o jsonpath='{.data.AGENTIC_APP_TOKEN_SECRET}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    if [[ -z "$_agentic_app_token" && -n "${UI_ENV_FILE:-}" && -f "$UI_ENV_FILE" ]]; then
+      _agentic_app_token=$(_env_get "$UI_ENV_FILE" AGENTIC_APP_TOKEN_SECRET)
+    fi
+    [[ -z "$_agentic_app_token" ]] && _agentic_app_token="$(openssl rand -hex 32)"
+    kubectl patch secret caipe-ui-secret -n caipe --type='merge' \
+      -p="{\"data\":{\"AGENTIC_APP_TOKEN_SECRET\":\"$(echo -n "$_agentic_app_token" | base64 -w0)\"}}" \
+      &>/dev/null
+    log "AGENTIC_APP_TOKEN_SECRET ready for the External Apps hub"
   fi
 
   # Inject AGENTGATEWAY_TARGETS_TOKEN into caipe-ui-secret so the config-bridge
@@ -4480,15 +4564,18 @@ post_deploy_patches() {
   # patches the ConfigMap with the real cluster URI.
   _ensure_dynamic_agents_mongodb
 
-  # ── 9. Domain-scoped Keycloak SSO setup ──
-  if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+  # ── 9. Browser-facing Keycloak SSO setup ──
+  # Ingress mode uses CAIPE_DOMAIN; no-ingress mode uses localhost through the
+  # port-forward monitor (and, on a remote host, an SSH tunnel to those ports).
+  if [[ -n "${CAIPE_DOMAIN:-}" ]] || ! $ENABLE_INGRESS; then
     # In-chart Keycloak SSO over a public DNS domain: NextAuth's server-side
     # callback (token exchange + JWKS) hits the PUBLIC Keycloak endpoints
     # (KC_HOSTNAME). The UI pod resolves the public host to the public IP and
     # usually cannot hairpin back to its own ingress (OAuthCallback failure).
     # Pin the public host to the in-cluster ingress ClusterIP via hostAliases so
     # server-side calls route internally (TLS SNI/cert still match the host).
-    if $ENABLE_RBAC_RUNTIME && [[ ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if $ENABLE_RBAC_RUNTIME && $ENABLE_INGRESS \
+        && [[ ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       local _ningx_ip
       _ningx_ip=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
         -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
@@ -4512,8 +4599,8 @@ post_deploy_patches() {
     configure_github_idp
 
     # Default local Keycloak logins (no upstream IdP): an org-admin and a
-    # non-admin user. Self-guards via _local_admin_active (RBAC + DNS domain +
-    # no brokered IdP).
+    # non-admin user. Self-guards via _local_admin_active (RBAC + ingress or
+    # explicit port-forward mode + no brokered IdP).
     provision_local_users
 
     # RAG web-ingestor service account: creates caipe-web-ingestor client in
@@ -4540,6 +4627,7 @@ post_deploy_patches() {
 # unconfigured, the deployment falls back to local Keycloak username/password.
 prompt_github_social() {
   $ENABLE_RBAC_RUNTIME || return 0
+  $ENABLE_INGRESS || return 0
   [[ -n "$CAIPE_DOMAIN" ]] || return 0
   [[ "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && return 0
   [[ "$ENABLE_GITHUB_SOCIAL" == "false" ]] && return 0
@@ -4637,7 +4725,7 @@ provision_rag_ingestor_client() {
   # Use the public domain issuer when available; fall back to the in-cluster
   # Keycloak service URL so the web-ingestor works on Kind without a domain.
   local issuer_base
-  if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+  if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
     issuer_base="https://${CAIPE_DOMAIN}"
   else
     issuer_base="http://caipe-keycloak.${CAIPE_NAMESPACE:-caipe}.svc.cluster.local:8080"
@@ -4784,7 +4872,7 @@ JSON
 # that cause "Invalid parameter: redirect_uri" on login.
 update_keycloak_client_urls() {
   $ENABLE_RBAC_RUNTIME || return 0
-  [[ -n "${CAIPE_DOMAIN:-}" ]] || return 0
+  [[ -n "${CAIPE_DOMAIN:-}" || ! $ENABLE_INGRESS ]] || return 0
 
   local kcadm_pw="${KEYCLOAK_ADMIN_PASSWORD:-}"
   if [[ -z "$kcadm_pw" ]]; then
@@ -4813,7 +4901,8 @@ update_keycloak_client_urls() {
     return 0
   fi
 
-  local target_origin="https://${CAIPE_DOMAIN}"
+  local target_origin
+  target_origin="$(_browser_ui_url)"
   for client_id in caipe-ui caipe-platform; do
     local uuid
     uuid=$(curl -s -H "Authorization: Bearer $tok" \
@@ -4848,7 +4937,7 @@ update_keycloak_client_urls() {
 # BEARER_AUDIENCE_MISMATCH.
 provision_caipe_ui_audience_mapper() {
   $ENABLE_RBAC_RUNTIME || return 0
-  [[ -n "${CAIPE_DOMAIN:-}" ]] || return 0
+  [[ -n "${CAIPE_DOMAIN:-}" || ! $ENABLE_INGRESS ]] || return 0
 
   local kcadm_user kcadm_pw="${KEYCLOAK_ADMIN_PASSWORD:-}"
   kcadm_user=$(kubectl get secret caipe-keycloak-admin -n caipe \
@@ -4915,19 +5004,51 @@ provision_caipe_ui_audience_mapper() {
   fi
 }
 
-# True when we should self-provision a local Keycloak admin login. Requires the
-# RBAC runtime + a DNS domain (SSO needs a browser-reachable issuer) and is
-# skipped when an upstream IdP is brokered (IDP_ISSUER set in an env file) —
-# in that case identity comes from the broker, not a local password user.
+_upstream_idp_configured() {
+  if [[ -n "${UI_ENV_FILE:-}" && -f "${UI_ENV_FILE:-}" ]] \
+      && [[ -n "$(_env_get "$UI_ENV_FILE" IDP_ISSUER)" ]]; then
+    return 0
+  fi
+  if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE:-}" ]] \
+      && [[ -n "$(_env_get "$ENV_FILE" IDP_ISSUER)" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+_browser_ui_url() {
+  if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+    printf 'https://%s' "$CAIPE_DOMAIN"
+  else
+    printf 'http://localhost:%s' "$UI_PORT"
+  fi
+}
+
+_browser_oidc_issuer() {
+  if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+    printf 'https://%s/realms/caipe' "$CAIPE_DOMAIN"
+  else
+    printf 'http://localhost:%s/realms/caipe' "$KEYCLOAK_PORT"
+  fi
+}
+
+_internal_oidc_issuer() {
+  printf 'http://caipe-keycloak:8080/realms/caipe'
+}
+
+# True when we should self-provision a local Keycloak admin login. A DNS domain
+# is required for ingress mode; no-ingress installs use the explicit local
+# port-forward path and its browser-reachable localhost issuer instead. Local
+# users are skipped when an upstream IdP is brokered (IDP_ISSUER set in an env
+# file), because identity then comes from the broker.
 _local_admin_active() {
   $ENABLE_RBAC_RUNTIME || return 1
   [[ "$ENABLE_LOCAL_ADMIN" != "false" ]] || return 1
-  [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-  if [[ -n "${UI_ENV_FILE:-}" && -f "${UI_ENV_FILE:-}" ]]; then
-    [[ -z "$(_env_get "$UI_ENV_FILE" IDP_ISSUER)" ]] || return 1
-  fi
-  if [[ -n "${ENV_FILE:-}" && -f "${ENV_FILE:-}" ]]; then
-    [[ -z "$(_env_get "$ENV_FILE" IDP_ISSUER)" ]] || return 1
+  _upstream_idp_configured && return 1
+  if $ENABLE_INGRESS; then
+    [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  else
+    $PORT_FORWARD_MODE || return 1
   fi
   return 0
 }
@@ -6070,7 +6191,7 @@ _write_rbac_runtime_values() {
   [[ "${TLS_SELF_SIGNED:-false}" == true ]] && _kc_backchannel=$'\n    KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"'
 
   local _kc_public_yaml=""
-  if [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     _kc_public_yaml=$(cat <<KCPUB
   env:
     KC_HOSTNAME: "https://${CAIPE_DOMAIN}"
@@ -6186,17 +6307,24 @@ caipe-ui:
 RBACEOF
 
   if [[ -n "$UI_ENV_FILE" ]]; then
-    local oidc_issuer
+    local oidc_issuer oidc_discovery_config=""
     oidc_issuer=$(_env_get "$UI_ENV_FILE" "OIDC_ISSUER")
     # With a public DNS domain the token `iss` is the public Keycloak URL
     # (KC_HOSTNAME above), so the authz-bridge must validate against that —
     # not the localhost:7080 default copied from the dev env file.
-    if [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" \
+        && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       oidc_issuer="https://${CAIPE_DOMAIN}/realms/caipe"
+    fi
+    if [[ -z "$oidc_issuer" ]] && ! $ENABLE_INGRESS && ! _upstream_idp_configured; then
+      oidc_issuer="$(_browser_oidc_issuer)"
+      oidc_discovery_config="    OIDC_DISCOVERY_URL: \"$(_internal_oidc_issuer)\""
     fi
     if [[ -n "$oidc_issuer" ]]; then
       cat >> "$values_file" <<RBACEOF
     SSO_ENABLED: "true"
+    OIDC_ISSUER: "${oidc_issuer}"
+${oidc_discovery_config}
 
 openfga-authz-bridge:
   tokenValidation:
@@ -6379,10 +6507,41 @@ deploy_caipe() {
 
   # SSO: enable when a public domain is configured (NEXTAUTH_URL is already
   # patched in provision_ui_secret; here we flip the server-side flag too)
-  if [[ -n "$CAIPE_DOMAIN" ]]; then
+  if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" ]]; then
     helm_args+=(--set "caipe-ui.config.SSO_ENABLED=true")
   else
     helm_args+=(--set "caipe-ui.config.SSO_ENABLED=false")
+  fi
+  helm_args+=(
+    --set "caipe-ui.config.SETUP_WIZARD_ENABLED=${ENABLE_SETUP_WIZARD}"
+    --set "caipe-ui.config.DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED}"
+    --set "caipe-ui.config.WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED}"
+    --set "caipe-ui.config.WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED}"
+  )
+  if $ENABLE_AGENTIC_APPS && $ENABLE_RBAC_RUNTIME; then
+    helm_args+=(--set "caipe-ui.config.AGENTIC_APPS_INSTALL_ENABLED=true")
+  fi
+
+  # No-ingress installs are reached through the local kubectl/SSH port-forward
+  # monitor. Give NextAuth a browser-reachable issuer while keeping discovery
+  # and token/JWKS calls on the in-cluster Keycloak service. The auth provider
+  # supplies explicit browser/server endpoints for this split topology.
+  local _ui_env_oidc_issuer=""
+  if [[ -n "$UI_ENV_FILE" && -f "$UI_ENV_FILE" ]]; then
+    _ui_env_oidc_issuer=$(_env_get "$UI_ENV_FILE" "OIDC_ISSUER")
+  fi
+  if $ENABLE_RBAC_RUNTIME && ! $ENABLE_INGRESS \
+      && ! _upstream_idp_configured && [[ -z "$_ui_env_oidc_issuer" ]]; then
+    helm_args+=(
+      --set "caipe-ui.config.SSO_ENABLED=true"
+      --set "caipe-ui.config.NEXTAUTH_URL=$(_browser_ui_url)"
+      --set "caipe-ui.config.OIDC_ISSUER=$(_browser_oidc_issuer)"
+      --set "caipe-ui.config.OIDC_DISCOVERY_URL=$(_internal_oidc_issuer)"
+      --set "openfga-authz-bridge.tokenValidation.issuer=$(_browser_oidc_issuer)"
+    )
+    if _local_admin_active; then
+      helm_args+=(--set "caipe-ui.config.BOOTSTRAP_ADMIN_EMAILS=${LOCAL_ADMIN_EMAIL}")
+    fi
   fi
 
   # Default (no --ui-env-file) in-chart Keycloak SSO. The dev/Cisco env file
@@ -6394,7 +6553,7 @@ deploy_caipe() {
   # NEXTAUTH_SECRET + caipe-ui client secret are created in
   # create_namespace_and_secrets (caipe-ui-secret). Skipped for IP domains (no
   # browser-reachable issuer) and when a ui-env-file already provides OIDC.
-  if $ENABLE_RBAC_RUNTIME && [[ -z "$UI_ENV_FILE" \
+  if $ENABLE_RBAC_RUNTIME && $ENABLE_INGRESS && [[ -z "$UI_ENV_FILE" \
       && -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     helm_args+=(
       --set "caipe-ui.config.NEXTAUTH_URL=https://${CAIPE_DOMAIN}"
@@ -6452,6 +6611,9 @@ deploy_caipe() {
     if [[ -z "$da_oidc_issuer" && -n "${CAIPE_DOMAIN:-}" ]]; then
       da_oidc_issuer="https://${CAIPE_DOMAIN}/realms/caipe"
     fi
+    if [[ -z "$da_oidc_issuer" ]] && ! $ENABLE_INGRESS && ! _upstream_idp_configured; then
+      da_oidc_issuer="$(_browser_oidc_issuer)"
+    fi
     if [[ -z "$da_oidc_client_id" ]]; then
       da_oidc_client_id="caipe-platform"
     fi
@@ -6481,12 +6643,15 @@ dynamic-agents:
     # MongoDB-compatible URI baked in before post_deploy_patches.
     MONGODB_URI: "${_database_uri_value}"
 DAEOF
-    if [[ -n "$CAIPE_DOMAIN" && -n "$da_oidc_issuer" ]]; then
+    if [[ -n "$da_oidc_issuer" ]]; then
+      local _da_cors_origin
+      _da_cors_origin="$(_browser_ui_url)"
       cat >> "$_da_values_file" <<DAEOF
     AUTH_ENABLED: "true"
     OIDC_ISSUER: "${da_oidc_issuer}"
+    OIDC_DISCOVERY_URL: "$(_internal_oidc_issuer)"
     OIDC_CLIENT_ID: "${da_oidc_client_id}"
-    CORS_ORIGINS: '["https://${CAIPE_DOMAIN}", "http://localhost:3000"]'
+    CORS_ORIGINS: '["${_da_cors_origin}"]'
 DAEOF
       # Pass OIDC_REQUIRED_ADMIN_GROUP to dynamic-agents so it matches the UI's
       # admin group. When unset, it falls back to generic pattern matching
@@ -6552,7 +6717,13 @@ DAEOF
 DAEOF
     elif [[ "$_provider" == "openai" ]]; then
       local _oai_model="${OPENAI_MODEL_NAME:-gpt-4o-mini}"
-      cat >> "$_da_values_file" <<DAEOF
+      # A custom OpenAI-compatible endpoint (including LiteLLM) does not
+      # necessarily provide OpenAI's catalog. Advertising gpt-4o-mini there
+      # made the model picker look healthy while selecting an unavailable
+      # model. Seed only the configured model for custom endpoints; retain the
+      # familiar companion model for the real OpenAI API.
+      if [[ "${OPENAI_ENDPOINT%/}" == "https://api.openai.com/v1" ]]; then
+        cat >> "$_da_values_file" <<DAEOF
       - model_id: "gpt-4o-mini"
         name: "GPT-4o Mini"
         provider: "openai"
@@ -6562,6 +6733,14 @@ DAEOF
         provider: "openai"
         description: "Primary model via OpenAI"
 DAEOF
+      else
+        cat >> "$_da_values_file" <<DAEOF
+      - model_id: "${_oai_model}"
+        name: "${_oai_model} (OpenAI-compatible gateway)"
+        provider: "openai"
+        description: "Configured model via an OpenAI-compatible gateway"
+DAEOF
+      fi
     else
       # anthropic-claude (default)
       local _anthropic_model="${ANTHROPIC_MODEL_NAME:-claude-haiku-4-5}"
@@ -6656,11 +6835,12 @@ DAEOF
   # into the chart ConfigMap (caipe-ui.config.*). The ConfigMap takes precedence
   # over envFrom-secret for same-named keys, so values like NEXTAUTH_URL,
   # OIDC groups, branding, and feature flags must be set here, not just in the secret.
-  if [[ -n "$CAIPE_DOMAIN" && -n "$UI_ENV_FILE" ]]; then
+  if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" && -n "$UI_ENV_FILE" ]]; then
     helm_args+=(--set "caipe-ui.config.NEXTAUTH_URL=https://${CAIPE_DOMAIN}")
     local _config_keys=(
       OIDC_REQUIRED_GROUP OIDC_REQUIRED_ADMIN_GROUP OIDC_ENABLE_REFRESH_TOKEN
-      WORKFLOW_RUNNER_ENABLED AUDIT_LOGS_ENABLED FEEDBACK_ENABLED NPS_ENABLED
+      DYNAMIC_AGENTS_ENABLED WORKFLOW_RUNNER_ENABLED WORKFLOWS_ENABLED
+      AUDIT_LOGS_ENABLED FEEDBACK_ENABLED NPS_ENABLED
       JIRA_TICKET_ENABLED JIRA_TICKET_PROJECT
     )
     for key in "${_config_keys[@]}"; do
@@ -6687,12 +6867,15 @@ DAEOF
       --set 'rag-stack.milvus.etcd.replicaCount=1'
       --set 'rag-stack.milvus.minio.mode=standalone'
       --set 'rag-stack.milvus.minio.replicas=1'
+      # Docker Hub can rate-limit or remove older MinIO tags. The same pinned
+      # tag is available from Quay, which keeps first-install RAG reliable.
+      --set 'rag-stack.milvus.minio.image.repository=quay.io/minio/minio'
       --set 'rag-stack.milvus.minio.persistence.size=10Gi'
       --set 'rag-stack.milvus.minio.resources.requests.memory=256Mi'
       --set 'rag-stack.rag-server.env.SKIP_INIT_TESTS=true'
     )
     # Wire UI OIDC provider into rag-server so user tokens are validated.
-    if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+    if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
       helm_args+=(
         --set "rag-stack.rag-server.env.OIDC_ISSUER=https://${CAIPE_DOMAIN}/realms/caipe"
         --set 'rag-stack.rag-server.env.OIDC_CLIENT_ID=caipe-ui'
@@ -6897,7 +7080,7 @@ DAEOF
   # dynamic-agents pod must be cycled so it picks up the new issuer from the ConfigMap.
   # Without this it keeps using the internal http://keycloak:8080 issuer URL and rejects
   # every token with "Invalid issuer", blocking all chat in the Custom Agents UI.
-  if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+  if [[ -n "${CAIPE_DOMAIN:-}" ]] || ! $ENABLE_INGRESS; then
     if kubectl rollout restart deploy/caipe-dynamic-agents -n caipe &>/dev/null 2>&1; then
       kubectl rollout status deploy/caipe-dynamic-agents -n caipe --timeout=120s &>/dev/null 2>&1 || true
       log "dynamic-agents: restarted to apply OIDC issuer config"
@@ -7726,7 +7909,7 @@ monitor_port_forwards() {
   if _local_admin_active && [[ -n "${LOCAL_ADMIN_PASSWORD:-}" ]]; then
     echo ""
     header "Local logins (in-chart Keycloak, no upstream IdP)"
-    echo -e "    URL                ${CYAN}https://${CAIPE_DOMAIN}${NC}"
+    echo -e "    URL                ${CYAN}$(_browser_ui_url)${NC}"
     echo ""
     echo -e "    ${BOLD}Admin${NC} (org-admin / admin UI)"
     echo -e "      Email            ${BOLD}${LOCAL_ADMIN_EMAIL}${NC}"
@@ -8209,7 +8392,6 @@ cmd_docker_compose() {
   local env_file
   env_file=$(_compose_env_file)
   _ensure_compose_env_file "$env_file"
-  _update_compose_image_tag "$env_file"
   _choose_database_provider "$env_file"
 
   if [[ "$(uname -s)" == "Darwin" && -x "/usr/local/bin/docker" && ! "$(command -v docker 2>/dev/null)" ]]; then
@@ -8255,7 +8437,7 @@ cmd_docker_compose() {
   log "Env file: ${env_file}"
   log "Profiles: ${COMPOSE_PROFILES}"
   log "Database: ${DATABASE_PROVIDER} ($(_database_service_name))"
-  docker compose --env-file "$env_file" -f docker-compose.yaml up -d
+  docker compose --env-file "$env_file" -f docker-compose.yaml up --build -d
 
   log "CAIPE UI: http://localhost:3000"
   log "Knowledge Bases ingest: http://localhost:3000/knowledge-bases/ingest"
@@ -8366,8 +8548,14 @@ detect_deployed_features() {
         ;;
       openai|*)
         [[ -z "${OPENAI_API_KEY:-}" ]]    && OPENAI_API_KEY=$(_secret_val OPENAI_API_KEY)
-        [[ -z "${OPENAI_ENDPOINT:-}" ]]   && OPENAI_ENDPOINT=$(_secret_val OPENAI_ENDPOINT)
-        [[ -z "${OPENAI_MODEL_NAME:-}" ]] && OPENAI_MODEL_NAME=$(_secret_val OPENAI_MODEL_NAME)
+        if [[ -z "${_OPENAI_ENDPOINT_EXPLICIT:-}" ]]; then
+          local _detected_endpoint; _detected_endpoint=$(_secret_val OPENAI_ENDPOINT)
+          [[ -n "$_detected_endpoint" ]] && OPENAI_ENDPOINT="$_detected_endpoint"
+        fi
+        if [[ -z "${_OPENAI_MODEL_NAME_EXPLICIT:-}" ]]; then
+          local _detected_model; _detected_model=$(_secret_val OPENAI_MODEL_NAME)
+          [[ -n "$_detected_model" ]] && OPENAI_MODEL_NAME="$_detected_model"
+        fi
         ;;
     esac
     log "Loaded LLM config from existing llm-secret (provider: ${LLM_PROVIDER:-unknown})"
@@ -8568,11 +8756,12 @@ enable_ollama: "${ENABLE_OLLAMA:-false}"
 ollama_model: "${OLLAMA_MODEL:-qwen3:0.6b}"
 embeddings_provider: "${EMBEDDINGS_PROVIDER:-}"
 embeddings_model: "${EMBEDDINGS_MODEL:-}"
-enable_rag: "${ENABLE_RAG:-false}"
+enable_rag: "${ENABLE_RAG:-true}"
 enable_graph_rag: "${ENABLE_GRAPH_RAG:-false}"
 enable_tracing: "${ENABLE_TRACING:-false}"
 enable_scheduler: "${ENABLE_SCHEDULER:-true}"
 enable_autonomous_agents: "${ENABLE_AUTONOMOUS_AGENTS:-true}"
+enable_setup_wizard: "${ENABLE_SETUP_WIZARD:-true}"
 enable_metallb: "${ENABLE_METALLB:-false}"
 enable_ingress: "${ENABLE_INGRESS:-false}"
 domain: "${CAIPE_DOMAIN:-}"
@@ -8589,7 +8778,7 @@ _load_caipe_config() {
   echo -e "  ${DIM}Saved configuration found: ${CAIPE_CONFIG_FILE}${NC}"
   echo ""
 
-  local _ctx _chart _llm _database _ollama _omodel _eprov _emodel _rag _grag _tracing _metallb _ingress _domain _agents
+  local _ctx _chart _llm _database _ollama _omodel _eprov _emodel _rag _grag _tracing _setup_wizard _metallb _ingress _domain _agents
   _ctx=$(_cfg_get cluster_context)
   _chart=$(_cfg_get chart_version)
   _llm=$(_cfg_get llm_provider)
@@ -8601,6 +8790,7 @@ _load_caipe_config() {
   _rag=$(_cfg_get enable_rag)
   _grag=$(_cfg_get enable_graph_rag)
   _tracing=$(_cfg_get enable_tracing)
+  _setup_wizard=$(_cfg_get enable_setup_wizard)
   _metallb=$(_cfg_get enable_metallb)
   _ingress=$(_cfg_get enable_ingress)
   _domain=$(_cfg_get domain)
@@ -8617,6 +8807,7 @@ _load_caipe_config() {
   [[ -n "$_database" ]]   && echo -e "    ${DIM}database:        ${NC}${_database}"
   [[ -n "$_rag" ]]        && echo -e "    ${DIM}RAG:             ${NC}${_rag}  graph-RAG: ${_grag:-false}"
   [[ -n "$_tracing" ]]    && echo -e "    ${DIM}tracing:         ${NC}${_tracing}"
+  [[ -n "$_setup_wizard" ]] && echo -e "    ${DIM}setup wizard:    ${NC}${_setup_wizard}"
   [[ -n "$_metallb" ]]    && echo -e "    ${DIM}metallb:         ${NC}${_metallb}  ingress: ${_ingress:-false}"
   [[ -n "$_domain" ]]     && echo -e "    ${DIM}domain:          ${NC}${_domain}"
   [[ -n "$_agents" ]]     && echo -e "    ${DIM}agents:          ${NC}${_agents}"
@@ -8640,6 +8831,10 @@ _load_caipe_config() {
   [[ "$_rag"      == "true" ]] && ENABLE_RAG=true
   [[ "$_grag"     == "true" ]] && ENABLE_GRAPH_RAG=true && ENABLE_RAG=true
   [[ "$_tracing"  == "true"  ]] && ENABLE_TRACING=true
+  if ! $_ENABLE_SETUP_WIZARD_EXPLICIT; then
+    [[ "$_setup_wizard" == "true"  ]] && ENABLE_SETUP_WIZARD=true
+    [[ "$_setup_wizard" == "false" ]] && ENABLE_SETUP_WIZARD=false
+  fi
   [[ "$_metallb"  == "true"  ]] && ENABLE_METALLB=true
   [[ "$_metallb"  == "false" ]] && ENABLE_METALLB=false
   # MetalLB is a prerequisite for ingress; restore ingress flag from config,
@@ -8808,14 +9003,52 @@ BANNER
       BEDROCK_TEMPERATURE
       AZURE_OPENAI_API_KEY AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_VERSION
       AZURE_OPENAI_DEPLOYMENT OPENAI_API_KEY OPENAI_API_BASE
+      OPENAI_ENDPOINT OPENAI_MODEL_NAME
       EMBEDDINGS_PROVIDER EMBEDDINGS_MODEL EMBEDDINGS_DEVICE
       COHERE_API_KEY VOYAGE_API_KEY HUGGINGFACEHUB_API_TOKEN HF_TOKEN
       LITELLM_ENDPOINT LITELLM_API_KEY)
     for _v in "${_llm_vars[@]}"; do
       local _val
       _val=$(_env_get "$ENV_FILE" "$_v")
-      [[ -n "$_val" && -z "${!_v:-}" ]] && export "$_v=$_val"
+      [[ -n "$_val" ]] || continue
+      # The built-in endpoint/model are fallbacks. Values from an env-file
+      # should restore a configured gateway on upgrades unless the caller set
+      # the corresponding shell variable explicitly.
+      case "$_v" in
+        OPENAI_ENDPOINT)
+          if [[ -z "${_OPENAI_ENDPOINT_EXPLICIT:-}" ]]; then
+            export "$_v=$_val"
+            _OPENAI_ENDPOINT_EXPLICIT=set
+          fi
+          ;;
+        OPENAI_MODEL_NAME)
+          if [[ -z "${_OPENAI_MODEL_NAME_EXPLICIT:-}" ]]; then
+            export "$_v=$_val"
+            _OPENAI_MODEL_NAME_EXPLICIT=set
+          fi
+          ;;
+        *)
+          [[ -z "${!_v:-}" ]] && export "$_v=$_val"
+          ;;
+      esac
     done
+
+    # The UI feature flags default on for first installs. An env-file can
+    # explicitly turn any capability off, unless the shell environment
+    # already supplied that flag.
+    local _dynamic_agents_enabled _workflow_runner_enabled _workflows_enabled
+    _dynamic_agents_enabled=$(_env_get "$ENV_FILE" DYNAMIC_AGENTS_ENABLED)
+    _workflow_runner_enabled=$(_env_get "$ENV_FILE" WORKFLOW_RUNNER_ENABLED)
+    _workflows_enabled=$(_env_get "$ENV_FILE" WORKFLOWS_ENABLED)
+    if [[ -n "$_dynamic_agents_enabled" && -z "${_DYNAMIC_AGENTS_ENABLED_EXPLICIT:-}" ]]; then
+      DYNAMIC_AGENTS_ENABLED="$_dynamic_agents_enabled"
+    fi
+    if [[ -n "$_workflow_runner_enabled" && -z "${_WORKFLOW_RUNNER_ENABLED_EXPLICIT:-}" ]]; then
+      WORKFLOW_RUNNER_ENABLED="$_workflow_runner_enabled"
+    fi
+    if [[ -n "$_workflows_enabled" && -z "${_WORKFLOWS_ENABLED_EXPLICIT:-}" ]]; then
+      WORKFLOWS_ENABLED="$_workflows_enabled"
+    fi
 
     # Honor feature toggles from --env-file so a single .env reproduces the same
     # stack as docker-compose.dev.yaml (rag, tracing, graph-rag, slack-bot,
@@ -9096,8 +9329,7 @@ Commands:
   nuke          Non-interactive cleanup (same as: cleanup --yes)
   status        Show pod status and Helm releases
   docker-compose
-                Prepare .env, update IMAGE_TAG to the latest GitHub release,
-                and start the OSS all-in-one Docker Compose stack from
+                Prepare .env and start the OSS all-in-one Docker Compose stack from
                 docker-compose.yaml
   update-compose-release
                 Update IMAGE_TAG in .env (or --env-file=FILE) to the latest
@@ -9105,7 +9337,7 @@ Commands:
 
 Options:
   --non-interactive  Skip all prompts (use current context, latest chart,
-                     defaults for endpoint/model, no RAG/tracing unless flagged)
+                     defaults for endpoint/model, RAG enabled unless --no-rag)
   --no-sudo          Never run sudo; steps needing it are skipped or fail with
                      manual instructions (also CAIPE_ALLOW_SUDO=0 or false)
                      Either denial overrides --allow-sudo and --yes, regardless
@@ -9121,7 +9353,8 @@ Options:
                      ~/.config/caipe/config.yaml (shows summary, asks confirmation)
   --create-cluster   Create a Kind cluster if no kubectl context exists
                      (default name: caipe, override with KIND_CLUSTER_NAME)
-  --rag              Enable RAG stack (vector-only by default)
+  --rag              Enable RAG stack (vector-only by default; default ON)
+  --no-rag           Skip the RAG stack (knowledge bases)
   --graph-rag        Enable Graph RAG (Neo4j + ontology agent; implies --rag)
   --corporate-ca     Apply corporate TLS proxy CA patch to pods (for networks
                      with TLS inspection, e.g. Cisco Secure Access, Zscaler)
@@ -9140,9 +9373,9 @@ Options:
   --litellm-db          Like --litellm, plus persist LiteLLM virtual keys/spend in the shared Postgres
   --litellm-models=FILE Onboard extra models: seeds the litellm-extra-models ConfigMap (never regenerated;
                         kubectl-editable) whose entries are appended to the proxy config each deploy. See
-                        deploy/kind/litellm-models.example.yaml; scan with `setup-caipe.sh models`.
+                        deploy/kind/litellm-models.example.yaml; scan with 'setup-caipe.sh models'.
   --litellm-upstream-env=FILE  KEY=VALUE .env -> litellm-extra-upstream Secret (optional envFrom) so
-                        `api_key: "os.environ/<KEY>"` refs in --litellm-models resolve.
+                        'api_key: "os.environ/<KEY>"' refs in --litellm-models resolve.
   --persistence      Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --no-persistence   Accepted for compatibility; dynamic-agent persistence uses MongoDB
   --database=NAME    MongoDB-compatible database: mongodb (default) or documentdb
@@ -9152,11 +9385,19 @@ Options:
   --webex-bot        Deploy the Webex bot surface (webex-bot subchart). Auto-enabled when
                      --env-file sets ENABLE_WEBEX_BOT/ENABLE_WEBEX; needs WEBEX_INTEGRATION_BOT_ACCESS_TOKEN
   --no-webex-bot     Skip the Webex bot surface (overrides the env-file value)
+  --apps             Enable the External Apps hub with an empty deployment-owned catalog — default ON
+  --no-apps          Skip the External Apps hub (set ENABLE_AGENTIC_APPS=true to re-enable)
   --metallb          Install MetalLB to give LoadBalancer services real IPs in kind clusters — default ON
   --no-metallb       Skip MetalLB (also disables --ingress, which depends on it)
   --ingress          Install nginx-ingress + MetalLB and expose UI via domain — default ON
                      If --domain is omitted, falls back to ${CAIPE_DOMAIN_DEFAULT} (resolves to 127.0.0.1 via *.localtest.me)
   --no-ingress       Skip nginx-ingress
+  --setup-wizard     Automatically show the guided wizard to the first admin — default ON
+  --no-setup-wizard  Suppress the automatic prompt; the wizard remains available under
+                     Admin > Platform configuration > Setup Wizard
+  --port-forward-mode
+                     Use the browser-reachable localhost issuer and provision local
+                     Keycloak users for kubectl/SSH port-forward access (implies --no-ingress)
   --domain=HOST      Hostname for the UI ingress (e.g. my-caipe.example.com)
                      Default when ingress is enabled and --domain is omitted: ${CAIPE_DOMAIN_DEFAULT}
   --tls-cert=FILE    Path to TLS certificate PEM file (default: auto-generate self-signed)
@@ -9169,7 +9410,7 @@ Options:
   --github-social-id=ID         GitHub OAuth App client ID (login broker)
   --github-social-secret=SECRET GitHub OAuth App client secret (login broker)
   --local-admin[=EMAIL]         Create a local Keycloak admin login (default ON for
-                     in-chart Keycloak with a DNS domain and no upstream IdP) so RBAC/auth
+                     in-chart Keycloak with ingress or port-forward mode and no upstream IdP) so RBAC/auth
                      work with zero external SSO. EMAIL defaults to admin@caipe.local.
   --no-local-admin   Skip the local admin user (use only with an upstream IdP / GitHub social)
   --local-admin-password=PW     Set the local admin password (default: generated, persisted
@@ -9213,8 +9454,9 @@ Re-run behavior:
 
 Environment variables (all optional):
   LLM_PROVIDER            LLM provider: anthropic-claude (default) | aws-bedrock | openai
-  OPENAI_API_KEY          Pre-set OpenAI API key (skips prompt)
-  OPENAI_MODEL_NAME       OpenAI model (default: gpt-5.2; used by LLMFactory)
+  OPENAI_API_KEY          Pre-set OpenAI or OpenAI-compatible gateway API key (skips prompt)
+  OPENAI_ENDPOINT         OpenAI-compatible endpoint (default: https://api.openai.com/v1)
+  OPENAI_MODEL_NAME       Model exposed by that endpoint (default: gpt-5.2; used by LLMFactory)
   ANTHROPIC_API_KEY       Pre-set Anthropic API key (skips prompt)
   ANTHROPIC_MODEL_NAME    Anthropic model (default: claude-haiku-4-5)
   AWS_ACCESS_KEY_ID       AWS access key for Bedrock
@@ -9254,6 +9496,12 @@ Environment variables (all optional):
   ENABLE_AUTONOMOUS_AGENTS  Autonomous cron/interval/webhook agents
                           (default: true; ENABLE_AUTONOMOUS_AGENTS=false to skip).
                           Together these add ~4-5 pods.
+  ENABLE_AGENTIC_APPS    Enable the External Apps hub with an empty operator-owned catalog
+                          (default: true; ENABLE_AGENTIC_APPS=false to skip).
+  WORKFLOWS_ENABLED       Show the Workflows workspace when the workflow runner
+                          is enabled (default: true; set false to hide it).
+  ENABLE_SETUP_WIZARD    Automatically offer guided first-agent setup to the first admin
+                          (default: true; --no-setup-wizard suppresses the prompt)
   DATABASE_PROVIDER       Persistence provider: mongodb (default) or documentdb
   DOCUMENTDB_IMAGE_TAG    DocumentDB Local image tag (default: pg17-0.113.0)
   AGENTGATEWAY_VERSION    AgentGateway Helm chart version (default: v2.2.1)
@@ -9301,7 +9549,7 @@ Examples:
   $(basename "$0")                                        # re-run: offers monitor/upgrade/full menu
   $(basename "$0") cleanup                                # interactive teardown
   $(basename "$0") nuke                                   # teardown (confirm once with 'yes')
-  $(basename "$0") docker-compose                         # update .env IMAGE_TAG + start Docker Compose
+  $(basename "$0") docker-compose                         # prepare .env + start Docker Compose
   $(basename "$0") update-compose-release                 # only update IMAGE_TAG in .env
   LLM_PROVIDER=openai $(basename "$0") --non-interactive  # OpenAI instead of Claude
   LLM_PROVIDER=aws-bedrock $(basename "$0") --non-interactive       # AWS Bedrock (uses profile)
@@ -9332,7 +9580,8 @@ for arg in "$@"; do
     --docker-compose)  USE_DOCKER_COMPOSE=true ;;
     --non-interactive) NON_INTERACTIVE=true ;;
     --create-cluster)  CREATE_CLUSTER=true ;;
-    --rag)             ENABLE_RAG=true ;;
+    --rag)             ENABLE_RAG=true; _RAG_FORCED=on ;;
+    --no-rag)          ENABLE_RAG=false; _RAG_FORCED=off ;;
     --graph-rag)       ENABLE_GRAPH_RAG=true ;;
     --corporate-ca)    INJECT_CORPORATE_CA=true ;;
     --tracing)         ENABLE_TRACING=true ;;
@@ -9351,9 +9600,12 @@ for arg in "$@"; do
     --no-persistence)  ENABLE_PERSISTENCE=false ;;
     --database=*)      DATABASE_PROVIDER="${arg#--database=}" ;;
     --metallb)         ENABLE_METALLB=true ;;
-    --no-metallb)      ENABLE_METALLB=false; ENABLE_INGRESS=false ;;
+    --no-metallb)      ENABLE_METALLB=false; ENABLE_INGRESS=false; PORT_FORWARD_MODE=true ;;
     --ingress)         ENABLE_INGRESS=true; ENABLE_METALLB=true ;;
-    --no-ingress)      ENABLE_INGRESS=false ;;
+    --no-ingress)      ENABLE_INGRESS=false; PORT_FORWARD_MODE=true ;;
+    --setup-wizard)    ENABLE_SETUP_WIZARD=true; _ENABLE_SETUP_WIZARD_EXPLICIT=true ;;
+    --no-setup-wizard) ENABLE_SETUP_WIZARD=false; _ENABLE_SETUP_WIZARD_EXPLICIT=true ;;
+    --port-forward-mode) ENABLE_INGRESS=false; PORT_FORWARD_MODE=true ;;
     --domain=*)        CAIPE_DOMAIN="${arg#--domain=}" ;;
     --github-social)            ENABLE_GITHUB_SOCIAL=true ;;
     --no-github-social)         ENABLE_GITHUB_SOCIAL=false ;;
@@ -9377,6 +9629,8 @@ for arg in "$@"; do
     --no-slack-bot)    ENABLE_SLACK_BOT=false; _SLACK_BOT_FORCED=off ;;
     --webex-bot)       ENABLE_WEBEX_BOT=true;  _WEBEX_BOT_FORCED=on ;;
     --no-webex-bot)    ENABLE_WEBEX_BOT=false; _WEBEX_BOT_FORCED=off ;;
+    --apps)            ENABLE_AGENTIC_APPS=true ;;
+    --no-apps)         ENABLE_AGENTIC_APPS=false ;;
     --upgrade)         FORCE_UPGRADE=true ;;
     --auto-heal)       AUTOHEAL_ENABLED=true ;;
     --no-auto-heal)    AUTOHEAL_ENABLED=false ;;
@@ -9396,6 +9650,9 @@ fi
 $ENABLE_RBAC_RUNTIME && ENABLE_AGENTGATEWAY=true
 $ENABLE_GRAPH_RAG && ENABLE_RAG=true
 [[ ${#INGEST_URLS[@]} -gt 0 ]] && ENABLE_RAG=true
+if ! $ENABLE_INGRESS; then
+  PORT_FORWARD_MODE=true
+fi
 
 case "${args[0]:-setup}" in
   setup)        cmd_setup ;;

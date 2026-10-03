@@ -222,6 +222,7 @@ function DynamicAgentsPageContent() {
 
         {activeTab === "mcp-servers" ? (
           <MCPServersTab
+            openRemoteCatalog={searchParams.get("add") === "remote"}
             selectedServerId={selectedServerId}
             onSelectedServerChange={(id) => selectResource("mcp-servers", "server", id)}
             onSelectedServerNameChange={setSelectedServerName}
