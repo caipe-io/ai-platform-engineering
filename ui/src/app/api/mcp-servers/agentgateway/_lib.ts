@@ -11,6 +11,7 @@ import { caipeOrgKey } from "@/lib/rbac/organization";
 import type { MCPServerConfig } from "@/types/dynamic-agent";
 
 const COLLECTION_NAME = "mcp_servers";
+const AGENT_GATEWAY_ADMIN_FETCH_TIMEOUT_MS = 5_000;
 
 type AgentGatewayMigrationWarning = {
   id: string;
@@ -21,7 +22,10 @@ type AgentGatewayMigrationWarning = {
 };
 
 export async function fetchAgentGatewayMcpDiscovery(): Promise<AgentGatewayMcpDiscovery> {
-  const response = await fetch(agentGatewayAdminConfigUrl(), { method: "GET" });
+  const response = await fetch(agentGatewayAdminConfigUrl(), {
+    method: "GET",
+    signal: AbortSignal.timeout(AGENT_GATEWAY_ADMIN_FETCH_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new ApiError(`AgentGateway config request failed with HTTP ${response.status}`, 502);
   }
