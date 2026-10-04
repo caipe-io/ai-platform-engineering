@@ -92,6 +92,23 @@ curl -X POST http://localhost:8000/v1/task \
 
 The following tools are exposed by this agent via the MCP protocol. These are defined in the `tools/` directory and registered at runtime.
 
+### Current on-call
+
+`get_api_public_v1_oncall_current` calls VictorOps' read-only
+`GET /api-public/v1/oncall/current` endpoint and returns the current on-call
+users for an exact team slug. Pass `escalation_policy` to select an exact policy
+name or slug. Pass `org_slug` when more than one VictorOps organization is
+configured. For example, `team="team-example", escalation_policy="Primary"`
+returns only that team's Primary policy and its current users.
+
+VictorOps computes the current users; this tool does not interpret schedule
+timestamps or overrides. It makes a fresh API call each time, rather than using
+the five-minute schedule cache. The upstream endpoint allows at most two calls
+per second. The result can contain zero or multiple users; callers must handle
+those cases rather than selecting the first user. A missing team or policy is
+reported as an error rather than as a successful empty result. Use
+`get_api_public_v2_team_oncall_schedule` when you need upcoming shifts.
+
 
 
 ---
