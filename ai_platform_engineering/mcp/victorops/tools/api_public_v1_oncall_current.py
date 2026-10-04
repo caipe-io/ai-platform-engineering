@@ -3,13 +3,83 @@
 
 """Tool for the VictorOps current on-call endpoint."""
 
+import asyncio
 import json
 import logging
+import time
 from typing import Any, Optional
 
 from api.client import make_api_request
 
 logger = logging.getLogger("mcp_tools")
+
+_MIN_REQUEST_INTERVAL_SECONDS = 0.5
+_request_lock = asyncio.Lock()
+_last_request_started_at = 0.0
+
+
+async def _wait_for_request_slot() -> None:
+    """Pace process-wide requests to the endpoint's two-per-second limit."""
+    global _last_request_started_at
+
+    async with _request_lock:
+        delay = _last_request_started_at + _MIN_REQUEST_INTERVAL_SECONDS - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        _last_request_started_at = time.monotonic()
+
+
+def _validated_policies(on_call_now: Any, *, validate_users: bool = True) -> Optional[list[dict[str, Any]]]:
+    """Return policies only when the nested current-on-call payload is usable."""
+    if not isinstance(on_call_now, list):
+        return None
+
+    validated: list[dict[str, Any]] = []
+    policy_slugs: set[str] = set()
+    for entry in on_call_now:
+        if not isinstance(entry, dict):
+            return None
+        policy = entry.get("escalationPolicy")
+        users = entry.get("users")
+        if not isinstance(policy, dict) or (validate_users and not isinstance(users, list)):
+            return None
+        if any(key in policy and (not isinstance(policy[key], str) or not policy[key]) for key in ("slug", "name")):
+            return None
+        if not any(isinstance(policy.get(key), str) and policy[key] for key in ("slug", "name")):
+            return None
+        policy_slug = policy.get("slug")
+        if policy_slug is not None:
+            if policy_slug in policy_slugs:
+                return None
+            policy_slugs.add(policy_slug)
+        for user_entry in users if validate_users else []:
+            if not isinstance(user_entry, dict):
+                return None
+            on_call_user = user_entry.get("onCallUser")
+            if (
+                not isinstance(on_call_user, dict)
+                or not isinstance(on_call_user.get("username"), str)
+                or not on_call_user["username"]
+            ):
+                return None
+        validated.append(entry)
+    return validated
+
+
+def _select_policy(policies: list[dict[str, Any]], identifier: str) -> tuple[list[dict[str, Any]], Optional[str]]:
+    """Select one policy, preferring its unique slug over its display name."""
+    slug_matches = [entry for entry in policies if entry["escalationPolicy"].get("slug") == identifier]
+    if len(slug_matches) == 1:
+        return slug_matches, None
+
+    name_matches = [
+        entry for entry in policies if entry["escalationPolicy"].get("name") == identifier
+    ]
+    if len(name_matches) == 1:
+        return name_matches, None
+    if len(name_matches) > 1:
+        return [], "Policy name is ambiguous; use the policy slug"
+    return [], "Policy not present in current on-call response"
 
 
 async def get_api_public_v1_oncall_current(
@@ -35,9 +105,14 @@ async def get_api_public_v1_oncall_current(
         org_slug: VictorOps organization slug. Required when multiple
             organizations are configured.
     """
-    if not team.strip():
+    if not isinstance(team, str) or not team.strip():
         return json.dumps({"error": "team must be a non-empty VictorOps team slug"}, indent=2)
+    team = team.strip()
+    if escalation_policy is not None:
+        if not isinstance(escalation_policy, str) or not escalation_policy.strip():
+            return json.dumps({"error": "escalation_policy must be a non-empty policy name or slug"}, indent=2)
 
+    await _wait_for_request_slot()
     success, response = await make_api_request(
         "/api-public/v1/oncall/current", method="GET",
         org_slug=org_slug, params={}, data={},
@@ -50,37 +125,30 @@ async def get_api_public_v1_oncall_current(
         logger.error("Current on-call response has an unexpected format")
         return json.dumps({"error": "Unexpected current on-call response format"}, indent=2)
 
-    matching_teams: list[dict[str, Any]] = []
-    for entry in response["teamsOnCall"]:
-        if not isinstance(entry, dict):
-            continue
-        team_details = entry.get("team")
-        if not isinstance(team_details, dict) or team_details.get("slug") != team:
-            continue
-
-        on_call_now = entry.get("onCallNow")
-        if not isinstance(on_call_now, list):
-            logger.error("Current on-call team has an unexpected policy format")
-            return json.dumps({"error": "Unexpected current on-call policy format"}, indent=2)
-        if escalation_policy is None:
-            matching_teams.append(entry)
-            continue
-
-        matching_policies = [
-            policy_entry
-            for policy_entry in on_call_now
-            if isinstance(policy_entry, dict)
-            and isinstance(policy_entry.get("escalationPolicy"), dict)
-            and escalation_policy in (
-                policy_entry["escalationPolicy"].get("slug"),
-                policy_entry["escalationPolicy"].get("name"),
-            )
-        ]
-        matching_teams.append({**entry, "onCallNow": matching_policies})
-
+    teams_on_call = response["teamsOnCall"]
+    valid_teams = [
+        entry for entry in teams_on_call if isinstance(entry, dict) and isinstance(entry.get("team"), dict) and isinstance(entry["team"].get("slug"), str) and entry["team"]["slug"]
+    ]
+    matching_teams = [entry for entry in valid_teams if entry["team"]["slug"] == team]
     if not matching_teams:
+        if len(valid_teams) != len(teams_on_call):
+            return json.dumps({"error": "Unexpected current on-call response format"}, indent=2)
         return json.dumps({"error": "Team not present in current on-call response"}, indent=2)
-    if escalation_policy is not None and not any(entry["onCallNow"] for entry in matching_teams):
-        return json.dumps({"error": "Policy not present in current on-call response"}, indent=2)
+    if len(matching_teams) != 1:
+        return json.dumps({"error": "Multiple team entries in current on-call response"}, indent=2)
 
-    return json.dumps({"teamsOnCall": matching_teams}, indent=2, default=str)
+    team_entry = matching_teams[0]
+    policies = _validated_policies(team_entry.get("onCallNow"), validate_users=escalation_policy is None)
+    if policies is None:
+        logger.error("Current on-call team has an unexpected policy format")
+        return json.dumps({"error": "Unexpected current on-call policy format"}, indent=2)
+    if escalation_policy is not None:
+        policies, selection_error = _select_policy(policies, escalation_policy)
+        if selection_error is not None:
+            return json.dumps({"error": selection_error}, indent=2)
+        policies = _validated_policies(policies)
+        if policies is None:
+            return json.dumps({"error": "Unexpected current on-call policy format"}, indent=2)
+        team_entry = {**team_entry, "onCallNow": policies}
+
+    return json.dumps({"teamsOnCall": [team_entry]}, indent=2, default=str)

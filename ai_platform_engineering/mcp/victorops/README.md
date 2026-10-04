@@ -94,20 +94,14 @@ The following tools are exposed by this agent via the MCP protocol. These are de
 
 ### Current on-call
 
-`get_api_public_v1_oncall_current` calls VictorOps' read-only
-`GET /api-public/v1/oncall/current` endpoint and returns the current on-call
-users for an exact team slug. Pass `escalation_policy` to select an exact policy
-name or slug. Pass `org_slug` when more than one VictorOps organization is
-configured. For example, `team="team-example", escalation_policy="Primary"`
-returns only that team's Primary policy and its current users.
-
-VictorOps computes the current users; this tool does not interpret schedule
-timestamps or overrides. It makes a fresh API call each time, rather than using
-the five-minute schedule cache. The upstream endpoint allows at most two calls
-per second. The result can contain zero or multiple users; callers must handle
-those cases rather than selecting the first user. A missing team or policy is
-reported as an error rather than as a successful empty result. Use
-`get_api_public_v2_team_oncall_schedule` when you need upcoming shifts.
+- Calls the read-only `GET /api-public/v1/oncall/current` endpoint at request time.
+- Returns only the exact `team` slug; pass `org_slug` when multiple organizations are configured.
+- Optionally filters by an exact `escalation_policy` slug or name. A unique slug takes precedence, while duplicate names are rejected as ambiguous.
+- Preserves VictorOps' computed `users` list, including zero or multiple users. Callers must not assume the first user is primary.
+- Reports missing teams or policies, duplicate team or policy identifiers, and malformed response records as errors.
+- Makes a fresh API call instead of using the five-minute schedule cache. Each process spaces calls by at least half a second to respect the endpoint's two-request-per-second limit.
+- Requires external rate-limit coordination when multiple server replicas share one upstream quota.
+- Use `get_api_public_v2_team_oncall_schedule` for upcoming shifts rather than the computed current users.
 
 
 
