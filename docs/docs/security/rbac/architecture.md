@@ -433,23 +433,28 @@ The collection, env, and naming details are in the BFF library README at
 
 ## Component 2: CAIPE UI — The Reception Desk
 
-> **Badge analogy:** The reception desk at each department entrance. When you badge in, it reads your chip (JWT), checks your clearance level for this department, and either waves you through or says "sorry, you don't have access here." It doesn't phone HR — the badge chip already carries everything needed to make the decision.
+> **Badge analogy:** Any reception desk can look up your current login in the same register. Your badge identifies you; a separate permission check decides which doors you can open.
 
-**Technically:** Next.js App Router with NextAuth (Auth.js v5) for OIDC session management. Every API route handler runs `requireRbacPermission()` which validates the server-side session and enforces role requirements before proxying to backend services.
+**Technically:** Next.js App Router with NextAuth for OIDC session management. The BFF session module owns shared login credentials; authorization helpers enforce permissions before protected operations.
 
 ### Authentication Flow
 
 ```
 1. Browser visits http://localhost:3000
 2. NextAuth detects no session → 302 to Keycloak (OIDC auth code flow)
-3. Keycloak → Duo SSO (kc_idp_hint=duo-sso auto-redirects, user never sees KC)
-4. Duo SSO login → auth code returned to Keycloak
+3. Keycloak optionally redirects to a configured upstream identity provider
+4. Upstream login completes through Keycloak
 5. Keycloak issues JWT → NextAuth exchanges code for tokens
-6. NextAuth stores small session metadata in the encrypted httpOnly cookie
-7. Large OAuth tokens (access, refresh, ID token) stay in the UI server's in-process token cache and are rehydrated server-side
+6. The BFF persists encrypted credentials, expiry and version in MongoDB auth_sessions
+7. NextAuth issues an encrypted httpOnly cookie identifying that login
+8. Any BFF replica reads the same record; refresh is coordinated through a MongoDB lease
 ```
 
-**Security note:** The session cookie is httpOnly, Secure, SameSite=Lax, and encrypted with `NEXTAUTH_SECRET`. Large OAuth tokens are kept out of the browser cookie to avoid oversized request headers when Keycloak emits RBAC scopes, groups, or relationship-derived claims. If the UI process restarts and the in-process token cache is lost while a browser still has a valid slim session cookie, the session is marked `AccessTokenMissing` and the token-expiry guard sends the user back through login instead of allowing tokenless backend proxy calls. For multi-replica deployments, use sticky sessions or replace the in-process token cache with a shared store.
+- There is no per-replica credential/session cache and no sticky-session requirement.
+- SSO requires MongoDB and a common `NEXTAUTH_SECRET`. Each login has its own record; the user subject and grants are unchanged.
+- Missing/revoked/expired sessions require sign-in. Store outages return retryable errors, without exposing a usable identity or clearing the cookie.
+- Logout durably revokes that login after CSRF validation. Fenced refresh writes cannot restore it.
+- Existing cookies require a fresh login at coordinated cutover. See [browser sessions](../browser-sessions.md) for failure handling and rollout details.
 
 ### Server-Side Authorization (`api-middleware.ts`)
 
