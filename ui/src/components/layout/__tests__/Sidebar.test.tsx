@@ -261,7 +261,10 @@ const defaultProps = {
 }
 
 function selectConversationFilter(label: string) {
-  const values: Record<string, string> = { Chat: 'web', Scheduled: 'scheduled', Autonomous: 'autonomous' }
+  const values: Record<string, string> = {
+    Chat: 'web', Scheduled: 'scheduled', Autonomous: 'autonomous',
+    All: 'all', API: 'api', Webhook: 'webhook',
+  }
   fireEvent.change(screen.getByRole('combobox', { name: 'Conversation views' }), {
     target: { value: values[label] },
   })
@@ -682,6 +685,26 @@ describe('Sidebar — Live Status Indicator', () => {
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'web' })
     })
 
+    it('offers API and all-chat views without changing the web-chat default', () => {
+      mockConversations = [
+        makeConv('web-chat', 'Web conversation'),
+        makeConv('api-chat', 'API conversation', { source: 'api' }),
+      ]
+      render(<Sidebar {...defaultProps} />)
+      expect(screen.getByText('Web conversation')).toBeInTheDocument()
+      expect(screen.queryByText('API conversation')).not.toBeInTheDocument()
+
+      selectConversationFilter('API')
+      expect(screen.getByText('API conversation')).toBeInTheDocument()
+      expect(screen.queryByText('Web conversation')).not.toBeInTheDocument()
+      expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'api' })
+
+      selectConversationFilter('All')
+      expect(screen.getByText('Web conversation')).toBeInTheDocument()
+      expect(screen.getByText('API conversation')).toBeInTheDocument()
+      expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'all' })
+    })
+
     it('restores the selected conversation filter from browser storage', () => {
       mockConversations = [
         makeConv('conv-normal', 'Normal Chat'),
@@ -773,6 +796,8 @@ describe('Sidebar — Live Status Indicator', () => {
       expect(webhookSection).toHaveAttribute('aria-expanded', 'false')
       expect(screen.queryByText('Daily branch summary')).not.toBeInTheDocument()
       fireEvent.click(webhookSection)
+      selectConversationFilter('Webhook')
+      expect(screen.queryByRole('button', { name: /Webhook Runs/ })).not.toBeInTheDocument()
       expect(webhookSection).toHaveAttribute('aria-expanded', 'true')
       expect(await screen.findByText('Daily branch summary')).toBeInTheDocument()
       expect(screen.queryByText('Other owner hook')).not.toBeInTheDocument()

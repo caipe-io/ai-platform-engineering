@@ -9,6 +9,7 @@ on:
       - '.github/actions/prebuild-status/**'
       - '.github/actions/publish-prebuild-manifest/**'
       - 'ai_platform_engineering/dynamic_agents/**'
+      - 'ai_platform_engineering/llm_wrapper/**'
   workflow_call:
     inputs:
       pr_number:
@@ -77,7 +78,8 @@ jobs:
               .github/workflows/prebuild-dynamic-agents.yml \
               .github/actions/prebuild-status \
               .github/actions/publish-prebuild-manifest \
-              ai_platform_engineering/dynamic_agents | grep -q .; then
+              ai_platform_engineering/dynamic_agents \
+              ai_platform_engineering/llm_wrapper | grep -q .; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_build=false" >> "$GITHUB_OUTPUT"
