@@ -125,7 +125,10 @@ put a broad routing library in an agent-serving process, which FR-024 forbids.
   `AWS_BEDROCK_BASE_MODEL_ID` to the profile's actual foundation model ID or
   grant discovery permission. An unknown placeholder cannot choose a valid
   provider or request format.
-- Anthropic thinking requires `max_tokens > 1024`. Smaller explicit limits
+- Claude Sonnet 4.6/5 and Opus 4.6/4.7/4.8/5 use adaptive thinking with
+  `output_config.effort`; sampling parameters and thinking budgets are omitted.
+  Bedrock profile ARNs use the resolved foundation model to select this format.
+- Older Anthropic models use budget-based thinking and require `max_tokens > 1024`. Smaller explicit limits
   fail configuration validation; valid explicit limits are preserved. When
   no output limit is supplied, the wrapper adds response headroom above the
   thinking budget.

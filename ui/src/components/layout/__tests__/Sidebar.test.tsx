@@ -260,8 +260,11 @@ const defaultProps = {
   onCollapse: jest.fn(),
 }
 
-function selectConversationTab(label: string) {
-  fireEvent.mouseDown(screen.getByRole('tab', { name: label }), { button: 0, ctrlKey: false })
+function selectConversationFilter(label: string) {
+  const values: Record<string, string> = { Chat: 'web', Scheduled: 'scheduled', Autonomous: 'autonomous' }
+  fireEvent.change(screen.getByRole('combobox', { name: 'Conversation views' }), {
+    target: { value: values[label] },
+  })
 }
 
 // ============================================================================
@@ -541,7 +544,7 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} />)
 
-      selectConversationTab('Scheduled')
+      selectConversationFilter('Scheduled')
       expect(screen.getByText('Important Team 2 Meeting Prep')).toBeInTheDocument()
       expect(screen.queryByText('sched_ec7107dfab744ddd')).not.toBeInTheDocument()
     })
@@ -556,7 +559,7 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} />)
 
-      selectConversationTab('Scheduled')
+      selectConversationFilter('Scheduled')
       expect(screen.getByText('sched_ec7107dfab744ddd')).toBeInTheDocument()
     })
 
@@ -572,7 +575,7 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} />)
 
-      selectConversationTab('Autonomous')
+      selectConversationFilter('Autonomous')
       const badge = screen.getByText('Review open pull requests')
       expect(badge).toHaveClass(
         'border-violet-500/30',
@@ -596,35 +599,36 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} />)
 
-      selectConversationTab('Autonomous')
+      selectConversationFilter('Autonomous')
       expect(screen.getByText('Legacy task title')).toHaveClass('border-violet-500/30')
     })
 
     it.each([
       { metadata: { task_id: 'legacy-task', task_name: 'Legacy task' } },
       {},
-    ])('keeps legacy autonomous runs out of the Chat tab', (markers) => {
+    ])('keeps legacy autonomous runs out of the Web chats filter', (markers) => {
       mockConversations = [
         makeConv('legacy-autonomous', '[Autonomous] Legacy task', markers),
         makeConv('normal', 'Normal Chat'),
       ]
       render(<Sidebar {...defaultProps} />)
-      selectConversationTab('Chat')
+      selectConversationFilter('Chat')
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
       expect(screen.queryByText('Legacy task')).not.toBeInTheDocument()
-      selectConversationTab('Autonomous')
+      selectConversationFilter('Autonomous')
       expect(screen.getByText('Legacy task')).toBeInTheDocument()
       expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
     })
 
-    it('omits disabled automation tabs and does not fetch webhook tasks', () => {
+    it('omits disabled automation options and does not fetch webhook tasks', () => {
       mockSchedulerEnabled = false
       mockAutonomousAgentsEnabled = false
       window.localStorage.setItem('caipe-chat-history-tab', 'autonomous')
       render(<Sidebar {...defaultProps} />)
-      expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true')
-      expect(screen.queryByRole('tab', { name: 'Autonomous' })).not.toBeInTheDocument()
-      expect(screen.queryByRole('tab', { name: 'Scheduled' })).not.toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Conversation views' })).toHaveValue('web')
+      expect(screen.queryByRole('option', { name: 'Autonomous runs' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'Scheduled runs' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'Webhook runs' })).not.toBeInTheDocument()
       expect(mockListAutonomousTasks).not.toHaveBeenCalled()
       expect(mockLoadConversationsFromServer).toHaveBeenCalledWith({ filter: 'web' })
     })
@@ -641,35 +645,36 @@ describe('Sidebar — Live Status Indicator', () => {
           metadata: { task_name: 'Review alerts' },
         }),
       ]
-      // An old dropdown preference must not restore an unfiltered list.
+      // The current preference key governs the selected conversation view.
       window.localStorage.setItem('caipe-chat-history-filter', 'all')
       render(<Sidebar {...defaultProps} />)
 
-      expect(screen.getByRole('tablist', { name: 'Conversation views' })).toBeInTheDocument()
-      expect(screen.queryByRole('combobox', { name: 'Filter chat history' })).not.toBeInTheDocument()
-      expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true')
-      expect(screen.getByRole('tabpanel', { name: 'Chat' })).toHaveTextContent('History')
+      expect(screen.getByRole('combobox', { name: 'Conversation views' })).toHaveValue('web')
+      expect(screen.getByRole('option', { name: 'All chats' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'API chats' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'Webhook runs' })).toBeInTheDocument()
+      expect(screen.getByText('History')).toBeInTheDocument()
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
       expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
       expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
 
       // These assertions are synchronous: there must be no outgoing title or
-      // conversation retained by an exit animation during tab switches.
-      selectConversationTab('Autonomous')
-      expect(screen.getByRole('tabpanel', { name: 'Autonomous' })).toBeInTheDocument()
+      // conversation retained by an exit animation during filter switches.
+      selectConversationFilter('Autonomous')
+      expect(screen.getByRole('combobox', { name: 'Conversation views' })).toHaveValue('autonomous')
       expect(screen.queryByText('History')).not.toBeInTheDocument()
       expect(screen.getByText('Review alerts')).toBeInTheDocument()
       expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
       expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'autonomous' })
 
-      selectConversationTab('Scheduled')
+      selectConversationFilter('Scheduled')
       expect(screen.getByText('Nightly report')).toBeInTheDocument()
       expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
       expect(screen.queryByText('History')).not.toBeInTheDocument()
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'scheduled' })
 
-      selectConversationTab('Chat')
+      selectConversationFilter('Chat')
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
       expect(screen.getAllByText('History')).toHaveLength(1)
       expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
@@ -677,26 +682,26 @@ describe('Sidebar — Live Status Indicator', () => {
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'web' })
     })
 
-    it('restores the selected conversation tab from browser storage', () => {
+    it('restores the selected conversation filter from browser storage', () => {
       mockConversations = [
         makeConv('conv-normal', 'Normal Chat'),
         makeConv('conv-autonomous', '[Autonomous] Review alerts', { source: 'autonomous' }),
       ]
       const { unmount } = render(<Sidebar {...defaultProps} />)
 
-      selectConversationTab('Autonomous')
+      selectConversationFilter('Autonomous')
       expect(window.localStorage.getItem('caipe-chat-history-tab')).toBe('autonomous')
       unmount()
       mockLoadConversationsFromServer.mockClear()
       render(<Sidebar {...defaultProps} />)
 
-      expect(screen.getByRole('tab', { name: 'Autonomous' })).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByRole('combobox', { name: 'Conversation views' })).toHaveValue('autonomous')
       expect(screen.getByText('Review alerts')).toBeInTheDocument()
       expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
       expect(mockLoadConversationsFromServer).toHaveBeenCalledWith({ filter: 'autonomous' })
     })
 
-    it.each(['web', 'scheduled', 'autonomous'])('loads the next page for the %s tab', async (filter) => {
+    it.each(['web', 'scheduled', 'autonomous'])('loads the next page for the %s filter', async (filter) => {
       window.localStorage.setItem('caipe-chat-history-tab', filter)
       mockConversationFilter = filter
       mockConversationHasMore = true
@@ -718,13 +723,13 @@ describe('Sidebar — Live Status Indicator', () => {
       })
     })
 
-    it('does not append the previous tab while the newly selected tab is loading', async () => {
+    it('does not append the previous filter while the newly selected filter is loading', async () => {
       mockConversationHasMore = true
       mockLoadConversationsFromServer.mockResolvedValue(undefined)
       await act(async () => { render(<Sidebar {...defaultProps} />) })
       mockLoadConversationsFromServer.mockReturnValue(new Promise<void>(() => {}))
 
-      selectConversationTab('Autonomous')
+      selectConversationFilter('Autonomous')
       const viewport = screen.getByTestId('conversation-history-scroll')
       fireEvent.scroll(viewport)
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'autonomous' })
@@ -763,7 +768,7 @@ describe('Sidebar — Live Status Indicator', () => {
       expect(mockListAutonomousTasks).toHaveBeenCalledTimes(1)
       expect(screen.queryByText('Daily branch summary')).not.toBeInTheDocument()
 
-      selectConversationTab('Autonomous')
+      selectConversationFilter('Autonomous')
       const webhookSection = await screen.findByRole('button', { name: /Webhook Runs/ })
       expect(webhookSection).toHaveAttribute('aria-expanded', 'false')
       expect(screen.queryByText('Daily branch summary')).not.toBeInTheDocument()
