@@ -157,13 +157,6 @@ function expandEnvVars(value: unknown): unknown {
 export function loadSeedConfig(configPath: string): SeedConfig {
   console.log(`[seed-config] Loading configuration from: ${configPath}`);
 
-  if (!fs.existsSync(configPath)) {
-    console.warn(
-      `[seed-config] Config not found at ${configPath}, skipping seed`,
-    );
-    return emptySeedConfig();
-  }
-
   const raw = fs.readFileSync(configPath, "utf-8");
   if (raw.trim().length === 0) {
     return emptySeedConfig();
@@ -1753,17 +1746,23 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
  */
 export async function applySeedConfig(): Promise<void> {
   const configPath = process.env.APP_CONFIG_PATH;
-  let skillSeeds: SeedSkill[] | undefined;
-  let configLoaded = !configPath;
+  const seedSkills = async (skills?: SeedSkill[]): Promise<void> => {
+    if (!isMongoDBConfigured) return;
+    try {
+      await bootstrapSkills(skills);
+    } catch (error) {
+      console.error("[seed-config] Skill bootstrap failed:", error);
+    }
+  };
   if (!configPath) {
     console.log("[seed-config] APP_CONFIG_PATH not set, skipping seed");
+    await seedSkills();
   } else if (!isMongoDBConfigured) {
     console.warn("[seed-config] MongoDB not configured, skipping seed");
   } else {
     try {
       const config = loadSeedConfig(configPath);
-      skillSeeds = config.skills;
-      configLoaded = true;
+      await seedSkills(config.skills);
 
       console.log(
         `[seed-config] Found ${config.models.length} models, ` +
@@ -1838,14 +1837,6 @@ export async function applySeedConfig(): Promise<void> {
     } catch (err) {
       // Log but don't crash — seeding failure shouldn't prevent startup
       console.error("[seed-config] Failed to apply seed config:", err);
-    }
-  }
-
-  if (isMongoDBConfigured && configLoaded) {
-    try {
-      await bootstrapSkills(skillSeeds);
-    } catch (error) {
-      console.error("[seed-config] Skill bootstrap failed:", error);
     }
   }
 

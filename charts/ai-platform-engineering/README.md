@@ -118,10 +118,8 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | caipe-ui.config.SCHEDULER_URL | string | `"http://caipe-scheduler:8080"` |  |
 | caipe-ui.config.SHOW_POWERED_BY | string | `"false"` |  |
 | caipe-ui.config.SKILLS_DIR | string | `"/app/data/skills"` |  |
-| caipe-ui.config.SKILLS_HELPER_FILE | string | `"/app/data/skills-live-skills/caipe-skills.py"` |  |
-| caipe-ui.config.SKILLS_HOOK_FILE | string | `"/app/data/skills-live-skills/caipe-catalog.sh"` |  |
-| caipe-ui.config.SKILLS_LIVE_SKILLS_FILE | string | `"/app/data/skills-live-skills/live-skills.md"` |  |
-| caipe-ui.config.SKILLS_UPDATE_SKILLS_FILE | string | `"/app/data/skills-live-skills/update-skills.md"` |  |
+| caipe-ui.config.SKILLS_HELPER_FILE | string | `"/app/data/skills/caipe-skills.py"` |  |
+| caipe-ui.config.SKILLS_HOOK_FILE | string | `"/app/data/skills/caipe-catalog.sh"` |  |
 | caipe-ui.config.SKILL_SCANNER_URL | string | `""` |  |
 | caipe-ui.config.SLACK_BOT_ADMIN_AUDIENCE | string | `"caipe-slack-bot-admin"` |  |
 | caipe-ui.config.SLACK_BOT_ADMIN_URL | string | `""` |  |
@@ -183,13 +181,9 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | caipe-ui.schedulerRunnerClient.secretKey | string | `"KC_SCHEDULER_CLIENT_SECRET"` |  |
 | caipe-ui.schedulerRunnerClient.secretName | string | `""` |  |
 | caipe-ui.service.port | int | `3000` |  |
+| caipe-ui.volumeMounts | list | `[]` |  |
+| caipe-ui.volumes | list | `[]` |  |
 | caipe-ui.skills.enabled | bool | `true` |  |
-| caipe-ui.volumeMounts[0].mountPath | string | `"/app/data/skills-live-skills"` |  |
-| caipe-ui.volumeMounts[0].name | string | `"skills-live-skills"` |  |
-| caipe-ui.volumeMounts[0].readOnly | bool | `true` |  |
-| caipe-ui.volumes[0].configMap.name | string | `"skills-live-skills"` |  |
-| caipe-ui.volumes[0].configMap.optional | bool | `true` |  |
-| caipe-ui.volumes[0].name | string | `"skills-live-skills"` |  |
 | dynamic-agents.agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
 | dynamic-agents.agentContext.existingSecret.name | string | `""` |  |
 | dynamic-agents.config.AGENT_GATEWAY_MCP_SERVER_IDS | string | `"all"` |  |
@@ -690,8 +684,6 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | schedulerMcp.nameOverride | string | `"mcp-scheduler"` |  |
 | schedulerMcp.resources | object | `{}` |  |
 | schedulerMcp.service.port | int | `8000` |  |
-| skillsLiveSkills | string | `""` |  |
-| skillsLiveSkillsName | string | `""` | ------------------------------------------------------------------------- |
 | slack-bot.botConfig | object | `{}` | Per-channel configuration rendered as YAML and volume-mounted at /etc/caipe/bot-config.yaml. Only mounted when non-empty. |
 | slack-bot.config | object | `{"APP_NAME":"CAIPE","CAIPE_API_URL":"","SLACK_ADMIN_ALLOWED_CLIENT_IDS":"caipe-ui","SLACK_ADMIN_API_ENABLED":"true","SLACK_ADMIN_API_HOST":"0.0.0.0","SLACK_ADMIN_API_PORT":"3001","SLACK_ADMIN_JWT_AUDIENCE":"caipe-slack-bot-admin","SLACK_ADMIN_JWT_ISSUER":"","SLACK_AGENT_ROUTES_MODE":"db_prefer","SLACK_AUTO_ASSIGN_UNMAPPED_CHANNELS":"false","SLACK_BOT_MODE":"socket","SLACK_DEFAULT_AGENT_ID":"","SLACK_DEFAULT_TEAM_SLUG":"","SLACK_WORKSPACE_ALIAS":"CAIPE"}` | Flat key-value map of environment variables. Each key-value pair is injected as a flat environment variable via ConfigMap (envFrom → configMapRef). All non-sensitive env vars go here. |
 | slack-bot.existingSecret | string | `"slack-bot-secrets"` | Reference to a pre-existing Kubernetes Secret. Should contain: SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET, and optionally OAUTH2_CLIENT_SECRET. |

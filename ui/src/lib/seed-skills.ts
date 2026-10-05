@@ -22,8 +22,15 @@ interface SkillBootstrap {
 const BOOTSTRAP_ID = "skills";
 const LEASE_MS = 5 * 60 * 1000;
 
-export function getEnabledSkillTemplates(): SkillTemplateData[] {
-  const templates = loadSkillTemplatesInternal();
+export function getLegacySkillTemplates(): SkillTemplateData[] {
+  const templates = loadSkillTemplatesInternal().filter((skill) => skill.id !== "hello-world");
+  if (!templates.length && process.env.BUILTIN_SKILL_IDS?.trim() !== "none") {
+    throw new Error("Packaged skill catalog unavailable; retry with the UI image assets present");
+  }
+  return selectTemplates(templates);
+}
+
+function selectTemplates(templates: SkillTemplateData[]): SkillTemplateData[] {
   const whitelist = process.env.BUILTIN_SKILL_IDS?.trim();
   if (whitelist) {
     const ids = new Set(whitelist.split(",").map((id) => id.trim()));
@@ -33,6 +40,13 @@ export function getEnabledSkillTemplates(): SkillTemplateData[] {
   return exampleId
     ? templates.filter((template) => template.id === exampleId)
     : templates;
+}
+
+export function getEnabledSkillTemplates(): SkillTemplateData[] {
+  const templates = loadSkillTemplatesInternal();
+  return process.env.BUILTIN_SKILL_IDS?.trim() || process.env.SKILLS_AUTO_SEED_TEMPLATE_ID?.trim()
+    ? selectTemplates(templates)
+    : templates.filter((skill) => skill.id === "hello-world");
 }
 
 export async function isSkillBootstrapComplete(): Promise<boolean> {
@@ -85,15 +99,24 @@ export function templateToAgentSkill(skill: SeedSkill): AgentSkill {
 /** Seed once per database; the completion record preserves later edits and deletions. */
 export async function bootstrapSkills(
   configuredSkills?: SeedSkill[],
+  options: { migration?: boolean } = {},
 ): Promise<{ seeded: number; skipped: number }> {
   const result = { seeded: 0, skipped: 0 };
   if (!isMongoDBConfigured || await isSkillBootstrapComplete()) return result;
+  const state = await getCollection<SkillBootstrap>("startup_seeds");
+  if (!options.migration && !(await state.findOne({ _id: BOOTSTRAP_ID }))) {
+    // Existing application records belong to the explicit catalog migration.
+    for (const name of ["users", "dynamic_agents", "agent_skills", "data_schema_versions", "conversations", "llm_models", "mcp_servers", "workflow_configs"]) {
+      const collection = await getCollection(name);
+      if (await collection.findOne({}, { projection: { _id: 1 } })) return result;
+    }
+  }
   const skills = configuredSkills ?? getEnabledSkillTemplates();
   if (!Array.isArray(skills)) throw new Error("Seed skills must be a list");
   const documents = skills.map(templateToAgentSkill);
-  if (documents.length === 0 && configuredSkills === undefined) return result;
-
-  const state = await getCollection<SkillBootstrap>("startup_seeds");
+  if (!documents.length && configuredSkills === undefined && process.env.BUILTIN_SKILL_IDS?.trim() !== "none") {
+    throw new Error("No startup skill templates found");
+  }
   const owner = randomUUID();
   const now = new Date();
   try {
@@ -109,6 +132,9 @@ export async function bootstrapSkills(
     );
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === 11000) {
+      if (options.migration && !await isSkillBootstrapComplete()) {
+        throw new Error("Skill bootstrap is running on another replica; retry the migration");
+      }
       return result;
     }
     throw error;
@@ -126,7 +152,7 @@ export async function bootstrapSkills(
       const imported = await collection.findOne({
         is_system: true, "metadata.template_source_id": document.id,
       });
-      if (configuredSkills === undefined) {
+      if (configuredSkills === undefined || options.migration) {
         const scans = await getCollection<AgentSkill>("builtin_skill_scans");
         const scan = await scans.findOne({ id: document.id });
         if (scan?.scan_status) {

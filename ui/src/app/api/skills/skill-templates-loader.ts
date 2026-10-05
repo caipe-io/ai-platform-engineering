@@ -334,7 +334,19 @@ export function loadSkillTemplatesInternal(): SkillTemplateData[] {
   } else if (hasFlatFiles) {
     templates = loadFromFlatLayout(skillsDir);
   } else {
-    return [];
+    templates = [];
+  }
+
+  for (const id of ["live-skills", "update-skills"]) {
+    const instructionPath = path.join(skillsDir, `${id}.md`);
+    if (!templates.some((skill) => skill.id === id) && fs.existsSync(instructionPath)) {
+      const template = buildTemplate(id, fs.readFileSync(instructionPath, "utf-8"), {
+        title: id === "live-skills" ? "Live Skills" : "Update Skills",
+        category: "General", tags: ["catalog"],
+      });
+      template.description = "Coding agent catalog integration";
+      templates.push(template);
+    }
   }
 
   templates.sort((a, b) => a.title.localeCompare(b.title));

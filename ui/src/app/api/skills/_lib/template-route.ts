@@ -1,25 +1,10 @@
-/**
- * Shared GET handler factory for skill-template routes.
- *
- * Background: `/api/skills/live-skills` and `/api/skills/update-skills` both
- * serve a per-agent rendered slash-command template. Their shape, query
- * params, response, and validation logic are identical — only the source
- * template file (and its env-var overrides) differ. This module factors
- * out the duplicated 350-line route into a configurable handler.
- *
- * Routes that use it stay tiny: import {@link makeTemplateRouteHandler},
- * pass a {@link TemplateRouteConfig}, and re-export the result as `GET`.
- *
- * History: this handler used to negotiate a `commands`-vs-`skills` layout
- * and four per-agent file formats. After the skills-only overhaul (see
- * docs/docs/specs/2026-05-04-skills-only-overhaul/) every agent receives
- * the same canonical SKILL.md, and the `layout` query param is silently
- * ignored for backward compatibility with copy-pasted one-liners.
- */
+/** Render gateway instructions from MongoDB, with file defaults for database-free development. */
 
 import fs from "fs";
 import { NextResponse } from "next/server";
 import path from "path";
+import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
+import type { AgentSkill } from "@/types/agent-skill";
 import {
 AGENTS,
 DEFAULT_AGENT_ID,
@@ -56,9 +41,7 @@ export interface TemplateRouteConfig {
    * Path (relative to repo root) to the chart-shipped template file.
    * E.g. `"charts/ai-platform-engineering/data/skills/live-skills.md"`.
    *
-   * Resolved against `process.cwd() + ".."` so it works both in the dev
-   * UI (running from `ui/`) and in the container (where `data/` is
-   * mounted via ConfigMap to `/app/data/<route-id>/`).
+   * Resolved against the repo root for database-free development.
    */
   chartTemplatePath: string;
 
@@ -103,9 +86,19 @@ function safeReadFile(filePath: string, routeId: string): string | null {
   }
 }
 
-function resolveTemplate(
+async function resolveTemplate(
   cfg: TemplateRouteConfig,
-): { template: string; source: string } {
+): Promise<{ template: string; source: string } | null> {
+  if (isMongoDBConfigured) {
+    const collection = await getCollection<AgentSkill>("agent_skills");
+    const skill = await collection.findOne({
+      is_system: true, visibility: "global",
+      $or: [{ id: cfg.routeId }, { "metadata.template_source_id": cfg.routeId }],
+    });
+    return skill?.skill_content
+      ? { template: skill.skill_content, source: `mongodb:${cfg.routeId}` }
+      : null;
+  }
   const envInline = process.env[cfg.envInlineKey];
   if (envInline && envInline.trim().length > 0) {
     return { template: envInline, source: `env:${cfg.envInlineKey}` };
@@ -119,12 +112,7 @@ function resolveTemplate(
     }
   }
 
-  // process.cwd() in dev is `ui/`, so step up one to reach repo root.
-  // In the container the chart `data/` is mounted at `/app/data/`, and
-  // the route's parent (process.cwd()) is `/app`, so `..` is wrong but
-  // the absolute path also works because `chartTemplatePath` is
-  // joined relative to cwd's parent. Operators wanting a different
-  // mount layout should set `envFileKey`.
+  // Database-free development resolves packaged files from the repo root.
   const chartPath = path.resolve(
     process.cwd(),
     "..",
@@ -218,7 +206,17 @@ export function makeTemplateRouteHandler(
       sanitizeBaseUrl(url.searchParams.get("base_url")) ??
       getRequestOrigin(request);
 
-    const { template: canonicalTemplate, source } = resolveTemplate(cfg);
+    let resolved: Awaited<ReturnType<typeof resolveTemplate>>;
+    try {
+      resolved = await resolveTemplate(cfg);
+    } catch (error) {
+      console.error(`[skills/${cfg.routeId}] Template lookup failed:`, error);
+      return NextResponse.json({ error: "Skill database unavailable" }, { status: 503 });
+    }
+    if (!resolved) {
+      return NextResponse.json({ error: `A global ${cfg.routeId} skill is required. Import its packaged template in the Skills UI, or apply the catalog migration for an existing install.` }, { status: 404 });
+    }
+    const { template: canonicalTemplate, source } = resolved;
 
     const parsedDescription = parseFrontmatter(canonicalTemplate).description.trim();
     const description =

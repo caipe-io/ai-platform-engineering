@@ -3,12 +3,13 @@
 const mockState = { findOne: jest.fn(), updateOne: jest.fn() };
 const mockSkills = { findOne: jest.fn(), updateOne: jest.fn() };
 const mockScans = { findOne: jest.fn() };
+const mockExisting = { findOne: jest.fn() };
 const mockTemplates = jest.fn();
 const mockReconcile = jest.fn();
 jest.mock("@/lib/mongodb", () => ({
   isMongoDBConfigured: true,
   getCollection: async (name: string) =>
-    name === "startup_seeds" ? mockState : name === "agent_skills" ? mockSkills : mockScans,
+    name === "startup_seeds" ? mockState : name === "agent_skills" ? mockSkills : name === "builtin_skill_scans" ? mockScans : mockExisting,
 }));
 jest.mock("@/app/api/skills/skill-templates-loader", () => ({
   loadSkillTemplatesInternal: () => mockTemplates(),
@@ -19,16 +20,18 @@ jest.mock("@/lib/rbac/openfga-owned-resources-reconcile", () => ({
   reconcileShareableResource: (...args: unknown[]) => mockReconcile(...args),
 }));
 
-import { bootstrapSkills, getEnabledSkillTemplates } from "../seed-skills";
+import { bootstrapSkills, getEnabledSkillTemplates, getLegacySkillTemplates } from "../seed-skills";
 
 const example = { id: "example-skill", name: "Example Skill", content: "Summarize a document." };
+const hello = { ...example, id: "hello-world", name: "Hello World", content: "Say Hello, world! without tools." };
 const originalEnv = process.env;
 beforeEach(() => {
   jest.resetAllMocks();
   process.env = { ...originalEnv };
   delete process.env.BUILTIN_SKILL_IDS;
   delete process.env.SKILLS_AUTO_SEED_TEMPLATE_ID;
-  mockTemplates.mockReturnValue([example]);
+  mockTemplates.mockReturnValue([example, hello]);
+  mockExisting.findOne.mockResolvedValue(null);
   mockState.findOne.mockResolvedValue(null);
   mockState.updateOne.mockResolvedValue({ matchedCount: 1 });
   mockSkills.findOne.mockImplementation(async (query) => query.id
@@ -74,7 +77,7 @@ it("preserves existing content and restricted visibility", async () => {
 
 it("deduplicates templates already imported under another id", async () => {
   mockSkills.findOne.mockResolvedValue({ id: "imported-skill", is_system: true, visibility: "global" });
-  expect(await bootstrapSkills([example])).toEqual({ seeded: 0, skipped: 1 });
+  expect(await bootstrapSkills([example], { migration: true })).toEqual({ seeded: 0, skipped: 1 });
   expect(mockSkills.updateOne).not.toHaveBeenCalled();
   expect(mockReconcile).toHaveBeenCalledWith(expect.objectContaining({ objectId: "imported-skill" }));
 });
@@ -125,4 +128,36 @@ it("honors the packaged template whitelist and the explicit none setting", () =>
   expect(getEnabledSkillTemplates()).toEqual([]);
   process.env.BUILTIN_SKILL_IDS = example.id;
   expect(getEnabledSkillTemplates()).toEqual([example]);
+});
+
+it("seeds only Hello World by default", async () => {
+  expect(getEnabledSkillTemplates()).toEqual([hello]);
+  await bootstrapSkills();
+  expect(mockSkills.updateOne.mock.calls[0][0]).toEqual({ id: "hello-world" });
+});
+
+it("leaves existing installations for the explicit UI migration", async () => {
+  mockExisting.findOne.mockResolvedValueOnce({ id: "test-user" });
+  await bootstrapSkills();
+  expect(mockSkills.updateOne).not.toHaveBeenCalled();
+  expect(mockState.updateOne).not.toHaveBeenCalled();
+});
+
+it("retries an unfinished startup bootstrap even after skill records exist", async () => {
+  mockState.findOne.mockResolvedValue({ _id: "skills" });
+  mockExisting.findOne.mockResolvedValue({ id: "test-user" });
+  await bootstrapSkills();
+  expect(mockSkills.updateOne).toHaveBeenCalled();
+});
+
+it("does not complete a migration while another replica holds its lease", async () => {
+  mockState.updateOne.mockRejectedValueOnce({ code: 11000 });
+  await expect(bootstrapSkills([example], { migration: true })).rejects.toThrow("another replica");
+});
+
+it("does not consume migration seeds when packaged assets are unavailable", () => {
+  mockTemplates.mockReturnValue([]);
+  expect(() => getLegacySkillTemplates()).toThrow("catalog unavailable");
+  process.env.BUILTIN_SKILL_IDS = "none";
+  expect(getLegacySkillTemplates()).toEqual([]);
 });

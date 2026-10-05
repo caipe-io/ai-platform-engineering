@@ -69,10 +69,16 @@ caipe-ui:
 
 - The UI seeds skills once per database at server startup. A completion record
   in `startup_seeds` preserves subsequent edits and deletions across upgrades.
-- Omit `skills` to select image packaged templates using `BUILTIN_SKILL_IDS`
-  (`none` disables them; empty selects all). Set `skills: []` to initialize
-  without any skills. After initialization, use the Skills UI to add more.
+- Omit `skills` to seed only the tool-free **Hello World** example. `BUILTIN_SKILL_IDS` can select additional packaged templates (`none` disables them). Set `skills: []` to initialize without any skills. After initialization, use the Skills UI to add more.
 - Packaged defaults live in the UI image, and `agent_skills` supplies the
   persisted catalog. Template imports remain available explicitly.
-- The chart omits legacy mounts referencing the `skill-templates` ConfigMap
+- The chart omits legacy mounts referencing the `skill-templates` and `skills-live-skills` ConfigMaps
   on upgrade. Remove those obsolete entries from deployment overrides.
+
+### Existing installations
+
+- In the admin migration UI, preview and apply **Move packaged skill catalog into MongoDB**.
+- The migration inserts missing packaged catalog skills and the `live-skills` / `update-skills` gateway instructions. It preserves edited records, restricted visibility, and imported copies.
+- If `app-config.yaml` provides `skills`, the migration uses that list instead. A missing configured file fails the migration without marking it complete.
+- New databases already initialized by startup are left unchanged. Later restarts and upgrades do not recreate deleted skills.
+- Coding-agent helper scripts ship in the UI image; they do not need a ConfigMap or database seed.

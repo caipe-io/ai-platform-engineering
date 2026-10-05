@@ -21,6 +21,8 @@
  *   - Cache-Control: no-store is set.
  */
 
+jest.mock('@/lib/mongodb', () => ({ isMongoDBConfigured: false }));
+
 const mockNextResponseJson = jest.fn(
   (data: unknown, init?: { headers?: Record<string, string>; status?: number }) => ({
     json: async () => data,

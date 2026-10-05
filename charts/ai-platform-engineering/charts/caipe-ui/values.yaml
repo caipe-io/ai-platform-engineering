@@ -192,7 +192,7 @@ config:
   ENABLE_SUBAGENT_CARDS: "true"
   SSO_ENABLED: "true"
   # Built-in skill IDs to seed (comma-separated whitelist).
-  # Empty selects all packaged templates for initial database seeding.
+  # Empty selects only the tool-free Hello World skill for new databases.
   # Use "none" to disable packaged seeds, or a comma-separated list of IDs
   # to select a subset. appConfig.skills supplies an explicit initial catalog.
   BUILTIN_SKILL_IDS: ""
@@ -566,7 +566,7 @@ externalSecrets:
 # Environment variables in values support ${VAR_NAME} and ${VAR_NAME:-default} syntax.
 appConfig:
   # Skills are inserted once per database and remain managed in MongoDB.
-  # Omit skills to select packaged templates using BUILTIN_SKILL_IDS.
+  # Omit skills to seed Hello World; BUILTIN_SKILL_IDS can select other packaged templates.
   # Set skills: [] to initialize without any skills.
   # skills:
   #   - id: example-skill

@@ -18,12 +18,10 @@ import { NextRequest,NextResponse } from "next/server";
  * POST /api/skills/seed — seed MongoDB from disk templates (charts/data/skills/).
  * GET /api/skills/seed — check if seeding is needed
  *
- * **Default auto-seed** (when `BUILTIN_SKILL_IDS` is unset): seed **all**
- * templates discovered on disk. The legacy single-example mode is still
- * available by setting `SKILLS_AUTO_SEED_TEMPLATE_ID` to a specific template id
- * — useful for minimal demo deployments where only one example skill is wanted.
- * Set `BUILTIN_SKILL_IDS` to a comma-separated list to seed an explicit subset
- * (admin); in that case, non-whitelisted system rows are also deleted.
+ * Default selection is the tool-free Hello World skill. Startup bootstrap is
+ * separate and runs once per database. This endpoint supports explicit imports.
+ * BUILTIN_SKILL_IDS selects a subset; explicit imports also remove excluded
+ * packaged system rows in whitelist mode.
  */
 
 async function checkSeedingStatus(): Promise<{

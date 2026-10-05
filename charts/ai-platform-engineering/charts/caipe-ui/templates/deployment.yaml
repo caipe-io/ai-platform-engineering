@@ -1,7 +1,7 @@
 {{- $legacySkillVolumes := list }}
 {{- $volumes := list }}
 {{- range .Values.volumes }}
-{{- if eq ((.configMap | default dict).name | default "") "skill-templates" }}
+{{- if has ((.configMap | default dict).name | default "") (list "skill-templates" "skills-live-skills") }}
 {{- $legacySkillVolumes = append $legacySkillVolumes .name }}
 {{- else }}
 {{- $volumes = append $volumes . }}

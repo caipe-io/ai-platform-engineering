@@ -13,7 +13,8 @@
  * Query params, response shape, and validation are documented on
  * {@link makeTemplateRouteHandler}. Stable across both routes.
  *
- * Canonical template resolution (highest priority first):
+ * MongoDB serves the global system skill record by route id.
+ * Without MongoDB, template resolution is:
  *   1. SKILLS_LIVE_SKILLS_TEMPLATE env var (raw markdown)
  *   2. File at SKILLS_LIVE_SKILLS_FILE env var
  *   3. <repo>/charts/ai-platform-engineering/data/skills/live-skills.md

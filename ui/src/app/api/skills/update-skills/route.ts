@@ -12,7 +12,8 @@
  * shape match `/api/skills/live-skills` byte-for-byte; only the
  * template file and defaults differ.
  *
- * Canonical template resolution (highest priority first):
+ * MongoDB serves the global system skill record by route id.
+ * Without MongoDB, template resolution is:
  *   1. SKILLS_UPDATE_SKILLS_TEMPLATE env var (raw markdown)
  *   2. File at SKILLS_UPDATE_SKILLS_FILE env var
  *   3. <repo>/charts/ai-platform-engineering/data/skills/update-skills.md
