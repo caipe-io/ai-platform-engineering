@@ -23,6 +23,9 @@ async function migrationSeeds(): Promise<SeedSkill[]> {
 
 export async function planSkillsDatabaseCatalogMigration(): Promise<MigrationPlanResult> {
   const seeds = await migrationSeeds();
+  const configured = seeds.length > 0 && process.env.APP_CONFIG_PATH
+    ? (await import("@/lib/seed-config")).loadSeedConfig(process.env.APP_CONFIG_PATH).skills !== undefined
+    : false;
   const collection = await getCollection<AgentSkill>("agent_skills");
   const missing: SeedSkill[] = [];
   for (const skill of seeds) {
@@ -40,7 +43,9 @@ export async function planSkillsDatabaseCatalogMigration(): Promise<MigrationPla
     from_version: 3,
     to_version: 4,
     counts: { selected_skills: seeds.length, missing_skills: missing.length, existing_skills: seeds.length - missing.length },
-    warnings: missing.length ? ["Missing catalog skills will be inserted. Existing content and visibility are preserved."] : [],
+    warnings: configured
+      ? ["Configured skills are managed by app-config.yaml. Its content and global visibility replace matching database records."]
+      : missing.length ? ["Missing catalog skills will be inserted. Existing content and visibility are preserved."] : [],
     sample_diffs: missing.slice(0, 5).map((skill) => ({
       collection: "agent_skills", id: skill.id, before: {},
       after: { id: skill.id, name: skill.name, owner_id: "system", visibility: "global" },
@@ -54,6 +59,18 @@ export async function applySkillsDatabaseCatalogMigration(input: {
   actor: string; now: string;
 }): Promise<MigrationApplyResult> {
   const plan = await planSkillsDatabaseCatalogMigration();
+  if (process.env.APP_CONFIG_PATH && !await isSkillBootstrapComplete()) {
+    const { loadSeedConfig, seedConfiguredSkills } = await import("@/lib/seed-config");
+    const configured = loadSeedConfig(process.env.APP_CONFIG_PATH).skills;
+    if (configured !== undefined) {
+      const count = await seedConfiguredSkills(configured);
+      await bootstrapSkills([], { migration: true });
+      return {
+        ...plan, applied_counts: { skills_managed: count },
+        applied_at: input.now, applied_by: input.actor,
+      };
+    }
+  }
   const result = await bootstrapSkills(await migrationSeeds(), { migration: true });
   return {
     ...plan,

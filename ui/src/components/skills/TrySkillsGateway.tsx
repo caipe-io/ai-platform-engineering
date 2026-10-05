@@ -272,8 +272,11 @@ export function TrySkillsGateway() {
         signal: controller.signal,
       })
         .then(async (res) => {
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Unable to load the gateway skill");
+          const data = await res.json().catch(() => null);
+          if (!res.ok) throw new Error(data?.error || `Unable to load the gateway skill (${res.status})`);
+          if (!data || typeof data.template !== "string") {
+            throw new Error("Unable to load the gateway skill: invalid response");
+          }
           return data;
         })
         .then((data: LiveSkillsResponse | null) => {

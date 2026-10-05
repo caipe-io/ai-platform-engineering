@@ -179,7 +179,7 @@ export default function SkillWorkspacePage({
     };
   }, [id, isNew, configs, getSkillById, isLoading]);
 
-  // Built-in / hub skills are read-only — surface that explicitly. We
+  // Config-managed and filesystem catalog skills are read-only. We
   // derive the source from the unified catalog metadata since `AgentSkill`
   // itself doesn't carry a top-level `source` field.
   //
@@ -194,7 +194,7 @@ export default function SkillWorkspacePage({
       (skill.metadata as { catalog_source?: string } | undefined)
         ?.catalog_source;
     if (src === "hub" || src === "default") return true;
-    if (skill.is_system) return true;
+    if (skill.config_driven) return true;
     return false;
   }, [skill]);
 

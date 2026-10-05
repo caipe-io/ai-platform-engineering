@@ -14,7 +14,8 @@
  */
 
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
-import { bootstrapSkills, type SeedSkill } from "@/lib/seed-skills";
+import { bootstrapSkills, templateToAgentSkill, type SeedSkill } from "@/lib/seed-skills";
+import type { AgentSkill } from "@/types/agent-skill";
 import { BUILTIN_MCP_CREDENTIAL_SOURCES } from "@/lib/rbac/agentgateway-mcp-discovery";
 import { computeIngestionSourceId } from "@/lib/ingestion-source-id";
 import {
@@ -34,6 +35,7 @@ import {
 } from "@/lib/rbac/unlinked-service-account";
 import {
   deleteAllIngestionSourceRelationshipTuples,
+  deleteAllSkillRelationshipTuples,
   reconcileConfigDrivenLlmModelRelationships,
   reconcileConfigDrivenMcpServerRelationships,
   reconcileDataSourceRelationships,
@@ -1066,22 +1068,55 @@ export async function adoptConfigImportedRagSources(
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Stale cleanup
+// Configured skills
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * Remove config-driven entities that are no longer in the config.
- *
- * When an entity is removed from app-config.yaml, it should be deleted
- * from the database on the next server restart.
- */
+/** Apply declarative skills using the same config_driven lifecycle as agents. */
+export async function seedConfiguredSkills(skills: SeedSkill[]): Promise<number> {
+  const documents = skills.map(templateToAgentSkill);
+  if (new Set(documents.map((skill) => skill.id)).size !== documents.length) {
+    throw new Error("Configured skill IDs must be unique");
+  }
+  const collection = await getCollection<AgentSkill>("agent_skills");
+  for (const document of documents) {
+    const existing = await collection.findOne({ id: document.id });
+    document.config_driven = true;
+    document.created_at = existing?.created_at ?? document.created_at;
+    if (existing?.skill_content === document.skill_content &&
+        JSON.stringify(existing.ancillary_files ?? {}) === JSON.stringify(document.ancillary_files ?? {})) {
+      document.scan_status = existing.scan_status;
+      document.scan_summary = existing.scan_summary;
+      document.scan_updated_at = existing.scan_updated_at;
+      document.scan_override = existing.scan_override;
+    }
+    await collection.replaceOne({ id: document.id }, document, { upsert: true });
+    await reconcileShareableResource({
+      objectType: "skill", objectId: document.id,
+      sharedWithOrg: true, memberRelations: ["user"],
+    });
+  }
+  return documents.length;
+}
+
+/** Remove config-driven entities absent from the loaded application config. */
 export async function cleanupStaleConfigDriven(
   currentAgentIds: Set<string>,
   currentServerIds: Set<string>,
   currentModelIds: Set<string>,
   currentWorkflowIds: Set<string>,
   currentRagSourceIds: Set<string>,
+  currentSkillIds: Set<string> = new Set(),
 ): Promise<void> {
+  const skillCollection = await getCollection<AgentSkill>("agent_skills");
+  const managedSkills = await skillCollection.find({ config_driven: true }).toArray();
+  for (const skill of managedSkills) {
+    if (!currentSkillIds.has(skill.id)) {
+      if (isOpenFgaReconciliationEnabled()) {
+        await deleteAllSkillRelationshipTuples(skill.id);
+      }
+      await skillCollection.deleteOne({ id: skill.id, config_driven: true });
+    }
+  }
   // Cleanup stale agents
   const agentCollection =
     await getCollection<DynamicAgentConfig>("dynamic_agents");
@@ -1762,7 +1797,8 @@ export async function applySeedConfig(): Promise<void> {
   } else {
     try {
       const config = loadSeedConfig(configPath);
-      await seedSkills(config.skills);
+      await seedSkills(config.skills === undefined ? undefined : []);
+      const skillCount = await seedConfiguredSkills(config.skills ?? []);
 
       console.log(
         `[seed-config] Found ${config.models.length} models, ` +
@@ -1820,6 +1856,7 @@ export async function applySeedConfig(): Promise<void> {
         currentModelIds,
         currentWorkflowIds,
         currentRagSourceIds,
+        new Set((config.skills ?? []).map((skill) => skill.id)),
       );
 
       // Backfill credential_sources on previously-discovered built-in MCP
@@ -1829,7 +1866,7 @@ export async function applySeedConfig(): Promise<void> {
       console.log(
         `[seed-config] Applied: ${modelCount} models, ` +
           `${serverCount} MCP servers, ${agentCount} agents, ${workflowCount} workflow configs, ` +
-          `${ragSourceCount} rag sources` +
+          `${ragSourceCount} rag sources, ${skillCount} skills` +
           (credBackfillCount > 0
             ? `, ${credBackfillCount} MCP credential_sources backfilled`
             : ""),

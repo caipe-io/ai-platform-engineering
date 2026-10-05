@@ -24,29 +24,14 @@ const LEASE_MS = 5 * 60 * 1000;
 
 export function getLegacySkillTemplates(): SkillTemplateData[] {
   const templates = loadSkillTemplatesInternal().filter((skill) => skill.id !== "hello-world");
-  if (!templates.length && process.env.BUILTIN_SKILL_IDS?.trim() !== "none") {
+  if (!templates.length) {
     throw new Error("Packaged skill catalog unavailable; retry with the UI image assets present");
   }
-  return selectTemplates(templates);
+  return templates;
 }
 
-function selectTemplates(templates: SkillTemplateData[]): SkillTemplateData[] {
-  const whitelist = process.env.BUILTIN_SKILL_IDS?.trim();
-  if (whitelist) {
-    const ids = new Set(whitelist.split(",").map((id) => id.trim()));
-    return templates.filter((template) => ids.has(template.id));
-  }
-  const exampleId = process.env.SKILLS_AUTO_SEED_TEMPLATE_ID?.trim();
-  return exampleId
-    ? templates.filter((template) => template.id === exampleId)
-    : templates;
-}
-
-export function getEnabledSkillTemplates(): SkillTemplateData[] {
-  const templates = loadSkillTemplatesInternal();
-  return process.env.BUILTIN_SKILL_IDS?.trim() || process.env.SKILLS_AUTO_SEED_TEMPLATE_ID?.trim()
-    ? selectTemplates(templates)
-    : templates.filter((skill) => skill.id === "hello-world");
+export function getDefaultSkillTemplates(): SkillTemplateData[] {
+  return loadSkillTemplatesInternal().filter((skill) => skill.id === "hello-world");
 }
 
 export async function isSkillBootstrapComplete(): Promise<boolean> {
@@ -77,6 +62,7 @@ export function templateToAgentSkill(skill: SeedSkill): AgentSkill {
     }],
     owner_id: "system",
     is_system: true,
+    config_driven: false,
     visibility: "global",
     created_at: now,
     updated_at: now,
@@ -111,10 +97,10 @@ export async function bootstrapSkills(
       if (await collection.findOne({}, { projection: { _id: 1 } })) return result;
     }
   }
-  const skills = configuredSkills ?? getEnabledSkillTemplates();
+  const skills = configuredSkills ?? getDefaultSkillTemplates();
   if (!Array.isArray(skills)) throw new Error("Seed skills must be a list");
   const documents = skills.map(templateToAgentSkill);
-  if (!documents.length && configuredSkills === undefined && process.env.BUILTIN_SKILL_IDS?.trim() !== "none") {
+  if (!documents.length && configuredSkills === undefined) {
     throw new Error("No startup skill templates found");
   }
   const owner = randomUUID();

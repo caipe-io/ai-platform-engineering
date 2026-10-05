@@ -30,7 +30,9 @@ const mockReconcileDataSourceRelationships = jest.fn();
 
 jest.mock("@/lib/mongodb", () => ({
   isMongoDBConfigured: true,
-  getCollection: jest.fn(async () => mockCollection),
+  getCollection: jest.fn(async (name: string) => name === "agent_skills"
+    ? { find: () => ({ toArray: async () => [] }) }
+    : mockCollection),
 }));
 jest.mock("@/lib/rbac/openfga-owned-resources-reconcile", () => ({
   reconcileIngestionSourceRelationships: (...args: unknown[]) =>

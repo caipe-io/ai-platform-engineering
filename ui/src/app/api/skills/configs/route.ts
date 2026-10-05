@@ -9,10 +9,6 @@ successResponse,
 withAuth,
 withErrorHandler,
 } from "@/lib/api-middleware";
-import {
-BUILTIN_LOCKED_MESSAGE,
-canMutateBuiltinSkill,
-} from "@/lib/builtin-skill-policy";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
 import { syncSkillResource } from "@/lib/rbac/keycloak-resource-sync";
 import {
@@ -45,7 +41,7 @@ import { NextRequest,NextResponse } from "next/server";
  *
  * Storage: MongoDB collection `agent_skills`
  *
- * - User ownership (`owner_id`); built-in rows (`is_system`) editable/deletable by any authenticated user (restore via import/seed)
+ * - Resource permissions govern database skills; config_driven rows are managed through app-config.yaml.
  * - Catalog browse remains GET `/api/skills` (merged view), not this route
  *
  * HTTP: GET/POST/PUT/DELETE `/api/skills/configs`
@@ -158,13 +154,10 @@ async function updateAgentSkillInMongoDB(
     console.log(`[MongoDB] ERROR: Config not found`);
     throw new ApiError("Agent config not found", 404);
   }
-
-  // Layered authorisation. Built-in lock first so a misconfigured
-  // ownership check can't accidentally let a built-in through.
-  if (existing.is_system && !canMutateBuiltinSkill(existing)) {
-    console.log(`[MongoDB] ERROR: Built-in skill mutation locked by policy`);
-    throw new ApiError(BUILTIN_LOCKED_MESSAGE, 403);
+  if (existing.config_driven) {
+    throw new ApiError("Config-driven skills are read-only. Update app-config.yaml.", 403);
   }
+
   console.log(`[MongoDB] Permission checks passed`);
 
   const updatePayload = {
@@ -223,10 +216,10 @@ async function deleteAgentSkillFromMongoDB(
   if (!existing) {
     throw new ApiError("Agent config not found", 404);
   }
-
-  if (existing.is_system && !canMutateBuiltinSkill(existing)) {
-    throw new ApiError(BUILTIN_LOCKED_MESSAGE, 403);
+  if (existing.config_driven) {
+    throw new ApiError("Config-driven skills cannot be deleted through the UI. Remove them from app-config.yaml.", 403);
   }
+
   await collection.deleteOne({ id });
 
   await syncSkillResource("delete", id, existing.name);
@@ -298,6 +291,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       tasks: body.tasks,
       owner_id: user.email,
       is_system: false,
+      config_driven: false,
       created_at: now,
       updated_at: now,
       metadata: body.metadata,
@@ -448,6 +442,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     console.log(`[API PUT] User: ${user.email}, Role: ${user.role}, IsAdmin: ${isUserAdmin(user)}`);
 
     const body: UpdateAgentSkillInput = await request.json();
+    delete (body as Record<string, unknown>).config_driven;
     console.log(`[API PUT] Request body:`, JSON.stringify(body, null, 2));
 
     if (Object.keys(body).length === 0) {

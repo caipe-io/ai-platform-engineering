@@ -783,10 +783,6 @@ caipe-ui:
     SSO_ENABLED: "false"
     # Okta background sync is configured via the structured `oktaSync:` block
     # below (sibling of `config:`), modeled after the Backstage Okta provider.
-    # Built-in skill IDs to seed (comma-separated whitelist).
-    # Applies to initial database seeding; existing skills are preserved.
-    # When unset or empty, only the tool-free Hello World skill is seeded.
-    # BUILTIN_SKILL_IDS: "qs-deploy-status,qs-pr-review"
     # Dynamic Agents: set to "true" to enable custom agent creation and management
     # Requires admin role and MongoDB storage mode
     DYNAMIC_AGENTS_ENABLED: "false"

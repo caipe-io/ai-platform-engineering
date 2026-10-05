@@ -1,18 +1,16 @@
 /** @jest-environment node */
 
-import { getEnabledSkillTemplates, getLegacySkillTemplates } from "../seed-skills";
+import { getDefaultSkillTemplates, getLegacySkillTemplates } from "../seed-skills";
 
 const originalEnv = process.env;
 beforeEach(() => {
   process.env = { ...originalEnv };
-  delete process.env.BUILTIN_SKILL_IDS;
-  delete process.env.SKILLS_AUTO_SEED_TEMPLATE_ID;
   delete process.env.SKILLS_DIR;
 });
 afterEach(() => { process.env = originalEnv; });
 
 it("packages a tool-free example as the only initial default", () => {
-  const templates = getEnabledSkillTemplates();
+  const templates = getDefaultSkillTemplates();
   expect(templates.map((skill) => skill.id)).toEqual(["hello-world"]);
   expect(templates[0].content).toContain("Do not call tools");
 });

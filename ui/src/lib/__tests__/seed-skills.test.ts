@@ -20,7 +20,7 @@ jest.mock("@/lib/rbac/openfga-owned-resources-reconcile", () => ({
   reconcileShareableResource: (...args: unknown[]) => mockReconcile(...args),
 }));
 
-import { bootstrapSkills, getEnabledSkillTemplates, getLegacySkillTemplates } from "../seed-skills";
+import { bootstrapSkills, getDefaultSkillTemplates, getLegacySkillTemplates } from "../seed-skills";
 
 const example = { id: "example-skill", name: "Example Skill", content: "Summarize a document." };
 const hello = { ...example, id: "hello-world", name: "Hello World", content: "Say Hello, world! without tools." };
@@ -28,8 +28,6 @@ const originalEnv = process.env;
 beforeEach(() => {
   jest.resetAllMocks();
   process.env = { ...originalEnv };
-  delete process.env.BUILTIN_SKILL_IDS;
-  delete process.env.SKILLS_AUTO_SEED_TEMPLATE_ID;
   mockTemplates.mockReturnValue([example, hello]);
   mockExisting.findOne.mockResolvedValue(null);
   mockState.findOne.mockResolvedValue(null);
@@ -123,15 +121,8 @@ it("rejects invalid seed input before claiming the lease", async () => {
   expect(mockState.updateOne).not.toHaveBeenCalled();
 });
 
-it("honors the packaged template whitelist and the explicit none setting", () => {
-  process.env.BUILTIN_SKILL_IDS = "none";
-  expect(getEnabledSkillTemplates()).toEqual([]);
-  process.env.BUILTIN_SKILL_IDS = example.id;
-  expect(getEnabledSkillTemplates()).toEqual([example]);
-});
-
 it("seeds only Hello World by default", async () => {
-  expect(getEnabledSkillTemplates()).toEqual([hello]);
+  expect(getDefaultSkillTemplates()).toEqual([hello]);
   await bootstrapSkills();
   expect(mockSkills.updateOne.mock.calls[0][0]).toEqual({ id: "hello-world" });
 });
@@ -158,6 +149,4 @@ it("does not complete a migration while another replica holds its lease", async 
 it("does not consume migration seeds when packaged assets are unavailable", () => {
   mockTemplates.mockReturnValue([]);
   expect(() => getLegacySkillTemplates()).toThrow("catalog unavailable");
-  process.env.BUILTIN_SKILL_IDS = "none";
-  expect(getLegacySkillTemplates()).toEqual([]);
 });

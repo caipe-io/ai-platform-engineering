@@ -126,6 +126,45 @@ beforeEach(() => {
   Object.keys(mockCollections).forEach((key) => delete mockCollections[key]);
 });
 
+describe("configured skill mutation protection", () => {
+  beforeEach(() => {
+    mockGetServerSession.mockResolvedValue(userSession());
+    mockCollections.agent_skills = createMockCollection();
+    mockCollections.agent_skills.findOne.mockResolvedValue({
+      id: "example-skill", name: "Example Skill", tasks: [VALID_TASK],
+      owner_id: "system", is_system: true, config_driven: true,
+    });
+  });
+
+  it("rejects edits even when the request attempts to clear config_driven", async () => {
+    const { PUT } = await import("../skills/configs/route");
+    const response = await PUT(makeRequest("/api/skills/configs?id=example-skill", {
+      method: "PUT", body: JSON.stringify({ name: "Changed", config_driven: false }),
+    }));
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toContain("app-config.yaml");
+    expect(mockCollections.agent_skills.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("rejects deletion through the API", async () => {
+    const { DELETE } = await import("../skills/configs/route");
+    const response = await DELETE(makeRequest("/api/skills/configs?id=example-skill", { method: "DELETE" }));
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toContain("app-config.yaml");
+    expect(mockCollections.agent_skills.deleteOne).not.toHaveBeenCalled();
+  });
+
+  it("allows deletion of an ordinary database default", async () => {
+    mockCollections.agent_skills.findOne.mockResolvedValue({
+      id: "hello-world", owner_id: "system", is_system: true, config_driven: false,
+    });
+    const { DELETE } = await import("../skills/configs/route");
+    const response = await DELETE(makeRequest("/api/skills/configs?id=hello-world", { method: "DELETE" }));
+    expect(response.status).toBe(200);
+    expect(mockCollections.agent_skills.deleteOne).toHaveBeenCalled();
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST - Create with visibility
 // ─────────────────────────────────────────────────────────────────────────────

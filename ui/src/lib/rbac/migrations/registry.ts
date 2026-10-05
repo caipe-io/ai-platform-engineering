@@ -272,7 +272,7 @@ export const MIGRATION_DEFINITIONS: MigrationDefinition[] = [
     to_version: 4,
     kind: "explicit",
     title: "Move packaged skill catalog into MongoDB",
-    description: "Insert missing catalog and coding-agent gateway skills once. Preserve existing edits, visibility, and imported copies. Fresh installs retain their initial configured catalog.",
+    description: "Insert missing packaged catalog and gateway skills once, preserving existing edits and visibility. Skills declared in app-config.yaml follow its config-driven lifecycle instead.",
     confirmation: SKILLS_DATABASE_CATALOG_CONFIRMATION,
     required: true,
     blocking: false,

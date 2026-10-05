@@ -1,6 +1,5 @@
 import {
 getAgentSkillVisibleToUser,
-userCanModifyAgentSkill,
 } from "@/lib/agent-skill-visibility";
 import {
 ApiError,
@@ -96,8 +95,8 @@ export const PUT = withErrorHandler(
       const skill = await getAgentSkillVisibleToUser(id);
       if (!skill) throw new ApiError("Skill not found", 404);
       await requireSkillPermission(session, id, "write");
-      if (!userCanModifyAgentSkill(skill)) {
-        throw new ApiError("You don't have permission to edit this skill", 403);
+      if (skill.config_driven) {
+        throw new ApiError("Config-driven skills are read-only. Update app-config.yaml.", 403);
       }
 
       const body = (await request.json()) as PutBody;
@@ -193,8 +192,8 @@ export const DELETE = withErrorHandler(
       const skill = await getAgentSkillVisibleToUser(id);
       if (!skill) throw new ApiError("Skill not found", 404);
       await requireSkillPermission(session, id, "write");
-      if (!userCanModifyAgentSkill(skill)) {
-        throw new ApiError("You don't have permission to edit this skill", 403);
+      if (skill.config_driven) {
+        throw new ApiError("Config-driven skills are read-only. Update app-config.yaml.", 403);
       }
       const collection = await getCollection<AgentSkill>("agent_skills");
       const now = new Date();

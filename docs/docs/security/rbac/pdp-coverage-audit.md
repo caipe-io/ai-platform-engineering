@@ -56,7 +56,6 @@ return withAuth(request, async (req, user, session) => { ... });
 | `/api/workflow-configs` (all methods)                 | `dynamic_agent#view` |
 | `/api/workflow-runs` (`GET` / non-`GET`)              | `dynamic_agent#view` / `invoke` |
 | `/api/catalog-api-keys`                               | `skill#configure`              |
-| `/api/skills/seed`                                    | `admin_ui#admin`               |
 | `/api/skills/token`                                   | `skill#invoke`                 |
 | `/api/skills` / `/api/skill-templates` (everything else) | `skill#view` / `delete` / `configure` |
 | **fallback** (`GET` / non-`GET`)                      | `admin_ui#view` / `manage`     |

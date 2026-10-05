@@ -9,13 +9,19 @@ const mockCollection = {
   find: jest.fn(() => ({ toArray: async () => [] })),
   findOne: jest.fn(async () => null),
   countDocuments: jest.fn(async () => 1),
+  replaceOne: jest.fn(async () => ({ upsertedCount: 1 })),
+  updateOne: jest.fn(async () => ({ matchedCount: 1 })),
 };
 jest.mock("@/lib/mongodb", () => ({
   isMongoDBConfigured: true,
   getCollection: async () => mockCollection,
 }));
 jest.mock("@/lib/seed-skills", () => ({
+  ...jest.requireActual("@/lib/seed-skills"),
   bootstrapSkills: (...args: unknown[]) => mockBootstrapSkills(...args),
+}));
+jest.mock("@/lib/rbac/openfga-owned-resources-reconcile", () => ({
+  reconcileShareableResource: async () => ({}),
 }));
 jest.mock("@/lib/rbac/openfga", () => ({
   isOpenFgaReconciliationEnabled: () => false,
@@ -52,15 +58,19 @@ it("does not consume skill bootstrap when a configured file is missing", async (
 
   fs.writeFileSync(process.env.APP_CONFIG_PATH!, "skills:\n  - id: example-skill\n    name: Example Skill\n    content: Summarize a document.");
   await applySeedConfig();
-  expect(mockBootstrapSkills).toHaveBeenCalledWith([
-    { id: "example-skill", name: "Example Skill", content: "Summarize a document." },
-  ]);
+  expect(mockCollection.replaceOne).toHaveBeenCalledWith(
+    { id: "example-skill" },
+    expect.objectContaining({ skill_content: "Summarize a document.", config_driven: true }),
+    { upsert: true },
+  );
+  expect(mockBootstrapSkills).toHaveBeenCalledWith([]);
 });
 
 it("initializes an empty catalog for an explicitly loaded skills list", async () => {
   fs.writeFileSync(process.env.APP_CONFIG_PATH!, "skills: []");
   await applySeedConfig();
   expect(mockBootstrapSkills).toHaveBeenCalledWith([]);
+  expect(mockCollection.replaceOne).not.toHaveBeenCalled();
 });
 
 it("selects packaged defaults when no application config path is set", async () => {

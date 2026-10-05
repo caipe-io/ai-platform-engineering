@@ -2,7 +2,6 @@ import { NextRequest } from "next/server";
 
 import {
 getAgentSkillVisibleToUser,
-userCanModifyAgentSkill,
 } from "@/lib/agent-skill-visibility";
 import {
 ApiError,
@@ -29,9 +28,7 @@ import type { AgentSkill } from "@/types/agent-skill";
  * a year ago may fail today's scanner policy; the gallery's
  * scan-status pill must reflect a current verdict, not a frozen one.
  *
- * Auth: requires the same write permission as a normal save
- * (`userCanModifyAgentSkill`) — restore is just a save with a
- * pre-canned body.
+ * Auth: requires the same resource write permission as a normal save.
  */
 export const POST = withErrorHandler(
   async (
@@ -51,11 +48,8 @@ export const POST = withErrorHandler(
         throw new ApiError("Skill not found", 404);
       }
       await requireSkillPermission(session, id, "write");
-      if (!userCanModifyAgentSkill(skill)) {
-        throw new ApiError(
-          "You don't have permission to edit this skill",
-          403,
-        );
+      if (skill.config_driven) {
+        throw new ApiError("Config-driven skills are read-only. Update app-config.yaml.", 403);
       }
       const revision = await getRevision(id, revisionId);
       if (!revision) {

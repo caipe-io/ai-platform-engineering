@@ -90,13 +90,14 @@ async function resolveTemplate(
   cfg: TemplateRouteConfig,
 ): Promise<{ template: string; source: string } | null> {
   if (isMongoDBConfigured) {
-    const collection = await getCollection<AgentSkill>("agent_skills");
+    const collection = await getCollection<AgentSkill & { skill_template?: string }>("agent_skills");
     const skill = await collection.findOne({
       is_system: true, visibility: "global",
       $or: [{ id: cfg.routeId }, { "metadata.template_source_id": cfg.routeId }],
     });
-    return skill?.skill_content
-      ? { template: skill.skill_content, source: `mongodb:${cfg.routeId}` }
+    const template = skill?.skill_content || skill?.skill_template || skill?.tasks?.[0]?.llm_prompt;
+    return template
+      ? { template, source: `mongodb:${cfg.routeId}` }
       : null;
   }
   const envInline = process.env[cfg.envInlineKey];

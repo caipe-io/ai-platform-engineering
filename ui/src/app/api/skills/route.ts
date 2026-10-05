@@ -452,6 +452,7 @@ async function aggregateLocally(
               owner_id: 1,
               visibility: 1,
               is_system: 1,
+              config_driven: 1,
               category: 1,
               thumbnail: 1,
               metadata: 1,

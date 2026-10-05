@@ -21,7 +21,11 @@
  *   - Cache-Control: no-store is set.
  */
 
-jest.mock('@/lib/mongodb', () => ({ isMongoDBConfigured: false }));
+const mockFindOne = jest.fn();
+jest.mock('@/lib/mongodb', () => ({
+  isMongoDBConfigured: false,
+  getCollection: async () => ({ findOne: mockFindOne }),
+}));
 
 const mockNextResponseJson = jest.fn(
   (data: unknown, init?: { headers?: Record<string, string>; status?: number }) => ({
@@ -52,6 +56,7 @@ const ORIG_ENV = { ...process.env };
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.requireMock('@/lib/mongodb').isMongoDBConfigured = false;
   mockExists.mockReturnValue(false);
   mockStat.mockReturnValue({ isFile: () => false, size: 0 });
   delete process.env.SKILLS_LIVE_SKILLS_TEMPLATE;
@@ -66,6 +71,36 @@ const callGET = async (url: string) => {
   const res = await GET(new Request(url));
   return res.json() as Promise<unknown>;
 };
+
+describe('persisted gateway content', () => {
+  it.each([
+    { skill_content: 'Current instructions {{BASE_URL}}', skill_template: 'Older instructions' },
+    { skill_content: '', skill_template: 'Legacy instructions {{BASE_URL}}' },
+    { tasks: [{ llm_prompt: 'Task instructions {{BASE_URL}}' }] },
+  ])('renders the canonical or legacy content fields: %j', async (fields) => {
+    jest.requireMock('@/lib/mongodb').isMongoDBConfigured = true;
+    mockFindOne.mockResolvedValue({ id: 'live-skills', is_system: true, visibility: 'global', ...fields });
+    const response = await GET(new Request('https://app.example.com/api/skills/live-skills'));
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    const expected = fields.skill_content || fields.skill_template || fields.tasks?.[0]?.llm_prompt;
+    expect(data.template).toContain(expected!.replace('{{BASE_URL}}', 'https://app.example.com'));
+    expect(data.source).toBe('mongodb:live-skills');
+    expect(mockFindOne).toHaveBeenCalledWith({
+      is_system: true, visibility: 'global',
+      $or: [{ id: 'live-skills' }, { 'metadata.template_source_id': 'live-skills' }],
+    });
+    expect(mockRead).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for records with no content without restoring file defaults', async () => {
+    jest.requireMock('@/lib/mongodb').isMongoDBConfigured = true;
+    mockFindOne.mockResolvedValue({ id: 'live-skills', is_system: true });
+    const response = await GET(new Request('https://app.example.com/api/skills/live-skills'));
+    expect(response.status).toBe(404);
+    expect(mockRead).not.toHaveBeenCalled();
+  });
+});
 
 describe('GET /api/skills/live-skills — defaults', () => {
   it('returns Claude rendering with default command/description when no query', async () => {

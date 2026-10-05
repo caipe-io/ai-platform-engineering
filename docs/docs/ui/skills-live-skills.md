@@ -22,7 +22,7 @@ image.
 - Existing installs can preview and apply **Move packaged skill catalog into MongoDB** in the admin migration UI. It inserts missing packaged instructions without overwriting edited records.
 - The Python helper and session hook ship in the UI image at `/app/data/skills`. Neither requires a ConfigMap.
 
-## Configure initial instructions
+## Configure instructions
 
 Supply the complete instruction body through `caipe-ui.appConfig.skills`, or `skills` in `app-config.yaml`:
 
@@ -40,7 +40,8 @@ skills:
 
 The packaged `live-skills.md` and `update-skills.md` provide full instruction bodies. Include both records to enable both gateway installers.
 
-- Seeding runs once per database. Later changes belong in the Skills UI. Use its packaged template import to add gateway instructions after initial setup.
+- Configured skills follow the agent lifecycle: startup applies YAML additions and updates, and removes records absent from YAML. Edit or remove them through configuration; the UI keeps them read-only.
+- For instructions managed through the UI, explicitly import the packaged templates. These ordinary database records can be edited or deleted without being restored on startup.
 - Global system records are served by `/api/skills/live-skills` and `/api/skills/update-skills`. Missing, deleted, or private records return 404; file defaults do not restore them.
 - The renderer substitutes `{{COMMAND_NAME}}`, `{{DESCRIPTION}}`, `{{BASE_URL}}`, and `{{ARG_REF}}` for the selected coding agent.
 - Without MongoDB, development routes can use inline `SKILLS_*_TEMPLATE` and file `SKILLS_*_FILE` overrides, packaged chart files, or their fallback template.
@@ -61,8 +62,8 @@ Once the template is in place, the **Skills Gateway** page lets the user:
 - Read the per-agent **launch & invocation guide** rendered just below the
   install command.
 
-The canonical template is rendered server-side per agent, so a single
-ConfigMap serves every surface without operators maintaining N copies.
+The canonical database template is rendered server-side for each coding agent,
+so operators maintain one instruction body for all supported surfaces.
 
 ## Multi-agent support
 

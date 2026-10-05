@@ -5,10 +5,14 @@ const mockComplete = jest.fn();
 const mockLegacy = jest.fn();
 const mockBootstrap = jest.fn();
 const mockLoad = jest.fn();
+const mockConfigured = jest.fn();
 jest.mock("@/lib/mongodb", () => ({
   getCollection: (...args: unknown[]) => mockGetCollection(...args),
 }));
-jest.mock("@/lib/seed-config", () => ({ loadSeedConfig: (...args: unknown[]) => mockLoad(...args) }));
+jest.mock("@/lib/seed-config", () => ({
+  loadSeedConfig: (...args: unknown[]) => mockLoad(...args),
+  seedConfiguredSkills: (...args: unknown[]) => mockConfigured(...args),
+}));
 jest.mock("@/lib/seed-skills", () => ({
   isSkillBootstrapComplete: () => mockComplete(),
   getLegacySkillTemplates: () => mockLegacy(),
@@ -74,6 +78,16 @@ it("applies through the registry and records schema completion", async () => {
   expect(records.updateOne).toHaveBeenCalledWith({ _id: "agent_skills" }, expect.objectContaining({
     $set: expect.objectContaining({ version: 4, last_migration_id: id }),
   }), { upsert: true });
+});
+
+it("reconciles configured skills through the same declarative startup path", async () => {
+  process.env.APP_CONFIG_PATH = "/example/app-config.yaml";
+  mockLoad.mockReturnValue({ skills: [example] });
+  mockConfigured.mockResolvedValue(1);
+  const result = await applyMigration({ migrationId: id, actor: "admin@example.com", confirmation: SKILLS_DATABASE_CATALOG_CONFIRMATION });
+  expect(mockConfigured).toHaveBeenCalledWith([example]);
+  expect(mockBootstrap).toHaveBeenCalledWith([], { migration: true });
+  expect(result.applied_counts).toEqual({ skills_managed: 1 });
 });
 
 it("does not record completion for missing config files or failed imports", async () => {

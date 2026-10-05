@@ -21,7 +21,6 @@ interface AgentSkillsState {
   isLoading: boolean;
   error: string | null;
   selectedSkillId: string | null;
-  isSeeded: boolean;
   favorites: string[]; // Array of config IDs
   favoritesLoaded: boolean; // Track if favorites have been loaded from MongoDB
 
@@ -36,7 +35,6 @@ interface AgentSkillsState {
   getSkillsByCategory: (category: AgentSkillCategory | string) => AgentSkill[];
   importFromYaml: (yamlContent: string) => Promise<string[]>;
   refreshSkills: () => Promise<void>;
-  seedTemplates: () => Promise<void>;
   toggleFavorite: (id: string) => Promise<void>;
   isFavorite: (id: string) => boolean;
   getFavoriteSkills: () => AgentSkill[];
@@ -198,44 +196,8 @@ export const useAgentSkillsStore = create<AgentSkillsState>()((set, get) => ({
   isLoading: false,
   error: null,
   selectedSkillId: null,
-  isSeeded: false,
   favorites: [], // Will be loaded from MongoDB
   favoritesLoaded: false,
-
-  /**
-   * Seed built-in templates to MongoDB
-   */
-  seedTemplates: async () => {
-    try {
-      // Check if seeding is needed
-      const checkResponse = await fetch("/api/skills/seed");
-      if (!checkResponse.ok) {
-        console.log("[AgentSkillsStore] Seed check failed, skipping");
-        return;
-      }
-      
-      const status = await checkResponse.json();
-      if (!status.needsSeeding) {
-        console.log("[AgentSkillsStore] Templates already seeded");
-        set({ isSeeded: true });
-        return;
-      }
-      
-      // Perform seeding
-      console.log("[AgentSkillsStore] Seeding built-in templates...");
-      const seedResponse = await fetch("/api/skills/seed", {
-        method: "POST",
-      });
-      
-      if (seedResponse.ok) {
-        const result = await seedResponse.json();
-        console.log(`[AgentSkillsStore] Seeded ${result.seeded} templates`);
-        set({ isSeeded: true });
-      }
-    } catch (error) {
-      console.log("[AgentSkillsStore] Seeding skipped:", error);
-    }
-  },
 
   loadFavorites: async () => {
     // Migrate favorites from localStorage to MongoDB (one-time)

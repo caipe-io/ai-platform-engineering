@@ -20,15 +20,14 @@
 # MongoDB on every restart, marked config_driven=true, and cannot be
 # edited/deleted via the UI. Stale entries (removed from this file)
 # are automatically cleaned up.
-# Skills are the exception: they are inserted once per database, then managed
-# in the UI. Restarts preserve edits and deletions. Omit skills to select
-# packaged templates using BUILTIN_SKILL_IDS; skills: [] disables the bootstrap.
+# Omit skills on a fresh database to seed the editable Hello World example once.
+# Set skills: [] to suppress the default and remove previously configured skills.
 #
 # In Docker Compose, ${VAR:-default} syntax is expanded at
 # load time. In Kubernetes, Helm resolves values before creating the
 # ConfigMap, so the mounted YAML contains literal values.
 
-# Optional initial skills:
+# Optional config-driven skills:
 # skills:
 #   - id: example-skill
 #     name: Example Skill

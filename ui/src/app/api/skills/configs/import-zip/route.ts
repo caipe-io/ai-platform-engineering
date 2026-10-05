@@ -6,10 +6,6 @@ successResponse,
 withAuth,
 withErrorHandler,
 } from "@/lib/api-middleware";
-import {
-BUILTIN_LOCKED_MESSAGE,
-canMutateBuiltinSkill,
-} from "@/lib/builtin-skill-policy";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
 import {
 filterResourcesByPermission,
@@ -476,8 +472,8 @@ async function overwriteExisting(
   }
 
   // Same authorisation rules as PUT /api/skills/configs.
-  if (existing.is_system && !canMutateBuiltinSkill(existing)) {
-    throw new ApiError(BUILTIN_LOCKED_MESSAGE, 403);
+  if (existing.config_driven) {
+    throw new ApiError("Config-driven skills are read-only. Update app-config.yaml.", 403);
   }
   if (canOverwriteSkill) {
     await canOverwriteSkill(existing);

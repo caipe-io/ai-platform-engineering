@@ -6,10 +6,9 @@
  *
  * Covers:
  * - Initial state, selectSkill, getSkillById, getSkillsByCategory
- * - loadSkills: success, 503/401 fallback, seedTemplates, loadFavorites
+ * - loadSkills: success, 503/401 fallback, loadFavorites
  * - createSkill, updateSkill, deleteSkill with error handling
  * - Favorites: toggleFavorite, isFavorite, getFavoriteSkills
- * - seedTemplates
  */
 
 import { act } from "@testing-library/react";
@@ -41,7 +40,6 @@ function resetStore() {
     isLoading: false,
     error: null,
     selectedSkillId: null,
-    isSeeded: false,
     favorites: [],
     favoritesLoaded: false,
   });
@@ -80,18 +78,6 @@ function mockLoadConfigsSuccess(configs: Array<Record<string, unknown>> = []) {
 
   mockFetch.mockImplementation((url: string | URL, init?: RequestInit) => {
     const u = typeof url === "string" ? url : url.toString();
-    if (u.includes("/api/skills/seed")) {
-      if (init?.method === "POST") {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ seeded: 1 }),
-        } as Response);
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ needsSeeding: false }),
-      } as Response);
-    }
     if (u.includes("/api/users/me/favorites")) {
       return Promise.resolve({
         ok: true,
@@ -265,12 +251,6 @@ describe("agent-skills-store", () => {
     it("handles 503 - returns empty configs", async () => {
       mockFetch.mockImplementation((url: string | URL) => {
         const u = typeof url === "string" ? url : url.toString();
-        if (u.includes("/api/skills/seed")) {
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve({ needsSeeding: false }),
-          } as Response);
-        }
         if (u.includes("/api/users/me/favorites")) {
           return Promise.resolve({
             status: 503,
@@ -296,12 +276,6 @@ describe("agent-skills-store", () => {
     it("handles 401 - returns empty configs", async () => {
       mockFetch.mockImplementation((url: string | URL) => {
         const u = typeof url === "string" ? url : url.toString();
-        if (u.includes("/api/skills/seed")) {
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve({ needsSeeding: false }),
-          } as Response);
-        }
         if (u.includes("/api/users/me/favorites")) {
           return Promise.resolve({ status: 401, ok: false } as Response);
         }
@@ -321,12 +295,6 @@ describe("agent-skills-store", () => {
     it("handles error - returns empty configs", async () => {
       mockFetch.mockImplementation((url: string | URL) => {
         const u = typeof url === "string" ? url : url.toString();
-        if (u.includes("/api/skills/seed")) {
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve({ needsSeeding: false }),
-          } as Response);
-        }
         if (u.includes("/api/users/me/favorites")) {
           return Promise.resolve({
             ok: true,
@@ -347,20 +315,8 @@ describe("agent-skills-store", () => {
     });
 
     it("does not seed templates while loading skills", async () => {
-      mockFetch.mockImplementation((url: string | URL, init?: RequestInit) => {
+      mockFetch.mockImplementation((url: string | URL) => {
         const u = typeof url === "string" ? url : url.toString();
-        if (u.includes("/api/skills/seed")) {
-          if (init?.method === "POST") {
-            return Promise.resolve({
-              ok: true,
-              json: () => Promise.resolve({ seeded: 2 }),
-            } as Response);
-          }
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve({ needsSeeding: true }),
-          } as Response);
-        }
         if (u.includes("/api/users/me/favorites")) {
           return Promise.resolve({
             ok: true,
@@ -841,61 +797,4 @@ describe("agent-skills-store", () => {
     });
   });
 
-  // --------------------------------------------------------------------------
-  // seedTemplates
-  // --------------------------------------------------------------------------
-
-  describe("seedTemplates", () => {
-    it("skips POST when GET returns needsSeeding false", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ needsSeeding: false }),
-      } as Response);
-
-      await act(async () => {
-        await useAgentSkillsStore.getState().seedTemplates();
-      });
-
-      // Only GET should be called, no POST
-      const postCalls = mockFetch.mock.calls.filter(
-        (call) => (call[1] as RequestInit)?.method === "POST"
-      );
-      expect(postCalls).toHaveLength(0);
-    });
-
-    it("checks seed status via GET", async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ needsSeeding: false }),
-      } as Response);
-
-      await act(async () => {
-        await useAgentSkillsStore.getState().seedTemplates();
-      });
-
-      expect(mockFetch).toHaveBeenCalledWith("/api/skills/seed");
-    });
-
-    it("seeds via POST when needed", async () => {
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ needsSeeding: true }),
-        } as Response)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ seeded: 11 }),
-        } as Response);
-
-      await act(async () => {
-        await useAgentSkillsStore.getState().seedTemplates();
-      });
-
-      const postCalls = mockFetch.mock.calls.filter(
-        (call) => (call[1] as RequestInit)?.method === "POST"
-      );
-      expect(postCalls.length).toBeGreaterThanOrEqual(1);
-      expect(useAgentSkillsStore.getState().isSeeded).toBe(true);
-    });
-  });
 });
