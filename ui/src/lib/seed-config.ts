@@ -14,6 +14,7 @@
  */
 
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
+import { bootstrapSkills, type SeedSkill } from "@/lib/seed-skills";
 import { BUILTIN_MCP_CREDENTIAL_SOURCES } from "@/lib/rbac/agentgateway-mcp-discovery";
 import { computeIngestionSourceId } from "@/lib/ingestion-source-id";
 import {
@@ -85,6 +86,7 @@ interface SeedConfig {
   mcp_servers: Record<string, unknown>[];
   workflow_configs: Record<string, unknown>[];
   rag_sources: Record<string, unknown>[];
+  skills?: SeedSkill[];
 }
 
 function emptySeedConfig(): SeedConfig {
@@ -167,6 +169,9 @@ export function loadSeedConfig(configPath: string): SeedConfig {
     return emptySeedConfig();
   }
   const parsed = (load(raw) as Record<string, unknown> | null) ?? {};
+  if (parsed.skills !== undefined && !Array.isArray(parsed.skills)) {
+    throw new Error("Seed skills must be a list");
+  }
 
   // Models don't need env var expansion (no secrets)
   const models = (parsed.models ?? []) as SeedModel[];
@@ -187,7 +192,10 @@ export function loadSeedConfig(configPath: string): SeedConfig {
     unknown
   >[];
 
-  return { models, agents, mcp_servers, workflow_configs, rag_sources };
+  return {
+    models, agents, mcp_servers, workflow_configs, rag_sources,
+    ...(parsed.skills !== undefined ? { skills: parsed.skills as SeedSkill[] } : {}),
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1745,6 +1753,8 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
  */
 export async function applySeedConfig(): Promise<void> {
   const configPath = process.env.APP_CONFIG_PATH;
+  let skillSeeds: SeedSkill[] | undefined;
+  let configLoaded = !configPath;
   if (!configPath) {
     console.log("[seed-config] APP_CONFIG_PATH not set, skipping seed");
   } else if (!isMongoDBConfigured) {
@@ -1752,6 +1762,8 @@ export async function applySeedConfig(): Promise<void> {
   } else {
     try {
       const config = loadSeedConfig(configPath);
+      skillSeeds = config.skills;
+      configLoaded = true;
 
       console.log(
         `[seed-config] Found ${config.models.length} models, ` +
@@ -1826,6 +1838,14 @@ export async function applySeedConfig(): Promise<void> {
     } catch (err) {
       // Log but don't crash — seeding failure shouldn't prevent startup
       console.error("[seed-config] Failed to apply seed config:", err);
+    }
+  }
+
+  if (isMongoDBConfigured && configLoaded) {
+    try {
+      await bootstrapSkills(skillSeeds);
+    } catch (error) {
+      console.error("[seed-config] Skill bootstrap failed:", error);
     }
   }
 

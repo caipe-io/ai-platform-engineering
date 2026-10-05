@@ -52,3 +52,27 @@ caipe-ui:
 
 `existingSecret` or `externalSecrets` should provide sensitive values such as
 `MONGODB_URI`, OAuth client secrets, and `NEXTAUTH_SECRET`.
+
+## Initial Skills
+
+- Set `caipe-ui.appConfig.skills` in Helm values, or `skills` in the YAML file
+  referenced by `APP_CONFIG_PATH`, to provide initial skills:
+
+  ```yaml
+  skills:
+    - id: example-skill
+      name: Example Skill
+      description: Summarize a supplied document
+      content: |
+        Summarize the supplied document and list its main decisions.
+  ```
+
+- The UI seeds skills once per database at server startup. A completion record
+  in `startup_seeds` preserves subsequent edits and deletions across upgrades.
+- Omit `skills` to select image packaged templates using `BUILTIN_SKILL_IDS`
+  (`none` disables them; empty selects all). Set `skills: []` to initialize
+  without any skills. After initialization, use the Skills UI to add more.
+- Packaged defaults live in the UI image, and `agent_skills` supplies the
+  persisted catalog. Template imports remain available explicitly.
+- The chart omits legacy mounts referencing the `skill-templates` ConfigMap
+  on upgrade. Remove those obsolete entries from deployment overrides.

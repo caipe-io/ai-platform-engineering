@@ -107,6 +107,9 @@ COPY --from=build --chown=nextjs:nodejs /app/public ./public
 COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Packaged templates support database bootstrap and explicit template imports.
+COPY --chown=nextjs:nodejs charts/ai-platform-engineering/data/skills /app/data/skills
+
 # Copy version info
 COPY --from=build --chown=nextjs:nodejs /app/public/version.json ./public/version.json
 
@@ -146,6 +149,7 @@ COPY ui/package.json ui/package-lock.json* ./
 # bind-mount overlays them; the bind-mount then takes precedence on subsequent
 # starts and on file edits.
 COPY ui ./
+COPY charts/ai-platform-engineering/data/skills /app/data/skills
 
 ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1

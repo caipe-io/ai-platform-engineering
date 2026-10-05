@@ -1,6 +1,5 @@
 import {
 loadSkillTemplatesInternal,
-type SkillTemplateData,
 } from "@/app/api/skills/skill-templates-loader";
 import {
 ApiError,
@@ -9,6 +8,7 @@ withAuth,
 withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
+import { getEnabledSkillTemplates as getEnabledTemplates, templateToAgentSkill } from "@/lib/seed-skills";
 import type { AgentSkill } from "@/types/agent-skill";
 import { NextRequest,NextResponse } from "next/server";
 
@@ -25,68 +25,6 @@ import { NextRequest,NextResponse } from "next/server";
  * Set `BUILTIN_SKILL_IDS` to a comma-separated list to seed an explicit subset
  * (admin); in that case, non-whitelisted system rows are also deleted.
  */
-
-/**
- * If set (and `BUILTIN_SKILL_IDS` is unset), only the named template is seeded.
- * Leave unset for the default behaviour of seeding every template under
- * `charts/ai-platform-engineering/data/skills/`.
- */
-const SINGLE_EXAMPLE_TEMPLATE_ID =
-  process.env.SKILLS_AUTO_SEED_TEMPLATE_ID?.trim() || "";
-
-function templateToAgentSkill(t: SkillTemplateData): AgentSkill {
-  const now = new Date();
-  return {
-    id: t.id,
-    name: t.name,
-    description: t.description,
-    category: t.category || "Custom",
-    tasks: [
-      {
-        display_text: t.title || t.name,
-        llm_prompt: t.content,
-        subagent: "user_input",
-      },
-    ],
-    owner_id: "system",
-    is_system: true,
-    created_at: now,
-    updated_at: now,
-    is_quick_start: true,
-    thumbnail: t.icon || "Zap",
-    /** Same bytes as disk SKILL.md so Skills Builder editor loads without blank template */
-    skill_content: t.content,
-    metadata: {
-      tags: t.tags || [],
-      schema_version: "1.0",
-    },
-  };
-}
-
-/**
- * Templates eligible for seeding.
- *
- * Precedence:
- *   1. `BUILTIN_SKILL_IDS` (comma-separated whitelist) — exact subset; also
- *      enables stale-template removal for non-whitelisted system rows.
- *   2. `SKILLS_AUTO_SEED_TEMPLATE_ID` — single example template (legacy
- *      minimal-demo mode). No stale removal.
- *   3. Default — seed every template discovered under
- *      `charts/ai-platform-engineering/data/skills/`. No stale removal.
- */
-function getEnabledTemplates(): SkillTemplateData[] {
-  const allTemplates = loadSkillTemplatesInternal();
-  const raw = process.env.BUILTIN_SKILL_IDS?.trim();
-  if (raw) {
-    const allowedIds = new Set(raw.split(",").map((id) => id.trim()).filter(Boolean));
-    return allTemplates.filter((t) => allowedIds.has(t.id));
-  }
-  if (SINGLE_EXAMPLE_TEMPLATE_ID) {
-    const example = allTemplates.find((t) => t.id === SINGLE_EXAMPLE_TEMPLATE_ID);
-    return example ? [example] : [];
-  }
-  return allTemplates;
-}
 
 async function checkSeedingStatus(): Promise<{
   needsSeeding: boolean;

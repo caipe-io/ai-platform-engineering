@@ -783,17 +783,11 @@ caipe-ui:
             pathType: Prefix
     tls: []
   volumes:
-    - name: skill-templates
-      configMap:
-        name: skill-templates
     - name: skills-live-skills
       configMap:
         name: skills-live-skills
         optional: true
   volumeMounts:
-    - name: skill-templates
-      mountPath: /app/data/skills
-      readOnly: true
     - name: skills-live-skills
       mountPath: /app/data/skills-live-skills
       readOnly: true
@@ -803,7 +797,7 @@ caipe-ui:
     # Set to a dynamic agent ID to pre-configure the default without manual admin action.
     # When empty, the UI resolves the first available dynamic agent as the default.
     DEFAULT_AGENT_ID: ""
-    # Skills template directory (mounted from ConfigMap)
+    # Packaged templates for initial database seeding and explicit imports.
     SKILLS_DIR: "/app/data/skills"
     # Live-skills skill template (mounted from ConfigMap "skills-live-skills").
     # Override per-deployment via .Values.skillsLiveSkills (inline string) or
@@ -826,8 +820,8 @@ caipe-ui:
     # Okta background sync is configured via the structured `oktaSync:` block
     # below (sibling of `config:`), modeled after the Backstage Okta provider.
     # Built-in skill IDs to seed (comma-separated whitelist).
-    # When set, only listed templates are seeded; unlisted ones are removed on deploy.
-    # When unset or empty, all built-in templates are seeded automatically.
+    # Applies to initial database seeding; existing skills are preserved.
+    # When unset or empty, all packaged templates are eligible.
     # BUILTIN_SKILL_IDS: "qs-deploy-status,qs-pr-review"
     # Dynamic Agents: set to "true" to enable custom agent creation and management
     # Requires admin role and MongoDB storage mode

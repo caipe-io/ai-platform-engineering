@@ -1,6 +1,11 @@
 import { projectAgentSkillCatalogDoc } from "@/lib/catalog-skill-projection";
 
 describe("projectAgentSkillCatalogDoc", () => {
+  it("keeps the icon of a persisted template in the catalog", () => {
+    expect(projectAgentSkillCatalogDoc({
+      id: "example-skill", name: "Example Skill", thumbnail: "FileText",
+    }, false)?.metadata.icon).toBe("FileText");
+  });
   it("uses the Mongo skill id as source_id and keeps owner identity separate", () => {
     const projected = projectAgentSkillCatalogDoc(
       {

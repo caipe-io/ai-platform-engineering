@@ -147,11 +147,29 @@ describe('GET /api/skills — Skills Gateway', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env = { ...originalEnv };
+    jest.requireMock('@/lib/mongodb').isMongoDBConfigured = false;
     mockLoadTemplates.mockReturnValue(sampleTemplates());
   });
 
   afterAll(() => {
     process.env = originalEnv;
+  });
+
+  it('uses persisted skills without masking edits or deletions with disk templates', async () => {
+    mockGetServerSession.mockResolvedValue(sessionWith('test-user@example.com'));
+    const mongo = jest.requireMock('@/lib/mongodb');
+    mongo.isMongoDBConfigured = true;
+    let rows = [{ id: 'deploy-k8s', name: 'deploy-k8s', skill_content: 'Edited content', is_system: true }];
+    mongo.getCollection.mockImplementation(async (name: string) => ({
+      find: () => ({ toArray: async () => name === 'agent_skills' ? rows : [] }),
+    }));
+    const response = await GET(makeRequest('/api/skills?include_content=true'));
+    expect((await response.json()).skills).toEqual([
+      expect.objectContaining({ source: 'agent_skills', content: 'Edited content' }),
+    ]);
+    rows = [];
+    expect((await (await GET(makeRequest('/api/skills'))).json()).skills).toEqual([]);
+    expect(mockLoadTemplates).not.toHaveBeenCalled();
   });
 
   // --------------------------------------------------------------------------

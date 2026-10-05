@@ -192,10 +192,10 @@ config:
   ENABLE_SUBAGENT_CARDS: "true"
   SSO_ENABLED: "true"
   # Built-in skill IDs to seed (comma-separated whitelist).
-  # "none" (default) disables auto-seeding entirely — use "Import template skills"
-  # in the Skills UI to load templates explicitly. Set to a comma-separated list
-  # of template IDs to seed only those; leave empty to seed all built-in templates.
-  BUILTIN_SKILL_IDS: "none"
+  # Empty selects all packaged templates for initial database seeding.
+  # Use "none" to disable packaged seeds, or a comma-separated list of IDs
+  # to select a subset. appConfig.skills supplies an explicit initial catalog.
+  BUILTIN_SKILL_IDS: ""
   # NextAuth URL (non-sensitive)
   NEXTAUTH_URL: "http://localhost:3000"
   # Node environment
@@ -559,12 +559,21 @@ externalSecrets:
     #     key: dev/credential-oauth-connectors
     #     property: PAGERDUTY_SCOPES
 
-# Structured application config (models, MCP servers, agents, workflows, and RAG sources).
+# Structured application config (models, MCP servers, agents, workflows, RAG sources, and seed skills).
 # Rendered as a YAML file and volume-mounted into the container at /etc/caipe-ui/app-config.yaml.
 # Loaded at startup and marked as config_driven (cannot be edited via UI).
 # Auto-mounted only when at least one key below is non-empty.
 # Environment variables in values support ${VAR_NAME} and ${VAR_NAME:-default} syntax.
 appConfig:
+  # Skills are inserted once per database and remain managed in MongoDB.
+  # Omit skills to select packaged templates using BUILTIN_SKILL_IDS.
+  # Set skills: [] to initialize without any skills.
+  # skills:
+  #   - id: example-skill
+  #     name: Example Skill
+  #     description: Summarize a supplied document
+  #     content: |
+  #       Summarize the supplied document and list its main decisions.
   # Available LLM models for the model selector
   models: []
   # Example:

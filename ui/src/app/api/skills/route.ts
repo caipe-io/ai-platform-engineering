@@ -3,6 +3,7 @@ getAuthFromBearerOrSession,
 withErrorHandler,
 } from "@/lib/api-middleware";
 import type { SkillHubDoc } from "@/lib/hub-crawl";
+import { isMongoDBConfigured } from "@/lib/mongodb";
 import {
 projectAgentSkillCatalogDoc,
 type AgentSkillCatalogDoc,
@@ -328,8 +329,8 @@ export async function filterSkillsByOpenFga(
 }
 
 /**
- * Local aggregation: merge skill-templates (filesystem) and
- * persisted agent skills from MongoDB (`agent_skills`) into a single catalog.
+ * Local aggregation: MongoDB owns the skill catalog when configured.
+ * Filesystem templates provide the catalog for deployments without MongoDB.
  */
 async function aggregateLocally(
   includeContent: boolean,
@@ -341,7 +342,7 @@ async function aggregateLocally(
   // 1. Skill templates (filesystem / SKILLS_DIR)
   // Skip when HIDE_BUILTIN_SKILLS=true — users load templates explicitly via "Import template skills".
   const hideBuiltin = process.env.HIDE_BUILTIN_SKILLS === "true";
-  if (!hideBuiltin) try {
+  if (!hideBuiltin && !isMongoDBConfigured) try {
     const { loadSkillTemplatesInternal } = await import(
       "./skill-templates-loader"
     );
@@ -452,6 +453,7 @@ async function aggregateLocally(
               visibility: 1,
               is_system: 1,
               category: 1,
+              thumbnail: 1,
               metadata: 1,
               ancillary_files: 1,
               scan_status: 1,

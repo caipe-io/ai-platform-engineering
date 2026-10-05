@@ -251,11 +251,6 @@ export const useAgentSkillsStore = create<AgentSkillsState>()((set, get) => ({
     set({ isLoading: true, error: null });
 
     try {
-      // First, try to seed templates if not already done
-      if (!get().isSeeded) {
-        await get().seedTemplates();
-      }
-      
       // Load favorites if not already loaded
       if (!get().favoritesLoaded) {
         await get().loadFavorites();

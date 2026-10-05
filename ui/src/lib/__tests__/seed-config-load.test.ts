@@ -30,6 +30,14 @@ function withConfigFile(
 }
 
 describe("loadSeedConfig", () => {
+  it("preserves skill prompt variables and distinguishes omitted from empty skills", () => {
+    withConfigFile("skills: []", (configPath) => {
+      expect(loadSeedConfig(configPath).skills).toEqual([]);
+    });
+    withConfigFile("skills:\n  - id: example-skill\n    name: Example Skill\n    content: ${DOCUMENT}", (configPath) => {
+      expect(loadSeedConfig(configPath).skills?.[0].content).toBe("${DOCUMENT}");
+    });
+  });
   it("treats an empty YAML document as an empty seed configuration", () => {
     withConfigFile("", (configPath) => {
       expect(loadSeedConfig(configPath)).toEqual(EMPTY_SEED_CONFIG);

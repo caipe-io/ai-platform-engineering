@@ -6,6 +6,10 @@ export interface SchemaAreaClassificationEntry {
 }
 
 export const SCHEMA_AREA_CLASSIFICATIONS: Record<string, SchemaAreaClassificationEntry> = {
+  startup_seeds: {
+    classification: "metadata",
+    description: "Startup seed leases and completion records.",
+  },
   admin_surfaces: {
     classification: "migration",
     description:
