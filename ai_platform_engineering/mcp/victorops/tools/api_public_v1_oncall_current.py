@@ -89,11 +89,9 @@ async def get_api_public_v1_oncall_current(
 ) -> str:
     """Get the users currently on call for a team, as computed by VictorOps.
 
-    This calls ``GET /api-public/v1/oncall/current`` at request time. Unlike
-    the team schedule endpoint, it does not require interpreting shifts,
-    timestamps, or overrides locally. The upstream endpoint returns all teams
-    in the organization and permits at most two requests per second. This tool
-    returns only the requested team and, optionally, one policy.
+    Calls ``GET /api-public/v1/oncall/current`` at request time. Filters the
+    organization-wide result to the requested team and optional policy,
+    using VictorOps' computed users instead of reconstructing shifts.
 
     The ``users`` list is preserved as returned by VictorOps. It can contain
     zero, one, or multiple users; callers must not assume the first is primary.

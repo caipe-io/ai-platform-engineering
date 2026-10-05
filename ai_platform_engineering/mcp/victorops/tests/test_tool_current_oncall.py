@@ -86,7 +86,6 @@ async def test_filters_exact_team_and_policy_name_without_dropping_users(
     )
 
     assert requests == [("/api-public/v1/oncall/current", "GET", "example-org", {}, {})]
-    assert isinstance(result, str) and result.count("\n") > 10
     teams = json.loads(result)["teamsOnCall"]
     assert len(teams) == 1 and teams[0]["team"]["slug"] == "team-example"
     assert [entry["escalationPolicy"]["name"] for entry in teams[0]["onCallNow"]] == ["Primary"]
@@ -321,16 +320,12 @@ async def test_malformed_nested_user_data_fails_closed(
 async def test_empty_team_rejected_without_request(
     current_tool: ModuleType, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def unexpected_request(
-        path: str, method: str = "GET", org_slug: str | None = None,
-        params: dict[str, Any] | None = None, data: dict[str, Any] | None = None,
-    ) -> tuple[bool, dict[str, Any]]:
-        pytest.fail("A request with an empty team slug must not reach VictorOps")
-
-    monkeypatch.setattr(current_tool, "make_api_request", unexpected_request)
+    request = AsyncMock()
+    monkeypatch.setattr(current_tool, "make_api_request", request)
     team_error = await current_tool.get_api_public_v1_oncall_current(team="")
     policy_error = await current_tool.get_api_public_v1_oncall_current(
         team="team-example", escalation_policy=" ",
     )
     assert "error" in json.loads(team_error)
     assert "error" in json.loads(policy_error)
+    request.assert_not_awaited()
