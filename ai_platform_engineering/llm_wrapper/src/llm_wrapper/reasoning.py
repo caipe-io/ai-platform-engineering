@@ -92,18 +92,19 @@ def apply_reasoning_effort(
         if adaptive:
             # Adaptive thinking uses effort instead of token budgets; newer
             # Claude models reject sampling controls.
+            output_config = kwargs.pop("output_config", None) or {}
+            request_fields = kwargs
+            if langchain_provider in {"bedrock_converse", "bedrock"}:
+                field_name = "additional_model_request_fields" if langchain_provider == "bedrock_converse" else "model_kwargs"
+                request_fields = dict(kwargs.get(field_name) or {})
+                kwargs[field_name] = request_fields
             for parameter in ("temperature", "top_p", "top_k"):
                 kwargs.pop(parameter, None)
-            output_config = {**(kwargs.pop("output_config", None) or {}), "effort": effort}
-            payload = {"thinking": {"type": "adaptive"}, "output_config": output_config}
-            if langchain_provider == "bedrock_converse":
-                kwargs["additional_model_request_fields"] = {
-                    **(kwargs.get("additional_model_request_fields") or {}), **payload,
-                }
-            elif langchain_provider == "bedrock":
-                kwargs["model_kwargs"] = {**(kwargs.get("model_kwargs") or {}), **payload}
-            else:
-                kwargs.update(payload)
+                request_fields.pop(parameter, None)
+            request_fields.update({
+                "thinking": {"type": "adaptive"},
+                "output_config": {**(request_fields.get("output_config") or {}), **output_config, "effort": effort},
+            })
             if kwargs.get("max_tokens") is None:
                 kwargs["max_tokens"] = THINKING_BUDGETS[effort] + THINKING_RESPONSE_HEADROOM
             return kwargs

@@ -48,3 +48,57 @@ def test_older_claude_models_keep_budget_based_thinking(model: str) -> None:
     assert result["thinking"] == {"type": "enabled", "budget_tokens": 4096}
     assert result["max_tokens"] > result["thinking"]["budget_tokens"]
     assert "output_config" not in result
+
+
+@pytest.mark.parametrize("provider,container", [
+    ("bedrock_converse", "additional_model_request_fields"),
+    ("bedrock", "model_kwargs"),
+])
+def test_adaptive_bedrock_removes_nested_sampling_and_preserves_request_fields(provider: str, container: str) -> None:
+    nested = {"temperature": 0.4, "top_p": 0.8, "top_k": 20, "stop_sequences": ["stop"]}
+    result = apply_reasoning_effort(provider, "medium", {container: nested}, model_id="claude-sonnet-5")
+    assert not {"temperature", "top_p", "top_k"} & result[container].keys()
+    assert result[container]["stop_sequences"] == ["stop"]
+    assert result[container]["thinking"] == {"type": "adaptive"}
+    assert nested == {"temperature": 0.4, "top_p": 0.8, "top_k": 20, "stop_sequences": ["stop"]}
+
+
+@pytest.mark.parametrize("provider,container", [
+    ("bedrock_converse", "additional_model_request_fields"),
+    ("bedrock", "model_kwargs"),
+])
+def test_adaptive_bedrock_preserves_nested_output_format(provider: str, container: str) -> None:
+    output_config = {"format": {"type": "json_schema", "schema": {"type": "object"}}, "effort": "low"}
+    result = apply_reasoning_effort(
+        provider, "high", {container: {"output_config": output_config}}, model_id="claude-sonnet-5",
+    )
+    assert result[container]["output_config"] == {**output_config, "effort": "high"}
+    assert output_config["effort"] == "low"
+
+
+@pytest.mark.parametrize("provider,container", [
+    ("anthropic", None), ("anthropic_bedrock", None),
+    ("bedrock_converse", "additional_model_request_fields"), ("bedrock", "model_kwargs"),
+])
+def test_adaptive_preserves_top_level_output_format(provider: str, container: str | None) -> None:
+    output_config = {"format": {"type": "json_schema", "schema": {"type": "object"}}}
+    result = apply_reasoning_effort(provider, "high", {"output_config": output_config}, model_id="claude-sonnet-5")
+    payload = result[container] if container else result
+    assert payload["output_config"] == {**output_config, "effort": "high"}
+
+
+@pytest.mark.parametrize("provider,container", [
+    ("bedrock_converse", "additional_model_request_fields"),
+    ("bedrock", "model_kwargs"),
+])
+def test_adaptive_bedrock_merges_output_config_with_explicit_overrides(provider: str, container: str) -> None:
+    result = apply_reasoning_effort(
+        provider, "high",
+        {"output_config": {"effort": "medium", "format": {"type": "json_schema"}},
+         container: {"output_config": {"effort": "low", "format": {"type": "text"}, "custom_field": True}}},
+        model_id="claude-sonnet-5",
+    )
+    assert "output_config" not in result
+    assert result[container]["output_config"] == {
+        "effort": "high", "format": {"type": "json_schema"}, "custom_field": True,
+    }
