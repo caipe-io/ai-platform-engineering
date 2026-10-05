@@ -16,13 +16,12 @@ import os
 import re
 import time
 from collections.abc import AsyncGenerator, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
-from cnoe_agent_utils.llm_factory import resolve_bedrock_client
-from cnoe_agent_utils.tracing import TracingManager
 from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
@@ -34,6 +33,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
+from llm_wrapper.bedrock_family import resolve_bedrock_client
 from pymongo import MongoClient
 
 from dynamic_agents.config import Settings, get_settings
@@ -89,6 +89,7 @@ from dynamic_agents.services.model_capabilities import (
     get_model_capabilities,
 )
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.tracing import TracingManager
 
 if TYPE_CHECKING:
     from dynamic_agents.services.mongo import MongoDBService
@@ -1705,8 +1706,9 @@ class AgentRuntime:
             files,
             turn_id,
         )
-        async for frame in self._observe_turn(implementation, observation):
-            yield frame
+        async with aclosing(self._observe_turn(implementation, observation)) as observed:
+            async for frame in observed:
+                yield frame
 
     async def _observe_turn(
         self,
@@ -1718,8 +1720,9 @@ class AgentRuntime:
         self._is_streaming = True
         prom_metrics.active_streams.inc()
         try:
-            async for frame in implementation:
-                yield frame
+            async with aclosing(implementation):
+                async for frame in implementation:
+                    yield frame
         except (asyncio.CancelledError, GeneratorExit):
             observation.status = "cancelled"
             raise
@@ -1982,22 +1985,25 @@ class AgentRuntime:
         # In GridFS mode, skills are pre-populated in the store at init time.
         if getattr(self, "_skills_files", None) and self._resolve_backend_type() != BACKEND_STORE:
             state_input["files"] = dict(self._skills_files)
-        async for chunk in self._graph.astream(
-            state_input,
-            config=config,
-            stream_mode=["messages", "updates", "tasks", "custom"],
-            subgraphs=True,
-        ):
-            if self._cancelled:
-                logger.info(f"[stream] Stream cancelled by user for agent '{self.config.name}': user={user_id}")
-                observation.status = "cancelled"
-                return
+        async with aclosing(
+            self._graph.astream(
+                state_input,
+                config=config,
+                stream_mode=["messages", "updates", "tasks", "custom"],
+                subgraphs=True,
+            )
+        ) as graph_stream:
+            async for chunk in graph_stream:
+                if self._cancelled:
+                    logger.info(f"[stream] Stream cancelled by user for agent '{self.config.name}': user={user_id}")
+                    observation.status = "cancelled"
+                    return
 
-            content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
-            frames = encoder.on_chunk(chunk)
-            self._record_first_response(encoder, content_length_before, observation)
-            for frame in frames:
-                yield frame
+                content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
+                frames = encoder.on_chunk(chunk)
+                self._record_first_response(encoder, content_length_before, observation)
+                for frame in frames:
+                    yield frame
 
         # ── Core lifecycle: stream end (flush) ──
         for frame in encoder.on_stream_end():
@@ -2277,8 +2283,9 @@ class AgentRuntime:
             encoder,
             observation,
         )
-        async for frame in self._observe_turn(implementation, observation):
-            yield frame
+        async with aclosing(self._observe_turn(implementation, observation)) as observed:
+            async for frame in observed:
+                yield frame
 
     async def _resume_impl(
         self,
@@ -2315,22 +2322,25 @@ class AgentRuntime:
         logger.debug(f"[resume] Resume payload: {resume_payload}")
 
         # ── Core lifecycle: chunks ──
-        async for chunk in self._graph.astream(
-            Command(resume=resume_payload),
-            config=config,
-            stream_mode=["messages", "updates", "tasks", "custom"],
-            subgraphs=True,
-        ):
-            if self._cancelled:
-                logger.info(f"[resume] Resume stream cancelled by user for agent '{self.config.name}'")
-                observation.status = "cancelled"
-                return
+        async with aclosing(
+            self._graph.astream(
+                Command(resume=resume_payload),
+                config=config,
+                stream_mode=["messages", "updates", "tasks", "custom"],
+                subgraphs=True,
+            )
+        ) as graph_stream:
+            async for chunk in graph_stream:
+                if self._cancelled:
+                    logger.info(f"[resume] Resume stream cancelled by user for agent '{self.config.name}'")
+                    observation.status = "cancelled"
+                    return
 
-            content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
-            frames = encoder.on_chunk(chunk)
-            self._record_first_response(encoder, content_length_before, observation)
-            for frame in frames:
-                yield frame
+                content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
+                frames = encoder.on_chunk(chunk)
+                self._record_first_response(encoder, content_length_before, observation)
+                for frame in frames:
+                    yield frame
 
         # ── Core lifecycle: stream end (flush) ──
         for frame in encoder.on_stream_end():

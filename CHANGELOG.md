@@ -1,3 +1,20 @@
+## 1.3.0-rc.5 (2026-10-05)
+
+### Feat
+
+- **ui**: forward platform admin notifications to Slack (#2865)
+- **sharepoint**: refresh read-only MCP prebuild on latest main (#2860)
+
+### Fix
+
+- **rag**: authorize ingestion credential reads by verified platform identity (#2876)
+- **rag-stack**: preserve gp2 default with default StorageClass option (#2088)
+- **dynamic-agents**: raise MCP tool-load retry budget to 5 attempts (#2786)
+
+### Refactor
+
+- **dynamic-agents**: remove cnoe-agent-utils, add a shared llm_wrapper (#2820)
+
 ## 1.3.0-rc.4 (2026-10-01)
 
 ### Feat

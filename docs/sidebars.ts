@@ -367,10 +367,6 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'tools-utils/cnoe-agent-utils',
-        },
-        {
-          type: 'doc',
           id: 'tools-utils/agent-chat-cli',
         },
         {

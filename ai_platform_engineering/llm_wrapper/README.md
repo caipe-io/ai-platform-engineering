@@ -1,0 +1,131 @@
+# llm_wrapper
+
+Single source for building LangChain chat models from CAIPE provider
+configuration. **One copy, imported directly — not vendored, not published.**
+
+Spec: [`docs/docs/specs/2026-09-24-remove-cnoe-agent-utils/`](../../docs/docs/specs/2026-09-24-remove-cnoe-agent-utils/)
+
+## Why it declares no dependencies
+
+This directory has a `pyproject.toml` but declares no runtime dependencies. That is
+what lets it be a single shared source without coupling its consumers: each
+consuming package pins the provider integrations *it* ships, and this code just
+imports whatever is installed there.
+
+A package that declared `langchain-aws` / `boto3` / `langchain-anthropic` would
+set one version for everyone, which is exactly the coupling this code was
+written to remove — CAIPE previously could not patch a provider integration
+without waiting on an upstream release, and carried a dependency override to
+escape GHSA-gr75-jv2w-4656 as a result. Components legitimately differ: `boto3`
+is pinned differently in the platform root, in `dynamic_agents`, and in
+`harness_engine`.
+
+`build.py` imports LangChain; `providers.py` and `bedrock_family.py` import
+nothing third-party. `__init__.py` re-exports nothing so that a consumer needing
+only the latter two can import them without LangChain installed.
+
+## Why not under `utils/`
+
+`utils/pyproject.toml` sets `packages = ["."]`, so that directory builds the
+`ai-platform-engineering-utils` wheel and everything under it ships inside it.
+Shared source that is imported directly must not sit in a published package:
+installing that wheel would deliver source importing LangChain the package does
+not declare, and running these tests in that context would push someone to add
+`langchain` to `utils/pyproject.toml`, giving every utils consumer the full
+provider closure.
+
+## Files
+
+| File | Purpose | Who needs it |
+|---|---|---|
+| `providers.py` | CAIPE provider string → LangChain provider string + model env var | every consumer |
+| `bedrock_family.py` | `resolve_bedrock_client()` → `anthropic` / `converse` / `legacy` | anything selecting prompt-caching middleware or shaping attachments |
+| `build.py` | `build_chat_model()` over `init_chat_model` | consumers that construct models with credentials present |
+
+A sandboxed harness worker is expected to take the first two and not the third:
+it holds no raw provider credentials, so the shared-transport paths in `build.py`
+do not apply to it.
+
+## How consumers get it
+
+A **uv path dependency**, the same mechanism the RAG packages use for `common`:
+
+```toml
+# the consumer's pyproject.toml
+dependencies = ["llm-wrapper", ...]
+
+[tool.uv.sources]
+llm-wrapper = { path = "../llm_wrapper", editable = true }
+```
+
+Imported as `llm_wrapper.<module>`. One copy in the repository, installed into
+each consumer's venv, so it resolves identically in local development, in
+`uv run pytest`, and in the image.
+
+An earlier revision copied the files in and put them on `PYTHONPATH`. That
+worked in the image and broke every component-local test run, because
+`ai_platform_engineering` is not importable from inside `dynamic_agents`. A
+path dependency has no such split.
+
+The image still needs the directory present, so the consuming image builds with
+the **repository root** as its Docker context and copies it next to the
+component before `uv sync` resolves it:
+
+```dockerfile
+# WORKDIR is /app/dynamic_agents, so `../llm_wrapper` must resolve to /app/llm_wrapper
+COPY ai_platform_engineering/llm_wrapper/ /app/llm_wrapper/
+```
+
+A component-scoped build context cannot see this directory — that constraint is
+why other shared modules here were duplicated into component trees. The CI
+workflow for a consuming image must pass `context: .`.
+
+## Reaching LiteLLM (and anything else a gateway fronts)
+
+Set the `openai-compatible` provider at a LiteLLM Proxy, Bifrost, Portkey, or
+any other OpenAI-compatible endpoint:
+
+```bash
+export LLM_PROVIDER=openai-compatible
+export OPENAI_COMPATIBLE_BASE_URL=https://llm-gateway.example.com/v1
+export OPENAI_COMPATIBLE_API_KEY=<key>
+export OPENAI_COMPATIBLE_MODEL=<model the gateway exposes>
+```
+
+Use HTTPS when sending a gateway credential. For an HTTP development endpoint,
+keep the gateway on an isolated local network and use a placeholder key.
+
+There is deliberately **no in-process LiteLLM provider**. `langchain-litellm`
+was considered and dropped: it occupies no niche the other two paths leave
+open. Native providers give provider-native behaviour `ChatLiteLLM` cannot
+(Bedrock and Anthropic prompt caching, shared transport clients), and a proxy
+reaches the same model set with no extra dependency and works for a sandboxed
+runtime, which cannot hold provider credentials. Its only unique offer is
+client-side routing and fallbacks, which the proxy does server-side and
+`ModelFallbackMiddleware` already does in-process. Adding it back would also
+put a broad routing library in an agent-serving process, which FR-024 forbids.
+
+## Compatibility rules
+
+- Do not change the public provider strings (`aws-bedrock`, `azure-openai`,
+  `anthropic-claude`, `google-gemini`, `gcp-vertexai`, `openai`, `groq`). They
+  are persisted in agent records and rendered in the admin UI (spec FR-006).
+- Do not import this into `harness_engine`. That control plane has no LangChain
+  by design and its `ModelPolicy` already owns the portable model layer.
+- `bedrock_family.py` preserves `cnoe_agent_utils` 0.5.0 behaviour exactly,
+  including the `AWS_BEDROCK_CLIENT` override. Changing it changes cost and
+  document handling (spec FR-014, A-006).
+- Bedrock inference-profile ARNs need both the foundation model and native provider.
+  `build.py` resolves them before constructing Converse or legacy clients and
+  retains the original ARN for inference requests. `AWS_BEDROCK_BASE_MODEL_ID`
+  (or an explicit `base_model_id`/`base_model`) bypasses discovery and supplies
+  the native provider. This applies to application and system profile ARNs.
+- If `bedrock:GetInferenceProfile` is denied and no base model is configured,
+  construction raises an actionable `LLMConfigError`. Set
+  `AWS_BEDROCK_BASE_MODEL_ID` to the profile's actual foundation model ID or
+  grant discovery permission. An unknown placeholder cannot choose a valid
+  provider or request format.
+- Anthropic thinking requires `max_tokens > 1024`. Smaller explicit limits
+  fail configuration validation; valid explicit limits are preserved. When
+  no output limit is supplied, the wrapper adds response headroom above the
+  thinking budget.

@@ -1050,8 +1050,8 @@ services:
   #   - 8100: Dynamic Agents API (proxied via UI at /api/dynamic-agents)
   dynamic-agents:
     build:
-      context: ./ai_platform_engineering/dynamic_agents
-      dockerfile: build/Dockerfile
+      context: .
+      dockerfile: ai_platform_engineering/dynamic_agents/build/Dockerfile
     image: ghcr.io/caipe-io/caipe-dynamic-agents:${IMAGE_TAG:-localtag}
     container_name: dynamic-agents
     ports: ["8100:8001"]

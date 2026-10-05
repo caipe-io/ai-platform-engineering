@@ -766,6 +766,24 @@ still gets a useful response. Both surfaces are rate-limited per user
 `response_type=ephemeral`; Webex DMs the issuer in group spaces, replies
 inline in 1:1).
 
+### Ingestion Credential Retrieval
+
+`POST /api/credentials/retrieve` verifies the bearer JWT and checks credential
+`use` permission before decrypting. Requests carrying browser metadata or cookies
+are rejected. Ingestion's `internal_service` fallback requires all of:
+
+- A verified service-account session with a nonempty subject.
+- A signed `azp` claim matching both Keycloak's `service-account-<clientId>`
+  username and the existing `KEYCLOAK_RESOURCE_SERVER_ID` platform client.
+- A saved ingestion source referencing the credential, or an unexpired preview
+  grant recorded after the initiating caller passed credential `use` authorization.
+
+The bearer middleware preserves this verified client identity as
+`session.serviceAccountClientId`. Request headers and `intended_use` cannot grant
+access. Other service accounts require direct credential permission, and policy
+service failures deny retrieval. `RAG_INGESTOR_SERVICE_ACCOUNTS` scopes source
+polling/status APIs; credential retrieval requires no subject allow-list.
+
 ### Credential Exchange Authorization
 
 Connections & Secrets OAuth tokens are never returned to the browser. Browser
