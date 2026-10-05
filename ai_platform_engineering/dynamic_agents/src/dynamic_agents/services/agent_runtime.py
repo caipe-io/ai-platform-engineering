@@ -89,6 +89,7 @@ from dynamic_agents.services.model_capabilities import (
     get_model_capabilities,
 )
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
 from dynamic_agents.services.tracing import TracingManager
 
 if TYPE_CHECKING:
@@ -139,7 +140,7 @@ def _with_general_purpose_tool_result_recovery(
         "tools": tools,
         "model": model,
         "interrupt_on": interrupt_on,
-        "middleware": [ToolResultInvariantMiddleware()],
+        "middleware": [ToolCallRecoveryMiddleware(), ToolResultInvariantMiddleware()],
     }
     configured_subagents = [
         subagent

@@ -139,6 +139,22 @@ The API documentation is available at:
 - Swagger UI: http://localhost:8001/docs
 - ReDoc: http://localhost:8001/redoc
 
+## Tool call recovery
+
+Every agent and subagent checks model output before executing tools:
+
+- Output-limit stops (`length` / `max_tokens`), invalid tool-call JSON, and invalid
+  Pydantic tool arguments trigger recovery. Remote JSON-schema tools are checked
+  for missing required top-level arguments.
+- The entire defective parallel batch is rejected, including otherwise complete
+  calls. Rejected calls never run and raw tool-use blocks are removed from history.
+- The model gets one repair attempt, with feedback to use smaller file edits.
+  Consecutive failure counts belong to each invocation and reset after success.
+- Exhaustion emits an actionable stream error for start/resume, or HTTP 422 for
+  invoke. A later conversation turn can continue from the sanitized checkpoint.
+
+This guard does not change context compaction thresholds or model output budgets.
+
 ## Configuration Reference
 
 ### Environment Variables
