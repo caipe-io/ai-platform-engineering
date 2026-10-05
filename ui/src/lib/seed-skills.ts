@@ -40,14 +40,24 @@ export async function isSkillBootstrapComplete(): Promise<boolean> {
   return Boolean((await collection.findOne({ _id: BOOTSTRAP_ID }))?.completed_at);
 }
 
-export function templateToAgentSkill(skill: SeedSkill): AgentSkill {
-  if (
-    typeof skill.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$/.test(skill.id) ||
-    typeof skill.name !== "string" || !skill.name.trim() ||
-    typeof skill.content !== "string" || !skill.content.trim()
-  ) {
-    throw new Error("Seed skills require a valid id, name, and content");
+export function validateSeedSkills(skills: SeedSkill[]): void {
+  if (!Array.isArray(skills)) throw new Error("Seed skills must be a list");
+  const ids = new Set<string>();
+  for (const skill of skills) {
+    if (
+      !skill || typeof skill.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$/.test(skill.id) ||
+      typeof skill.name !== "string" || !skill.name.trim() ||
+      typeof skill.content !== "string" || !skill.content.trim()
+    ) {
+      throw new Error("Seed skills require a valid id, name, and content");
+    }
+    if (ids.has(skill.id)) throw new Error("Seed skill IDs must be unique");
+    ids.add(skill.id);
   }
+}
+
+export function templateToAgentSkill(skill: SeedSkill): AgentSkill {
+  validateSeedSkills([skill]);
   const now = new Date();
   const templateDir = resolveTemplateDir(skill.id);
   return {
@@ -98,7 +108,7 @@ export async function bootstrapSkills(
     }
   }
   const skills = configuredSkills ?? getDefaultSkillTemplates();
-  if (!Array.isArray(skills)) throw new Error("Seed skills must be a list");
+  validateSeedSkills(skills);
   const documents = skills.map(templateToAgentSkill);
   if (!documents.length && configuredSkills === undefined) {
     throw new Error("No startup skill templates found");

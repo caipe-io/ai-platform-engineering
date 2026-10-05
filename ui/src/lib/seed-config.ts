@@ -14,7 +14,7 @@
  */
 
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
-import { bootstrapSkills, templateToAgentSkill, type SeedSkill } from "@/lib/seed-skills";
+import { bootstrapSkills, templateToAgentSkill, validateSeedSkills, type SeedSkill } from "@/lib/seed-skills";
 import type { AgentSkill } from "@/types/agent-skill";
 import { BUILTIN_MCP_CREDENTIAL_SOURCES } from "@/lib/rbac/agentgateway-mcp-discovery";
 import { computeIngestionSourceId } from "@/lib/ingestion-source-id";
@@ -1073,10 +1073,8 @@ export async function adoptConfigImportedRagSources(
 
 /** Apply declarative skills using the same config_driven lifecycle as agents. */
 export async function seedConfiguredSkills(skills: SeedSkill[]): Promise<number> {
+  validateSeedSkills(skills);
   const documents = skills.map(templateToAgentSkill);
-  if (new Set(documents.map((skill) => skill.id)).size !== documents.length) {
-    throw new Error("Configured skill IDs must be unique");
-  }
   const collection = await getCollection<AgentSkill>("agent_skills");
   for (const document of documents) {
     const existing = await collection.findOne({ id: document.id });
@@ -1797,6 +1795,7 @@ export async function applySeedConfig(): Promise<void> {
   } else {
     try {
       const config = loadSeedConfig(configPath);
+      validateSeedSkills(config.skills ?? []);
       await seedSkills(config.skills === undefined ? undefined : []);
       const skillCount = await seedConfiguredSkills(config.skills ?? []);
 

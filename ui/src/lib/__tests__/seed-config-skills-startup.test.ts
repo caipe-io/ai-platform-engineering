@@ -73,6 +73,31 @@ it("initializes an empty catalog for an explicitly loaded skills list", async ()
   expect(mockCollection.replaceOne).not.toHaveBeenCalled();
 });
 
+it.each([
+  [{ id: "example-skill", name: "Example Skill", content: "" }],
+  [null],
+  [
+    { id: "example-skill", name: "Example Skill", content: "First prompt" },
+    { id: "example-skill", name: "Example Skill", content: "Second prompt" },
+  ],
+])("validates configured skills before consuming bootstrap: %j", async (...skills) => {
+  fs.writeFileSync(process.env.APP_CONFIG_PATH!, JSON.stringify({ skills }));
+  await applySeedConfig();
+  expect(mockBootstrapSkills).not.toHaveBeenCalled();
+  expect(mockCollection.replaceOne).not.toHaveBeenCalled();
+  expect(mockCollection.find).not.toHaveBeenCalled();
+
+  fs.writeFileSync(process.env.APP_CONFIG_PATH!, JSON.stringify({ skills: [
+    { id: "example-skill", name: "Example Skill", content: "Corrected prompt" },
+  ] }));
+  await applySeedConfig();
+  expect(mockBootstrapSkills).toHaveBeenCalledWith([]);
+  expect(mockCollection.replaceOne).toHaveBeenCalledWith(
+    { id: "example-skill" }, expect.objectContaining({ skill_content: "Corrected prompt", config_driven: true }),
+    { upsert: true },
+  );
+});
+
 it("selects packaged defaults when no application config path is set", async () => {
   delete process.env.APP_CONFIG_PATH;
   await applySeedConfig();

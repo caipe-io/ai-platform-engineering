@@ -536,6 +536,10 @@ async function aggregateLocally(
     return a.name.localeCompare(b.name);
   });
 
+  if (sourcesLoaded.length === 0 && unavailableSources.length > 0) {
+    throw new Error("No skill catalog sources could be loaded");
+  }
+
   return {
     skills: sortedSkills,
     meta: {

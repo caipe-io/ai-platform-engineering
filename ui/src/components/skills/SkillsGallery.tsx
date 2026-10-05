@@ -1640,7 +1640,7 @@ export function SkillsGallery({
                   Remove built-in template{" "}
                   <span className="font-medium text-foreground">&ldquo;{deleteTarget?.name}&rdquo;</span>{" "}
                   from this environment? You can restore it later via{" "}
-                  <span className="font-medium text-foreground">Import templates</span> or workspace seed.
+                  <span className="font-medium text-foreground">Import templates</span>.
                 </>
               ) : (
                 <>

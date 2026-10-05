@@ -172,6 +172,17 @@ describe('GET /api/skills — Skills Gateway', () => {
     expect(mockLoadTemplates).not.toHaveBeenCalled();
   });
 
+  it('returns 503 when MongoDB is unavailable without restoring file defaults', async () => {
+    mockGetServerSession.mockResolvedValue(sessionWith('test-user@example.com'));
+    const mongo = jest.requireMock('@/lib/mongodb');
+    mongo.isMongoDBConfigured = true;
+    mongo.getCollection.mockRejectedValue(new Error('Database unavailable'));
+    const response = await GET(makeRequest('/api/skills'));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: 'skills_unavailable' });
+    expect(mockLoadTemplates).not.toHaveBeenCalled();
+  });
+
   // --------------------------------------------------------------------------
   // Authentication
   // --------------------------------------------------------------------------
