@@ -281,6 +281,7 @@ async def test_api_failure_and_unexpected_response_fail_closed(
     [
         None,
         {"escalationPolicy": {"name": "Primary", "slug": None}, "users": []},
+        {"escalationPolicy": {"name": "Primary", "slug": "policy-primary"}},
         {"escalationPolicy": {"name": "Primary", "slug": "policy-primary"}, "users": None},
         {"escalationPolicy": {"name": "Primary", "slug": "policy-primary"}, "users": [None]},
         {
@@ -291,6 +292,12 @@ async def test_api_failure_and_unexpected_response_fail_closed(
             "escalationPolicy": {"name": "Primary", "slug": "policy-primary"},
             "users": [{"onCallUser": {"username": None}}],
         },
+        {
+            "escalationPolicy": {"name": "Primary", "slug": "policy-primary"},
+            "users": [{"onCallUser": {"username": "   "}}],
+        },
+        {"escalationPolicy": {"name": "   ", "slug": "policy-primary"}, "users": []},
+        {"escalationPolicy": {"name": "Primary", "slug": "   "}, "users": []},
     ],
 )
 @pytest.mark.asyncio

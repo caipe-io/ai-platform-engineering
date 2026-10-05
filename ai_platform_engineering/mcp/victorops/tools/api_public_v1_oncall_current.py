@@ -43,9 +43,9 @@ def _validated_policies(on_call_now: Any, *, validate_users: bool = True) -> Opt
         users = entry.get("users")
         if not isinstance(policy, dict) or (validate_users and not isinstance(users, list)):
             return None
-        if any(key in policy and (not isinstance(policy[key], str) or not policy[key]) for key in ("slug", "name")):
+        if any(key in policy and (not isinstance(policy[key], str) or not policy[key].strip()) for key in ("slug", "name")):
             return None
-        if not any(isinstance(policy.get(key), str) and policy[key] for key in ("slug", "name")):
+        if not any(isinstance(policy.get(key), str) and policy[key].strip() for key in ("slug", "name")):
             return None
         policy_slug = policy.get("slug")
         if policy_slug is not None:
@@ -59,7 +59,7 @@ def _validated_policies(on_call_now: Any, *, validate_users: bool = True) -> Opt
             if (
                 not isinstance(on_call_user, dict)
                 or not isinstance(on_call_user.get("username"), str)
-                or not on_call_user["username"]
+                or not on_call_user["username"].strip()
             ):
                 return None
         validated.append(entry)

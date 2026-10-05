@@ -98,6 +98,7 @@ The following tools are exposed by this agent via the MCP protocol. These are de
 - Returns only the exact `team` slug; pass `org_slug` when multiple organizations are configured.
 - Optionally filters by an exact `escalation_policy` slug or name. A unique slug takes precedence, while duplicate names are rejected as ambiguous.
 - Preserves VictorOps' computed `users` list, including zero or multiple users. Callers must not assume the first user is primary.
+- An explicit empty `users` list means nobody is on call for that policy; a missing `onCallNow` or selected-policy `users` field is treated as malformed rather than assumed empty.
 - Reports missing teams or policies, duplicate team or policy identifiers, and malformed response records as errors.
 - Makes a fresh API call instead of using the five-minute schedule cache. Each process spaces calls by at least half a second to respect the endpoint's two-request-per-second limit.
 - Requires external rate-limit coordination when multiple server replicas share one upstream quota.
