@@ -70,7 +70,7 @@ function safeCallbackUrl(value: string | null): string {
 }
 
 function LoginContent() {
-  const { status } = useSession();
+  const { status, data: session } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
@@ -92,12 +92,12 @@ function LoginContent() {
       return;
     }
 
-    if (status === "authenticated") {
+    if (status === "authenticated" && !session?.error) {
       // Clear counter on successful auth redirect (not a loop)
       clearRedirectLoopCounter();
       router.push(callbackUrl);
     }
-  }, [status, router, callbackUrl, sessionReset, loopBroken]);
+  }, [status, session?.error, router, callbackUrl, sessionReset, loopBroken]);
 
   const handleSignIn = async () => {
     setIsLoading(true);
@@ -253,7 +253,8 @@ function LoginContent() {
                       {error === "OAuthCreateAccount" && "We could not create your account."}
                       {error === "Callback" && "We could not finish sign-in."}
                       {error === "AccessDenied" && "This account does not have access."}
-                      {!["OAuthSignin", "OAuthCallback", "OAuthCreateAccount", "Callback", "AccessDenied"].includes(error) &&
+                      {error === "SessionStorageRequired" && "SSO requires MongoDB session storage. Ask an administrator to configure it."}
+                      {!["OAuthSignin", "OAuthCallback", "OAuthCreateAccount", "Callback", "AccessDenied", "SessionStorageRequired"].includes(error) &&
                         "An unexpected error occurred. Please try again."}
                     </p>
                   </div>
