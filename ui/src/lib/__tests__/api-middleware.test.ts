@@ -64,6 +64,7 @@ const mockCheckPermission = jest.requireMock('@/lib/rbac/keycloak-authz').checkP
 
 beforeEach(() => {
   mockGetConfig.mockImplementation((key: string) => key === 'ssoEnabled');
+  mockValidateBearerJWT.mockClear();
   mockAuditWrite.mockClear();
   mockVerifyCatalogApiKey.mockReset().mockResolvedValue(null);
   mockValidateLocalSkillsJWT.mockReset().mockResolvedValue(null);
@@ -72,6 +73,28 @@ beforeEach(() => {
 });
 
 describe('getAuthFromBearerOrSession scoped credentials', () => {
+  it('preserves the verified service-account client identity for credential authorization', async () => {
+    mockValidateBearerJWT.mockResolvedValueOnce({
+      email: 'service-account@example.test',
+      name: 'Example service',
+      groups: [],
+      sub: 'example-service-sub',
+      isServiceAccount: true,
+      serviceAccountClientId: 'example-platform',
+    });
+    const request = new Request('https://example.test/api/credentials/retrieve', {
+      headers: { Authorization: 'Bearer example-token' },
+    }) as unknown as NextRequest;
+
+    const { session } = await getAuthFromBearerOrSession(request);
+    expect(session).toMatchObject({
+      sub: 'example-service-sub',
+      isServiceAccount: true,
+      serviceAccountClientId: 'example-platform',
+      authMethod: 'bearer',
+    });
+  });
+
   it('rejects an invalid catalog API key', async () => {
     const request = new Request('http://test.com/api/skills', {
       headers: { 'X-Caipe-Catalog-Key': 'sk_invalid.secret' },

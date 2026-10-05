@@ -46,6 +46,7 @@ export async function getCredentialRetrievalService(): Promise<CredentialRetriev
       keyWrapper: createRetrievalKeyWrapper(),
     }),
     authorize: requireResourcePermission,
+    internalServiceClientId: process.env.KEYCLOAK_RESOURCE_SERVER_ID?.trim() || "caipe-platform",
     authorizeByUsage: ingestorMayUseSecret,
   });
 }
