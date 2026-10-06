@@ -122,7 +122,7 @@ describe("MCPServersTab", () => {
     }) as unknown as typeof fetch;
   });
 
-  it("does not expose the unsafe AgentGateway repair action", async () => {
+  it("does not expose the global AgentGateway repair action", async () => {
     render(<MCPServersTab />);
 
     await screen.findByText("Jira");
@@ -379,10 +379,11 @@ describe("MCPServersTab", () => {
     expect(await screen.findByText("Add MCP Server")).toBeInTheDocument();
   });
 
-  it("shows probe, test, and delete when list permissions allow them", async () => {
+  it("shows permitted row actions without exposing global AgentGateway repair", async () => {
     render(<MCPServersTab />);
 
     await screen.findByText("Jira");
+    expect(screen.queryByRole("button", { name: /Repair AgentGateway/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Probe tools for Jira/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /test mcp tools for jira/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Delete Jira/i })).toBeInTheDocument();

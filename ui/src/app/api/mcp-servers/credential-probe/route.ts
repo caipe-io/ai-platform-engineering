@@ -10,12 +10,15 @@ import {
   successResponse,
   withErrorHandler,
 } from "@/lib/api-middleware";
-import { caipeOrgKey } from "@/lib/rbac/organization";
-import { requireResourcePermission } from "@/lib/rbac/resource-authz";
 import { isMcpCredentialUnavailableError, resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
+import { isAgentGatewayEndpoint, listHttpMcpTools } from "@/lib/mcp-http-server-client";
+import { getCollection } from "@/lib/mongodb";
+import { requireResourcePermission } from "@/lib/rbac/resource-authz";
 import type { McpCredentialResolution } from "@/lib/mcp-credential-headers";
-import type { MCPCredentialSource } from "@/types/dynamic-agent";
+import type { MCPCredentialSource, MCPServerConfig } from "@/types/dynamic-agent";
 import { NextRequest } from "next/server";
+
+const COLLECTION_NAME = "mcp_servers";
 
 interface CredentialProbeResult {
   ok: boolean;
@@ -25,44 +28,50 @@ interface CredentialProbeResult {
   missingCredentials: string[];
 }
 
-function normalizedUrl(value: unknown): string {
+function requiredServerId(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) {
-    throw new ApiError("Endpoint URL is required", 400);
+    throw new ApiError(
+      "Save the MCP server before testing its AgentGateway connection",
+      400,
+      "MCP_SERVER_SAVE_REQUIRED",
+    );
   }
-  let parsed: URL;
-  try {
-    parsed = new URL(value.trim());
-  } catch {
-    throw new ApiError("Endpoint URL must be a valid URL", 400);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new ApiError("Endpoint URL must use http or https", 400);
-  }
-  return parsed.toString().replace(/\/$/, "");
+  return value.trim();
 }
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const { session } = await getAuthFromBearerOrSession(request);
+  const body = await request.json();
+  const serverId = requiredServerId(body.server_id);
   await requireResourcePermission(
     session,
-    { type: "organization", id: caipeOrgKey(), action: "use" },
-    { bypassForOrgAdmin: true },
+    { type: "mcp_server", id: serverId, action: "manage" },
   );
 
-  const body = await request.json();
-  const url = normalizedUrl(body.url);
-  const credentialSources = (body.credential_sources ?? []) as MCPCredentialSource[];
+  const collection = await getCollection<MCPServerConfig>(COLLECTION_NAME);
+  const server = await collection.findOne({ _id: serverId });
+  if (!server) throw new ApiError("MCP server not found", 404);
+  if (!server.enabled) throw new ApiError("MCP server is disabled", 400);
+  if (server.transport !== "http" || !server.endpoint) {
+    throw new ApiError(
+      "Connection testing requires a saved Streamable HTTP MCP server",
+      400,
+      "MCP_PROBE_UNSUPPORTED_TRANSPORT",
+    );
+  }
+  if (!isAgentGatewayEndpoint(server)) {
+    throw new ApiError(
+      "Connection testing requires a registered AgentGateway route",
+      409,
+      "MCP_GATEWAY_ROUTE_REQUIRED",
+    );
+  }
 
-  // Build a minimal MCPServerConfig shape for credential resolution
-  const fakeServer = {
-    _id: "probe",
-    name: "probe",
-    endpoint: url,
-    transport: "http" as const,
+  const credentialSources = (body.credential_sources ?? []) as MCPCredentialSource[];
+  const diagnosticServer: MCPServerConfig & { endpoint: string } = {
+    ...server,
+    endpoint: server.endpoint,
     credential_sources: credentialSources,
-    enabled: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
   };
 
   let resolution: McpCredentialResolution;
@@ -70,8 +79,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     resolution = await resolveMcpHeaderCredentials({
       request,
       session,
-      server: fakeServer,
-      viaAgentGateway: false,
+      server: diagnosticServer,
+      viaAgentGateway: true,
       retrievalCaller: "mcp-credential-probe",
     });
   } catch (error) {
@@ -90,44 +99,32 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     .filter((s) => s.origin === "none")
     .map((s) => s.name);
 
-  // Make the probe request with resolved headers
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  let probeResult: CredentialProbeResult;
-  try {
-    const headers = new Headers({ accept: "application/json, text/event-stream;q=0.9, */*;q=0.1" });
-    for (const [key, value] of Object.entries(resolution.headers)) {
-      headers.set(key, value);
-    }
-    const response = await fetch(url, {
-      method: "GET",
-      signal: controller.signal,
-      headers,
-    });
-    probeResult = {
-      ok: response.status < 500 && response.status !== 404,
-      status: response.status,
-      credentialOrigins: resolution.sources.map((s) => ({
-        name: s.name,
-        origin: s.origin,
-        ...(s.provider ? { provider: s.provider } : {}),
-      })),
-      missingCredentials,
-    };
-  } catch (error) {
-    probeResult = {
+  const credentialOrigins = resolution.sources.map((s) => ({
+    name: s.name,
+    origin: s.origin,
+    ...(s.provider ? { provider: s.provider } : {}),
+  }));
+  if (missingCredentials.length > 0) {
+    return successResponse<CredentialProbeResult>({
       ok: false,
-      error: error instanceof Error ? error.message : "Could not connect",
-      credentialOrigins: resolution.sources.map((s) => ({
-        name: s.name,
-        origin: s.origin,
-        ...(s.provider ? { provider: s.provider } : {}),
-      })),
+      error: "One or more credentials could not be resolved. Check that connected apps are authorized.",
+      credentialOrigins,
       missingCredentials,
-    };
-  } finally {
-    clearTimeout(timeout);
+    });
   }
 
-  return successResponse(probeResult);
+  await listHttpMcpTools({
+    request,
+    session,
+    server: diagnosticServer,
+    serverId,
+    credentialResolution: resolution,
+  });
+
+  return successResponse<CredentialProbeResult>({
+    ok: true,
+    status: 200,
+    credentialOrigins,
+    missingCredentials,
+  });
 });
