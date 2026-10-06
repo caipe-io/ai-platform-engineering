@@ -286,12 +286,27 @@ export class SecretService {
     };
 
     await this.payloadStore.putSecret({ secretRefId: id, plaintext, maskedPreview });
-    await this.reconcileOwnerRelationships({
-      secretId: id,
-      owner: input.owner,
-      ownerSubject: typeof input.session.sub === "string" ? input.session.sub : null,
-    });
-    await this.secretRefsCollection.insertOne(doc);
+    try {
+      await this.reconcileOwnerRelationships({
+        secretId: id,
+        owner: input.owner,
+        ownerSubject: typeof input.session.sub === "string" ? input.session.sub : null,
+      });
+      await this.secretRefsCollection.insertOne(doc);
+    } catch (error) {
+      const cleanupResults = await Promise.allSettled([
+        this.deleteAllRelationships(id),
+        this.payloadStore.deleteSecret?.(id) ?? Promise.resolve(),
+      ]);
+      const cleanupFailures = cleanupResults.filter((result) => result.status === "rejected");
+      if (cleanupFailures.length > 0) {
+        console.error("[credentials] Failed to clean up partially created secret", {
+          secretId: id,
+          cleanupFailures,
+        });
+      }
+      throw error;
+    }
     writeCredentialAuditEvent({
       action: "credential.create",
       actor: { type: "user", id: String(input.session.sub ?? "unknown") },

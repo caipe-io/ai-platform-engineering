@@ -155,4 +155,52 @@ describe("/api/credentials/secrets", () => {
       { type: "team", id: "platform-team", action: "manage" },
     );
   });
+
+  it("requires organization manage permission before creating an organization-owned secret", async () => {
+    const { POST } = await import("../route");
+    mockCreateSecret.mockResolvedValue({
+      id: "secret-1",
+      name: "Organization token",
+      maskedPreview: "org_...alue",
+    });
+
+    await POST(
+      request("POST", {
+        name: "Organization token",
+        type: "bearer_token",
+        value: "organization-token-value",
+        ownerType: "organization",
+        ownerId: "example-org",
+      }),
+    );
+
+    expect(mockRequireResourcePermission).toHaveBeenCalledWith(
+      { sub: "alice-sub", user: { email: "alice@example.test", name: "Alice Example" } },
+      { type: "organization", id: "example-org", action: "manage" },
+    );
+    expect(mockCreateSecret).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: { type: "organization", id: "example-org" } }),
+    );
+  });
+
+  it("does not create an organization-owned secret when organization manage is denied", async () => {
+    const { POST } = await import("../route");
+    mockRequireResourcePermission.mockRejectedValueOnce(
+      new Error("Only organization admins can create organization secrets."),
+    );
+
+    await expect(
+      POST(
+        request("POST", {
+          name: "Denied organization token",
+          type: "bearer_token",
+          value: "organization-token-value",
+          ownerType: "organization",
+          ownerId: "example-org",
+        }),
+      ),
+    ).rejects.toThrow("Only organization admins can create organization secrets.");
+
+    expect(mockCreateSecret).not.toHaveBeenCalled();
+  });
 });

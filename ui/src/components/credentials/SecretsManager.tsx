@@ -8,6 +8,7 @@ import React from "react";
 import { Button } from "@/components/ui/button";
 import { shortMaskedPreview } from "@/lib/credentials/masking";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
+import { useToast } from "@/components/ui/toast";
 
 import { principalLabel, SecretProtectionBadge } from "./SecretProtectionDetails";
 import { SecretSharingPanel } from "./SecretSharingPanel";
@@ -45,6 +46,11 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
   return json.data;
 }
 
+async function apiErrorMessage(response: Response, fallback: string): Promise<string> {
+  const json = await response.json().catch(() => null) as { error?: unknown } | null;
+  return typeof json?.error === "string" && json.error.trim() ? json.error.trim() : fallback;
+}
+
 function formatDate(value?: string): string {
   if (!value) return "Not recorded";
   const date = new Date(value);
@@ -53,6 +59,7 @@ function formatDate(value?: string): string {
 }
 
 export function SecretsManager() {
+  const { toast } = useToast();
   const [secrets, setSecrets] = React.useState<SecretMetadata[]>([]);
   const [name, setName] = React.useState("");
   const [secretValue, setSecretValue] = React.useState("");
@@ -79,21 +86,29 @@ export function SecretsManager() {
     [detailsSecret],
   );
 
+  const reportError = React.useCallback((reason: unknown, fallback: string) => {
+    const message = reason instanceof Error && reason.message && !(reason instanceof TypeError)
+      ? reason.message
+      : fallback;
+    setError(message);
+    toast(message, "error", 8000);
+  }, [toast]);
+
   const loadSecrets = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const response = await fetch("/api/credentials/secrets");
       if (!response.ok) {
-        throw new Error("Could not load secrets");
+        throw new Error(await apiErrorMessage(response, "Could not load secrets"));
       }
       setSecrets(await parseApiResponse<SecretMetadata[]>(response));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load secrets");
+      reportError(err, "Could not load secrets");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [reportError]);
 
   React.useEffect(() => {
     void loadSecrets();
@@ -118,21 +133,23 @@ export function SecretsManager() {
     if (createOrgLevel) {
       body.ownerType = "organization";
     }
-    const response = await fetch("/api/credentials/secrets", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    try {
+      const response = await fetch("/api/credentials/secrets", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-    if (!response.ok) {
-      const json = await response.json().catch(() => null) as { error?: string } | null;
-      setError(json?.error ?? "Could not save secret");
-      return;
+      if (!response.ok) {
+        throw new Error(await apiErrorMessage(response, "Could not save secret"));
+      }
+
+      const created = await parseApiResponse<SecretMetadata>(response);
+      setSecrets((current) => [...current, created].sort((a, b) => a.name.localeCompare(b.name)));
+      closeCreateDialog();
+    } catch (err) {
+      reportError(err, "Could not save secret");
     }
-
-    const created = await parseApiResponse<SecretMetadata>(response);
-    setSecrets((current) => [...current, created].sort((a, b) => a.name.localeCompare(b.name)));
-    closeCreateDialog();
   };
 
   const handleDelete = async (secret: SecretMetadata) => {
@@ -143,7 +160,7 @@ export function SecretsManager() {
         method: "DELETE",
       });
       if (!response.ok) {
-        throw new Error("Could not delete secret");
+        throw new Error(await apiErrorMessage(response, "Could not delete secret"));
       }
       setSecrets((current) => current.filter((item) => item.id !== secret.id));
       if (sharingSecretId === secret.id) {
@@ -159,7 +176,7 @@ export function SecretsManager() {
         setPendingDeleteSecretId(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete secret");
+      reportError(err, "Could not delete secret");
     } finally {
       setDeletingSecretId(null);
     }
@@ -197,7 +214,7 @@ export function SecretsManager() {
         }),
       });
       if (!response.ok) {
-        throw new Error("Could not rotate secret");
+        throw new Error(await apiErrorMessage(response, "Could not rotate secret"));
       }
       const rotated = await parseApiResponse<SecretMetadata>(response);
       setSecrets((current) =>
@@ -207,7 +224,7 @@ export function SecretsManager() {
       );
       closeRotatePanel();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not rotate secret");
+      reportError(err, "Could not rotate secret");
     } finally {
       setSavingRotateSecretId(null);
     }

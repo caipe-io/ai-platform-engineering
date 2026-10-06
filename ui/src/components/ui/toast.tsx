@@ -110,6 +110,9 @@ function ToastItem({ toast, onRemove }: ToastItemProps) {
 
   return (
     <motion.div
+      role={toast.type === "error" ? "alert" : "status"}
+      aria-live={toast.type === "error" ? "assertive" : "polite"}
+      aria-atomic="true"
       initial={{ opacity: 0, y: 50, scale: 0.3 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.5, transition: { duration: 0.2 } }}
@@ -121,6 +124,8 @@ function ToastItem({ toast, onRemove }: ToastItemProps) {
       <Icon className={cn("h-5 w-5 shrink-0 mt-0.5", config.iconClassName)} />
       <div className="flex-1 text-sm whitespace-pre-line">{toast.message}</div>
       <button
+        type="button"
+        aria-label="Dismiss notification"
         onClick={() => onRemove(toast.id)}
         className="shrink-0 p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
       >

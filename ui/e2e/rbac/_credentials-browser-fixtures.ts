@@ -167,6 +167,21 @@ export type InstallCredentialsBrowserMocksOptions = {
   auditEvents?: CredentialAuditFixture[];
   oauthConnectors?: Array<Record<string, unknown>>;
   providerConnections?: Array<Record<string, unknown>>;
+  isAdmin?: boolean;
+  session?: {
+    email: string;
+    name: string;
+    role: "admin" | "user";
+    canViewAdmin: boolean;
+  };
+};
+
+type PersonalSecretCreateRequest = {
+  name?: string;
+  type?: string;
+  value?: string;
+  ownerType?: "user" | "team" | "organization";
+  ownerId?: string;
 };
 
 export type InstalledCredentialsBrowserMocks = {
@@ -174,7 +189,7 @@ export type InstalledCredentialsBrowserMocks = {
   rotateRequests: Array<{ action?: string; value?: string }>;
   deleteRequests: string[];
   connectionRevokeRequests: string[];
-  personalCreateRequests: Array<{ name?: string; type?: string; value?: string }>;
+  personalCreateRequests: PersonalSecretCreateRequest[];
   adminPatchRequests: Array<{ id: string; body: Record<string, unknown> }>;
   adminDeleteRequests: string[];
   get secrets(): CredentialSecretFixture[];
@@ -206,7 +221,7 @@ function credentialSecretsHandler(
     shareRequests: Array<{ action?: string; teamId?: string }>;
     rotateRequests: Array<{ action?: string; value?: string }>;
     deleteRequests: string[];
-    personalCreateRequests: Array<{ name?: string; type?: string; value?: string }>;
+    personalCreateRequests: PersonalSecretCreateRequest[];
     adminPatchRequests: Array<{ id: string; body: Record<string, unknown> }>;
     adminDeleteRequests: string[];
     auditEvents: CredentialAuditFixture[];
@@ -303,17 +318,15 @@ function credentialSecretsHandler(
     }
 
     if (path === "/api/credentials/secrets" && method === "POST") {
-      const body = ((await postJson(route)) ?? {}) as {
-        name?: string;
-        type?: string;
-        value?: string;
-      };
+      const body = ((await postJson(route)) ?? {}) as PersonalSecretCreateRequest;
       state.personalCreateRequests.push(body);
       const created: CredentialSecretFixture = {
         id: "secret-new",
         name: body.name ?? "New secret",
         type: body.type ?? "bearer_token",
-        owner: DEFAULT_GITHUB_SECRET.owner,
+        owner: body.ownerType === "organization"
+          ? { type: "organization", id: body.ownerId ?? "example-org" }
+          : DEFAULT_GITHUB_SECRET.owner,
         maskedPreview: "e2e_...alue",
         sharedWithTeams: [],
         storage: DEFAULT_GITHUB_SECRET.storage,
@@ -435,7 +448,7 @@ export async function installCredentialsBrowserMocks(
   const rotateRequests: Array<{ action?: string; value?: string }> = [];
   const deleteRequests: string[] = [];
   const connectionRevokeRequests: string[] = [];
-  const personalCreateRequests: Array<{ name?: string; type?: string; value?: string }> = [];
+  const personalCreateRequests: PersonalSecretCreateRequest[] = [];
   const adminPatchRequests: Array<{ id: string; body: Record<string, unknown> }> = [];
   const adminDeleteRequests: string[] = [];
 
@@ -480,8 +493,8 @@ export async function installCredentialsBrowserMocks(
 
   await forceCredentialsFeatureFlags(page);
   await installMockedRbacApp(page, {
-    isAdmin: true,
-    session: CREDENTIALS_ADMIN_SESSION,
+    isAdmin: options.isAdmin ?? true,
+    session: options.session ?? CREDENTIALS_ADMIN_SESSION,
     gates: {
       credentials: true,
       teams: true,
