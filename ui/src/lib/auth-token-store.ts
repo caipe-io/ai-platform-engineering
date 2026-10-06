@@ -1,131 +1,197 @@
-// assisted-by Codex Codex-sonnet-4-6
 import crypto from 'crypto';
-
 import { getCollection, isMongoDBConfigured } from './mongodb';
 
+export const SESSION_FORMAT = 2;
+export const SESSION_MAX_AGE = 24 * 60 * 60;
+const COLLECTION = 'auth_sessions';
+const LEASE_MS = 30_000;
+const WAIT_MS = 12_000;
+const RETRY_MS = 30_000;
+
 export interface StoredTokens {
-  accessToken?: string;
+  accessToken: string;
+  expiresAt: number;
   refreshToken?: string;
+  refreshTokenExpiresAt?: number;
   idToken?: string;
 }
 
-interface L1Entry {
-  tokens: StoredTokens;
-  expiresAt: number; // unix seconds
-}
-
-interface TokenStoreDoc {
+interface SessionDoc {
   _id: string;
-  enc: string; // base64(iv[12] || authTag[16] || ciphertext)
-  updatedAt: Date;
+  sub: string;
+  enc: string;
+  version: number;
+  expiresAt: Date;
+  refreshLease?: { owner: string; until: Date };
+  refreshRetryAfter?: Date;
 }
 
-const COLLECTION = 'auth_token_cache';
-const L1_TTL_S = 60; // seconds — short enough for cross-pod consistency
-const HKDF_INFO = 'caipe-auth-token-store-v1';
-
-const _l1 = new Map<string, L1Entry>();
-
-function _deriveKey(): Buffer {
-  const secret = process.env.NEXTAUTH_SECRET;
-  if (!secret) throw new Error('NEXTAUTH_SECRET is not set');
-  return Buffer.from(crypto.hkdfSync('sha256', secret, '', HKDF_INFO, 32));
+export interface StoredSession extends StoredTokens {
+  sessionId: string;
+  sessionVersion: number;
+  sessionExpiresAt: number;
 }
 
-function _encrypt(tokens: StoredTokens): string {
-  const key = _deriveKey();
+export class SessionExpiredError extends Error {
+  constructor() { super('Your session has expired. Please sign in again.'); }
+}
+
+export class SessionUnavailableError extends Error {
+  constructor() { super('Sign-in services are temporarily unavailable. Please retry.'); }
+}
+
+/** A definitive provider failure before rotation, safe to retry later. */
+export class RefreshRetryableError extends SessionUnavailableError {}
+
+function cryptKey(): Buffer {
+  if (!process.env.NEXTAUTH_SECRET) throw new SessionUnavailableError();
+  return Buffer.from(crypto.hkdfSync('sha256', process.env.NEXTAUTH_SECRET, '', 'caipe-auth-session-v2', 32));
+}
+
+function encrypt(tokens: StoredTokens, id: string, sub: string): string {
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(Buffer.from(JSON.stringify(tokens))),
-    cipher.final(),
-  ]);
-  const tag = cipher.getAuthTag();
-  return Buffer.concat([iv, tag, ciphertext]).toString('base64');
+  const cipher = crypto.createCipheriv('aes-256-gcm', cryptKey(), iv);
+  cipher.setAAD(Buffer.from(JSON.stringify([id, sub])));
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(tokens)), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64');
 }
 
-function _decrypt(enc: string): StoredTokens {
-  const key = _deriveKey();
-  const buf = Buffer.from(enc, 'base64');
-  const iv = buf.subarray(0, 12);
-  const tag = buf.subarray(12, 28);
-  const ciphertext = buf.subarray(28);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-  decipher.setAuthTag(tag);
-  return JSON.parse(
-    Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString(),
-  ) as StoredTokens;
-}
-
-function _l1Get(sub: string): StoredTokens | undefined {
-  const entry = _l1.get(sub);
-  if (!entry) return undefined;
-  if (Math.floor(Date.now() / 1000) >= entry.expiresAt) {
-    _l1.delete(sub);
-    return undefined;
+function unpack(doc: SessionDoc): StoredSession {
+  try {
+    const bytes = Buffer.from(doc.enc, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', cryptKey(), bytes.subarray(0, 12));
+    decipher.setAAD(Buffer.from(JSON.stringify([doc._id, doc.sub])));
+    decipher.setAuthTag(bytes.subarray(12, 28));
+    const tokens: StoredTokens = JSON.parse(Buffer.concat([
+      decipher.update(bytes.subarray(28)), decipher.final(),
+    ]).toString());
+    if (!tokens.accessToken || !Number.isFinite(tokens.expiresAt)) throw new Error('Invalid record');
+    return { ...tokens, sessionId: doc._id, sessionVersion: doc.version,
+      sessionExpiresAt: Math.floor(doc.expiresAt.getTime() / 1000) };
+  } catch {
+    // Never log encrypted records, credentials, or driver errors containing them.
+    throw new SessionUnavailableError();
   }
-  return entry.tokens;
 }
 
-function _l1Set(sub: string, tokens: StoredTokens): void {
-  _l1.set(sub, {
-    tokens,
-    expiresAt: Math.floor(Date.now() / 1000) + L1_TTL_S,
-  });
+async function collection() {
+  if (!isMongoDBConfigured) throw new SessionUnavailableError();
+  try { return await getCollection<SessionDoc>(COLLECTION); }
+  catch { throw new SessionUnavailableError(); }
+}
+
+const writeOptions = { writeConcern: { w: 'majority' as const, wtimeoutMS: 5000 }, maxTimeMS: 5000 };
+
+/** A fresh login owns a new record; encoding cookies never writes credentials. */
+export async function createSession(sub: string, tokens: StoredTokens): Promise<StoredSession> {
+  const id = crypto.randomUUID();
+  const doc: SessionDoc = { _id: id, sub, enc: encrypt(tokens, id, sub), version: 1,
+    expiresAt: new Date(Date.now() + SESSION_MAX_AGE * 1000) };
+  try { await (await collection()).insertOne(doc, writeOptions); }
+  catch { throw new SessionUnavailableError(); }
+  return unpack(doc);
+}
+
+async function readSession(id: string, sub: string): Promise<SessionDoc> {
+  let doc: SessionDoc | null;
+  try {
+    doc = await (await collection()).findOne({ _id: id, sub }, {
+      readPreference: 'primary', readConcern: { level: 'majority' }, maxTimeMS: 5000,
+    });
+  } catch { throw new SessionUnavailableError(); }
+  if (!doc || doc.expiresAt.getTime() <= Date.now()) throw new SessionExpiredError();
+  return doc;
+}
+
+export async function getStoredSession(id: string, sub: string): Promise<StoredSession> {
+  return unpack(await readSession(id, sub));
+}
+
+export async function revokeSession(id: string, sub: string): Promise<void> {
+  try { await (await collection()).deleteOne({ _id: id, sub }, writeOptions); }
+  catch { throw new SessionUnavailableError(); }
+}
+
+function usableDuringRetry(doc: SessionDoc): StoredSession {
+  const session = unpack(doc);
+  if (session.expiresAt <= Math.floor(Date.now() / 1000)) throw new SessionUnavailableError();
+  return session;
 }
 
 /**
- * Read stored OAuth tokens for a user.
- * L1 (in-memory, 60s TTL) is checked first; on miss, falls back to MongoDB.
+ * A Mongo lease serializes refreshes across processes. Version + owner fencing
+ * prevents a late request overwriting a winner or recreating a logged-out session.
+ * An abandoned exchange is ambiguous: its refresh token may have been consumed.
+ * Expire that session instead of replaying the old refresh token.
  */
-export async function getStoredTokens(sub: string | undefined): Promise<StoredTokens | undefined> {
-  if (!sub) return undefined;
+export async function refreshSession(
+  id: string, sub: string, expectedVersion: number,
+  exchange: (tokens: StoredTokens) => Promise<StoredTokens>,
+): Promise<StoredSession> {
+  const deadline = Date.now() + WAIT_MS;
+  const col = await collection();
+  while (Date.now() < deadline) {
+    const doc = await readSession(id, sub);
+    if (doc.version !== expectedVersion) return unpack(doc);
+    if (doc.refreshLease && doc.refreshLease.until.getTime() <= Date.now()) {
+      try {
+        const deleted = await col.deleteOne({ _id: id, sub, version: doc.version,
+          'refreshLease.owner': doc.refreshLease.owner }, writeOptions);
+        if (!deleted.deletedCount) continue;
+      } catch { throw new SessionUnavailableError(); }
+      throw new SessionExpiredError();
+    }
+    if (doc.refreshLease) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      continue;
+    }
+    if (doc.refreshRetryAfter && doc.refreshRetryAfter.getTime() > Date.now()) {
+      return usableDuringRetry(doc);
+    }
+    const owner = crypto.randomUUID();
+    let acquired;
+    try {
+      acquired = await col.updateOne({ _id: id, sub, version: doc.version,
+        expiresAt: { $gt: new Date() }, refreshLease: { $exists: false },
+        $or: [{ refreshRetryAfter: { $exists: false } }, { refreshRetryAfter: { $lte: new Date() } }],
+      }, {
+        $set: { refreshLease: { owner, until: new Date(Date.now() + LEASE_MS) } },
+      }, writeOptions);
+    } catch { throw new SessionUnavailableError(); }
+    if (!acquired.matchedCount) continue;
 
-  const l1 = _l1Get(sub);
-  if (l1) return l1;
-
-  if (!isMongoDBConfigured) return undefined;
-
-  try {
-    const col = await getCollection<TokenStoreDoc>(COLLECTION);
-    const doc = await col.findOne({ _id: sub } as Parameters<typeof col.findOne>[0]);
-    if (!doc) return undefined;
-    const tokens = _decrypt(doc.enc);
-    _l1Set(sub, tokens);
-    return tokens;
-  } catch (err) {
-    console.error('[auth-token-store] MongoDB read error:', err);
-    return undefined;
+    const fence = { _id: id, sub, version: doc.version, 'refreshLease.owner': owner };
+    try {
+      const fresh = await exchange(unpack(doc));
+      const enc = encrypt(fresh, id, sub);
+      const saved = await col.updateOne({ ...fence, expiresAt: { $gt: new Date() },
+        'refreshLease.until': { $gt: new Date() } }, {
+        $set: { enc }, $inc: { version: 1 }, $unset: { refreshLease: '', refreshRetryAfter: '' },
+      }, writeOptions);
+      if (!saved.matchedCount) {
+        await readSession(id, sub);
+        throw new SessionExpiredError();
+      }
+      return await getStoredSession(id, sub);
+    } catch (error) {
+      try {
+        if (error instanceof SessionExpiredError) await col.deleteOne(fence, writeOptions);
+        if (error instanceof RefreshRetryableError) {
+          const released = await col.updateOne(fence, {
+            $unset: { refreshLease: '' }, $set: { refreshRetryAfter: new Date(Date.now() + RETRY_MS) },
+          }, writeOptions);
+          if (!released.matchedCount) continue;
+        }
+      } catch { throw new SessionUnavailableError(); }
+      if (error instanceof RefreshRetryableError) {
+        // Read again: logout or a storage failure must beat the old in-flight token.
+        // The shared cooldown prevents other replicas immediately retrying the provider.
+        return usableDuringRetry(await readSession(id, sub));
+      }
+      // Unknown outcomes retain the lease: the provider may have rotated the token.
+      if (error instanceof SessionExpiredError) throw error;
+      throw new SessionUnavailableError();
+    }
   }
-}
-
-/**
- * Persist OAuth tokens for a user.
- * Writes to L1 immediately and to MongoDB asynchronously (non-fatal on failure).
- * Tokens are AES-256-GCM encrypted before storage; key derived from NEXTAUTH_SECRET via HKDF.
- */
-export async function storeTokens(sub: string | undefined, tokens: StoredTokens): Promise<void> {
-  if (!sub) return;
-
-  _l1Set(sub, tokens);
-
-  if (!isMongoDBConfigured) return;
-
-  try {
-    const enc = _encrypt(tokens);
-    const col = await getCollection<TokenStoreDoc>(COLLECTION);
-    await col.updateOne(
-      { _id: sub } as Parameters<typeof col.updateOne>[0],
-      { $set: { enc, updatedAt: new Date() } },
-      { upsert: true },
-    );
-  } catch (err) {
-    // Non-fatal: L1 still serves this pod; other pods may miss until next refresh
-    console.error('[auth-token-store] MongoDB write error:', err);
-  }
-}
-
-/** Clear the L1 cache. For testing only. */
-export function resetTokenStore(): void {
-  _l1.clear();
+  throw new SessionUnavailableError();
 }

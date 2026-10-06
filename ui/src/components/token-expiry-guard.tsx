@@ -5,7 +5,8 @@ import { formatTimeUntilExpiry,getTimeUntilExpiry,getWarningTimestamp,isTokenExp
 import { getConfig } from "@/lib/config";
 import { AnimatePresence,motion } from "framer-motion";
 import { AlertCircle,LogOut } from "lucide-react";
-import { signOut,useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
+import { signOutWithFeedback } from "@/lib/sign-out";
 import { useCallback,useEffect,useRef,useState } from "react";
 
 const LOGIN_REDIRECT_COUNTDOWN_SECONDS = 5;
@@ -16,6 +17,7 @@ const SESSION_KEEPALIVE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 // AccessTokenMissing is intentionally absent here — it has its own retry-budget
 // handling above (lines 198-211) and must never fall through to immediate logout.
 const SESSION_CREDENTIAL_ERRORS = new Set([
+  "SessionExpired",
   "RefreshTokenExpired",
   "RefreshTokenError",
 ]);
@@ -98,7 +100,7 @@ export function TokenExpiryGuard() {
     if (typeof window !== 'undefined') {
       sessionStorage.setItem('token-expiry-handling', 'true');
     }
-    await signOut({ callbackUrl: buildSessionExpiredLoginUrl() });
+    if (!await signOutWithFeedback({ callbackUrl: buildSessionExpiredLoginUrl() })) setShowExpired(true);
   }, [clearRedirectTimers]);
 
   const beginLoginCountdown = useCallback((reason: "expired" | "refresh_failed") => {
@@ -182,6 +184,15 @@ export function TokenExpiryGuard() {
 
     if (status !== "authenticated" || !session) {
       return; // Not authenticated
+    }
+
+    // A storage/provider outage is retryable, not evidence that the login died.
+    if (session.error === "SessionUnavailable") {
+      clearRedirectTimers();
+      setShowExpired(false);
+      setShowWarning(false);
+      setRefreshFailed(false);
+      return;
     }
 
     // Check if token refresh failed or the server-side token cache was lost.
@@ -317,7 +328,7 @@ export function TokenExpiryGuard() {
         sessionStorage.removeItem('token-expiry-handling');
       }
     }
-  }, [status, session, showWarning, showExpired, beginLoginCountdown, attemptSilentRefresh]);
+  }, [status, session, showWarning, showExpired, beginLoginCountdown, attemptSilentRefresh, clearRedirectTimers]);
 
   // Set up periodic token expiry checking
   useEffect(() => {
