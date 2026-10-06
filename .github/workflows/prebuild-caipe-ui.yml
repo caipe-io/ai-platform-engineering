@@ -49,6 +49,7 @@ jobs:
     if: |
       (github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]') &&
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.event.action != 'closed'
     outputs:
       should_build: ${{ steps.eligibility.outputs.should_build }}

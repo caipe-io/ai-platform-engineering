@@ -1,10 +1,6 @@
-name: "[Prebuild] Manual PR Fanout (⚠️ trusted PRs only)"
+name: "[Prebuild] Manual PR Fanout"
 description: >-
-  Manually run prebuild publishing for a prebuild/* PR head.
-  WARNING: this builds and pushes images using the PR's own code, including
-  PRs from forks, with write access to packages/contents. Only dispatch this
-  for PRs authored by people you trust — it is equivalent to running their
-  code with your permissions.
+  Manually run prebuild publishing for a prebuild/* PR head from this repository.
 
 run-name: "Manual prebuild for PR #${{ inputs.pr_number }} (${{ inputs.target }})"
 
@@ -13,10 +9,7 @@ on:
     inputs:
       pr_number:
         description: >-
-          Open prebuild/* PR number to build from.
-          ⚠️ SECURITY: this runs the PR author's code (Dockerfile/build
-          scripts) with write access to packages/contents, including for
-          fork PRs. Only run this for a PR from someone you trust.
+          Open prebuild/* PR number to build from. Fork pull requests are not supported.
         required: true
         type: number
       target:
@@ -107,7 +100,8 @@ jobs:
             }
 
             if (pr.head.repo.full_name !== repoFullName) {
-              core.info(`PR #${prNumber} head repo is ${pr.head.repo.full_name} (fork). Proceeding because @${context.actor} has write access and triggered this manually.`);
+              core.setFailed(`PR #${prNumber} is from a fork; prebuild images are only published for branches in ${repoFullName}.`);
+              return;
             }
 
             if (!pr.head.ref.startsWith('prebuild/')) {
