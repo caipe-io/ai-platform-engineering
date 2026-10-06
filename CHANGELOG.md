@@ -1,3 +1,9 @@
+## 1.3.0-rc.6 (2026-10-06)
+
+### Fix
+
+- **platform**: restore adaptive reasoning and chat history filters (#2878)
+
 ## 1.3.0-rc.5 (2026-10-05)
 
 ### Feat

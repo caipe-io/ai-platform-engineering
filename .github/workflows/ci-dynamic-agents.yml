@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - 'ai_platform_engineering/dynamic_agents/**'
+      - 'ai_platform_engineering/llm_wrapper/**'
   workflow_dispatch:
     inputs:
       tag_version:
@@ -54,6 +55,7 @@ jobs:
           filters: |
             dynamic_agents:
               - 'ai_platform_engineering/dynamic_agents/**'
+              - 'ai_platform_engineering/llm_wrapper/**'
 
       - name: Set Outputs
         id: set-outputs

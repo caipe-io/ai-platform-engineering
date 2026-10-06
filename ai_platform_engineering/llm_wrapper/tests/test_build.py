@@ -101,6 +101,14 @@ def test_bedrock_converse_keeps_botocore_clients(captured: dict[str, Any]) -> No
     assert captured["kwargs"]["config"] is config
 
 
+def test_sonnet_five_receives_adaptive_thinking(captured: dict[str, Any]) -> None:
+    build_chat_model("aws-bedrock", "global.anthropic.claude-sonnet-5", reasoning_effort="high", temperature=1.0)
+    assert captured["model_provider"] == "anthropic_bedrock"
+    assert captured["kwargs"]["thinking"] == {"type": "adaptive"}
+    assert captured["kwargs"]["output_config"] == {"effort": "high"}
+    assert "temperature" not in captured["kwargs"]
+
+
 def test_openai_compatible_injects_base_url(
     captured: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:

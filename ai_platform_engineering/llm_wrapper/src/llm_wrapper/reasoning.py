@@ -13,6 +13,7 @@ Single shared source, imported directly. See README.md.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 ReasoningEffort = Literal["low", "medium", "high", "max"]
@@ -59,13 +60,15 @@ def apply_reasoning_effort(
     langchain_provider: str,
     effort: ReasoningEffort | None,
     kwargs: dict[str, Any],
+    *,
+    model_id: str | None = None,
 ) -> dict[str, Any]:
     """Return ``kwargs`` with ``effort`` expressed the way the provider expects.
 
     - OpenAI-family providers take ``reasoning_effort`` natively; it is left
       in place untouched.
-    - Anthropic-family providers need ``thinking={"type": "enabled",
-      "budget_tokens": N}`` plus a ``max_tokens`` that exceeds ``N``.
+    - Recent Claude models use adaptive thinking and ``output_config.effort``;
+      older models use a thinking budget plus output headroom.
     - Gemini uses its own, lower budget ceiling.
 
     A provider with no known mapping has ``reasoning_effort`` removed rather
@@ -82,6 +85,29 @@ def apply_reasoning_effort(
     kwargs.pop("reasoning_effort", None)
 
     if langchain_provider in {"anthropic", "anthropic_bedrock", "bedrock_converse", "bedrock"}:
+        adaptive = re.search(
+            r"claude-(?:sonnet-(?:4-6|5)|opus-(?:4-[678]|5))(?:[-.:]|$)",
+            (model_id or "").lower(),
+        )
+        if adaptive:
+            # Adaptive thinking uses effort instead of token budgets; newer
+            # Claude models reject sampling controls.
+            output_config = kwargs.pop("output_config", None) or {}
+            request_fields = kwargs
+            if langchain_provider in {"bedrock_converse", "bedrock"}:
+                field_name = "additional_model_request_fields" if langchain_provider == "bedrock_converse" else "model_kwargs"
+                request_fields = dict(kwargs.get(field_name) or {})
+                kwargs[field_name] = request_fields
+            for parameter in ("temperature", "top_p", "top_k"):
+                kwargs.pop(parameter, None)
+                request_fields.pop(parameter, None)
+            request_fields.update({
+                "thinking": {"type": "adaptive"},
+                "output_config": {**(request_fields.get("output_config") or {}), **output_config, "effort": effort},
+            })
+            if kwargs.get("max_tokens") is None:
+                kwargs["max_tokens"] = THINKING_BUDGETS[effort] + THINKING_RESPONSE_HEADROOM
+            return kwargs
         if kwargs.get("max_tokens") is not None and kwargs["max_tokens"] <= THINKING_MIN_BUDGET:
             raise ValueError("Thinking requires max_tokens > 1024; increase the limit or disable reasoning_effort.")
         budget = clamp_thinking_budget(THINKING_BUDGETS[effort], kwargs.get("max_tokens"))

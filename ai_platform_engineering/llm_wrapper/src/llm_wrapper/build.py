@@ -218,8 +218,11 @@ def build_chat_model(
             kwargs["timeout"] = config.read_timeout
 
     try:
-        kwargs = apply_reasoning_effort(lc_provider, kwargs.pop("reasoning_effort", None), kwargs)
         _resolve_bedrock_aip(resolved_model, lc_provider, kwargs)
+        kwargs = apply_reasoning_effort(
+            lc_provider, kwargs.pop("reasoning_effort", None), kwargs,
+            model_id=kwargs.get("base_model_id") or resolved_model,
+        )
         return init_chat_model(model=resolved_model, model_provider=lc_provider, **kwargs)
     except ImportError as exc:
         raise LLMConfigError(
