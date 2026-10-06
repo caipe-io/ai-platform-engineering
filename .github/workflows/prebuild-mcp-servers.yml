@@ -45,6 +45,7 @@ jobs:
       (github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]') &&
       (
         startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+        (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
         github.event.action != 'closed'
       )
     outputs:
@@ -71,6 +72,7 @@ jobs:
     needs: load-config
     if: |
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.event.action != 'closed'
     outputs:
       agents: ${{ steps.set-matrix.outputs.agents }}
@@ -138,6 +140,7 @@ jobs:
     if: |
       needs.determine-agents.outputs.should_build == 'true' &&
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.event.action != 'closed'
     permissions:
       contents: write
@@ -278,6 +281,7 @@ jobs:
       needs.determine-agents.result == 'success' &&
       needs.determine-agents.outputs.should_build == 'true' &&
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.event.action != 'closed'
     permissions:
       contents: write
