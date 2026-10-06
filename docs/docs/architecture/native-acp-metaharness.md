@@ -5,8 +5,9 @@ sidebar_position: 9
 # Native ACP metaharness
 
 The first implementation of the [CAIPE metaharness proposal](https://github.com/orgs/caipe-io/discussions/2877)
-puts an Agent Client Protocol (ACP) boundary around the existing Dynamic Agents
-runtime. Default and custom agents remain logical agents in the shared service;
+establishes one Agent Client Protocol (ACP) execution path for native Dynamic
+Agents. Streaming, human-input resume and invoke all cross this boundary.
+Default and custom agents remain logical agents in the shared service;
 DeepAgents and LangGraph still execute them.
 
 ## Execution path
@@ -44,10 +45,11 @@ and cancellation use it as well.
 LangGraph chunks are interpreted once into typed stream events. The native ACP
 agent publishes standard ACP progress and acknowledged native events directly;
 the client renders those events through the existing AG-UI or custom SSE
-encoder. Direct rollback uses the same event projection and encoders. Neither
-the agent nor the protocol bridge parses UI event strings to infer execution
-state. Runtime construction, binding validation and administrative deletion
-share one resolver for checkpoint and logical filesystem coordinates.
+encoder. The native runtime implements execution behind the logical ACP agent,
+and the shared execution service dispatches every native turn through ACP.
+Neither the agent nor the protocol bridge parses UI event strings to infer
+execution state. Runtime construction, binding validation and administrative
+deletion share one resolver for checkpoint and logical filesystem coordinates.
 
 The bridge implements stable initialization, session creation, prompting,
 updates and cancellation. It does not advertise ACP session loading, session
@@ -152,16 +154,17 @@ enforcement are later stages. Separate sandboxed runtimes will require enforced
 filesystem and network boundaries before admission. This implementation does
 not add OpenShell or NemoClaw execution.
 
-## Enablement and rollback
+## Deployment and rollback
 
-`NATIVE_ACP_ENABLED=true` enables the native ACP path. Set it to `false` and
-restart Dynamic Agents to use the existing direct runtime path. Both paths keep
-the current chat API and checkpoint IDs; switching the flag does not delete
-bindings, checkpoints or conversation records. Existing bindings still select
-their admitted configuration and storage during direct rollback; unbound
-legacy sessions do not create an ACP binding while the flag is disabled. Both
-transports coordinate turns and state mutations through the same MongoDB
-lease, including during a rolling change between enabled and disabled replicas.
+ACP is part of the Dynamic Agents execution path. Deploy the service image
+through the existing Helm/GitOps process; no separate ACP enablement setting is
+required. The HTTP API, native thread IDs and cached, persistent or ephemeral
+runtime lifetimes retain their existing roles.
+
+To undo a release, restore the previous image pin and release values through
+the normal deployment process. Keep binding, checkpoint, file and conversation
+collections intact. Deployment rollback changes the deployed version rather
+than selecting another execution path inside this implementation.
 
 See the [Dynamic Agents configuration reference](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/dynamic_agents#configuration-reference)
 for component settings.

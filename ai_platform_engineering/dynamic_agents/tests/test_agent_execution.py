@@ -1,4 +1,4 @@
-"""Canonical execution preserves admission, lifetime, state and rollback contracts."""
+"""Canonical ACP execution preserves admission, runtime lifetime and native session state."""
 
 import asyncio
 import threading
@@ -19,6 +19,7 @@ from dynamic_agents.models import (
     InputFile,
     UserContext,
 )
+from dynamic_agents.routes import chat
 from dynamic_agents.services import agent_execution as execution
 from dynamic_agents.services.mongo import MongoDBService
 from dynamic_agents.services.session_bindings import (
@@ -79,8 +80,8 @@ def _cached_borrow(cache, state):
 
 @pytest.fixture
 def environment(monkeypatch):
-    settings = Settings(native_acp_enabled=True)
-    state = SimpleNamespace(leased=False, borrowed=0, acquisitions=0, calls=[], acp_calls=[])
+    settings = Settings()
+    state = SimpleNamespace(leased=False, acp_owned=False, borrowed=0, acquisitions=0, acp_calls=[])
 
     @asynccontextmanager
     async def lease(*args):
@@ -95,22 +96,21 @@ def environment(monkeypatch):
 
     @asynccontextmanager
     async def local(*args):
-        yield
-
-    async def stream(*args, **kwargs):
-        state.calls.append(("stream", args, kwargs))
-        yield "preserved frame"
-
-    async def resume(*args, **kwargs):
-        state.calls.append(("resume", args, kwargs))
-        yield "preserved frame"
+        assert not state.acp_owned
+        state.acp_owned = True
+        try:
+            yield
+        finally:
+            state.acp_owned = False
 
     async def acp(runtime, **kwargs):
+        assert state.leased and state.acp_owned
         state.acp_calls.append((runtime, kwargs))
         yield "preserved frame"
 
     runtime = SimpleNamespace(
-        stream=stream, resume=resume, _graph=object(),
+        stream=MagicMock(side_effect=AssertionError("Direct stream bypassed ACP")),
+        resume=MagicMock(side_effect=AssertionError("Direct resume bypassed ACP")), _graph=object(),
         has_pending_interrupt=AsyncMock(return_value=None), rewind_before_turn=AsyncMock(return_value="checkpoint"),
     )
 
@@ -137,11 +137,9 @@ def environment(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("resume", [False, True])
-async def test_stream_preserves_turn_and_transport_contract(environment, enabled, resume):
+async def test_stream_preserves_acp_turn_contract(environment, resume):
     env = environment
-    env.settings.native_acp_enabled = enabled
     files = [InputFile(mime_type="image/png", data="aGVsbG8=", name="example.png")]
     context = ClientContext(source="webui")
     turn = execution.ExecutionTurn(
@@ -154,30 +152,21 @@ async def test_stream_preserves_turn_and_transport_contract(environment, enabled
     args, kwargs = env.cache.get_or_create.await_args
     assert args[2] == "original-thread" and kwargs == {"user": env.user, "client_context": context}
     assert not env.state.leased and env.state.acquisitions == 1
-    if enabled:
-        _, envelope = env.state.acp_calls[0]
-        assert envelope == {
-            "message": turn.message, "session_id": turn.session_id, "user_email": env.user.email,
-            "encoder": encoder, "trace_id": "trace", "files": files, "turn_id": "turn", "resume_data": turn.resume_data,
-        }
-        assert env.state.calls == []
-        assert env.admit.call_args.kwargs["resume"] is resume
-    else:
-        env.admit.assert_not_called()
-        assert not env.state.acp_calls
-        kind, args, kwargs = env.state.calls[0]
-        assert kind == ("resume" if resume else "stream")
-        assert "original-thread" in args and env.user.email in args
-        if not resume:
-            assert kwargs == {"files": files, "turn_id": "turn"}
+    _, envelope = env.state.acp_calls[0]
+    assert envelope == {
+        "message": turn.message, "session_id": turn.session_id, "user_email": env.user.email,
+        "encoder": encoder, "trace_id": "trace", "files": files, "turn_id": "turn", "resume_data": turn.resume_data,
+    }
+    env.runtime.stream.assert_not_called()
+    env.runtime.resume.assert_not_called()
+    assert env.admit.call_args.kwargs["resume"] is resume
 
 
-@pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("scheduler", [False, True])
 @pytest.mark.parametrize("persist_history", [False, True])
-async def test_invoke_keeps_native_runtime_lifetime(environment, enabled, scheduler, persist_history):
+async def test_invoke_keeps_native_runtime_lifetime_through_acp(environment, scheduler, persist_history):
     env = environment
-    env.settings.native_acp_enabled, env.settings.invoke_persist_history = enabled, persist_history
+    env.settings.invoke_persist_history = persist_history
     interrupt = {"type": "tool_approval", "interrupt_id": "approval"}
     env.runtime.has_pending_interrupt.return_value = interrupt
     turn = execution.ExecutionTurn(
@@ -199,38 +188,38 @@ async def test_invoke_keeps_native_runtime_lifetime(environment, enabled, schedu
         env.cache.ephemeral.assert_called_once()
         env.cache.get_or_create.assert_not_awaited()
         env.saved.assert_not_called()
-    assert env.admit.called is (enabled and (scheduler or persist_history))
-    assert bool(env.state.acp_calls) is enabled
+    assert env.admit.called is (scheduler or persist_history)
+    assert len(env.state.acp_calls) == 1
+    env.runtime.stream.assert_not_called()
+    env.runtime.resume.assert_not_called()
     assert not env.state.leased and env.state.acquisitions == 1
 
 
-@pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("failure", [SessionRunBusyError("active turn"), SessionBindingError("storage unavailable")])
-async def test_failed_admission_cannot_construct_or_execute_runtime(environment, monkeypatch, failure, enabled):
+async def test_failed_admission_cannot_construct_or_execute_runtime(environment, monkeypatch, failure):
     env = environment
-    env.settings.native_acp_enabled = enabled
     if isinstance(failure, SessionRunBusyError):
         @asynccontextmanager
         async def busy(*args):
             raise failure
             yield
         monkeypatch.setattr(execution, "native_session_run", busy)
-    elif enabled:
-        env.admit.side_effect = failure
     else:
-        env.saved.side_effect = failure
+        env.admit.side_effect = failure
     turn = execution.ExecutionTurn(agent=_agent(), session_id="thread", user=env.user, message="hello")
     with pytest.raises(type(failure)):
         _ = [frame async for frame in env.service.stream(turn, get_encoder())]
     env.cache.get_or_create.assert_not_awaited()
     env.mongo.get_agent_mcp_servers.assert_not_called()
-    assert not env.state.acp_calls and not env.state.calls and not env.state.leased
+    assert not env.state.acp_calls and not env.state.leased and not env.state.acp_owned
+    env.runtime.stream.assert_not_called()
+    env.runtime.resume.assert_not_called()
 
 
-async def test_rollback_preserves_real_admitted_storage_and_resume_snapshot(environment, monkeypatch):
+async def test_cache_restart_preserves_real_admitted_storage_and_resume_snapshot(environment, monkeypatch):
     env = environment
     settings = Settings(
-        native_acp_enabled=True, mongodb_database="example", checkpoint_collection="checkpoints",
+        mongodb_database="example", checkpoint_collection="checkpoints",
         checkpoint_writes_collection="writes", gridfs_bucket_name="files",
     )
     collection = _BindingCollection()
@@ -254,32 +243,34 @@ async def test_rollback_preserves_real_admitted_storage_and_resume_snapshot(envi
     assert [frame async for frame in initial.stream(turn, get_encoder())] == ["preserved frame"]
     admitted = get_native_binding(mongo, original.id, "original-thread")
     before = deepcopy(collection.rows)
-    rollback_cache = MagicMock(get_or_create=AsyncMock(return_value=env.runtime))
-    rollback_cache.borrow.side_effect = _cached_borrow(rollback_cache, env.state)
+    restarted_cache = MagicMock(get_or_create=AsyncMock(return_value=env.runtime))
+    restarted_cache.borrow.side_effect = _cached_borrow(restarted_cache, env.state)
     env.state.acp_calls.clear()
-    env.settings.native_acp_enabled = settings.native_acp_enabled = False
     # A new service/cache represents a restarted pod; the current definition no
     # longer contains the workflow's storage override or prompt.
     replacement = _agent(system_prompt="New base definition", backend=AgentBackend(type="state"))
-    rollback = execution.AgentExecutionService(mongo, settings=settings, cache=rollback_cache)
+    restarted = execution.AgentExecutionService(mongo, settings=settings, cache=restarted_cache)
     resume = execution.ExecutionTurn(
         agent=replacement, session_id="original-thread", user=env.user, resume_data='{"type":"form_input","values":{}}',
     )
-    assert [frame async for frame in rollback.stream(resume, get_encoder())] == ["preserved frame"]
-    assert rollback_cache.get_or_create.await_args.args[0] == admitted
-    assert env.state.calls[-1][0] == "resume" and env.state.calls[-1][1][0] == "original-thread"
+    assert [frame async for frame in restarted.stream(resume, get_encoder())] == ["preserved frame"]
+    assert restarted_cache.get_or_create.await_args.args[0] == admitted
+    assert env.state.acp_calls[0][1]["session_id"] == "original-thread"
+    assert env.state.acp_calls[0][1]["resume_data"] == resume.resume_data
     env.runtime.has_pending_interrupt.return_value = {"type": "form_input"}
-    assert await rollback.interrupt_state(replacement, "original-thread", env.user) == {"type": "form_input"}
-    assert await rollback.rewind(
+    assert await restarted.interrupt_state(replacement, "original-thread", env.user) == {"type": "form_input"}
+    assert await restarted.rewind(
         replacement, "original-thread", env.user, turn_id="turn", message_content="hello", content_occurrence=1,
     ) == "checkpoint"
-    cleared = await rollback.clear(original.id, "original-thread")
+    cleared = await restarted.clear(original.id, "original-thread")
     assert (cleared.checkpoints_deleted, cleared.writes_deleted, cleared.files_deleted) == (3, 4, 2)
     checkpoints.delete_many.assert_called_once_with({"thread_id": "original-thread"})
     writes.delete_many.assert_called_once_with({"thread_id": "original-thread"})
     store.delete_by_namespace.assert_called_once_with(("workflow", "run", "filesystem"))
-    assert all(call.args[0] == admitted for call in rollback_cache.get_or_create.await_args_list)
-    assert collection.rows == before and not env.state.acp_calls and not env.state.leased
+    assert all(call.args[0] == admitted for call in restarted_cache.get_or_create.await_args_list)
+    assert collection.rows == before and len(env.state.acp_calls) == 1 and not env.state.leased
+    env.runtime.stream.assert_not_called()
+    env.runtime.resume.assert_not_called()
 
 
 async def test_disconnect_drains_runtime_cleanup_before_releasing_admission(environment, monkeypatch):
@@ -373,19 +364,18 @@ async def test_cancelled_checkpoint_delete_keeps_admission_until_thread_finishes
     writes.delete_many.assert_not_called()
 
 
-async def test_direct_rollout_reads_bound_state_only_after_turn_ownership(environment):
+async def test_session_admission_requires_turn_ownership_before_binding(environment):
     env = environment
-    env.settings.native_acp_enabled = False
 
-    def saved(*args):
-        assert env.state.leased
-        return None
+    def admitted(mongo, agent, session, **kwargs):
+        assert env.state.leased and env.state.acp_owned
+        return agent
 
-    env.saved.side_effect = saved
+    env.admit.side_effect = admitted
     turn = execution.ExecutionTurn(agent=_agent(), session_id="thread", user=env.user, message="hello")
     assert [frame async for frame in env.service.stream(turn, get_encoder())] == ["preserved frame"]
-    env.admit.assert_not_called()
-    assert env.state.acquisitions == 1 and not env.state.leased
+    env.admit.assert_called_once()
+    assert env.state.acquisitions == 1 and not env.state.leased and not env.state.acp_owned
 
 
 async def test_interrupt_poll_borrows_read_only_without_reserving_an_execution_turn(environment):
@@ -415,3 +405,40 @@ async def test_rewind_keeps_runtime_borrow_and_write_ownership_for_the_operation
     ) == "checkpoint"
     assert env.cache.borrow.call_args.kwargs["read_only"] is False
     assert not env.state.leased and env.state.borrowed == 0
+
+
+@pytest.mark.parametrize(("operation", "source", "persist_history"), [
+    ("start", "webui", False), ("resume", "webui", False),
+    ("invoke", "webui", False), ("invoke", "webui", True),
+    ("invoke", "scheduler", False), ("invoke", "scheduler", True),
+])
+async def test_chat_entrypoints_share_the_canonical_acp_service(
+    environment, monkeypatch, operation, source, persist_history,
+):
+    env = environment
+    agent = _agent()
+    env.settings.invoke_persist_history = persist_history
+    env.mongo.get_agent.return_value = agent
+    monkeypatch.setattr(chat, "AgentExecutionService", lambda mongo: env.service)
+    monkeypatch.setattr(chat, "require_agent_use_permission", AsyncMock())
+    context = ClientContext(source=source)
+    if operation == "resume":
+        response = await chat.chat_resume_stream(chat.ResumeStreamRequest(
+            agent_id=agent.id, conversation_id="original-thread", client_context=context,
+            resume_data='{"type":"form_input","values":{}}',
+        ), env.user, env.mongo)
+    else:
+        request = chat.ChatRequest(
+            agent_id=agent.id, conversation_id="original-thread", message="hello", client_context=context,
+        )
+        handler = chat.chat_invoke if operation == "invoke" else chat.chat_start_stream
+        response = await handler(request, env.user, env.mongo)
+    if operation == "invoke":
+        assert response["success"] is True
+    else:
+        assert [frame async for frame in response.body_iterator] == ["preserved frame"]
+    assert len(env.state.acp_calls) == 1
+    assert env.state.acp_calls[0][1]["session_id"] == "original-thread"
+    env.runtime.stream.assert_not_called()
+    env.runtime.resume.assert_not_called()
+    assert not env.state.leased and not env.state.acp_owned and env.state.borrowed == 0

@@ -50,8 +50,8 @@ Dynamic Agents provide a flexible way to create purpose-built AI assistants with
 
 ### Native ACP execution
 
-Default and custom agents can run through an in-service Agent Client Protocol
-(ACP) boundary while keeping their existing DeepAgents/LangGraph runtime.
+Default and custom agent turns execute through one in-service Agent Client
+Protocol (ACP) path while keeping their existing DeepAgents/LangGraph runtime.
 The native ACP client and logical agent exchange JSON-RPC messages using the
 pinned Python SDK 0.12.1, schema 1.19 and wire protocol 1.
 
@@ -80,16 +80,16 @@ pinned Python SDK 0.12.1, schema 1.19 and wire protocol 1.
 - Ordinary `/invoke` retains its ephemeral checkpoint/history behavior unless
   `INVOKE_PERSIST_HISTORY` is enabled; transient turn coordination still uses
   MongoDB. Scheduler invocations retain their existing persistent execution.
-- `NATIVE_ACP_ENABLED=false` restores the direct runtime path after a service
-  restart. Existing bound sessions continue to use their saved configuration
-  and storage; unbound legacy sessions do not create ACP bindings.
 
 The shared execution service owns admission, MCP resolution, runtime lifetime,
-transport selection and conversation-state operations. HTTP routes retain
+ACP dispatch and conversation-state operations. HTTP routes retain
 authorization and request/response handling. LangGraph chunks become typed
 events once; ACP publishes them directly and the client renders AG-UI or custom
-SSE. The direct path uses the same event projection and renderers. Runtime
-construction, saved bindings and state deletion share one storage resolver.
+SSE. Streaming, human-input resume and invoke all use this path; the native
+runtime remains the execution implementation behind the logical ACP agent.
+Runtime construction, saved bindings and state deletion share one storage
+resolver. Deployment rollback uses the previous image pin and release values
+through the normal deployment process.
 
 This is the native-runtime stage of the
 [metaharness proposal](https://github.com/orgs/caipe-io/discussions/2877), related
@@ -171,7 +171,6 @@ ENABLE_TRACING=false
 
 # Runtime
 AGENT_RUNTIME_TTL_SECONDS=3600  # Cache TTL for agent runtimes
-NATIVE_ACP_ENABLED=true  # Set false to use the direct native runtime path
 
 # CORS
 CORS_ORIGINS=["*"]
@@ -208,7 +207,6 @@ The API documentation is available at:
 | `AUTONOMOUS_TASKS_COLLECTION` | Shared Autonomous task collection, used to authorize manual follow-up chats | `autonomous_tasks` |
 | `AUTONOMOUS_RUNS_COLLECTION` | Shared Autonomous run collection, used to select the completed run context | `autonomous_runs` |
 | `AGENT_RUNTIME_TTL_SECONDS` | Cache TTL for agent runtimes | `3600` |
-| `NATIVE_ACP_ENABLED` | Run native agents through the in-service ACP client; `false` restores direct execution | `true` |
 | `CORS_ORIGINS` | Allowed CORS origins | `["*"]` |
 
 ### Models Configuration

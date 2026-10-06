@@ -1,8 +1,8 @@
 """Canonical admission and lifetime for native agent execution.
 
 HTTP routes authorize callers and validate overrides before entering this
-service. Transport selection does not own session storage, runtime caching,
-or cancellation: ACP and direct rollback share those responsibilities here.
+service. Every turn uses ACP; session storage, runtime caching and cancellation
+are owned here rather than by the transport or HTTP routes.
 """
 
 from __future__ import annotations
@@ -89,38 +89,30 @@ class AgentExecutionService:
 
     @asynccontextmanager
     async def _session(
-        self, agent_id: str, session_id: str, *, execute: bool = False, persistent: bool = True,
+        self, agent_id: str, session_id: str, *, execute: bool = False,
     ) -> AsyncGenerator[DynamicAgentConfig | None, None]:
-        """Guard writes before admission; retain bound sessions during rollback."""
+        """Guard execution and state mutations before resolving their binding."""
         async with AsyncExitStack() as stack:
-            # Mixed replicas during a flag rollout must still coordinate the
-            # same session. Transport choice never bypasses turn ownership.
             if self.mongo is not None and agent_id:
                 await stack.enter_async_context(native_session_run(self.mongo, agent_id, session_id))
-            if execute and self.settings.native_acp_enabled is True:
+            if execute:
                 await stack.enter_async_context(native_acp_turn(agent_id, session_id))
             # Reads follow the lease so another worker cannot update the snapshot
             # between resolving storage coordinates and mutating its state.
-            saved = (
-                await self._saved_agent(agent_id, session_id)
-                if persistent and (not execute or self.settings.native_acp_enabled is not True) else None
-            )
+            saved = await self._saved_agent(agent_id, session_id) if not execute else None
             yield saved
 
     @asynccontextmanager
     async def _runtime(
         self, turn: ExecutionTurn, mode: _RuntimeMode,
     ) -> AsyncGenerator[AgentRuntime, None]:
-        async with self._session(
-            turn.agent.id, turn.session_id, execute=True, persistent=mode is not _RuntimeMode.EPHEMERAL,
-        ) as saved:
+        async with self._session(turn.agent.id, turn.session_id, execute=True):
             agent = turn.agent
             if self.mongo is not None and mode is not _RuntimeMode.EPHEMERAL:
-                if self.settings.native_acp_enabled is True or saved is not None:
-                    agent = await await_session_operation(
-                        resolve_native_binding, self.mongo, agent, turn.session_id,
-                        resume=turn.resume_data is not None,
-                    )
+                agent = await await_session_operation(
+                    resolve_native_binding, self.mongo, agent, turn.session_id,
+                    resume=turn.resume_data is not None,
+                )
             servers = await asyncio.to_thread(self.mongo.get_agent_mcp_servers, agent) if self.mongo is not None else []
             arguments = (agent, servers, turn.session_id)
             context = {"user": turn.user, "client_context": turn.client_context}
@@ -136,20 +128,11 @@ class AgentExecutionService:
     async def _dispatch(
         self, runtime: AgentRuntime, turn: ExecutionTurn, encoder: StreamEncoder[str],
     ) -> AsyncGenerator[str, None]:
-        if self.settings.native_acp_enabled is True:
-            source = native_acp_stream(
-                runtime, message=turn.message, session_id=turn.session_id, user_email=turn.user.email,
-                encoder=encoder, trace_id=turn.trace_id, files=turn.files, turn_id=turn.turn_id,
-                resume_data=turn.resume_data,
-            )
-        elif turn.resume_data is not None:
-            source = runtime.resume(turn.session_id, turn.user.email, turn.resume_data, turn.trace_id, encoder)
-        else:
-            source = runtime.stream(
-                turn.message, turn.session_id, turn.user.email, turn.trace_id, encoder,
-                files=turn.files, turn_id=turn.turn_id,
-            )
-        async with aclosing(source) as frames:
+        async with aclosing(native_acp_stream(
+            runtime, message=turn.message, session_id=turn.session_id, user_email=turn.user.email,
+            encoder=encoder, trace_id=turn.trace_id, files=turn.files, turn_id=turn.turn_id,
+            resume_data=turn.resume_data,
+        )) as frames:
             async for frame in frames:
                 yield frame
 
