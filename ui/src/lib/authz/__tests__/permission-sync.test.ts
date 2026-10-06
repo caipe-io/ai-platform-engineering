@@ -65,6 +65,37 @@ it("rejects overlapping saves while recovery is pending", async () => {
   expect(mockCollection.updateOne).not.toHaveBeenCalled();
 });
 
+it("does not stage or bump the snapshot for a genuinely empty existing-resource command", async () => {
+  const previous = { ...command.previous, _permission_sync: { ...pending, state: "applied" } };
+  expect(await persistPermissionChange({ ...command, previous, set: {} }, { writes: [], deletes: [] }, context)).toMatchObject({ state: "applied" });
+  expect(mockCollection.updateOne).not.toHaveBeenCalled();
+  expect(mockCollection.findOneAndUpdate).not.toHaveBeenCalled();
+  expect(mockApply).not.toHaveBeenCalled();
+});
+
+it("still projects repair tuples when the settings are unchanged", async () => {
+  await persistPermissionChange({ ...command, set: {} }, diff, context);
+  expect(mockApply).toHaveBeenCalledWith(diff, expect.any(Function));
+});
+
+it("an empty command cannot bypass pending-operation or disabled-writer guards", async () => {
+  const empty = { writes: [], deletes: [] };
+  await expect(persistPermissionChange({ ...command, previous: { _permission_sync: pending }, set: {} }, empty, context)).rejects.toMatchObject({ statusCode: 409 });
+  mockEnabled.mockReturnValue(false);
+  await expect(persistPermissionChange({ ...command, set: {} }, empty, context)).rejects.toMatchObject({ code: "ACCESS_WRITES_DISABLED" });
+  expect(mockCollection.updateOne).not.toHaveBeenCalled();
+});
+
+it.each(["create", "unset", "delete"])("does not discard a %s operation with an empty tuple diff", async operation => {
+  mockCollection.deleteOne.mockResolvedValue({ deletedCount: 1 });
+  await persistPermissionChange({ ...command, set: {},
+    ...(operation === "create" ? { previous: null } : {}),
+    ...(operation === "unset" ? { unset: { default_agent_id: "" } } : {}),
+    ...(operation === "delete" ? { deleteResource: true } : {}),
+  }, { writes: [], deletes: [] }, context);
+  expect(mockCollection.findOneAndUpdate).toHaveBeenCalledTimes(1);
+});
+
 it("returns pending after a graph outage and leaves retry work durable", async () => {
   mockApply.mockRejectedValueOnce(new Error("OpenFGA unavailable"));
   expect(await persistPermissionChange(command, diff, context)).toMatchObject({ state: "pending" });

@@ -27,7 +27,7 @@ import {
   mapWithConcurrency,
 } from "@/lib/rbac/openfga";
 import { reconcileAgentRelationships, deleteAllAgentToolTuples } from "@/lib/rbac/openfga-agent-tools";
-import { type PermissionPersistence, permissionSyncStatus } from "@/lib/authz/permission-sync";
+import { PermissionSaveConflictError, type PermissionPersistence, permissionSyncStatus } from "@/lib/authz/permission-sync";
 import { getResolvedPlatformDefaultAgentId } from "@/lib/platform-default-agent";
 import {
   resolveUnlinkedServiceAccountSub,
@@ -1709,6 +1709,7 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
   // sub also drives the everyone-can-use backfill.
   const { sub: unlinkedServiceAccountSub, explicitAgentIds } =
     await resolveUnlinkedServiceAccountGrantState();
+  let processed = 0;
   for (const agent of agents) {
     const agentId = String(agent._id ?? "").trim();
     if (!agentId || permissionSyncStatus(agent)?.state === "pending") continue;
@@ -1717,7 +1718,7 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
     const isGlobal = agent.visibility === "global";
     const retainPlatformDefaultGrant =
       platformDefaultAgentId !== null && agentId === platformDefaultAgentId;
-    await reconcileAgentRelationships({
+    const result = await reconcileAgentRelationships({
       agentId,
       previousAllowedTools: allowedTools,
       nextAllowedTools: allowedTools,
@@ -1738,15 +1739,22 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
       unlinkedGrantIsExplicit: explicitAgentIds.has(agentId),
       failClosed: true,
       persistence: { collection: "dynamic_agents", id: agentId, previous: agent, set: {} },
+    }).catch((error: unknown) => {
+      if (!(error instanceof PermissionSaveConflictError)) throw error;
+      // Another writer owns this snapshot; do not let it starve unrelated
+      // agents later in the sweep. Its pending journal is recovered separately.
+      console.warn("[seed-config] Skipping agent permission snapshot conflict", { agentId });
+      return null;
     });
+    if (result !== null) processed++;
   }
 
   if (agents.length > 0) {
     console.log(
-      `[seed-config] Reconciled OpenFGA tuples for ${agents.length} dynamic agent(s)`,
+      `[seed-config] Processed permission recovery for ${processed} dynamic agent(s); skipped ${agents.length - processed}`,
     );
   }
-  return agents.length;
+  return processed;
 }
 
 /**

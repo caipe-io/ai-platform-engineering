@@ -128,6 +128,8 @@ export function DynamicAgentsTab({
     }
   }, [page, pageSize, search]);
 
+  const refreshAgents = React.useCallback(() => { void fetchAgents(); }, [fetchAgents]);
+
   React.useEffect(() => {
     fetchAgents();
   }, [fetchAgents]);
@@ -489,7 +491,7 @@ export function DynamicAgentsTab({
               const rowActionError = rowActionErrors[agent._id];
               return (
               <div key={agent._id} className="space-y-2">
-              <PermissionSyncNotice status={agent.permission_sync} onApplied={() => void fetchAgents()} onMissing={() => void fetchAgents()} />
+              <PermissionSyncNotice status={agent.permission_sync} onApplied={refreshAgents} onMissing={refreshAgents} />
               <div
                 className="grid grid-cols-12 gap-4 py-3 px-2 rounded-lg hover:bg-muted/50 items-center cursor-pointer"
                 onClick={() => openAgent(agent)}

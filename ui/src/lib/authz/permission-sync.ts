@@ -83,10 +83,17 @@ export async function persistPermissionChange(
   context: TupleReconcileContext,
 ): Promise<PermissionSyncStatus | undefined> {
   if (isOpenFgaConfigured() && !isOpenFgaReconciliationEnabled()) throw new OpenFgaReconcileRequiredError();
-  const col = await getCollection<ResourceDocument>(persistence.collection);
   const previous = persistence.previous as ResourceDocument | null;
   const conflict = () => new PermissionSaveConflictError(persistence.collection === "dynamic_agents" ? "AGENT_SAVE_CONFLICT" : "PLATFORM_CONFIG_SAVE_CONFLICT");
   if (previous?._permission_sync?.state === "pending") throw conflict();
+  // No settings change and no requested repair: leave the editor's snapshot
+  // untouched. A nonempty projection still needs to verify the stored grants.
+  if (previous !== null && !persistence.deleteResource &&
+    !Object.keys(persistence.set).length && !Object.keys(persistence.unset ?? {}).length &&
+    !diff.writes.length && !diff.deletes.length) {
+    return permissionSyncStatus(previous);
+  }
+  const col = await getCollection<ResourceDocument>(persistence.collection);
   // An applied operation no longer owns its old deletes. Replaying history could
   // remove a grant subsequently created through another administrative path.
   const combined = mergePermissionProjection(undefined, diff);

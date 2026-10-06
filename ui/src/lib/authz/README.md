@@ -148,6 +148,9 @@ Picker GET → read candidates → permission filter (no grant writes)
   configured. Default selection does not itself grant service-account access.
 - Startup agent sweeps use the same journal and skip pending resources. Login
   retains baseline user/team grants but no longer repairs the default-agent tuple.
+- A snapshot conflict skips only that agent, with a warning; later agents are
+  still processed. Unexpected errors remain visible. Genuinely empty commands
+  leave the settings version untouched; nonempty repair projections still run.
 
 Without `OPENFGA_HTTP`, storage-only saves still run once; this does not
 bypass route authentication or permission checks or make those routes usable
