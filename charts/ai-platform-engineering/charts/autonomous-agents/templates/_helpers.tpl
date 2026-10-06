@@ -85,3 +85,11 @@ with dynamicAgentsAuth.tokenUrl.
 {{- define "autonomous-agents.dynamicAgentsTokenUrl" -}}
 {{- .Values.dynamicAgentsAuth.tokenUrl | default (printf "http://%s-keycloak:8080/realms/caipe/protocol/openid-connect/token" .Release.Name) -}}
 {{- end -}}
+
+{{/*
+Default to the secret created by the bundled Keycloak chart for the scoped
+scheduler-runner token-exchange client. External IdPs can override the name.
+*/}}
+{{- define "autonomous-agents.dynamicAgentsClientSecretName" -}}
+{{- .Values.dynamicAgentsAuth.clientSecretRef.name | default (printf "%s-keycloak-scheduler-runner" .Release.Name) -}}
+{{- end -}}

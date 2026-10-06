@@ -49,6 +49,7 @@ import {
   changedApprovalGatedSourceUpdate,
   prepareRagPublication,
   ragPublicationRevision,
+  ragPublicationRevisionBasis,
 } from "@/lib/rag-publication-approval.server";
 import {
   deleteAllDataSourceRelationshipTuples,
@@ -68,6 +69,10 @@ import {
   optionalStringMap,
   optionalWebSettings,
 } from "@/lib/ingestion-source-config";
+import {
+  authorizedSourceSecretRefs,
+  screenSourceRequestHeaders,
+} from "@/lib/rag-source-credentials.server";
 import type { IngestionSourceConfig } from "@/types/ingestion-source";
 import { NextRequest } from "next/server";
 
@@ -108,6 +113,7 @@ const IMMUTABLE_FIELDS = [
   "confluence_url",
   "space_key",
   "start_page_url",
+  "content_kind",
   "whole_space",
   "page_configs",
   "project_key",
@@ -638,6 +644,14 @@ export const PATCH = withErrorHandler(
 
     const updateData = pickMutableFields(body);
     validateMutableFields(source, updateData);
+    const settingsWereRequested = Object.prototype.hasOwnProperty.call(
+      updateData,
+      "settings",
+    );
+    if (settingsWereRequested) {
+      await authorizedSourceSecretRefs(session, updateData.settings);
+      await screenSourceRequestHeaders({ settings: updateData.settings, session });
+    }
     const searchTeamsWereRequested = Object.prototype.hasOwnProperty.call(
       body,
       "search_team_slugs",
@@ -1132,6 +1146,7 @@ export const PATCH = withErrorHandler(
       publicationRequest = await createPublicationRequest({
         resource: publication.resource,
         resourceRevision: ragPublicationRevision(updated, effectiveSearch),
+        revisionBasis: ragPublicationRevisionBasis(updated, effectiveSearch),
         requestedState: publication.requestedState as unknown as Record<string, unknown>,
         effectiveState: effectiveSearch as unknown as Record<string, unknown>,
         riskFacts: publication.plan.risk_facts,
@@ -1150,6 +1165,7 @@ export const PATCH = withErrorHandler(
       await recordAutoApprovedPublication({
         resource: publication.resource,
         resourceRevision: ragPublicationRevision(updated, effectiveSearch),
+        revisionBasis: ragPublicationRevisionBasis(updated, effectiveSearch),
         requestedState: publication.requestedState as unknown as Record<string, unknown>,
         effectiveState: effectiveSearch as unknown as Record<string, unknown>,
         riskFacts: publication.plan.risk_facts,

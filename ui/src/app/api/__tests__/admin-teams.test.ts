@@ -736,7 +736,10 @@ describe('DELETE /api/admin/teams/[id]', () => {
     expect(body.data.deleted).toBe(true);
     expect(teamsCol.deleteOne).toHaveBeenCalledTimes(1);
     // Should clean up conversation shared_with_teams
-    expect(convsCol.updateMany).toHaveBeenCalledTimes(1);
+    expect(convsCol.updateMany).toHaveBeenCalledWith(
+      { 'sharing.shared_with_teams': TEST_TEAM_ID.toString() },
+      { $pull: { 'sharing.shared_with_teams': TEST_TEAM_ID.toString() } },
+    );
   });
 });
 

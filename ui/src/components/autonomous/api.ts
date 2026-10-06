@@ -5,7 +5,6 @@ import type {
   AutonomousRuntimeSettings,
   AutonomousTask,
   TaskRun,
-  TaskRunFollowUpResult,
   TaskSaveResult,
 } from './types';
 // Note: ``TaskRun`` is exported because consumers like ``RunHistory``
@@ -117,16 +116,8 @@ export const autonomousApi = {
     request(`/tasks/${encodeURIComponent(id)}/run`, { method: 'POST' }),
   listRuns: (id: string): Promise<TaskRun[]> =>
     request(`/tasks/${encodeURIComponent(id)}/runs`),
-  followUpRun: (
-    taskId: string,
-    runId: string,
-    userText: string,
-  ): Promise<TaskRunFollowUpResult> =>
-    request(
-      `/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}/follow-up`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ user_text: userText }),
-      },
-    ),
+  listFollowUpChats: (taskId: string): Promise<Record<string, string>> =>
+    request(`/tasks/${encodeURIComponent(taskId)}/follow-up-chats`),
+  openFollowUpChat: (taskId: string, runId: string): Promise<{ conversation_id: string; run_id: string }> =>
+    request(`/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}/follow-up-chat`, { method: 'POST' }),
 };

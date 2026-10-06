@@ -1,3 +1,8 @@
+import {
+  getOpenFgaStoreId,
+  isOpenFgaConfigured,
+  requestOpenFga,
+} from "@/lib/authz/engines/openfga-client";
 import type { UniversalRebacRelationship } from "@/types/rbac-universal";
 
 import { getCurrentTraceparent,withAuthzSpan } from "./authz-tracing";
@@ -10,6 +15,8 @@ openFgaSubject,
 type UniversalRebacTupleDiffInput,
 } from "./tuple-builders";
 import { organizationObjectId } from "./organization";
+
+export { getOpenFgaStoreId, isOpenFgaConfigured, resetOpenFgaStoreIdCacheForTests } from "@/lib/authz/engines/openfga-client";
 
 export interface OpenFgaTupleKey {
   user: string;
@@ -82,30 +89,7 @@ function assertWritableRelations(diff: TeamResourceTupleDiff): void {
   }
 }
 
-const DEFAULT_STORE_NAME = "caipe-openfga";
 const MAX_READ_PAGE_SIZE = 100;
-
-function openFgaHttpUrl(): string | null {
-  const url = process.env.OPENFGA_HTTP?.trim();
-  return url ? url.replace(/\/+$/, "") : null;
-}
-
-function openFgaStoreName(): string {
-  return process.env.OPENFGA_STORE_NAME?.trim() || DEFAULT_STORE_NAME;
-}
-
-function openFgaHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const traceparent = getCurrentTraceparent();
-  if (traceparent) {
-    headers.traceparent = traceparent;
-  }
-  return headers;
-}
-
-export function isOpenFgaConfigured(): boolean {
-  return Boolean(openFgaHttpUrl());
-}
 
 function parseOpenFgaReconcileEnabledFlag(): boolean {
   const raw = process.env.OPENFGA_RECONCILE_ENABLED?.trim().toLowerCase();
@@ -115,7 +99,7 @@ function parseOpenFgaReconcileEnabledFlag(): boolean {
 }
 
 export function isOpenFgaReconciliationEnabled(): boolean {
-  return parseOpenFgaReconcileEnabledFlag() && Boolean(openFgaHttpUrl());
+  return parseOpenFgaReconcileEnabledFlag() && isOpenFgaConfigured();
 }
 
 function uniqueTuples(tuples: OpenFgaTupleKey[]): OpenFgaTupleKey[] {
@@ -384,39 +368,6 @@ export function buildUniversalRebacTupleDiff(
   return buildOpenFgaTupleDiff(input);
 }
 
-// Module-level singleton: one HTTP round-trip per process lifetime.
-// Reset to null on failure so the next call retries.
-let _storeIdPromise: Promise<string> | null = null;
-
-export function resetOpenFgaStoreIdCacheForTests(): void {
-  if (process.env.NODE_ENV === "test") {
-    _storeIdPromise = null;
-  }
-}
-
-export async function getOpenFgaStoreId(): Promise<string> {
-  const explicitStoreId = process.env.OPENFGA_STORE_ID?.trim();
-  if (explicitStoreId) return explicitStoreId;
-
-  if (!_storeIdPromise) {
-    const baseUrl = openFgaHttpUrl();
-    if (!baseUrl) throw new Error("OPENFGA_HTTP is not set");
-    _storeIdPromise = fetch(`${baseUrl}/stores`, { method: "GET", headers: openFgaHeaders() })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`OpenFGA store discovery failed: ${res.status}`);
-        const body = (await res.json()) as { stores?: Array<{ id?: string; name?: string }> };
-        const store = body.stores?.find((c) => c.name === openFgaStoreName());
-        if (!store?.id) throw new Error(`OpenFGA store ${openFgaStoreName()} was not found`);
-        return store.id;
-      })
-      .catch((err: unknown) => {
-        _storeIdPromise = null;
-        throw err;
-      });
-  }
-  return _storeIdPromise;
-}
-
 function tupleKeysEqual(a: OpenFgaTupleKey, b: OpenFgaTupleKey): boolean {
   return a.user === b.user && a.relation === b.relation && a.object === b.object;
 }
@@ -429,7 +380,6 @@ function tupleKeysEqual(a: OpenFgaTupleKey, b: OpenFgaTupleKey): boolean {
  * write/delete filtering must use existence, not authorization evaluation.
  */
 async function tupleExistsInStore(
-  baseUrl: string,
   storeId: string,
   tuple: OpenFgaTupleKey,
 ): Promise<boolean> {
@@ -437,9 +387,8 @@ async function tupleExistsInStore(
   if (!filter?.user || !filter.relation || !filter.object) {
     return false;
   }
-  const response = await fetch(`${baseUrl}/stores/${storeId}/read`, {
+  const response = await requestOpenFga(`/stores/${storeId}/read`, {
     method: "POST",
-    headers: openFgaHeaders(),
     body: JSON.stringify({ tuple_key: filter, page_size: 1 }),
   });
   if (!response.ok) {
@@ -452,10 +401,9 @@ async function tupleExistsInStore(
   return (payload.tuples ?? []).some((entry) => entry.key && tupleKeysEqual(entry.key, tuple));
 }
 
-async function tupleAllowed(baseUrl: string, storeId: string, tuple: OpenFgaTupleKey): Promise<boolean> {
-  const response = await fetch(`${baseUrl}/stores/${storeId}/check`, {
+async function tupleAllowed(storeId: string, tuple: OpenFgaTupleKey): Promise<boolean> {
+  const response = await requestOpenFga(`/stores/${storeId}/check`, {
     method: "POST",
-    headers: openFgaHeaders(),
     body: JSON.stringify({ tuple_key: tuple }),
   });
   if (!response.ok) {
@@ -496,7 +444,6 @@ function openFgaBatchCheckLimit(): number {
 }
 
 async function postOpenFgaBatchCheck(
-  baseUrl: string,
   storeId: string,
   tuples: OpenFgaTupleKey[],
 ): Promise<boolean[]> {
@@ -505,9 +452,8 @@ async function postOpenFgaBatchCheck(
     correlation_id: String(i),
   }));
 
-  const response = await fetch(`${baseUrl}/stores/${storeId}/batch-check`, {
+  const response = await requestOpenFga(`/stores/${storeId}/batch-check`, {
     method: "POST",
-    headers: openFgaHeaders(),
     body: JSON.stringify({ checks }),
   });
   if (!response.ok) {
@@ -531,18 +477,17 @@ export async function batchCheckOpenFgaTuples(tuples: OpenFgaTupleKey[]): Promis
     warnUnsafeRbacBypassEnabled("openfga.batch-check");
     return tuples.map(() => true);
   }
-  const baseUrl = openFgaHttpUrl();
-  if (!baseUrl) throw new Error("OPENFGA_HTTP is not set");
+  if (!isOpenFgaConfigured()) throw new Error("OPENFGA_HTTP is not set");
   const storeId = await getOpenFgaStoreId();
 
   const limit = openFgaBatchCheckLimit();
   if (tuples.length <= limit) {
-    return postOpenFgaBatchCheck(baseUrl, storeId, tuples);
+    return postOpenFgaBatchCheck(storeId, tuples);
   }
 
   const chunkResults = await Promise.all(
     Array.from({ length: Math.ceil(tuples.length / limit) }, (_, i) =>
-      postOpenFgaBatchCheck(baseUrl, storeId, tuples.slice(i * limit, (i + 1) * limit)),
+      postOpenFgaBatchCheck(storeId, tuples.slice(i * limit, (i + 1) * limit)),
     ),
   );
   return chunkResults.flat();
@@ -561,12 +506,9 @@ export async function checkOpenFgaTuple(tuple: OpenFgaTupleKey): Promise<OpenFga
         warnUnsafeRbacBypassEnabled("openfga.check");
         return { allowed: true };
       }
-      const baseUrl = openFgaHttpUrl();
-      if (!baseUrl) {
-        throw new Error("OPENFGA_HTTP is not set");
-      }
+      if (!isOpenFgaConfigured()) throw new Error("OPENFGA_HTTP is not set");
       const storeId = await getOpenFgaStoreId();
-      return { allowed: await tupleAllowed(baseUrl, storeId, tuple) };
+      return { allowed: await tupleAllowed(storeId, tuple) };
     },
     getCurrentTraceparent(),
   );
@@ -583,10 +525,7 @@ export async function checkUniversalRebacRelationship(
 }
 
 export async function readOpenFgaTuples(options: OpenFgaReadOptions = {}): Promise<OpenFgaReadResult> {
-  const baseUrl = openFgaHttpUrl();
-  if (!baseUrl) {
-    throw new Error("OPENFGA_HTTP is not set");
-  }
+  if (!isOpenFgaConfigured()) throw new Error("OPENFGA_HTTP is not set");
   const storeId = await getOpenFgaStoreId();
   const pageSize = Math.min(Math.max(options.pageSize ?? 100, 1), MAX_READ_PAGE_SIZE);
   const body = {
@@ -595,9 +534,8 @@ export async function readOpenFgaTuples(options: OpenFgaReadOptions = {}): Promi
     ...(options.continuationToken ? { continuation_token: options.continuationToken } : {}),
   };
 
-  const response = await fetch(`${baseUrl}/stores/${storeId}/read`, {
+  const response = await requestOpenFga(`/stores/${storeId}/read`, {
     method: "POST",
-    headers: openFgaHeaders(),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -637,14 +575,10 @@ export async function listOpenFgaObjects(
       "authz.user_ref": input.user.replace(/user:[^#]+/, "user:<redacted>"),
     },
     async () => {
-      const baseUrl = openFgaHttpUrl();
-      if (!baseUrl) {
-        throw new Error("OPENFGA_HTTP is not set");
-      }
+      if (!isOpenFgaConfigured()) throw new Error("OPENFGA_HTTP is not set");
       const storeId = await getOpenFgaStoreId();
-      const response = await fetch(`${baseUrl}/stores/${storeId}/list-objects`, {
+      const response = await requestOpenFga(`/stores/${storeId}/list-objects`, {
         method: "POST",
-        headers: openFgaHeaders(),
         body: JSON.stringify({
           user: input.user,
           relation: input.relation,
@@ -707,7 +641,6 @@ interface OpenFgaChunkResult {
  * shape that callers can detect by name (`OpenFgaWriteError`).
  */
 async function postOpenFgaWriteChunk(
-  baseUrl: string,
   storeId: string,
   chunk: TeamResourceTupleDiff,
 ): Promise<OpenFgaChunkResult> {
@@ -718,9 +651,8 @@ async function postOpenFgaWriteChunk(
     ...(chunk.writes.length > 0 ? { writes: { tuple_keys: chunk.writes } } : {}),
     ...(chunk.deletes.length > 0 ? { deletes: { tuple_keys: chunk.deletes } } : {}),
   };
-  const response = await fetch(`${baseUrl}/stores/${storeId}/write`, {
+  const response = await requestOpenFga(`/stores/${storeId}/write`, {
     method: "POST",
-    headers: openFgaHeaders(),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -791,17 +723,14 @@ export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff): Promise<O
     return { enabled: true, writes: 0, deletes: 0 };
   }
 
-  const baseUrl = openFgaHttpUrl();
-  if (!baseUrl) {
-    throw new Error("OPENFGA_HTTP is not set");
-  }
+  if (!isOpenFgaConfigured()) throw new Error("OPENFGA_HTTP is not set");
   const storeId = await getOpenFgaStoreId();
-  const filteredDiff = await filterTupleDiff(baseUrl, storeId, diff);
+  const filteredDiff = await filterTupleDiff(storeId, diff);
   if (filteredDiff.writes.length === 0 && filteredDiff.deletes.length === 0) {
     return { enabled: true, writes: 0, deletes: 0 };
   }
 
-  return applyDiffWithCompensation(baseUrl, storeId, filteredDiff);
+  return applyDiffWithCompensation(storeId, filteredDiff);
 }
 
 /**
@@ -813,7 +742,6 @@ export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff): Promise<O
  * (e.g. the identity-group-sync reconciler reverts Mongo state on this throw).
  */
 async function applyDiffWithCompensation(
-  baseUrl: string,
   storeId: string,
   diff: TeamResourceTupleDiff,
 ): Promise<OpenFgaReconcileResult> {
@@ -823,14 +751,14 @@ async function applyDiffWithCompensation(
   let totalDeletes = 0;
   try {
     for (const chunk of chunks) {
-      const result = await postOpenFgaWriteChunk(baseUrl, storeId, chunk);
+      const result = await postOpenFgaWriteChunk(storeId, chunk);
       applied.push(result);
       totalWrites += result.applied.writes.length;
       totalDeletes += result.applied.deletes.length;
     }
   } catch (err) {
     if (applied.length > 0) {
-      await compensateAppliedChunks(baseUrl, storeId, applied).catch(
+      await compensateAppliedChunks(storeId, applied).catch(
         (compensationErr) => {
           console.error(
             "[openfga] failed to compensate already-applied tuple chunks; manual cleanup may be required",
@@ -876,12 +804,9 @@ export async function deleteExactOpenFgaTuples(
   if (unique.length === 0) {
     return { enabled: true, writes: 0, deletes: 0 };
   }
-  const baseUrl = openFgaHttpUrl();
-  if (!baseUrl) {
-    throw new Error("OPENFGA_HTTP is not set");
-  }
+  if (!isOpenFgaConfigured()) throw new Error("OPENFGA_HTTP is not set");
   const storeId = await getOpenFgaStoreId();
-  return applyDiffWithCompensation(baseUrl, storeId, { writes: [], deletes: unique });
+  return applyDiffWithCompensation(storeId, { writes: [], deletes: unique });
 }
 
 /**
@@ -896,7 +821,6 @@ export async function deleteExactOpenFgaTuples(
  * tuples partially succeeded before our compensation failed.
  */
 async function compensateAppliedChunks(
-  baseUrl: string,
   storeId: string,
   applied: OpenFgaChunkResult[],
 ): Promise<void> {
@@ -914,7 +838,7 @@ async function compensateAppliedChunks(
   };
   const chunks = chunkOpenFgaDiff(compensationDiff);
   for (const chunk of chunks) {
-    await postOpenFgaWriteChunk(baseUrl, storeId, chunk);
+    await postOpenFgaWriteChunk(storeId, chunk);
   }
 }
 
@@ -970,19 +894,18 @@ export async function mapWithConcurrency<T, R>(
 }
 
 async function filterTupleDiff(
-  baseUrl: string,
   storeId: string,
   diff: TeamResourceTupleDiff
 ): Promise<TeamResourceTupleDiff> {
   const concurrency = openFgaReadConcurrency();
   const writes = (
     await mapWithConcurrency(diff.writes, concurrency, async (tuple) =>
-      (await tupleExistsInStore(baseUrl, storeId, tuple)) ? null : tuple,
+      (await tupleExistsInStore(storeId, tuple)) ? null : tuple,
     )
   ).filter((tuple): tuple is OpenFgaTupleKey => tuple !== null);
   const deletes = (
     await mapWithConcurrency(diff.deletes, concurrency, async (tuple) =>
-      (await tupleExistsInStore(baseUrl, storeId, tuple)) ? tuple : null,
+      (await tupleExistsInStore(storeId, tuple)) ? tuple : null,
     )
   ).filter((tuple): tuple is OpenFgaTupleKey => tuple !== null);
   return { writes, deletes };

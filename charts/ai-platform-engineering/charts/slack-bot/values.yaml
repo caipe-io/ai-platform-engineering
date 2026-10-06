@@ -10,6 +10,7 @@ fullnameOverride: ""
 
 serviceAccount:
   create: true
+  automount: false
   annotations: {}
   name: ""
 
@@ -204,9 +205,13 @@ securityContext:
   seccompProfile:
     type: RuntimeDefault
 
+# PodDisruptionBudget: prevents simultaneous eviction of all replicas during voluntary disruptions.
+# Enable in production; leave disabled for local/single-node environments.
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
+  # maxUnavailable: 1  # opt in to allowing a single-replica drain
+  annotations: {}
 
 nodeSelector: {}
 tolerations: []

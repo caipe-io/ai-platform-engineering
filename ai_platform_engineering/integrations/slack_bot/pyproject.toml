@@ -15,8 +15,8 @@ dependencies = [
   "loguru==0.7.3",
   "pydantic==2.13.4",
   "pyyaml==6.0.3",
-  "pymongo==4.16.0",
-  "pyjwt[crypto]==2.13.0",
+  "pymongo==4.18.2",
+  "pyjwt[crypto]==2.15.1",
 ]
 
 [dependency-groups]

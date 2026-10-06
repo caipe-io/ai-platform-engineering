@@ -14,17 +14,17 @@ A Helm chart for CAIPE UI - chat interface for AI Platform Engineering
 
 | | |
 |---|---|
-| **Version** | `1.0.0` |
+| **Version** | `1.1.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0
+helm install caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0
 
 # Upgrade an existing release
-helm upgrade caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0
+helm upgrade caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0 \
+helm install caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0 \
+helm install caipe-ui oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0
+helm show values oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0
 ```
 
 ## Reading the Values Table
@@ -181,7 +181,7 @@ helm show values oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.0.0
 | service.port | int | `3000` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.annotations | object | `{}` |  |
-| serviceAccount.automount | bool | `true` |  |
+| serviceAccount.automount | bool | `false` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
 | startupProbe.failureThreshold | int | `30` |  |

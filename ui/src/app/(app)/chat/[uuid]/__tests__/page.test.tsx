@@ -141,9 +141,26 @@ jest.mock("@/components/layout/Sidebar", () => ({
 // ChatContainer renders the DynamicAgentChatView (`ChatView`). Sidebar is
 // rendered by the layout, not by these view components.
 jest.mock("@/components/chat/DynamicAgentChatView", () => ({
-  ChatView: ({ conversationId }: { conversationId: string }) => (
+  ChatView: ({
+    conversationId,
+    readOnly,
+    readOnlyReason,
+    apiConversation,
+  }: {
+    conversationId: string;
+    readOnly?: boolean;
+    readOnlyReason?: string;
+    apiConversation?: boolean;
+  }) => (
     <div>
-      <div data-testid="chat-panel">Chat: {conversationId}</div>
+      <div
+        data-testid="chat-panel"
+        data-read-only={String(Boolean(readOnly))}
+        data-read-only-reason={readOnlyReason ?? ""}
+        data-api-conversation={String(Boolean(apiConversation))}
+      >
+        Chat: {conversationId}
+      </div>
       <div data-testid="context-panel">Context</div>
     </div>
   ),
@@ -698,6 +715,27 @@ describe("ChatContainer", () => {
     render(<ChatContainer />);
 
     expect(screen.getByText(`Chat: ${mockUuid}`)).toBeInTheDocument();
+  });
+
+  it("keeps API conversations writable and identifies them for a persistent warning", () => {
+    mockConversations = [
+      {
+        id: mockUuid,
+        title: "API Conversation",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        messages: [{ id: "m1", role: "user", content: "hello" }],
+        streamEvents: [],
+        participants: [{ type: "agent", id: "agent-1" }],
+        source: "api",
+      },
+    ];
+
+    render(<ChatContainer />);
+
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-read-only", "false");
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-read-only-reason", "");
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-api-conversation", "true");
   });
 
   // ========================================================================

@@ -8,17 +8,17 @@ OpenFGA authorization service for CAIPE relationship-based access control
 
 | | |
 |---|---|
-| **Version** | `1.0.0` |
+| **Version** | `1.1.0` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0
+helm install openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.1.0
 
 # Upgrade an existing release
-helm upgrade openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0
+helm upgrade openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.1.0
 ```
 
 ## Customizing Values
@@ -27,15 +27,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0 \
+helm install openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.1.0 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0 \
+helm install openfga oci://ghcr.io/caipe-io/charts/openfga --version 1.1.0 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0
+helm show values oci://ghcr.io/caipe-io/charts/openfga --version 1.1.0
 ```
 
 ## Reading the Values Table
@@ -78,6 +78,10 @@ helm show values oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0
 | init.platformClient.enabled | bool | `false` |  |
 | init.platformClient.orgObject | string | `"organization:caipe"` |  |
 | init.platformClient.tokenUrl | string | `""` |  |
+| init.resources.limits.cpu | string | `"500m"` |  |
+| init.resources.limits.memory | string | `"512Mi"` |  |
+| init.resources.requests.cpu | string | `"100m"` |  |
+| init.resources.requests.memory | string | `"128Mi"` |  |
 | init.seedSub | string | `""` |  |
 | init.seedTuples | list | `[]` |  |
 | init.storeName | string | `"caipe-openfga"` |  |
@@ -85,6 +89,10 @@ helm show values oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0
 | migrate.backoffLimit | int | `6` |  |
 | migrate.enabled | bool | `true` |  |
 | migrate.helmHookDeletePolicy | string | `"before-hook-creation,hook-succeeded"` |  |
+| migrate.resources.limits.cpu | string | `"500m"` |  |
+| migrate.resources.limits.memory | string | `"512Mi"` |  |
+| migrate.resources.requests.cpu | string | `"100m"` |  |
+| migrate.resources.requests.memory | string | `"128Mi"` |  |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` |  |
 | playground.enabled | bool | `false` |  |
@@ -110,6 +118,7 @@ helm show values oci://ghcr.io/caipe-io/charts/openfga --version 1.0.0
 | service.playgroundPort | int | `3000` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.annotations | object | `{}` |  |
+| serviceAccount.automount | bool | `false` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
 | tolerations | list | `[]` |  |

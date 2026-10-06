@@ -19,12 +19,11 @@ spec:
       labels:
         {{- include "openfga.selectorLabels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ include "openfga.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       restartPolicy: OnFailure
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1001
-        runAsGroup: 1001
-        fsGroup: 1001
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: openfga-init
           image: "{{ .Values.init.image.repository }}:{{ .Values.init.image.tag }}"
@@ -61,15 +60,9 @@ spec:
               mountPath: /model
               readOnly: true
           securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            runAsUser: 1001
-            runAsGroup: 1001
-            capabilities:
-              drop:
-                - ALL
-            seccompProfile:
-              type: RuntimeDefault
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.init.resources | nindent 12 }}
       volumes:
         - name: openfga-model
           configMap:

@@ -27,7 +27,7 @@ import jwt
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 
 try:
-    from audit import log_authz_decision
+    from audit import flush_allow_rollups, log_authz_decision, start_allow_rollup_flusher
 except ModuleNotFoundError:
     audit_spec = importlib.util.spec_from_file_location(
         "openfga_bridge_audit",
@@ -38,6 +38,8 @@ except ModuleNotFoundError:
     audit_module = importlib.util.module_from_spec(audit_spec)
     audit_spec.loader.exec_module(audit_module)
     log_authz_decision = audit_module.log_authz_decision
+    flush_allow_rollups = audit_module.flush_allow_rollups
+    start_allow_rollup_flusher = audit_module.start_allow_rollup_flusher
 
 OPENFGA_HTTP = os.environ.get("OPENFGA_HTTP", "http://openfga:8080").rstrip("/")
 OPENFGA_STORE_NAME = os.environ.get("OPENFGA_STORE_NAME", "caipe-openfga").strip()
@@ -1026,6 +1028,7 @@ def serve() -> None:
     _add_authorization_service(server)
     server.add_insecure_port(GRPC_BIND)
     server.start()
+    start_allow_rollup_flusher()
     print(f"[bridge] gRPC ext_authz listening on {GRPC_BIND}", file=sys.stderr)
 
     should_stop = futures.Future()
@@ -1033,6 +1036,7 @@ def serve() -> None:
     def stop(signum: int, _frame: object) -> None:
         print(f"[bridge] received signal {signum}; stopping", file=sys.stderr)
         server.stop(grace=5)
+        flush_allow_rollups()
         should_stop.set_result(None)
 
     signal.signal(signal.SIGTERM, stop)

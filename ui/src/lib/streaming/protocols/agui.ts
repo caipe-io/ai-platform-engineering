@@ -12,7 +12,7 @@
  */
 
 import type { StreamCallbacks } from "../callbacks";
-import type { InputFieldDefinition } from "../types";
+import { parseContextUsageData,type InputFieldDefinition } from "../types";
 
 // ═══════════════════════════════════════════════════════════════
 // AG-UI event type constants
@@ -36,6 +36,7 @@ export const AGUI = {
 const CUSTOM_NAMESPACE_CONTEXT = "NAMESPACE_CONTEXT";
 const CUSTOM_WARNING = "WARNING";
 const CUSTOM_INPUT_REQUIRED = "INPUT_REQUIRED";
+const CUSTOM_CONTEXT_USAGE = "CONTEXT_USAGE";
 
 // ═══════════════════════════════════════════════════════════════
 // Protocol State
@@ -270,6 +271,18 @@ function handleCustom(
         (value?.agent as string) || "",
       );
       return true;
+
+    case CUSTOM_CONTEXT_USAGE: {
+      if (!value) return false;
+      const usage = parseContextUsageData(value);
+      if (usage) {
+        callbacks.onContextUsage?.(
+          usage,
+          (value.namespace as string[]) || state.currentNamespace,
+        );
+      }
+      return false;
+    }
 
     default:
       return false;

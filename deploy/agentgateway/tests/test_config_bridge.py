@@ -798,7 +798,7 @@ def test_generated_config_forwards_request_body_on_every_builtin_route(config_pa
     )
     # Belt-and-suspenders: the specific servers testing-manager flagged.
     rendered_paths = {r["matches"][0]["path"]["pathPrefix"] for r in mcp_routes}
-    for sid in ("slack", "splunk", "victorops", "webex", "knowledge-base"):
+    for sid in ("sharepoint", "slack", "splunk", "victorops", "webex", "knowledge-base"):
         assert f"/mcp/{sid}" in rendered_paths, (
             f"/mcp/{sid} missing from generated config ({config_path.name})"
         )

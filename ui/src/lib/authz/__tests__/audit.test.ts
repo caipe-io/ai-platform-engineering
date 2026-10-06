@@ -10,19 +10,31 @@ jest.mock("@/lib/audit", () => ({
 }));
 
 import {
+  buildBatchDecisionEvent,
   buildDecisionEvent,
   buildGrantEvent,
+  buildListObjectsDecisionEvent,
+  emitBatchDecisionAudit,
   emitDecisionAudit,
   emitGrantAudit,
+  emitListObjectsDecisionAudit,
   emitReconcileAudit,
+  flushAllowRollups,
 } from "../audit";
 
 const subject = { type: "user" as const, id: "alice" };
 const resource = { type: "agent" as const, id: "platform-engineer" };
 
+const ALLOW = { decision: "ALLOW" as const, reason: "OK" as const, retriable: false };
+const DENY = { decision: "DENY" as const, reason: "NO_CAPABILITY" as const, retriable: false };
+
 beforeEach(() => {
+  // Allow rollups accumulate in module state; drain them so a prior test's
+  // pending counts never leak into the next assertion.
+  flushAllowRollups();
   jest.clearAllMocks();
   mockGetAuditBackend.mockReturnValue({ write: mockWrite });
+  delete process.env.AUDIT_FULL_FIDELITY_ALLOWS;
 });
 
 describe("buildDecisionEvent — UnifiedAuditEvent conformance", () => {
@@ -81,10 +93,11 @@ describe("buildDecisionEvent — UnifiedAuditEvent conformance", () => {
 });
 
 describe("emitDecisionAudit", () => {
-  it("writes the event through the audit backend", () => {
-    emitDecisionAudit(subject, resource, "use", { decision: "ALLOW", reason: "OK", retriable: false });
+  it("writes a deny straight through, without aggregating it", () => {
+    emitDecisionAudit(subject, resource, "use", DENY);
     expect(mockWrite).toHaveBeenCalledTimes(1);
-    expect(mockWrite.mock.calls[0][0]).toMatchObject({ type: "cas_decision", outcome: "allow" });
+    expect(mockWrite.mock.calls[0][0]).toMatchObject({ type: "cas_decision", outcome: "deny" });
+    expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("count");
   });
 
   it("swallows backend lookup failures (never throws into the decision path)", () => {
@@ -92,9 +105,64 @@ describe("emitDecisionAudit", () => {
       throw new Error("audit-service down");
     });
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-    expect(() => emitDecisionAudit(subject, resource, "use", { decision: "DENY", reason: "NO_CAPABILITY", retriable: false })).not.toThrow();
+    expect(() => emitDecisionAudit(subject, resource, "use", DENY)).not.toThrow();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("emitDecisionAudit — allow aggregation", () => {
+  it("does not write an allow until the rollup is flushed", () => {
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("collapses repeated identical allows into one row carrying count", () => {
+    for (let i = 0; i < 4; i++) {
+      emitDecisionAudit(subject, resource, "use", ALLOW);
+    }
+    expect(mockWrite).not.toHaveBeenCalled();
+
+    flushAllowRollups();
+
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+    const row = mockWrite.mock.calls[0][0];
+    expect(row).toMatchObject({ type: "cas_decision", outcome: "allow", count: 4 });
+    // A rollup summarizes many requests, so it must not claim one request's id.
+    expect(row.correlation_id).toMatch(/^rollup:/);
+    expect(row.window_start).toBeDefined();
+    expect(row.window_end).toBeDefined();
+  });
+
+  it("keeps distinct subjects and resources in separate rows", () => {
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    emitDecisionAudit({ type: "user", id: "bob" }, resource, "use", ALLOW);
+    emitDecisionAudit(subject, { type: "agent", id: "other-agent" }, "use", ALLOW);
+
+    flushAllowRollups();
+
+    expect(mockWrite).toHaveBeenCalledTimes(3);
+    expect(mockWrite.mock.calls.every(([row]) => row.count === 1)).toBe(true);
+  });
+
+  it("clears pending counts so a second flush does not double-report", () => {
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    flushAllowRollups();
+    flushAllowRollups();
+
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes one row per allow when full-fidelity mode is enabled", () => {
+    process.env.AUDIT_FULL_FIDELITY_ALLOWS = "true";
+
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+    emitDecisionAudit(subject, resource, "use", ALLOW);
+
+    expect(mockWrite).toHaveBeenCalledTimes(2);
+    expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("count");
+    flushAllowRollups();
+    expect(mockWrite).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -291,5 +359,194 @@ describe("emitReconcileAudit", () => {
     });
     expect(event.subject_hash).toMatch(/^sha256:/);
     expect(event.actor_hash).toBe(event.subject_hash);
+  });
+});
+
+describe("buildBatchDecisionEvent / emitBatchDecisionAudit — bulk evaluation", () => {
+  const results = (entries: Array<[string, "ALLOW" | "DENY"]>) =>
+    new Map(entries.map(([id, decision]) => [id, decision === "ALLOW" ? ALLOW : DENY]));
+
+  it("summarizes a filter as ONE row instead of one row per id", () => {
+    emitBatchDecisionAudit(
+      subject,
+      "discover",
+      "agent",
+      results([
+        ["a", "ALLOW"],
+        ["b", "DENY"],
+        ["c", "DENY"],
+        ["d", "DENY"],
+      ]),
+    );
+
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+    expect(mockWrite.mock.calls[0][0]).toMatchObject({
+      type: "cas_decision",
+      batch: true,
+      action: "discover",
+      resource_type: "agent",
+      // No single resource applies to a filter over a collection.
+      resource_ref: "agent:*",
+      evaluated_count: 4,
+      allowed_count: 1,
+      denied_count: 3,
+      allowed_ids: ["a"],
+      denied_reasons: { NO_CAPABILITY: 3 },
+    });
+  });
+
+  it("writes nothing for an empty batch", () => {
+    emitBatchDecisionAudit(subject, "discover", "agent", new Map());
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("reports outcome deny only when nothing in the filter was accessible", () => {
+    expect(
+      buildBatchDecisionEvent(
+        subject,
+        "use",
+        "agent",
+        results([
+          ["a", "DENY"],
+          ["b", "DENY"],
+        ]),
+      ),
+    ).toMatchObject({ outcome: "deny", reason_code: "NO_CAPABILITY", allowed_count: 0 });
+
+    expect(
+      buildBatchDecisionEvent(
+        subject,
+        "use",
+        "agent",
+        results([
+          ["a", "DENY"],
+          ["b", "ALLOW"],
+        ]),
+      ),
+    ).toMatchObject({ outcome: "allow", reason_code: "OK", allowed_count: 1 });
+  });
+
+  it("caps allowed_ids while keeping the counts exact", () => {
+    const many = results(
+      Array.from({ length: 150 }, (_, i) => [`agent-${i}`, "ALLOW"] as [string, "ALLOW"]),
+    );
+    const event = buildBatchDecisionEvent(subject, "discover", "agent", many);
+
+    expect(event.allowed_count).toBe(150);
+    expect(event.allowed_ids).toHaveLength(100);
+    expect(event.allowed_truncated).toBe(true);
+    expect(event.denied_count).toBe(0);
+    expect(event.denied_reasons).toBeUndefined();
+  });
+
+  it("keeps a PDP outage inside a bulk evaluation visible by reason", () => {
+    const event = buildBatchDecisionEvent(
+      subject,
+      "read",
+      "agent",
+      new Map([
+        ["a", { decision: "DENY" as const, reason: "AUTHZ_UNAVAILABLE" as const, retriable: true }],
+        ["b", DENY],
+      ]),
+    );
+
+    expect(event.denied_reasons).toEqual({ AUTHZ_UNAVAILABLE: 1, NO_CAPABILITY: 1 });
+  });
+
+  it("is not fed into the allow rollup — a batch row is already an aggregate", () => {
+    emitBatchDecisionAudit(subject, "discover", "agent", results([["a", "ALLOW"]]));
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+    flushAllowRollups();
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("buildListObjectsDecisionEvent / emitListObjectsDecisionAudit — reverse lookup", () => {
+  it("summarizes a reverse lookup as ONE row, marked list_objects not batch", () => {
+    emitListObjectsDecisionAudit(
+      subject,
+      "discover",
+      "agent",
+      ["a", "b", "c", "d"],
+      new Set(["a"]),
+      "OK",
+    );
+
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+    expect(mockWrite.mock.calls[0][0]).toMatchObject({
+      type: "cas_decision",
+      list_objects: true,
+      action: "discover",
+      resource_type: "agent",
+      resource_ref: "agent:*",
+      evaluated_count: 4,
+      allowed_count: 1,
+      denied_count: 3,
+      allowed_ids: ["a"],
+      denied_reasons: { NO_CAPABILITY: 3 },
+    });
+    expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("batch");
+  });
+
+  it("writes nothing for an empty candidate list", () => {
+    emitListObjectsDecisionAudit(subject, "discover", "agent", [], new Set(), "OK");
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it("reports outcome deny only when none of the candidates were in the accessible set", () => {
+    expect(
+      buildListObjectsDecisionEvent(subject, "use", "agent", ["a", "b"], new Set(), "OK"),
+    ).toMatchObject({ outcome: "deny", reason_code: "NO_CAPABILITY", allowed_count: 0 });
+
+    expect(
+      buildListObjectsDecisionEvent(subject, "use", "agent", ["a", "b"], new Set(["b"]), "OK"),
+    ).toMatchObject({ outcome: "allow", reason_code: "OK", allowed_count: 1 });
+  });
+
+  it("never buckets partial-access denials under reason_code OK", () => {
+    // allowed_count > 0 (reason_code "OK") but denied_count > 0 too — the
+    // denials must land in their own bucket, not fall through to "OK".
+    const event = buildListObjectsDecisionEvent(subject, "discover", "agent", ["a", "b"], new Set(["a"]), "OK");
+
+    expect(event.reason_code).toBe("OK");
+    expect(event.denied_reasons).toEqual({ NO_CAPABILITY: 1 });
+  });
+
+  it("fails closed on a PDP outage: empty allowed_ids, not the (irrelevant) accessible set", () => {
+    // A real caller would pass an empty Set on AUTHZ_UNAVAILABLE (see
+    // listAccessible), but the builder must fail closed even if it didn't.
+    const event = buildListObjectsDecisionEvent(
+      subject,
+      "read",
+      "agent",
+      ["a", "b"],
+      new Set(["a", "b"]),
+      "AUTHZ_UNAVAILABLE",
+    );
+
+    expect(event.outcome).toBe("deny");
+    expect(event.reason_code).toBe("AUTHZ_UNAVAILABLE");
+    expect(event.allowed_count).toBe(0);
+    expect(event.allowed_ids).toEqual([]);
+    expect(event.denied_count).toBe(2);
+    expect(event.denied_reasons).toEqual({ AUTHZ_UNAVAILABLE: 2 });
+  });
+
+  it("caps allowed_ids while keeping the counts exact", () => {
+    const ids = Array.from({ length: 150 }, (_, i) => `agent-${i}`);
+    const event = buildListObjectsDecisionEvent(subject, "discover", "agent", ids, new Set(ids), "OK");
+
+    expect(event.allowed_count).toBe(150);
+    expect(event.allowed_ids).toHaveLength(100);
+    expect(event.allowed_truncated).toBe(true);
+    expect(event.denied_count).toBe(0);
+    expect(event.denied_reasons).toBeUndefined();
+  });
+
+  it("is not fed into the allow rollup — a list-objects row is already an aggregate", () => {
+    emitListObjectsDecisionAudit(subject, "discover", "agent", ["a"], new Set(["a"]), "OK");
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+    flushAllowRollups();
+    expect(mockWrite).toHaveBeenCalledTimes(1);
   });
 });

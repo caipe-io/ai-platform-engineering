@@ -3,7 +3,7 @@
 This module configures logging for the dynamic_agents package with:
 - Conversation ID context for request tracing
 - Custom format with [dynamic_agents] prefix
-- Isolation from cnoe-agent-utils logging
+- Isolation from third-party logging
 - Configurable log level via LOG_LEVEL env var
 """
 
@@ -60,7 +60,7 @@ def setup_logging() -> logging.Logger:
     Sets up a dedicated handler for the 'dynamic_agents' logger that:
     - Uses our own format with [dynamic_agents] prefix
     - Includes conversation_id for request tracing
-    - Does not propagate to root logger (avoids cnoe-agent-utils format)
+    - Does not propagate to root logger (avoids third-party root formatting)
     - Log level configurable via LOG_LEVEL env var (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
     Returns:
@@ -79,7 +79,7 @@ def setup_logging() -> logging.Logger:
         handler.addFilter(ConversationContextFilter())
         pkg_logger.addHandler(handler)
 
-    # Don't propagate to root logger (cnoe-agent-utils configures root with [llm_factory])
+    # Don't propagate to root logger (third-party libraries may reconfigure it)
     pkg_logger.propagate = False
 
     # Suppress health endpoint access logs from uvicorn

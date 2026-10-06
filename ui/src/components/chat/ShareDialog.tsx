@@ -8,6 +8,7 @@ import { useChatStore } from "@/store/chat-store";
 import type { UserPublicInfo } from "@/types/mongodb";
 import type { Team } from "@/types/teams";
 import { Check,Copy,Mail,Trash2,Users,X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback,useEffect,useRef,useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -62,6 +63,7 @@ export function ShareDialog({
   sharedBy,
   initialSharing,
 }: ShareDialogProps) {
+  const router = useRouter();
   const updateConversationSharing = useChatStore((state) => state.updateConversationSharing);
   const [searchInput, setSearchInput] = useState("");
   const [userResults, setUserResults] = useState<UserPublicInfo[]>([]);
@@ -452,8 +454,7 @@ export function ShareDialog({
               <button
                 onClick={() => {
                   onOpenChange(false);
-                  // Navigate to new chat
-                  window.location.href = '/chat';
+                  router.push("/chat");
                 }}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
               >

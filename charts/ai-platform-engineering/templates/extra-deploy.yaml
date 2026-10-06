@@ -1,8 +1,7 @@
 {{- /*
-Render additional Kubernetes resources from extraDeploy array.
-This allows users to add custom resources like VirtualServices, DestinationRules, etc.
+Render additional Kubernetes resources from the stable-key extraDeployMap.
 */ -}}
-{{- range .Values.extraDeploy }}
+{{- range $_, $resource := .Values.extraDeployMap }}
 ---
-{{- toYaml . }}
+{{- toYaml $resource }}
 {{- end }}

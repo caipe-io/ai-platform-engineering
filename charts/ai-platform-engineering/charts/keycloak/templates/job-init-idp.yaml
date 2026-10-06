@@ -35,9 +35,15 @@ spec:
         {{- include "keycloak.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: init-idp
     spec:
+      serviceAccountName: {{ include "keycloak.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       restartPolicy: OnFailure
+      securityContext:
+        {{- toYaml .Values.jobPodSecurityContext | nindent 8 }}
       containers:
         - name: init-idp
+          securityContext:
+            {{- toYaml .Values.jobSecurityContext | nindent 12 }}
           image: "{{ .Values.initImage.repository }}:{{ .Values.initImage.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.initImage.pullPolicy }}
           command: ["/bin/sh", "/scripts/init-idp.sh"]
@@ -147,6 +153,8 @@ spec:
             - name: init-scripts
               mountPath: /scripts
               readOnly: true
+          resources:
+            {{- toYaml .Values.jobResources | nindent 12 }}
       volumes:
         - name: init-scripts
           configMap:

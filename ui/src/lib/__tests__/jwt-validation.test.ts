@@ -7,6 +7,9 @@
  * to capture the options passed to it.
  */
 
+import { jwtVerify } from 'jose';
+import { validateBearerJWT } from '../jwt-validation';
+
 let capturedOptions: Record<string, unknown> | undefined;
 
 // Mock jose — intercept jwtVerify to capture the audience option
@@ -131,5 +134,28 @@ describe('validateBearerJWT audience handling', () => {
     await validateBearerJWT('fake-token');
 
     expect(capturedOptions?.issuer).toBe('https://idp.example.com');
+  });
+});
+
+describe('verified service-account client identity', () => {
+  it.each([
+    ['service-account-example-platform', 'example-platform', true, 'example-platform'],
+    ['service-account-example-platform', 'external-client', true, undefined],
+    ['service-account-example-platform', undefined, true, undefined],
+    ['service-account-example-platform', 123, true, undefined],
+    ['test-user', 'example-platform', false, undefined],
+  ])('extracts client identity from verified claims (%s, %s)', async (
+    preferred_username, azp, isServiceAccount, serviceAccountClientId,
+  ) => {
+    process.env.OIDC_ISSUER = 'https://idp.example.com';
+    process.env.OIDC_CLIENT_ID = 'example-api';
+    jest.mocked(jwtVerify).mockResolvedValueOnce({
+      payload: { sub: 'example-subject', preferred_username, azp },
+      protectedHeader: { alg: 'RS256' },
+    } as never);
+
+    await expect(validateBearerJWT('example-token')).resolves.toMatchObject({
+      sub: 'example-subject', isServiceAccount, serviceAccountClientId,
+    });
   });
 });

@@ -38,7 +38,6 @@ import React from "react";
 import { MCPServerEditor, type MCPServerInitialValues } from "./MCPServerEditor";
 import { RemoteMCPCatalogDialog, type RemoteMCPTemplate } from "./RemoteMCPCatalogDialog";
 
-// assisted-by Codex Codex-sonnet-4-6
 export const MCP_SERVERS_REFRESH_INTERVAL_MS = 10_000;
 const MCP_SERVERS_LIST_URL = "/api/mcp-servers?page_size=100";
 

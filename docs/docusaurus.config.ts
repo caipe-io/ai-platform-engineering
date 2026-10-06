@@ -290,10 +290,6 @@ const config: Config = {
               href: 'https://github.com/cnoe-io/openapi-mcp-codegen',
             },
             {
-              label: 'cnoe-agent-utils',
-              href: 'https://github.com/cnoe-io/cnoe-agent-utils',
-            },
-            {
               label: 'CAIPE.io',
               href: 'https://caipe.io',
             },
@@ -317,6 +313,8 @@ const config: Config = {
   } satisfies Preset.ThemeConfig,
 
   markdown: {
+    // Parse .md as CommonMark and reserve MDX syntax for .mdx files.
+    format: 'detect',
     mermaid: true,
     hooks: {
       onBrokenMarkdownLinks: 'warn',

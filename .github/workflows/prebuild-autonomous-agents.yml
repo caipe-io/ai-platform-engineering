@@ -49,6 +49,7 @@ jobs:
       (github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]') &&
       (
         startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+        (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
         github.event.action != 'closed'
       )
     permissions:
@@ -65,7 +66,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
-          ref: ${{ inputs.head_sha || github.ref }}
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Check build eligibility
@@ -92,7 +93,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.eligibility.outputs.should_build == 'true'
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GitHub Container Registry
         if: steps.eligibility.outputs.should_build == 'true'
@@ -105,25 +106,21 @@ jobs:
       - name: Compute prebuild tag
         if: steps.eligibility.outputs.should_build == 'true'
         id: compute_tag
+        uses: ./.github/actions/prebuild-version
+        with:
+          head_ref: ${{ inputs.head_ref || github.head_ref }}
+          base_ref: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
+          base_sha: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+
+      - name: Export prebuild tag to env
+        if: steps.eligibility.outputs.should_build == 'true'
         shell: bash
         env:
-          BRANCH: ${{ inputs.head_ref || github.head_ref }}
-          BASE_REF: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
-          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+          PREBUILD_TAG: ${{ steps.compute_tag.outputs.prebuild_tag }}
+          BRANCH_BARE: ${{ steps.compute_tag.outputs.branch }}
         run: |
-          BRANCH_NO_PREFIX="${BRANCH#prebuild/}"
-          BRANCH_SANITIZED="${BRANCH_NO_PREFIX//\//-}"
-          git fetch origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-          if [[ -n "$BASE_SHA" ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            BASE_COMMIT="$BASE_SHA"
-          else
-            BASE_COMMIT="origin/${BASE_REF}"
-          fi
-          COMMIT_COUNT=$(git rev-list --count "${BASE_COMMIT}..HEAD")
-          PREBUILD_TAG="${BRANCH_SANITIZED}-${COMMIT_COUNT}"
-          echo "BRANCH_BARE=${BRANCH_SANITIZED}" >> "$GITHUB_ENV"
+          echo "BRANCH_BARE=${BRANCH_BARE}" >> "$GITHUB_ENV"
           echo "PREBUILD_TAG=${PREBUILD_TAG}" >> "$GITHUB_ENV"
-          echo "prebuild_tag=${PREBUILD_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Upload building prebuild status
         if: steps.eligibility.outputs.should_build == 'true'
@@ -154,12 +151,12 @@ jobs:
 
       - name: Set up QEMU
         if: steps.eligibility.outputs.should_build == 'true'
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
 
       - name: Build and Push Autonomous Agents Docker image
         if: steps.eligibility.outputs.should_build == 'true'
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: ai_platform_engineering/autonomous_agents
           file: build/Dockerfile.autonomous-agents

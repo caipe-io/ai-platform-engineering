@@ -41,6 +41,7 @@ spec:
       {{- $cbImageTag := $cbImage.tag | default .Chart.AppVersion }}
       {{- $cbImagePull := $cbImage.pullPolicy | default "IfNotPresent" }}
       serviceAccountName: {{ include "agentgateway.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{- if $cbEnabled }}

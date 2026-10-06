@@ -48,6 +48,7 @@ export interface SearchablePickerProps<Option> {
   searchValue?: string;
   onSearchChange?: (query: string) => void;
   filterOptions?: boolean;
+  prioritizeSelected?: boolean;
   portalled?: boolean;
   contentSide?: "top" | "bottom";
 }
@@ -95,6 +96,7 @@ export function SearchablePicker<Option>({
   searchValue,
   onSearchChange,
   filterOptions = true,
+  prioritizeSelected = true,
   portalled = true,
   contentSide = "bottom",
 }: SearchablePickerProps<Option>) {
@@ -142,7 +144,7 @@ export function SearchablePicker<Option>({
           );
         });
 
-    if (!selectedKey) return matches;
+    if (!prioritizeSelected || !selectedKey) return matches;
     const matchedSelection = matches.find(
       (option) => getOptionKey(option) === selectedKey,
     );
@@ -157,6 +159,7 @@ export function SearchablePicker<Option>({
     getOptionLabel,
     getSearchText,
     options,
+    prioritizeSelected,
     query,
     selectedKey,
   ]);
@@ -275,7 +278,7 @@ export function SearchablePicker<Option>({
             onKeyDown={handleTriggerKeyDown}
             className={cn(
               "inline-flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm",
-              "hover:bg-muted/40 focus:outline-none focus:ring-1 focus:ring-ring",
+              "hover:bg-muted/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring",
               "disabled:cursor-not-allowed disabled:opacity-60",
               "pr-8",
               canClear && "pr-14",

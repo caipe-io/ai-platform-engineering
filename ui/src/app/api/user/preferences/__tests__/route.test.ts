@@ -10,6 +10,7 @@ const mockEvaluateAgentAccess = jest.fn();
 const mockGetAuth = jest.fn();
 const mockGetAgentsCollection = jest.fn();
 const mockGetResolvedPlatformDefaultAgentId = jest.fn();
+const mockGetIntegrationAvailability = jest.fn();
 const mockListWebexBotPolicies = jest.fn();
 const mockRequireAvailableWebexBotPolicy = jest.fn();
 const mockListWebexDirectUserRoutesForUser = jest.fn();
@@ -43,7 +44,7 @@ jest.mock("@/lib/mongodb", () => ({
 }));
 
 jest.mock("@/lib/integration-config", () => ({
-  getIntegrationAvailability: () => ({ slack: true, webex: false }),
+  getIntegrationAvailability: () => mockGetIntegrationAvailability(),
 }));
 
 jest.mock("@/lib/platform-default-agent", () => ({
@@ -107,6 +108,7 @@ describe("GET /api/user/preferences", () => {
     mockGetAuth.mockResolvedValue(authedSession);
     mockGetAgentsCollection.mockResolvedValue(mockAgentsCollection);
     mockGetResolvedPlatformDefaultAgentId.mockResolvedValue("platform-agent");
+    mockGetIntegrationAvailability.mockReturnValue({ slack: true, webex: false });
     mockListWebexBotPolicies.mockResolvedValue([]);
     mockListWebexDirectUserRoutesForUser.mockResolvedValue(new Map());
   });
@@ -134,6 +136,7 @@ describe("GET /api/user/preferences", () => {
       tenantId: "default",
       userId: "alice-sub",
     });
+    expect(mockListWebexBotPolicies).not.toHaveBeenCalled();
   });
 
   it("returns null when no preference is saved", async () => {
@@ -154,6 +157,28 @@ describe("GET /api/user/preferences", () => {
     });
   });
 
+  it("returns saved defaults when the optional Webex service is unavailable", async () => {
+    mockGetUserPreference.mockResolvedValue({
+      web_default_agent_id: "agent-web",
+      slack_default_agent_id: null,
+    });
+    mockGetIntegrationAvailability.mockReturnValue({ slack: true, webex: true });
+    mockListWebexBotPolicies.mockRejectedValue(new TypeError("fetch failed"));
+
+    const response = await GET(makeRequest("GET"));
+
+    expect(response.status).toBe(200);
+    await expect(bodyOf(response)).resolves.toMatchObject({
+      success: true,
+      data: {
+        web_default_agent_id: "agent-web",
+        slack_default_agent_id: null,
+        webex_bots: [],
+        platform_default_agent_id: "platform-agent",
+      },
+    });
+  });
+
   it("rejects requests without a valid session", async () => {
     mockGetAuth.mockResolvedValue({
       user: { email: "x", name: "y", role: "user" },
@@ -168,6 +193,7 @@ describe("GET /api/user/preferences", () => {
 
   it("includes an all_users bot as editable, falling back to the bot default", async () => {
     mockGetUserPreference.mockResolvedValue({ web_default_agent_id: null, slack_default_agent_id: null });
+    mockGetIntegrationAvailability.mockReturnValue({ slack: true, webex: true });
     mockListWebexBotPolicies.mockResolvedValue([ALL_USERS_BOT]);
 
     const response = await GET(makeRequest("GET"));
@@ -190,6 +216,7 @@ describe("GET /api/user/preferences", () => {
 
   it("uses the user's own route agent for an all_users bot when one exists", async () => {
     mockGetUserPreference.mockResolvedValue({ web_default_agent_id: null, slack_default_agent_id: null });
+    mockGetIntegrationAvailability.mockReturnValue({ slack: true, webex: true });
     mockListWebexBotPolicies.mockResolvedValue([ALL_USERS_BOT]);
     mockListWebexDirectUserRoutesForUser.mockResolvedValue(
       new Map([["primary", { bot_id: "primary", agent_id: "agent-x", status: "active" }]]),
@@ -206,6 +233,7 @@ describe("GET /api/user/preferences", () => {
 
   it("marks an admin-denied all_users bot as not editable", async () => {
     mockGetUserPreference.mockResolvedValue({ web_default_agent_id: null, slack_default_agent_id: null });
+    mockGetIntegrationAvailability.mockReturnValue({ slack: true, webex: true });
     mockListWebexBotPolicies.mockResolvedValue([ALL_USERS_BOT]);
     mockListWebexDirectUserRoutesForUser.mockResolvedValue(
       new Map([["primary", { bot_id: "primary", agent_id: "agent-x", status: "disabled" }]]),
@@ -222,6 +250,7 @@ describe("GET /api/user/preferences", () => {
 
   it("hides an allowlist bot the user has no active route for", async () => {
     mockGetUserPreference.mockResolvedValue({ web_default_agent_id: null, slack_default_agent_id: null });
+    mockGetIntegrationAvailability.mockReturnValue({ slack: true, webex: true });
     mockListWebexBotPolicies.mockResolvedValue([ALLOWLIST_BOT]);
 
     const response = await GET(makeRequest("GET"));
@@ -231,6 +260,7 @@ describe("GET /api/user/preferences", () => {
 
   it("shows an allowlisted bot read-only with the admin-chosen agent", async () => {
     mockGetUserPreference.mockResolvedValue({ web_default_agent_id: null, slack_default_agent_id: null });
+    mockGetIntegrationAvailability.mockReturnValue({ slack: true, webex: true });
     mockListWebexBotPolicies.mockResolvedValue([ALLOWLIST_BOT]);
     mockListWebexDirectUserRoutesForUser.mockResolvedValue(
       new Map([["secondary", { bot_id: "secondary", agent_id: "agent-y", status: "active" }]]),
