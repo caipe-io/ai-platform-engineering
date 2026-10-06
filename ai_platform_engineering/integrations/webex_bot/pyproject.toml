@@ -12,7 +12,7 @@ dependencies = [
   "requests==2.34.2",
   "pydantic==2.13.4",
   "pyyaml==6.0.3",
-  "pymongo==4.16.0",
+  "pymongo==4.18.2",
   "pyjwt[crypto]==2.15.1",
   "loguru==0.7.3",
   "aiohttp==3.14.3",
