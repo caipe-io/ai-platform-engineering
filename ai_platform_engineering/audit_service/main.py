@@ -44,6 +44,14 @@ _LOCAL_RETENTION_CLEANUP_INTERVAL_SECONDS = 60 * 60
 _logger = logging.getLogger(__name__)
 
 
+def _log_query_failure(task: asyncio.Task[QueryResult]) -> None:
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None and not isinstance(error, AuditQueryCancelled):
+        _logger.warning("audit history scan failed", exc_info=error)
+
+
 async def _query_events(
     request: Request, store: LocalAuditStore | S3AuditStore, query: AuditQuery, timeout_seconds: float
 ) -> QueryResult:
@@ -62,7 +70,7 @@ async def _query_events(
             slots.release()
 
     task = asyncio.create_task(asyncio.to_thread(scan))
-    task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+    task.add_done_callback(_log_query_failure)
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     try:
         while True:

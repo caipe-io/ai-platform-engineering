@@ -6,6 +6,7 @@ import gzip
 import heapq
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -17,6 +18,8 @@ from pathlib import Path
 from threading import Event
 from typing import Any, Iterable
 from uuid import uuid4
+
+_logger = logging.getLogger(__name__)
 
 _PARQUET_INDEX_FIELDS = (
     "ts",
@@ -682,7 +685,8 @@ class S3AuditStore:
         except AuditQueryCancelled:
             raise
         except Exception:
-            return []
+            _logger.warning("Failed to read S3 audit object s3://%s/%s", self.bucket, key, exc_info=True)
+            raise
 
     def _to_parquet_bytes(self, records: list[dict[str, Any]]) -> bytes:
         import pyarrow as pa  # type: ignore[import-untyped]

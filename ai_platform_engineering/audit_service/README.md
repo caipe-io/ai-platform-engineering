@@ -11,4 +11,4 @@ History scans count every matching event and retain only the newest requested re
 
 Client disconnects and deadlines signal cancellation to the storage scan. Cancellation stops new listings, fetches, and record processing. In-flight storage calls finish before the scan releases its concurrency slot. Ingest and readiness remain available under read pressure.
 
-Completed queries return an exact `total`, stable ordering from newest to oldest, and `truncated` when more records match than the response limit. Timed-out scans return an error rather than partial totals.
+Completed queries return an exact `total`, stable ordering from newest to oldest, and `truncated` when more records match than the response limit. An S3 fetch, body-read, or Parquet-decoding failure fails the request with HTTP 500 and logs the object location and traceback. Failed and timed-out scans do not return partial totals. Failures that arrive after a client disconnects are also logged; expected cancellation is quiet.

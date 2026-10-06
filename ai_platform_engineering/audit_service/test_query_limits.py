@@ -148,8 +148,9 @@ def test_day_prefixes_do_not_list_legacy_objects_twice() -> None:
 
 
 @pytest.mark.parametrize("disconnected,expected_status", [(True, 499), (False, 504)])
+@pytest.mark.parametrize("worker_outcome", ["success", "failure", "cancellation"])
 def test_http_scan_cancels_and_holds_capacity_until_worker_exits(
-    disconnected: bool, expected_status: int
+    disconnected: bool, expected_status: int, worker_outcome: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     async def scenario() -> None:
         slots = threading.BoundedSemaphore(1)
@@ -162,6 +163,10 @@ def test_http_scan_cancels_and_holds_capacity_until_worker_exits(
                 started.set()
                 assert release.wait(5)
                 assert query.cancel_event.is_set()
+                if worker_outcome == "failure":
+                    raise OSError("backend read failed")
+                if worker_outcome == "cancellation":
+                    raise AuditQueryCancelled
                 return QueryResult([], 0, False)
 
         async def is_disconnected() -> bool:
@@ -188,8 +193,15 @@ def test_http_scan_cancels_and_holds_capacity_until_worker_exits(
             assert asyncio.get_running_loop().time() < deadline
             await asyncio.sleep(0.01)
         slots.release()
+        workers = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+        await asyncio.gather(*workers, return_exceptions=True)
 
     asyncio.run(scenario())
+    failures = [record for record in caplog.records if record.getMessage() == "audit history scan failed"]
+    assert len(failures) == (1 if worker_outcome == "failure" else 0)
+    if failures:
+        assert failures[0].exc_info is not None
+        assert isinstance(failures[0].exc_info[1], OSError)
 
 
 def test_settings_read_scan_limits(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -259,3 +271,44 @@ def test_zero_limit_counts_matches_without_retaining_records(tmp_path: Path) -> 
     assert result.records == []
     assert result.total == 1
     assert result.truncated
+
+
+@pytest.mark.parametrize("failure_stage", ["fetch", "body", "decode"])
+def test_failed_s3_object_returns_an_error_without_partial_totals(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failure_stage: str
+) -> None:
+    store = S3AuditStore.__new__(S3AuditStore)
+    good_body = store._to_parquet_bytes([{"ts": "2026-06-20T01:00:00Z", "type": "auth"}])
+    bad_streams: list[BytesIO] = []
+
+    class BrokenBody(BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            raise OSError("example backend detail")
+
+    class Client:
+        def head_bucket(self, **kwargs: object) -> None:
+            pass
+
+        def get_object(self, **kwargs: object) -> dict[str, object]:
+            if kwargs["Key"] == "good.parquet":
+                return {"Body": BytesIO(good_body)}
+            if failure_stage == "fetch":
+                raise OSError("example backend detail")
+            stream = BrokenBody() if failure_stage == "body" else BytesIO(b"invalid parquet")
+            bad_streams.append(stream)
+            return {"Body": stream}
+
+    monkeypatch.setattr(S3AuditStore, "_build_client", lambda _: Client())
+    monkeypatch.setattr(S3AuditStore, "_keys_for_range", lambda *args, **kwargs: iter(["good.parquet", "bad.parquet"]))
+    settings = Settings(backend="s3", s3_bucket="example-bucket")
+    with TestClient(create_app(settings), raise_server_exceptions=False) as client:
+        response = client.get(
+            "/v1/audit/events", params={"since": "2026-06-20T00:00:00Z", "until": "2026-06-21T00:00:00Z"}
+        )
+    assert response.status_code == 500
+    assert "total" not in response.text
+    assert "example backend detail" not in response.text
+    assert all(stream.closed for stream in bad_streams)
+    failures = [record for record in caplog.records if "s3://example-bucket/bad.parquet" in record.getMessage()]
+    assert len(failures) == 1
+    assert failures[0].exc_info is not None
