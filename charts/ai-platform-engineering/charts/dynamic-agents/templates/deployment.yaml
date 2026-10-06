@@ -75,6 +75,13 @@ spec:
                   name: {{ .Values.agentContext.existingSecret.name | quote }}
                   key: {{ .Values.agentContext.existingSecret.key | quote }}
             {{- end }}
+            {{- if .Values.userContext.existingSecret.name }}
+            - name: DA_USER_CONTEXT_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.userContext.existingSecret.name | quote }}
+                  key: {{ .Values.userContext.existingSecret.key | quote }}
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "dynamic-agents.fullname" . }}-config

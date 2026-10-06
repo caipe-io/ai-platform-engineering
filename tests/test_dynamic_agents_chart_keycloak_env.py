@@ -173,6 +173,114 @@ def test_hmac_secret_omitted_when_agent_context_secret_empty() -> None:
     assert "CAIPE_AGENT_CONTEXT_HMAC_SECRET" not in env_names
 
 
+def test_user_context_secret_and_strict_bearer_are_wired_together() -> None:
+    docs = _helm_template(
+        "userContext.existingSecret.name=example-user-context-secret",
+        "userContext.existingSecret.key=DA_USER_CONTEXT_HMAC_SECRET",
+    )
+    deployment = _find_deployment(docs)
+    env = _container_env(deployment)
+    context_env = next(e for e in env if e.get("name") == "DA_USER_CONTEXT_HMAC_SECRET")
+    assert context_env["valueFrom"]["secretKeyRef"] == {
+        "name": "example-user-context-secret",
+        "key": "DA_USER_CONTEXT_HMAC_SECRET",
+    }
+    assert _find_configmap(docs, "-config")["data"]["DA_REQUIRE_BEARER"] == "true"
+
+
+def test_user_context_secret_is_omitted_when_not_configured() -> None:
+    docs = _helm_template()
+    env_names = {e.get("name") for e in _container_env(_find_deployment(docs))}
+    assert "DA_USER_CONTEXT_HMAC_SECRET" not in env_names
+
+
+def test_umbrella_dynamic_agents_requires_user_context_secret(tmp_path: Path) -> None:
+    _require_helm()
+    chart = tmp_path / "validation-chart"
+    templates = chart / "templates"
+    templates.mkdir(parents=True)
+    (chart / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: validation-chart\nversion: 0.1.0\n"
+    )
+    (chart / "values.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "tags": {
+                    "dynamic-agents": True,
+                    "caipe-ui": False,
+                    "autonomous-agents": False,
+                },
+                "dynamic-agents": {
+                    "userContext": {
+                        "existingSecret": {
+                            "name": "",
+                            "key": "DA_USER_CONTEXT_HMAC_SECRET",
+                        }
+                    }
+                },
+                "caipe-ui": {"userContext": {"existingSecret": {}}},
+                "autonomous-agents": {"userContext": {"existingSecret": {}}},
+            }
+        )
+    )
+    shutil.copy(
+        REPO_ROOT
+        / "charts"
+        / "ai-platform-engineering"
+        / "templates"
+        / "validate-user-context-secret.yaml",
+        templates,
+    )
+    result = subprocess.run(
+        ["helm", "template", "test", str(chart)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "dynamic-agents.userContext.existingSecret.name is required" in result.stderr
+
+
+def test_network_policy_is_disabled_for_standalone_chart_by_default() -> None:
+    docs = _helm_template()
+    assert not any(doc.get("kind") == "NetworkPolicy" for doc in docs)
+
+
+def test_network_policy_allows_only_selected_bff_and_metrics_pods() -> None:
+    docs = _helm_template("networkPolicy.enabled=true")
+    policy = next(doc for doc in docs if doc.get("kind") == "NetworkPolicy")
+    deployment = _find_deployment(docs)
+    chart_values = yaml.safe_load((CHART_PATH / "values.yaml").read_text())
+
+    assert policy["spec"]["policyTypes"] == ["Ingress"]
+    assert policy["spec"]["podSelector"]["matchLabels"] == deployment["spec"]["selector"]["matchLabels"]
+    ingress = policy["spec"]["ingress"]
+    assert ingress[0]["from"] == [{"podSelector": chart_values["networkPolicy"]["bffPodSelector"]}]
+    assert ingress[0]["ports"] == [
+        {"protocol": "TCP", "port": chart_values["service"]["port"]}
+    ]
+    assert ingress[1]["from"] == [{"podSelector": chart_values["networkPolicy"]["metricsPodSelector"]}]
+
+
+def test_network_policy_allows_configured_additional_api_callers() -> None:
+    docs = _helm_template(
+        "networkPolicy.enabled=true",
+        "networkPolicy.additionalCallerPodSelectors[0].matchLabels.app\\.kubernetes\\.io/name=autonomous-agents",
+    )
+    policy = next(doc for doc in docs if doc.get("kind") == "NetworkPolicy")
+    ingress = policy["spec"]["ingress"]
+    assert ingress[1]["from"] == [
+        {
+            "podSelector": {
+                "matchLabels": {"app.kubernetes.io/name": "autonomous-agents"}
+            }
+        }
+    ]
+    assert ingress[1]["ports"] == [
+        {"protocol": "TCP", "port": 8001}
+    ]
+
+
 # ---------------------------------------------------------------------------
 # NOTES.txt warning behaviour
 # ---------------------------------------------------------------------------
@@ -217,6 +325,7 @@ def test_notes_quiet_when_both_keycloak_envs_are_set() -> None:
         "config.KEYCLOAK_URL=http://caipe-keycloak:8080",
         "config.OIDC_ISSUER=https://idp.public.example.com/realms/caipe",
         "agentContext.existingSecret.name=shared-agent-context-secret",
+        "userContext.existingSecret.name=shared-user-context-secret",
     )
     assert "WARNING" not in output, (
         "NOTES.txt must NOT warn when both Keycloak/OIDC env vars are set"
@@ -232,6 +341,11 @@ def test_notes_warns_when_agent_gateway_enabled_without_hmac_secret() -> None:
         "config.AGENT_GATEWAY_MCP_SERVER_IDS=all",
     )
     assert "CAIPE_AGENT_CONTEXT_HMAC_SECRET is NOT wired for dynamic-agents." in output
+
+
+def test_notes_warns_when_user_context_hmac_secret_is_missing() -> None:
+    output = _helm_install_dry_run()
+    assert "DA_USER_CONTEXT_HMAC_SECRET is NOT wired for dynamic-agents." in output
 
 
 # ---------------------------------------------------------------------------

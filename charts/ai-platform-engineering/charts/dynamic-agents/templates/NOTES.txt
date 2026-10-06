@@ -19,6 +19,16 @@
 
 dynamic-agents installed.
 
+{{- if not .Values.userContext.existingSecret.name }}
+
+⚠️  WARNING — DA_USER_CONTEXT_HMAC_SECRET is NOT wired for dynamic-agents.
+
+    Signed X-User-Context authentication will fail closed at runtime. Before
+    upgrading, create a shared Secret and set userContext.existingSecret.name
+    and userContext.existingSecret.key. Every direct caller must use the same
+    key.
+{{- end }}
+
 {{- if and (eq (toString $kcUrl) "") (eq (toString $oidcIssuer) "") }}
 
 ⚠️  WARNING — Keycloak/OIDC env vars are NOT set for dynamic-agents.

@@ -10,6 +10,7 @@ Covers all four branches of ``JwtAuthMiddleware.dispatch``:
    reaches the handler, contextvar reset on the way out.
 4. Invalid Bearer  -> 401 with ``code=bearer_invalid`` (NEVER falls
    through to the legacy header path; this is the security boundary).
+5. The unset ``DA_REQUIRE_BEARER`` variable defaults to strict mode.
 """
 
 from __future__ import annotations
@@ -76,7 +77,23 @@ def test_no_bearer_strict_returns_401(monkeypatch):
     assert body["action"] == "sign_in"
 
 
-def test_healthz_bypasses_strict_bearer_requirement(monkeypatch):
+def test_no_bearer_defaults_to_strict(monkeypatch):
+    monkeypatch.delenv("DA_REQUIRE_BEARER", raising=False)
+    from dynamic_agents.auth import jwt_middleware as mw
+
+    importlib.reload(mw)
+    app = Starlette(routes=[Route("/echo", lambda _request: JSONResponse({"ok": True}))])
+    app.add_middleware(mw.JwtAuthMiddleware)
+
+    with TestClient(app) as client:
+        resp = client.get("/echo")
+
+    assert resp.status_code == 401
+    assert resp.json()["code"] == "missing_bearer"
+
+
+@pytest.mark.parametrize("path", ["/health", "/healthz", "/readyz", "/metrics"])
+def test_operational_endpoints_bypass_strict_bearer_requirement(monkeypatch, path):
     """Health endpoints must stay probeable without auth."""
     app, seen = _build_app(
         monkeypatch, require_bearer=True, validator=lambda _t: {"sub": "x"}
@@ -86,13 +103,29 @@ def test_healthz_bypasses_strict_bearer_requirement(monkeypatch):
         seen["token"] = None
         return JSONResponse({"status": "healthy"})
 
-    app.router.routes.append(Route("/healthz", health_handler, methods=["GET"]))
+    app.router.routes.append(Route(path, health_handler, methods=["GET"]))
 
     with TestClient(app) as client:
-        resp = client.get("/healthz")
+        resp = client.get(path)
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
+
+
+def test_options_preflight_bypasses_strict_bearer_requirement(monkeypatch):
+    app, _ = _build_app(
+        monkeypatch, require_bearer=True, validator=lambda _t: {"sub": "user-primary"}
+    )
+
+    async def options_handler(request: Request) -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    app.router.routes.append(Route("/resource", options_handler, methods=["OPTIONS"]))
+
+    with TestClient(app) as client:
+        resp = client.options("/resource")
+
+    assert resp.status_code == 200
 
 
 def test_valid_bearer_binds_contextvar(monkeypatch):
@@ -130,15 +163,19 @@ def test_invalid_bearer_rejects_with_401_and_does_not_fallthrough(monkeypatch):
     assert "token" not in seen
 
 
-def test_empty_bearer_value_is_treated_as_no_bearer(monkeypatch):
-    """``Authorization: Bearer `` with whitespace only must not 401 in lenient mode."""
+@pytest.mark.parametrize("require_bearer", [False, True])
+def test_empty_bearer_value_is_always_rejected(monkeypatch, require_bearer):
+    """An explicit Bearer scheme must never fall through to trusted headers."""
     app, seen = _build_app(
-        monkeypatch, require_bearer=False, validator=lambda _t: {"sub": "x"}
+        monkeypatch,
+        require_bearer=require_bearer,
+        validator=lambda _t: {"sub": "x"},
     )
     with TestClient(app) as client:
         resp = client.get("/echo", headers={"Authorization": "Bearer    "})
-    assert resp.status_code == 200
-    assert seen["token"] is None
+    assert resp.status_code == 401
+    assert resp.json()["code"] == "missing_bearer"
+    assert "token" not in seen
 
 
 @pytest.mark.parametrize("scheme", ["basic", "BEARER", "bearer"])

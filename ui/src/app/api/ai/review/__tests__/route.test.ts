@@ -14,7 +14,7 @@
  * so a future refactor can't silently regress.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { NextRequest } from "next/server";
 
 const mockAuthenticateRequest = jest.fn();
@@ -88,7 +88,10 @@ beforeEach(() => {
   // No Platform LLM and no registered models, so resolution reaches the
   // built-in default unless a test says otherwise.
   mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue(null) });
+  process.env.DA_USER_CONTEXT_HMAC_SECRET = "test-context-secret";
 });
+
+afterEach(() => { delete process.env.DA_USER_CONTEXT_HMAC_SECRET; });
 
 describe("/api/ai/review POST — header forwarding to dynamic-agents", () => {
   it("falls back to Claude Haiku 4.5 when no platform LLM, review config, or Mongo model is available", async () => {
@@ -159,6 +162,10 @@ describe("/api/ai/review POST — header forwarding to dynamic-agents", () => {
     // validate the JWT and resolve the caller identity for the LLM call.
     expect(headers["Authorization"]).toBe("Bearer ADMIN_JWT_TOKEN");
     expect(headers["X-User-Context"]).toBe("BASE64_USER_CTX");
+    const signature = createHmac("sha256", "test-context-secret")
+      .update("BASE64_USER_CTX")
+      .digest("hex");
+    expect(headers["X-User-Context-Signature"]).toBe(`v1=${signature}`);
   });
 
   it("forwards traceparent when the auth layer surfaces one", async () => {

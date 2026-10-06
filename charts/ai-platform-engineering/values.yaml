@@ -985,6 +985,11 @@ caipe-ui:
   #   token mode → IDENTITY_SYNC_OKTA_API_TOKEN
   #   oauth mode → IDENTITY_SYNC_OKTA_OAUTH_PRIVATE_KEY (PEM PKCS#8)
   existingSecret: ""
+  # Shared with dynamic-agents; both references must point to the same key.
+  userContext:
+    existingSecret:
+      name: ""
+      key: DA_USER_CONTEXT_HMAC_SECRET
 
   # Enable switch for the in-cluster MongoDB-compatible persistence subchart.
   # Provider/image/auth values are configured under the top-level `mongodb`
@@ -1199,6 +1204,15 @@ dynamic-agents:
     existingSecret:
       name: ""
       key: CAIPE_AGENT_CONTEXT_HMAC_SECRET
+  userContext:
+    existingSecret:
+      name: ""
+      key: DA_USER_CONTEXT_HMAC_SECRET
+  networkPolicy:
+    enabled: true
+    additionalCallerPodSelectors:
+      - matchLabels:
+          app.kubernetes.io/name: autonomous-agents
     # LLM configuration (override if needed)
     # LLM_PROVIDER: "openai"
     # LLM_MODEL: "gpt-4o"
@@ -1257,6 +1271,11 @@ autonomous-agents:
     clientSecretRef:
       name: ""
       key: "KC_SCHEDULER_CLIENT_SECRET"
+  # Must reference the same Secret key as caipe-ui and dynamic-agents.
+  userContext:
+    existingSecret:
+      name: ""
+      key: DA_USER_CONTEXT_HMAC_SECRET
   # ConfigMap for non-sensitive configuration.
   # DYNAMIC_AGENTS_URL defaults to the in-release dynamic-agents Service in the
   # autonomous-agents subchart helper. Set it here only to override that default.

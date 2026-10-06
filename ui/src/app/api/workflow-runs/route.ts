@@ -22,6 +22,7 @@ startWorkflowRun,
 type WorkflowRunDocument,
 } from "@/lib/server/workflow-engine";
 import { deleteEventsByRun,readEventsByRun } from "@/lib/server/event-store";
+import { buildWorkflowDaAuthHeaders } from "@/lib/server/workflow-da-auth";
 import {
 filterAccessibleWorkflowConfigs,
 requireWorkflowRunAccess,
@@ -169,20 +170,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // back to the session's OIDC access token so browser (cookie) sessions still
   // forward a valid bearer — DA + the BFF per-step CAS gate both need the
   // run-owner's token.
-  const authHeaders: Record<string, string> = {};
-  const incomingAuth = request.headers.get("Authorization");
-  const sessionAccessToken = typeof (session as { accessToken?: unknown }).accessToken === "string"
-    ? (session as { accessToken?: string }).accessToken
-    : undefined;
-  if (incomingAuth) {
-    authHeaders["Authorization"] = incomingAuth;
-  } else if (sessionAccessToken) {
-    authHeaders["Authorization"] = `Bearer ${sessionAccessToken}`;
-  }
-  authHeaders["X-User-Context"] = Buffer.from(JSON.stringify({
-    email: user.email,
-    name: user.name,
-  })).toString("base64");
+  const authHeaders = buildWorkflowDaAuthHeaders(request, user, session);
 
   // Enrich trigger_info with user context
   const enrichedTriggerInfo = {
@@ -391,12 +379,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
         `${daUrl}/api/v1/files/namespace?fs_namespace=${encodeURIComponent(fsNamespace)}`,
         {
           method: "DELETE",
-          headers: {
-            "X-User-Context": Buffer.from(JSON.stringify({
-              email: user.email,
-              name: user.name,
-            })).toString("base64"),
-          },
+          headers: buildWorkflowDaAuthHeaders(request, user, session),
         },
       );
     } catch {

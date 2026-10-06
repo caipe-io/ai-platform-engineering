@@ -209,6 +209,12 @@ dynamicAgentsAuth:
     name: ""
     key: "KC_SCHEDULER_CLIENT_SECRET"
 
+# Secret shared with Dynamic Agents for signed X-User-Context headers.
+userContext:
+  existingSecret:
+    name: ""
+    key: DA_USER_CONTEXT_HMAC_SECRET
+
 # Pre-existing secret with sensitive values:
 #   MONGODB_URI            (required -- same MongoDB the CAIPE UI uses)
 #   WEBHOOK_SECRET         (required before exposing webhook ingress -- global

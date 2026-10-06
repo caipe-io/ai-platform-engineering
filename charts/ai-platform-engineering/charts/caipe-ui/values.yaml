@@ -418,6 +418,12 @@ credentialSecretRefs: []
 # admin sync/reload still requires WEBEX_BOT_ADMIN_CLIENT_SECRET when enabled.
 existingSecret: ""
 
+# Secret shared with dynamic-agents for signed X-User-Context headers.
+userContext:
+  existingSecret:
+    name: ""
+    key: DA_USER_CONTEXT_HMAC_SECRET
+
 # ---------- Keycloak Admin REST client wiring ----------
 #
 # The BFF's `fetchFreshAdminToken` (ui/src/lib/rbac/keycloak-admin.ts) needs

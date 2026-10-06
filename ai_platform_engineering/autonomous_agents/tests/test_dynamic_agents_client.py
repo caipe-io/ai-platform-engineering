@@ -9,6 +9,8 @@ parsing run end-to-end without booting the dynamic-agents service.
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -43,6 +45,7 @@ def _reset_settings_cache():
 def configured(monkeypatch):
     """Set DYNAMIC_AGENTS_URL to a fake host."""
     monkeypatch.setenv("DYNAMIC_AGENTS_URL", "http://dynamic-agents-test:8001")
+    monkeypatch.setenv("DYNAMIC_AGENTS_USER_CONTEXT_HMAC_SECRET", "test-context-secret")
     monkeypatch.delenv("DYNAMIC_AGENTS_OAUTH2_TOKEN_URL", raising=False)
     monkeypatch.delenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_ID", raising=False)
     monkeypatch.delenv("DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET", raising=False)
@@ -95,6 +98,41 @@ class TestUserContextHeaders:
         assert decoded["email"] == "alice@example.com"
         assert decoded["is_admin"] is False
         assert decoded["is_authorized"] is True
+
+    @pytest.mark.asyncio
+    async def test_invocation_signs_user_context(self, configured):
+        factory, client = _mock_async_client(
+            _resp(200, {"success": True, "content": "ok"})
+        )
+        with patch("autonomous_agents.services.dynamic_agents_client.httpx.AsyncClient", factory):
+            await invoke_dynamic_agent(
+                prompt="hi",
+                task_id="t1",
+                agent_id="agent-x",
+                owner_email="user@example.com",
+            )
+
+        headers = client.post.await_args.kwargs["headers"]
+        expected = hmac.new(
+            b"test-context-secret",
+            headers["X-User-Context"].encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        assert headers["X-User-Context-Signature"] == f"v1={expected}"
+
+    @pytest.mark.asyncio
+    async def test_invocation_fails_closed_without_signing_secret(
+        self, configured, monkeypatch
+    ):
+        monkeypatch.delenv("DYNAMIC_AGENTS_USER_CONTEXT_HMAC_SECRET")
+        get_settings.cache_clear()
+        with pytest.raises(
+            DynamicAgentsNotConfiguredError,
+            match="DYNAMIC_AGENTS_USER_CONTEXT_HMAC_SECRET",
+        ):
+            await invoke_dynamic_agent(
+                prompt="hi", task_id="t1", agent_id="agent-x"
+            )
 
 class TestInvokeDynamicAgent:
     """``invoke_dynamic_agent`` (non-streaming) request and response handling."""

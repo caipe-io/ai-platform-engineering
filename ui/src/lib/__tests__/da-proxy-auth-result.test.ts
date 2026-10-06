@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { createHmac } from "node:crypto";
 
 import { authenticateRequest, buildBackendHeaders, type AuthResult } from "../da-proxy";
 
@@ -42,13 +43,14 @@ function request(path = "/api/v1/chat/invoke"): NextRequest {
 describe("authenticateRequest auth result", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.DA_USER_CONTEXT_HMAC_SECRET = "context-secret";
   });
 
   it("includes stable subject and bearer token for downstream OpenFGA checks", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({
-      user: { email: "alice@example.com", name: "Alice", role: "user" },
+      user: { email: "user@example.com", name: "Example User", role: "user" },
       session: {
-        sub: "alice-sub",
+        sub: "user-primary",
         accessToken: "access-token",
         canViewAdmin: false,
         canAccessDynamicAgents: true,
@@ -59,7 +61,7 @@ describe("authenticateRequest auth result", () => {
 
     expect(result).not.toBeInstanceOf(NextResponse);
     expect(result).toMatchObject({
-      subject: "alice-sub",
+      subject: "user-primary",
       bearerToken: "access-token",
       role: "user",
     });
@@ -67,7 +69,7 @@ describe("authenticateRequest auth result", () => {
 
   it("falls back to email as subject only when the session sub is missing", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({
-      user: { email: "alice@example.com", name: "Alice", role: "user" },
+      user: { email: "user@example.com", name: "Example User", role: "user" },
       session: {
         accessToken: "access-token",
         canViewAdmin: false,
@@ -79,7 +81,7 @@ describe("authenticateRequest auth result", () => {
 
     expect(result).not.toBeInstanceOf(NextResponse);
     expect(result).toMatchObject({
-      subject: "alice@example.com",
+      subject: "user@example.com",
       bearerToken: "access-token",
       role: "user",
     });
@@ -91,9 +93,9 @@ describe("authenticateRequest auth result", () => {
     // the AuthResult, and buildBackendHeaders forwards it unchanged so DA's
     // JwtAuthMiddleware can validate the SA identity. No SA-specific code path
     // is required — this test guards that the SA JWT is not dropped/rewritten.
-    const saJwt = "sa-client-credentials-jwt";
+    const saJwt = "service-account-client-credentials-jwt";
     mockGetAuthFromBearerOrSession.mockResolvedValue({
-      user: { email: "service-account-caipe-sa-incident-bot-a1b2c3", name: null, role: "user" },
+      user: { email: "service-account-example-bot", name: null, role: "user" },
       session: {
         sub: "sa-user-sub",
         accessToken: saJwt,
@@ -111,13 +113,17 @@ describe("authenticateRequest auth result", () => {
     // The SA JWT is forwarded downstream unchanged.
     const headers = buildBackendHeaders("application/json", result as AuthResult);
     expect(headers["Authorization"]).toBe(`Bearer ${saJwt}`);
+    const expectedSignature = createHmac("sha256", "context-secret")
+      .update(headers["X-User-Context"])
+      .digest("hex");
+    expect(headers["X-User-Context-Signature"]).toBe(`v1=${expectedSignature}`);
   });
 
-  it("allows browser session fallback without a bearer token for DA backend calls", async () => {
+  it("rejects a browser session whose bearer token is unavailable", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({
-      user: { email: "alice@example.com", name: "Alice", role: "admin" },
+      user: { email: "user@example.com", name: "Example User", role: "admin" },
       session: {
-        sub: "alice-sub",
+        sub: "user-primary",
         canViewAdmin: true,
         canAccessDynamicAgents: true,
       },
@@ -125,12 +131,22 @@ describe("authenticateRequest auth result", () => {
 
     const result = await authenticateRequest(request("/api/dynamic-agents/middleware"));
 
-    expect(result).not.toBeInstanceOf(NextResponse);
-    expect(result).toMatchObject({
-      subject: "alice-sub",
-      email: "alice@example.com",
-      role: "admin",
-      bearerToken: undefined,
+    expect(result).toBeInstanceOf(NextResponse);
+    expect((result as NextResponse).status).toBe(401);
+    await expect((result as NextResponse).json()).resolves.toMatchObject({
+      code: "BEARER_REQUIRED",
+      action: "sign_in",
     });
+  });
+
+  it("fails closed when the user-context signing secret is unavailable", () => {
+    delete process.env.DA_USER_CONTEXT_HMAC_SECRET;
+
+    expect(() =>
+      buildBackendHeaders("application/json", {
+        bearerToken: "access-token",
+        userContextHeader: "encoded-context",
+      }),
+    ).toThrow("DA_USER_CONTEXT_HMAC_SECRET is not configured");
   });
 });
