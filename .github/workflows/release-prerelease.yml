@@ -1,5 +1,5 @@
 name: "[Release] Pre-release Build"
-description: "Create an rc/hotfix tag on a release/* branch and trigger a coordinated build of all containers and the Helm chart."
+description: "Create build-only rc/hotfix tags on a release/* branch and trigger a coordinated build of all containers and the Helm chart."
 
 # Usage:
 #   GitHub UI → Actions → "[Release] Pre-release Build" → Run workflow
@@ -15,6 +15,8 @@ description: "Create an rc/hotfix tag on a release/* branch and trigger a coordi
 #      to that tag, commits, and pushes the commit + tag to the release branch.
 #   4. The push-tag event triggers required container CI and ci-helm.yml
 #      automatically — tag pushes always rebuild everything fresh.
+#   5. Does not update CHANGELOG.md or create a GitHub Release; prerelease tags
+#      are build artifacts until a stable release is cut.
 
 on:
   workflow_dispatch:
