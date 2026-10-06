@@ -163,6 +163,12 @@ ROUTES: list[tuple[str, Method, str, str, str]] = [
     ("/api/dynamic-agents/teams", "GET", "dynamic_agent", "view", "TODO migrate"),
     ("/api/dynamic-agents/available-subagents", "GET", "dynamic_agent", "manage", "TODO migrate"),
     ("/api/dynamic-agents/agents/[id]", "GET", "dynamic_agent", "view", "TODO migrate"),
+    # Generic file routes have a coarse invoke gate here. Their resource/run
+    # relationship checks are covered by the object-level route suites.
+    ("/api/files/list", "GET", "dynamic_agent", "invoke", "Coarse gate plus namespace read access"),
+    ("/api/files/content", "GET", "dynamic_agent", "invoke", "Coarse gate plus namespace read access"),
+    ("/api/files/content", "PUT", "dynamic_agent", "invoke", "Coarse gate plus namespace write access"),
+    ("/api/files/content", "DELETE", "dynamic_agent", "invoke", "Coarse gate plus namespace write access"),
     # ── /api/mcp-servers/** ──────────────────────────────────────────────────
     ("/api/mcp-servers", "GET", "mcp_server", "read", "TODO migrate"),
     ("/api/mcp-servers", "POST", "mcp_server", "manage", "TODO migrate"),

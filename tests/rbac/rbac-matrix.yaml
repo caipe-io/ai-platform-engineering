@@ -2014,6 +2014,98 @@ routes:
       frank_service_account:
         status: 403
         reason: DENY_NO_CAPABILITY
+  - id: ui-bff-get-api-files-list
+    surface: ui_bff
+    method: GET
+    path: /api/files/list
+    resource: dynamic_agent
+    scope: invoke
+    migration_status: migrated
+    notes: Coarse gate plus namespace read access
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 200
+      carol_kb_ingestor:
+        status: 200
+      dave_no_role:
+        status: 403
+        reason: DENY_NO_CAPABILITY
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: DENY_NO_CAPABILITY
+  - id: ui-bff-get-api-files-content
+    surface: ui_bff
+    method: GET
+    path: /api/files/content
+    resource: dynamic_agent
+    scope: invoke
+    migration_status: migrated
+    notes: Coarse gate plus namespace read access
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 200
+      carol_kb_ingestor:
+        status: 200
+      dave_no_role:
+        status: 403
+        reason: DENY_NO_CAPABILITY
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: DENY_NO_CAPABILITY
+  - id: ui-bff-put-api-files-content
+    surface: ui_bff
+    method: PUT
+    path: /api/files/content
+    resource: dynamic_agent
+    scope: invoke
+    migration_status: migrated
+    notes: Coarse gate plus namespace write access
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 200
+      carol_kb_ingestor:
+        status: 200
+      dave_no_role:
+        status: 403
+        reason: DENY_NO_CAPABILITY
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: DENY_NO_CAPABILITY
+  - id: ui-bff-delete-api-files-content
+    surface: ui_bff
+    method: DELETE
+    path: /api/files/content
+    resource: dynamic_agent
+    scope: invoke
+    migration_status: migrated
+    notes: Coarse gate plus namespace write access
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 200
+      carol_kb_ingestor:
+        status: 200
+      dave_no_role:
+        status: 403
+        reason: DENY_NO_CAPABILITY
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: DENY_NO_CAPABILITY
   - id: ui-bff-get-api-mcp-servers
     surface: ui_bff
     method: GET
