@@ -454,6 +454,7 @@ The collection, env, and naming details are in the BFF library README at
 - SSO requires MongoDB and a common `NEXTAUTH_SECRET`. Each login has its own record; the user subject and grants are unchanged.
 - Missing/revoked/expired sessions require sign-in. Store outages return retryable errors, without exposing a usable identity or clearing the cookie.
 - Logout durably revokes that login after CSRF validation. Fenced refresh writes cannot restore it.
+- Definitely retryable refresh rejections use a shared retry delay and may retain an unexpired token after rereading the session. Database outages and ambiguous provider failures do not use that fallback.
 - Existing cookies require a fresh login at coordinated cutover. See [browser sessions](../browser-sessions.md) for failure handling and rollout details.
 
 ### Server-Side Authorization (`api-middleware.ts`)

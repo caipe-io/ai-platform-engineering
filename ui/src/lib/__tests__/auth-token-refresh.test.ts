@@ -41,7 +41,7 @@ it('treats invalid_grant as expiration, even if an older access token is still v
   await expect(exchangeRefreshToken({ ...tokens(), expiresAt: now() + 60 })).rejects.toBeInstanceOf(SessionExpiredError);
 });
 
-it('does not log out users for a definite temporary provider failure', async () => {
+it('classifies provider 503 as ambiguous, leaving recovery to the session store', async () => {
   jest.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503 } as Response);
   await expect(exchangeRefreshToken(tokens())).rejects.toBeInstanceOf(SessionUnavailableError);
 });

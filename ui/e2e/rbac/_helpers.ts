@@ -633,8 +633,8 @@ export async function installTestSession(
       url: env.baseUrl,
       httpOnly: true,
       sameSite: "Lax",
-      // Keep the browser-level cookie alive past the embedded token expiry so
-      // tests that start with an already-expired token still load authenticated.
+      // Cookie lifetime is independent of server-side token validity. Tests of
+      // client expiry must keep the stored session valid to pass the SSR gate.
       expires: Math.max(tokenExpiresAt, nowSeconds) + 60 * 60,
     },
   ]);

@@ -2,11 +2,13 @@
 type Doc = Record<string, unknown>;
 const mockDocuments = new Map<string, Doc>();
 const mockMatches = (doc: Doc, filter: Doc): boolean => Object.entries(filter).every(([key, condition]) => {
+  if (key === '$or') return (condition as Doc[]).some(branch => mockMatches(doc, branch));
   const actual = key.split('.').reduce<unknown>((value, field) => (value as Doc | undefined)?.[field], doc);
   if (condition && typeof condition === 'object' && !(condition instanceof Date)) {
     const operator = condition as Doc;
     if ('$exists' in operator) return (actual !== undefined) === operator.$exists;
     if ('$gt' in operator) return (actual as number) > (operator.$gt as number);
+    if ('$lte' in operator) return (actual as number) <= (operator.$lte as number);
   }
   return actual === condition;
 });
@@ -35,6 +37,8 @@ jest.mock('../mongodb', () => ({
 
 import * as store from '../auth-token-store';
 import { getCollection } from '../mongodb';
+import { exchangeRefreshToken } from '../auth-token-refresh';
+import { authOptions } from '../auth-config';
 
 const sub = 'test-user';
 const tokens = { accessToken: 'old-token', refreshToken: 'refresh-token', expiresAt: 100 };
@@ -153,16 +157,106 @@ it('fences late refresh completion after the lease deadline', async () => {
   expect(mockDocuments.size).toBe(0);
 });
 
-it('retains a lease after an ambiguous response, but releases a definite retryable failure', async () => {
-  const login = await store.createSession(sub, tokens);
+it('shares a retry cooldown and keeps only unexpired credentials after a definite rejection', async () => {
+  jest.useFakeTimers();
+  const valid = { ...tokens, expiresAt: Math.floor(Date.now() / 1000) + 60 };
+  const login = await store.createSession(sub, valid);
+  const exchange = jest.fn(async () => { throw new store.RefreshRetryableError(); });
+  expect(await store.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
+  expect(mockDocuments.get(login.sessionId)!.refreshLease).toBeUndefined();
+  expect(await peer.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
+  expect(exchange).toHaveBeenCalledTimes(1);
+  jest.setSystemTime(Date.now() + 31_000);
+  expect(await store.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
+  expect(exchange).toHaveBeenCalledTimes(2);
+  jest.setSystemTime(Date.now() + 29_000);
+  await expect(peer.refreshSession(login.sessionId, sub, 1, exchange)).rejects.toBeInstanceOf(peer.SessionUnavailableError);
+  expect(exchange).toHaveBeenCalledTimes(2);
+  jest.setSystemTime(Date.now() + 2000);
+  const recovered = { ...valid, accessToken: 'recovered', expiresAt: Math.floor(Date.now() / 1000) + 3600 };
+  expect(await store.refreshSession(login.sessionId, sub, 1, async () => recovered)).toMatchObject(recovered);
+  expect(mockDocuments.get(login.sessionId)!.refreshRetryAfter).toBeUndefined();
+});
+
+it('never falls back after logout or a failed post-rejection database read', async () => {
+  const valid = { ...tokens, expiresAt: Math.floor(Date.now() / 1000) + 60 };
+  const login = await store.createSession(sub, valid);
   await expect(store.refreshSession(login.sessionId, sub, 1, async () => {
+    await peer.revokeSession(login.sessionId, sub);
+    throw new store.RefreshRetryableError();
+  })).rejects.toBeInstanceOf(store.SessionExpiredError);
+  const second = await store.createSession(sub, valid);
+  await expect(store.refreshSession(second.sessionId, sub, 1, async () => {
+    mockCollection.findOne.mockRejectedValueOnce(new Error('database unavailable'));
     throw new store.RefreshRetryableError();
   })).rejects.toBeInstanceOf(store.SessionUnavailableError);
-  expect(mockDocuments.get(login.sessionId)!.refreshLease).toBeUndefined();
+});
+
+it('does not erase a concurrent replica cooldown using a stale lease-acquisition read', async () => {
+  const valid = { ...tokens, expiresAt: Math.floor(Date.now() / 1000) + 60 };
+  const login = await store.createSession(sub, valid);
+  const update = mockCollection.updateOne.getMockImplementation()!;
+  mockCollection.updateOne.mockImplementationOnce(async (filter, change) => {
+    // Another replica releases its lease between this caller's read and update.
+    mockDocuments.get(login.sessionId)!.refreshRetryAfter = new Date(Date.now() + 30_000);
+    return update(filter, change);
+  });
+  const exchange = jest.fn();
+  expect(await store.refreshSession(login.sessionId, sub, 1, exchange)).toMatchObject(valid);
+  expect(exchange).not.toHaveBeenCalled();
+});
+
+it('retains a lease after an ambiguous response and requires re-login after it expires', async () => {
+  jest.useFakeTimers();
+  const login = await store.createSession(sub, tokens);
   await expect(store.refreshSession(login.sessionId, sub, 1, async () => {
     throw new Error('connection closed after sending refresh');
   })).rejects.toBeInstanceOf(store.SessionUnavailableError);
   expect(mockDocuments.get(login.sessionId)!.refreshLease).toBeDefined();
+  jest.setSystemTime(Date.now() + 31_000);
+  const exchange = jest.fn();
+  await expect(store.refreshSession(login.sessionId, sub, 1, exchange)).rejects.toBeInstanceOf(store.SessionExpiredError);
+  expect(exchange).not.toHaveBeenCalled();
+  expect(mockDocuments.has(login.sessionId)).toBe(false);
+});
+
+it.each([undefined, { error: 'temporarily_unavailable' }])('a provider 503 remains ambiguous through the full store lifecycle: %j', async body => {
+  jest.useFakeTimers();
+  const originalFetch = global.fetch;
+  const originalEnv = process.env;
+  process.env = { ...originalEnv, OIDC_ISSUER: 'https://sso.example.test',
+    OIDC_CLIENT_ID: 'example-client', OIDC_CLIENT_SECRET: 'example-secret' };
+  global.fetch = jest.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ token_endpoint: 'https://sso.example.test/token' }) })
+    .mockResolvedValueOnce({ ok: false, status: 503, json: async () => body });
+  try {
+    const login = await store.createSession(sub, { ...tokens, expiresAt: Math.floor(Date.now() / 1000) + 240 });
+    await expect(store.refreshSession(login.sessionId, sub, 1, exchangeRefreshToken)).rejects.toBeInstanceOf(store.SessionUnavailableError);
+    expect(mockDocuments.get(login.sessionId)!.refreshLease).toBeDefined();
+    jest.setSystemTime(Date.now() + 31_000);
+    await expect(store.refreshSession(login.sessionId, sub, 1, exchangeRefreshToken)).rejects.toBeInstanceOf(store.SessionExpiredError);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(mockDocuments.has(login.sessionId)).toBe(false);
+  } finally { global.fetch = originalFetch; process.env = originalEnv; }
+});
+
+it('keeps a valid browser session through a definite provider rejection and the NextAuth callbacks', async () => {
+  const originalFetch = global.fetch;
+  const originalEnv = process.env;
+  process.env = { ...originalEnv, OIDC_ISSUER: 'https://sso.example.test',
+    OIDC_CLIENT_ID: 'example-client', OIDC_CLIENT_SECRET: 'example-secret' };
+  global.fetch = jest.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ token_endpoint: 'https://sso.example.test/token' }) })
+    .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: 'temporarily_unavailable' }) });
+  try {
+    const login = await store.createSession(sub, { ...tokens, expiresAt: Math.floor(Date.now() / 1000) + 240 });
+    const token = await authOptions.callbacks!.jwt!({ token: { ...login, sub, sessionFormat: 2 },
+      trigger: 'update', session: { forceRefresh: true } } as never);
+    const session = await authOptions.callbacks!.session!({ token,
+      session: { user: { email: 'user@example.test' }, expires: 'later' } } as never);
+    expect(session).toMatchObject({ user: { email: 'user@example.test' }, accessToken: tokens.accessToken, expiresAt: login.expiresAt });
+    expect(session.error).toBeUndefined();
+  } finally { global.fetch = originalFetch; process.env = originalEnv; }
 });
 
 it('expires a session rejected by the provider', async () => {

@@ -32,11 +32,16 @@ Renewing credentials during a long-running workflow remains separate work.
   token cache or authenticated-session cache; the old cache TTL setting has no effect.
 - Refresh takes a 30-second MongoDB lease. Other callers wait up to 12 seconds,
   then return a retryable error. A version/owner check rejects stale writes.
+- A definitely retryable refresh rejection releases the lease and records a shared 30-second
+  retry delay. The BFF rereads the session and can keep using its unexpired access
+  token. Expired tokens, revoked sessions and database failures never use this fallback.
 - Encoding a cookie never writes credentials. Logout cannot be undone by a late
   cookie response or refresh completion.
 - A lost refresh response may mean the provider already rotated its token.
   After an abandoned lease, the next refresh requires sign-in instead of replaying
   that possibly consumed token. This is conservative recovery, not seamless recovery.
+  Provider 5xx responses remain ambiguous, including JSON error bodies; the body
+  alone is not treated as proof that no rotation occurred upstream.
 - Missing/revoked/expired sessions return **401 / sign in** on the shared BFF path.
   Storage/refresh unavailability returns **503 / retry**, without clearing the cookie.
   Session errors expose no user identity, roles or credentials to direct session callers.

@@ -52,4 +52,23 @@ describeMongo('session coordination with real MongoDB', () => {
     })).rejects.toBeInstanceOf(store.SessionExpiredError);
     expect(await mockDb.collection('auth_sessions').countDocuments({ _id: login.sessionId as never })).toBe(0);
   });
+
+  it('shares definite-failure cooldowns across replicas without overriding logout', async () => {
+    const valid = { ...credentials, expiresAt: Math.floor(Date.now() / 1000) + 240 };
+    const login = await store.createSession(sub, valid);
+    const exchange = jest.fn(async () => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      throw new store.RefreshRetryableError();
+    });
+    const [one, two] = await Promise.all([
+      store.refreshSession(login.sessionId, sub, 1, exchange),
+      peer.refreshSession(login.sessionId, sub, 1, exchange),
+    ]);
+    expect(one).toMatchObject(valid);
+    expect(two).toEqual(one);
+    expect(exchange).toHaveBeenCalledTimes(1);
+    await peer.revokeSession(login.sessionId, sub);
+    await expect(store.refreshSession(login.sessionId, sub, 1, exchange)).rejects.toBeInstanceOf(store.SessionExpiredError);
+    expect(exchange).toHaveBeenCalledTimes(1);
+  });
 });

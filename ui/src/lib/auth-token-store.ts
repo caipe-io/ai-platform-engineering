@@ -6,6 +6,7 @@ export const SESSION_MAX_AGE = 24 * 60 * 60;
 const COLLECTION = 'auth_sessions';
 const LEASE_MS = 30_000;
 const WAIT_MS = 12_000;
+const RETRY_MS = 30_000;
 
 export interface StoredTokens {
   accessToken: string;
@@ -22,6 +23,7 @@ interface SessionDoc {
   version: number;
   expiresAt: Date;
   refreshLease?: { owner: string; until: Date };
+  refreshRetryAfter?: Date;
 }
 
 export interface StoredSession extends StoredTokens {
@@ -110,6 +112,12 @@ export async function revokeSession(id: string, sub: string): Promise<void> {
   catch { throw new SessionUnavailableError(); }
 }
 
+function usableDuringRetry(doc: SessionDoc): StoredSession {
+  const session = unpack(doc);
+  if (session.expiresAt <= Math.floor(Date.now() / 1000)) throw new SessionUnavailableError();
+  return session;
+}
+
 /**
  * A Mongo lease serializes refreshes across processes. Version + owner fencing
  * prevents a late request overwriting a winner or recreating a logged-out session.
@@ -137,11 +145,16 @@ export async function refreshSession(
       await new Promise(resolve => setTimeout(resolve, 100));
       continue;
     }
+    if (doc.refreshRetryAfter && doc.refreshRetryAfter.getTime() > Date.now()) {
+      return usableDuringRetry(doc);
+    }
     const owner = crypto.randomUUID();
     let acquired;
     try {
       acquired = await col.updateOne({ _id: id, sub, version: doc.version,
-        expiresAt: { $gt: new Date() }, refreshLease: { $exists: false } }, {
+        expiresAt: { $gt: new Date() }, refreshLease: { $exists: false },
+        $or: [{ refreshRetryAfter: { $exists: false } }, { refreshRetryAfter: { $lte: new Date() } }],
+      }, {
         $set: { refreshLease: { owner, until: new Date(Date.now() + LEASE_MS) } },
       }, writeOptions);
     } catch { throw new SessionUnavailableError(); }
@@ -153,7 +166,7 @@ export async function refreshSession(
       const enc = encrypt(fresh, id, sub);
       const saved = await col.updateOne({ ...fence, expiresAt: { $gt: new Date() },
         'refreshLease.until': { $gt: new Date() } }, {
-        $set: { enc }, $inc: { version: 1 }, $unset: { refreshLease: '' },
+        $set: { enc }, $inc: { version: 1 }, $unset: { refreshLease: '', refreshRetryAfter: '' },
       }, writeOptions);
       if (!saved.matchedCount) {
         await readSession(id, sub);
@@ -164,9 +177,17 @@ export async function refreshSession(
       try {
         if (error instanceof SessionExpiredError) await col.deleteOne(fence, writeOptions);
         if (error instanceof RefreshRetryableError) {
-          await col.updateOne(fence, { $unset: { refreshLease: '' } }, writeOptions);
+          const released = await col.updateOne(fence, {
+            $unset: { refreshLease: '' }, $set: { refreshRetryAfter: new Date(Date.now() + RETRY_MS) },
+          }, writeOptions);
+          if (!released.matchedCount) continue;
         }
       } catch { throw new SessionUnavailableError(); }
+      if (error instanceof RefreshRetryableError) {
+        // Read again: logout or a storage failure must beat the old in-flight token.
+        // The shared cooldown prevents other replicas immediately retrying the provider.
+        return usableDuringRetry(await readSession(id, sub));
+      }
       // Unknown outcomes retain the lease: the provider may have rotated the token.
       if (error instanceof SessionExpiredError) throw error;
       throw new SessionUnavailableError();
