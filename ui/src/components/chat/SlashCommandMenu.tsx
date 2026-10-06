@@ -10,7 +10,7 @@ export interface SlashCommand {
   id: string;
   label: string;
   description: string;
-  category: "skill" | "agent" | "command";
+  category: "skill" | "mcp" | "subagent" | "command";
   icon?: React.ReactNode;
   action: "insert" | "execute";
   value: string;
@@ -24,18 +24,20 @@ interface SlashCommandMenuProps {
   visible: boolean;
 }
 
-const CATEGORY_ORDER: SlashCommand["category"][] = ["command", "skill", "agent"];
+const CATEGORY_ORDER: SlashCommand["category"][] = ["command", "skill", "mcp", "subagent"];
 
 const CATEGORY_LABELS: Record<SlashCommand["category"], string> = {
   command: "Commands",
   skill: "Skills",
-  agent: "Agents",
+  mcp: "MCP Servers",
+  subagent: "Subagents",
 };
 
 const CATEGORY_ICONS: Record<SlashCommand["category"], React.ReactNode> = {
   command: <Terminal className="h-3 w-3" />,
   skill: <Zap className="h-3 w-3" />,
-  agent: <Bot className="h-3 w-3" />,
+  mcp: <Bot className="h-3 w-3" />,
+  subagent: <Bot className="h-3 w-3" />,
 };
 
 export function getFilteredCommands(
@@ -141,9 +143,9 @@ export function SlashCommandMenu({
                       >
                         <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-muted/60">
                           {cmd.icon || (
-                            cmd.category === "agent" ? (
+                            cmd.category === "mcp" || cmd.category === "subagent" ? (
                               (() => {
-                                const agentLogo = AGENT_LOGOS[cmd.id];
+                                const agentLogo = AGENT_LOGOS[cmd.label];
                                 return agentLogo?.icon ? (
                                   <div className="w-5 h-5">{agentLogo.icon}</div>
                                 ) : (
@@ -160,7 +162,7 @@ export function SlashCommandMenu({
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium font-mono">
-                              {cmd.category === "agent" ? `/@${cmd.id}` : `/${cmd.id}`}
+                              {cmd.category === "mcp" || cmd.category === "subagent" ? `/@${cmd.label}` : `/${cmd.id}`}
                             </span>
                           </div>
                           <p className="text-xs text-muted-foreground truncate">

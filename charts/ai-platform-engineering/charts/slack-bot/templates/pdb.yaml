@@ -5,8 +5,18 @@ metadata:
   name: {{ include "slack-bot.fullname" . }}
   labels:
     {{- include "slack-bot.labels" . | nindent 4 }}
+  {{- with .Values.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
+  {{- if hasKey .Values.podDisruptionBudget "maxUnavailable" }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- else if hasKey .Values.podDisruptionBudget "minAvailable" }}
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- else }}
+  maxUnavailable: 1
+  {{- end }}
   selector:
     matchLabels:
       {{- include "slack-bot.selectorLabels" . | nindent 6 }}

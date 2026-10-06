@@ -1,5 +1,6 @@
 name: "[Prebuild] Manual PR Fanout"
-description: "Manually run prebuild publishing for a prebuild/* PR head"
+description: >-
+  Manually run prebuild publishing for a prebuild/* PR head from this repository.
 
 run-name: "Manual prebuild for PR #${{ inputs.pr_number }} (${{ inputs.target }})"
 
@@ -7,7 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "Open prebuild/* PR number to build from"
+        description: >-
+          Open prebuild/* PR number to build from. Fork pull requests are not supported.
         required: true
         type: number
       target:
@@ -98,7 +100,7 @@ jobs:
             }
 
             if (pr.head.repo.full_name !== repoFullName) {
-              core.setFailed(`PR #${prNumber} head repo is ${pr.head.repo.full_name}; manual prebuild only supports same-repo PRs.`);
+              core.setFailed(`PR #${prNumber} is from a fork; prebuild images are only published for branches in ${repoFullName}.`);
               return;
             }
 

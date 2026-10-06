@@ -17,7 +17,7 @@ Every image and Helm chart carries the same tag, so you can tell how stable a bu
 | `x.y.z-hotfix.N` | Beta (patch) | every push to `release/x.y.z-hotfix` | A candidate fix for a version that already shipped. Fixed — never changes once created. |
 | `x.y.z` | Stable | `release-manual.yml` | The production release. Also tagged `latest`. Fixed — never changes once created. |
 
-Chart version and image tag always match — there is no separate chart-only version. A chart-only fix ships with the next tag like any other change.
+Chart version and image tag always match — with one exception. Helm requires a chart's `version` field to be strict SemVer, and `canary` isn't, so the canary chart is packaged as `0.0.0-canary` instead. Its `appVersion` still reads `canary`, so it still deploys the matching `canary` images by default.
 
 ## Artifact Locations
 

@@ -40,4 +40,88 @@ describe("MultiSelect", () => {
     await user.click(screen.getByRole("button", { name: /jira: all tools/i }));
     expect(onChange).toHaveBeenCalledWith(["jira: all tools"]);
   });
+
+  it("accepts a custom option when enabled", async () => {
+    const user = userEvent.setup();
+    const onChange = jest.fn();
+
+    render(
+      <MultiSelect
+        options={["opened", "closed"]}
+        selected={[]}
+        onChange={onChange}
+        ariaLabel="GitHub actions"
+        allowCustom
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "GitHub actions" }));
+    await user.type(screen.getByPlaceholderText("Search..."), "converted_to_draft");
+    await user.click(screen.getByRole("button", { name: /add "converted_to_draft"/i }));
+
+    expect(onChange).toHaveBeenCalledWith(["converted_to_draft"]);
+  });
+
+  it("reports every keystroke via onSearchChange instead of filtering options locally", async () => {
+    const user = userEvent.setup();
+    const onSearchChange = jest.fn();
+
+    render(
+      <MultiSelect
+        options={["alice@example.com"]}
+        selected={[]}
+        onChange={jest.fn()}
+        placeholder="Add members..."
+        onSearchChange={onSearchChange}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /add members/i }));
+    await user.type(screen.getByPlaceholderText("Search..."), "bob");
+
+    await waitFor(() => expect(onSearchChange).toHaveBeenLastCalledWith("bob"));
+
+    // The caller (not this component) owns filtering when onSearchChange is
+    // wired up, so an option that doesn't match the typed query — but was
+    // handed in via `options`, e.g. server-side search results — still shows.
+    expect(screen.getByRole("button", { name: /alice@example.com/i })).toBeInTheDocument();
+  });
+
+  it("still selects a server-driven option on click when onSearchChange is wired up", async () => {
+    const user = userEvent.setup();
+    const onChange = jest.fn();
+
+    render(
+      <MultiSelect
+        options={["alice@example.com"]}
+        selected={[]}
+        onChange={onChange}
+        placeholder="Add members..."
+        onSearchChange={jest.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /add members/i }));
+    await user.click(screen.getByRole("button", { name: /alice@example.com/i }));
+
+    expect(onChange).toHaveBeenCalledWith(["alice@example.com"]);
+  });
+
+  it("shows a searching indicator while an async search is in flight", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MultiSelect
+        options={[]}
+        selected={[]}
+        onChange={jest.fn()}
+        placeholder="Add members..."
+        onSearchChange={jest.fn()}
+        searchLoading
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /add members/i }));
+    expect(screen.getByText("Searching…")).toBeInTheDocument();
+  });
 });

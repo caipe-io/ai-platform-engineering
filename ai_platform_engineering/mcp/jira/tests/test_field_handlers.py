@@ -163,6 +163,20 @@ class TestNormalizeADFField:
         result = _normalize_adf_field(adf)
         assert result == adf
 
+    def test_malformed_adf_is_not_passed_through(self):
+        """Malformed ADF dictionaries should be normalized instead of trusted."""
+        malformed_adf = {
+            "version": 1,
+            "type": "doc",
+            "content": "not-a-list",
+        }
+
+        result = _normalize_adf_field(malformed_adf)
+
+        assert result != malformed_adf
+        assert result["type"] == "doc"
+        assert isinstance(result["content"], list)
+
 
 class TestNormalizeFieldValue:
     """Tests for main normalize_field_value function."""
@@ -236,4 +250,3 @@ class TestNormalizeFieldValue:
         # Should pass through with warning
         assert value == "value"
         assert error is None
-

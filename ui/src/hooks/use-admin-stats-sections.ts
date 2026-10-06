@@ -20,6 +20,8 @@ interface AdminStatsSectionError extends Error {
   status?: number;
 }
 
+const STATS_SECTION_REQUEST_TIMEOUT_MS = 30_000;
+
 const createSectionStatuses = (): AdminStatsSectionStatuses => Object.fromEntries(
   ADMIN_STATS_SECTIONS.map((section) => [section, { error: null, loading: false }]),
 ) as AdminStatsSectionStatuses;
@@ -85,6 +87,11 @@ export function useAdminStatsSections({
       abortControllersRef.current[section] = controller;
       const requestVersion = requestVersionsRef.current[section] + 1;
       requestVersionsRef.current[section] = requestVersion;
+      let timedOut = false;
+      const timeoutHandle = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, STATS_SECTION_REQUEST_TIMEOUT_MS);
 
       try {
         const response = await fetch(getSectionUrlRef.current(section), {
@@ -114,14 +121,16 @@ export function useAdminStatsSections({
           [section]: { error: null, loading: false },
         }));
       } catch (error) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted && !timedOut) return;
         if (
           activeScopeKeyRef.current !== requestScopeKey
           || requestVersionsRef.current[section] !== requestVersion
         ) return;
 
         const requestError = error as AdminStatsSectionError;
-        const message = requestError.message || `Failed to load ${section.replaceAll('_', ' ')}`;
+        const message = timedOut
+          ? `Timed out loading ${section.replaceAll('_', ' ')}`
+          : requestError.message || `Failed to load ${section.replaceAll('_', ' ')}`;
         setStatuses((current) => ({
           ...current,
           [section]: { error: message, loading: false },
@@ -130,6 +139,8 @@ export function useAdminStatsSections({
         if (requestError.status === 401 || requestError.status === 403) {
           onFatalErrorRef.current?.(message);
         }
+      } finally {
+        window.clearTimeout(timeoutHandle);
       }
     }));
   }, []);

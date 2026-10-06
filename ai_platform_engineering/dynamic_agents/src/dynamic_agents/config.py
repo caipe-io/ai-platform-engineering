@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables.
 
     Tracing (Langfuse) Configuration:
-        The following environment variables are read by cnoe-agent-utils.TracingManager
+        The following environment variables are read by dynamic_agents.services.tracing.TracingManager
         to enable Langfuse tracing for LLM calls and agent execution:
 
         - ENABLE_TRACING: Set to "true" to enable tracing (default: disabled)
@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     # Collections
     dynamic_agents_collection: str = "dynamic_agents"
     mcp_servers_collection: str = "mcp_servers"
+    autonomous_tasks_collection: str = "autonomous_tasks"
+    autonomous_runs_collection: str = "autonomous_runs"
 
     # CORS
     cors_origins: list[str] = ["*"]

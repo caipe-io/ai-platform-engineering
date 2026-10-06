@@ -77,6 +77,20 @@ AI agents operating in this repository **must** follow these rules on every comm
   - Example: `prebuild/feat/rag-batch-job-status`
 - **PR descriptions** - Follow the template in `.github/pull_request_template.md`
 
+## Pull Requests and Review
+
+- One logical change per PR. Aim for under 500 changed lines of hand-written code; keep
+  refactors out of behaviour changes.
+- The description states why the change exists, links the issue, and says how it was
+  verified.
+- Disclose AI assistance in the description. Never add AI co-author or `assisted-by`
+  trailers - see [DCO Policy](#dco-policy).
+- Never apply a review suggestion with GitHub's "Commit suggestion" button; the commit it
+  creates names the suggestion's author as a co-author who has not signed off, which
+  fails DCO. Apply it locally.
+- Do not resolve review threads on a pull request you do not own.
+- Full policy: `docs/docs/repo-ops/code-review.md`
+
 ## Issue Tracking
 
 This project uses **GitHub Issues** for issue tracking.

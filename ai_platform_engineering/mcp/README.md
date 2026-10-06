@@ -1,7 +1,7 @@
 # MCP Servers
 
 Per-tool **MCP (Model Context Protocol) servers**. Each subdirectory is one
-self-contained server (ArgoCD, AWS, Jira, …) consumed by the dynamic agents
+self-contained server (ArgoCD, AWS, Jira, SharePoint, …) consumed by the dynamic agents
 runtime.
 
 ## Layout

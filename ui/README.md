@@ -68,6 +68,12 @@ ui/src/types/               Shared TypeScript types
 
 ## Current Chat Flow
 
+The themed conversation picker below New Chat defaults to All chats and offers
+Web chats, API chats, Autonomous runs, Scheduled runs, and Webhook runs in that
+order, with icons and search. Automation choices appear when their platform
+features are enabled. The selected view persists in browser storage; webhook
+entries open each task's delivery timeline.
+
 1. The user selects or opens a conversation in the UI.
 2. The BFF validates auth/RBAC and forwards stream requests to Dynamic Agents.
 3. Dynamic Agents streams AG-UI/SSE events back through the BFF.

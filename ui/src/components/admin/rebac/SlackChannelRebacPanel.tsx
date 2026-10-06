@@ -13,6 +13,7 @@ RuntimeSyncSummary,
 } from "./connector-admin-adapter";
 import { parsePendingConnectorPublication } from "./connector-admin-adapter";
 import { ConnectorAdminPanel } from "./ConnectorAdminPanel";
+import { SlackAdminNotificationForwardingSetting } from "./SlackAdminNotificationForwardingSetting";
 import { SlackConfiguredChannelDetail } from "./slack/SlackConfiguredChannelDetail";
 import { SlackVictoropsAgentSetting } from "./SlackVictoropsAgentSetting";
 import {
@@ -356,10 +357,15 @@ const SLACK_ADAPTER: ConnectorAdminAdapter = {
 
   missingRouteableAgentAutoFix: null,
 
-  // Superadmin VictorOps escalation agent picker, rendered at the bottom of
-  // the Slack Advanced tab. Persists to platform_config and is read by the
-  // Slack bot at runtime.
-  advancedTabExtraSection: ({ disabled }) => <SlackVictoropsAgentSetting disabled={disabled} />,
+  // Superadmin-only settings rendered at the bottom of the Slack Advanced
+  // tab: the VictorOps escalation agent picker, and the admin notification
+  // Slack-forwarding toggle. Both persist to platform_config.
+  advancedTabExtraSection: ({ disabled }) => (
+    <>
+      <SlackVictoropsAgentSetting disabled={disabled} />
+      <SlackAdminNotificationForwardingSetting disabled={disabled} />
+    </>
+  ),
 };
 
 export function SlackChannelRebacPanel({

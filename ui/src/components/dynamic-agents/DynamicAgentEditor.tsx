@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ModelPicker } from "@/components/ui/model-picker";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { type TeamPickerOption } from "@/components/ui/team-picker";
 import { Textarea } from "@/components/ui/textarea";
@@ -41,6 +42,7 @@ import type {
   DynamicAgentConfigUpdate,
   FeaturesConfig,
   InterruptOn,
+  ReasoningEffort,
   SubAgentRef,
   VisibilityType,
 } from "@/types/dynamic-agent";
@@ -485,6 +487,10 @@ export function DynamicAgentEditor({
   const [modelProvider, setModelProvider] = React.useState(
     source?.model?.provider || "",
   );
+  const [reasoningEffort, setReasoningEffort] = React.useState<ReasoningEffort>(
+    source?.model?.reasoning_effort || "medium",
+  );
+  const [supportedReasoningEfforts, setSupportedReasoningEfforts] = React.useState<ReasoningEffort[] | null>(null);
   const [gradientTheme, setGradientTheme] = React.useState<string>(
     source?.ui?.gradient_theme || "default",
   );
@@ -687,6 +693,32 @@ export function DynamicAgentEditor({
     fetchExistingIds();
   }, [isEditing]);
 
+  React.useEffect(() => {
+    if (!modelId || !modelProvider) {
+      setSupportedReasoningEfforts([]);
+      return;
+    }
+    let cancelled = false;
+    setSupportedReasoningEfforts(null);
+    const params = new URLSearchParams({
+      model_id: modelId,
+      provider: modelProvider,
+    });
+    fetch(`/api/dynamic-agents/model-capabilities?${params}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled) {
+          setSupportedReasoningEfforts(data?.reasoning_efforts ?? []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setSupportedReasoningEfforts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modelId, modelProvider]);
+
   // Fetch available models on mount
   React.useEffect(() => {
     async function fetchModels() {
@@ -831,6 +863,7 @@ export function DynamicAgentEditor({
       features,
       modelId,
       modelProvider,
+      reasoningEffort,
       gradientTheme,
     }),
     [
@@ -849,6 +882,7 @@ export function DynamicAgentEditor({
       features,
       modelId,
       modelProvider,
+      reasoningEffort,
       gradientTheme,
     ],
   );
@@ -932,7 +966,7 @@ export function DynamicAgentEditor({
                   }))
                 : undefined,
           },
-          model: { id: modelId, provider: modelProvider },
+          model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort },
           ...(instruction ? { instruction } : {}),
           ...(field === "system_prompt" ? { prompt_style: promptStyle } : {}),
         }),
@@ -1159,7 +1193,7 @@ export function DynamicAgentEditor({
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
           ...knowledgeFields,
-          model: { id: modelId, provider: modelProvider },
+          model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort },
           ui: uiConfig,
           features: features,
           interrupt_on: interruptOn,
@@ -1209,7 +1243,7 @@ export function DynamicAgentEditor({
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
           ...knowledgeFields,
-          model: { id: modelId, provider: modelProvider },
+          model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort },
           ui: uiConfig,
           features: features,
           interrupt_on: interruptOn,
@@ -1495,6 +1529,35 @@ export function DynamicAgentEditor({
                       </p>
                     )}
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="reasoningEffort">Default reasoning effort</Label>
+                  <Select
+                    id="reasoningEffort"
+                    value={reasoningEffort}
+                    onChange={(event) => setReasoningEffort(event.target.value as ReasoningEffort)}
+                    disabled={loading || !!readOnly || supportedReasoningEfforts === null || supportedReasoningEfforts.length === 0}
+                  >
+                    {(["low", "medium", "high", "max"] as ReasoningEffort[]).map((effort) => (
+                      <option
+                        key={effort}
+                        value={effort}
+                        disabled={supportedReasoningEfforts !== null && !supportedReasoningEfforts.includes(effort)}
+                      >
+                        {effort}
+                      </option>
+                    ))}
+                  </Select>
+                  {supportedReasoningEfforts !== null && supportedReasoningEfforts.length === 0 ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      This model does not advertise configurable reasoning. The saved value is ignored, and the provider uses its own behavior.
+                    </p>
+                  ) : supportedReasoningEfforts !== null ? (
+                    <p className="text-xs text-muted-foreground">
+                      New conversations start at this level. Each chat can override it.
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="space-y-2">
