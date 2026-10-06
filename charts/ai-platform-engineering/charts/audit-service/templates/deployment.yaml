@@ -107,6 +107,10 @@ spec:
               value: {{ .Values.read.maxLimit | quote }}
             - name: AUDIT_SERVICE_READ_MAX_DAYS
               value: {{ .Values.read.maxDays | quote }}
+            - name: AUDIT_SERVICE_READ_MAX_CONCURRENT
+              value: {{ .Values.read.maxConcurrent | quote }}
+            - name: AUDIT_SERVICE_READ_TIMEOUT_SECONDS
+              value: {{ .Values.read.timeoutSeconds | quote }}
             {{- if .Values.storage.s3.existingSecret.name }}
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
