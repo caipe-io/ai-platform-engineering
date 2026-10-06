@@ -70,7 +70,8 @@ pinned Python SDK 0.12.1, schema 1.19 and wire protocol 1.
   guarantee exactly-once tool effects. Worker clocks must be synchronized.
 - New turns refresh the effective configuration while preserving the first
   admitted backend/checkpoint/filesystem binding; human-input resume restores
-  the last admitted snapshot after runtime-cache eviction.
+  the last admitted snapshot after runtime-cache eviction, narrowed by the
+  current validated tool scope.
 - Conversation and execution-context IDs keep their original LangGraph thread
   IDs. Interactive transcripts still use the existing browser/BFF writer.
 - Cached runtimes refresh their current caller, bearer and client context before

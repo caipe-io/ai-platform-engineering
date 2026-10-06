@@ -17,6 +17,7 @@ from dynamic_agents.log_config import conversation_id_var
 from dynamic_agents.models import ChatRequest, ClientContext, DynamicAgentConfig, InputFile, UserContext
 from dynamic_agents.services.agent_execution import AgentExecutionService, ExecutionTurn, InvocationResult
 from dynamic_agents.services.llm_clients import LLMConfigError
+from dynamic_agents.services.mcp_client import is_tool_scope_subset
 from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
 from dynamic_agents.services.runtime_cache import (
@@ -102,22 +103,23 @@ def _validate_allowed_tools_subset(
     base: dict[str, list[str] | bool],
     override: dict[str, list[str] | bool],
 ) -> None:
-    """Ensure override allowed_tools is a strict subset of base config.
+    """Ensure override allowed_tools is a subset of base config.
 
-    Rules:
-    - Cannot add servers not in base
-    - Cannot enable a server that is disabled (False) in base
-    - Cannot add tools not in base's tool list (when base has a specific list)
-    - Setting False (disable) is always allowed
-    - Setting True (all) is allowed if base allows the server
+    Server and tool scope semantics come from the canonical MCP filter.
+    Overrides can disable or narrow an existing scope, never broaden it.
 
     Raises:
         HTTPException(400): If override violates subset constraint.
     """
     if not isinstance(override, dict):
-        return
+        raise HTTPException(status_code=400, detail="config_override.allowed_tools must be a server scope mapping")
 
     for server_id, override_val in override.items():
+        if not (
+            isinstance(override_val, bool)
+            or isinstance(override_val, list) and all(isinstance(name, str) for name in override_val)
+        ):
+            raise HTTPException(status_code=400, detail="Tool scopes must be booleans or lists of tool names")
         if server_id not in base:
             raise HTTPException(
                 status_code=400,
@@ -128,36 +130,13 @@ def _validate_allowed_tools_subset(
 
         base_val = base[server_id]
 
-        # Cannot re-enable a server that is explicitly disabled in base
-        if base_val is False and override_val is not False:
+        if not is_tool_scope_subset(base_val, override_val):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"config_override.allowed_tools enables server '{server_id}' "
-                    f"which is disabled in the base agent config"
+                    f"config_override.allowed_tools['{server_id}'] broadens the base agent tool scope"
                 ),
             )
-
-        # Disabling is always fine
-        if override_val is False:
-            continue
-
-        # "All tools" is fine if base allows the server at all
-        if override_val is True:
-            continue
-
-        # Override is a specific list — validate each tool
-        if isinstance(override_val, list) and isinstance(base_val, list):
-            extra = set(override_val) - set(base_val)
-            if extra:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"config_override.allowed_tools['{server_id}'] includes tools "
-                        f"not in base config: {sorted(extra)}"
-                    ),
-                )
-        # override is list, base is True — any subset is fine (all tools available)
 
 
 router = APIRouter(prefix="/chat", tags=["chat"])

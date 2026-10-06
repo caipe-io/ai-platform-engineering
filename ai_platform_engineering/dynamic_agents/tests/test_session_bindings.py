@@ -160,6 +160,73 @@ def test_resume_after_repository_recreation_uses_last_admitted_snapshot() -> Non
     assert collection.rows[("primary", "step-attempt")]["revision"] == 2
 
 
+@pytest.mark.parametrize("saved,current,expected", [
+    ({"primary": True}, {"primary": ["read"]}, {"primary": ["read"]}),
+    ({"primary": ["read", "write"]}, {"primary": ["read", "new"]}, {"primary": ["read"]}),
+    ({"primary": ["read"]}, {"primary": ["write"]}, {"primary": False}),
+    ({"primary": True}, {"primary": False}, {"primary": False}),
+    ({"primary": False}, {"primary": True}, {"primary": False}),
+    ({"primary": True}, {}, {}),
+    ({"primary": []}, {"primary": ["read"]}, {"primary": ["read"]}),
+    ({"primary": ["read"]}, {"primary": []}, {"primary": ["read"]}),
+    ({"primary": []}, {"primary": True}, {"primary": []}),
+    ({"primary": True}, {"primary": []}, {"primary": True}),
+    ({"primary": ["read"]}, {"primary": ["read", "write"], "new": True}, {"primary": ["read"]}),
+])
+def test_resume_only_narrows_tool_grants_and_preserves_other_admitted_fields(
+    saved: dict[str, list[str] | bool], current: dict[str, list[str] | bool], expected: dict[str, list[str] | bool],
+) -> None:
+    collection = _AtomicCollection()
+    mongo = _mongo(collection)
+    first = resolve_native_binding(mongo, _agent(
+        allowed_tools=saved, backend=_workflow_backend(),
+        interrupt_on={"builtin": {"request_user_input": True}},
+    ), "step-attempt")
+    before = deepcopy(collection.rows[("primary", "step-attempt")])
+    current_agent = _agent(
+        allowed_tools=current, system_prompt="Changed instructions.",
+        model=ModelConfig(id="other-model", provider="example-provider", reasoning_effort="high"),
+        backend=_workflow_backend("changed"), interrupt_on={},
+    )
+
+    resumed = resolve_native_binding(mongo, current_agent, "step-attempt", resume=True)
+
+    assert resumed == first.model_copy(update={"allowed_tools": expected}, deep=True)
+    row = collection.rows[("primary", "step-attempt")]
+    if saved != expected:
+        assert row["revision"] == 2
+        assert row["config_version"] != before["config_version"]
+    else:
+        assert row == before
+    assert get_native_binding(mongo, "primary", "step-attempt") == resumed
+
+
+def test_resume_never_restores_revoked_grants_from_a_later_broader_definition() -> None:
+    collection = _AtomicCollection()
+    mongo = _mongo(collection)
+    resolve_native_binding(mongo, _agent(allowed_tools={"primary": True}), "step-attempt")
+    narrowed = resolve_native_binding(
+        mongo, _agent(allowed_tools={"primary": ["read"]}), "step-attempt", resume=True,
+    )
+    restored = resolve_native_binding(
+        mongo, _agent(allowed_tools={"primary": True, "new": True}), "step-attempt", resume=True,
+    )
+
+    assert restored == narrowed
+    assert collection.rows[("primary", "step-attempt")]["revision"] == 2
+
+
+def test_competing_resume_narrowing_uses_the_existing_revision_guard() -> None:
+    collection = _AtomicCollection()
+    resolve_native_binding(_mongo(collection), _agent(allowed_tools={"primary": True}), "step-attempt")
+    racing = MagicMock()
+    racing.find_one_and_update.side_effect = [deepcopy(collection.rows[("primary", "step-attempt")]), None]
+
+    with pytest.raises(SessionBindingError, match="admitted concurrently"):
+        resolve_native_binding(_mongo(racing), _agent(allowed_tools={"primary": False}), "step-attempt", resume=True)
+    assert racing.find_one_and_update.call_args.args[0]["revision"] == 1
+
+
 def test_read_binding_preserves_admitted_snapshot_without_changing_it() -> None:
     collection = _AtomicCollection()
     admitted = resolve_native_binding(_mongo(collection), _agent(backend=_workflow_backend()), "step-attempt")

@@ -109,7 +109,9 @@ Starting a subsequent turn admits the latest effective agent configuration so
 existing prompt, model and reasoning edits continue to work. The first
 admitted backend/checkpoint/filesystem binding remains fixed. Human-input
 resume restores the last admitted configuration after runtime-cache eviction,
-including workflow overrides. Configuration snapshots have the same
+including workflow overrides. Resume intersects its saved tool scope with the
+current validated definition so removing or narrowing tools takes effect
+without expanding the saved scope. Configuration snapshots have the same
 sensitivity as agent definitions and need the same database access controls.
 They are not a redaction layer for sensitive values placed in prompts or
 middleware configuration. Changing the database, checkpoint collection or

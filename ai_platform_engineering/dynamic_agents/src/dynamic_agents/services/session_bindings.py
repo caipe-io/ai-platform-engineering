@@ -20,6 +20,7 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from dynamic_agents.models import DynamicAgentConfig
+from dynamic_agents.services.mcp_client import intersect_allowed_tools
 from dynamic_agents.services.runtime_storage import materialize_runtime_config, resolve_runtime_storage
 
 if TYPE_CHECKING:
@@ -114,7 +115,8 @@ def resolve_native_binding(
     """Resolve an authorized native session while preserving its storage binding.
 
     Call only after current agent-use authorization. Starts admit current
-    definition/model options; resumes reconstruct the last admitted snapshot.
+    definition/model options; resumes reconstruct the last admitted snapshot
+    while intersecting its tool grants with the currently authorized definition.
     The first backend, filesystem namespace and checkpoint coordinates stay
     fixed. The caller's active-run guard must precede admission; this repository
     detects competing configuration updates rather than choosing a running turn.
@@ -151,9 +153,11 @@ def resolve_native_binding(
             raise SessionBindingError("Native ACP session admission returned no stored binding")
         binding = _validate_binding(record, agent.id, session_id, mongo.settings)
         if resume:
-            return binding.effective_config
-
-        admitted = agent.model_copy(update={"backend": binding.effective_config.backend}, deep=True)
+            admitted = binding.effective_config.model_copy(update={
+                "allowed_tools": intersect_allowed_tools(binding.effective_config.allowed_tools, agent.allowed_tools),
+            }, deep=True)
+        else:
+            admitted = agent.model_copy(update={"backend": binding.effective_config.backend}, deep=True)
         version = _config_version(admitted)
         if version == binding.config_version:
             return binding.effective_config
