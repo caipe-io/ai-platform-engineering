@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
+from dynamic_agents.config import Settings
 from dynamic_agents.models import ChatRequest, DynamicAgentConfig, UserContext
 from dynamic_agents.routes import chat
 
@@ -151,6 +152,7 @@ async def test_start_route_preserves_authz_failure_shape(monkeypatch, authz, sta
 
 @pytest.mark.asyncio
 async def test_cancel_stream_remains_openfga_ungated(monkeypatch):
+    monkeypatch.setattr(chat, "get_settings", lambda: Settings(native_acp_enabled=False))
     async def fail_if_called(agent_id: str, delegated_user_sub: str | None = None) -> None:
         raise AssertionError("cancel must not be OpenFGA gated")
 

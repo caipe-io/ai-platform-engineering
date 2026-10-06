@@ -73,10 +73,15 @@ class Settings(BaseSettings):
 
     # /invoke endpoint persistence
     # When False (default), each /invoke call uses an ephemeral in-memory runtime that is
-    # discarded after the request — no MongoDB writes, no conversation history across calls.
+    # discarded after the request — no durable checkpoints or conversation history.
+    # ACP-enabled calls still coordinate active turns using transient Mongo leases.
     # Set to True to use the shared MongoDB-backed runtime cache, enabling multi-turn
     # conversation history via /invoke at the cost of additional MongoDB load.
     invoke_persist_history: bool = False
+
+    # Route admitted native agents through ACP while preserving the public
+    # chat protocols. Disable temporarily to use the direct runtime path.
+    native_acp_enabled: bool = True
 
     # Runtime
     agent_runtime_ttl_seconds: int = 60  # 60s inactivity TTL for agent runtimes

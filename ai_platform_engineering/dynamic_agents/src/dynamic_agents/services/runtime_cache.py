@@ -169,7 +169,14 @@ class AgentRuntimeCache:
         # Fast path: cached and valid
         if key in self._cache:
             runtime = self._cache[key]
-            if runtime.is_stale(agent_config, mcp_servers):
+            # Resume and management callers may omit presentation context.
+            # Retain the admitted context when refreshing their caller token.
+            if client_context is None:
+                client_context = runtime._client_context
+            if runtime.is_stale(agent_config, mcp_servers, user=user, client_context=client_context):
+                # A second caller must never tear down another active turn.
+                if runtime._is_streaming:
+                    raise RuntimeCapacityError(self._max_size)
                 logger.info(
                     "Runtime cache invalidated due to config change for agent %s",
                     agent_config.id,

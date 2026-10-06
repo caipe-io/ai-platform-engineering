@@ -178,6 +178,7 @@ jobs:
           file: ai_platform_engineering/dynamic_agents/build/Dockerfile
           labels: |
             ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.revision=${{ inputs.head_sha || github.event.pull_request.head.sha }}
             io.cnoe.prebuild.branch=${{ env.BRANCH_BARE }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=ghcr.io/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true

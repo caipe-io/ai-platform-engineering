@@ -1,7 +1,8 @@
 """Chat endpoint for Dynamic Agents with SSE streaming."""
 
+import asyncio
 import logging
-from contextlib import AsyncExitStack, aclosing
+from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from typing import Any, AsyncGenerator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,10 +20,18 @@ from dynamic_agents.models import ChatRequest, ClientContext, DynamicAgentConfig
 from dynamic_agents.services.llm_clients import LLMConfigError
 from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
+from dynamic_agents.services.native_acp import cancel_native_acp, native_acp_stream, native_acp_turn
 from dynamic_agents.services.runtime_cache import (
     RuntimeCapacityError,
     RuntimeInitError,
     get_runtime_cache,
+)
+from dynamic_agents.services.session_bindings import resolve_native_binding
+from dynamic_agents.services.session_runs import (
+    SessionRunBusyError,
+    await_session_operation,
+    native_session_run,
+    request_native_session_cancel,
 )
 from dynamic_agents.services.stream_encoders import StreamEncoder, get_encoder
 
@@ -180,6 +189,7 @@ class ResumeStreamRequest(BaseModel):
     resume_data: str  # JSON string with type discriminator (form_input or tool_approval)
     protocol: str = Field("custom", pattern=r"^(custom|agui)$")
     trace_id: str | None = None
+    client_context: ClientContext | None = None
     reasoning_effort: Literal["low", "medium", "high", "max"] | None = None
     config_override: dict | None = Field(
         None,
@@ -235,16 +245,18 @@ async def _collect_invoke_response(
     """Run a non-streaming invocation and return its accumulated response."""
     encoder = get_encoder("custom")
 
-    async for _frame in runtime.stream(
-        request.message,
-        request.conversation_id,
-        user.email,
-        request.trace_id,
-        encoder,
+    async with aclosing(_stream_native(
+        runtime,
+        message=request.message,
+        session_id=request.conversation_id,
+        user_email=user.email,
+        trace_id=request.trace_id,
+        encoder=encoder,
         files=request.files,
         turn_id=request.turn_id,
-    ):
-        pass
+    )) as frames:
+        async for _frame in frames:
+            pass
 
     interrupt = await runtime.has_pending_interrupt(request.conversation_id)
     if interrupt:
@@ -272,6 +284,49 @@ async def _collect_invoke_response(
         "conversation_id": request.conversation_id,
         "trace_id": request.trace_id,
     }
+
+
+async def _stream_native(
+    runtime: Any,
+    *,
+    message: str | None,
+    session_id: str,
+    user_email: str,
+    encoder: StreamEncoder,
+    trace_id: str | None = None,
+    files: list[InputFile] | None = None,
+    turn_id: str | None = None,
+    resume_data: str | None = None,
+) -> AsyncGenerator[str, None]:
+    """Dispatch an already authorized runtime without changing public frames."""
+    if get_settings().native_acp_enabled is True:
+        source = native_acp_stream(
+            runtime, message=message, session_id=session_id, user_email=user_email,
+            encoder=encoder, trace_id=trace_id, files=files, turn_id=turn_id,
+            resume_data=resume_data,
+        )
+    elif resume_data is not None:
+        source = runtime.resume(session_id, user_email, resume_data, trace_id, encoder)
+    else:
+        source = runtime.stream(message, session_id, user_email, trace_id, encoder, files=files, turn_id=turn_id)
+    async with aclosing(source) as frames:
+        async for frame in frames:
+            yield frame
+
+
+@asynccontextmanager
+async def _native_turn(
+    agent_id: str, session_id: str, mongo: MongoDBService | None = None,
+) -> AsyncGenerator[None, None]:
+    """Reserve admission before changing a running session's config or cache."""
+    if get_settings().native_acp_enabled is True:
+        async with AsyncExitStack() as stack:
+            if mongo:
+                await stack.enter_async_context(native_session_run(mongo, agent_id, session_id))
+            await stack.enter_async_context(native_acp_turn(agent_id, session_id))
+            yield
+    else:
+        yield
 
 
 async def _generate_sse_events(
@@ -302,31 +357,36 @@ async def _generate_sse_events(
         cache.set_mongo_service(mongo)
 
     try:
-        # Get or create runtime with user context
-        runtime = await cache.get_or_create(
-            agent_config,
-            mcp_servers,
-            session_id,
-            user=user,
-            client_context=client_context,
-        )
-
-        # Stream response with trace_id for Langfuse tracing
-        async with aclosing(
-            runtime.stream(
-                message,
+        async with _native_turn(agent_config.id, session_id, mongo):
+            if mongo and get_settings().native_acp_enabled is True:
+                agent_config = await await_session_operation(resolve_native_binding, mongo, agent_config, session_id)
+                mcp_servers = await asyncio.to_thread(mongo.get_agent_mcp_servers, agent_config)
+            # Get or create runtime with user context
+            runtime = await cache.get_or_create(
+                agent_config,
+                mcp_servers,
                 session_id,
-                user.email,
-                trace_id,
-                encoder,
-                files=files,
-                turn_id=turn_id,
+                user=user,
+                client_context=client_context,
             )
-        ) as frames:
-            async for frame in frames:
-                yield frame
 
-    except RuntimeCapacityError as e:
+            # Stream response with trace_id for Langfuse tracing
+            async with aclosing(
+                _stream_native(
+                    runtime,
+                    message=message,
+                    session_id=session_id,
+                    user_email=user.email,
+                    trace_id=trace_id,
+                    encoder=encoder,
+                    files=files,
+                    turn_id=turn_id,
+                )
+            ) as frames:
+                async for frame in frames:
+                    yield frame
+
+    except (RuntimeCapacityError, SessionRunBusyError) as e:
         logger.warning(f"Agent runtime at capacity: {e}")
         for frame in encoder.on_run_error("This agent is at capacity right now. Please try again in a moment."):
             yield frame
@@ -447,6 +507,7 @@ async def _generate_resume_sse_events(
     encoder: StreamEncoder,
     trace_id: str | None = None,
     mongo: MongoDBService | None = None,
+    client_context: ClientContext | None = None,
 ) -> AsyncGenerator[str, None]:
     """Generate SSE events from agent resume streaming.
 
@@ -462,20 +523,28 @@ async def _generate_resume_sse_events(
         cache.set_mongo_service(mongo)
 
     try:
-        # Get or create runtime with user context
-        runtime = await cache.get_or_create(
-            agent_config,
-            mcp_servers,
-            session_id,
-            user=user,
-        )
+        async with _native_turn(agent_config.id, session_id, mongo):
+            if mongo and get_settings().native_acp_enabled is True:
+                agent_config = await await_session_operation(resolve_native_binding, mongo, agent_config, session_id, resume=True)
+                mcp_servers = await asyncio.to_thread(mongo.get_agent_mcp_servers, agent_config)
+            # Get or create runtime with user context
+            runtime = await cache.get_or_create(
+                agent_config,
+                mcp_servers,
+                session_id,
+                user=user,
+                client_context=client_context,
+            )
 
-        # Resume streaming with form data
-        async with aclosing(runtime.resume(session_id, user.email, resume_data, trace_id, encoder)) as frames:
-            async for frame in frames:
-                yield frame
+            # Resume streaming with form data
+            async with aclosing(_stream_native(
+                runtime, message=None, session_id=session_id, user_email=user.email,
+                resume_data=resume_data, trace_id=trace_id, encoder=encoder,
+            )) as frames:
+                async for frame in frames:
+                    yield frame
 
-    except RuntimeCapacityError as e:
+    except (RuntimeCapacityError, SessionRunBusyError) as e:
         logger.warning(f"Agent runtime at capacity: {e}")
         for frame in encoder.on_run_error("This agent is at capacity right now. Please try again in a moment."):
             yield frame
@@ -546,6 +615,7 @@ async def chat_resume_stream(
             encoder=encoder,
             trace_id=request.trace_id,
             mongo=mongo,
+            client_context=request.client_context,
         ),
         media_type="text/event-stream",
         headers={
@@ -586,9 +656,6 @@ async def chat_invoke(
 
     agent = _with_reasoning_effort(agent, request.reasoning_effort)
 
-    # Get MCP servers for this agent and its subagents
-    mcp_servers = mongo.get_agent_mcp_servers(agent)
-
     settings = get_settings()
     persist_history = settings.invoke_persist_history
 
@@ -601,23 +668,18 @@ async def chat_invoke(
     cache.set_mongo_service(mongo)
 
     try:
-        if _is_scheduler_invoke(request):
-            async with cache.persistent(
-                agent,
-                mcp_servers,
-                request.conversation_id,
-                user=user,
-                client_context=request.client_context,
-            ) as runtime:
-                return await _collect_invoke_response(
-                    runtime=runtime,
-                    request=request,
-                    user=user,
-                    agent=agent,
-                )
-
         async with AsyncExitStack() as stack:
-            if persist_history:
+            await stack.enter_async_context(_native_turn(agent.id, request.conversation_id, mongo))
+            # Ephemeral /invoke remains free of session/checkpoint writes.
+            if settings.native_acp_enabled is True and (persist_history or _is_scheduler_invoke(request)):
+                agent = await await_session_operation(resolve_native_binding, mongo, agent, request.conversation_id)
+            mcp_servers = await asyncio.to_thread(mongo.get_agent_mcp_servers, agent)
+            if _is_scheduler_invoke(request):
+                runtime = await stack.enter_async_context(cache.persistent(
+                    agent, mcp_servers, request.conversation_id,
+                    user=user, client_context=request.client_context,
+                ))
+            elif persist_history:
                 runtime = await cache.get_or_create(
                     agent,
                     mcp_servers,
@@ -643,7 +705,7 @@ async def chat_invoke(
                 agent=agent,
             )
 
-    except RuntimeCapacityError as e:
+    except (RuntimeCapacityError, SessionRunBusyError) as e:
         logger.warning(f"Agent runtime at capacity for invoke: {e}")
         return JSONResponse(
             status_code=503,
@@ -733,7 +795,12 @@ async def cancel_stream(
 
     # Cancel the stream via the runtime cache
     cache = get_runtime_cache()
-    cancelled = cache.cancel_stream(request.agent_id, request.conversation_id)
+    cancelled = cancel_native_acp(request.agent_id, request.conversation_id)
+    if get_settings().native_acp_enabled is True:
+        remote_cancelled = await asyncio.to_thread(request_native_session_cancel, mongo, request.agent_id, request.conversation_id)
+        cancelled = cancelled or remote_cancelled
+    if not cancelled:
+        cancelled = cache.cancel_stream(request.agent_id, request.conversation_id)
 
     logger.info(f"[cancel] Cancel result: agent={agent.name}, user={user.email}, cancelled={cancelled}")
 

@@ -36,6 +36,7 @@ from langgraph.types import Command
 from llm_wrapper.bedrock_family import resolve_bedrock_client
 from pymongo import MongoClient
 
+from dynamic_agents.auth.token_context import current_user_token
 from dynamic_agents.config import Settings, get_settings
 from dynamic_agents.metrics import metrics as prom_metrics
 from dynamic_agents.models import (
@@ -672,6 +673,7 @@ class AgentRuntime:
         self._initialized = False
         self._active_stream_count = 0
         self._is_streaming = False  # guards LRU eviction — never evict mid-stream
+        self._cancelled = False
         self._created_at = time.time()
         self._last_interaction = time.time()
         self.tracing = TracingManager()
@@ -1615,20 +1617,23 @@ class AgentRuntime:
         self,
         agent_config: DynamicAgentConfig,
         mcp_servers: list[MCPServerConfig],
+        *,
+        user: UserContext | None = None,
+        client_context: ClientContext | None = None,
     ) -> bool:
-        """Check if cached runtime is stale due to config changes.
+        """Rebuild when admitted configuration or caller context changes.
 
-        Returns True if either the agent config or any MCP server has been
-        updated since this runtime was created.
+        Overrides can change without updated_at changing. Tools and rendered
+        prompts also capture the caller and bearer during initialization.
         """
-        if agent_config.updated_at != self._config_updated_at:
-            return True
-        if agent_config.model != self.config.model:
-            return True
-        current_mcp_max = max((s.updated_at for s in mcp_servers), default=datetime.min.replace(tzinfo=timezone.utc))
-        if current_mcp_max != self._mcp_servers_updated_at:
-            return True
-        return False
+        bearer = current_user_token.get() or ((user.obo_jwt or user.access_token) if user else None)
+        return (
+            agent_config != self.config
+            or mcp_servers != self.mcp_servers
+            or user != self._user
+            or client_context != self._client_context
+            or bearer != self._auth_bearer
+        )
 
     # ─────────────────────────────────────────────────────────────────────
     # Streaming / Resume / Interrupt

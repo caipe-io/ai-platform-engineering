@@ -237,6 +237,7 @@ const sidebars: SidebarsConfig = {
         { type: 'doc', id: 'architecture/gateway', label: 'AgentGateway' },
         { type: 'doc', id: 'architecture/scheduler', label: 'Scheduler' },
         { type: 'doc', id: 'architecture/autonomous-agents', label: 'Autonomous Agents' },
+        { type: 'doc', id: 'architecture/native-acp-metaharness', label: 'Native ACP Metaharness' },
         {
           type: 'doc',
           id: 'architecture/enterprise-identity-federation',

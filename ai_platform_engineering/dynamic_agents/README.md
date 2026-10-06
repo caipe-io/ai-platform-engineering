@@ -48,6 +48,48 @@ Dynamic Agents provide a flexible way to create purpose-built AI assistants with
 - Exactly one terminal outcome per turn: `success`, `error`, `interrupted`, or `cancelled`
 - Time to first user-visible response and end-to-end turn latency histograms
 
+### Native ACP execution
+
+Default and custom agents can run through an in-service Agent Client Protocol
+(ACP) boundary while keeping their existing DeepAgents/LangGraph runtime.
+The native ACP client and logical agent exchange JSON-RPC messages using the
+pinned Python SDK 0.12.1, schema 1.19 and wire protocol 1.
+
+- Existing chat endpoints, AG-UI/custom SSE, workflow/invoke behavior, native
+  tools, logical files, subagent delegation and human input remain available.
+- Capability negotiation uses `caipe.io/native-acp` metadata and acknowledged
+  `_caipe/frame` requests for native event payloads and execution context. Standard ACP
+  session loading, client filesystem and terminal capabilities are not
+  advertised. This integration does not expose a public ACP server.
+- `native_acp_sessions` stores effective agent configuration admissions and
+  session bindings using `MONGODB_URI` and `MONGODB_DATABASE`, alongside existing
+  CAIPE records and native checkpoints. Tokens and MCP credentials are excluded.
+- `native_acp_runs` coordinates concurrent replicas using an owned 120-second
+  turn lease with one-second heartbeat/cancellation polling. Expiry permits
+  later checkpoint-based continuation; it does not restart crashed runs or
+  guarantee exactly-once tool effects. Worker clocks must be synchronized.
+- New turns refresh the effective configuration while preserving the first
+  admitted backend/checkpoint/filesystem binding; human-input resume restores
+  the last admitted snapshot after runtime-cache eviction.
+- Conversation and execution-context IDs keep their original LangGraph thread
+  IDs. Interactive transcripts still use the existing browser/BFF writer.
+- Cached runtimes refresh their current caller, bearer and client context before
+  execution. Include ACP bindings, coordination and native state in canonical
+  database backups; restored leases do not trigger automatic execution.
+- Ordinary `/invoke` retains its ephemeral checkpoint/history behavior unless
+  `INVOKE_PERSIST_HISTORY` is enabled; transient turn coordination still uses
+  MongoDB. Scheduler invocations retain their existing persistent execution.
+- `NATIVE_ACP_ENABLED=false` restores the direct runtime path after a service
+  restart. It does not delete the additional binding records.
+
+This is the native-runtime stage of the
+[metaharness proposal](https://github.com/orgs/caipe-io/discussions/2877), related
+to the gateway and session foundation in the
+[Harness Engine discussion](https://github.com/orgs/caipe-io/discussions/2405).
+Remote transports, discovery, detached execution and sandbox runtimes are not
+implemented. See the [architecture guide](../../docs/docs/architecture/native-acp-metaharness.md)
+for session ownership and filesystem/network boundaries.
+
 ## Running Locally
 
 ### Prerequisites
@@ -120,6 +162,7 @@ ENABLE_TRACING=false
 
 # Runtime
 AGENT_RUNTIME_TTL_SECONDS=3600  # Cache TTL for agent runtimes
+NATIVE_ACP_ENABLED=true  # Set false to use the direct native runtime path
 
 # CORS
 CORS_ORIGINS=["*"]
@@ -156,6 +199,7 @@ The API documentation is available at:
 | `AUTONOMOUS_TASKS_COLLECTION` | Shared Autonomous task collection, used to authorize manual follow-up chats | `autonomous_tasks` |
 | `AUTONOMOUS_RUNS_COLLECTION` | Shared Autonomous run collection, used to select the completed run context | `autonomous_runs` |
 | `AGENT_RUNTIME_TTL_SECONDS` | Cache TTL for agent runtimes | `3600` |
+| `NATIVE_ACP_ENABLED` | Run native agents through the in-service ACP client; `false` restores direct execution | `true` |
 | `CORS_ORIGINS` | Allowed CORS origins | `["*"]` |
 
 ### Models Configuration
