@@ -3,6 +3,11 @@
 import { render, screen, waitFor } from '@testing-library/react'
 
 const mockUpdateConversationSharing = jest.fn()
+const mockPush = jest.fn()
+
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({ push: mockPush }),
+}))
 
 jest.mock('@/store/chat-store', () => ({
   useChatStore: (selector: unknown) => selector({

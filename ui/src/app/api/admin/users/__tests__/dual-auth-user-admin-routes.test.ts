@@ -136,6 +136,19 @@ beforeEach(() => {
 });
 
 describe("admin user sibling routes dual-auth PDP gates", () => {
+  it("returns selected membership provenance without leaking arbitrary source fields", async () => {
+    const { GET } = await import("../[id]/route");
+    mockGetCollection.mockResolvedValue({ find: jest.fn().mockReturnValue({ project: jest.fn().mockReturnValue({
+      toArray: jest.fn().mockResolvedValue([
+        { team_slug: "example-team", team_id: "example", relationship: "member", source_type: "oidc_claim", provider_id: "primary", external_group_id: "example-group", user_subject: "old-subject", private_field: "must-not-leak" },
+      ]),
+    }) }) });
+    const response = await GET(request("/api/admin/users/bob-sub"), { params: Promise.resolve({ id: "bob-sub" }) });
+    const { data } = await response.json();
+    expect(data.user.membershipSourcesAvailable).toBe(true);
+    expect(data.user.membershipSources).toEqual([{ team: "example-team", relationship: "member", source: "oidc_claim", provider: "primary", externalGroup: "example-group", subject: "old-subject" }]);
+    expect(JSON.stringify(data)).not.toContain("must-not-leak");
+  });
   it("returns only the caller's own user row without admin_ui#view", async () => {
     const { GET } = await import("../route");
 

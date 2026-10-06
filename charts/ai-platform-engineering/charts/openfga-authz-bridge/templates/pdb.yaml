@@ -1,0 +1,23 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "openfga-authz-bridge.fullname" . }}
+  labels:
+    {{- include "openfga-authz-bridge.labels" . | nindent 4 }}
+  {{- with .Values.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if hasKey .Values.podDisruptionBudget "minAvailable" }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- else if hasKey .Values.podDisruptionBudget "maxUnavailable" }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  maxUnavailable: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "openfga-authz-bridge.selectorLabels" . | nindent 6 }}
+{{- end }}

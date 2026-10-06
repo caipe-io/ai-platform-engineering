@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { cn } from "@/lib/utils";
 import { Loader2,RefreshCw,Shield,Users } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback,useEffect,useState } from "react";
 
 interface RbacPosture {
@@ -31,6 +31,7 @@ function webexLinkErrorMessage(reason: string | null): string {
 }
 
 export function AccessSettings(): React.ReactElement {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [posture,setPosture] = useState<RbacPosture | null>(null);
   const [loading,setLoading] = useState(true);
@@ -149,7 +150,7 @@ export function AccessSettings(): React.ReactElement {
                     <Button
                       className="h-7 px-2 text-xs"
                       disabled={unlinkingWebex}
-                      onClick={() => { window.location.href = "/api/auth/webex-link/start"; }}
+                      onClick={() => { router.push("/api/auth/webex-link/start"); }}
                       size="sm"
                       variant="outline"
                     >

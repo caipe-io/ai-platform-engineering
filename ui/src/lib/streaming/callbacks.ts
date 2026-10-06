@@ -8,7 +8,7 @@
  * All callbacks are optional — adapters check before calling.
  */
 
-import type { InputFieldDefinition } from "@/lib/streaming/types";
+import type { ContextUsageEventData,InputFieldDefinition } from "@/lib/streaming/types";
 
 // ═══════════════════════════════════════════════════════════════
 // Raw event type for persistence / replay
@@ -43,6 +43,8 @@ export interface StreamParams {
   conversationId: string;
   /** Agent config ID (determines routing in unified gateway) */
   agentId: string;
+  /** Portable reasoning effort for this conversation. */
+  reasoningEffort?: "low" | "medium" | "high" | "max";
   /** JSON-stringified resume data (for HITL resume — form input or tool approval) */
   resumeData?: string;
   /** Turn ID for request/response pairing */
@@ -112,6 +114,9 @@ export interface StreamCallbacks {
 
   /** Non-fatal warning from the agent */
   onWarning?(message: string, namespace?: string[]): void;
+
+  /** Prompt usage relative to the runtime's automatic compaction threshold */
+  onContextUsage?(usage: ContextUsageEventData, namespace: string[]): void;
 
   /** Stream completed successfully */
   onDone?(): void;

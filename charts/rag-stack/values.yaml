@@ -27,6 +27,8 @@ global:
       clientSecretRef:
         name: ""
         key: "INGESTOR_OIDC_CLIENT_SECRET"
+    caipeApi:
+      url: ""
     ragServer:
       host: "rag-server"
       port: 9446
@@ -229,9 +231,21 @@ neo4j:
 
   volumes:
     data:
+      # Keep the existing gp2-backed dynamic volume as the default so upgrades
+      # preserve the current StorageClass selection. Set mode to
+      # "defaultStorageClass" to use the cluster's default StorageClass.
       mode: "dynamic"
       dynamic:
         storageClassName: gp2
+        accessModes:
+          - ReadWriteOnce
+        requests:
+          storage: 100Gi
+      defaultStorageClass:
+        accessModes:
+          - ReadWriteOnce
+        requests:
+          storage: 100Gi
 
 # RAG Redis configuration
 rag-redis:
@@ -279,18 +293,16 @@ milvus:
     ragStackManaged: true
     annotations: {}
 
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    runAsGroup: 1000
-    fsGroup: 1000
-    fsGroupChangePolicy: OnRootMismatch
+  # milvusdb/milvus only runs as root: /milvus/bin/milvus is mode 0774 root:root,
+  # /milvus/lib and /milvus/configs are 0774 directories with no world search bit,
+  # and /var/lib/milvus/data is 0755 root:root. Any other UID cannot exec the
+  # binary, dlopen its libraries, read its config, or write local data.
+  # Empty so the subchart omits the pod-level block entirely.
+  securityContext: {}
 
+  # UID-independent hardening only; runAsNonRoot is not settable here (see above).
   containerSecurityContext:
     allowPrivilegeEscalation: false
-    runAsNonRoot: true
-    runAsUser: 1000
-    runAsGroup: 1000
     capabilities:
       drop:
         - ALL

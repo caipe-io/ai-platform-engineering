@@ -1,0 +1,27 @@
+{{- /* Only create a PDB when an MCP Deployment actually exists (http mode).
+       stdio-mode servers run in-process and have no schedulable pods. */}}
+{{- if and .Values.podDisruptionBudget.enabled (include "agent.createMcpHttpServer" . | eq "true") }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "agent.fullname" . }}
+  labels:
+    {{- include "agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+  {{- with .Values.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if hasKey .Values.podDisruptionBudget "minAvailable" }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- else if hasKey .Values.podDisruptionBudget "maxUnavailable" }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  maxUnavailable: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "agent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mcp
+{{- end }}

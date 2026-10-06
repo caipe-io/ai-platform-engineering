@@ -37,6 +37,11 @@ import type {
   PublicationRequestDocument,
 } from "@/types/publication-approval";
 import {
+  DriftRows,
+  PublicationDriftDialog,
+  type PublicationDriftItem,
+} from "./PublicationDriftDialog";
+import {
   Check,
   ChevronDown,
   ChevronRight,
@@ -167,6 +172,85 @@ function rejectionReason(request: PublicationRequestDocument): string | null {
     .reverse()
     .find((entry) => entry.action === "rejected");
   return historyEntry?.note?.trim() || null;
+}
+
+type HistoryEntryWithDrift = PublicationRequestDocument["history"][number] & {
+  drift?: PublicationDriftItem[];
+};
+
+// Only the *latest* history entry is considered — an earlier `drift_detected`
+// entry followed by a later decision that carried no drift (e.g. a rejection,
+// or a subsequent attempt that resolved cleanly) must not keep showing a
+// stale "changes detected" banner for a diff that no longer describes the
+// request's current state.
+function driftHistoryEntry(request: PublicationRequestDocument): HistoryEntryWithDrift | null {
+  const entries = request.history as HistoryEntryWithDrift[];
+  const latest = entries[entries.length - 1];
+  return latest && Array.isArray(latest.drift) && latest.drift.length > 0 ? latest : null;
+}
+
+interface DriftDialogState {
+  id: string;
+  mode: "soft" | "hard";
+  drift: PublicationDriftItem[];
+  reason?: string;
+  fingerprint?: string;
+}
+
+type DecisionOutcome =
+  | { kind: "success"; message: string }
+  | { kind: "drift"; state: DriftDialogState }
+  | { kind: "error"; message: string };
+
+async function postPublicationDecision(
+  id: string,
+  decision: "approve" | "reject",
+  extra: Record<string, unknown>,
+): Promise<{ response: Response; body: { data?: Record<string, unknown>; error?: string } }> {
+  const response = await fetch(`/api/publication-requests/${encodeURIComponent(id)}/${decision}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(extra),
+  });
+  const body = await response.json().catch(() => ({}));
+  return { response, body };
+}
+
+function evaluateDecisionResponse(
+  id: string,
+  response: Response,
+  body: { data?: Record<string, unknown>; error?: string },
+  successMessage: string,
+): DecisionOutcome {
+  if (response.ok) return { kind: "success", message: successMessage };
+  if (response.status === 409 && body?.data?.drift_confirmation_required) {
+    return {
+      kind: "drift",
+      state: {
+        id,
+        mode: "soft",
+        drift: (body.data.drift as PublicationDriftItem[]) ?? [],
+        fingerprint: body.data.drift_fingerprint as string | undefined,
+      },
+    };
+  }
+  if (response.status === 409 && body?.data?.conflict) {
+    const requestDoc = body.data.request as { decision_note?: string } | undefined;
+    const reason = requestDoc?.decision_note?.trim();
+    return {
+      kind: "drift",
+      state: {
+        id,
+        mode: "hard",
+        drift: (body.data.drift as PublicationDriftItem[]) ?? [],
+        reason: reason || "This request changed after it was submitted and could not be approved.",
+      },
+    };
+  }
+  return {
+    kind: "error",
+    message: (body?.error || (body?.data?.error as string | undefined)) ?? "Could not process this request",
+  };
 }
 
 function statusBadgeClass(status: PublicationRequestDocument["status"]): string {
@@ -507,6 +591,8 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
   const [rejectingId, setRejectingId] = React.useState<string | null>(null);
   const [decisionNote, setDecisionNote] = React.useState("");
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
+  const [driftDialog, setDriftDialog] = React.useState<DriftDialogState | null>(null);
+  const [confirmingDrift, setConfirmingDrift] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [settings, setSettings] = React.useState<PublicationApprovalSettings>(EMPTY_SETTINGS);
   const [delegations, setDelegations] = React.useState<DelegationDraft[]>([]);
@@ -618,42 +704,70 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
       .finally(() => setLoadingSettings(false));
   }, [settingsOpen, summary?.can_manage_settings, toast]);
 
+  const finishDecision = async (id: string, message: string) => {
+    toast(message, "success");
+    window.dispatchEvent(new Event("in-app-notifications:refresh"));
+    setDriftDialog(null);
+    setRejectingId(null);
+    setDecisionNote("");
+    if (linkedRequestId === id) {
+      setUrlParams({ request: null });
+      await load(null);
+    } else {
+      await load();
+    }
+  };
+
   const decide = async (id: string, decision: "approve" | "reject") => {
     setActingId(id);
     try {
-      const response = await fetch(`/api/publication-requests/${encodeURIComponent(id)}/${decision}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note: decisionNote }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        if (response.status === 409 && body?.data?.conflict) {
-          const reason = body?.data?.request?.decision_note?.trim();
-          throw new Error(reason || "This request changed after it was submitted and could not be approved.", {
-            cause: "conflict",
-          });
-        }
-        throw new Error(body?.error || body?.data?.error || `Could not ${decision} request`);
+      const { response, body } = await postPublicationDecision(id, decision, { note: decisionNote });
+      const outcome = evaluateDecisionResponse(
+        id,
+        response,
+        body,
+        decision === "approve" ? "Publication approved." : "Publication rejected.",
+      );
+      if (outcome.kind === "drift") {
+        setDriftDialog(outcome.state);
+        return;
       }
-      toast(decision === "approve" ? "Publication approved." : "Publication rejected.", "success");
-      window.dispatchEvent(new Event("in-app-notifications:refresh"));
-      setRejectingId(null);
-      setDecisionNote("");
-      if (linkedRequestId === id) {
-        setUrlParams({ request: null });
-        await load(null);
-      } else {
-        await load();
-      }
+      if (outcome.kind === "error") throw new Error(outcome.message);
+      await finishDecision(id, outcome.message);
     } catch (error) {
       toast(error instanceof Error ? error.message : `Could not ${decision} request`, "error", 6000);
-      if (error instanceof Error && error.cause === "conflict") {
-        await load();
-      }
     } finally {
       setActingId(null);
     }
+  };
+
+  const confirmDrift = async () => {
+    if (!driftDialog || driftDialog.mode !== "soft") return;
+    const { id, fingerprint } = driftDialog;
+    setConfirmingDrift(true);
+    try {
+      const { response, body } = await postPublicationDecision(id, "approve", {
+        note: decisionNote,
+        acknowledged_drift_fingerprint: fingerprint,
+      });
+      const outcome = evaluateDecisionResponse(id, response, body, "Publication approved.");
+      if (outcome.kind === "drift") {
+        setDriftDialog(outcome.state);
+        return;
+      }
+      if (outcome.kind === "error") throw new Error(outcome.message);
+      await finishDecision(id, outcome.message);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Could not approve request", "error", 6000);
+    } finally {
+      setConfirmingDrift(false);
+    }
+  };
+
+  const closeDriftDialog = () => {
+    const wasHard = driftDialog?.mode === "hard";
+    setDriftDialog(null);
+    if (wasHard) void load();
   };
 
   const saveSettings = async () => {
@@ -877,6 +991,22 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
                             Last apply attempt: {item.last_error}
                           </p>
                         )}
+                        {(() => {
+                          const driftEntry = driftHistoryEntry(item);
+                          if (!driftEntry?.drift) return null;
+                          return (
+                            <div className="sm:col-span-2">
+                              <p className="font-medium text-foreground">
+                                {driftEntry.action === "drift_detected"
+                                  ? "Changes detected when approval was attempted"
+                                  : "Approved with these changes"}
+                              </p>
+                              <div className="mt-1">
+                                <DriftRows drift={driftEntry.drift} />
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -906,10 +1036,17 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
                           </div>
                         ) : (
                           <div className="flex justify-end gap-2">
-                            <Button variant="outline" onClick={() => { setRejectingId(item._id); setDecisionNote(""); }}>
+                            <Button
+                              variant="outline"
+                              disabled={driftDialog?.id === item._id}
+                              onClick={() => { setRejectingId(item._id); setDecisionNote(""); }}
+                            >
                               <X className="mr-2 h-4 w-4" /> Reject
                             </Button>
-                            <Button disabled={actingId === item._id} onClick={() => void decide(item._id, "approve") }>
+                            <Button
+                              disabled={actingId === item._id || driftDialog?.id === item._id}
+                              onClick={() => void decide(item._id, "approve") }
+                            >
                               {actingId === item._id
                                 ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 : <Check className="mr-2 h-4 w-4" />}
@@ -1329,6 +1466,16 @@ export function PublicationApprovalQueue({ readOnly = false }: PublicationApprov
           </CardContent>
         </Card>
       )}
+
+      <PublicationDriftDialog
+        open={driftDialog !== null}
+        mode={driftDialog?.mode ?? "soft"}
+        drift={driftDialog?.drift ?? []}
+        reason={driftDialog?.reason}
+        isConfirming={confirmingDrift}
+        onCancel={closeDriftDialog}
+        onConfirm={() => void confirmDrift()}
+      />
     </div>
   );
 }

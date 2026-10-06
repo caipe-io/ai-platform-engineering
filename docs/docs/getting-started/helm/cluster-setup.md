@@ -31,61 +31,12 @@ Your cluster is ready. Jump to [Deploy with Helm →](./setup.md)
 
 ## Option 2 — AWS EKS
 
-Use EKS for production or cloud-based evaluation.
-
-### Install tools
-
-| Tool | Purpose |
-|------|---------|
-| **AWS CLI** | Authenticate to AWS — [install](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
-| **eksctl** | Create and manage EKS clusters — [install](https://eksctl.io/installation/) |
-| **kubectl** | Interact with the cluster — [install](https://kubernetes.io/docs/tasks/tools/) |
-
-### Configure AWS credentials
-
-```bash
-aws configure
-aws sts get-caller-identity
-export AWS_DEFAULT_REGION=us-east-2
-```
-
-### Create the cluster
-
-```bash
-git clone https://github.com/caipe-io/ai-platform-engineering.git
-cd ai-platform-engineering
-cp deploy/eks/dev-eks-cluster-config.yaml.example dev-eks-cluster-config.yaml
-
-# Takes ~10–15 minutes
-eksctl create cluster -f dev-eks-cluster-config.yaml
-
-# Verify nodes are ready
-kubectl get nodes
-```
-
-### (Recommended) Install AWS Load Balancer Controller
-
-Required for `LoadBalancer`-type services on EKS:
-
-```bash
-eksctl create iamserviceaccount \
-  --cluster=dev-eks-cluster \
-  --namespace=kube-system \
-  --name=aws-load-balancer-controller \
-  --role-name AmazonEKSLoadBalancerControllerRole \
-  --attach-policy-arn=arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess \
-  --approve
-
-helm repo add eks https://aws.github.io/eks-charts && helm repo update
-
-helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
-  -n kube-system \
-  --set clusterName=dev-eks-cluster \
-  --set serviceAccount.create=false \
-  --set serviceAccount.name=aws-load-balancer-controller
-```
-
-Your cluster is ready. Jump to [Deploy with Helm →](./setup.md)
+For a new Auto Mode cluster, follow the [EKS Auto Mode setup guide](../eks/setup.md).
+It uses a separate cluster config example, storage class, RAG NodePool, and
+Helm values overlay. Existing managed-node-group clusters can continue using
+`deploy/eks/dev-eks-cluster-config.yaml.example` and their current Helm values.
+Auto Mode includes load balancing, so its setup does not require a separate
+AWS Load Balancer Controller install.
 
 ---
 

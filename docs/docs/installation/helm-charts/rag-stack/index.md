@@ -127,9 +127,6 @@ helm show values oci://ghcr.io/caipe-io/charts/rag-stack --version 1.1.0
 | global.rag.redis.port | int | `6379` |  |
 | milvus.containerSecurityContext.allowPrivilegeEscalation | bool | `false` |  |
 | milvus.containerSecurityContext.capabilities.drop[0] | string | `"ALL"` |  |
-| milvus.containerSecurityContext.runAsGroup | int | `1000` |  |
-| milvus.containerSecurityContext.runAsNonRoot | bool | `true` |  |
-| milvus.containerSecurityContext.runAsUser | int | `1000` |  |
 | milvus.containerSecurityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | milvus.dataNode.annotations | object | `{}` |  |
 | milvus.dataNode.podDisruptionBudget.enabled | bool | `false` |  |
@@ -170,11 +167,7 @@ helm show values oci://ghcr.io/caipe-io/charts/rag-stack --version 1.1.0
 | milvus.queryNode.podDisruptionBudget.enabled | bool | `false` |  |
 | milvus.queryNode.resources.limits.cpu | string | `"200m"` |  |
 | milvus.queryNode.resources.limits.memory | string | `"256Mi"` |  |
-| milvus.securityContext.fsGroup | int | `1000` |  |
-| milvus.securityContext.fsGroupChangePolicy | string | `"OnRootMismatch"` |  |
-| milvus.securityContext.runAsGroup | int | `1000` |  |
-| milvus.securityContext.runAsNonRoot | bool | `true` |  |
-| milvus.securityContext.runAsUser | int | `1000` |  |
+| milvus.securityContext | object | `{}` |  |
 | milvus.serviceAccount.annotations | object | `{}` |  |
 | milvus.serviceAccount.create | bool | `false` |  |
 | milvus.serviceAccount.name | string | `"rag-milvus"` |  |

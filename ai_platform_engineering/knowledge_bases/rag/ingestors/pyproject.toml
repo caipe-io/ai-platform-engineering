@@ -16,7 +16,7 @@ dependencies = [
     "kubernetes==36.0.3",
     "langchain-text-splitters==1.1.2",
     "lxml==6.1.2",
-    "pyjwt==2.13.0",
+    "pyjwt==2.15.1",
     "python-dotenv==1.2.2",
     "redis==8.1.0",
     "requests==2.34.2",
@@ -30,7 +30,7 @@ dependencies = [
 # Adds ~1GB to image size (Chromium browser + dependencies)
 playwright = [
     "scrapy-playwright==0.0.48",
-    "playwright==1.62.0",
+    "playwright==1.63.0",
 ]
 dev = [
     "pytest==9.1.1",

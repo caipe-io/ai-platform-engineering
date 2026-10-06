@@ -119,6 +119,7 @@ def test_stream_chat_parses_sse_lines_and_metadata() -> None:
             message="hello",
             conversation_id="conv-1",
             agent_id="agent-1",
+            reasoning_effort="high",
         )
     )
 
@@ -127,6 +128,7 @@ def test_stream_chat_parses_sse_lines_and_metadata() -> None:
     assert events[0].delta == "final answer chunk"
     assert streaming_metadata_from_event(events[0]) == {"is_final_answer": True}
     mock_client.stream.assert_called_once()
+    assert mock_client.stream.call_args.kwargs["json"]["reasoning_effort"] == "high"
 
 
 def test_redact_sse_error_body_strips_secrets_and_truncates() -> None:

@@ -37,6 +37,7 @@ function ChatRedirectPage() {
   useEffect(() => {
     if (status === "loading") return;
     if (redirected.current) return;
+    redirected.current = true;
 
     const resolve = async () => {
       const storageMode = getStorageMode();
@@ -67,7 +68,6 @@ function ChatRedirectPage() {
       if (lastActiveConversationId) {
         const stillExists = currentConversations.some((c) => c.id === lastActiveConversationId);
         if (stillExists) {
-          redirected.current = true;
           router.replace(`/chat/${lastActiveConversationId}`);
           return;
         }
@@ -76,19 +76,16 @@ function ChatRedirectPage() {
       // 2. Fall back to the most recent OWNED conversation (sorted by updatedAt)
       if (ownedConversations.length > 0) {
         const latestId = ownedConversations[0].id;
-        redirected.current = true;
         router.replace(`/chat/${latestId}`);
       } else {
         // 3. No owned conversations — create a new one
         const newId = await createConversation(await resolveUsableChatAgentId());
-        redirected.current = true;
         router.replace(`/chat/${newId}`);
       }
     };
 
     resolve().catch((error) => {
       console.error("[ChatRedirect] Failed to resolve conversation:", error);
-      redirected.current = true;
       setError(error instanceof Error ? error.message : "Failed to resolve a chat agent");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
