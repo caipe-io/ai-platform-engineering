@@ -110,6 +110,30 @@ jobs:
           --set tags.basic=true \
           --set tags.rag-stack=false
 
+    - name: Test extraDeploy backward compatibility
+      run: |
+        cd charts/ai-platform-engineering
+        cat > /tmp/extra-deploy-values.yaml <<'EOF'
+        extraDeploy:
+          - apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: legacy-extra-deploy
+        extraDeployMap:
+          stable-extra-deploy:
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: stable-extra-deploy
+        EOF
+        rendered=$(helm template test-extra-deploy . \
+          --show-only templates/extra-deploy.yaml \
+          --values /tmp/extra-deploy-values.yaml)
+        echo "$rendered" | grep -q 'name: legacy-extra-deploy' \
+          || { echo "ERROR: legacy extraDeploy resource was not rendered" >&2; exit 1; }
+        echo "$rendered" | grep -q 'name: stable-extra-deploy' \
+          || { echo "ERROR: extraDeployMap resource was not rendered" >&2; exit 1; }
+
     - name: Test ai-platform-engineering installation (dry-run) - RBAC runtime
       run: |
         cd charts/ai-platform-engineering
