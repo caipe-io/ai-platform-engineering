@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -15,6 +16,38 @@ import httpx
 # assisted-by Codex Codex-sonnet-4-6
 
 SUBJECT_SALT = os.getenv("AUDIT_SUBJECT_SALT", "caipe-098-audit")
+
+# A single MCP tools/call fans out into several ext_authz checks (coarse gate,
+# per-server invoke, per-tool, caller-keyed), so posting every decision as its
+# own durable event makes audit volume scale with raw request count instead of
+# anything security-relevant. Denials stay full-fidelity — they're rare and
+# the signal that matters for review. Routine allows are counted in memory,
+# keyed by subject/action/resource/reason, and flushed as periodic aggregate
+# rows (see flush_allow_rollups). AUDIT_FULL_FIDELITY_ALLOWS restores one
+# durable event per allow for a bounded investigation/compliance window.
+ALLOW_ROLLUP_FLUSH_SECONDS = float(os.getenv("AUDIT_ALLOW_ROLLUP_FLUSH_SECONDS", "60"))
+FULL_FIDELITY_ALLOWS = os.getenv("AUDIT_FULL_FIDELITY_ALLOWS", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
+_ROLLUP_KEY_FIELDS = (
+    "tenant_id",
+    "subject_hash",
+    "subject_ref",
+    "component",
+    "action",
+    "resource_ref",
+    "pdp",
+    "source",
+    "reason_code",
+)
+
+_rollup_lock = threading.Lock()
+_rollup_counts: dict[tuple[Any, ...], dict[str, Any]] = {}
+_flush_timer: threading.Timer | None = None
 
 
 def _hash_subject(subject: str) -> str:
@@ -40,6 +73,75 @@ def _post_to_audit_service(event: dict[str, Any]) -> None:
             response.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         print(f"[bridge-audit] Failed to submit audit event to audit-service: {exc}", file=sys.stderr)
+
+
+def _rollup_key(event: dict[str, Any]) -> tuple[Any, ...]:
+    return tuple(event.get(field) for field in _ROLLUP_KEY_FIELDS)
+
+
+def _record_allow(event: dict[str, Any]) -> None:
+    key = _rollup_key(event)
+    ts = event["ts"]
+    with _rollup_lock:
+        entry = _rollup_counts.get(key)
+        if entry is None:
+            entry = {"sample": event, "count": 0, "window_start": ts}
+            _rollup_counts[key] = entry
+        entry["count"] += 1
+        entry["window_end"] = ts
+
+
+def flush_allow_rollups() -> None:
+    """Emit one aggregated event per distinct key accumulated since the last flush."""
+    with _rollup_lock:
+        pending = list(_rollup_counts.values())
+        _rollup_counts.clear()
+    for entry in pending:
+        sample = entry["sample"]
+        rollup: dict[str, Any] = {
+            "audit_event_id": str(uuid.uuid4()),
+            "ts": entry["window_end"],
+            "type": sample["type"],
+            "tenant_id": sample["tenant_id"],
+            "subject_hash": sample["subject_hash"],
+            "action": sample["action"],
+            "outcome": "allow",
+            "reason_code": sample["reason_code"],
+            # This row summarizes `count` decisions, not one request — there is
+            # no single correlation_id to attach.
+            "correlation_id": f"rollup:{uuid.uuid4()}",
+            "component": sample["component"],
+            "resource_ref": sample["resource_ref"],
+            "pdp": sample["pdp"],
+            "source": sample["source"],
+            "count": entry["count"],
+            "window_start": entry["window_start"],
+            "window_end": entry["window_end"],
+        }
+        if sample.get("subject_ref"):
+            rollup["subject_ref"] = sample["subject_ref"]
+        print(json.dumps(rollup, separators=(",", ":")), file=sys.stderr)
+        _post_to_audit_service(rollup)
+
+
+def _schedule_next_flush() -> None:
+    global _flush_timer
+    _flush_timer = threading.Timer(ALLOW_ROLLUP_FLUSH_SECONDS, _flush_and_reschedule)
+    _flush_timer.daemon = True
+    _flush_timer.start()
+
+
+def _flush_and_reschedule() -> None:
+    flush_allow_rollups()
+    _schedule_next_flush()
+
+
+def start_allow_rollup_flusher() -> None:
+    """Start the periodic background flush. Call once from the server entrypoint."""
+    if getattr(start_allow_rollup_flusher, "_started", False) or FULL_FIDELITY_ALLOWS:
+        return
+    start_allow_rollup_flusher._started = True
+    _schedule_next_flush()
 
 
 def log_authz_decision(
@@ -83,6 +185,10 @@ def log_authz_decision(
         event["duration_ms"] = round(duration_ms, 2)
     if extra:
         event["extra"] = extra
+
+    if outcome == "allow" and not FULL_FIDELITY_ALLOWS:
+        _record_allow(event)
+        return event
 
     print(json.dumps(event, separators=(",", ":")), file=sys.stderr)
     _post_to_audit_service(event)

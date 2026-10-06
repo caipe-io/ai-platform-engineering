@@ -311,7 +311,10 @@ export interface MiddlewareDefinition {
 export interface ModelConfig {
   id: string; // LLM model identifier (e.g., 'claude-sonnet-4-20250514')
   provider: string; // LLM provider (anthropic-claude, openai, azure-openai, aws-bedrock, etc.)
+  reasoning_effort?: ReasoningEffort;
 }
+
+export type ReasoningEffort = "low" | "medium" | "high" | "max";
 
 // =============================================================================
 // Dynamic Agent Types

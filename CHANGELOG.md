@@ -1,3 +1,179 @@
+## 1.3.0-rc.6 (2026-10-06)
+
+### Fix
+
+- **platform**: restore adaptive reasoning and chat history filters (#2878)
+
+## 1.3.0-rc.5 (2026-10-05)
+
+### Feat
+
+- **ui**: forward platform admin notifications to Slack (#2865)
+- **sharepoint**: refresh read-only MCP prebuild on latest main (#2860)
+
+### Fix
+
+- **rag**: authorize ingestion credential reads by verified platform identity (#2876)
+- **rag-stack**: preserve gp2 default with default StorageClass option (#2088)
+- **dynamic-agents**: raise MCP tool-load retry budget to 5 attempts (#2786)
+
+### Refactor
+
+- **dynamic-agents**: remove cnoe-agent-utils, add a shared llm_wrapper (#2820)
+
+## 1.3.0-rc.4 (2026-10-01)
+
+### Feat
+
+- **publication-approval**: confirm drift instead of superseding on approve (#2849)
+- **eks**: add Auto Mode RAG pool and PodDisruptionBudgets (#1446)
+- **rag**: ingest web pages behind header-based authentication (#2808)
+
+### Fix
+
+- **rag**: correct fetch_document tool name in truncation hint (#2856)
+- **ui**: fix team admin dialog search and layout issues (#2842)
+- **security**: report failed post-release Grype dispatch (#2847)
+- **deps**: resolve current Dependabot alerts (#2845)
+- **caipe-ui**: show session-expired hint for auth-interrupted turns (#1764)
+- **rag**: pin tenacity dependency (#2844)
+- **ci**: grant PR write access for size labeling (#2835)
+- **autonomous**: correct owner token forward to agent and mcp (#2708)
+- **webex-meetings-mcp**: fix timezone issue (#2838)
+- **rag**: retry ingestor POST on 429, split batch on 413 (#2600)
+
+### Refactor
+
+- **authz**: route agent execution through fresh CAS decisions (#2813)
+
+## 1.3.0-rc.3 (2026-09-24)
+
+## 1.3.0-rc.2 (2026-09-24)
+
+### Feat
+
+- **admin**: improve user identity and access visibility (#2810)
+- **authz**: establish BFF access API foundation (#2807)
+
+### Fix
+
+- **agents**: restore Azure and Bedrock reasoning (#2809)
+
+## 1.3.0-rc.1 (2026-09-23)
+
+### Feat
+
+- **rag**: support Confluence folder and whole-space ingestion (#2805)
+- **agents**: add configurable reasoning effort (#2798)
+
+### Fix
+
+- **auth**: debounce Keycloak sub mapping writes for repeated identity calls (#2800)
+
+## 1.2.0 (2026-09-22)
+
+### Feat
+
+- **rbac**: let owner-team members manage KBs, RAG collections, MCP tools, Webex spaces (#2773)
+- **authz**: reverse-lookup accessible sets instead of checking every catalog candidate (#2793)
+- **chat**: unify conversation history and queued turns (#2778)
+- **chat**: edit messages and rewind conversations (#2781)
+- **chat**: show context remaining before compaction (#2779)
+
+### Fix
+
+- **audit**: audit bulk authorization as one event instead of one per resource (#2777)
+- **insights**: scope conversations across chat surfaces (#2780)
+
+## 1.2.0-rc.4 (2026-09-21)
+
+### Fix
+
+- **helm**: support bridge image pull secrets (#2398)
+- **deps**: bump cnoe-agent-utils 0.4.1 -> 0.4.2 for Sonnet 5 temperature fix (#2776)
+- **ci**: drop unused GitHub App token steps (#2772)
+
+## 1.2.0-rc.3 (2026-09-18)
+
+### Feat
+
+- **jira**: support native ADF in comments and descriptions (#2766)
+
+### Fix
+
+- **ui**: resolve origin scheme mismatch in platform-health audit (#2752)
+- **ci**: allow manual prebuild dispatch for fork PRs
+- **ci**: package canary Helm charts under a valid SemVer placeholder (#2768)
+- **compose**: pull minio from quay.io, not Docker Hub (#2769)
+- **ci**: checkout the real PR head SHA in prebuild builds, not the merge ref
+- **ci**: replace dev auto-tag scheme with canary builds and versioned prebuild tags
+- **rag**: log shutdown-cancellation instead of a silent pass, match rag logger
+
+## 1.1.1-dev.2 (2026-09-17)
+
+### Feat
+
+- **rag**: audit RAG server OpenFGA decisions, grouping allows by subject
+
+### Fix
+
+- **ui**: load release notes from canonical repository (#2761)
+- **rag**: explain the expected CancelledError in stop_allow_rollup_flusher
+- **audit**: fail readiness immediately on shutdown, drop redundant global
+- **audit**: aggregate routine authorization allows into periodic counts
+
+## 1.1.1 (2026-09-16)
+
+## 1.1.1-dev.1 (2026-09-16)
+
+## 1.2.0-dev.7 (2026-09-16)
+
+### Fix
+
+- **service-accounts**: raise create scopes cap and batch large selections (#2751)
+
+## 1.2.0-dev.6 (2026-09-15)
+
+### Fix
+
+- **helm**: correct non-root defaults breaking milvus and keycloak init jobs (#2749)
+
+## 1.2.0-dev.5 (2026-09-15)
+
+## 1.2.0-rc.2 (2026-09-15)
+
+## 1.2.0-dev.4 (2026-09-15)
+
+### Fix
+
+- **rag**: update E2E specs for the redesigned Unlinked Access modal
+- **rag**: show live progress while applying a bulk scope add
+
+### Perf
+
+- **rag**: batch bulk scope adds into one request instead of N
+
+## 1.2.0-dev.3 (2026-09-14)
+
+### Fix
+
+- **ui**: enforce zero lint warnings (#2743)
+
+## 1.2.0-dev.2 (2026-09-14)
+
+### Feat
+
+- **rag**: bulk-add datasources from a collection in service account pickers
+
+### Fix
+
+- **deps**: resolve install warnings and security alerts (#2742)
+- **rag**: keep unlinked SA edit UX in sync, fix long scope-list usability
+
+## 1.2.0-dev.1 (2026-09-14)
+
+## 1.2.0-rc.1 (2026-09-14)
+
 ## 1.1.0 (2026-09-14)
 
 ## 1.1.0-dev.7 (2026-09-14)
@@ -21,8 +197,6 @@
 
 ## 1.1.0-dev.3 (2026-09-14)
 
-## 1.1.0-rc.2 (2026-09-14)
-
 ### Feat
 
 - **setup-caipe**: enable scheduler + autonomous agents by default (#2681)
@@ -37,8 +211,6 @@
 ## 1.1.0-dev.2 (2026-09-14)
 
 ## 1.1.0-dev.1 (2026-09-14)
-
-## 1.1.0-rc.1 (2026-09-14)
 
 ## 1.0.1-dev.12 (2026-09-14)
 
@@ -87,8 +259,6 @@
 
 ## 1.0.1-dev.8 (2026-09-10)
 
-## 1.0.1-rc.3 (2026-09-10)
-
 ### Fix
 
 - **ui**: preserve agent colors in chat avatars (#2699)
@@ -121,8 +291,6 @@
 
 ## 1.0.1-dev.6 (2026-09-07)
 
-## 1.0.1-rc.2 (2026-09-07)
-
 ## 1.0.1-dev.5 (2026-09-07)
 
 ### Fix
@@ -152,8 +320,6 @@
 - **ci**: allow autonomous path detection on pull requests (#2653)
 
 ## 1.0.1-dev.1 (2026-09-04)
-
-## 1.0.1-rc.1 (2026-09-04)
 
 ## 1.0.0-dev.24 (2026-09-04)
 
@@ -190,8 +356,6 @@
 
 ## 1.0.0-dev.22 (2026-09-02)
 
-## 1.0.0-rc.7 (2026-09-02)
-
 ## 1.0.0-dev.21 (2026-09-02)
 
 ### Fix
@@ -217,8 +381,6 @@
 - Update README.md (#2542)
 
 ## 1.0.0-dev.18 (2026-09-01)
-
-## 1.0.0-rc.6 (2026-09-01)
 
 ## 1.0.0-dev.17 (2026-09-01)
 
@@ -252,8 +414,6 @@
 
 ## 1.0.0-dev.16 (2026-09-01)
 
-## 1.0.0-rc.5 (2026-09-01)
-
 ## 1.0.0-dev.15 (2026-09-01)
 
 ## 1.0.0-dev.14 (2026-08-31)
@@ -282,8 +442,6 @@
 
 ## 1.0.0-dev.13 (2026-08-28)
 
-## 1.0.0-rc.4 (2026-08-28)
-
 ## 1.0.0-dev.12 (2026-08-28)
 
 ### Refactor
@@ -309,8 +467,6 @@
 
 ## 1.0.0-dev.10 (2026-08-27)
 
-## 1.0.0-rc.3 (2026-08-27)
-
 ## 1.0.0-dev.9 (2026-08-26)
 
 ### Fix
@@ -318,8 +474,6 @@
 - **platform**: align RAG access and application controls (#2599)
 
 ## 1.0.0-dev.8 (2026-08-26)
-
-## 1.0.0-rc.2 (2026-08-26)
 
 ## 1.0.0-dev.7 (2026-08-26)
 
@@ -376,8 +530,6 @@
 - **ui**: retire legacy agent builder (#2443)
 
 ## 1.0.0-dev.1 (2026-08-24)
-
-## 1.0.0-rc.1 (2026-08-24)
 
 ### Fix
 

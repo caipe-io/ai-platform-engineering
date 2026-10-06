@@ -419,7 +419,7 @@ jobs:
             exit 1
           fi
           echo "Running ${#specs[@]} mocked-RBAC spec files."
-          npx playwright test "${specs[@]}" --config=playwright.rbac.config.ts
+          npx playwright test "${specs[@]}" --config=playwright.rbac.config.ts --workers=1
 
       - name: Upload Playwright artifacts
         if: failure() && steps.playwright.outcome == 'failure'
@@ -475,4 +475,4 @@ jobs:
 
       - name: Run ESLint
         working-directory: ui
-        run: npm run lint
+        run: npm run lint -- --max-warnings 0

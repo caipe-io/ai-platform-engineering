@@ -1,0 +1,42 @@
+[project]
+name = "mcp-sharepoint"
+version = "0.1.0"
+description = "Read-only SharePoint MCP server backed by Microsoft Graph"
+license = "Apache-2.0"
+authors = [{ name = "CNOE Contributors" }]
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "click==8.5.0",
+  "fastmcp==3.4.7",
+  "httpx==0.28.1",
+  "mcp==1.29.1",
+  "mcp-agent-auth", # gitleaks:allow - package name, not a credential
+  "pydantic==2.13.4",
+  "python-dotenv==1.2.2",
+]
+
+[dependency-groups]
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "ruff==0.16.4",
+]
+
+[tool.uv]
+package = false
+constraint-dependencies = ["uv==0.12.6"]
+
+[tool.uv.sources]
+mcp-agent-auth = { path = "../common/mcp-auth", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 140
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

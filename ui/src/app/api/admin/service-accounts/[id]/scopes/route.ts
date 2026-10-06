@@ -46,7 +46,7 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-interface ResolvedActor {
+export interface ResolvedActor {
   callerSub: string;
   email?: string;
 }
@@ -60,15 +60,15 @@ function unauthorized() {
 }
 
 /**
- * Common preamble: authenticate, parse the scope body, and enforce can_manage.
- * Returns either an early `response` (to return) or the validated context.
+ * Shared can_manage/platform-admin gate for both the single-scope and bulk
+ * scope-mutation routes: the caller must belong to the owning team OR be an
+ * org admin. 404 to neither (don't reveal existence — FR-022).
  */
-async function authorizeScopeMutation(
-  request: Request,
+export async function requireManageServiceAccountAccess(
   id: string,
 ): Promise<
   | { response: NextResponse }
-  | { actor: ResolvedActor; scope: ScopeRef; bypassHeldScopeCheck: boolean }
+  | { actor: ResolvedActor; bypassHeldScopeCheck: boolean }
 > {
   const session = (await getServerSession(authOptions)) as {
     sub?: string;
@@ -86,6 +86,42 @@ async function authorizeScopeMutation(
       ),
     };
   }
+
+  const canManage = await checkOpenFgaTuple({
+    user: `user:${session.sub}`,
+    relation: "can_manage",
+    object: `service_account:${id}`,
+  });
+  const platformAdmin = await isPlatformAdmin(session);
+
+  if (!canManage.allowed && !platformAdmin) {
+    return {
+      response: NextResponse.json(
+        { success: false, error: "Service account not found" },
+        { status: 404 },
+      ),
+    };
+  }
+
+  return {
+    actor: { callerSub: session.sub, email: session.user.email ?? undefined },
+    bypassHeldScopeCheck: platformAdmin,
+  };
+}
+
+/**
+ * Common preamble: authenticate, parse the scope body, and enforce can_manage.
+ * Returns either an early `response` (to return) or the validated context.
+ */
+async function authorizeScopeMutation(
+  request: Request,
+  id: string,
+): Promise<
+  | { response: NextResponse }
+  | { actor: ResolvedActor; scope: ScopeRef; bypassHeldScopeCheck: boolean }
+> {
+  const gate = await requireManageServiceAccountAccess(id);
+  if ("response" in gate) return gate;
 
   let raw: unknown;
   try {
@@ -105,34 +141,7 @@ async function authorizeScopeMutation(
     };
   }
 
-  // can_manage gate (owning-team membership) OR org admin. 404 to neither
-  // (don't reveal existence — FR-022). Org admins get the same bypass here
-  // that every other shareable resource type grants (see resource-authz.ts's
-  // `bypassForOrgAdmin`); this also subsumes the narrower unlinked-SA-only
-  // bypass this route used to have (platform admins could already manage the
-  // unlinked SA's scopes — now that extends to every SA, consistent with the
-  // detail/rotate/credentials routes).
-  const canManage = await checkOpenFgaTuple({
-    user: `user:${session.sub}`,
-    relation: "can_manage",
-    object: `service_account:${id}`,
-  });
-  const platformAdmin = await isPlatformAdmin(session);
-
-  if (!canManage.allowed && !platformAdmin) {
-    return {
-      response: NextResponse.json(
-        { success: false, error: "Service account not found" },
-        { status: 404 },
-      ),
-    };
-  }
-
-  return {
-    actor: { callerSub: session.sub, email: session.user.email ?? undefined },
-    scope,
-    bypassHeldScopeCheck: platformAdmin,
-  };
+  return { ...gate, scope };
 }
 
 /**
@@ -140,10 +149,10 @@ async function authorizeScopeMutation(
  * Mongo display snapshot after a mutation. `mutated` carries the just-changed
  * scope's added_by/added_at so the snapshot reflects who added it.
  */
-async function refreshSnapshot(
+export async function refreshSnapshot(
   saSub: string,
   addedByForNew: { sub: string; at: Date },
-  explicitlyAddedScope?: ScopeRef,
+  explicitlyAddedScopes: ScopeRef[] = [],
 ): Promise<void> {
   const subject = `service_account:${saSub}`;
   const serviceAccount = await getBySub(saSub);
@@ -174,8 +183,9 @@ async function refreshSnapshot(
     return (
       !automatic ||
       priorByKey.has(key) ||
-      (explicitlyAddedScope?.type === scope.type &&
-        explicitlyAddedScope.ref === scope.ref)
+      explicitlyAddedScopes.some(
+        (added) => added.type === scope.type && added.ref === scope.ref,
+      )
     );
   });
   const datasourceIds = explicitKnowledgeScopes
@@ -271,7 +281,7 @@ export async function POST(request: Request, context: RouteContext) {
     await refreshSnapshot(
       id,
       { sub: actor.callerSub, at: new Date() },
-      scope,
+      [scope],
     );
 
     logOpenFgaRebacAuditEvent({

@@ -82,12 +82,12 @@ export interface AiAssistTaskDef {
 /**
  * Defaults match what the dynamic-agents service is configured to invoke:
  *
- *   - Provider must be one of cnoe-agent-utils' supported bindings
+ *   - Provider must be one of the platform's supported bindings
  *     (`aws-bedrock`, `openai`, `azure-openai`, `anthropic-claude`,
  *     `google-gemini`, `gcp-vertexai`, `groq`).
  *   - For Bedrock, `id` is the **raw Bedrock modelId** (e.g.
  *     `global.anthropic.claude-haiku-4-5-20251001-v1:0`) — NOT a LiteLLM-style
- *     `bedrock/...` prefix. cnoe-agent-utils passes it straight through
+ *     `bedrock/...` prefix. The model id is passed straight through
  *     to `client.converse(modelId=...)`, and Bedrock rejects the prefix
  *     with `ValidationException: The provided model identifier is invalid`.
  *

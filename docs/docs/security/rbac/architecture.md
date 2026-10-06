@@ -108,6 +108,12 @@ The Admin → Security & Policy → OpenFGA policy graph is a visibility surface
 
 Conversations use a hybrid ownership model to avoid creating high-cardinality owner tuples for every private chat. Private ownership is implicit from MongoDB (`owner_subject` for normalized records, legacy `owner_id` email fallback for old records). Explicit OpenFGA relationships remain the enforcement store for cross-boundary sharing and admin surfaces. The Web UI backend now fetches non-deleted conversation candidates without MongoDB team-sharing prefilters, then applies the same implicit-or-explicit conversation check on chat list/detail routes, Dynamic Agent v1 stream/invoke/resume/cancel proxy routes, and conversation metadata updates. This lets Slack OBO requests write their own thread conversations and bookkeeping metadata without requiring explicit owner tuples while still allowing OpenFGA-only conversation grants to appear in the UI. The Admin → System → Migrations tab seeds a DB-managed `migration_manifest` from the runtime bundle, shows the active runtime migration release beside per-collection `data_schema_versions`, hides completed migrations by default, and runs the release migration handlers, including `conversation_owner_identity_v1` for `owner_subject`/`owner_identity_version=2`, `organization_membership_backfill_v1` for direct baseline organization membership, universal team-resource OpenFGA backfill, Dynamic Agent tool tuple reconciliation, Dynamic Agent organization-admin inheritance backfill, Dynamic Agent shared-team grants backfill (`agent_shared_team_grants_backfill_v1`, writes the missing `team:<slug>#member can_use agent:<id>` tuples for every existing agent's `shared_with_teams`), Slack channel and Webex space ReBAC grant backfills, messaging team mapping reconciliation, RBAC index creation, and Webex messaging ReBAC index creation. Migration runs are recorded in `schema_migrations`; blocking required migrations and the migration status API are admin-only surfaces.
 
+Runtime conversation identity reconciliation keeps authorization ownership separate from analytics attribution:
+
+- An authenticated human subject binds matching provisional email or stable connector-ID conversations to `owner_subject`, without overwriting a different existing subject.
+- A connector service-account fallback may set `owner_canonical_subject` when its human email already resolves to a known subject. This field is analytics-only and is never accepted by conversation authorization checks.
+- A later verified human request reconciles the provisional rows before creating or returning the linked conversation, so authorization continues to use `owner_subject` while cross-surface statistics use one canonical person key.
+
 Conversation secondary views and mutations now use the same model: shared, search, and trash routes fetch candidates and filter through the implicit-or-explicit OpenFGA helper; pin, archive, restore, and share actions require the concrete conversation relationship instead of raw `owner_id` equality. Skill nested routes and import overwrite paths also load candidates by id and require `skill#read`, `skill#write`, or `skill#admin` as appropriate; legacy skill visibility fields remain metadata only. Workflow run list/start/poll/update/delete/resume/cancel operations authorize against the parent workflow config through the temporary `task` namespace mapping. MCP server list/probe/update/delete and team RAG tool list/read/write/delete use concrete `mcp_server` and `tool` OpenFGA resource checks without a legacy session role bypass; MCP server create requires a stable Keycloak `sub`, writes `mcp_server` owner/team tuples before Mongo persistence, and delete removes associated OpenFGA tuples before deleting the Mongo row. Credential management adds `admin_surface:credentials` for connector administration and global secret metadata management, plus concrete `secret_ref` authorization for user metadata, use, share, manage, and audit decisions. The user-facing page separates `My Secrets` and `My Connections`, while the Admin Credentials tab owns OAuth provider configuration and all-user secret metadata actions. Browser API routes may create or rotate secret material, but raw credential retrieval is restricted to bearer-authenticated service callers using the credential-service audience.
 
 Knowledge Base UI routes are enforced at the Web UI backend before proxying to the RAG server. `caipe-ui` authenticates the browser session, applies the coarse `rag` route gate, checks concrete `ingestion_source:<id>` operations for connector management, filters datasource list responses by `data_source#can_read`, constrains search/MCP invocations to the caller's readable datasource IDs, and then forwards the Keycloak bearer token to RAG. RAG validates the token signature, issuer, audience, and expiry against Keycloak, then repeats OpenFGA checks for direct API/MCP requests using the caller's Keycloak `sub`. Human Keycloak realm roles and per-KB realm roles do not grant RAG access. **Owner** controls configuration, reload, transfer, and deletion through `ingestion_source`; **Search** writes query-only `reader` relationships on `knowledge_base`, inherited by `data_source`. The separate organization capabilities govern whether a user may create a datasource or invoke Search at all.
@@ -134,7 +140,7 @@ type mcp_tool        # RAG custom MCP tools (PUT /v1/mcp/custom-tools/<id>),
                      # distinct from the existing tool:<id> used by AgentGateway
 ```
 
-Both expose `manager: [user, service_account, team#admin, organization#admin]` so org admins are an explicit edge on the model — not just a runtime bypass. `buildDataSourceRelationshipTupleDiff` and `buildMcpToolRelationshipTupleDiff` (in `ui/src/lib/rbac/openfga-owned-resources.ts`) emit the same shared-teams diff that PR 3 introduced for `knowledge_base`. `mcp_tool` additionally emits the `user` relation on member tuples so team members get `can_call` (mirrors how `mcp_server` invokers are modelled).
+Both expose `manager: [user, service_account, team#member, team#admin, organization#admin]` so org admins are an explicit edge on the model — not just a runtime bypass. `buildDataSourceRelationshipTupleDiff` and `buildMcpToolRelationshipTupleDiff` (in `ui/src/lib/rbac/openfga-owned-resources.ts`) emit the same shared-teams diff that PR 3 introduced for `knowledge_base`, with the owner team's `manager` grant written to `team#member` (not `team#admin`) via the `ownerTeamManagerViaMember` opt-in — any owner-team member can manage, not just its admins. `mcp_tool` additionally emits the `user` relation on member tuples so team members get `can_call` (mirrors how `mcp_server` invokers are modelled).
 
 The BFF (`ui/src/app/api/rag/[...path]/route.ts`) now writes `mcp_tool:<tool_id>` tuples on a successful `PUT /v1/mcp/custom-tools/<tool_id>` (sourcing the owner team slug from the request body) and filters the `GET /v1/mcp/custom-tools` response by `mcp_tool:<id>#can_read`. Org admins bypass via the PR 1 super-grant; non-admins only see tools they have a tuple on.
 
@@ -495,7 +501,18 @@ email claim. New relationship writers should prefer Keycloak `sub` values.
 The UI auth middleware also persists the verified Keycloak subject into
 MongoDB `users.keycloak_sub` and `users.metadata.keycloak_sub` during session or
 bearer authentication. This gives migrations and admin tooling a durable
-email-to-sub mapping without depending on transient session cookies.
+email-to-sub mapping without depending on transient session cookies. It also
+reconciles conversation owner identity (see above) as part of the same write.
+Because Bearer/service-account callers re-authenticate the same static token
+on every request — with no cookie-based session cache to skip the call
+outright — this persistence is debounced per Keycloak subject + email:
+concurrent or repeated calls for the same identity within a short window
+(10s) share one in-flight write instead of each re-issuing the
+`users.updateOne` and conversation-owner-identity `updateMany`. Without this,
+a burst of concurrent requests from one service-account identity (e.g. a
+smoke-test suite opening several conversations in parallel) can trigger
+MongoDB write contention (`Concurrent operations on the same resource`) that
+starves the event loop long enough to time out unrelated PDP decision calls.
 
 For browser sessions, the Web UI backend forwards the Keycloak access token to
 Dynamic Agents when it is present so the runtime can bind
@@ -532,11 +549,171 @@ denies, and PDP-unavailable failures alongside admin ReBAC graph/check actions.
 The Admin UI's RBAC Audit type filter uses `All` as a literal unfiltered view
 over audit-service events; selecting a specific type narrows the result to
 `auth`, `openfga_rebac`, `tool_action`, or `agent_delegation`. The AgentGateway
-`openfga-authz-bridge` also posts each external `ext_authz` decision through the
+`openfga-authz-bridge` also posts external `ext_authz` decisions through the
 same audit-service write path with `source=openfga_authz_bridge`, so
 gateway-level OpenFGA allow/deny/error decisions appear without a trace backend.
-`audit-service` is the audit owner; UI, Dynamic Agents, and bridge processes are
-producers only.
+The RAG server's own datasource/tool/search/org-admin/publication-approve
+OpenFGA checks (`server/rbac.py::_openfga_check_object`) post through the same
+write path with `source=rag_server` and `component=rag_server`.
+`audit-service` is the audit owner; UI, Dynamic Agents, the bridge, and the RAG
+server are producers only.
+
+:::warning Adding a field to an audit event
+`audit-service` stores unknown fields (`extra="allow"`, plus the full record in
+the Parquet `record_json` column), but the read path does **not** pass them
+through automatically: `documentToEvent` in
+`ui/src/app/api/admin/audit-events/route.ts` is an explicit whitelist, and
+`UnifiedAuditEvent` in `ui/src/lib/rbac/types.ts` types it. A field missing from
+both is written and stored but silently absent from the Admin UI and from
+downloaded evidence. Add new fields to both.
+:::
+
+#### Allow aggregation
+
+Decision volume tracks request count, not policy activity: a single MCP
+`tools/call` fans out into several `ext_authz` checks (coarse gateway gate,
+per-server invoke, per-tool, caller-keyed), and the BFF authorizes on
+effectively every request. Storing one durable row per decision therefore costs
+storage and query time without adding review signal.
+
+| Event | Stored | Rationale |
+|---|---|---|
+| Denials (`outcome=deny`), including `DENY_PDP_UNAVAILABLE` | Per decision | Rare, and the signal reviewers act on |
+| Policy/admin changes (`cas_grant`, `cas_reconcile`, ReBAC edits) | Per event | Compliance record of who changed what |
+| Routine allows | Periodic aggregate | Counted in memory, flushed as one row per distinct subject/action/resource/reason |
+| Bulk evaluation (`authorizeMany`) | One row per call | A list filter, not an access attempt — see below |
+
+Aggregate rows carry `count` (decisions summarized), `window_start`, and
+`window_end`, and a `correlation_id` prefixed `rollup:` — they summarize many
+requests, so no single request id applies. **Consumers must sum `count` rather
+than count rows**; a row without `count` is one decision.
+
+#### Bulk evaluation vs. access attempt
+
+`authorizeMany` answers "which of these N resources may the subject touch" —
+how every resource list in the UI is rendered. Auditing that per-resource made
+volume scale with catalog size, not with activity: one agents-list render
+evaluates `manage`+`write`+`discover` across the whole catalog, so N agents
+produced **3N** rows, and the denials in them only ever said "this user does
+not have that agent".
+
+It is audited as one row carrying `batch: true`:
+
+| Field | Meaning |
+|---|---|
+| `evaluated_count` | Resources the filter evaluated |
+| `allowed_count` / `denied_count` | How many resolved each way |
+| `allowed_ids` | The accessible ids (capped; `allowed_truncated` marks a capped list) |
+| `denied_reasons` | Denial reason → count, so `AUTHZ_UNAVAILABLE` stays visible |
+| `resource_ref` | The evaluated collection (`agent:*`) — no single resource applies |
+
+`outcome` describes the filter, not any one resource: `deny` only when nothing
+was accessible. **Consumers must read `allowed_count`/`denied_count` rather
+than attributing the row to `outcome`** — counting a filter over 500 resources
+as one decision undercounts, and the old per-id rows overcounted it as 498
+policy denials, which is what made the deny-rate metric meaningless.
+
+A single access decision is never folded into this: those go through
+`authorize`/`authorizeOrThrow` and keep their own row. That is the line the
+split rests on — bulk evaluation summarizes, a real attempt does not.
+
+Bulk-evaluation denials are deliberately excluded from `topDenied` in
+`/api/admin/authz/stats`: a filter's `resource_ref` is the collection, so they
+would crowd out the per-resource denials that indicate an actual access problem.
+
+#### Reverse lookup: `listAccessible` vs. `authorizeMany`
+
+`authorizeMany` still checks every candidate — one PDP round-trip per id
+(bounded-parallel, so cheap for a small set), collapsed into a single audit
+row. For `filterResourcesByPermission`'s and `filterAccessibleWorkflowConfigs`'s
+own core use — filtering the **whole catalog** (agents, MCP servers, workflow
+configs) down to what one subject can see, before pagination — that meant
+OpenFGA load scaled with catalog size on every page load, not just audit
+volume: rendering the agents list checked every agent in the org, every time,
+regardless of how many the subject could actually see.
+
+`listAccessible` asks the PDP once for the subject's *whole* accessible set of
+a type (`PolicyEngine.listObjects`, OpenFGA's `list-objects`) and intersects it
+with the candidate list in memory — one PDP call regardless of catalog size.
+Audited as one row carrying `list_objects: true` (same `evaluated_count` /
+`allowed_count` / `denied_count` / `allowed_ids` shape as a `batch` row, so
+`/api/admin/authz/stats` reads both identically); `denied_reasons` is always a
+single `NO_CAPABILITY` (or `AUTHZ_UNAVAILABLE`) bucket, since a reverse lookup
+has no per-candidate reason to report.
+
+**Only correct where the relation is a pure relationship-graph computation** —
+no `condition`s, no contextual tuples the caller would need to pass, and no
+product-policy `preCheck` (see `PolicyEngine.listObjects`'s doc comment and
+`compose()`'s `listObjects` passthrough). Verified against `deploy/openfga/model.fga`
+for `agent`, `mcp_server`, and `task` before this was wired in. **Org admins are
+unaffected either way**: both functions check the `organization#manage`
+org-admin bypass *before* reaching either `authorizeMany` or `listAccessible`,
+so admins always see the full catalog regardless of which one is used.
+
+**`listAccessible` self-selects the strategy — callers don't have to.**
+`filterResourcesByPermission` is shared by both true pre-pagination catalog
+scans (agents, MCP servers) *and* callers with an already-small candidate list
+(a single-id lookup by `?id=`, or a page already sliced before the filter
+runs, e.g. `llm-models`). A reverse expansion of the subject's whole accessible
+set is not guaranteed to be cheaper than a few direct checks — for a
+broadly-authorized subject it can cost more. Below
+`LIST_OBJECTS_MIN_CANDIDATES` (default 100 — the API's own hard cap on
+`page_size`, so every already-paginated or single-item caller stays under it
+by construction), `listAccessible` delegates to `authorizeMany`'s per-candidate
+batch instead of calling `listObjects` at all; only a candidate list larger
+than one page — an actual catalog scan — crosses the threshold. This is a
+runtime decision inside `listAccessible` itself, not something each call site
+has to opt into.
+
+**Not migrated — never routed through `listAccessible`, structurally:**
+
+- `resolveAgentListPermissions` / `resolveMcpServerListPermissions` — call
+  `authorizeMany` directly, not through `filterResourcesByPermission`. Already
+  bounded to a page (~20–50 ids) by the caller; no reason to route them
+  through the threshold check at all.
+- `POST /api/authz/v1/decisions/batch` — an external caller supplies up to
+  200 arbitrary ids per call (`MAX_IDS`). Unlike the catalog-scan case, there
+  is no guarantee the accessible set is small relative to the candidate list,
+  so the efficiency trade is unclear without production measurement. Left on
+  `authorizeMany`.
+
+:::warning listObjectsCache must stay invalidated alongside decisionCache
+Both caches must be cleared together on every relationship-graph mutation, or
+a revoked catalog permission can be served stale (or a newly-granted one
+withheld) for up to the read-cache TTL — a real regression, not just a
+missed optimization, since `filterResourcesByPermission` used to reflect a
+grant/revoke immediately via `decisionCache`. `invalidateDecisionCache()` in
+`engines/openfga.ts` is the **only** place that should ever clear either
+cache; `grant`/`revoke` and `reconcile.ts`'s tuple-diff writes all route
+through it precisely so the two caches can't drift apart again. Reaching for
+`decisionCache.clear()` directly anywhere else is how this regression
+happened the first time.
+:::
+
+Counts live in process memory, so a restart can drop an unflushed window. That
+undercounts an allow metric and never loses a denial or a policy change. The
+bridge flushes on `SIGTERM` to narrow the gap.
+
+Set `AUDIT_FULL_FIDELITY_ALLOWS=true` (bridge: `audit.fullFidelityAllows`) to
+store one row per allow for a bounded investigation or compliance window.
+Aggregation resumes when it is turned back off. `AUDIT_ALLOW_ROLLUP_FLUSH_SECONDS`
+(bridge) and `AUDIT_ALLOW_ROLLUP_FLUSH_MS` (BFF) tune the flush interval: longer
+means fewer rows and a longer lag before allows appear.
+
+**RAG server** (`ai_platform_engineering/knowledge_bases/rag/server/src/server/audit.py`)
+groups differently: one question can fan out into several RAG tool calls
+(search, then a handful of `get_full_doc` calls, etc.), each its own OpenFGA
+decision on a *different* resource. There is no session/turn id threaded
+through the MCP tool-call path to group by, and an MCP session — if used —
+would span an entire connection, not one question, so grouping by session id
+would over-group. Instead, allows are grouped **by subject** over a short
+time window (`AUDIT_RAG_ROLLUP_FLUSH_SECONDS`, default 10s): every distinct
+resource an allowed subject touches in the window lands in one event's
+`resources` list (each entry: `action`, `resource_ref`, `count`), rather than
+one row per decision. `resource_ref` on that row is a comma-joined summary
+for consumers that only read the single-string field; `resources` is
+authoritative. Denials and PDP-unavailable errors are still written
+per-decision, immediately, same as the bridge.
 
 ### Personal DM Experience — Phase 2 (spec 2026-05-24)
 
@@ -588,6 +765,24 @@ still gets a useful response. Both surfaces are rate-limited per user
 `WEBEX_COMMAND_RATE_LIMIT`) and reply ephemerally (Slack
 `response_type=ephemeral`; Webex DMs the issuer in group spaces, replies
 inline in 1:1).
+
+### Ingestion Credential Retrieval
+
+`POST /api/credentials/retrieve` verifies the bearer JWT and checks credential
+`use` permission before decrypting. Requests carrying browser metadata or cookies
+are rejected. Ingestion's `internal_service` fallback requires all of:
+
+- A verified service-account session with a nonempty subject.
+- A signed `azp` claim matching both Keycloak's `service-account-<clientId>`
+  username and the existing `KEYCLOAK_RESOURCE_SERVER_ID` platform client.
+- A saved ingestion source referencing the credential, or an unexpired preview
+  grant recorded after the initiating caller passed credential `use` authorization.
+
+The bearer middleware preserves this verified client identity as
+`session.serviceAccountClientId`. Request headers and `intended_use` cannot grant
+access. Other service accounts require direct credential permission, and policy
+service failures deny retrieval. `RAG_INGESTOR_SERVICE_ACCOUNTS` scopes source
+polling/status APIs; credential retrieval requires no subject allow-list.
 
 ### Credential Exchange Authorization
 
@@ -1003,7 +1198,8 @@ Webex space ReBAC follows the same team-ownership shape with Webex-specific type
 of truth, while `webex_space_agent_routes` stores dependent dispatch metadata
 such as listen mode, priority, and enabled state. Team-space assignment writes
 `team:<slug>#member user webex_space:<workspace>--<space>` and
-`team:<slug>#admin manager webex_space:<workspace>--<space>`, and per-space
+`team:<slug>#member manager webex_space:<workspace>--<space>` (any owner-team
+member can manage, not just its admins), and per-space
 grant/route/diagnostic APIs check the derived Webex space permissions. The top-level
 Webex space list is also resource-scoped, and the Integrations → Webex tab appears
 for non-admin users who can manage at least one concrete `webex_space`. The Webex bot never trusts
@@ -1043,7 +1239,7 @@ grants, rolls back on failure, and never overwrites an existing active space
 mapping. The onboarding writer
 (`webex-space-onboarding.ts`) also emits the inbound
 `team:<slug>#member user webex_space:<workspace>--<space>` and
-`team:<slug>#admin manager webex_space:<workspace>--<space>` visibility tuples
+`team:<slug>#member manager webex_space:<workspace>--<space>` visibility tuples
 so the space surfaces in `/api/admin/webex/spaces` (which filters each row by
 `can_read`). Previously-onboarded spaces are backfilled by the same
 `messaging_team_visibility_v1` migration that handles Slack channels — both
@@ -1077,6 +1273,9 @@ Legacy Keycloak realm roles may still appear in old local data, but they are not
 | `GITHUB_PERSONAL_ACCESS_TOKEN` / `GITLAB_PERSONAL_ACCESS_TOKEN` (on **Dynamic Agents**) | Static org-PAT fallback read via `MCPCredentialSource.fallback_env` when a caller has not connected their personal GitHub/GitLab account                            | Keeps GitHub/GitLab tools backward compatible for unconnected callers. The PAT now lives only on Dynamic Agents (no longer a gateway `backendAuth` key); connected users always get their own OAuth token instead. Source from runtime secrets.   |
 | `AUDIT_SERVICE_URL`                                           | Enables Python and TypeScript audit writers, including Dynamic Agents and `openfga-authz-bridge`, to emit durable `openfga_rebac` rows to audit-service             | Point services at the in-cluster or compose `audit-service`; configure local/S3 storage on audit-service itself.                                                                                                                                |
 | `AUDIT_SERVICE_BACKEND` / `AUDIT_SERVICE_LOCAL_RETENTION_DAYS` | Selects the audit-service storage backend (`local` or `s3`) and controls local-disk retention                                                                       | `local` is the default backend. Local storage keeps `1` day by default and purges expired files on startup and periodically; S3 retention should be managed with bucket lifecycle policy.                                                        |
+| `AUDIT_FULL_FIDELITY_ALLOWS`                                  | Stores one durable event per allowed decision instead of periodic aggregate counts. Denials and policy changes are always per-event                                  | Off by default. Turn on only for a bounded investigation or compliance window — a single MCP `tools/call` fans out into several checks, so volume tracks request count. See [Allow aggregation](#allow-aggregation).                              |
+| `AUDIT_ALLOW_ROLLUP_FLUSH_SECONDS` (bridge) / `AUDIT_ALLOW_ROLLUP_FLUSH_MS` (BFF) | How often accumulated allow counts are flushed as aggregate rows                                                                  | Defaults to 60s. Longer means fewer rows and a longer lag before allows appear; unflushed counts are lost on restart (denials are never affected).                                                                                              |
+| `AUDIT_RAG_ROLLUP_FLUSH_SECONDS`                              | How often the RAG server's per-subject allow rollup (grouping every resource one subject touched, not one row per decision) is flushed | Defaults to 10s — short enough that one question's search + follow-up calls land together, long enough to actually collapse a burst. See [Allow aggregation](#allow-aggregation).                                                             |
 | `SLACK_AGENT_ROUTES_MODE`                                     | Slack bot route source: `db_prefer` (default; prefer OpenFGA-backed UI-managed channel-agent routes, fall back to static config), `config`, or `db_only`             | `db_prefer` and `db_only` require OpenFGA access; MongoDB is used only to enrich tuple-backed routes with listen/priority metadata. Use `config` only for static-only environments that should ignore UI-managed channel routes.                  |
 | `SLACK_INTEGRATION_SILENCE_ENV`                               | Initial setup switch that makes the Slack bot ignore inbound payloads before handlers can send user-visible Slack responses                                           | Use only during bootstrap or broken-route setup windows. Admin/runtime diagnostics remain the place to inspect OpenFGA route health while end-user channel noise is suppressed.                                                                  |
 | `SLACK_WORKSPACE_ALIAS`                                       | Canonical Slack workspace namespace used by the Web UI backend, Slack bot, Mongo route/grant rows, and OpenFGA `slack_channel:<alias>--<channel_id>` subjects      | Configure per deployment (for example, `CAIPE` or `Splunk`). The Slack bot maps incoming Slack `team_id` values to this alias before route and ReBAC lookups.                                                                                       |
@@ -1155,11 +1354,12 @@ bridge also requires a signed `X-CAIPE-Agent-Context` header so it can enforce
 per-agent tool allowlists (`agent:<id> can_call tool:<server>/<tool>`). See
 [Agent context HMAC](./agent-context-hmac.md).
 
-For observability and compliance, the bridge also writes a best-effort
-`openfga_rebac` event to audit-service for every terminal
-authorization result: missing subject, OpenFGA allow, OpenFGA deny, and
-OpenFGA unavailable. These writes never affect the allow/deny response returned
-to AgentGateway.
+For observability and compliance, the bridge also writes best-effort
+`openfga_rebac` events to audit-service for terminal authorization results:
+missing subject, OpenFGA allow, OpenFGA deny, and OpenFGA unavailable. Denials
+are written per decision; routine allows are aggregated into periodic counts
+(see [Allow aggregation](#allow-aggregation)). These writes never affect the
+allow/deny response returned to AgentGateway.
 
 ### ext_authz Timeout
 

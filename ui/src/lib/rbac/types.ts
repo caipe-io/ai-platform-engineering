@@ -202,6 +202,43 @@ export interface UnifiedAuditEvent {
   writes?: number;
   /** CAS reconcile: tuple removals actually applied by OpenFGA. */
   deletes?: number;
+  /**
+   * Decisions summarized by this row. Present only on aggregated allow rollups
+   * (routine allows are counted rather than stored per-decision); absent means
+   * one decision. Denials are never aggregated.
+   */
+  count?: number;
+  /** Aggregated allow rollup: start of the summarized window. */
+  window_start?: string;
+  /** Aggregated allow rollup: end of the summarized window. */
+  window_end?: string;
+  /** RAG per-subject rollup: every distinct resource touched in the window. */
+  resources?: Array<{ action?: string; resource_ref?: string; count?: number }>;
+  /**
+   * True when this row summarizes one bulk evaluation (a list filter) rather
+   * than a single access decision. The per-resource outcome is in the counts
+   * below, not in `outcome`.
+   */
+  batch?: boolean;
+  /**
+   * True when this row is a list-objects reverse lookup rather than N
+   * per-candidate checks (`batch`) or a single decision. No per-candidate
+   * decision was made at all — the counts below describe an intersection
+   * with the PDP's returned accessible set, not N evaluated outcomes.
+   */
+  list_objects?: boolean;
+  /** Bulk evaluation: resources evaluated by the filter. */
+  evaluated_count?: number;
+  /** Bulk evaluation: how many were accessible. */
+  allowed_count?: number;
+  /** Bulk evaluation: how many were not. */
+  denied_count?: number;
+  /** Bulk evaluation: the accessible ids, capped — see `allowed_truncated`. */
+  allowed_ids?: string[];
+  /** True when `allowed_ids` was capped and does not list every id. */
+  allowed_truncated?: boolean;
+  /** Bulk evaluation: denial reason → count. */
+  denied_reasons?: Record<string, number>;
 }
 
 /** Admin dashboard tab keys for RBAC-based visibility */

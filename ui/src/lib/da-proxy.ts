@@ -62,6 +62,30 @@ export interface ProxyRbacPermission {
 }
 
 /**
+ * Builds the base64-encoded ``X-User-Context`` header DA requires on every
+ * proxied request. DA doesn't parse the flag fields — they pass through via
+ * ``extra="allow"`` on UserContext and are available to the ``user_info`` tool.
+ */
+export function buildUserContextHeader(input: {
+  email?: string | null;
+  name?: string | null;
+  role?: string;
+  isAuthorized?: boolean;
+  canViewAdmin?: boolean;
+  canAccessDynamicAgents?: boolean;
+}): string {
+  const userContext = {
+    email: input.email ?? null,
+    name: input.name ?? null,
+    is_admin: input.role === "admin",
+    is_authorized: input.isAuthorized ?? true,
+    can_view_admin: input.canViewAdmin ?? false,
+    can_access_dynamic_agents: input.canAccessDynamicAgents ?? false,
+  };
+  return Buffer.from(JSON.stringify(userContext)).toString("base64");
+}
+
+/**
  * Resolve user identity from the request (session cookie or Bearer token).
  *
  * If the caller is authenticated, builds a base64-encoded ``X-User-Context``
@@ -96,20 +120,15 @@ export async function authenticateRequest(
       `[gateway] ${method} ${path} — auth=${authMethod} user=${user.email} role=${user.role} client=${clientSource} ip=${ip} ua=${ua}`,
     );
 
-    // Build X-User-Context from pre-computed authorization flags.
-    // DA doesn't parse these — they pass through via extra="allow"
-    // on UserContext and are available to the user_info tool.
     const s = session as Record<string, unknown>;
-    const userContext = {
+    const encoded = buildUserContextHeader({
       email: user.email,
       name: user.name ?? null,
-      is_admin: user.role === "admin",
-      is_authorized: (s?.isAuthorized as boolean) ?? true,
-      can_view_admin: (s?.canViewAdmin as boolean) ?? false,
-      can_access_dynamic_agents: (s?.canAccessDynamicAgents as boolean) ?? false,
-    };
-
-    const encoded = Buffer.from(JSON.stringify(userContext)).toString("base64");
+      role: user.role,
+      isAuthorized: s?.isAuthorized as boolean | undefined,
+      canViewAdmin: s?.canViewAdmin as boolean | undefined,
+      canAccessDynamicAgents: s?.canAccessDynamicAgents as boolean | undefined,
+    });
     const bearerToken = (s?.accessToken as string | undefined) || undefined;
     const subject = (s?.sub as string | undefined) || user.email;
     const tenantId = (s?.org as string | undefined) || "default";

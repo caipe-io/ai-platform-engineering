@@ -124,6 +124,18 @@ jobs:
           --set openfga-authz-bridge.tokenValidation.audiences[0]=agentgateway \
           --set openfga-authz-bridge.tokenValidation.audiences[1]=caipe-platform
 
+    - name: Test OpenFGA bridge private registry credentials
+      run: |
+        cd charts/ai-platform-engineering
+        rendered=$(helm template test-bridge-pull-secret . \
+          --set openfgaAuthzBridge.enabled=true \
+          --set 'openfga-authz-bridge.imagePullSecrets[0].name=example-registry-pull' \
+          --show-only charts/openfga-authz-bridge/templates/deployment.yaml)
+        echo "$rendered" | grep -q 'imagePullSecrets:' \
+          || { echo "ERROR: bridge imagePullSecrets block was not rendered" >&2; exit 1; }
+        echo "$rendered" | grep -q 'name: example-registry-pull' \
+          || { echo "ERROR: bridge pull secret name was not rendered" >&2; exit 1; }
+
     - name: Test ai-platform-engineering installation (dry-run) - AgentGateway static routing (CRD-free, default)
       run: |
         cd charts/ai-platform-engineering

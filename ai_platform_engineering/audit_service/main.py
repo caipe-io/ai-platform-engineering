@@ -194,6 +194,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/readyz")
     async def readyz(request: Request) -> dict[str, Any]:
         service: AuditQueueService = request.app.state.audit_queue
+        if service.is_stopping:
+            # Fail readiness the instant shutdown starts, not only once the
+            # drain finishes — Service endpoint removal is what actually stops
+            # new traffic, and that only happens once the probe fails.
+            raise HTTPException(status_code=503, detail="audit-service is shutting down")
         try:
             service.store.readiness_check()
         except Exception:  # noqa: BLE001

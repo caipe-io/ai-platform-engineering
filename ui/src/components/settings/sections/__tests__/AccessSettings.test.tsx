@@ -5,8 +5,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 let mockSearchParams = new URLSearchParams();
+const mockPush = jest.fn();
 
 jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
   useSearchParams: () => mockSearchParams,
 }));
 
@@ -67,7 +69,8 @@ describe("AccessSettings", () => {
     render(<AccessSettings />);
 
     expect(await screen.findByText("Webex account: Not linked")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Link Webex account" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Link Webex account" }));
+    expect(mockPush).toHaveBeenCalledWith("/api/auth/webex-link/start");
   });
 
   it("shows a Relink button and Linked status when already linked", async () => {

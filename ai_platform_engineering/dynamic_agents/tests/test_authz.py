@@ -333,4 +333,4 @@ async def test_invalid_agent_id_returns_400_without_calling_cas(monkeypatch):
     finally:
         current_user_token.reset(token_ref)
     assert exc.value.status_code == 400
-    assert exc.value.detail["code"] == "invalid_agent_id"
+    assert exc.value.detail["code"] == "invalid_resource_id"

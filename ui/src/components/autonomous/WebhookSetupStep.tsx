@@ -18,6 +18,35 @@ const PROVIDER_LABELS: Record<string, string> = {
   pagerduty: "PagerDuty",
 };
 
+export function WebhookPayloadNotice({ provider }: { provider: string }) {
+  return (
+    <div
+      role="note"
+      aria-label="Webhook payload requirement"
+      className="space-y-1 rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-xs text-foreground"
+    >
+      <p className="font-medium">Required for all webhook providers: JSON payloads</p>
+      <p>
+        Send webhook requests as <code>application/json</code>. Form-encoded payloads
+        (<code>application/x-www-form-urlencoded</code>) cannot be read by this
+        receiver, so payload filters will not match.
+      </p>
+      {provider === "github" && (
+        <p>
+          In GitHub → repository Settings → Webhooks → your webhook, set Content type
+          to <code>application/json</code> and save.
+        </p>
+      )}
+      <p>
+        A provider showing “delivered” confirms receipt, not an agent run. Check
+        the delivery response: <code>status: accepted</code>
+        {" "}includes a run ID; <code>reason: filter_mismatch</code> means no run was
+        created. After correcting the content type, trigger a new event to test.
+      </p>
+    </div>
+  );
+}
+
 function CopyValue({
   label,
   value,
@@ -91,7 +120,7 @@ function ProviderInstructions({ provider }: { provider: string }) {
           Open the repository’s Settings → Webhooks and select Add webhook.
         </li>
         <li>
-          Use the URL below as the Payload URL and select application/json.
+          Use the URL below as the Payload URL and set Content type to application/json.
         </li>
         <li>Copy the signing secret below into GitHub’s Secret field.</li>
         <li>
@@ -196,7 +225,15 @@ export function WebhookSetupStep({
         Task created. Finish the {providerLabel} webhook setup below.
       </div>
 
+      <div className="rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-xs text-foreground">
+        Webhook deliveries appear under Chat → Autonomous Runs → Webhook Runs.
+        This is a read-only history with independent context for each run.
+        Select “Continue this run” on any result to open a separate manual
+        follow-up chat without changing the automated history.
+      </div>
+
       <ProviderInstructions provider={provider} />
+      <WebhookPayloadNotice provider={provider} />
       <CopyValue label="Webhook URL" value={webhookUrl} />
 
       {!providerIssuesSecret && generatedSecret && (

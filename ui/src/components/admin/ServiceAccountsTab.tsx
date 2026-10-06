@@ -39,6 +39,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
+import { fetchCollectionMemberDatasourceIds } from "@/lib/rag-collections-client";
+import { labelledGrantOptions, type GrantableItem } from "@/lib/grantable-options";
 import { TeamPicker, type TeamPickerOption } from "@/components/ui/team-picker";
 import {
   ProviderSelect,
@@ -52,6 +55,11 @@ import { getProviderDisplayName } from "@/lib/credentials/provider-display-names
 
 // Matches the BFF default (`page_size` defaults to 24 server-side too).
 const PAGE_SIZE = 24;
+// Mirrors MAX_SCOPES in /api/admin/service-accounts/route.ts: the create
+// endpoint only accepts this many scopes per request body.
+const MAX_CREATE_SCOPES = 500;
+// Mirrors MAX_BULK_SCOPES in /api/admin/service-accounts/[id]/scopes/bulk/route.ts.
+const MAX_BULK_SCOPES = 1000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types (mirror the BFF contract; never include secret material on list/detail)
@@ -72,11 +80,6 @@ interface ServiceAccountListItem {
     datasources: number;
     collections: number;
   };
-}
-
-interface GrantableItem {
-  ref: string;
-  name: string;
 }
 
 interface GrantableData {
@@ -100,37 +103,6 @@ function normalizeGrantableData(
 interface ScopeRef {
   type: "agent" | "tool" | "datasource" | "collection";
   ref: string;
-}
-
-interface KnowledgeGrantOption extends ScopeRef {
-  label: string;
-}
-
-function knowledgeGrantOptions(
-  collections: GrantableItem[],
-  datasources: GrantableItem[],
-): KnowledgeGrantOption[] {
-  const candidates = [
-    ...collections.map((item) => ({
-      type: "collection" as const,
-      ref: item.ref,
-      baseLabel: `Collection: ${item.name}`,
-    })),
-    ...datasources.map((item) => ({
-      type: "datasource" as const,
-      ref: item.ref,
-      baseLabel: `Datasource: ${item.name}`,
-    })),
-  ];
-  const counts = new Map<string, number>();
-  for (const item of candidates) {
-    counts.set(item.baseLabel, (counts.get(item.baseLabel) ?? 0) + 1);
-  }
-  return candidates.map(({ type, ref, baseLabel }) => ({
-    type,
-    ref,
-    label: counts.get(baseLabel) === 1 ? baseLabel : `${baseLabel} (${ref})`,
-  }));
 }
 
 interface CreatedCredential {
@@ -188,6 +160,9 @@ export function ServiceAccountsTab({
   const [createOpen, setCreateOpen] = useState(false);
   const [credential, setCredential] = useState<CreatedCredential | null>(null);
   const [createdName, setCreatedName] = useState<string>("");
+  const [credentialWarning, setCredentialWarning] = useState<string | null>(
+    null,
+  );
   const [manageId, setManageId] = useState<string | null>(null);
 
   const [searchDraft, setSearchDraft] = useState("");
@@ -251,10 +226,11 @@ export function ServiceAccountsTab({
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const handleCreated = useCallback(
-    (cred: CreatedCredential, name: string) => {
+    (cred: CreatedCredential, name: string, warning?: string) => {
       setCreateOpen(false);
       setCredential(cred);
       setCreatedName(name);
+      setCredentialWarning(warning ?? null);
       void loadList(true);
     },
     [loadList],
@@ -434,7 +410,11 @@ export function ServiceAccountsTab({
             key={credential?.client_id ?? "no-credential"}
             credential={credential}
             name={createdName}
-            onClose={() => setCredential(null)}
+            warning={credentialWarning}
+            onClose={() => {
+              setCredential(null);
+              setCredentialWarning(null);
+            }}
           />
         </>
       )}
@@ -541,6 +521,139 @@ function StatusBadge({ status }: { status: "active" | "revoked" }) {
 // Create dialog
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface BulkScopesCallResult {
+  ok: boolean;
+  body: { success?: boolean; error?: string; data?: unknown };
+}
+
+/**
+ * POST a batch of scopes to `/scopes/bulk`. Shared by the edit-modal add-scope
+ * flow (`addScope`) and `createServiceAccountBatched`'s overflow attach —
+ * both already hold state they can't afford to lose (an existing SA's scopes,
+ * or a just-issued one-time credential), so a thrown fetch (network blip,
+ * timeout) degrades to the same `{ok: false}` shape as a bad response instead
+ * of propagating as an unhandled rejection.
+ */
+async function postScopesBulk(
+  saId: string,
+  scopes: ScopeRef[],
+): Promise<BulkScopesCallResult> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `/api/admin/service-accounts/${encodeURIComponent(saId)}/scopes/bulk`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scopes }),
+      },
+    );
+  } catch {
+    return { ok: false, body: { success: false } };
+  }
+  const body = await res.json().catch(() => ({ success: false }));
+  return { ok: res.ok, body };
+}
+
+export interface CreateServiceAccountBatchedResult {
+  success: boolean;
+  credential?: CreatedCredential;
+  name?: string;
+  /** Set when some scopes beyond the first batch failed to attach. */
+  warning?: string;
+  error?: string;
+  /** Set on a 403 with rejected_scopes — refs the caller doesn't hold. */
+  rejectedScopeRefs?: string[];
+}
+
+const WARNING_REFS_SHOWN = 10;
+
+/**
+ * Create a service account whose selected scopes may exceed what the create
+ * endpoint accepts in one request (MAX_CREATE_SCOPES, mirrored server-side as
+ * MAX_SCOPES). The first batch is sent in the create body; anything beyond
+ * that is attached afterward via the bulk `/scopes/bulk` endpoint (the same
+ * one the edit/unlinked-SA "add scopes" flow uses) in chunks of
+ * MAX_BULK_SCOPES — a handful of requests instead of one per scope, per the
+ * same "avoid hundreds of round trips" rationale that endpoint exists for.
+ *
+ * Extracted from CreateServiceAccountDialog.submit so this orchestration can
+ * be unit-tested without driving the MultiSelect pickers through the DOM.
+ */
+export async function createServiceAccountBatched({
+  name,
+  description,
+  owningTeamId,
+  scopes,
+  createBatchSize = MAX_CREATE_SCOPES,
+  bulkBatchSize = MAX_BULK_SCOPES,
+}: {
+  name: string;
+  description?: string;
+  owningTeamId: string;
+  scopes: ScopeRef[];
+  createBatchSize?: number;
+  bulkBatchSize?: number;
+}): Promise<CreateServiceAccountBatchedResult> {
+  const firstBatch = scopes.slice(0, createBatchSize);
+  const remaining = scopes.slice(createBatchSize);
+
+  const res = await fetch("/api/admin/service-accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      description,
+      owning_team_id: owningTeamId,
+      scopes: firstBatch,
+    }),
+  });
+  const body = await res.json();
+  if (!res.ok || !body.success) {
+    return {
+      success: false,
+      error: body.error || "Failed to create service account.",
+      rejectedScopeRefs:
+        res.status === 403 && body.data?.rejected_scopes?.length
+          ? body.data.rejected_scopes.map((s: { ref: string }) => s.ref)
+          : undefined,
+    };
+  }
+
+  let warning: string | undefined;
+  if (remaining.length > 0) {
+    const saId = body.data.id as string;
+    // Bulk writes are atomic per chunk (see .../scopes/bulk/route.ts): if any
+    // scope in a chunk isn't held, the WHOLE chunk is rejected together, so
+    // there's no per-scope split within a failed chunk to report — every ref
+    // in that chunk genuinely didn't get attached.
+    const failedRefs: ScopeRef[] = [];
+    for (let i = 0; i < remaining.length; i += bulkBatchSize) {
+      const chunk = remaining.slice(i, i + bulkBatchSize);
+      const { ok, body: bulkBody } = await postScopesBulk(saId, chunk);
+      if (!ok || !bulkBody.success) failedRefs.push(...chunk);
+    }
+    if (failedRefs.length > 0) {
+      const shown = failedRefs
+        .slice(0, WARNING_REFS_SHOWN)
+        .map((s) => s.ref)
+        .join(", ");
+      const more =
+        failedRefs.length > WARNING_REFS_SHOWN
+          ? ` and ${failedRefs.length - WARNING_REFS_SHOWN} more`
+          : "";
+      warning = `${failedRefs.length} of ${remaining.length} additional scope(s) beyond the first ${createBatchSize} could not be attached (${shown}${more}). Add them from Manage → Scopes.`;
+    }
+  }
+
+  return {
+    success: true,
+    credential: body.data.credential as CreatedCredential,
+    name: body.data.name as string,
+    warning,
+  };
+}
+
 function CreateServiceAccountDialog({
   open,
   onOpenChange,
@@ -548,7 +661,7 @@ function CreateServiceAccountDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (cred: CreatedCredential, name: string) => void;
+  onCreated: (cred: CreatedCredential, name: string, warning?: string) => void;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -568,6 +681,13 @@ function CreateServiceAccountDialog({
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [collectionPickNote, setCollectionPickNote] = useState<string | null>(
+    null,
+  );
+  // Gates the bulk-add picker so two overlapping picks (the popover reopens
+  // instantly after a select) can't both decide the same member id is "not
+  // yet selected" and each add it, producing a duplicate ref.
+  const [addingFromCollection, setAddingFromCollection] = useState(false);
 
   // Reset + load pickers each time the dialog opens.
   useEffect(() => {
@@ -580,6 +700,8 @@ function CreateServiceAccountDialog({
     setSelectedDatasources([]);
     setSelectedCollections([]);
     setFormError(null);
+    setCollectionPickNote(null);
+    setAddingFromCollection(false);
     setGrantableError(false);
     setGrantable({ agents: [], tools: [], datasources: [], collections: [] });
     setLoadingOptions(true);
@@ -624,15 +746,52 @@ function CreateServiceAccountDialog({
   const agentRefToLabel = new Map(grantable.agents.map((a) => [a.ref, a.name]));
   const toolLabelToRef = new Map(grantable.tools.map((t) => [t.name, t.ref]));
   const toolRefToLabel = new Map(grantable.tools.map((t) => [t.ref, t.name]));
-  const knowledgeOptions = knowledgeGrantOptions(
-    grantable.collections,
-    grantable.datasources,
+  const datasourceOptions = labelledGrantOptions(grantable.datasources);
+  const datasourceLabelToRef = new Map(
+    datasourceOptions.map((o) => [o.label, o.ref]),
   );
-  const knowledgeLabelToScope = new Map(
-    knowledgeOptions.map((item) => [item.label, item]),
+  const datasourceRefToLabel = new Map(
+    datasourceOptions.map((o) => [o.ref, o.label]),
   );
-  const knowledgeKeyToLabel = new Map(
-    knowledgeOptions.map((item) => [`${item.type}:${item.ref}`, item.label]),
+  const collectionOptions = labelledGrantOptions(grantable.collections);
+  const collectionLabelToRef = new Map(
+    collectionOptions.map((o) => [o.label, o.ref]),
+  );
+  const collectionRefToLabel = new Map(
+    collectionOptions.map((o) => [o.ref, o.label]),
+  );
+
+  const addDatasourcesFromCollection = useCallback(
+    async (collectionId: string) => {
+      if (addingFromCollection) return;
+      setAddingFromCollection(true);
+      setCollectionPickNote(null);
+      try {
+        const memberIds = await fetchCollectionMemberDatasourceIds(collectionId);
+        const grantableRefs = new Set(grantable.datasources.map((d) => d.ref));
+        const alreadySelected = new Set(selectedDatasources);
+        const addable = memberIds.filter(
+          (id) => grantableRefs.has(id) && !alreadySelected.has(id),
+        );
+        if (addable.length === 0) {
+          setCollectionPickNote(
+            "No datasources you can grant are in that collection.",
+          );
+          return;
+        }
+        setSelectedDatasources((prev) => [...prev, ...addable]);
+        setCollectionPickNote(
+          `Queued ${addable.length} datasource${addable.length === 1 ? "" : "s"} from the collection — they'll be granted when you create the account.`,
+        );
+      } catch (err) {
+        setCollectionPickNote(
+          err instanceof Error ? err.message : "Could not load collection",
+        );
+      } finally {
+        setAddingFromCollection(false);
+      }
+    },
+    [addingFromCollection, grantable.datasources, selectedDatasources],
   );
 
   const submit = useCallback(async () => {
@@ -659,31 +818,26 @@ function CreateServiceAccountDialog({
           ref,
         })),
       ];
-      const res = await fetch("/api/admin/service-accounts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim() || undefined,
-          owning_team_id: owningTeam,
-          scopes,
-        }),
+      const result = await createServiceAccountBatched({
+        name: name.trim(),
+        description: description.trim() || undefined,
+        owningTeamId: owningTeam,
+        scopes,
       });
-      const body = await res.json();
-      if (!res.ok || !body.success) {
-        if (res.status === 403 && body.data?.rejected_scopes?.length) {
-          const refs = body.data.rejected_scopes
-            .map((s: { ref: string }) => s.ref)
-            .join(", ");
-          setFormError(`You cannot grant scopes you do not hold: ${refs}`);
+      if (!result.success) {
+        if (result.rejectedScopeRefs?.length) {
+          setFormError(
+            `You cannot grant scopes you do not hold: ${result.rejectedScopeRefs.join(", ")}`,
+          );
         } else {
-          setFormError(body.error || "Failed to create service account.");
+          setFormError(result.error || "Failed to create service account.");
         }
         return;
       }
       onCreated(
-        body.data.credential as CreatedCredential,
-        body.data.name as string,
+        result.credential as CreatedCredential,
+        result.name as string,
+        result.warning,
       );
     } catch (err) {
       setFormError(
@@ -821,43 +975,85 @@ function CreateServiceAccountDialog({
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm font-medium">RAG Datasources</label>
+              <label className="text-sm font-medium">Datasources</label>
               <MultiSelect
-                options={knowledgeOptions.map((item) => item.label)}
-                selected={[
-                  ...selectedCollections.map((ref) => `collection:${ref}`),
-                  ...selectedDatasources.map((ref) => `datasource:${ref}`),
-                ]
-                  .map((key) => knowledgeKeyToLabel.get(key))
+                options={datasourceOptions.map((o) => o.label)}
+                selected={selectedDatasources
+                  .map((ref) => datasourceRefToLabel.get(ref))
                   .filter((v): v is string => Boolean(v))}
-                onChange={(labels) => {
-                  const selected = labels
-                    .map((label) => knowledgeLabelToScope.get(label))
-                    .filter((value): value is KnowledgeGrantOption =>
-                      Boolean(value),
-                    );
-                  setSelectedCollections(
-                    selected
-                      .filter((item) => item.type === "collection")
-                      .map((item) => item.ref),
-                  );
+                onChange={(labels) =>
                   setSelectedDatasources(
-                    selected
-                      .filter((item) => item.type === "datasource")
-                      .map((item) => item.ref),
-                  );
-                }}
-                placeholder="Grant collections or datasources..."
-                emptyLabel="You hold no RAG knowledge to grant"
-                badgeLabel="knowledge items"
+                    labels
+                      .map((l) => datasourceLabelToRef.get(l))
+                      .filter((v): v is string => Boolean(v)),
+                  )
+                }
+                placeholder="Grant datasources..."
+                emptyLabel="You hold no datasources to grant"
+                badgeLabel="datasources"
+                portalled={false}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Collections</label>
+              <MultiSelect
+                options={collectionOptions.map((o) => o.label)}
+                selected={selectedCollections
+                  .map((ref) => collectionRefToLabel.get(ref))
+                  .filter((v): v is string => Boolean(v))}
+                onChange={(labels) =>
+                  setSelectedCollections(
+                    labels
+                      .map((l) => collectionLabelToRef.get(l))
+                      .filter((v): v is string => Boolean(v)),
+                  )
+                }
+                placeholder="Grant collections..."
+                emptyLabel="You hold no collections to grant"
+                badgeLabel="collections"
                 portalled={false}
               />
               <p className="text-xs text-muted-foreground">
                 A collection grant lets the service account search using that
                 collection as a filter; it does not grant access to its
-                member datasources. Grant datasources directly for content
-                access. The service account can use selected knowledge
-                through direct RAG calls or assigned agents.
+                member datasources. Grant datasources directly, or use
+                &quot;Add datasources from a collection&quot; below, for
+                content access.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">
+                Add datasources from a collection
+              </label>
+              <SearchablePicker
+                options={grantable.collections}
+                selected={undefined}
+                onSelect={(item) => void addDatasourcesFromCollection(item.ref)}
+                getOptionKey={(item) => item.ref}
+                getOptionLabel={(item) => item.name}
+                getSearchText={(item) => [item.ref, item.name]}
+                placeholder="Select a collection to bulk-add its datasources..."
+                searchPlaceholder="Search collections..."
+                emptyLabel="No collections available"
+                ariaLabel="Add datasources from a collection"
+                disabled={
+                  grantable.collections.length === 0 || addingFromCollection
+                }
+                portalled={false}
+                triggerClassName="h-9 w-full text-sm"
+              />
+              {collectionPickNote && (
+                <p className="text-xs text-muted-foreground">
+                  {collectionPickNote}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Queues every datasource in the collection that you can grant
+                into the Datasources list above. This does not add the
+                collection itself — grant it separately above if the service
+                account should also use it as a search filter.
               </p>
             </div>
 
@@ -919,12 +1115,22 @@ function ManageServiceAccountDialog({
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [confirmRotate, setConfirmRotate] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<ScopeRef | null>(null);
+  const [scopeFilter, setScopeFilter] = useState("");
+  // Adding scopes is one bulk call (server batches the check + writes + a
+  // single snapshot refresh — see .../scopes/bulk/route.ts), but a batch of
+  // hundreds can still take a couple of seconds. A visible "Adding N
+  // scopes..." label makes that wait legible from the very first click — a
+  // bare spinner icon is easy to miss at the exact moment Add is clicked.
+  const [addCount, setAddCount] = useState<number | null>(null);
   // Add-scope selection — ref arrays, mirroring the create dialog's grantable
   // pickers (#54: styled MultiSelect, not native <select>).
   const [addAgents, setAddAgents] = useState<string[]>([]);
   const [addTools, setAddTools] = useState<string[]>([]);
   const [addDatasources, setAddDatasources] = useState<string[]>([]);
   const [addCollections, setAddCollections] = useState<string[]>([]);
+  const [collectionPickNote, setCollectionPickNote] = useState<string | null>(
+    null,
+  );
 
   // ── Tokens section state ───────────────────────────────────────────────────
   const [credentials, setCredentials] = useState<ServiceAccountCredential[]>(
@@ -1085,15 +1291,52 @@ function ManageServiceAccountDialog({
   const datasourceNameByRef = new Map(
     grantable.datasources.map((item) => [item.ref, item.name]),
   );
-  const knowledgeOptions = knowledgeGrantOptions(
-    addableCollections,
-    addableDatasources,
+  const addableDatasourceOptions = labelledGrantOptions(addableDatasources);
+  const addDatasourceLabelToRef = new Map(
+    addableDatasourceOptions.map((o) => [o.label, o.ref]),
   );
-  const knowledgeLabelToScope = new Map(
-    knowledgeOptions.map((item) => [item.label, item]),
+  const addDatasourceRefToLabel = new Map(
+    addableDatasourceOptions.map((o) => [o.ref, o.label]),
   );
-  const knowledgeKeyToLabel = new Map(
-    knowledgeOptions.map((item) => [`${item.type}:${item.ref}`, item.label]),
+  const addableCollectionOptions = labelledGrantOptions(addableCollections);
+  const addCollectionLabelToRef = new Map(
+    addableCollectionOptions.map((o) => [o.label, o.ref]),
+  );
+  const addCollectionRefToLabel = new Map(
+    addableCollectionOptions.map((o) => [o.ref, o.label]),
+  );
+
+  const addDatasourcesFromCollection = useCallback(
+    async (collectionId: string) => {
+      if (busy) return;
+      setBusy(true);
+      setCollectionPickNote(null);
+      try {
+        const memberIds = await fetchCollectionMemberDatasourceIds(collectionId);
+        const addableRefs = new Set(addableDatasources.map((d) => d.ref));
+        const alreadyQueued = new Set(addDatasources);
+        const addable = memberIds.filter(
+          (id) => addableRefs.has(id) && !alreadyQueued.has(id),
+        );
+        if (addable.length === 0) {
+          setCollectionPickNote(
+            "No datasources you can grant are in that collection.",
+          );
+          return;
+        }
+        setAddDatasources((prev) => [...prev, ...addable]);
+        setCollectionPickNote(
+          `Queued ${addable.length} datasource${addable.length === 1 ? "" : "s"} from the collection — click Add to apply.`,
+        );
+      } catch (err) {
+        setCollectionPickNote(
+          err instanceof Error ? err.message : "Could not load collection",
+        );
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, addableDatasources, addDatasources],
   );
 
   const addScope = useCallback(async () => {
@@ -1107,26 +1350,22 @@ function ManageServiceAccountDialog({
     if (selected.length === 0) return;
     setBusy(true);
     setError(null);
+    setAddCount(selected.length);
     try {
-      for (const scope of selected) {
-        const res = await fetch(
-          `/api/admin/service-accounts/${encodeURIComponent(saId)}/scopes`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(scope),
-          },
-        );
-        const body = await res.json();
-        if (!res.ok || !body.success) {
-          const message =
-            body.error || `Failed to add ${scope.type} ${scope.ref}`;
-          // Refresh so any scopes that DID get added show, then stop.
-          await refresh();
-          onMutated();
-          setError(message);
-          return;
-        }
+      // One bulk call, not one POST per scope: the server batches the
+      // held-scope check and the OpenFGA writes, and re-derives the
+      // snapshot ONCE instead of once per scope — the whole point of the
+      // bulk endpoint is avoiding hundreds of full rescans.
+      const { ok, body } = await postScopesBulk(saId, selected);
+      if (!ok || !body.success) {
+        // Refresh in case the batch's OpenFGA write itself partially landed
+        // before a later failure (e.g. the snapshot refresh throwing) —
+        // the held-scope check and the tuple write are each atomic on
+        // their own, but the two together aren't a single transaction.
+        await refresh();
+        onMutated();
+        setError(body.error || "Failed to add scopes");
+        return;
       }
       setAddAgents([]);
       setAddTools([]);
@@ -1136,6 +1375,7 @@ function ManageServiceAccountDialog({
       onMutated();
     } finally {
       setBusy(false);
+      setAddCount(null);
     }
   }, [
     saId,
@@ -1339,7 +1579,13 @@ function ManageServiceAccountDialog({
           // Dialog scroll: cap height and let content scroll vertically so the
           // dialog doesn't overflow the viewport when credentials + scopes stack up.
           <div className="max-h-[65vh] overflow-y-auto space-y-4 pr-1">
-            {/* Current scopes */}
+            {/* Current scopes.
+                KEEP IN SYNC: the filter-input-above-8-items + bounded
+                max-h-56 scroll container mirrors UnlinkedServiceAccountModal.tsx's
+                "Current scopes" list — a service account (unlinked or not)
+                can hold hundreds of datasource scopes, so both lists need
+                their own scroll region and a way to narrow it down
+                independent of the surrounding dialog's scroll. */}
             <div className="space-y-2">
               <span className="text-sm font-medium">Current scopes</span>
               {detail.scopes.length === 0 ? (
@@ -1348,8 +1594,30 @@ function ManageServiceAccountDialog({
                   knowledge yet.
                 </p>
               ) : (
-                <ul className="space-y-1">
-                  {detail.scopes.map((scope) => {
+                <>
+                  {detail.scopes.length > 8 && (
+                    <Input
+                      value={scopeFilter}
+                      onChange={(e) => setScopeFilter(e.target.value)}
+                      placeholder="Filter current scopes..."
+                      aria-label="Filter current scopes"
+                      className="h-8 text-xs"
+                    />
+                  )}
+                  <ul className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                  {detail.scopes
+                    .filter((scope) => {
+                      const displayName =
+                        scope.type === "collection"
+                          ? collectionNameByRef.get(scope.ref)
+                          : scope.type === "datasource"
+                            ? datasourceNameByRef.get(scope.ref)
+                            : undefined;
+                      const haystack =
+                        `${scope.type} ${scope.ref} ${displayName ?? ""}`.toLowerCase();
+                      return haystack.includes(scopeFilter.trim().toLowerCase());
+                    })
+                    .map((scope) => {
                     const isPending =
                       pendingRemove?.type === scope.type &&
                       pendingRemove?.ref === scope.ref;
@@ -1374,7 +1642,11 @@ function ManageServiceAccountDialog({
                           ) : (
                             <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
                           )}
-                          <code className="text-xs" title={scope.ref}>
+                          <code
+                            className="text-xs"
+                            title={scope.ref}
+                            data-testid={`scope-${scope.type}-${scope.ref}`}
+                          >
                             {displayName ?? scope.ref}
                           </code>
                         </span>
@@ -1422,13 +1694,21 @@ function ManageServiceAccountDialog({
                       </li>
                     );
                   })}
-                </ul>
+                  </ul>
+                </>
               )}
             </div>
 
             {/* Add scope (bounded by what the editor holds). Uses the app's
                 styled MultiSelect — same picker as the create dialog (#54), not
-                native browser <select>. */}
+                native browser <select>.
+                KEEP IN SYNC: this block (4 MultiSelects + staged Add + the
+                "Add datasources from a collection" bulk picker) is
+                intentionally mirrored by UnlinkedServiceAccountModal.tsx's
+                "Add scopes" block. If you change the UX/copy/behavior here,
+                change it there too, and vice versa — editing the unlinked SA
+                should look and behave exactly like editing any other
+                service account. */}
             <div className="space-y-3 rounded-md border border-dashed border-input p-3">
               <span className="text-sm font-medium">Add scopes</span>
               <div className="space-y-1">
@@ -1477,40 +1757,95 @@ function ManageServiceAccountDialog({
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">
-                  RAG Datasources
+                  Datasources
                 </label>
                 <MultiSelect
-                  options={knowledgeOptions.map((item) => item.label)}
-                  selected={[
-                    ...addCollections.map((ref) => `collection:${ref}`),
-                    ...addDatasources.map((ref) => `datasource:${ref}`),
-                  ]
-                    .map((key) => knowledgeKeyToLabel.get(key))
+                  options={addableDatasourceOptions.map((o) => o.label)}
+                  selected={addDatasources
+                    .map((ref) => addDatasourceRefToLabel.get(ref))
                     .filter((v): v is string => Boolean(v))}
-                  onChange={(labels) => {
-                    const selected = labels
-                      .map((label) => knowledgeLabelToScope.get(label))
-                      .filter((value): value is KnowledgeGrantOption =>
-                        Boolean(value),
-                      );
-                    setAddCollections(
-                      selected
-                        .filter((item) => item.type === "collection")
-                        .map((item) => item.ref),
-                    );
+                  onChange={(labels) =>
                     setAddDatasources(
-                      selected
-                        .filter((item) => item.type === "datasource")
-                        .map((item) => item.ref),
-                    );
-                  }}
-                  placeholder="Add collections or datasources..."
-                  emptyLabel="No more RAG knowledge you can grant"
-                  badgeLabel="knowledge items"
+                      labels
+                        .map((l) => addDatasourceLabelToRef.get(l))
+                        .filter((v): v is string => Boolean(v)),
+                    )
+                  }
+                  placeholder="Add datasources..."
+                  emptyLabel="No more datasources you can grant"
+                  badgeLabel="datasources"
                   portalled={false}
                 />
               </div>
-              <div className="flex justify-end">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Collections
+                </label>
+                <MultiSelect
+                  options={addableCollectionOptions.map((o) => o.label)}
+                  selected={addCollections
+                    .map((ref) => addCollectionRefToLabel.get(ref))
+                    .filter((v): v is string => Boolean(v))}
+                  onChange={(labels) =>
+                    setAddCollections(
+                      labels
+                        .map((l) => addCollectionLabelToRef.get(l))
+                        .filter((v): v is string => Boolean(v)),
+                    )
+                  }
+                  placeholder="Add collections..."
+                  emptyLabel="No more collections you can grant"
+                  badgeLabel="collections"
+                  portalled={false}
+                />
+                <p className="text-xs text-muted-foreground">
+                  A collection grant lets the service account search using
+                  that collection as a filter; it does not grant access to
+                  its member datasources. Grant datasources directly, or use
+                  &quot;Add datasources from a collection&quot; below, for
+                  content access.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Add datasources from a collection
+                </label>
+                <SearchablePicker
+                  options={grantable.collections}
+                  selected={undefined}
+                  onSelect={(item) =>
+                    void addDatasourcesFromCollection(item.ref)
+                  }
+                  getOptionKey={(item) => item.ref}
+                  getOptionLabel={(item) => item.name}
+                  getSearchText={(item) => [item.ref, item.name]}
+                  placeholder="Select a collection to bulk-add its datasources..."
+                  searchPlaceholder="Search collections..."
+                  emptyLabel="No collections available"
+                  ariaLabel="Add datasources from a collection"
+                  disabled={busy || grantable.collections.length === 0}
+                  portalled={false}
+                  triggerClassName="h-9 w-full text-sm"
+                />
+                {collectionPickNote && (
+                  <p className="text-xs text-muted-foreground">
+                    {collectionPickNote}
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Queues every datasource in the collection that you can
+                  grant into the Datasources list above — click Add to
+                  apply. This does not add the collection itself — grant it
+                  separately above if the service account should also use
+                  it as a search filter.
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                {addCount !== null && (
+                  <span className="text-xs text-muted-foreground">
+                    Adding {addCount} scope{addCount === 1 ? "" : "s"}...
+                  </span>
+                )}
                 <Button
                   onClick={addScope}
                   disabled={
@@ -1522,6 +1857,7 @@ function ManageServiceAccountDialog({
                   }
                   className="gap-1.5"
                 >
+                  {busy && <Loader2 className="h-4 w-4 animate-spin" />}
                   <Plus className="h-4 w-4" />
                   Add
                 </Button>
@@ -1864,10 +2200,12 @@ function ManageServiceAccountDialog({
 function CredentialRevealDialog({
   credential,
   name,
+  warning,
   onClose,
 }: {
   credential: CreatedCredential | null;
   name: string;
+  warning?: string | null;
   onClose: () => void;
 }) {
   // This component is remounted per credential (via `key` on the parent), so
@@ -1911,6 +2249,12 @@ function CredentialRevealDialog({
         </div>
 
         <EnvBlock credential={credential} />
+
+        {warning && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm">
+            {warning}
+          </div>
+        )}
 
         <label className="flex items-center gap-2 pt-2 text-sm">
           <input

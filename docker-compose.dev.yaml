@@ -467,6 +467,40 @@ services:
       - netutils-agent
       - mcp-servers
 
+  # Optional app-only SharePoint integration. Keep this out of mcp-servers so
+  # first-time OSS installs do not require Microsoft credentials.
+  mcp-sharepoint:
+    build:
+      context: .
+      dockerfile: build/agents/Dockerfile.mcp
+      args:
+        - AGENT_NAME=sharepoint
+    image: ghcr.io/caipe-io/mcp-sharepoint:${IMAGE_TAG:-localtag}
+    container_name: mcp-sharepoint
+    env_file: [.env]
+    ports: ["18014:8000"]
+    volumes:
+      - ./ai_platform_engineering/mcp/sharepoint:/app/ai_platform_engineering/mcp/sharepoint
+    environment:
+      - MCP_MODE=http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - MCP_AUTH_MODE=${SHAREPOINT_MCP_AUTH_MODE:-none}
+      - SHAREPOINT_TENANT_ID=${SHAREPOINT_TENANT_ID}
+      - SHAREPOINT_CLIENT_ID=${SHAREPOINT_CLIENT_ID}
+      - SHAREPOINT_CLIENT_SECRET=${SHAREPOINT_CLIENT_SECRET}
+      - SHAREPOINT_SITE_URL=${SHAREPOINT_SITE_URL}
+      - SHAREPOINT_REQUEST_TIMEOUT_SECONDS=${SHAREPOINT_REQUEST_TIMEOUT_SECONDS:-30}
+      - SHAREPOINT_MAX_DOWNLOAD_BYTES=${SHAREPOINT_MAX_DOWNLOAD_BYTES:-2000000}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); result=s.connect_ex(('localhost', 8000)); s.close(); exit(0 if result == 0 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    profiles:
+      - sharepoint
+
   ####################################################################################################
   #                                      CAIPE UI                                                    #
   ####################################################################################################
@@ -1016,8 +1050,8 @@ services:
   #   - 8100: Dynamic Agents API (proxied via UI at /api/dynamic-agents)
   dynamic-agents:
     build:
-      context: ./ai_platform_engineering/dynamic_agents
-      dockerfile: build/Dockerfile
+      context: .
+      dockerfile: ai_platform_engineering/dynamic_agents/build/Dockerfile
     image: ghcr.io/caipe-io/caipe-dynamic-agents:${IMAGE_TAG:-localtag}
     container_name: dynamic-agents
     ports: ["8100:8001"]
@@ -1297,6 +1331,7 @@ services:
       - OPENFGA_HTTP=${OPENFGA_HTTP:-http://openfga:8080}
       - OPENFGA_STORE_NAME=${OPENFGA_STORE_NAME:-caipe-openfga}
       - CAIPE_UNSAFE_RBAC_BYPASS=${CAIPE_UNSAFE_RBAC_BYPASS:-false}
+      - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
     restart: unless-stopped
     env_file: [.env]
     depends_on:
@@ -1367,6 +1402,7 @@ services:
       - INGESTOR_OIDC_CLIENT_SECRET=${INGESTOR_OIDC_CLIENT_SECRET}
       - INGESTOR_OIDC_DISCOVERY_URL=${INGESTOR_OIDC_DISCOVERY_URL:-}
       - INGESTOR_OIDC_SCOPE=${INGESTOR_OIDC_SCOPE:-}
+      - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
     env_file: [.env]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]
@@ -1751,7 +1787,7 @@ services:
       - deps
 
   milvus-minio:
-    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    image: quay.io/minio/minio:RELEASE.2024-05-28T17-19-04Z
     container_name: milvus-minio
     environment:
       - MINIO_ACCESS_KEY=minioadmin
@@ -1880,7 +1916,7 @@ services:
       - tracing
 
   langfuse-minio:
-    image: minio/minio
+    image: quay.io/minio/minio
     container_name: langfuse-minio
     restart: always
     entrypoint: sh
