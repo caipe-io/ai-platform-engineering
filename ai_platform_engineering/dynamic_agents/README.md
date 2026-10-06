@@ -58,7 +58,7 @@ pinned Python SDK 0.12.1, schema 1.19 and wire protocol 1.
 - Existing chat endpoints, AG-UI/custom SSE, workflow/invoke behavior, native
   tools, logical files, subagent delegation and human input remain available.
 - Capability negotiation uses `caipe.io/native-acp` metadata and acknowledged
-  `_caipe/frame` requests for native event payloads and execution context. Standard ACP
+  `_caipe/event` requests for validated native stream events. Standard ACP
   session loading, client filesystem and terminal capabilities are not
   advertised. This integration does not expose a public ACP server.
 - `native_acp_sessions` stores effective agent configuration admissions and
@@ -80,7 +80,15 @@ pinned Python SDK 0.12.1, schema 1.19 and wire protocol 1.
   `INVOKE_PERSIST_HISTORY` is enabled; transient turn coordination still uses
   MongoDB. Scheduler invocations retain their existing persistent execution.
 - `NATIVE_ACP_ENABLED=false` restores the direct runtime path after a service
-  restart. It does not delete the additional binding records.
+  restart. Existing bound sessions continue to use their saved configuration
+  and storage; unbound legacy sessions do not create ACP bindings.
+
+The shared execution service owns admission, MCP resolution, runtime lifetime,
+transport selection and conversation-state operations. HTTP routes retain
+authorization and request/response handling. LangGraph chunks become typed
+events once; ACP publishes them directly and the client renders AG-UI or custom
+SSE. The direct path uses the same event projection and renderers. Runtime
+construction, saved bindings and state deletion share one storage resolver.
 
 This is the native-runtime stage of the
 [metaharness proposal](https://github.com/orgs/caipe-io/discussions/2877), related

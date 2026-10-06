@@ -14,10 +14,11 @@ DeepAgents and LangGraph still execute them.
 ```mermaid
 flowchart TB
   Clients[CAIPE clients] -->|Existing chat API| Routes[Dynamic Agents routes]
-  Routes --> Client[Native ACP client]
+  Routes --> Execution[Agent execution service]
+  Execution --> Client[Native ACP client]
   Client -->|JSON-RPC| Agent[Logical ACP agent]
   Agent --> Runtime[DeepAgents runtime]
-  Routes -->|Bindings and turn leases| DB[(Canonical MongoDB)]
+  Execution -->|Bindings and turn leases| DB[(Canonical MongoDB)]
   Runtime -->|Checkpoints and files| DB
 ```
 
@@ -30,9 +31,23 @@ agent and converts native progress back into the caller's existing stream.
 |---|---|
 | Browser, bots and automation | Keep existing chat endpoints and AG-UI or custom SSE responses. No UI change is required. |
 | ACP client and logical agent | Use the pinned `agent-client-protocol` Python SDK 0.12.1, released schema 1.19 and wire protocol 1. |
-| Native feature preservation | Negotiate `caipe.io/native-acp` metadata and acknowledged `_caipe/frame` requests for native event payloads. Trace, turn and human-input resume context retain their runtime behavior. |
+| Native feature preservation | Negotiate `caipe.io/native-acp` metadata and acknowledged `_caipe/event` requests carrying validated native stream events. Trace, turn and human-input resume context retain their runtime behavior. |
 | Execution | Use the current agent runtime and MCP integrations; subagents remain native in-process delegation. |
 | Workflows and triggers | Keep the current workflow engine, scheduler and autonomous trigger services, including their invoke and execution-context contracts. |
+
+The execution service owns session admission, MCP resolution, runtime lifetime,
+dispatch and state operations. HTTP routes retain authorization, request
+validation and response translation. Streaming, human-input resume and invoke
+share this service; conversation interrupt inspection, rewind, clear, restart
+and cancellation use it as well.
+
+LangGraph chunks are interpreted once into typed stream events. The native ACP
+agent publishes standard ACP progress and acknowledged native events directly;
+the client renders those events through the existing AG-UI or custom SSE
+encoder. Direct rollback uses the same event projection and encoders. Neither
+the agent nor the protocol bridge parses UI event strings to infer execution
+state. Runtime construction, binding validation and administrative deletion
+share one resolver for checkpoint and logical filesystem coordinates.
 
 The bridge implements stable initialization, session creation, prompting,
 updates and cancellation. It does not advertise ACP session loading, session
@@ -140,7 +155,11 @@ not add OpenShell or NemoClaw execution.
 `NATIVE_ACP_ENABLED=true` enables the native ACP path. Set it to `false` and
 restart Dynamic Agents to use the existing direct runtime path. Both paths keep
 the current chat API and checkpoint IDs; switching the flag does not delete
-bindings, checkpoints or conversation records.
+bindings, checkpoints or conversation records. Existing bindings still select
+their admitted configuration and storage during direct rollback; unbound
+legacy sessions do not create an ACP binding while the flag is disabled. Both
+transports coordinate turns and state mutations through the same MongoDB
+lease, including during a rolling change between enabled and disabled replicas.
 
 See the [Dynamic Agents configuration reference](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/dynamic_agents#configuration-reference)
 for component settings.

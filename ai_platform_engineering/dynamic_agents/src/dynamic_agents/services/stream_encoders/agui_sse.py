@@ -21,36 +21,32 @@ No dependency on ``ai_platform_engineering.utils.agui``.
 """
 
 import json
-import logging
 import time
 from typing import Any
 from uuid import uuid4
 
-from dynamic_agents.services.context_usage import CONTEXT_USAGE_EVENT
 from dynamic_agents.services.stream_encoders import StreamEncoder
-from dynamic_agents.services.stream_encoders.langgraph_helpers import (
-    LangGraphStreamHelper,
-    normalize_tool_message_content,
-    truncate_tool_result,
+from dynamic_agents.services.stream_encoders.events import (
+    ContextUsage,
+    StreamEvent,
+    TextDelta,
+    ToolCompleted,
+    ToolStarted,
+    UpdatesBoundary,
 )
-
-logger = logging.getLogger(__name__)
-
+from dynamic_agents.services.stream_encoders.langgraph_helpers import truncate_tool_result
 
 # ═══════════════════════════════════════════════════════════════
 # AG-UI SSE helpers
 # ═══════════════════════════════════════════════════════════════
 
-
 def _ts() -> float:
     """Current Unix timestamp."""
     return time.time()
 
-
 def _new_id(prefix: str = "") -> str:
     """Generate a prefixed UUID4."""
     return f"{prefix}{uuid4()}"
-
 
 def _sse_frame(event_type: str, data: dict[str, Any]) -> str:
     """Build an AG-UI SSE frame from event type and payload dict.
@@ -64,18 +60,15 @@ def _sse_frame(event_type: str, data: dict[str, Any]) -> str:
         data_lines = f"data: {raw}"
     return f"event: {event_type}\n{data_lines}\n\n"
 
-
 def _namespace_key(namespace: tuple[str, ...]) -> str:
     """Return a stable dict key for a namespace tuple."""
     return namespace[0] if namespace else ""
-
 
 # ═══════════════════════════════════════════════════════════════
 # AGUIStreamEncoder
 # ═══════════════════════════════════════════════════════════════
 
-
-class AGUIStreamEncoder(StreamEncoder):
+class AGUIStreamEncoder(StreamEncoder[str]):
     """Encodes LangGraph stream chunks to AG-UI protocol SSE format.
 
     Builds AG-UI events as plain dicts and serializes them directly.
@@ -89,7 +82,7 @@ class AGUIStreamEncoder(StreamEncoder):
     """
 
     def __init__(self) -> None:
-        self._helper = LangGraphStreamHelper()
+        super().__init__()
         self._active_message_ids: dict[str, str | None] = {}
         self._last_emitted_namespace: tuple[str, ...] = ()
         self._run_id: str = ""
@@ -107,44 +100,6 @@ class AGUIStreamEncoder(StreamEncoder):
                     "type": "RUN_STARTED",
                     "runId": run_id,
                     "threadId": thread_id,
-                    "timestamp": _ts(),
-                },
-            )
-        ]
-
-    def on_chunk(self, chunk: tuple) -> list[str]:
-        namespace, mode, data = self._helper.parse_chunk(chunk)
-        if mode == "tasks":
-            return []
-
-        correlated_ns = self._helper.correlate_namespace(namespace)
-
-        if mode == "messages":
-            return self._handle_messages(data, correlated_ns)
-        if mode == "updates":
-            return self._handle_updates(data, correlated_ns)
-        if mode == "custom":
-            return self._handle_custom(data, correlated_ns)
-        return []
-
-    def _handle_custom(
-        self,
-        data: Any,
-        namespace: tuple[str, ...],
-    ) -> list[str]:
-        """Encode transport-neutral runtime signals as AG-UI custom events."""
-        if not isinstance(data, dict) or data.get("type") != CONTEXT_USAGE_EVENT:
-            return []
-
-        value = {key: item for key, item in data.items() if key != "type"}
-        value["namespace"] = list(namespace)
-        return [
-            _sse_frame(
-                "CUSTOM",
-                {
-                    "type": "CUSTOM",
-                    "name": "CONTEXT_USAGE",
-                    "value": value,
                     "timestamp": _ts(),
                 },
             )
@@ -259,14 +214,6 @@ class AGUIStreamEncoder(StreamEncoder):
             )
         ]
 
-    # ── Content retrieval ─────────────────────────────────
-
-    def get_accumulated_content(self) -> str:
-        return self._helper.get_accumulated_content()
-
-    def get_thinking_content(self) -> str:
-        return self._helper.get_thinking_content()
-
     # ── Namespace tracking ────────────────────────────────
 
     def _emit_namespace_if_changed(self, namespace: tuple[str, ...]) -> list[str]:
@@ -292,227 +239,68 @@ class AGUIStreamEncoder(StreamEncoder):
             )
         ]
 
-    # ── Private: messages mode ────────────────────────────
+    # ── Semantic event formatting ─────────────────────────
 
-    def _handle_messages(
-        self,
-        data: Any,
-        namespace: tuple[str, ...],
-    ) -> list[str]:
-        """Handle 'messages' mode chunks -> AG-UI text content events.
+    def _format_event(self, event: StreamEvent) -> list[str]:
+        if isinstance(event, TextDelta):
+            return self._format_text(event)
+        if isinstance(event, UpdatesBoundary):
+            return self._close_text(event.namespace)
+        if isinstance(event, ToolStarted):
+            return [
+                *self._emit_namespace_if_changed(event.namespace),
+                _sse_frame("TOOL_CALL_START", {
+                    "type": "TOOL_CALL_START", "toolCallId": event.tool_call_id,
+                    "toolCallName": event.tool_name, "timestamp": _ts(),
+                }),
+                _sse_frame("TOOL_CALL_ARGS", {
+                    "type": "TOOL_CALL_ARGS", "toolCallId": event.tool_call_id,
+                    "delta": json.dumps(event.args), "timestamp": _ts(),
+                }),
+            ]
+        if isinstance(event, ToolCompleted):
+            frames = self._emit_namespace_if_changed(event.namespace)
+            if event.content:
+                frames.append(_sse_frame("TOOL_CALL_RESULT", {
+                    "type": "TOOL_CALL_RESULT", "message_id": event.message_id,
+                    "tool_call_id": event.tool_call_id, "content": truncate_tool_result(event.content),
+                    "role": "tool", "timestamp": _ts(),
+                }))
+            frames.append(_sse_frame("TOOL_CALL_END", {
+                "type": "TOOL_CALL_END", "toolCallId": event.tool_call_id, "timestamp": _ts(),
+            }))
+            return frames
+        if isinstance(event, ContextUsage):
+            return [_sse_frame("CUSTOM", {
+                "type": "CUSTOM", "name": "CONTEXT_USAGE",
+                "value": {**event.value, "namespace": list(event.namespace)}, "timestamp": _ts(),
+            })]
+        return []
 
-        Emits TEXT_MESSAGE_START on the first content chunk for each
-        namespace, TEXT_MESSAGE_CONTENT for each subsequent token.
-        TEXT_MESSAGE_END is emitted in ``on_stream_end()`` or when an
-        updates chunk arrives (see ``_handle_updates``).
-        """
-        if not isinstance(data, tuple) or len(data) != 2:
-            return []
-
-        msg_chunk, metadata = data
-
-        if LangGraphStreamHelper.is_summarization_chunk(msg_chunk, metadata):
-            return []
-
-        if LangGraphStreamHelper.is_tool_message(msg_chunk):
-            return []
-        if LangGraphStreamHelper.has_tool_calls(msg_chunk):
-            return []
-
-        content = LangGraphStreamHelper.extract_content(msg_chunk)
-        if not content:
-            return []
-
-        self._helper.accumulate_content(content)
-
-        ns_key = _namespace_key(namespace)
+    def _format_text(self, event: TextDelta) -> list[str]:
+        ns_key = _namespace_key(event.namespace)
         frames: list[str] = []
-
-        # Emit TEXT_MESSAGE_START the first time we see content for this namespace
         if self._active_message_ids.get(ns_key) is None:
             message_id = _new_id("msg-")
             self._active_message_ids[ns_key] = message_id
-            frames.extend(self._emit_namespace_if_changed(namespace))
-            frames.append(
-                _sse_frame(
-                    "TEXT_MESSAGE_START",
-                    {
-                        "type": "TEXT_MESSAGE_START",
-                        "messageId": message_id,
-                        "role": "assistant",
-                        "timestamp": _ts(),
-                    },
-                )
-            )
-
-        message_id = self._active_message_ids[ns_key]  # type: ignore[assignment]
-        frames.extend(self._emit_namespace_if_changed(namespace))
-        frames.append(
-            _sse_frame(
-                "TEXT_MESSAGE_CONTENT",
-                {
-                    "type": "TEXT_MESSAGE_CONTENT",
-                    "messageId": message_id,
-                    "delta": content,
-                    "timestamp": _ts(),
-                },
-            )
-        )
+            frames.extend(self._emit_namespace_if_changed(event.namespace))
+            frames.append(_sse_frame("TEXT_MESSAGE_START", {
+                "type": "TEXT_MESSAGE_START", "messageId": message_id,
+                "role": "assistant", "timestamp": _ts(),
+            }))
+        frames.extend(self._emit_namespace_if_changed(event.namespace))
+        frames.append(_sse_frame("TEXT_MESSAGE_CONTENT", {
+            "type": "TEXT_MESSAGE_CONTENT", "messageId": self._active_message_ids[ns_key],
+            "delta": event.text, "timestamp": _ts(),
+        }))
         return frames
 
-    # ── Private: updates mode ─────────────────────────────
-
-    def _handle_updates(
-        self,
-        data: Any,
-        namespace: tuple[str, ...],
-    ) -> list[str]:
-        """Handle 'updates' mode chunks -> AG-UI tool events.
-
-        Also closes any open TEXT_MESSAGE for this namespace when an
-        updates chunk arrives (tool invocations interrupt the text stream).
-        """
-        results: list[str] = []
-
-        if not isinstance(data, dict):
-            return results
-
+    def _close_text(self, namespace: tuple[str, ...]) -> list[str]:
         ns_key = _namespace_key(namespace)
-
-        # Close any open text message for this namespace before tool events
-        if self._active_message_ids.get(ns_key) is not None:
-            results.append(
-                _sse_frame(
-                    "TEXT_MESSAGE_END",
-                    {
-                        "type": "TEXT_MESSAGE_END",
-                        "messageId": self._active_message_ids[ns_key],
-                        "timestamp": _ts(),
-                    },
-                )
-            )
-            self._active_message_ids[ns_key] = None
-
-        for _node_name, node_data in data.items():
-            if not isinstance(node_data, dict):
-                continue
-
-            messages = node_data.get("messages", [])
-            if not isinstance(messages, list):
-                continue
-
-            # ── Pre-scan: identify rejected tool_call_ids ──────────────────
-            # LangGraph quirk: when a tool call is rejected via HITL
-            # (HumanInTheLoopMiddleware), the resume stream re-emits the
-            # original AIMessage (with tool_calls) AND a ToolMessage containing
-            # the rejection text — all in the same "updates" chunk.
-            # We suppress ALL tool events (START, ARGS, END) for rejected tools
-            # because:
-            #   1. The tool was already shown in the pre-interrupt stream
-            #   2. The tool never actually executed — showing it as "completed"
-            #      would be misleading
-            #   3. AG-UI has no "tool_rejected" event; TOOL_CALL_END implies
-            #      successful completion
-            # The LLM still receives the rejection ToolMessage in its context,
-            # so it knows the tool was blocked and can respond accordingly.
-            rejected_tool_call_ids: set[str] = set()
-            for msg in messages:
-                tc_id = getattr(msg, "tool_call_id", None)
-                if tc_id:
-                    content = normalize_tool_message_content(getattr(msg, "content", ""))
-                    if "rejected" in content.lower():
-                        rejected_tool_call_ids.add(tc_id)
-
-            for msg in messages:
-                # Handle AIMessage with tool_calls
-                tool_calls = getattr(msg, "tool_calls", None)
-                if tool_calls:
-                    for tc in tool_calls:
-                        tc_info = LangGraphStreamHelper.extract_tool_call(tc)
-                        tool_name = tc_info["name"]
-                        tool_call_id = tc_info["id"]
-                        args = tc_info["args"]
-
-                        # Skip rejected tools (see pre-scan comment above)
-                        if tool_call_id in rejected_tool_call_ids:
-                            logger.debug(
-                                f"[sse:TOOL_CALL_START] SUPPRESSED (rejected) {tool_name} id={tool_call_id[:8]}..."
-                            )
-                            continue
-
-                        logger.debug(f"[sse:TOOL_CALL_START] {tool_name} id={tool_call_id[:8]}... ns={namespace}")
-                        self._helper.reset_accumulated_content()
-                        results.extend(self._emit_namespace_if_changed(namespace))
-                        results.append(
-                            _sse_frame(
-                                "TOOL_CALL_START",
-                                {
-                                    "type": "TOOL_CALL_START",
-                                    "toolCallId": tool_call_id,
-                                    "toolCallName": tool_name,
-                                    "timestamp": _ts(),
-                                },
-                            )
-                        )
-                        results.append(
-                            _sse_frame(
-                                "TOOL_CALL_ARGS",
-                                {
-                                    "type": "TOOL_CALL_ARGS",
-                                    "toolCallId": tool_call_id,
-                                    "delta": json.dumps(args),
-                                    "timestamp": _ts(),
-                                },
-                            )
-                        )
-
-                # Handle ToolMessage (tool results)
-                tool_call_id = getattr(msg, "tool_call_id", None)
-                if tool_call_id:
-                    # Skip rejected tools — already suppressed above
-                    if tool_call_id in rejected_tool_call_ids:
-                        logger.debug(f"[sse:TOOL_CALL_END] SUPPRESSED (rejected) id={tool_call_id[:8]}...")
-                        continue
-
-                    # ToolMessage.content can be str OR list[dict | str] (LangChain
-                    # >= 0.3). Bedrock and many MCP tools return list-of-blocks.
-                    # Normalise so the UI receives the tool's textual response
-                    # regardless of LLM transport (kept in lockstep with the
-                    # custom_sse encoder).
-                    raw_content = getattr(msg, "content", "")
-                    content = normalize_tool_message_content(raw_content)
-                    error = None
-                    if content.startswith("ERROR: "):
-                        error = content
-
-                    logger.debug(f"[sse:TOOL_CALL_END] id={tool_call_id[:8]}... ns={namespace} error={bool(error)}")
-                    results.extend(self._emit_namespace_if_changed(namespace))
-
-                    # Emit TOOL_CALL_RESULT with the content (errors have "ERROR:" prefix)
-                    if content:
-                        results.append(
-                            _sse_frame(
-                                "TOOL_CALL_RESULT",
-                                {
-                                    "type": "TOOL_CALL_RESULT",
-                                    "message_id": getattr(msg, "id", tool_call_id),
-                                    "tool_call_id": tool_call_id,
-                                    "content": truncate_tool_result(content),
-                                    "role": "tool",
-                                    "timestamp": _ts(),
-                                },
-                            )
-                        )
-
-                    results.append(
-                        _sse_frame(
-                            "TOOL_CALL_END",
-                            {
-                                "type": "TOOL_CALL_END",
-                                "toolCallId": tool_call_id,
-                                "timestamp": _ts(),
-                            },
-                        )
-                    )
-
-        return results
+        message_id = self._active_message_ids.get(ns_key)
+        if message_id is None:
+            return []
+        self._active_message_ids[ns_key] = None
+        return [_sse_frame("TEXT_MESSAGE_END", {
+            "type": "TEXT_MESSAGE_END", "messageId": message_id, "timestamp": _ts(),
+        })]

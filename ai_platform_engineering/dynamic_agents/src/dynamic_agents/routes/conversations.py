@@ -6,45 +6,23 @@ interrupt state, files, and clear operations.
 Messages are served by the Next.js layer directly from MongoDB.
 """
 
-import asyncio
 import logging
-from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from pymongo.database import Database
 
 from dynamic_agents.auth.access import can_access_conversation
 from dynamic_agents.auth.auth import UserContext, get_user_context
-from dynamic_agents.config import get_settings
-from dynamic_agents.models import ApiResponse, DynamicAgentConfig
-from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
+from dynamic_agents.models import ApiResponse
+from dynamic_agents.services.agent_execution import AgentExecutionService
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
-from dynamic_agents.services.runtime_cache import get_runtime_cache
-from dynamic_agents.services.session_bindings import get_native_binding
-from dynamic_agents.services.session_runs import SessionRunBusyError, await_session_operation, native_session_run
+from dynamic_agents.services.runtime_cache import RuntimeCapacityError
+from dynamic_agents.services.session_runs import SessionRunBusyError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
-
-
-def _get_gridfs_store(db: Database) -> MongoDBGridFSStore:
-    """Get a GridFS store instance for the given database."""
-    settings = get_settings()
-    return MongoDBGridFSStore(db=db, bucket_name=settings.gridfs_bucket_name)
-
-
-async def _read_admitted_agent(
-    mongo: MongoDBService, agent: DynamicAgentConfig, session_id: str,
-) -> DynamicAgentConfig:
-    """Read the existing storage binding after conversation authorization."""
-    if get_settings().native_acp_enabled is True:
-        saved = await asyncio.to_thread(get_native_binding, mongo, agent.id, session_id)
-        if saved is not None:
-            return saved
-    return agent
 
 
 class InterruptData(BaseModel):
@@ -124,31 +102,10 @@ async def get_interrupt_state(
     if not can_access_conversation(conversation, user):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # 4. Preserve admitted checkpoint/filesystem coordinates while resolving
-    # current MCP credentials and endpoints.
-    agent = await _read_admitted_agent(mongo, agent, conversation_id)
-    mcp_servers = await asyncio.to_thread(mongo.get_agent_mcp_servers, agent)
-
-    # 5. Get or create runtime to access checkpointer
-    cache = get_runtime_cache()
-    cache.set_mongo_service(mongo)
-
-    runtime = await cache.get_or_create(
-        agent,
-        mcp_servers,
-        conversation_id,
-        user=user,
-    )
-
-    # 6. Check for pending interrupt only (no message extraction)
-    if not runtime._graph:
-        return InterruptStateResponse(
-            conversation_id=conversation_id,
-            agent_id=agent_id,
-            has_pending_interrupt=False,
-        )
-
-    interrupt_data = await runtime.has_pending_interrupt(conversation_id)
+    try:
+        interrupt_data = await AgentExecutionService(mongo).interrupt_state(agent, conversation_id, user)
+    except RuntimeCapacityError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     has_pending_interrupt = interrupt_data is not None
 
     logger.debug(
@@ -272,27 +229,14 @@ async def rewind_conversation(
         raise HTTPException(status_code=400, detail="Agent does not match conversation")
 
     try:
-        async with AsyncExitStack() as stack:
-            if get_settings().native_acp_enabled is True:
-                await stack.enter_async_context(native_session_run(mongo, request.agent_id, conversation_id))
-            agent = await _read_admitted_agent(mongo, agent, conversation_id)
-            cache = get_runtime_cache()
-            cache.set_mongo_service(mongo)
-            runtime = await cache.get_or_create(
-                agent,
-                await asyncio.to_thread(mongo.get_agent_mcp_servers, agent),
-                conversation_id,
-                user=user,
-            )
-            checkpoint_id = await runtime.rewind_before_turn(
-                conversation_id,
-                request.turn_id,
-                request.message_content,
-                request.content_occurrence,
-            )
+        checkpoint_id = await AgentExecutionService(mongo).rewind(
+            agent, conversation_id, user,
+            turn_id=request.turn_id, message_content=request.message_content,
+            content_occurrence=request.content_occurrence,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except RuntimeError as exc:
+    except (RuntimeError, RuntimeCapacityError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return ApiResponse(
@@ -334,7 +278,6 @@ async def clear_conversation_checkpoints(
         raise HTTPException(status_code=503, detail="Database not connected")
 
     conversations_coll = db["conversations"]
-    settings = get_settings()
 
     # Verify conversation exists
     conversation = conversations_coll.find_one({"_id": conversation_id})
@@ -343,42 +286,23 @@ async def clear_conversation_checkpoints(
 
     agent_id = conversation.get("agent_id", "")
     try:
-        async with AsyncExitStack() as stack:
-            saved = None
-            if agent_id and settings.native_acp_enabled is True:
-                await stack.enter_async_context(native_session_run(mongo, agent_id, conversation_id))
-                saved = await asyncio.to_thread(get_native_binding, mongo, agent_id, conversation_id)
-            backend = saved.backend.config if saved and saved.backend else None
-            override = backend.checkpoint_collection if backend else None
-            checkpoints_coll = db[override or settings.checkpoint_collection]
-            writes_coll = db[f"{override}_writes" if override else settings.checkpoint_writes_collection]
-            checkpoints_result = await await_session_operation(checkpoints_coll.delete_many, {"thread_id": conversation_id})
-            writes_result = await await_session_operation(writes_coll.delete_many, {"thread_id": conversation_id})
-
-            store = _get_gridfs_store(db)
-            files_deleted = 0
-            if agent_id:
-                namespace = (
-                    tuple(backend.fs_namespace) if backend and backend.fs_namespace
-                    else (agent_id, conversation_id, "filesystem")
-                )
-                files_deleted = await await_session_operation(store.delete_by_namespace, namespace)
+        result = await AgentExecutionService(mongo).clear(agent_id, conversation_id)
     except SessionRunBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # Log the action for audit
     logger.info(
         f"Admin {user.email} cleared conversation {conversation_id}: "
-        f"deleted {checkpoints_result.deleted_count} checkpoints, "
-        f"{writes_result.deleted_count} writes, {files_deleted} files"
+        f"deleted {result.checkpoints_deleted} checkpoints, "
+        f"{result.writes_deleted} writes, {result.files_deleted} files"
     )
 
     return ApiResponse(
         success=True,
         data={
             "conversation_id": conversation_id,
-            "checkpoints_deleted": checkpoints_result.deleted_count,
-            "writes_deleted": writes_result.deleted_count,
-            "files_deleted": files_deleted,
+            "checkpoints_deleted": result.checkpoints_deleted,
+            "writes_deleted": result.writes_deleted,
+            "files_deleted": result.files_deleted,
         },
     )

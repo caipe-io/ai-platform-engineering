@@ -22,6 +22,7 @@ from dynamic_agents.models import InputFile
 from dynamic_agents.services import native_acp
 from dynamic_agents.services.native_acp import cancel_native_acp, native_acp_stream, native_acp_turn
 from dynamic_agents.services.stream_encoders import get_encoder
+from dynamic_agents.services.stream_encoders.semantic import SemanticStreamEncoder
 from tests.test_stream_cancellation_cleanup import _runtime
 
 
@@ -123,13 +124,82 @@ async def test_json_rpc_preserves_native_frames_and_encoder_state(
     assert any(update["sessionUpdate"] == "tool_call_update" and update.get("rawOutput") == "Result" for update in updates)
     assert any(update["_meta"][native_acp.EXTENSION]["namespace"] == ["example-child"] for update in updates)
     assert all(message["params"]["sessionId"] == "example-session" for message in wire_messages
-               if message.get("method") in {"session/prompt", "session/update", native_acp.FRAME_METHOD})
+               if message.get("method") in {"session/prompt", "session/update", f"_{native_acp.EVENT_METHOD}"})
     capability = wire_messages[0]["params"]["clientCapabilities"]
     # The SDK omits capabilities whose values equal the disabled defaults.
     assert not capability.get("fs", {}).get("readTextFile", False)
     assert not capability.get("fs", {}).get("writeTextFile", False)
     assert not capability.get("terminal", False)
     assert not any("test-user@example.com" in json.dumps(message) for message in wire_messages)
+    native_events = [message["params"]["event"] for message in wire_messages
+                     if message.get("method") == f"_{native_acp.EVENT_METHOD}"]
+    assert [event["kind"] for event in native_events] == [
+        "run_started", "warning", "text_delta", "updates_boundary", "tool_started", "text_delta",
+        "updates_boundary", "tool_completed", "context_usage", "text_delta", "stream_ended",
+        "input_required" if interrupt else "run_finished",
+    ]
+    assert not any("frame" in message.get("params", {}) for message in wire_messages)
+
+
+async def test_agent_execution_never_calls_browser_encoder(monkeypatch: pytest.MonkeyPatch) -> None:
+    browser = get_encoder("custom")
+    owner = asyncio.current_task()
+    original_format = browser.encode_event
+    delivered: list[str] = []
+
+    def format_on_client(event: Any) -> list[str]:
+        assert asyncio.current_task() is owner
+        delivered.append(event.kind)
+        return original_format(event)
+
+    def fail_on_graph_chunk(_chunk: tuple) -> list[str]:
+        pytest.fail("The ACP agent used the browser's LangGraph parser")
+
+    monkeypatch.setattr(browser, "encode_event", format_on_client)
+    monkeypatch.setattr(browser, "on_chunk", fail_on_graph_chunk)
+
+    class Runtime(FakeRuntime):
+        async def stream(self, *args: Any, **kwargs: Any) -> Any:
+            assert isinstance(args[4], SemanticStreamEncoder)
+            async for event in super().stream(*args, **kwargs):
+                yield event
+
+    frames = [frame async for frame in native_acp_stream(
+        Runtime(), message="hello", session_id="example-session", user_email="test-user@example.com", encoder=browser,
+    )]
+    assert frames[-1] == "event: done\ndata: {}\n\n"
+    assert delivered[-1] == "run_finished"
+
+
+async def test_standard_tool_failure_comes_from_native_semantics(wire_messages: list[dict[str, Any]]) -> None:
+    class Runtime(FakeRuntime):
+        async def stream(self, *args: Any, **kwargs: Any) -> Any:
+            encoder = args[4]
+            for event in encoder.on_chunk(((), "updates", {"tools": {"messages": [
+                ToolMessage(content="ERROR: Example failure", tool_call_id="example-tool"),
+            ]}})):
+                yield event
+
+    frames = [frame async for frame in native_acp_stream(
+        Runtime(), message="hello", session_id="example-session", user_email="test-user@example.com", encoder=get_encoder("agui"),
+    )]
+    update = next(message["params"]["update"] for message in wire_messages
+                  if message.get("method") == "session/update")
+    assert update["status"] == "failed"
+    assert update["rawOutput"] == "ERROR: Example failure"
+    assert "ERROR: Example failure" in "".join(frames)
+
+
+@pytest.mark.parametrize("event", [
+    {"kind": "text_delta", "text": "example", "namespace": [], "frame": "injected"},
+    {"kind": "tool_started", "tool_call_id": "example-tool", "args": {}},
+    {"kind": "unknown"},
+])
+async def test_extension_rejects_invalid_native_event(event: dict[str, Any]) -> None:
+    client = native_acp._EventClient("example-session")
+    with pytest.raises(RequestError):
+        await client.ext_method(native_acp.EVENT_METHOD, {"sessionId": "example-session", "event": event})
+    assert client.events.empty()
 
 
 async def test_multimodal_files_cross_standard_prompt_blocks(wire_messages: list[dict[str, Any]]) -> None:
@@ -237,11 +307,12 @@ async def test_frame_burst_finishes_after_every_notification() -> None:
     class BurstRuntime(FakeRuntime):
         async def stream(self, *args: Any, **kwargs: Any) -> Any:
             for index in range(500):
-                yield f'event: warning\ndata: {{"message":"{index}"}}\n\n'
+                for event in args[4].on_warning(str(index)):
+                    yield event
 
     frames = [frame async for frame in native_acp_stream(
         BurstRuntime(), message="hello", session_id="example-session", user_email="test-user@example.com",
-        encoder=get_encoder("agui"),
+        encoder=get_encoder("custom"),
     )]
     assert [json.loads(frame.split("data: ")[1])["message"] for frame in frames] == [str(index) for index in range(500)]
 
@@ -258,14 +329,15 @@ async def test_bounded_delivery_and_full_buffer_cleanup(total: int, consumer_clo
                     self.produced += 1
                     if self.produced == min(total, native_acp.BUFFER_SIZE + 2):
                         ready.set()
-                    yield f'event: warning\ndata: {{"message":"{index}"}}\n\n'
+                    for event in args[4].on_warning(str(index)):
+                        yield event
             finally:
                 self.closed.set()
 
     ready = asyncio.Event()
     runtime = BurstRuntime()
     stream = native_acp_stream(runtime, message="hello", session_id="example-session",
-                               user_email="test-user@example.com", encoder=get_encoder("agui"))
+                               user_email="test-user@example.com", encoder=get_encoder("custom"))
     async with asyncio.timeout(5):
         first = await anext(stream)
         await ready.wait()
@@ -286,9 +358,9 @@ async def test_bounded_delivery_and_full_buffer_cleanup(total: int, consumer_clo
 async def connected_agent(runtime: FakeRuntime) -> Any:
     first, second = native_acp._transport_pair()
     agent_connection = AgentSideConnection(native_acp._NativeAgent(
-        runtime, "example-session", "trusted-user@example.com", get_encoder("agui"),
+        runtime, "example-session", "trusted-user@example.com",
     ), second)
-    client_connection = connect_to_agent(native_acp._FrameClient("example-session"), first)
+    client_connection = connect_to_agent(native_acp._EventClient("example-session"), first)
     try:
         await client_connection.initialize(PROTOCOL_VERSION, client_capabilities=ClientCapabilities(field_meta={native_acp.EXTENSION: 1}))
         yield client_connection
@@ -335,7 +407,7 @@ async def test_wire_cancellation_before_prompt_never_executes_runtime(wire_messa
     assert runtime.calls == []
     assert not runtime.cancelled
     assert any(message.get("method") == "session/cancel" for message in wire_messages)
-    assert not any(message.get("method") == native_acp.FRAME_METHOD for message in wire_messages)
+    assert not any(message.get("method") == f"_{native_acp.EVENT_METHOD}" for message in wire_messages)
 
 
 async def test_json_transport_does_not_share_request_objects() -> None:

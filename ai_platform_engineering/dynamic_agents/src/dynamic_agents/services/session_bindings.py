@@ -19,7 +19,8 @@ from pydantic import BaseModel, Field, ValidationError
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from dynamic_agents.models import AgentBackend, AgentBackendConfig, DynamicAgentConfig
+from dynamic_agents.models import DynamicAgentConfig
+from dynamic_agents.services.runtime_storage import materialize_runtime_config, resolve_runtime_storage
 
 if TYPE_CHECKING:
     from dynamic_agents.config import Settings
@@ -61,33 +62,13 @@ def _config_version(agent: DynamicAgentConfig) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def _admitted_config(agent: DynamicAgentConfig, session_id: str, settings: Settings) -> DynamicAgentConfig:
-    """Materialize defaults without changing the legacy checkpoint writes collection."""
-    backend = agent.backend or AgentBackend()
-    config = backend.config or AgentBackendConfig()
-    config = config.model_copy(update={
-        "fs_namespace": config.fs_namespace or [agent.id, session_id, "filesystem"],
-        "fs_ttl_seconds": (
-            config.fs_ttl_seconds if config.fs_ttl_seconds is not None else settings.default_fs_ttl_seconds
-        ),
-    })
-    backend_type = (
-        agent.backend.type if agent.backend is not None and agent.backend.type is not None
-        else settings.default_runtime_backend
-    )
-    backend = backend.model_copy(update={"type": backend_type, "config": config})
-    return agent.model_copy(update={"backend": backend}, deep=True)
-
-
 def _persistence_coordinates(agent: DynamicAgentConfig, settings: Settings) -> _PersistenceCoordinates:
-    collection_override = agent.backend.config.checkpoint_collection if agent.backend and agent.backend.config else None
+    storage = resolve_runtime_storage(agent, None, settings)
     return _PersistenceCoordinates(
-        database=settings.mongodb_database,
-        checkpoint_collection=collection_override or settings.checkpoint_collection,
-        checkpoint_writes_collection=(
-            f"{collection_override}_writes" if collection_override else settings.checkpoint_writes_collection
-        ),
-        gridfs_bucket_name=settings.gridfs_bucket_name,
+        database=storage.database,
+        checkpoint_collection=storage.checkpoint_collection,
+        checkpoint_writes_collection=storage.checkpoint_writes_collection,
+        gridfs_bucket_name=storage.gridfs_bucket_name,
     )
 
 
@@ -141,7 +122,7 @@ def resolve_native_binding(
     if not session_id.strip():
         raise ValueError("Native ACP session ID must not be empty")
     collection = mongo.get_session_bindings_collection()
-    admitted = _admitted_config(agent, session_id, mongo.settings)
+    admitted = materialize_runtime_config(agent, session_id, mongo.settings)
     now = datetime.now(timezone.utc)
     key = {"agent_id": agent.id, "session_id": session_id}
     initial = {

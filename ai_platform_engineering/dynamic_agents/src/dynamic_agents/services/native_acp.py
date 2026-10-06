@@ -2,8 +2,9 @@
 
 The HTTP caller admits the runtime and caller before constructing this bridge.
 ACP messages carry prompts, not identities, executable paths or agent configs.
-CAIPE's negotiated extension preserves existing SSE events that ACP does not
+CAIPE's negotiated extension carries typed native events that ACP does not
 represent, including checkpointed forms and subagent namespace attribution.
+Browser protocol formatting happens only after client-side event delivery.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from acp.agent import AgentSideConnection
 from acp.schema import (
     AgentCapabilities,
     AgentMessageChunk,
-    AgentThoughtChunk,
     BlobResourceContents,
     ClientCapabilities,
     EmbeddedResourceContentBlock,
@@ -39,6 +39,14 @@ from acp.schema import (
 )
 
 from dynamic_agents.models import InputFile
+from dynamic_agents.services.stream_encoders.events import (
+    STREAM_EVENT_ADAPTER,
+    StreamEvent,
+    TextDelta,
+    ToolCompleted,
+    ToolStarted,
+)
+from dynamic_agents.services.stream_encoders.semantic import SemanticStreamEncoder
 
 if TYPE_CHECKING:
     from dynamic_agents.services.agent_runtime import AgentRuntime
@@ -46,7 +54,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 EXTENSION = "caipe.io/native-acp"
-FRAME_METHOD = "_caipe/frame"
+# The SDK adds the ACP extension prefix on send and removes it on dispatch.
+EVENT_METHOD = "caipe/event"
 BUFFER_SIZE = 64
 _active_turns: dict[tuple[str, str], _ActiveTurn] = {}
 _turn_context: ContextVar[_ActiveTurn | None] = ContextVar("native_acp_turn", default=None)
@@ -133,14 +142,14 @@ def _decode_prompt(prompt: list[Any]) -> tuple[str, list[InputFile] | None]:
 
 
 class _NativeAgent:
-    def __init__(self, runtime: AgentRuntime, session_id: str, user_email: str, encoder: StreamEncoder) -> None:
-        self.runtime, self.session_id, self.user_email, self.encoder = runtime, session_id, user_email, encoder
+    def __init__(self, runtime: AgentRuntime, session_id: str, user_email: str) -> None:
+        self.runtime, self.session_id, self.user_email = runtime, session_id, user_email
+        self.encoder = SemanticStreamEncoder()
         self.connection: Any = None
         self.prompt_task: asyncio.Task[Any] | None = None
         self.negotiated = False
         self.session_created = False
         self.cancel_requested = False
-        self.namespace: list[str] = []
 
     def on_connect(self, connection: Any) -> None:
         self.connection = connection
@@ -185,17 +194,17 @@ class _NativeAgent:
         self.prompt_task = asyncio.current_task()
         try:
             if metadata.get("resume_data") is not None:
-                frames = self.runtime.resume(
+                events = self.runtime.resume(
                     self.session_id, self.user_email, metadata["resume_data"], metadata.get("trace_id"), self.encoder,
                 )
             else:
-                frames = self.runtime.stream(
+                events = self.runtime.stream(
                     message, self.session_id, self.user_email, metadata.get("trace_id"), self.encoder,
                     files=files, turn_id=metadata.get("turn_id"),
                 )
-            async with aclosing(frames):
-                async for frame in frames:
-                    await self._publish(frame)
+            async with aclosing(events):
+                async for event in events:
+                    await self._publish(event)
             return PromptResponse(stop_reason="end_turn")
         except asyncio.CancelledError:
             return PromptResponse(stop_reason="cancelled")
@@ -213,51 +222,36 @@ class _NativeAgent:
             self.runtime.cancel()
             self.prompt_task.cancel()
 
-    async def _publish(self, frame: str) -> None:
-        event = ""
-        data: list[str] = []
-        for line in frame.splitlines():
-            if line.startswith("event: "):
-                event = line[7:]
-            elif line.startswith("data: "):
-                data.append(line[6:])
-        payload = json.loads("\n".join(data)) if data else {}
-        if event == "CUSTOM" and payload.get("name") == "NAMESPACE_CONTEXT":
-            self.namespace = payload["value"]["namespace"]
-        metadata = {EXTENSION: {"namespace": payload.get("namespace", self.namespace)}}
+    async def _publish(self, event: StreamEvent) -> None:
+        metadata = {EXTENSION: {"namespace": list(getattr(event, "namespace", ()))}}
         update: Any = None
-        if event in {"content", "TEXT_MESSAGE_CONTENT", "thinking", "THOUGHT_MESSAGE_CONTENT"}:
-            update_class = AgentThoughtChunk if event in {"thinking", "THOUGHT_MESSAGE_CONTENT"} else AgentMessageChunk
-            update = update_class(session_update="agent_thought_chunk" if update_class is AgentThoughtChunk else "agent_message_chunk",
-                                  content=TextContentBlock(type="text", text=payload.get("delta", payload.get("text", ""))),
-                                  field_meta=metadata)
-        elif event in {"tool_start", "TOOL_CALL_START"}:
-            update = ToolCallStart(
-                session_update="tool_call",
-                tool_call_id=payload.get("toolCallId", payload.get("tool_call_id")),
-                title=payload.get("toolCallName", payload.get("tool_name")),
-                status="in_progress", raw_input=payload.get("args"), field_meta=metadata,
+        if isinstance(event, TextDelta):
+            update = AgentMessageChunk(
+                session_update="agent_message_chunk", content=TextContentBlock(type="text", text=event.text),
+                field_meta=metadata,
             )
-        elif event in {"tool_end", "TOOL_CALL_END", "TOOL_CALL_RESULT", "TOOL_CALL_ARGS"}:
+        elif isinstance(event, ToolStarted):
+            update = ToolCallStart(
+                session_update="tool_call", tool_call_id=event.tool_call_id, title=event.tool_name,
+                status="in_progress", raw_input=event.args, field_meta=metadata,
+            )
+        elif isinstance(event, ToolCompleted):
             update = ToolCallProgress(
-                session_update="tool_call_update",
-                tool_call_id=payload.get("toolCallId", payload.get("tool_call_id")),
-                status=("failed" if payload.get("error") else "completed") if event in {"tool_end", "TOOL_CALL_END"} else None,
-                raw_output=payload.get("result", payload.get("content", payload.get("error"))),
-                raw_input=json.loads(payload["delta"]) if event == "TOOL_CALL_ARGS" else None,
+                session_update="tool_call_update", tool_call_id=event.tool_call_id,
+                status="failed" if event.error else "completed", raw_output=event.content or None,
                 field_meta=metadata,
             )
         if update is not None:
             await self.connection.session_update(self.session_id, update)
         # Acknowledgement after enqueue provides backpressure. Notifications
         # alone let the SDK create unbounded handlers behind a slow consumer.
-        await self.connection.ext_method(FRAME_METHOD, {"sessionId": self.session_id, "frame": frame})
+        await self.connection.ext_method(EVENT_METHOD, {"sessionId": self.session_id, "event": event.model_dump(mode="json")})
 
 
-class _FrameClient:
+class _EventClient:
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
-        self.frames: asyncio.Queue[str | None] = asyncio.Queue(maxsize=BUFFER_SIZE)
+        self.events: asyncio.Queue[StreamEvent | None] = asyncio.Queue(maxsize=BUFFER_SIZE)
         self.closing = asyncio.Event()
 
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
@@ -265,15 +259,19 @@ class _FrameClient:
             raise RequestError.invalid_params({"reason": "Unexpected native session"})
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        if method != FRAME_METHOD or params.get("sessionId") != self.session_id or not isinstance(params.get("frame"), str):
-            raise RequestError.invalid_params({"reason": "Unexpected native frame"})
+        if method != EVENT_METHOD or params.get("sessionId") != self.session_id or set(params) != {"sessionId", "event"}:
+            raise RequestError.invalid_params({"reason": "Unexpected native event"})
+        try:
+            event = STREAM_EVENT_ADAPTER.validate_python(params["event"])
+        except ValueError:
+            raise RequestError.invalid_params({"reason": "Invalid native event"}) from None
         if not self.closing.is_set():
-            await self.frames.put(params["frame"])
+            await self.events.put(event)
         return {}
 
     async def finish(self) -> None:
         """Finish delivery, or stop waiting if a full buffer loses its reader."""
-        delivery = asyncio.create_task(self.frames.put(None))
+        delivery = asyncio.create_task(self.events.put(None))
         closed = asyncio.create_task(self.closing.wait())
         try:
             await asyncio.wait({delivery, closed}, return_when=asyncio.FIRST_COMPLETED)
@@ -335,10 +333,10 @@ def cancel_native_acp(agent_id: str, session_id: str) -> bool:
 
 async def native_acp_stream(
     runtime: AgentRuntime, *, message: str | None, session_id: str, user_email: str,
-    encoder: StreamEncoder, trace_id: str | None = None, files: list[InputFile] | None = None,
+    encoder: StreamEncoder[str], trace_id: str | None = None, files: list[InputFile] | None = None,
     turn_id: str | None = None, resume_data: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Drive one admitted native turn through ACP and preserve its SSE frames.
+    """Drive native events through ACP, then format the requested UI protocol.
 
     Connections are turn-scoped so SDK dispatch tasks capture this request's
     verified authentication context. Closing the consumer cancels and awaits
@@ -355,12 +353,12 @@ async def native_acp_stream(
 
 async def _stream_admitted_turn(
     runtime: AgentRuntime, active: _ActiveTurn, *, message: str | None, session_id: str, user_email: str,
-    encoder: StreamEncoder, trace_id: str | None, files: list[InputFile] | None,
+    encoder: StreamEncoder[str], trace_id: str | None, files: list[InputFile] | None,
     turn_id: str | None, resume_data: str | None,
 ) -> AsyncGenerator[str, None]:
     client_transport, agent_transport = _transport_pair()
-    client = _FrameClient(session_id)
-    agent = _NativeAgent(runtime, session_id, user_email, encoder)
+    client = _EventClient(session_id)
+    agent = _NativeAgent(runtime, session_id, user_email)
     agent_connection = AgentSideConnection(agent, agent_transport)
     connection = connect_to_agent(client, client_transport)
     active.connection = connection
@@ -390,8 +388,9 @@ async def _stream_admitted_turn(
                 await client.finish()
 
         prompt_task = asyncio.create_task(run_prompt())
-        while (frame := await client.frames.get()) is not None:
-            yield frame
+        while (event := await client.events.get()) is not None:
+            for frame in encoder.encode_event(event):
+                yield frame
         await prompt_task
     finally:
         client.closing.set()
