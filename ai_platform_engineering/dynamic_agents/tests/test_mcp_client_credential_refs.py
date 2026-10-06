@@ -273,6 +273,7 @@ async def test_caller_token_falls_back_to_client_credentials(monkeypatch):
         server, config, credential_client=FakeCredentialClient()
     )
 
+    assert resolved["headers"]["Authorization"] == "Bearer service-client-credentials-token"
     assert resolved["headers"]["X-CAIPE-Provider-Token"] == "service-client-credentials-token"
 
 
@@ -294,6 +295,29 @@ async def test_caller_token_no_jwt_no_mint_skips_injection(monkeypatch):
     )
 
     assert "X-CAIPE-Provider-Token" not in resolved.get("headers", {})
+
+
+@pytest.mark.asyncio
+async def test_batch_resolves_caller_token_fallback_without_credential_api_client(monkeypatch):
+    """Local no-SSO has no user bearer, but can still mint the platform token."""
+    monkeypatch.setenv("USE_IMPERSONATION_TOKENS", "true")
+
+    async def _mint():
+        return "service-client-credentials-token"
+
+    monkeypatch.setattr(mcp_client, "mint_service_client_credentials_token", _mint)
+    server = _kb_server()
+    connections = {"knowledge-base": build_mcp_connection_config(server)}
+
+    result = await resolve_mcp_connections_credential_refs(
+        [server],
+        connections,
+        credential_client=None,
+    )
+
+    assert result.connections["knowledge-base"]["headers"]["Authorization"] == (
+        "Bearer service-client-credentials-token"
+    )
 
 
 @pytest.mark.asyncio

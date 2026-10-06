@@ -1,4 +1,5 @@
 import { authOptions,isBootstrapAdmin } from "@/lib/auth-config";
+import { getDevAnonymousSession,isDevAnonymousAuthEnabled } from "@/lib/auth/dev-auth-provider";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
 import { checkOpenFgaTuple,readOpenFgaTuples } from "@/lib/rbac/openfga";
 import { organizationObjectId } from "@/lib/rbac/organization";
@@ -56,6 +57,7 @@ async function isOrgAdmin(session: {
   accessToken?: string;
   user?: { email?: string | null };
 }): Promise<boolean> {
+  if (isDevAnonymousAuthEnabled()) return true;
   if (isBootstrapAdmin(session.user?.email ?? "")) return true;
   const subject = getSessionSubject(session);
   if (!subject) return false;
@@ -104,7 +106,9 @@ export async function GET() {
     return NextResponse.json({ teams: [] });
   }
 
-  const session = (await getServerSession(authOptions)) as
+  const session = ((await getServerSession(authOptions)) ?? (
+    isDevAnonymousAuthEnabled() ? getDevAnonymousSession() : null
+  )) as
     | {
         accessToken?: string;
         sub?: string;
