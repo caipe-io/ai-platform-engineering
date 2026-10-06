@@ -3,6 +3,8 @@
  */
 
 import { NextRequest } from "next/server";
+import { PermissionSaveConflictError, type PermissionPersistence } from "@/lib/authz/permission-sync";
+import { mutationSnapshotFilter } from "@/lib/rbac/mutation-snapshot";
 
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockRequireRbacPermission = jest.fn();
@@ -159,6 +161,24 @@ function request(path: string, init?: RequestInit): NextRequest {
 const session = { sub: "alice-sub", role: "admin" };
 const user = { email: "alice@example.com" };
 
+// Route tests verify the validated persistence command. The durable runner has
+// separate real-path tests for atomic staging, replay and dependency failures.
+async function mockPersistCommand(input: PermissionPersistence) {
+  const col = await mockGetCollection(input.collection);
+  if (input.deleteResource) {
+    const result = await col.deleteOne(mutationSnapshotFilter(input.id, input.previous));
+    if (!result.deletedCount) throw new PermissionSaveConflictError("AGENT_SAVE_CONFLICT");
+  } else if (!input.previous) {
+    await col.insertOne(input.set);
+  } else {
+    const result = await col.findOneAndUpdate(mutationSnapshotFilter(input.id, input.previous), {
+      $set: { ...input.set, authz_write_id: "example-write" },
+      ...(input.unset && Object.keys(input.unset).length ? { $unset: input.unset } : {}),
+    }, { returnDocument: "after" });
+    if (!result) throw new PermissionSaveConflictError("AGENT_SAVE_CONFLICT");
+  }
+}
+
 describe("dynamic agents RBAC routes", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -177,8 +197,8 @@ describe("dynamic agents RBAC routes", () => {
     mockRequireResourcePermission.mockResolvedValue(undefined);
     mockRequireAgentPermission.mockResolvedValue(undefined);
     mockCanTransferResourceOwnership.mockResolvedValue(true);
-    mockReconcileAgentRelationships.mockImplementation(async (input: { persist?: () => Promise<void> }) => { await input.persist?.(); });
-    mockDeleteAllAgentToolTuples.mockImplementation(async (_id: string, _context: unknown, persist?: () => Promise<void>) => { await persist?.(); });
+    mockReconcileAgentRelationships.mockImplementation(async (input: { persistence: PermissionPersistence }) => { await mockPersistCommand(input.persistence); });
+    mockDeleteAllAgentToolTuples.mockImplementation(async (_id: string, _context: unknown, _persist: unknown, persistence: PermissionPersistence) => { await mockPersistCommand(persistence); });
     mockCascadeDeleteAutonomousTasksForAgent.mockResolvedValue({ attempted: 0, deleted: 0 });
     mockWriteOpenFgaTuples.mockResolvedValue({
       enabled: true,
@@ -1884,7 +1904,7 @@ describe("dynamic agents RBAC routes", () => {
     expect(mockCascadeDeleteAutonomousTasksForAgent).toHaveBeenCalledWith("agent-1");
     expect(mockDeleteAllAgentToolTuples).toHaveBeenCalledWith("agent-1", expect.objectContaining({
       caller: { type: "user", id: "alice-sub" },
-    }), expect.any(Function));
+    }), undefined, expect.objectContaining({ collection: "dynamic_agents", id: "agent-1", deleteResource: true }));
     expect(deleteOne).toHaveBeenCalledWith({ _id: "agent-1", updated_at: { $exists: false }, authz_write_id: { $exists: false } });
     const cascadeOrder = mockCascadeDeleteAutonomousTasksForAgent.mock.invocationCallOrder[0];
     const tupleDeleteOrder = mockDeleteAllAgentToolTuples.mock.invocationCallOrder[0];

@@ -36,6 +36,11 @@ Small change PRs -> prebuild/feat/cas-authz -> draft integration PR -> main
 
 - Review agent-grant lifecycle changes in [#2827](https://github.com/caipe-io/ai-platform-engineering/pull/2827).
 - Address session/token consistency separately; do not mix it into grant lifecycle.
+- Keep [#2854](https://github.com/caipe-io/ai-platform-engineering/issues/2854)
+  open until durable grant recovery is proven. The recovery draft adds the
+  settings journal and pending UX; late OpenFGA writes, remaining writers and
+  real multi-process crash tests still block rollout. See the
+  [recovery contract](../ui/src/lib/authz/README.md#agent-grant-lifecycle--recovery-draft).
 - Continue CAS migration in small reviews, including the Admin access-decision view
   tracked in [#2828](https://github.com/caipe-io/ai-platform-engineering/issues/2828).
 

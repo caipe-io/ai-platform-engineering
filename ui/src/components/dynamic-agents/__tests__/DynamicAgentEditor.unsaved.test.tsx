@@ -328,6 +328,44 @@ describe("DynamicAgentEditor — unsaved-changes back-button guard", () => {
     expect(flagAtOnSaveTime[0]).toBe(false);
   });
 
+  it("shows a disabled Save spinner until the request returns, then shows pending without closing", async () => {
+    const originalFetch = global.fetch;
+    let finish!: (value: Response) => void;
+    global.fetch = jest.fn((url, init) => init?.method === "PUT"
+      ? new Promise<Response>(resolve => { finish = resolve; }) : originalFetch(url, init));
+    const onSave = jest.fn();
+    render(<DynamicAgentEditor agent={fixtureAgent} onCancel={jest.fn()} onSave={onSave} />);
+    await flushAsync();
+    fireEvent.change(screen.getByPlaceholderText(/Code Review Agent/i), { target: { value: "Changed" } });
+    const save = screen.getByRole("button", { name: "Save Changes" });
+    fireEvent.click(save);
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute("aria-busy", "true");
+    expect(save.querySelector(".animate-spin")).not.toBeNull();
+    fireEvent.click(save);
+    expect(jest.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1);
+    await act(async () => { finish({ ...jsonResponse({ success: true, data: {
+      permission_sync: { id: "example-operation", state: "pending", requested_at: "2026-01-01" },
+    } }), status: 202 } as Response); });
+    const pending = screen.getByRole("button", { name: "Permissions pending" });
+    expect(pending).toBeDisabled();
+    expect(pending).toHaveAttribute("aria-busy", "false");
+    expect(pending.querySelector(".animate-spin")).toBeNull();
+    expect(screen.getByText(/Previous access may still work/)).toBeInTheDocument();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(useUnsavedChangesStore.getState().hasUnsavedChanges).toBe(false);
+  });
+
+  it("restores pending state from the saved agent when the editor is reopened", async () => {
+    render(<DynamicAgentEditor agent={{ ...fixtureAgent, permission_sync: {
+      id: "example-operation", state: "pending", requested_at: "2026-01-01",
+    } }} onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+    expect(screen.getByRole("button", { name: "Permissions pending" })).toBeDisabled();
+    expect(screen.getByPlaceholderText(/Code Review Agent/i)).toBeDisabled();
+    expect(screen.getByText(/Previous access may still work/)).toBeInTheDocument();
+  });
+
   it("failed save leaves the global flag dirty so subsequent back-clicks warn", async () => {
     const onCancel = jest.fn();
     const onSave = jest.fn();

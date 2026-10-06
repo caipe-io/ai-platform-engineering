@@ -27,7 +27,6 @@ const tuple = (id: string): OpenFgaTupleKey => ({ user: "user:*", relation: "use
 const key = (value: OpenFgaTupleKey) => `${value.user}|${value.relation}|${value.object}`;
 let graph: Map<string, OpenFgaTupleKey>;
 let savedDefault: string | null;
-let failCleanup: boolean;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -36,7 +35,6 @@ beforeEach(() => {
   process.env.OPENFGA_RECONCILE_ENABLED = "true";
   delete process.env.DEFAULT_AGENT_ID;
   savedDefault = "agent-old";
-  failCleanup = false;
   graph = new Map([[key(tuple("agent-old")), tuple("agent-old")]]);
   mockUpdateOne.mockResolvedValue({ matchedCount: 0, upsertedCount: 0 });
   mockGetCollection.mockImplementation(async (name: string) => {
@@ -54,7 +52,6 @@ beforeEach(() => {
       return Response.json({ tuples: found ? [{ key: found }] : [] });
     }
     if (String(url).endsWith("/write")) {
-      if (failCleanup && mockUpdateOne.mock.calls.length) return new Response("unavailable", { status: 503 });
       for (const t of body.writes?.tuple_keys ?? []) graph.set(key(t), t);
       for (const t of body.deletes?.tuple_keys ?? []) graph.delete(key(t));
       return Response.json({});
@@ -91,28 +88,24 @@ it.each(["storage-only", "route-empty-diff"])("returns 409 for a direct %s snaps
   expect(global.fetch).not.toHaveBeenCalled();
 });
 
-it.each([false, true])("returns repair-required 503 after a tuple mutation and conflict (cleanup fails: %s)", async cleanupFails => {
-  failCleanup = cleanupFails;
+it("rejects a stale settings snapshot before any OpenFGA mutation", async () => {
   const response = await save("agent-next");
   const body = await response.json();
-  expect(response.status).toBe(503);
+  expect(response.status).toBe(409);
   expect(body).toMatchObject({
-    success: false, code: "ACCESS_UPDATE_INCOMPLETE", action: "contact_admin",
-    error: expect.stringContaining("Reference:"),
+    success: false, code: "PLATFORM_CONFIG_SAVE_CONFLICT",
   });
-  expect(body.error).toContain("Access may need repair");
   expect(body).not.toHaveProperty("cause");
-  expect(body.error).not.toContain("PLATFORM_CONFIG_SAVE_CONFLICT");
   expect(mockUpdateOne).toHaveBeenCalledTimes(1);
-  expect(graph.has(key(tuple("agent-old")))).toBe(false);
-  expect(graph.has(key(tuple("agent-next")))).toBe(cleanupFails);
+  expect([...graph.values()]).toEqual([tuple("agent-old")]);
+  expect(global.fetch).not.toHaveBeenCalled();
 });
 
-it("keeps the configured writer's 503 contract when all requested tuples already exist", async () => {
+it("still checks the snapshot when all requested tuples already exist", async () => {
   const response = await save("agent-old");
-  expect(response.status).toBe(503);
-  expect(await response.json()).toMatchObject({ code: "ACCESS_UPDATE_INCOMPLETE", action: "contact_admin" });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ code: "PLATFORM_CONFIG_SAVE_CONFLICT" });
   expect([...graph.values()]).toEqual([tuple("agent-old")]);
   expect(mockUpdateOne).toHaveBeenCalledTimes(1);
-  expect(jest.mocked(global.fetch).mock.calls.every(([url]) => String(url).endsWith("/read"))).toBe(true);
+  expect(global.fetch).not.toHaveBeenCalled();
 });
