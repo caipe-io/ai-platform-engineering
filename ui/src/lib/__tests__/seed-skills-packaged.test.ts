@@ -15,10 +15,9 @@ it("packages a tool-free example as the only initial default", () => {
   expect(templates[0].content).toContain("Do not call tools");
 });
 
-it("includes the legacy catalog and gateway instructions for existing installs", () => {
+it("keeps protected gateway instructions out of the ordinary packaged catalog", () => {
   const templates = getLegacySkillTemplates();
   expect(templates.length).toBeGreaterThan(2);
-  expect(templates.map((skill) => skill.id)).toEqual(expect.arrayContaining(["live-skills", "update-skills"]));
-  expect(templates.find((skill) => skill.id === "live-skills")?.content).toContain("{{BASE_URL}}");
+  expect(templates.some((skill) => ["live-skills", "update-skills"].includes(skill.id))).toBe(false);
   expect(templates.some((skill) => skill.id === "hello-world")).toBe(false);
 });

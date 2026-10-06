@@ -13,12 +13,8 @@
  * Query params, response shape, and validation are documented on
  * {@link makeTemplateRouteHandler}. Stable across both routes.
  *
- * MongoDB serves the global system skill record by route id.
- * Without MongoDB, template resolution is:
- *   1. SKILLS_LIVE_SKILLS_TEMPLATE env var (raw markdown)
- *   2. File at SKILLS_LIVE_SKILLS_FILE env var
- *   3. <repo>/charts/ai-platform-engineering/data/skills/live-skills.md
- *   4. Built-in fallback string below
+ * MongoDB serves the code-owned system_skills record by route id.
+ * Database-free development uses the packaged file or the fallback below.
  */
 
 import { makeTemplateRouteHandler } from "../_lib/template-route";
@@ -50,10 +46,6 @@ Slash command: /{{COMMAND_NAME}}
 
 export const GET = makeTemplateRouteHandler({
   routeId: "live-skills",
-  envInlineKey: "SKILLS_LIVE_SKILLS_TEMPLATE",
-  envFileKey: "SKILLS_LIVE_SKILLS_FILE",
-  chartTemplatePath:
-    "charts/ai-platform-engineering/data/skills/live-skills.md",
   fallbackTemplate: FALLBACK_TEMPLATE,
   defaultCommandName: DEFAULT_LIVE_SKILLS_COMMAND,
   defaultDescription: "Browse and install skills from the CAIPE skill catalog",

@@ -5,6 +5,10 @@ import os from "os";
 import path from "path";
 
 const mockBootstrapSkills = jest.fn();
+const mockSeedSystemSkills = jest.fn();
+jest.mock("@/lib/system-skills", () => ({
+  seedSystemSkills: () => mockSeedSystemSkills(),
+}));
 const mockCollection = {
   find: jest.fn(() => ({ toArray: async () => [] })),
   findOne: jest.fn(async () => null),
@@ -53,6 +57,7 @@ afterEach(() => {
 
 it("does not consume skill bootstrap when a configured file is missing", async () => {
   await applySeedConfig();
+  expect(mockSeedSystemSkills).toHaveBeenCalled();
   expect(mockBootstrapSkills).not.toHaveBeenCalled();
   expect(mockCollection.find).not.toHaveBeenCalled();
 
@@ -71,6 +76,28 @@ it("initializes an empty catalog for an explicitly loaded skills list", async ()
   await applySeedConfig();
   expect(mockBootstrapSkills).toHaveBeenCalledWith([]);
   expect(mockCollection.replaceOne).not.toHaveBeenCalled();
+});
+
+it("initializes system instructions independently of same-named configured skills", async () => {
+  fs.writeFileSync(process.env.APP_CONFIG_PATH!, JSON.stringify({ skills: [
+    { id: "live-skills", name: "Example Skill", content: "Operator catalog content" },
+  ] }));
+  await applySeedConfig();
+  expect(mockSeedSystemSkills).toHaveBeenCalledTimes(1);
+  expect(mockCollection.replaceOne).toHaveBeenCalledWith(
+    { id: "live-skills" },
+    expect.objectContaining({ skill_content: "Operator catalog content", config_driven: true }),
+    { upsert: true },
+  );
+});
+
+it("keeps ordinary initialization available after a system skill initialization failure", async () => {
+  mockSeedSystemSkills.mockRejectedValueOnce(new Error("System assets unavailable"));
+  delete process.env.APP_CONFIG_PATH;
+  await applySeedConfig();
+  expect(mockBootstrapSkills).toHaveBeenCalledWith(undefined);
+  await applySeedConfig();
+  expect(mockSeedSystemSkills).toHaveBeenCalledTimes(2);
 });
 
 it.each([

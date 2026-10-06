@@ -1182,6 +1182,7 @@ Both paths require a populated `session.sub`; without it `filterSkillsByOpenFga`
 - Database skills use the existing resource permission checks for reads, writes, and deletion. Skill administrators retain their management grants.
 - Skills declared in `app-config.yaml` are `config_driven` and read-only through the UI and content mutation APIs, including for administrators. Startup applies YAML additions and updates; removing a declaration removes its managed record and OpenFGA relationships.
 - The one-time Hello World default and explicitly imported templates are ordinary database records. Authorized users can edit or delete them; `is_system` alone does not lock a skill.
+- The code-owned `live-skills` and `update-skills` gateway instructions live in `system_skills`, outside the ordinary skill catalog. Startup writes the release's packaged instructions; gateway APIs only read them. UI skill APIs, app-config, and template imports cannot edit or delete these records, including for administrators.
 - Cloning requires read permission on the source and creates an independent, private, user-owned skill with `config_driven=false`.
 - Initialization runs at server startup; existing installations use the admin catalog migration. `/api/skills/seed` is not an API surface. Explicit packaged imports remain available through the admin-only `/api/skills/templates/import` endpoint.
 

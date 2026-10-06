@@ -70,6 +70,7 @@ caipe-ui:
 - Startup applies configured additions and changes to MongoDB. Removing a skill from YAML removes its config-driven database record. These skills are read-only in the UI; clone one to create an editable user-owned copy.
 - Omit `skills` on a fresh database to seed only the tool-free **Hello World** example once. This ordinary database skill can be edited or deleted in the UI; restarts do not restore it.
 - Set `skills: []` to suppress the default on a fresh database and remove previously config-driven skills. User-created and explicitly imported skills remain managed through the UI.
+- System gateway instructions (`live-skills` and `update-skills`) initialize from release assets in a separate `system_skills` collection on every startup. App-config and ordinary skill APIs cannot change them, even through an ordinary skill with the same ID.
 - Packaged defaults live in the UI image, and `agent_skills` supplies the
   persisted catalog. Template imports remain available explicitly.
 - The chart omits legacy mounts referencing the `skill-templates` and `skills-live-skills` ConfigMaps
@@ -78,7 +79,7 @@ caipe-ui:
 ### Existing installations
 
 - In the admin migration UI, preview and apply **Move packaged skill catalog into MongoDB**.
-- The migration inserts missing packaged catalog skills and the `live-skills` / `update-skills` gateway instructions. It preserves edited records, restricted visibility, and imported copies.
+- The migration inserts missing ordinary packaged catalog skills. It preserves edited records, restricted visibility, and imported copies. System gateway instructions initialize separately on startup.
 - If `app-config.yaml` provides `skills`, the migration applies that declarative list instead. YAML controls matching records, including their content and global visibility. A missing configured file fails the migration without marking it complete.
 - The packaged catalog migration runs once. New databases already initialized by startup are left unchanged; later restarts and upgrades do not recreate deleted ordinary skills.
 - Coding-agent helper scripts ship in the UI image; they do not need a ConfigMap or database seed.

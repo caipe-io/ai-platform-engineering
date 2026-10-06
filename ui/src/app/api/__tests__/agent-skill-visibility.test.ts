@@ -165,6 +165,21 @@ describe("configured skill mutation protection", () => {
   });
 });
 
+it.each(["PUT", "DELETE"] as const)("does not expose protected system skills through ordinary %s operations", async (method) => {
+  mockGetServerSession.mockResolvedValue(userSession());
+  mockCollections.agent_skills = createMockCollection();
+  mockCollections.system_skills = createMockCollection();
+  mockCollections.system_skills.findOne.mockResolvedValue({ _id: "live-skills", content: "System instructions" });
+  const handler = (await import("../skills/configs/route"))[method];
+  const response = await handler(makeRequest("/api/skills/configs?id=live-skills", {
+    method, ...(method === "PUT" ? { body: JSON.stringify({ name: "Changed" }) } : {}),
+  }));
+  expect(response.status).toBe(404);
+  expect(mockCollections.system_skills.findOne).not.toHaveBeenCalled();
+  expect(mockCollections.system_skills.updateOne).not.toHaveBeenCalled();
+  expect(mockCollections.system_skills.deleteOne).not.toHaveBeenCalled();
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST - Create with visibility
 // ─────────────────────────────────────────────────────────────────────────────

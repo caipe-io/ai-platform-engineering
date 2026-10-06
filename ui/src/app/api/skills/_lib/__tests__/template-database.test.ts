@@ -1,29 +1,32 @@
 /** @jest-environment node */
 
 const mockFind = jest.fn();
+const mockGetCollection = jest.fn(async () => ({ findOne: mockFind }));
 jest.mock("@/lib/mongodb", () => ({
   isMongoDBConfigured: true,
-  getCollection: async () => ({ findOne: mockFind }),
+  getCollection: (...args: unknown[]) => mockGetCollection(...args),
 }));
 import { GET as live } from "../../live-skills/route";
 import { GET as update } from "../../update-skills/route";
 
-beforeEach(() => { jest.resetAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockGetCollection.mockResolvedValue({ findOne: mockFind });
+});
 
 it.each([["live-skills", live], ["update-skills", update]])(
-  "renders the edited %s instruction from MongoDB", async (id, handler) => {
-    mockFind.mockResolvedValue({ skill_content: "---\ndescription: Example gateway\n---\nEdited instruction for {{BASE_URL}}." });
+  "renders the protected %s instruction from MongoDB", async (id, handler) => {
+    mockFind.mockResolvedValue({ content: "---\ndescription: Example gateway\n---\nSystem instruction for {{BASE_URL}}." });
     const response = await handler(new Request(`https://app.example.com/api/skills/${id}`));
     const data = await response.json();
-    expect(data.source).toBe(`mongodb:${id}`);
-    expect(data.template).toContain("Edited instruction for https://app.example.com");
-    expect(mockFind).toHaveBeenCalledWith({ is_system: true, visibility: "global",
-      $or: [{ id }, { "metadata.template_source_id": id }],
-    });
+    expect(data.source).toBe(`mongodb:system_skills/${id}`);
+    expect(data.template).toContain("System instruction for https://app.example.com");
+    expect(mockGetCollection).toHaveBeenCalledWith("system_skills");
+    expect(mockFind).toHaveBeenCalledWith({ _id: id });
   },
 );
 
-it("does not restore a deleted or private instruction from packaged files or environment", async () => {
+it("does not replace a missing system record with packaged files or environment", async () => {
   const original = process.env.SKILLS_LIVE_SKILLS_TEMPLATE;
   process.env.SKILLS_LIVE_SKILLS_TEMPLATE = "A filesystem fallback";
   try {

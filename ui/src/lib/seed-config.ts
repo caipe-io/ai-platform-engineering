@@ -16,6 +16,7 @@
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { bootstrapSkills, templateToAgentSkill, validateSeedSkills, type SeedSkill } from "@/lib/seed-skills";
 import type { AgentSkill } from "@/types/agent-skill";
+import { seedSystemSkills } from "@/lib/system-skills";
 import { BUILTIN_MCP_CREDENTIAL_SOURCES } from "@/lib/rbac/agentgateway-mcp-discovery";
 import { computeIngestionSourceId } from "@/lib/ingestion-source-id";
 import {
@@ -1778,6 +1779,13 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
  * Also cleans up config-driven entities that have been removed from config.
  */
 export async function applySeedConfig(): Promise<void> {
+  if (isMongoDBConfigured) {
+    try {
+      await seedSystemSkills();
+    } catch (error) {
+      console.error("[seed-config] System skill initialization failed:", error);
+    }
+  }
   const configPath = process.env.APP_CONFIG_PATH;
   const seedSkills = async (skills?: SeedSkill[]): Promise<void> => {
     if (!isMongoDBConfigured) return;

@@ -1,10 +1,8 @@
-/** Render gateway instructions from MongoDB, with file defaults for database-free development. */
+/** Render code-owned gateway instructions from system_skills. */
 
-import fs from "fs";
 import { NextResponse } from "next/server";
-import path from "path";
-import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
-import type { AgentSkill } from "@/types/agent-skill";
+import { isMongoDBConfigured } from "@/lib/mongodb";
+import { getSystemSkill, readPackagedSystemSkill, type SystemSkillId } from "@/lib/system-skills";
 import {
 AGENTS,
 DEFAULT_AGENT_ID,
@@ -23,30 +21,10 @@ export interface TemplateRouteConfig {
    * strings. Should match the route segment, e.g. `"live-skills"` or
    * `"update-skills"`.
    */
-  routeId: string;
+  routeId: SystemSkillId;
 
   /**
-   * Env var holding inline template markdown. Highest-priority override.
-   * E.g. `"SKILLS_LIVE_SKILLS_TEMPLATE"`.
-   */
-  envInlineKey: string;
-
-  /**
-   * Env var holding a filesystem path to the template. Tried after the
-   * inline override. E.g. `"SKILLS_LIVE_SKILLS_FILE"`.
-   */
-  envFileKey: string;
-
-  /**
-   * Path (relative to repo root) to the chart-shipped template file.
-   * E.g. `"charts/ai-platform-engineering/data/skills/live-skills.md"`.
-   *
-   * Resolved against the repo root for database-free development.
-   */
-  chartTemplatePath: string;
-
-  /**
-   * Used as last-resort fallback when no override and no chart file
+   * Used as last-resort fallback when no packaged file
    * exists. Should be a complete frontmatter+body markdown string.
    */
   fallbackTemplate: string;
@@ -65,63 +43,19 @@ export interface TemplateRouteConfig {
  * context.
  * ------------------------------------------------------------------------ */
 
-function safeReadFile(filePath: string, routeId: string): string | null {
-  try {
-    if (!filePath) return null;
-    const resolved = path.resolve(filePath);
-    if (!fs.existsSync(resolved)) return null;
-    const stat = fs.statSync(resolved);
-    if (!stat.isFile()) return null;
-    // Cap at 256 KiB to prevent runaway reads / DoS.
-    if (stat.size > 256 * 1024) {
-      console.warn(
-        `[skills/${routeId}] file too large (${stat.size} bytes): ${resolved}`,
-      );
-      return null;
-    }
-    return fs.readFileSync(resolved, "utf-8");
-  } catch (err) {
-    console.warn(`[skills/${routeId}] failed to read ${filePath}:`, err);
-    return null;
-  }
-}
-
 async function resolveTemplate(
   cfg: TemplateRouteConfig,
 ): Promise<{ template: string; source: string } | null> {
   if (isMongoDBConfigured) {
-    const collection = await getCollection<AgentSkill & { skill_template?: string }>("agent_skills");
-    const skill = await collection.findOne({
-      is_system: true, visibility: "global",
-      $or: [{ id: cfg.routeId }, { "metadata.template_source_id": cfg.routeId }],
-    });
-    const template = skill?.skill_content || skill?.skill_template || skill?.tasks?.[0]?.llm_prompt;
-    return template
-      ? { template, source: `mongodb:${cfg.routeId}` }
+    const skill = await getSystemSkill(cfg.routeId);
+    return skill?.content
+      ? { template: skill.content, source: `mongodb:system_skills/${cfg.routeId}` }
       : null;
   }
-  const envInline = process.env[cfg.envInlineKey];
-  if (envInline && envInline.trim().length > 0) {
-    return { template: envInline, source: `env:${cfg.envInlineKey}` };
-  }
-
-  const envFile = process.env[cfg.envFileKey];
-  if (envFile) {
-    const fromFile = safeReadFile(envFile, cfg.routeId);
-    if (fromFile) {
-      return { template: fromFile, source: `file:${envFile}` };
-    }
-  }
-
-  // Database-free development resolves packaged files from the repo root.
-  const chartPath = path.resolve(
-    process.cwd(),
-    "..",
-    cfg.chartTemplatePath,
-  );
-  const fromChart = safeReadFile(chartPath, cfg.routeId);
-  if (fromChart) {
-    return { template: fromChart, source: `file:${chartPath}` };
+  try {
+    return { template: readPackagedSystemSkill(cfg.routeId), source: `packaged:${cfg.routeId}` };
+  } catch (error) {
+    console.warn(`[skills/${cfg.routeId}] Packaged system skill unavailable:`, error);
   }
 
   return { template: cfg.fallbackTemplate, source: "fallback" };

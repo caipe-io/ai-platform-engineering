@@ -10,41 +10,23 @@ a copy-pasteable slash command that lets a coding agent (Claude Code, Cursor,
 Spec Kit, etc.) browse, search, run, install, and update skills served by the
 CAIPE skill catalog.
 
-The body of that slash command is rendered from a single Markdown template
-called the **live-skills skill**. This page describes how operators can
-customize it for their deployment without forking the chart or rebuilding the
-image.
+The platform provides two system instruction templates: **live-skills** for
+accessing the catalog and **update-skills** for refreshing installed skills.
 
-## Where the templates live
+## Protected system instructions
 
-- With MongoDB configured, `agent_skills` records `live-skills` and `update-skills` are the canonical gateway instructions.
-- Fresh installs seed only a tool-free Hello World example. Gateway instructions are optional.
-- Existing installs can preview and apply **Move packaged skill catalog into MongoDB** in the admin migration UI. It inserts missing packaged instructions without overwriting edited records.
-- The Python helper and session hook ship in the UI image at `/app/data/skills`. Neither requires a ConfigMap.
+- MongoDB stores these templates in `system_skills`, separate from the ordinary `agent_skills` catalog.
+- Startup creates or updates both templates from the release's packaged Markdown files on new and existing installations. This runs independently of app-config and the ordinary catalog migration.
+- UI skill APIs, template imports, and app-config do not write to `system_skills`. An ordinary skill with the same ID cannot replace the gateway instructions.
+- Change system instructions in the repository and ship a new release. They are not editable or deletable through the UI.
+- The templates, Python helper, and session hook ship in the UI image at `/app/data/skills`. They do not require skill ConfigMaps.
 
-## Configure instructions
+## Rendering and deployment
 
-Supply the complete instruction body through `caipe-ui.appConfig.skills`, or `skills` in `app-config.yaml`:
-
-```yaml
-skills:
-  - id: live-skills
-    name: Live Skills
-    description: Browse the live skill catalog
-    content: |
-      ---
-      description: Browse the live skill catalog
-      ---
-      Browse skills from {{BASE_URL}}/api/skills using the installed catalog helper.
-```
-
-The packaged `live-skills.md` and `update-skills.md` provide full instruction bodies. Include both records to enable both gateway installers.
-
-- Configured skills follow the agent lifecycle: startup applies YAML additions and updates, and removes records absent from YAML. Edit or remove them through configuration; the UI keeps them read-only.
-- For instructions managed through the UI, explicitly import the packaged templates. These ordinary database records can be edited or deleted without being restored on startup.
-- Global system records are served by `/api/skills/live-skills` and `/api/skills/update-skills`. Missing, deleted, or private records return 404; file defaults do not restore them.
-- The renderer substitutes `{{COMMAND_NAME}}`, `{{DESCRIPTION}}`, `{{BASE_URL}}`, and `{{ARG_REF}}` for the selected coding agent.
-- Without MongoDB, development routes can use inline `SKILLS_*_TEMPLATE` and file `SKILLS_*_FILE` overrides, packaged chart files, or their fallback template.
+- `/api/skills/live-skills` and `/api/skills/update-skills` read only the protected system records. A missing record returns 404; a database failure returns 503.
+- The renderer substitutes `{{COMMAND_NAME}}`, `{{DESCRIPTION}}`, `{{BASE_URL}}`, and `{{ARG_REF}}` for the selected coding agent without changing the stored template.
+- Without MongoDB, development routes use the packaged files or their code fallback. Inline `SKILLS_*_TEMPLATE` and file `SKILLS_*_FILE` overrides do not control system instructions.
+- Use `caipe-ui.appConfig.skills` or `skills` in `app-config.yaml` for ordinary configured skills. Those records follow the agent configuration lifecycle and remain read-only through the UI.
 - Remove obsolete `skillsLiveSkills`, `skillsLiveSkillsName`, and skill ConfigMap mounts from Helm overrides. The chart omits mounts referencing `skill-templates` and `skills-live-skills` on upgrade.
 
 ## What the user sees
@@ -62,8 +44,8 @@ Once the template is in place, the **Skills Gateway** page lets the user:
 - Read the per-agent **launch & invocation guide** rendered just below the
   install command.
 
-The canonical database template is rendered server-side for each coding agent,
-so operators maintain one instruction body for all supported surfaces.
+The system template is rendered server-side for each coding agent,
+so one instruction body serves all supported surfaces.
 
 ## Multi-agent support
 

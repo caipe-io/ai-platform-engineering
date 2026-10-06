@@ -3,17 +3,8 @@
  *
  * Tests for GET /api/skills/update-skills
  *
- * Most behavior is shared with /api/skills/live-skills via the
- * `makeTemplateRouteHandler` factory in `_lib/template-route.ts`. The
- * 47-case live-skills test suite exercises all per-agent rendering,
- * sanitization, layout selection, and template-source precedence. This
- * file therefore covers ONLY the update-skills-specific surface area
- * (defaults + env-var keys + chart path) plus a smoke assertion that
- * the response shape hasn't drifted from live-skills.
- *
- * Adding fresh per-agent / per-scope assertions here would just duplicate
- * the live-skills tests against the same factory, so we deliberately
- * don't.
+ * Route-specific defaults and packaged assets complement the shared
+ * rendering and protected database-source coverage.
  */
 
 jest.mock('@/lib/mongodb', () => ({ isMongoDBConfigured: false }));
@@ -110,69 +101,24 @@ describe('GET /api/skills/update-skills — defaults', () => {
   });
 });
 
-describe('GET /api/skills/update-skills — template resolution', () => {
-  it('reads SKILLS_UPDATE_SKILLS_TEMPLATE inline override', async () => {
-    process.env.SKILLS_UPDATE_SKILLS_TEMPLATE = '---\ndescription: my custom updater\n---\n# body';
-
-    const data = await callGET(
-      'https://app.example.com/api/skills/update-skills',
-    );
-
-    expect(data.source).toBe('env:SKILLS_UPDATE_SKILLS_TEMPLATE');
-    expect(data.canonical_template).toContain('my custom updater');
-  });
-
-  it('reads SKILLS_UPDATE_SKILLS_FILE when set and inline override is absent', async () => {
-    process.env.SKILLS_UPDATE_SKILLS_FILE = '/etc/caipe/update-skills.md';
-    mockExists.mockImplementation((p: string) =>
-      String(p).endsWith('/etc/caipe/update-skills.md'),
-    );
-    mockStat.mockReturnValue({ isFile: () => true, size: 64 });
-    mockRead.mockReturnValue('---\ndescription: from file\n---\n# body');
-
-    const data = await callGET(
-      'https://app.example.com/api/skills/update-skills',
-    );
-
-    expect(data.source).toBe('file:/etc/caipe/update-skills.md');
-    expect(data.canonical_template).toContain('from file');
-  });
-
-  it('does NOT read SKILLS_LIVE_SKILLS_* env vars (route isolation)', async () => {
-    // Set the live-skills env var to a marker. The update-skills route
-    // must ignore it and fall through to its own resolution chain (which
-    // will land on the built-in fallback since no fs is staged).
-    process.env.SKILLS_LIVE_SKILLS_TEMPLATE = 'WRONG_TEMPLATE_SHOULD_BE_IGNORED';
-
-    const data = await callGET(
-      'https://app.example.com/api/skills/update-skills',
-    );
-
-    expect(data.canonical_template).not.toContain('WRONG_TEMPLATE_SHOULD_BE_IGNORED');
+describe('GET /api/skills/update-skills — packaged system instructions', () => {
+  it('ignores inline and file overrides', async () => {
+    process.env.SKILLS_UPDATE_SKILLS_TEMPLATE = 'Operator override';
+    process.env.SKILLS_UPDATE_SKILLS_FILE = '/example/operator-template.md';
+    const data = await callGET('https://app.example.com/api/skills/update-skills');
     expect(data.source).toBe('fallback');
+    expect(data.canonical_template).not.toContain('Operator override');
+    expect(mockRead).not.toHaveBeenCalled();
   });
 
-  it('looks up the chart-relative update-skills.md when env vars are unset', async () => {
-    // The factory resolves `chartTemplatePath` against process.cwd() + ".."
-    // so the path probed will end with "update-skills.md", not "live-skills.md".
-    mockExists.mockImplementation((p: string) =>
-      String(p).endsWith('/data/skills/update-skills.md'),
-    );
+  it('reads the packaged update instructions for database-free development', async () => {
+    mockExists.mockImplementation((p: string) => String(p).endsWith('/data/skills/update-skills.md'));
     mockStat.mockReturnValue({ isFile: () => true, size: 128 });
-    mockRead.mockReturnValue('---\ndescription: {{DESCRIPTION}}\n---\n# body');
-
-    const data = await callGET(
-      'https://app.example.com/api/skills/update-skills',
-    );
-
-    expect(data.source).toMatch(/file:.*update-skills\.md$/);
-    expect(data.canonical_template).toContain('description: {{DESCRIPTION}}');
-    expect(data.template).toContain(
-      'description: Refresh locally-installed CAIPE skills from the live catalog',
-    );
-    expect(data.template).not.toContain(
-      'description: Browse and install skills from the CAIPE skill catalog',
-    );
+    mockRead.mockReturnValue('---\ndescription: {{DESCRIPTION}}\n---\n# Packaged updater');
+    const data = await callGET('https://app.example.com/api/skills/update-skills');
+    expect(data.source).toBe('packaged:update-skills');
+    expect(data.canonical_template).toContain('Packaged updater');
+    expect(data.template).toContain('description: Refresh locally-installed CAIPE skills from the live catalog');
   });
 });
 
