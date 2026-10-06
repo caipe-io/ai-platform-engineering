@@ -195,7 +195,7 @@ describe("GET /api/skills/configs RBAC cutover", () => {
       "write",
     );
     expect(updateOne).toHaveBeenCalledWith(
-      { id: "skill-openfga-write" },
+      { id: "skill-openfga-write", config_driven: { $ne: true } },
       expect.objectContaining({
         $set: expect.objectContaining({ description: "after" }),
       }),

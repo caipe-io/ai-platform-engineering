@@ -22,6 +22,47 @@ interface SkillBootstrap {
 const BOOTSTRAP_ID = "skills";
 const LEASE_MS = 5 * 60 * 1000;
 
+/** Serialize complete configured-skill reconciliation, including grant changes and stale cleanup. */
+export async function withSkillConfigLease<T>(
+  apply: (renew: () => Promise<void>) => Promise<T>,
+): Promise<T> {
+  const state = await getCollection<SkillBootstrap>("startup_seeds");
+  const id = "configured-skills";
+  const owner = randomUUID();
+  const deadline = Date.now() + 30_000;
+  while (true) {
+    const now = new Date();
+    try {
+      await state.updateOne(
+        { _id: id, $or: [{ lease_until: { $exists: false } }, { lease_until: { $lte: now } }] },
+        { $set: { lease_owner: owner, lease_until: new Date(now.getTime() + LEASE_MS) } },
+        { upsert: true },
+      );
+      break;
+    } catch (error) {
+      if (typeof error !== "object" || error === null || !("code" in error) || error.code !== 11000) throw error;
+      if (Date.now() >= deadline) throw new Error("Configured skill reconciliation is running on another replica; retry");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  const renew = async (): Promise<void> => {
+    const now = new Date();
+    const result = await state.updateOne(
+      { _id: id, lease_owner: owner, lease_until: { $gt: now } },
+      { $set: { lease_until: new Date(now.getTime() + LEASE_MS) } },
+    );
+    if (!result.matchedCount) throw new Error("Configured skill reconciliation lease lost");
+  };
+  try {
+    return await apply(renew);
+  } finally {
+    await state.updateOne(
+      { _id: id, lease_owner: owner },
+      { $unset: { lease_owner: "", lease_until: "" } },
+    );
+  }
+}
+
 export function getLegacySkillTemplates(): SkillTemplateData[] {
   const templates = loadSkillTemplatesInternal().filter((skill) => skill.id !== "hello-world");
   if (!templates.length) {

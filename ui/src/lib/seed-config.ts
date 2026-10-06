@@ -14,7 +14,7 @@
  */
 
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
-import { bootstrapSkills, templateToAgentSkill, validateSeedSkills, type SeedSkill } from "@/lib/seed-skills";
+import { bootstrapSkills, templateToAgentSkill, validateSeedSkills, withSkillConfigLease, type SeedSkill } from "@/lib/seed-skills";
 import type { AgentSkill } from "@/types/agent-skill";
 import { seedSystemSkills } from "@/lib/system-skills";
 import { BUILTIN_MCP_CREDENTIAL_SOURCES } from "@/lib/rbac/agentgateway-mcp-discovery";
@@ -1076,25 +1076,41 @@ export async function adoptConfigImportedRagSources(
 export async function seedConfiguredSkills(skills: SeedSkill[]): Promise<number> {
   validateSeedSkills(skills);
   const documents = skills.map(templateToAgentSkill);
-  const collection = await getCollection<AgentSkill>("agent_skills");
-  for (const document of documents) {
-    const existing = await collection.findOne({ id: document.id });
-    document.config_driven = true;
-    document.created_at = existing?.created_at ?? document.created_at;
-    if (existing?.skill_content === document.skill_content &&
-        JSON.stringify(existing.ancillary_files ?? {}) === JSON.stringify(document.ancillary_files ?? {})) {
-      document.scan_status = existing.scan_status;
-      document.scan_summary = existing.scan_summary;
-      document.scan_updated_at = existing.scan_updated_at;
-      document.scan_override = existing.scan_override;
+  return withSkillConfigLease(async (renew) => {
+    const collection = await getCollection<AgentSkill>("agent_skills");
+    for (const document of documents) {
+      await renew();
+      const existing = await collection.findOne({ id: document.id });
+      document.config_driven = true;
+      document.created_at = existing?.created_at ?? document.created_at;
+      if (existing?.skill_content === document.skill_content &&
+          JSON.stringify(existing.ancillary_files ?? {}) === JSON.stringify(document.ancillary_files ?? {})) {
+        document.scan_status = existing.scan_status;
+        document.scan_summary = existing.scan_summary;
+        document.scan_updated_at = existing.scan_updated_at;
+        document.scan_override = existing.scan_override;
+      }
+      await renew();
+      await collection.replaceOne({ id: document.id }, document, { upsert: true });
+      await renew();
+      await reconcileShareableResource({
+        objectType: "skill", objectId: document.id,
+        sharedWithOrg: true, memberRelations: ["user"],
+      });
     }
-    await collection.replaceOne({ id: document.id }, document, { upsert: true });
-    await reconcileShareableResource({
-      objectType: "skill", objectId: document.id,
-      sharedWithOrg: true, memberRelations: ["user"],
-    });
-  }
-  return documents.length;
+    const currentIds = new Set(documents.map((skill) => skill.id));
+    await renew();
+    const managedSkills = await collection.find({ config_driven: true }).toArray();
+    for (const skill of managedSkills) {
+      if (!currentIds.has(skill.id)) {
+        await renew();
+        if (isOpenFgaReconciliationEnabled()) await deleteAllSkillRelationshipTuples(skill.id);
+        await renew();
+        await collection.deleteOne({ id: skill.id, config_driven: true });
+      }
+    }
+    return documents.length;
+  });
 }
 
 /** Remove config-driven entities absent from the loaded application config. */
@@ -1104,18 +1120,7 @@ export async function cleanupStaleConfigDriven(
   currentModelIds: Set<string>,
   currentWorkflowIds: Set<string>,
   currentRagSourceIds: Set<string>,
-  currentSkillIds: Set<string> = new Set(),
 ): Promise<void> {
-  const skillCollection = await getCollection<AgentSkill>("agent_skills");
-  const managedSkills = await skillCollection.find({ config_driven: true }).toArray();
-  for (const skill of managedSkills) {
-    if (!currentSkillIds.has(skill.id)) {
-      if (isOpenFgaReconciliationEnabled()) {
-        await deleteAllSkillRelationshipTuples(skill.id);
-      }
-      await skillCollection.deleteOne({ id: skill.id, config_driven: true });
-    }
-  }
   // Cleanup stale agents
   const agentCollection =
     await getCollection<DynamicAgentConfig>("dynamic_agents");
@@ -1863,7 +1868,6 @@ export async function applySeedConfig(): Promise<void> {
         currentModelIds,
         currentWorkflowIds,
         currentRagSourceIds,
-        new Set((config.skills ?? []).map((skill) => skill.id)),
       );
 
       // Backfill credential_sources on previously-discovered built-in MCP

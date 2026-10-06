@@ -91,7 +91,8 @@ export const POST = withErrorHandler(
         scan_updated_at: revision.skill_content?.trim() ? now : undefined,
         updated_at: now,
       };
-      await collection.updateOne({ id }, { $set: updatePayload });
+      const result = await collection.updateOne({ id, config_driven: { $ne: true } }, { $set: updatePayload });
+      if (!result.matchedCount) throw new ApiError("Skill changed during the request. Reload and retry.", 409);
 
       await recordScanEvent({
         trigger: "manual_user_skill",

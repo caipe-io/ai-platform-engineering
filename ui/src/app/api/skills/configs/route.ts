@@ -172,9 +172,12 @@ async function updateAgentSkillInMongoDB(
 
   console.log(`[MongoDB] Executing updateOne...`);
   const updateResult = await collection.updateOne(
-    { id },
+    { id, config_driven: { $ne: true } },
     { $set: updatePayload, $unset: { shared_with_teams: "" } },
   );
+  if (!updateResult.matchedCount) {
+    throw new ApiError("Skill changed during the request. Reload; configured skills are managed in app-config.yaml.", 409);
+  }
   console.log(`[MongoDB] UpdateOne result:`, {
     matchedCount: updateResult.matchedCount,
     modifiedCount: updateResult.modifiedCount,
@@ -220,7 +223,10 @@ async function deleteAgentSkillFromMongoDB(
     throw new ApiError("Config-driven skills cannot be deleted through the UI. Remove them from app-config.yaml.", 403);
   }
 
-  await collection.deleteOne({ id });
+  const result = await collection.deleteOne({ id, config_driven: { $ne: true } });
+  if (!result.deletedCount) {
+    throw new ApiError("Skill changed during the request. Reload; configured skills are managed in app-config.yaml.", 409);
+  }
 
   await syncSkillResource("delete", id, existing.name);
 }

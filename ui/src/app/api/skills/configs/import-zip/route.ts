@@ -30,6 +30,7 @@ type ZipParseFailureReason,
 type ZipSkillCandidate,
 } from "@/lib/skill-zip-import";
 import type { AgentSkill,ScanStatus } from "@/types/agent-skill";
+import { persistImportedSkill } from "./persist-skill";
 
 /**
  * POST /api/skills/configs/import-zip
@@ -722,31 +723,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           previousVisibility: previousSkill?.visibility ?? "private",
         });
       },
-      persistSkill: async (skill, mode) => {
-        const mongoRow = { ...skill };
-        delete mongoRow.shared_with_teams;
-        if (mode === "create") {
-          await collection.insertOne(mongoRow as AgentSkill);
-          return {
-            rollback: async () => {
-              await collection.deleteOne({ id: skill.id });
-            },
-          };
-        } else {
-          const previous = await collection.findOne({ id: skill.id });
-          await collection.updateOne(
-            { id: skill.id },
-            { $set: mongoRow, $unset: { shared_with_teams: "" } },
-          );
-          return {
-            rollback: async () => {
-              if (previous) {
-                await collection.replaceOne({ id: skill.id }, previous);
-              }
-            },
-          };
-        }
-      },
+      persistSkill: (skill, mode) => persistImportedSkill(collection, skill, mode),
     });
 
     return successResponse(result);

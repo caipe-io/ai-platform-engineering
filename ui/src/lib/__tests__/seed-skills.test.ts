@@ -20,7 +20,7 @@ jest.mock("@/lib/rbac/openfga-owned-resources-reconcile", () => ({
   reconcileShareableResource: (...args: unknown[]) => mockReconcile(...args),
 }));
 
-import { bootstrapSkills, getDefaultSkillTemplates, getLegacySkillTemplates } from "../seed-skills";
+import { bootstrapSkills, getDefaultSkillTemplates, getLegacySkillTemplates, withSkillConfigLease } from "../seed-skills";
 
 const example = { id: "example-skill", name: "Example Skill", content: "Summarize a document." };
 const hello = { ...example, id: "hello-world", name: "Hello World", content: "Say Hello, world! without tools." };
@@ -149,4 +149,35 @@ it("does not complete a migration while another replica holds its lease", async 
 it("does not consume migration seeds when packaged assets are unavailable", () => {
   mockTemplates.mockReturnValue([]);
   expect(() => getLegacySkillTemplates()).toThrow("catalog unavailable");
+});
+
+it("releases configured reconciliation on failure so startup can retry", async () => {
+  await expect(withSkillConfigLease(async (renew) => {
+    await renew();
+    throw new Error("Grant unavailable");
+  })).rejects.toThrow("Grant unavailable");
+  expect(mockState.updateOne).toHaveBeenLastCalledWith(
+    { _id: "configured-skills", lease_owner: expect.any(String) },
+    { $unset: { lease_owner: "", lease_until: "" } },
+  );
+  await expect(withSkillConfigLease(async () => 1)).resolves.toBe(1);
+});
+
+it("stops configured writes when the reconciliation lease is lost", async () => {
+  mockState.updateOne.mockResolvedValueOnce({ matchedCount: 1 }).mockResolvedValueOnce({ matchedCount: 0 });
+  const write = jest.fn();
+  await expect(withSkillConfigLease(async (renew) => { await renew(); write(); })).rejects.toThrow("lease lost");
+  expect(write).not.toHaveBeenCalled();
+});
+
+it("bounds waiting for a busy configured reconciliation without making writes", async () => {
+  jest.useFakeTimers();
+  try {
+    mockState.updateOne.mockRejectedValue({ code: 11000 });
+    const apply = jest.fn();
+    const rejection = expect(withSkillConfigLease(apply)).rejects.toThrow("another replica");
+    await jest.advanceTimersByTimeAsync(30_100);
+    await rejection;
+    expect(apply).not.toHaveBeenCalled();
+  } finally { jest.useRealTimers(); }
 });

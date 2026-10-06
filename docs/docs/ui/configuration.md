@@ -68,6 +68,7 @@ caipe-ui:
   ```
 
 - Startup applies configured additions and changes to MongoDB. Removing a skill from YAML removes its config-driven database record. These skills are read-only in the UI; clone one to create an editable user-owned copy.
+- Configured skill reconciliation uses a shared database lease across replacement, access grants, and stale cleanup. Overlapping startups apply complete lists in turn; no deployment revision ordering is inferred from YAML. Failed runs remain retryable.
 - Omit `skills` on a fresh database to seed only the tool-free **Hello World** example once. This ordinary database skill can be edited or deleted in the UI; restarts do not restore it.
 - Set `skills: []` to suppress the default on a fresh database and remove previously config-driven skills. User-created and explicitly imported skills remain managed through the UI.
 - System gateway instructions (`live-skills` and `update-skills`) initialize from release assets in a separate `system_skills` collection on every startup. App-config and ordinary skill APIs cannot change them, even through an ordinary skill with the same ID.

@@ -120,10 +120,11 @@ export const PUT = withErrorHandler(
       let nextAncillary = skill.ancillary_files;
 
       if (path === SKILL_MD_PATH) {
-        await collection.updateOne(
-          { id },
+        const result = await collection.updateOne(
+          { id, config_driven: { $ne: true } },
           { $set: { skill_content: content, updated_at: now } },
         );
+        if (!result.matchedCount) throw new ApiError("Skill changed during the request. Reload and retry.", 409);
         nextSkillContent = content;
       } else {
         const ancillary = { ...(skill.ancillary_files ?? {}) };
@@ -137,10 +138,11 @@ export const PUT = withErrorHandler(
           );
         }
         ancillary[path] = content;
-        await collection.updateOne(
-          { id },
+        const result = await collection.updateOne(
+          { id, config_driven: { $ne: true } },
           { $set: { ancillary_files: ancillary, updated_at: now } },
         );
+        if (!result.matchedCount) throw new ApiError("Skill changed during the request. Reload and retry.", 409);
         nextAncillary = ancillary;
       }
 
@@ -202,10 +204,11 @@ export const DELETE = withErrorHandler(
       let nextAncillary = skill.ancillary_files;
 
       if (path === SKILL_MD_PATH) {
-        await collection.updateOne(
-          { id },
+        const result = await collection.updateOne(
+          { id, config_driven: { $ne: true } },
           { $set: { skill_content: "", updated_at: now } },
         );
+        if (!result.matchedCount) throw new ApiError("Skill changed during the request. Reload and retry.", 409);
         nextSkillContent = "";
       } else {
         const ancillary = { ...(skill.ancillary_files ?? {}) };
@@ -213,10 +216,11 @@ export const DELETE = withErrorHandler(
           throw new ApiError("File not found", 404);
         }
         delete ancillary[path];
-        await collection.updateOne(
-          { id },
+        const result = await collection.updateOne(
+          { id, config_driven: { $ne: true } },
           { $set: { ancillary_files: ancillary, updated_at: now } },
         );
+        if (!result.matchedCount) throw new ApiError("Skill changed during the request. Reload and retry.", 409);
         nextAncillary = ancillary;
       }
 
