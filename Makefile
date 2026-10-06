@@ -472,7 +472,7 @@ scan-image: ## Scan a single image with grype (make scan-image IMG=ghcr.io/caipe
 
 # Profile selection. Override with E2E_PROFILES=...
 # All profiles live in docker-compose.dev.yaml — no separate e2e compose file.
-E2E_PROFILES   ?= rbac,caipe-ui,caipe-mongodb,dynamic-agents,rag,all-agents,slack-bot
+E2E_PROFILES   ?= rbac,caipe-ui,caipe-documentdb,dynamic-agents,rag,all-agents,slack-bot
 E2E_COMPOSE    := -f docker-compose.dev.yaml
 E2E_KC_URL     ?= http://localhost:7080
 E2E_KC_REALM   ?= cnoe
@@ -561,7 +561,7 @@ rbac-reinit: ## Force-rerun keycloak-init + keycloak-init-token-exchange against
 # Useful for day-to-day Slack/UI iteration without booting the full all-agents/rag/graph_rag stack.
 # Override agent set with: make e2e-test-minimal MINIMAL_AGENTS="aws,github,jira"
 MINIMAL_AGENTS  ?= aws,github,argocd,jira,confluence
-MINIMAL_PROFILES = $(MINIMAL_AGENTS),caipe-ui,dynamic-agents,slack-bot,caipe-mongodb,rbac
+MINIMAL_PROFILES = $(MINIMAL_AGENTS),caipe-ui,dynamic-agents,slack-bot,caipe-documentdb,rbac
 
 .PHONY: e2e-test-minimal e2e-test-minimal-down
 

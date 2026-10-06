@@ -13,7 +13,7 @@ Protect the plain OSS setup path:
 
 ```bash
 cp .env.example .env
-COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-mongodb,web_ingestor" \
+COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-documentdb,web_ingestor" \
 docker compose --env-file .env -f docker-compose.yaml up -d
 ```
 
@@ -37,7 +37,7 @@ Use this skill when a task touches:
 The minimal first-install profile set is:
 
 ```bash
-mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-mongodb,web_ingestor
+mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-documentdb,web_ingestor
 ```
 
 Do not add `slack-bot` or `webex-bot` to the default all-in-one path.
@@ -65,7 +65,7 @@ Required local Docker defaults:
 Run these before committing Compose/env changes:
 
 ```bash
-COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-mongodb,web_ingestor" \
+COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-documentdb,web_ingestor" \
 NEXTAUTH_SECRET=test \
 docker compose --env-file .env.example -f docker-compose.yaml config --quiet
 ```
@@ -73,7 +73,7 @@ docker compose --env-file .env.example -f docker-compose.yaml config --quiet
 Inspect the rendered UI env:
 
 ```bash
-COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-mongodb,web_ingestor" \
+COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-documentdb,web_ingestor" \
 NEXTAUTH_SECRET=test \
 docker compose --env-file .env.example -f docker-compose.yaml config --format json \
 | jq '.services["caipe-ui"].environment
@@ -92,7 +92,7 @@ docker compose --env-file .env.example -f docker-compose.yaml config --format js
 Inspect the rendered Dynamic Agents env:
 
 ```bash
-COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-mongodb,web_ingestor" \
+COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-documentdb,web_ingestor" \
 NEXTAUTH_SECRET=test \
 docker compose --env-file .env.example -f docker-compose.yaml config --format json \
 | jq '.services["dynamic-agents"].environment | {AUTHZ_SERVICE_URL}'
@@ -101,7 +101,7 @@ docker compose --env-file .env.example -f docker-compose.yaml config --format js
 Inspect Keycloak init secrets:
 
 ```bash
-COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-mongodb,web_ingestor" \
+COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-documentdb,web_ingestor" \
 NEXTAUTH_SECRET=test \
 docker compose --env-file .env.example -f docker-compose.yaml config --format json \
 | jq '.services["keycloak-init"].environment
@@ -111,7 +111,7 @@ docker compose --env-file .env.example -f docker-compose.yaml config --format js
 Check rendered images:
 
 ```bash
-COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-mongodb,web_ingestor" \
+COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-documentdb,web_ingestor" \
 NEXTAUTH_SECRET=test \
 docker compose --env-file .env.example -f docker-compose.yaml config --images \
 | sort
@@ -121,12 +121,16 @@ The UI image should be `ghcr.io/cnoe-io/caipe-ui:<version>`, not
 `ghcr.io/cnoe-io/caipe-ui:<version>-prod`, unless that suffixed image is known
 to be published for the release.
 
+DocumentDB is the default persistence provider. To test the MongoDB provider,
+replace `caipe-documentdb` with `caipe-mongodb` in the profile list and set
+`DATABASE_PROVIDER=mongodb` with a MongoDB-compatible `MONGODB_URI`.
+
 ## Recovery Commands For Local Testing
 
 Use non-destructive recovery first:
 
 ```bash
-COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-mongodb,web_ingestor" \
+COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-documentdb,web_ingestor" \
 docker compose --env-file .env -f docker-compose.yaml up -d --force-recreate caipe-ui dynamic-agents web_ingestor keycloak-init
 ```
 
@@ -136,7 +140,7 @@ data volumes:
 ```bash
 docker compose --env-file .env -f docker-compose.yaml down
 docker volume rm docker-compose-fixes_keycloak_postgres_data docker-compose-fixes_openfga_postgres_data
-COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-mongodb,web_ingestor" \
+COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,caipe-supervisor,dynamic-agents,rag,caipe-documentdb,web_ingestor" \
 docker compose --env-file .env -f docker-compose.yaml up -d
 ```
 
