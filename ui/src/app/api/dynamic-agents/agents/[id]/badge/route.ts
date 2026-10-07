@@ -11,6 +11,9 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  if (process.env.AGNTCY_IDENTITY_ENABLED !== "true") {
+    return NextResponse.json({ error: "Agent Badge publication is disabled" }, { status: 404 });
+  }
   const auth = await authenticateRequest(request, { resource: "admin_ui", scope: "admin" });
   if (auth instanceof NextResponse) return auth;
   // DA uses the same platform-admin flag. Org-level grants cannot publish here.

@@ -19,9 +19,23 @@ const invoke = (body = '{}') => POST(new NextRequest("https://ui.example.test/ap
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.env.AGNTCY_IDENTITY_ENABLED = "true";
   authenticate.mockResolvedValue({ role: "admin", subject: "test-user" });
   proxy.mockResolvedValue(NextResponse.json({ credential_id: "urn:uuid:primary", subject: "agntcy://IDP-primary" }));
   updateOne.mockResolvedValue({});
+});
+
+afterEach(() => {
+  delete process.env.AGNTCY_IDENTITY_ENABLED;
+});
+
+test.each([undefined, "false", "", "1"])("disabled for flag %s without auth, backend or database access", async (flag) => {
+  if (flag === undefined) delete process.env.AGNTCY_IDENTITY_ENABLED;
+  else process.env.AGNTCY_IDENTITY_ENABLED = flag;
+  expect((await invoke()).status).toBe(404);
+  expect(authenticate).not.toHaveBeenCalled();
+  expect(proxy).not.toHaveBeenCalled();
+  expect(updateOne).not.toHaveBeenCalled();
 });
 
 test("requires admin permission and records only the publication receipt", async () => {

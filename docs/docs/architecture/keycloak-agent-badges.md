@@ -10,7 +10,7 @@ Keycloak access tokens authorize publication. Agent Badges attest the public age
 
 ```mermaid
 flowchart LR
-    A[Platform admin: approved public OASF] --> B[CAIPE BFF: authenticate and authorize]
+    A[Platform admin: approved public OASF] --> B[CAIPE BFF: opt-in gate and admin authorization]
     B --> P[Optional dynamic-agents publisher]
     O[Operator bindings and secret mounts] --> P
     P -->|client credentials| K[Keycloak OIDC]
@@ -28,7 +28,7 @@ Solid publication flow is the initial implementation. Directory publication, nat
 
 ## Initial implementation contract
 
-- Disabled by default: `AGNTCY_IDENTITY_ENABLED=false`.
+- Disabled by default: `AGNTCY_IDENTITY_ENABLED=false` on the UI gateway and dynamic-agents service. Operators must explicitly enable both; the gateway returns 404 before authentication, backend or database access when disabled.
 - Explicit platform-admin endpoint: `POST /api/dynamic-agents/agents/{id}/badge`.
 - Body is an admin-approved public OASF definition. Runtime prompts, tool credentials and private agent configuration are not automatically exported.
 - An operator-owned binding maps the Mongo agent ID to a Keycloak client, expected token subject and Node Agent ID. Client secrets and the AGNTCY signing key are mounted files, outside user-editable agent records.
@@ -47,8 +47,10 @@ sequenceDiagram
     participant K as Keycloak
     participant N as Identity Node
     A->>B: Publish approved OASF for agent ID
+    B->>B: Require opt-in flag or return 404
     B->>B: Authenticate and require platform admin
     B->>P: Trusted admin context and public definition
+    P->>P: Require backend opt-in flag
     P->>P: Load operator binding and secret files
     P->>K: Client-credentials token request
     K-->>P: Access token

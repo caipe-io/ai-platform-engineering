@@ -453,13 +453,18 @@ assertion key, including `kid`.
 
 ### Runtime configuration
 
-Set these variables on the **dynamic-agents container**, not only in the shell
-or the UI container. For Compose, place them in an explicitly loaded override
-and mount the secret directory read-only. The default Compose configuration
+Set `AGNTCY_IDENTITY_ENABLED=true` on **both the UI gateway and dynamic-agents
+containers** to opt in. It defaults to false; an unset or disabled gateway flag
+returns 404 before authentication, backend or database access. Set the remaining
+identity variables only on the dynamic-agents container. For Compose, use an
+explicitly loaded override and mount the secret directory read-only. The default Compose configuration
 continues to run with the feature disabled.
 
 ```yaml
 services:
+  caipe-ui:
+    environment:
+      AGNTCY_IDENTITY_ENABLED: "true"
   dynamic-agents:
     environment:
       AGNTCY_IDENTITY_ENABLED: "true"
