@@ -170,6 +170,27 @@ it("stops configured writes when the reconciliation lease is lost", async () => 
   expect(write).not.toHaveBeenCalled();
 });
 
+it.each(["success", "failure"] as const)("preserves operation %s when releasing the configured skill lease fails", async (outcome) => {
+  const operationError = new Error("Grant unavailable");
+  const releaseError = new Error("Database unavailable during lease release");
+  mockState.updateOne.mockImplementation(async (_filter, update) => {
+    if (update.$unset) throw releaseError;
+    return { matchedCount: 1 };
+  });
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const operation = withSkillConfigLease(async () => {
+      if (outcome === "failure") throw operationError;
+      return 1;
+    });
+    if (outcome === "success") await expect(operation).resolves.toBe(1);
+    else await expect(operation).rejects.toBe(operationError);
+    expect(warn).toHaveBeenCalledWith("[seed-skills] Lease release failed for configured-skills:", releaseError);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
 it("bounds waiting for a busy configured reconciliation without making writes", async () => {
   jest.useFakeTimers();
   try {

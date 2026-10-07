@@ -56,10 +56,14 @@ export async function withSkillConfigLease<T>(
   try {
     return await apply(renew);
   } finally {
-    await state.updateOne(
-      { _id: id, lease_owner: owner },
-      { $unset: { lease_owner: "", lease_until: "" } },
-    );
+    try {
+      await state.updateOne(
+        { _id: id, lease_owner: owner },
+        { $unset: { lease_owner: "", lease_until: "" } },
+      );
+    } catch (error) {
+      console.warn("[seed-skills] Lease release failed for configured-skills:", error);
+    }
   }
 }
 
