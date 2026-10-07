@@ -162,10 +162,12 @@ const SKILLS_LIST_BODY = {
 const FAKE_MINT_KEY = "FAKE-TEST-KEY-DO-NOT-USE";
 let mintedKeyValue = FAKE_MINT_KEY;
 let mintCallCount = 0;
+let gatewayFailure: "html" | "null" | "invalid" | null = null;
 const mintPostMock = jest.fn();
 
 beforeEach(() => {
   mintCallCount = 0;
+  gatewayFailure = null;
   mintPostMock.mockReset();
   mintedKeyValue = FAKE_MINT_KEY;
 
@@ -192,6 +194,16 @@ beforeEach(() => {
 
     // Live-skills (per-agent rendered template).
     if (url.startsWith("/api/skills/live-skills")) {
+      if (gatewayFailure) {
+        const failure = gatewayFailure;
+        return Promise.resolve({
+          ok: failure === "invalid", status: failure === "invalid" ? 200 : 502,
+          json: async () => {
+            if (failure === "html") throw new SyntaxError("Unexpected token <");
+            return null;
+          },
+        } as Response);
+      }
       return jsonResponse({ ok: true, body: LIVE_SKILLS_BODY });
     }
 
@@ -221,6 +233,22 @@ let clipboardWriteTextMock: jest.Mock;
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+it.each(["html", "null", "invalid"] as const)("shows a useful gateway error for %s responses", async (failure) => {
+  gatewayFailure = failure;
+  const { TrySkillsGateway } = await import("../TrySkillsGateway");
+  render(<TrySkillsGateway />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    failure === "invalid" ? "Unable to load the gateway skill: invalid response" : "Unable to load the gateway skill (502)",
+  );
+});
+
+it("describes gateway instructions as release-managed with startup recovery", async () => {
+  const { TrySkillsGateway } = await import("../TrySkillsGateway");
+  render(<TrySkillsGateway />);
+  expect(await screen.findByText(/supplied by the installed release/)).toHaveTextContent("system skill initialization");
+  expect(screen.queryByText(/Configure the live-skills record in the Skills UI/)).not.toBeInTheDocument();
 });
 
 // ----------------------------------------------------------------------------

@@ -334,7 +334,7 @@ export function loadSkillTemplatesInternal(): SkillTemplateData[] {
   } else if (hasFlatFiles) {
     templates = loadFromFlatLayout(skillsDir);
   } else {
-    return [];
+    templates = [];
   }
 
   templates.sort((a, b) => a.title.localeCompare(b.title));

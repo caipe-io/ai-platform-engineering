@@ -6,10 +6,6 @@ successResponse,
 withAuth,
 withErrorHandler,
 } from "@/lib/api-middleware";
-import {
-BUILTIN_LOCKED_MESSAGE,
-canMutateBuiltinSkill,
-} from "@/lib/builtin-skill-policy";
 import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
 import {
 filterResourcesByPermission,
@@ -24,6 +20,7 @@ generateSkillIdFromName,
 type ImportConflictAction,
 type ImportConflictDecision,
 } from "@/lib/skill-import-helpers";
+import { withSkillConfigLease } from "@/lib/seed-skills";
 import { recordRevision } from "@/lib/skill-revisions";
 import { scanSkillContent as runSkillScan } from "@/lib/skill-scan";
 import { recordScanEvent } from "@/lib/skill-scan-history";
@@ -34,6 +31,7 @@ type ZipParseFailureReason,
 type ZipSkillCandidate,
 } from "@/lib/skill-zip-import";
 import type { AgentSkill,ScanStatus } from "@/types/agent-skill";
+import { persistImportedSkill } from "./persist-skill";
 
 /**
  * POST /api/skills/configs/import-zip
@@ -134,6 +132,8 @@ interface RunZipImportArgs {
     skill: AgentSkill,
     mode: "create" | "overwrite",
   ) => Promise<{ rollback?: () => Promise<void> } | void>;
+  /** Coordinate database, access, and rollback writes with configured skill startup. */
+  withWriteLease?: typeof withSkillConfigLease;
   /** Concrete authorization hook for overwriting an existing skill. */
   canOverwriteSkill?: (skill: AgentSkill) => Promise<void>;
   /** Reconcile owner and optional team grants after persistence. */
@@ -215,6 +215,7 @@ export async function runZipImport(
         persistSkill: args.persistSkill,
         canOverwriteSkill: args.canOverwriteSkill,
         reconcileAccess: args.reconcileAccess,
+        withWriteLease: args.withWriteLease,
       });
       imported.push(summary);
     } catch (err) {
@@ -242,6 +243,30 @@ export async function runZipImport(
   return { phase: "import", imported };
 }
 
+async function persistWithAccess(
+  hooks: Pick<RunZipImportArgs, "persistSkill" | "reconcileAccess" | "withWriteLease">,
+  skill: AgentSkill,
+  mode: "create" | "overwrite",
+  previousSkill?: AgentSkill,
+): Promise<void> {
+  const write = async (renew: () => Promise<void>): Promise<void> => {
+    await renew();
+    const persisted = await hooks.persistSkill(skill, mode);
+    try {
+      await renew();
+      if (mode === "overwrite") await hooks.reconcileAccess?.(skill, mode, previousSkill);
+      else await hooks.reconcileAccess?.(skill, mode);
+    } catch (error) {
+      // Rollback shares the lease so it cannot restore a row after configuration adoption.
+      await renew();
+      if (persisted) await persisted.rollback?.();
+      throw error;
+    }
+  };
+  if (hooks.withWriteLease) await hooks.withWriteLease(write);
+  else await write(async () => {});
+}
+
 interface ImportOneArgs {
   candidate: ZipSkillCandidate;
   decision: ImportConflictDecision | undefined;
@@ -251,6 +276,7 @@ interface ImportOneArgs {
   persistSkill: RunZipImportArgs["persistSkill"];
   canOverwriteSkill?: (skill: AgentSkill) => Promise<void>;
   reconcileAccess?: RunZipImportArgs["reconcileAccess"];
+  withWriteLease?: RunZipImportArgs["withWriteLease"];
 }
 
 async function importOne(
@@ -265,6 +291,7 @@ async function importOne(
     persistSkill,
     canOverwriteSkill,
     reconcileAccess,
+    withWriteLease,
   } = args;
 
   // No conflict resolution provided: the candidate name didn't
@@ -324,6 +351,7 @@ async function importOne(
       persistSkill,
       canOverwriteSkill,
       reconcileAccess,
+      withWriteLease,
       durationMs: Date.now() - tStart,
     });
   }
@@ -337,6 +365,7 @@ async function importOne(
     teamRefs,
     persistSkill,
     reconcileAccess,
+    withWriteLease,
     durationMs: Date.now() - tStart,
   });
 }
@@ -349,6 +378,7 @@ interface CreateNewArgs {
   teamRefs: string[];
   persistSkill: RunZipImportArgs["persistSkill"];
   reconcileAccess?: RunZipImportArgs["reconcileAccess"];
+  withWriteLease?: RunZipImportArgs["withWriteLease"];
   durationMs: number;
 }
 
@@ -361,6 +391,7 @@ async function createNew(args: CreateNewArgs): Promise<ImportedSkillSummary> {
     teamRefs,
     persistSkill,
     reconcileAccess,
+    withWriteLease,
     durationMs,
   } = args;
   const id = generateSkillIdFromName(saveAsName);
@@ -399,13 +430,7 @@ async function createNew(args: CreateNewArgs): Promise<ImportedSkillSummary> {
     is_quick_start: true,
   };
 
-  const persisted = await persistSkill(skill, "create");
-  try {
-    await reconcileAccess?.(skill, "create");
-  } catch (error) {
-    if (persisted) await persisted.rollback?.();
-    throw error;
-  }
+  await persistWithAccess({ persistSkill, reconcileAccess, withWriteLease }, skill, "create");
 
   await recordScanEvent({
     trigger: "auto_save",
@@ -447,6 +472,7 @@ interface OverwriteArgs {
   persistSkill: RunZipImportArgs["persistSkill"];
   canOverwriteSkill?: (skill: AgentSkill) => Promise<void>;
   reconcileAccess?: RunZipImportArgs["reconcileAccess"];
+  withWriteLease?: RunZipImportArgs["withWriteLease"];
   durationMs: number;
 }
 
@@ -464,6 +490,7 @@ async function overwriteExisting(
     persistSkill,
     canOverwriteSkill,
     reconcileAccess,
+    withWriteLease,
     durationMs,
   } = args;
   const existing = existingByName.get(normalise(decision.existingName)) ||
@@ -476,8 +503,8 @@ async function overwriteExisting(
   }
 
   // Same authorisation rules as PUT /api/skills/configs.
-  if (existing.is_system && !canMutateBuiltinSkill(existing)) {
-    throw new ApiError(BUILTIN_LOCKED_MESSAGE, 403);
+  if (existing.config_driven) {
+    throw new ApiError("Config-driven skills are read-only. Update app-config.yaml.", 403);
   }
   if (canOverwriteSkill) {
     await canOverwriteSkill(existing);
@@ -519,13 +546,7 @@ async function overwriteExisting(
         ],
   };
 
-  const persisted = await persistSkill(updated, "overwrite");
-  try {
-    await reconcileAccess?.(updated, "overwrite", existing);
-  } catch (error) {
-    if (persisted) await persisted.rollback?.();
-    throw error;
-  }
+  await persistWithAccess({ persistSkill, reconcileAccess, withWriteLease }, updated, "overwrite", existing);
 
   // Record the before/after timeline only after persistence and access
   // reconciliation both succeed. The snapshots themselves are already in
@@ -695,6 +716,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       user,
       teamRefs,
       loadVisibleSkills: async () => visible,
+      withWriteLease: withSkillConfigLease,
       canOverwriteSkill: async (skill) => {
         await requireSkillPermission(session, skill.id, "write");
       },
@@ -726,31 +748,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           previousVisibility: previousSkill?.visibility ?? "private",
         });
       },
-      persistSkill: async (skill, mode) => {
-        const mongoRow = { ...skill };
-        delete mongoRow.shared_with_teams;
-        if (mode === "create") {
-          await collection.insertOne(mongoRow as AgentSkill);
-          return {
-            rollback: async () => {
-              await collection.deleteOne({ id: skill.id });
-            },
-          };
-        } else {
-          const previous = await collection.findOne({ id: skill.id });
-          await collection.updateOne(
-            { id: skill.id },
-            { $set: mongoRow, $unset: { shared_with_teams: "" } },
-          );
-          return {
-            rollback: async () => {
-              if (previous) {
-                await collection.replaceOne({ id: skill.id }, previous);
-              }
-            },
-          };
-        }
-      },
+      persistSkill: (skill, mode) => persistImportedSkill(collection, skill, mode),
     });
 
     return successResponse(result);

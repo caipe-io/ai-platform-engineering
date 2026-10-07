@@ -581,9 +581,6 @@ function resolveLegacyWithAuthRbacPolicy(request: NextRequest): RouteRbacPolicy 
     return { resource: 'chat', scope: 'invoke' };
   }
 
-  if (pathname.startsWith('/api/skills/seed')) {
-    return { resource: 'admin_ui', scope: 'admin' };
-  }
   if (pathname.startsWith('/api/skills/token')) {
     return { resource: 'skill', scope: 'invoke' };
   }

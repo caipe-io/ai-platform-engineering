@@ -58,7 +58,6 @@ TabsList,
 TabsTrigger,
 } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
-import { getConfig } from "@/lib/config";
 import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import { cn } from "@/lib/utils";
 
@@ -104,7 +103,7 @@ export interface SkillWorkspaceProps {
   backHref?: string;
   /** Override the back-button label. */
   backLabel?: string;
-  /** Force read-only mode (built-in / hub skill). */
+  /** Force read-only mode for configured or external catalog skills. */
   readOnly?: boolean;
 }
 
@@ -281,7 +280,7 @@ export function SkillWorkspace({
     confirmNavigation,
   } = useUnsavedChangesStore();
 
-  // Read-only skills (built-in / hub) are never dirty from the user's
+  // Read-only skills (configured / hub) are never dirty from the user's
   // perspective even if some local form state changes — don't surface the
   // guard for them.
   const trackDirty = form.isDirty && !readOnly;
@@ -365,7 +364,7 @@ export function SkillWorkspace({
   //
   // The endpoint streams `application/zip` bytes (not JSON), so we read the
   // response as a Blob and trigger a synthetic <a download> click. Works
-  // for both editable user skills and read-only built-ins. We surface a
+  // for both editable skills and read-only configured skills. We surface a
   // toast on failure since browsers swallow non-2xx responses silently for
   // attachment downloads.
   // ---------------------------------------------------------------------
@@ -409,21 +408,6 @@ export function SkillWorkspace({
       setIsExporting(false);
     }
   }, [existingConfig, toast]);
-
-  // -------------------------------------------------------------------
-  // Built-in mutation lock
-  //
-  // When a built-in skill is opened (read-only) and the operator
-  // hasn't set ALLOW_BUILTIN_SKILL_MUTATION=true, we surface a
-  // "Clone to edit" CTA next to the disabled Save. This is the same
-  // escape hatch the gallery offers; rendering it here too means the
-  // user can act on the lock without going back to the gallery.
-  // -------------------------------------------------------------------
-  const allowBuiltinSkillMutation = getConfig("allowBuiltinSkillMutation");
-  const showCloneCta =
-    !!existingConfig &&
-    !!existingConfig.is_system &&
-    !allowBuiltinSkillMutation;
 
   const [isCloning, setIsCloning] = useState(false);
   const handleClone = useCallback(async () => {
@@ -625,14 +609,14 @@ export function SkillWorkspace({
                 {isExporting ? "Exporting…" : "Export"}
               </Button>
             )}
-            {showCloneCta && (
+            {existingConfig && (
               <Button
                 size="sm"
                 variant="default"
                 onClick={() => void handleClone()}
                 disabled={isCloning}
                 className="gap-1.5"
-                title="Built-in skills are read-only. Clone produces an editable copy you own."
+                title="Clone to a new editable copy"
                 data-testid="skill-workspace-clone"
               >
                 {isCloning ? (
@@ -640,15 +624,9 @@ export function SkillWorkspace({
                 ) : (
                   <Copy className="h-3.5 w-3.5" />
                 )}
-                {isCloning ? "Cloning…" : "Clone to edit"}
+                {isCloning ? "Cloning…" : "Clone"}
               </Button>
             )}
-            {/* When the built-in lock is active we hide the disabled
-                Save altogether — the Clone CTA above is the actionable
-                next step. Showing both a disabled Save *and* a Clone
-                button doubled up the visual noise without adding
-                signal. */}
-            {!showCloneCta && (
               <Button
                 size="sm"
                 onClick={() => void handleSave()}
@@ -662,7 +640,6 @@ export function SkillWorkspace({
                     ? "Save"
                     : "Create skill"}
               </Button>
-            )}
           </div>
         </div>
       </header>

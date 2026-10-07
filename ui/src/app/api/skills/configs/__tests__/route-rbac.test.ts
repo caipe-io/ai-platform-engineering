@@ -13,7 +13,9 @@ const mockReconcileSkillTeamShares = jest.fn();
 const mockReadSkillSharedTeamSlugsFromOpenFga = jest.fn(async () => [] as string[]);
 
 jest.mock("@/lib/mongodb", () => ({
-  getCollection: (...args: unknown[]) => mockGetCollection(...args),
+  getCollection: (name: string) => name === "startup_seeds"
+    ? Promise.resolve({ updateOne: async () => ({ matchedCount: 1 }) })
+    : mockGetCollection(name),
   isMongoDBConfigured: true,
 }));
 
@@ -195,7 +197,7 @@ describe("GET /api/skills/configs RBAC cutover", () => {
       "write",
     );
     expect(updateOne).toHaveBeenCalledWith(
-      { id: "skill-openfga-write" },
+      { id: "skill-openfga-write", config_driven: { $ne: true } },
       expect.objectContaining({
         $set: expect.objectContaining({ description: "after" }),
       }),

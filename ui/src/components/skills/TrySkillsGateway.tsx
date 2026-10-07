@@ -120,10 +120,7 @@ export function TrySkillsGateway() {
 
   // Per-agent rendered live-skills (fetched from
   // /api/skills/live-skills?agent=<id>&command_name=...&description=...).
-  // The server resolves the canonical template from SKILLS_LIVE_SKILLS_TEMPLATE,
-  // SKILLS_LIVE_SKILLS_FILE, the chart default, or a built-in fallback, then
-  // renders it for the selected agent (Markdown frontmatter, plain Markdown,
-  // Gemini TOML, or Continue JSON fragment).
+  // The server renders the release's system skill for the selected agent.
   interface AgentMeta {
     id: string;
     label: string;
@@ -172,6 +169,7 @@ export function TrySkillsGateway() {
     };
   }
   const [liveSkills, setLiveSkills] = useState<LiveSkillsResponse | null>(null);
+  const [liveSkillsError, setLiveSkillsError] = useState<string | null>(null);
   const [liveSkillsTemplateSource, setLiveSkillsTemplateSource] = useState<
     string | null
   >(null);
@@ -273,10 +271,18 @@ export function TrySkillsGateway() {
         credentials: "include",
         signal: controller.signal,
       })
-        .then((res) => (res.ok ? res.json() : null))
+        .then(async (res) => {
+          const data = await res.json().catch(() => null);
+          if (!res.ok) throw new Error(data?.error || `Unable to load the gateway skill (${res.status})`);
+          if (!data || typeof data.template !== "string") {
+            throw new Error("Unable to load the gateway skill: invalid response");
+          }
+          return data;
+        })
         .then((data: LiveSkillsResponse | null) => {
           if (!data || typeof data.template !== "string") return;
           setLiveSkills(data);
+          setLiveSkillsError(null);
           if (typeof data.source === "string") {
             setLiveSkillsTemplateSource(data.source);
           }
@@ -284,7 +290,8 @@ export function TrySkillsGateway() {
         })
         .catch((err) => {
           if (err?.name !== "AbortError") {
-            // Soft-fail; UI shows a fallback notice.
+            setLiveSkills(null);
+            setLiveSkillsError(err instanceof Error ? err.message : "Unable to load the gateway skill");
           }
         });
     }, 200);
@@ -1510,18 +1517,10 @@ export function TrySkillsGateway() {
 
             <p className="text-[11px] text-muted-foreground mt-4 mb-2 leading-relaxed">
               Template source:{" "}
-              <code>{liveSkillsTemplateSource ?? "loading…"}</code>
-              {". Override via Helm value "}
-              <code>skillsLiveSkills</code>
-              {" (inline) or "}
-              <code>skillsLiveSkillsName</code>
-              {" (selects "}
-              <code>data/skills/live-skills.&lt;name&gt;.md</code>
-              {"), or container env "}
-              <code>SKILLS_LIVE_SKILLS_FILE</code>
-              {" / "}
-              <code>SKILLS_LIVE_SKILLS_TEMPLATE</code>.
+              <code>{liveSkillsError ? "unavailable" : liveSkillsTemplateSource ?? "loading…"}</code>
+              {". The gateway instructions are supplied by the installed release. If unavailable, ask an administrator to check system skill initialization and restart the UI service."}
             </p>
+            {liveSkillsError && <p role="alert" className="text-sm text-muted-foreground">{liveSkillsError}</p>}
 
             <details className="text-xs">
               <summary className="cursor-pointer text-muted-foreground hover:text-foreground">

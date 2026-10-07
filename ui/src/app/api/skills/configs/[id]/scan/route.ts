@@ -1,6 +1,5 @@
 import {
 getAgentSkillVisibleToUser,
-userCanModifyAgentSkill,
 } from "@/lib/agent-skill-visibility";
 import {
 ApiError,
@@ -68,9 +67,6 @@ export const POST = withErrorHandler(
         throw new ApiError("Agent config not found", 404);
       }
 
-      if (!userCanModifyAgentSkill(existing)) {
-        throw new ApiError("You don't have permission to scan this skill", 403);
-      }
 
       // Same gate as PUT / file-write: `can_write` on the skill (not `can_manage`).
       await requireSkillPermission(session, id, "write");

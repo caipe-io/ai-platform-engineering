@@ -1,6 +1,5 @@
 import {
 getAgentSkillVisibleToUser,
-userCanModifyAgentSkill,
 } from "@/lib/agent-skill-visibility";
 import {
 ApiError,
@@ -96,8 +95,8 @@ export const PUT = withErrorHandler(
       const skill = await getAgentSkillVisibleToUser(id);
       if (!skill) throw new ApiError("Skill not found", 404);
       await requireSkillPermission(session, id, "write");
-      if (!userCanModifyAgentSkill(skill)) {
-        throw new ApiError("You don't have permission to edit this skill", 403);
+      if (skill.config_driven) {
+        throw new ApiError("Config-driven skills are read-only. Update app-config.yaml.", 403);
       }
 
       const body = (await request.json()) as PutBody;
@@ -121,10 +120,11 @@ export const PUT = withErrorHandler(
       let nextAncillary = skill.ancillary_files;
 
       if (path === SKILL_MD_PATH) {
-        await collection.updateOne(
-          { id },
+        const result = await collection.updateOne(
+          { id, config_driven: { $ne: true } },
           { $set: { skill_content: content, updated_at: now } },
         );
+        if (!result.matchedCount) throw new ApiError("Skill changed during the request. Reload and retry.", 409);
         nextSkillContent = content;
       } else {
         const ancillary = { ...(skill.ancillary_files ?? {}) };
@@ -138,10 +138,11 @@ export const PUT = withErrorHandler(
           );
         }
         ancillary[path] = content;
-        await collection.updateOne(
-          { id },
+        const result = await collection.updateOne(
+          { id, config_driven: { $ne: true } },
           { $set: { ancillary_files: ancillary, updated_at: now } },
         );
+        if (!result.matchedCount) throw new ApiError("Skill changed during the request. Reload and retry.", 409);
         nextAncillary = ancillary;
       }
 
@@ -193,8 +194,8 @@ export const DELETE = withErrorHandler(
       const skill = await getAgentSkillVisibleToUser(id);
       if (!skill) throw new ApiError("Skill not found", 404);
       await requireSkillPermission(session, id, "write");
-      if (!userCanModifyAgentSkill(skill)) {
-        throw new ApiError("You don't have permission to edit this skill", 403);
+      if (skill.config_driven) {
+        throw new ApiError("Config-driven skills are read-only. Update app-config.yaml.", 403);
       }
       const collection = await getCollection<AgentSkill>("agent_skills");
       const now = new Date();
@@ -203,10 +204,11 @@ export const DELETE = withErrorHandler(
       let nextAncillary = skill.ancillary_files;
 
       if (path === SKILL_MD_PATH) {
-        await collection.updateOne(
-          { id },
+        const result = await collection.updateOne(
+          { id, config_driven: { $ne: true } },
           { $set: { skill_content: "", updated_at: now } },
         );
+        if (!result.matchedCount) throw new ApiError("Skill changed during the request. Reload and retry.", 409);
         nextSkillContent = "";
       } else {
         const ancillary = { ...(skill.ancillary_files ?? {}) };
@@ -214,10 +216,11 @@ export const DELETE = withErrorHandler(
           throw new ApiError("File not found", 404);
         }
         delete ancillary[path];
-        await collection.updateOne(
-          { id },
+        const result = await collection.updateOne(
+          { id, config_driven: { $ne: true } },
           { $set: { ancillary_files: ancillary, updated_at: now } },
         );
+        if (!result.matchedCount) throw new ApiError("Skill changed during the request. Reload and retry.", 409);
         nextAncillary = ancillary;
       }
 

@@ -126,6 +126,105 @@ beforeEach(() => {
   Object.keys(mockCollections).forEach((key) => delete mockCollections[key]);
 });
 
+describe("configured skill mutation protection", () => {
+  beforeEach(() => {
+    mockGetServerSession.mockResolvedValue(userSession());
+    mockCollections.agent_skills = createMockCollection();
+    mockCollections.agent_skills.findOne.mockResolvedValue({
+      id: "example-skill", name: "Example Skill", tasks: [VALID_TASK],
+      owner_id: "system", is_system: true, config_driven: true,
+    });
+  });
+
+  it("rejects edits even when the request attempts to clear config_driven", async () => {
+    const { PUT } = await import("../skills/configs/route");
+    const response = await PUT(makeRequest("/api/skills/configs?id=example-skill", {
+      method: "PUT", body: JSON.stringify({ name: "Changed", config_driven: false }),
+    }));
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toContain("app-config.yaml");
+    expect(mockCollections.agent_skills.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("rejects deletion through the API", async () => {
+    const { DELETE } = await import("../skills/configs/route");
+    const response = await DELETE(makeRequest("/api/skills/configs?id=example-skill", { method: "DELETE" }));
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toContain("app-config.yaml");
+    expect(mockCollections.agent_skills.deleteOne).not.toHaveBeenCalled();
+  });
+
+  it("allows deletion of an ordinary database default", async () => {
+    mockCollections.agent_skills.findOne.mockResolvedValue({
+      id: "hello-world", owner_id: "system", is_system: true, config_driven: false,
+    });
+    const { DELETE } = await import("../skills/configs/route");
+    const response = await DELETE(makeRequest("/api/skills/configs?id=hello-world", { method: "DELETE" }));
+    expect(response.status).toBe(200);
+    expect(mockCollections.agent_skills.deleteOne).toHaveBeenCalled();
+  });
+});
+
+it.each(["PUT", "DELETE"] as const)("does not expose protected system skills through ordinary %s operations", async (method) => {
+  mockGetServerSession.mockResolvedValue(userSession());
+  mockCollections.agent_skills = createMockCollection();
+  mockCollections.system_skills = createMockCollection();
+  mockCollections.system_skills.findOne.mockResolvedValue({ _id: "live-skills", content: "System instructions" });
+  const handler = (await import("../skills/configs/route"))[method];
+  const response = await handler(makeRequest("/api/skills/configs?id=live-skills", {
+    method, ...(method === "PUT" ? { body: JSON.stringify({ name: "Changed" }) } : {}),
+  }));
+  expect(response.status).toBe(404);
+  expect(mockCollections.system_skills.findOne).not.toHaveBeenCalled();
+  expect(mockCollections.system_skills.updateOne).not.toHaveBeenCalled();
+  expect(mockCollections.system_skills.deleteOne).not.toHaveBeenCalled();
+});
+
+it.each(["PUT", "DELETE"] as const)("rejects %s when app-config adopts the skill after the initial read", async (method) => {
+  mockGetServerSession.mockResolvedValue(userSession());
+  const collection = createMockCollection();
+  mockCollections.agent_skills = collection;
+  const skill = { id: "example-skill", name: "Example Skill", owner_id: "system", config_driven: false };
+  collection.findOne.mockResolvedValue(skill);
+  collection.updateOne.mockImplementation(async (filter) => {
+    skill.config_driven = true;
+    expect(filter).toEqual({ id: skill.id, config_driven: { $ne: true } });
+    return { matchedCount: 0, modifiedCount: 0, acknowledged: true };
+  });
+  collection.deleteOne.mockImplementation(async (filter) => {
+    skill.config_driven = true;
+    expect(filter).toEqual({ id: skill.id, config_driven: { $ne: true } });
+    return { deletedCount: 0 };
+  });
+  const handler = (await import("../skills/configs/route"))[method];
+  const response = await handler(makeRequest(`/api/skills/configs?id=${skill.id}`, {
+    method, ...(method === "PUT" ? { body: JSON.stringify({ name: "Changed" }) } : {}),
+  }));
+  expect(response.status).toBe(409);
+  expect(skill.name).toBe("Example Skill");
+  expect(skill.config_driven).toBe(true);
+});
+
+it.each([
+  ["PUT", "SKILL.md"], ["PUT", "notes.md"], ["DELETE", "SKILL.md"], ["DELETE", "notes.md"],
+] as const)("rejects file %s for %s when app-config adopts the skill during the request", async (method, path) => {
+  mockGetServerSession.mockResolvedValue(userSession());
+  const collection = createMockCollection();
+  mockCollections.agent_skills = collection;
+  collection.findOne.mockResolvedValue({
+    id: "example-skill", name: "Example Skill", config_driven: false, ancillary_files: { "notes.md": "Original" },
+  });
+  collection.updateOne.mockResolvedValue({ matchedCount: 0, modifiedCount: 0, acknowledged: true });
+  const handler = (await import("../skills/configs/[id]/files/route"))[method];
+  const response = await handler(makeRequest(`/api/skills/configs/example-skill/files?path=${path}`, {
+    method, ...(method === "PUT" ? { body: JSON.stringify({ path, content: "Changed" }) } : {}),
+  }), { params: Promise.resolve({ id: "example-skill" }) });
+  expect(response.status).toBe(409);
+  expect(collection.updateOne).toHaveBeenCalledWith(
+    { id: "example-skill", config_driven: { $ne: true } }, expect.anything(),
+  );
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST - Create with visibility
 // ─────────────────────────────────────────────────────────────────────────────

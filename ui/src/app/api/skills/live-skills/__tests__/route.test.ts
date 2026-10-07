@@ -11,8 +11,7 @@
  *   - Unknown agent ids fall back to Claude with `agent_fallback: true`.
  *   - Sanitization of `command_name`, `description`, and `base_url` rejects
  *     hostile inputs and falls back to safe defaults.
- *   - Template resolution order: SKILLS_LIVE_SKILLS_TEMPLATE env >
- *     SKILLS_LIVE_SKILLS_FILE env > chart-relative file > built-in fallback.
+ *   - System collection reads and packaged assets for database-free development.
  *   - The response carries the catalog of all 5 supported agents and the
  *     canonical template for the UI.
  *   - `install_paths` per scope is an ARRAY with the single
@@ -20,6 +19,15 @@
  *   - `?layout=...` is silently accepted and ignored (back-compat).
  *   - Cache-Control: no-store is set.
  */
+
+const mockFindOne = jest.fn();
+jest.mock('@/lib/mongodb', () => ({
+  isMongoDBConfigured: false,
+  getCollection: async (name: string) => {
+    if (name !== "system_skills") throw new Error("Ordinary skills must not supply gateway instructions");
+    return { findOne: mockFindOne };
+  },
+}));
 
 const mockNextResponseJson = jest.fn(
   (data: unknown, init?: { headers?: Record<string, string>; status?: number }) => ({
@@ -50,6 +58,7 @@ const ORIG_ENV = { ...process.env };
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.requireMock('@/lib/mongodb').isMongoDBConfigured = false;
   mockExists.mockReturnValue(false);
   mockStat.mockReturnValue({ isFile: () => false, size: 0 });
   delete process.env.SKILLS_LIVE_SKILLS_TEMPLATE;
@@ -64,6 +73,37 @@ const callGET = async (url: string) => {
   const res = await GET(new Request(url));
   return res.json() as Promise<unknown>;
 };
+
+describe('protected gateway content', () => {
+  it('reads the system collection even when ordinary skills or operator overrides exist', async () => {
+    jest.requireMock('@/lib/mongodb').isMongoDBConfigured = true;
+    process.env.SKILLS_LIVE_SKILLS_TEMPLATE = 'Operator override';
+    mockFindOne.mockResolvedValue({ _id: 'live-skills', content: 'System instructions {{BASE_URL}}' });
+    const response = await GET(new Request('https://app.example.com/api/skills/live-skills'));
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.template).toContain('System instructions https://app.example.com');
+    expect(data.source).toBe('mongodb:system_skills/live-skills');
+    expect(mockFindOne).toHaveBeenCalledWith({ _id: 'live-skills' });
+    expect(mockRead).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for missing system instructions without using ordinary skills or disk defaults', async () => {
+    jest.requireMock('@/lib/mongodb').isMongoDBConfigured = true;
+    mockFindOne.mockResolvedValue(null);
+    const response = await GET(new Request('https://app.example.com/api/skills/live-skills'));
+    expect(response.status).toBe(404);
+    expect(mockRead).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 for a database outage without restoring disk defaults', async () => {
+    jest.requireMock('@/lib/mongodb').isMongoDBConfigured = true;
+    mockFindOne.mockRejectedValueOnce(new Error('Database unavailable'));
+    const response = await GET(new Request('https://app.example.com/api/skills/live-skills'));
+    expect(response.status).toBe(503);
+    expect(mockRead).not.toHaveBeenCalled();
+  });
+});
 
 describe('GET /api/skills/live-skills — defaults', () => {
   it('returns Claude rendering with default command/description when no query', async () => {
@@ -310,74 +350,29 @@ describe('GET /api/skills/live-skills — input sanitization', () => {
   });
 });
 
-describe('GET /api/skills/live-skills — template resolution order', () => {
-  it('SKILLS_LIVE_SKILLS_TEMPLATE env wins over everything else', async () => {
-    process.env.SKILLS_LIVE_SKILLS_TEMPLATE =
-      '---\ndescription: From env\n---\nbody from env {{ARG_REF}}\n';
-    process.env.SKILLS_LIVE_SKILLS_FILE = '/path/to/file.md';
+describe('GET /api/skills/live-skills — packaged system instructions', () => {
+  it('ignores inline and file overrides in database-free development', async () => {
+    process.env.SKILLS_LIVE_SKILLS_TEMPLATE = 'Operator override';
+    process.env.SKILLS_LIVE_SKILLS_FILE = '/example/operator-template.md';
     mockExists.mockReturnValue(true);
     mockStat.mockReturnValue({ isFile: () => true, size: 100 });
-    mockRead.mockReturnValue(
-      '---\ndescription: From file\n---\nbody from file\n',
-    );
-
-    const data = await callGET(
-      'https://app.example.com/api/skills/live-skills',
-    );
-    expect(data.source).toBe('env:SKILLS_LIVE_SKILLS_TEMPLATE');
-    expect(data.template).toContain('body from env');
-    expect(data.template).not.toContain('body from file');
-    expect(data.template).toContain('description: From env');
+    mockRead.mockReturnValue('---\ndescription: Packaged instructions\n---\nPackaged body {{ARG_REF}}');
+    const data = await callGET('https://app.example.com/api/skills/live-skills');
+    expect(data.source).toBe('packaged:live-skills');
+    expect(data.template).toContain('Packaged body');
+    expect(data.template).not.toContain('Operator override');
+    expect(mockRead).not.toHaveBeenCalledWith('/example/operator-template.md', 'utf-8');
   });
 
-  it('SKILLS_LIVE_SKILLS_FILE wins when SKILLS_LIVE_SKILLS_TEMPLATE is empty', async () => {
-    process.env.SKILLS_LIVE_SKILLS_FILE = '/var/data/live-skills.md';
-    mockExists.mockImplementation((p: string) => p === '/var/data/live-skills.md');
-    mockStat.mockReturnValue({ isFile: () => true, size: 100 });
-    mockRead.mockReturnValue(
-      '---\ndescription: From file\n---\nbody from file {{ARG_REF}}\n',
-    );
-
-    const data = await callGET(
-      'https://app.example.com/api/skills/live-skills',
-    );
-    expect(data.source).toBe('file:/var/data/live-skills.md');
-    expect(data.template).toContain('body from file');
-    expect(data.template).toContain('description: From file');
-  });
-
-  it('rejects oversized files (>256 KiB) and falls through to the next source', async () => {
-    process.env.SKILLS_LIVE_SKILLS_FILE = '/huge.md';
+  it.each([
+    { isFile: () => true, size: 257 * 1024 },
+    { isFile: () => false, size: 0 },
+  ])('rejects invalid packaged assets', async (stat) => {
     mockExists.mockReturnValue(true);
-    mockStat.mockReturnValue({ isFile: () => true, size: 257 * 1024 });
-    mockRead.mockReturnValue('would-be-content');
-
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const data = await callGET(
-      'https://app.example.com/api/skills/live-skills',
-    );
-    warnSpy.mockRestore();
-
+    mockStat.mockReturnValue(stat);
+    const data = await callGET('https://app.example.com/api/skills/live-skills');
     expect(data.source).toBe('fallback');
     expect(mockRead).not.toHaveBeenCalled();
-  });
-
-  it('ignores SKILLS_LIVE_SKILLS_FILE when the path is not a regular file', async () => {
-    process.env.SKILLS_LIVE_SKILLS_FILE = '/etc';
-    mockExists.mockReturnValue(true);
-    mockStat.mockReturnValue({ isFile: () => false, size: 0 });
-    const data = await callGET(
-      'https://app.example.com/api/skills/live-skills',
-    );
-    expect(data.source).toBe('fallback');
-  });
-
-  it('treats a whitespace-only SKILLS_LIVE_SKILLS_TEMPLATE as unset', async () => {
-    process.env.SKILLS_LIVE_SKILLS_TEMPLATE = '   \n  ';
-    const data = await callGET(
-      'https://app.example.com/api/skills/live-skills',
-    );
-    expect(data.source).toBe('fallback');
   });
 });
 

@@ -1,3 +1,18 @@
+{{- $legacySkillVolumes := list }}
+{{- $volumes := list }}
+{{- range .Values.volumes }}
+{{- if has ((.configMap | default dict).name | default "") (list "skill-templates" "skills-live-skills") }}
+{{- $legacySkillVolumes = append $legacySkillVolumes .name }}
+{{- else }}
+{{- $volumes = append $volumes . }}
+{{- end }}
+{{- end }}
+{{- $mounts := list }}
+{{- range .Values.volumeMounts }}
+{{- if not (has .name $legacySkillVolumes) }}
+{{- $mounts = append $mounts . }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -69,7 +84,7 @@ spec:
           {{- $hasAgents := and .Values.appConfig.agents (gt (len .Values.appConfig.agents) 0) }}
           {{- $hasWorkflowConfigs := and .Values.appConfig.workflow_configs (gt (len .Values.appConfig.workflow_configs) 0) }}
           {{- $hasRagSources := and .Values.appConfig.rag_sources (gt (len .Values.appConfig.rag_sources) 0) }}
-          {{- $hasAppConfig := or $hasModels $hasMcpServers $hasAgents $hasWorkflowConfigs $hasRagSources }}
+          {{- $hasAppConfig := or $hasModels $hasMcpServers $hasAgents $hasWorkflowConfigs $hasRagSources (hasKey .Values.appConfig "skills") }}
           {{- $schedulerEnabled := dig "scheduler" "enabled" false (.Values.global | default dict) }}
           {{- $schedulerTokenSecretName := dig "scheduler" "serviceTokenSecretName" "caipe-scheduler-service-token" (.Values.global | default dict) }}
           {{- $schedulerTokenSecretKey := dig "scheduler" "serviceTokenSecretKey" "token" (.Values.global | default dict) }}
@@ -239,7 +254,7 @@ spec:
               mountPath: /etc/caipe-ui
               readOnly: true
             {{- end }}
-            {{- with .Values.volumeMounts }}
+            {{- with $mounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
@@ -248,7 +263,7 @@ spec:
           configMap:
             name: {{ include "caipe-ui.fullname" . }}-app-config
         {{- end }}
-        {{- with .Values.volumes }}
+        {{- with $volumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- with .Values.nodeSelector }}
