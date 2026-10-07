@@ -46,7 +46,7 @@ class NetutilsExecutor(AgentExecutor):
         logger.info("Ignoring cancellation for netutils task %s", context.task_id)
 
 
-async def _health(_: Any) -> JSONResponse:
+async def _health() -> JSONResponse:
     return JSONResponse({"status": "healthy"})
 
 

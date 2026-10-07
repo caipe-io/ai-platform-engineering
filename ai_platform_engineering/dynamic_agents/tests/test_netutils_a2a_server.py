@@ -7,6 +7,7 @@ import threading
 import time
 from types import SimpleNamespace
 
+import httpx
 import pytest
 import uvicorn
 
@@ -24,6 +25,15 @@ class _FakeNetutilsAgent:
         content = str(messages[-1]["content"])
         self.messages.append(content)
         return {"messages": [SimpleNamespace(content=f"netutils result for {content}")]}
+
+
+async def test_health_endpoint_needs_no_query_parameters() -> None:
+    transport = httpx.ASGITransport(app=create_app(agent=_FakeNetutilsAgent()))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "healthy"}
 
 
 @pytest.mark.asyncio
