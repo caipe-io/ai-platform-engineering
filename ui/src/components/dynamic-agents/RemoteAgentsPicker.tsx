@@ -73,8 +73,8 @@ export function RemoteAgentsPicker({ value, onChange, timeoutValues, onTimeoutCh
     }
   };
 
-  const addRemoteAgent = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const addRemoteAgent = async () => {
+    if (!name.trim() || !endpoint.trim()) return;
     setSaving(true);
     try {
       const response = await fetch("/api/remote-agents", {
@@ -109,9 +109,9 @@ export function RemoteAgentsPicker({ value, onChange, timeoutValues, onTimeoutCh
     }
   };
 
-  const saveRemoteAgent = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const saveRemoteAgent = async () => {
     if (!editingId) return;
+    if (!editValues.name.trim() || !editValues.endpoint.trim()) return;
     setSaving(true);
     try {
       const response = await fetch(`/api/remote-agents/${encodeURIComponent(editingId)}`, {
@@ -158,7 +158,14 @@ export function RemoteAgentsPicker({ value, onChange, timeoutValues, onTimeoutCh
                 </div>
               </div>
               {canManage && editingId === item._id && (
-                <form onSubmit={saveRemoteAgent} className="mt-4 space-y-3 border-t pt-3">
+                <div
+                  className="mt-4 space-y-3 border-t pt-3"
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" || !(event.target instanceof HTMLInputElement)) return;
+                    event.preventDefault();
+                    void saveRemoteAgent();
+                  }}
+                >
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-1"><Label htmlFor={`edit-remote-agent-name-${item._id}`}>Name</Label><Input id={`edit-remote-agent-name-${item._id}`} required value={editValues.name} onChange={(event) => setEditValues((current) => ({ ...current, name: event.target.value }))} /></div>
                     <div className="space-y-1"><Label htmlFor={`edit-remote-agent-endpoint-${item._id}`}>Agent URL</Label><Input id={`edit-remote-agent-endpoint-${item._id}`} type="url" required value={editValues.endpoint} onChange={(event) => setEditValues((current) => ({ ...current, endpoint: event.target.value }))} /></div>
@@ -166,17 +173,24 @@ export function RemoteAgentsPicker({ value, onChange, timeoutValues, onTimeoutCh
                     <div className="space-y-1"><Label htmlFor={`edit-remote-agent-timeout-${item._id}`}>Default timeout (seconds)</Label><Input id={`edit-remote-agent-timeout-${item._id}`} type="number" min={1} max={600} value={editValues.timeout_seconds} onChange={(event) => setEditValues((current) => ({ ...current, timeout_seconds: Number(event.target.value) }))} /></div>
                   </div>
                   <div className="flex gap-2">
-                    <Button type="submit" size="sm" disabled={saving}><Check className="mr-2 h-4 w-4" />Save</Button>
+                    <Button type="button" size="sm" disabled={saving || !editValues.name.trim() || !editValues.endpoint.trim()} onClick={() => void saveRemoteAgent()}><Check className="mr-2 h-4 w-4" />Save</Button>
                     <Button type="button" size="sm" variant="outline" onClick={() => setEditingId(null)}><X className="mr-2 h-4 w-4" />Cancel</Button>
                   </div>
-                </form>
+                </div>
               )}
             </div>
           ))}
         </div>
       )}
       {canManage && !disabled && (
-        <form onSubmit={addRemoteAgent} className="space-y-3 rounded-lg border border-dashed p-4">
+        <div
+          className="space-y-3 rounded-lg border border-dashed p-4"
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || !(event.target instanceof HTMLInputElement)) return;
+            event.preventDefault();
+            void addRemoteAgent();
+          }}
+        >
           <div className="font-medium">Add a remote A2A agent</div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1"><Label htmlFor="remote-agent-name">Name</Label><Input id="remote-agent-name" required value={name} onChange={(event) => setName(event.target.value)} /></div>
@@ -186,10 +200,10 @@ export function RemoteAgentsPicker({ value, onChange, timeoutValues, onTimeoutCh
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" size="sm" variant="outline" disabled={probing || !endpoint.trim()} onClick={() => void probeEndpoint()}>{probing ? "Probing…" : "Discover Agent Card"}</Button>
-            <Button type="submit" size="sm" disabled={saving || !name.trim() || !endpoint.trim()}><Plus className="mr-2 h-4 w-4" />{saving ? "Adding…" : "Add and select"}</Button>
+            <Button type="button" size="sm" disabled={saving || !name.trim() || !endpoint.trim()} onClick={() => void addRemoteAgent()}><Plus className="mr-2 h-4 w-4" />{saving ? "Adding…" : "Add and select"}</Button>
             {probedCard?.protocol_bindings?.length ? <span className="text-xs text-muted-foreground">A2A {probedCard.protocol_version || ""} · {probedCard.protocol_bindings.join(", ")}</span> : null}
           </div>
-        </form>
+        </div>
       )}
     </div>
   );
