@@ -113,6 +113,20 @@ class Settings(BaseSettings):
     oauth2_scope: str = ""
     oauth2_audience: str = ""
 
+    # Explicit Agent Badge publication; no network or key access while disabled.
+    agntcy_identity_enabled: bool = False
+    agntcy_identity_node_url: str = ""
+    agntcy_identity_bindings_file: str = ""
+    agntcy_identity_issuer: str = ""
+    agntcy_identity_signing_key_file: str = ""
+    agntcy_identity_signing_key_id: str = ""
+    agntcy_identity_keycloak_issuer: str = ""
+    agntcy_identity_keycloak_token_url: str = ""
+    agntcy_identity_keycloak_jwks_url: str = ""
+    agntcy_identity_keycloak_audience: str = ""
+    agntcy_identity_badge_ttl_seconds: int = 900
+    agntcy_identity_allow_http: bool = False
+
     # Per-model input-capability overrides (env: MODEL_CAPABILITIES_JSON). JSON object
     # mapping model id (or family prefix) to accepted modalities, e.g.
     # '{"some-text-only-model": {"accepts_images": false}}'. Merged over the

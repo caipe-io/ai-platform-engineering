@@ -33,6 +33,7 @@ from fastapi.responses import JSONResponse
 from dynamic_agents.config import get_settings
 from dynamic_agents.metrics import PrometheusHTTPMiddleware
 from dynamic_agents.routes import (
+    agent_badges,
     agents,
     assistant,
     autonomous_follow_up,
@@ -185,6 +186,8 @@ def create_app() -> FastAPI:
     # Agent reachability probe used by the autonomous-agents service
     # to verify ``dynamic_agent_id`` targets exist before scheduling.
     app.include_router(agents.router, prefix="/api/v1")
+    if settings.agntcy_identity_enabled:
+        app.include_router(agent_badges.router, prefix="/api/v1")
 
     @app.exception_handler(RuntimeInitError)
     async def runtime_init_error_handler(request: Request, exc: RuntimeInitError):

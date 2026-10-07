@@ -36,6 +36,9 @@ dependencies = [
     # (vendored from ai_platform_engineering.utils.auth so the DA image
     # does not need to install the entire shared package).
     "pyjwt[crypto]==2.15.1",
+    # Agent Badge publication uses these existing dependency-graph libraries directly.
+    "httpx==0.28.1",
+    "cryptography==50.0.1",
     # S3 attachment store (services/attachment_store.py) and the Bedrock
     # transport clients in services/llm_clients.py. Chosen by this package;
     # no longer held in lockstep with an external utility library.
