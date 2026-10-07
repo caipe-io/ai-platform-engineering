@@ -375,8 +375,10 @@ source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "boto3" },
+    { name = "cryptography" },
     { name = "deepagents" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "jinja2" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
@@ -416,8 +418,10 @@ dev = [
 requires-dist = [
     { name = "beautifulsoup4", specifier = "==4.15.0" },
     { name = "boto3", specifier = "==1.43.16" },
+    { name = "cryptography", specifier = "==50.0.1" },
     { name = "deepagents", specifier = "==0.6.8" },
     { name = "fastapi", specifier = "==0.141.1" },
+    { name = "httpx", specifier = "==0.28.1" },
     { name = "jinja2", specifier = "==3.1.6" },
     { name = "langchain", specifier = "==1.4.1" },
     { name = "langchain-anthropic", specifier = "==1.4.6" },

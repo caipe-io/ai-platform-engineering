@@ -405,3 +405,145 @@ dynamic_agents/
 - [SSE_EVENTS.md](./SSE_EVENTS.md) - SSE event types and streaming protocol
 - [UI Integration](../../ui/src/components/dynamic-agents/) - Frontend components
 - [MCP Protocol](https://modelcontextprotocol.io/) - Model Context Protocol specification
+
+## Optional AGNTCY Agent Badges with Keycloak
+
+Agent Badge publication is disabled by default. Enable it only after enrolling
+an AGNTCY issuer and the agent's Keycloak service-account identity in Identity
+Node. This is explicit publication of an approved public OASF definition;
+existing runtime configuration and permissions remain in MongoDB.
+
+Architecture and trust limits: [Keycloak Agent Badges](../../docs/docs/architecture/keycloak-agent-badges.md),
+[Identity discussion #180](https://github.com/agntcy/identity/discussions/180).
+
+### Operator enrollment
+
+1. Create a dedicated Keycloak confidential client with service accounts enabled.
+   Configure an access-token audience mapper for `identity-node`. Use a distinct
+   service account for each dynamic agent; record its stable token `sub`.
+2. Register the AGNTCY issuer using Node `POST /v1alpha1/issuer/register`, supplying
+   the AGNTCY public signing JWK and an OIDC proof. The issuer's `commonName`
+   must match Node's hostname mapping of the Keycloak issuer. Use
+   `authType: ISSUER_AUTH_TYPE_IDP`; the Keycloak realm key signs the proof,
+   while the registered AGNTCY key signs badges.
+3. Generate agent metadata with `POST /v1alpha1/id/generate`, supplying that
+   issuer and the **agent's** Keycloak client-credentials proof. The generic
+   OIDC path produces `IDP-<sub>`. Save the returned exact identifier.
+4. Use a Node release containing [the resolver-controller API fix #181](https://github.com/agntcy/identity/pull/181). The publisher rejects missing or mismatched controllers.
+5. Mount operator bindings, client-secret files and the private signing PEM
+   read-only. Keep them outside user-editable agent records and Git.
+
+Bindings file example (paths are container paths):
+
+```json
+{
+  "primary": {
+    "subject": "IDP-primary-sub",
+    "token_subject": "primary-sub",
+    "client_id": "primary-client",
+    "client_secret_file": "/run/agent-identity/primary-client-secret"
+  }
+}
+```
+
+Here `primary` is the existing Mongo agent ID. Replace example subjects with
+actual stable Keycloak service-account UUIDs; a client display name is not its
+JWT subject. The RSA signing key must be at least 2048 bits and match the Node's
+assertion key, including `kid`.
+
+### Runtime configuration
+
+Set these variables on the **dynamic-agents container**, not only in the shell
+or the UI container. For Compose, place them in an explicitly loaded override
+and mount the secret directory read-only. The default Compose configuration
+continues to run with the feature disabled.
+
+```yaml
+services:
+  dynamic-agents:
+    environment:
+      AGNTCY_IDENTITY_ENABLED: "true"
+      AGNTCY_IDENTITY_NODE_URL: https://node.example.com
+      AGNTCY_IDENTITY_BINDINGS_FILE: /run/agent-identity/bindings.json
+      AGNTCY_IDENTITY_ISSUER: issuer.example.com
+      AGNTCY_IDENTITY_SIGNING_KEY_FILE: /run/agent-identity/signing.pem
+      AGNTCY_IDENTITY_SIGNING_KEY_ID: primary-signing-key
+      AGNTCY_IDENTITY_KEYCLOAK_ISSUER: https://issuer.example.com/realms/primary
+      AGNTCY_IDENTITY_KEYCLOAK_TOKEN_URL: https://issuer.example.com/realms/primary/protocol/openid-connect/token
+      AGNTCY_IDENTITY_KEYCLOAK_JWKS_URL: https://issuer.example.com/realms/primary/protocol/openid-connect/certs
+      AGNTCY_IDENTITY_KEYCLOAK_AUDIENCE: identity-node
+      AGNTCY_IDENTITY_BADGE_TTL_SECONDS: "900"
+    volumes:
+      - ./agent-identity-secrets:/run/agent-identity:ro
+```
+
+Load with `docker compose -f docker-compose.yaml -f compose.identity-badges.yaml up -d`.
+TLS verification is enabled. `AGNTCY_IDENTITY_ALLOW_HTTP=true` is an explicit
+exception for disposable local integration tests.
+
+### Publish
+
+A signed-in platform admin calls:
+
+```http
+POST /api/dynamic-agents/agents/primary/badge
+Content-Type: application/json
+
+{
+  "name": "primary",
+  "version": "1.0.0",
+  "schema_version": "1.0.0",
+  "description": "Example public agent definition",
+  "authors": ["test-user@example.com"],
+  "created_at": "2026-01-01T00:00:00Z",
+  "annotations": {
+    "agntcy.dir/identity": "agntcy://IDP-primary-sub"
+  }
+}
+```
+
+The name must match the existing agent. Submit a complete OASF definition
+validated for your Directory schema version; the adapter checks the identity,
+name, required version fields and size, and does not claim full OASF schema
+validation. The exact definition is embedded in the signed badge. No prompt,
+credential or tool configuration is automatically exported.
+
+The response is a publication receipt: `agent_id`, `subject`, `credential_id`,
+`issuer`, `expires_at`, `badges_url`, and `definition_sha256`. The BFF stores it in
+`agent_identity_badges`. If receipt storage fails after successful publication,
+the response includes `receipt_persisted: false`; retain that response for
+recovery. The signed badge lives in Identity Node.
+
+`definition_sha256` is not a Directory CID or a verification result. Publish the
+same OASF object through the Directory publisher and sign its native IdentityClaim
+before expecting verified identity search. This integration does not automatically
+publish records to Directory or activate imported MCP servers.
+
+Badges last at most 15 minutes. There is no automatic renewal or immediate
+revocation guarantee. Disabling a Keycloak client prevents new publication; an
+already-issued badge remains subject to its validity/status policy. Repeated
+publication creates another bounded credential. A timeout can leave an unknown
+remote outcome: inspect the Node's well-known badge list before retrying.
+
+### Verification
+
+```bash
+cd ai_platform_engineering/dynamic_agents
+uv run --extra dev ruff check src/dynamic_agents/services/agent_badges.py src/dynamic_agents/routes/agent_badges.py
+uv run --extra dev pytest tests/test_agent_badges.py
+```
+
+An opt-in live test exercises the real backend route, Keycloak token/JWKS,
+Node resolution, signature verification, publication and well-known retrieval.
+It also checks rejection of a badge signed with an unauthorized key:
+
+```bash
+AGNTCY_BADGE_LIVE_SETTINGS=/absolute/path/to/disposable-settings.json \
+  uv run --extra dev pytest tests/test_agent_badges_live.py
+```
+
+The settings JSON uses the lowercase `agntcy_identity_*` configuration fields
+corresponding to the variables above and points at pre-enrolled **disposable**
+services. The test uses the `primary` binding, issues a real credential and
+leaves it in the disposable Node. It does not test the Directory reconciler or
+CAIPE runtime identity enforcement.
