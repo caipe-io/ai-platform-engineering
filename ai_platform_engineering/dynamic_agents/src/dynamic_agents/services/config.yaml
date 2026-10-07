@@ -84,11 +84,6 @@ mcp_servers:
     id: jira
     name: Jira
     transport: http
-    credential_sources:
-      - kind: provider_connection
-        name: X-CAIPE-Provider-Token
-        provider: atlassian
-        target: header
 
   - description: PagerDuty incident management
     enabled: true
@@ -96,11 +91,6 @@ mcp_servers:
     id: pagerduty
     name: PagerDuty
     transport: http
-    credential_sources:
-      - kind: provider_connection
-        name: X-CAIPE-Provider-Token
-        provider: pagerduty
-        target: header
 
   - description: Webex meeting, transcript, and recording tools
     enabled: true

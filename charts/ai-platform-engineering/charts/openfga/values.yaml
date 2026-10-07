@@ -37,8 +37,8 @@ datastore:
 migrate:
   enabled: true
   backoffLimit: 6
-  helmHookDeletePolicy: "before-hook-creation,hook-succeeded"
-  argocdHookDeletePolicy: "BeforeHookCreation,HookSucceeded"
+  helmHookDeletePolicy: "before-hook-creation"
+  argocdHookDeletePolicy: "BeforeHookCreation"
   resources:
     requests:
       cpu: 100m
