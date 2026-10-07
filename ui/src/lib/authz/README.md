@@ -1,5 +1,7 @@
 # BFF authorization and Access API
 
+Ongoing consolidation uses the [CAS integration workflow](../../../../.github/CAS_INTEGRATION.md).
+
 ## Access API contract
 
 Foundation routes for remote consumers; BFF callers use CAS in process:
@@ -107,6 +109,79 @@ Other actions, model selection and migration of remaining legacy checks are
 separate work. Writes are not replayed and do not inherit the check deadline.
 The platform health route keeps its independent diagnostic probe. Python services
 and the gateway authorization bridge are outside this BFF change.
+
+## Agent grant lifecycle — recovery draft
+
+```text
+Save → Mongo: settings + pending operation (one atomic write)
+                    ↓
+             CAS → OpenFGA → mark applied → UI confirms completion
+                    ↓ unavailable / interrupted
+             pending operation → another BFF replica retries
+
+Picker GET → read candidates → permission filter (no grant writes)
+```
+
+- Agent editor, deletion and default-selection saves use `permission-sync.ts`.
+  Settings and a private recovery journal are committed together, before graph
+  writes. No Mongo transaction or separate microservice is required.
+- Snapshot conflicts and an already-pending operation return HTTP **409** without
+  starting a new graph write. Do not stack changes while a save is pending.
+- HTTP **202**, `permission_sync.state: pending`, means settings were accepted,
+  **not** that access changed. Previous access can still work until revocation
+  completes. A normal success response follows confirmed application.
+- The Save spinner runs only during the request. Pending status survives reload
+  and polls `GET /api/access/operations/:id` (read-only, no-store). The initiating
+  principal or a resource manager can read the safe reference/state/timestamps;
+  tuple intent, leases and actor context remain server-side. Deleted/superseded
+  references return 404: reload resource state, do not infer completion.
+- Each BFF starts recovery on boot and scans due work every 15 seconds, at most
+  100 documents per collection per scan. A 30-second renewable Mongo lease
+  coordinates attempts; projection requests have a five-second abort signal.
+  These intervals are **not** a recovery SLA during outages or backlog.
+- Retries remove access before adding access, using exact stored-tuple reads.
+  They never undo a revocation by restoring an old configuration snapshot.
+  Completed operations discard their old diffs so later unrelated grants are
+  not removed by replaying historical deletes.
+- A public human grant survives while the agent is global **or** the effective
+  platform default. Clearing a database default restores `DEFAULT_AGENT_ID`, if
+  configured. Default selection does not itself grant service-account access.
+- Startup agent sweeps use the same journal and skip pending resources. Login
+  retains baseline user/team grants but no longer repairs the default-agent tuple.
+- A snapshot conflict skips only that agent, with a warning; later agents are
+  still processed. Unexpected errors remain visible. Genuinely empty commands
+  leave the settings version untouched; nonempty repair projections still run.
+
+Without `OPENFGA_HTTP`, storage-only saves still run once; this does not
+bypass route authentication or permission checks or make those routes usable
+without their existing dependencies. If OpenFGA **is configured** but
+`OPENFGA_RECONCILE_ENABLED` is false or invalid, permission-changing saves fail
+with `ACCESS_WRITES_DISABLED`. An unset flag defaults to enabled. A reachable
+authorization service with writes disabled is not a no-authorization mode.
+
+### Must resolve before merging this draft
+
+[#2854](https://github.com/caipe-io/ai-platform-engineering/issues/2854) remains
+an open release gate. This is not an atomic Mongo/OpenFGA transaction.
+
+- **Late writes:** a Mongo lease fences journal completion, not an OpenFGA write
+  already in flight. A delayed old worker could write after a newer operation.
+  Aborting an HTTP request does not prove the server cancelled it. Resolve and
+  test this ordering before calling recovery safe across replicas.
+- **All writers:** complete the ownership audit, including Hello World bootstrap,
+  raw grant administration and concurrent default/visibility changes. Reading
+  shared reasons again reduces races but is not a cross-document lock.
+- **Real crash proof:** kill a worker at the persistence/write/ack boundaries;
+  recover on a second replica against real MongoDB and OpenFGA. Unit tests with
+  mocked I/O do not establish this guarantee or a bounded recovery time.
+- **Operations:** pending status/reference and correlated server errors are
+  visible today. Retention of completed deletion receipts, backlog monitoring
+  and the Admin decision/recovery view need explicit rollout coverage.
+
+Other callers of `reconcileTupleDiff` retain their existing write-then-persist
+and repair-required **503** contract. Do not interpret that response as a safe
+409 or assume this migration covers every resource. Existing picker caches and
+team-membership writers are unchanged.
 
 ## Isolated agent-use model tests
 

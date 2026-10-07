@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { config } from "@/lib/config";
 import { motion } from "framer-motion";
 import { LogOut,Mail,ShieldX } from "lucide-react";
-import { signOut } from "next-auth/react";
+import { signOutWithFeedback } from "@/lib/sign-out";
 
 export default function UnauthorizedPage() {
   const requiredGroup = config.oidcRequiredGroup;
@@ -73,7 +73,7 @@ export default function UnauthorizedPage() {
             <Button
               variant="outline"
               className="w-full gap-2"
-              onClick={() => signOut({ callbackUrl: "/login" })}
+              onClick={() => void signOutWithFeedback({ callbackUrl: "/login" })}
             >
               <LogOut className="h-4 w-4" />
               Try Another Account

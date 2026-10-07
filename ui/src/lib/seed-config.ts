@@ -26,7 +26,9 @@ import {
   isOpenFgaReconciliationEnabled,
   mapWithConcurrency,
 } from "@/lib/rbac/openfga";
-import { reconcileAgentRelationships } from "@/lib/rbac/openfga-agent-tools";
+import { reconcileAgentRelationships, deleteAllAgentToolTuples } from "@/lib/rbac/openfga-agent-tools";
+import { PermissionSaveConflictError, type PermissionPersistence, permissionSyncStatus } from "@/lib/authz/permission-sync";
+import { getResolvedPlatformDefaultAgentId } from "@/lib/platform-default-agent";
 import {
   resolveUnlinkedServiceAccountSub,
   resolveUnlinkedServiceAccountGrantState,
@@ -216,6 +218,7 @@ async function reconcileSeededAgentRelationships(input: {
   previousGlobalUserAccess?: boolean;
   unlinkedServiceAccountSub?: string | null;
   logContext: string;
+  persistence?: PermissionPersistence;
 }): Promise<void> {
   try {
     await reconcileAgentRelationships({
@@ -232,8 +235,10 @@ async function reconcileSeededAgentRelationships(input: {
       previousGlobalUserAccess: input.previousGlobalUserAccess === true,
       unlinkedServiceAccountSub: input.unlinkedServiceAccountSub ?? null,
       failClosed: false,
+      persistence: input.persistence,
     });
   } catch (error) {
+    if (input.persistence) throw error;
     console.warn(
       `[seed-config] Failed to reconcile OpenFGA relationships for agent ${input.agentId} (${input.logContext}):`,
       error,
@@ -265,6 +270,9 @@ export async function seedAgents(
 
     // Preserve created_at if document already exists
     const existing = await collection.findOne({ _id: agentId });
+
+    // Do not overwrite durable recovery intent from another replica/save.
+    if (permissionSyncStatus(existing)?.state === "pending") continue;
 
     if (existing?.config_import_adopted === true) {
       console.log(
@@ -346,8 +354,6 @@ export async function seedAgents(
       updated_at: now,
     };
 
-    await collection.replaceOne({ _id: agentId }, doc, { upsert: true });
-
     // Write the OpenFGA ownership/share tuples so config-driven agents have
     // the same PDP-visible policy as agents saved through the editor.
     await reconcileSeededAgentRelationships({
@@ -364,6 +370,11 @@ export async function seedAgents(
       previousGlobalUserAccess: existing?.visibility === "global",
       unlinkedServiceAccountSub,
       logContext: "config seed",
+      persistence: {
+        collection: "dynamic_agents", id: agentId, previous: existing,
+        set: Object.fromEntries(Object.entries(doc).filter(([, value]) => value !== undefined)),
+        unset: Object.fromEntries(Object.entries(doc).filter(([, value]) => value === undefined).map(([name]) => [name, ""])),
+      },
     });
 
     console.log(`[seed-config] Seeded agent: ${agentId}`);
@@ -407,6 +418,7 @@ export async function adoptConfigImportedAgents(
       !existing ||
       existing.config_driven !== true ||
       existing.config_import_adopted === true
+      || permissionSyncStatus(existing)?.state === "pending"
     ) {
       skipped.push(agentId);
       continue;
@@ -417,10 +429,7 @@ export async function adoptConfigImportedAgents(
       : existing.visibility;
     const now = new Date().toISOString();
 
-    await collection.updateOne(
-      { _id: agentId },
-      {
-        $set: {
+    const adoptedSettings = {
           config_driven: false,
           config_import_adopted: true,
           visibility: nextVisibility,
@@ -428,9 +437,7 @@ export async function adoptConfigImportedAgents(
           shared_with_teams:
             sharedTeamSlugs.length > 0 ? sharedTeamSlugs : undefined,
           updated_at: now,
-        },
-      },
-    );
+    };
 
     await reconcileSeededAgentRelationships({
       agentId,
@@ -444,6 +451,7 @@ export async function adoptConfigImportedAgents(
       previousGlobalUserAccess: existing.visibility === "global",
       unlinkedServiceAccountSub,
       logContext: "config import adopt",
+      persistence: { collection: "dynamic_agents", id: agentId, previous: existing, set: adoptedSettings },
     });
 
     console.log(`[seed-config] Adopted config-imported agent: ${agentId}`);
@@ -1096,7 +1104,9 @@ export async function cleanupStaleConfigDriven(
       console.log(
         `[seed-config] Removing stale config-driven agent: ${agent._id}`,
       );
-      await agentCollection.deleteOne({ _id: agent._id });
+      if (permissionSyncStatus(agent)?.state === "pending") continue;
+      await deleteAllAgentToolTuples(agent._id, { source: "config_agent_delete" }, undefined,
+        { collection: "dynamic_agents", id: agent._id, previous: agent, set: {}, deleteResource: true });
       agentsDeleted++;
     }
   }
@@ -1666,10 +1676,9 @@ export async function reconcileExistingPlatformMcpServerOpenFgaTuples(): Promise
 export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
   if (!isMongoDBConfigured || !isOpenFgaReconciliationEnabled()) return 0;
 
-  const { getPlatformDefaultAgentId } = await import(
-    "@/lib/rbac/platform-default"
-  );
-  const platformDefaultAgentId = await getPlatformDefaultAgentId();
+  // A failed config read must not be treated as "no default": that could
+  // revoke its public grant. Surface the failure to the startup reconciler.
+  const platformDefaultAgentId = await getResolvedPlatformDefaultAgentId();
 
   const collection = await getCollection<DynamicAgentConfig>("dynamic_agents");
   const agents = await collection
@@ -1684,6 +1693,9 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
           owner_team_slug: 1,
           shared_with_teams: 1,
           visibility: 1,
+          updated_at: 1,
+          authz_write_id: 1,
+          _permission_sync: 1,
         },
       },
     )
@@ -1697,15 +1709,16 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
   // sub also drives the everyone-can-use backfill.
   const { sub: unlinkedServiceAccountSub, explicitAgentIds } =
     await resolveUnlinkedServiceAccountGrantState();
+  let processed = 0;
   for (const agent of agents) {
     const agentId = String(agent._id ?? "").trim();
-    if (!agentId) continue;
+    if (!agentId || permissionSyncStatus(agent)?.state === "pending") continue;
     const allowedTools = agent.allowed_tools ?? {};
     const sharedSlugs = agent.shared_with_teams ?? [];
     const isGlobal = agent.visibility === "global";
     const retainPlatformDefaultGrant =
       platformDefaultAgentId !== null && agentId === platformDefaultAgentId;
-    await reconcileAgentRelationships({
+    const result = await reconcileAgentRelationships({
       agentId,
       previousAllowedTools: allowedTools,
       nextAllowedTools: allowedTools,
@@ -1715,6 +1728,7 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
       nextSharedTeamSlugs: sharedSlugs,
       previousSharedTeamSlugs: sharedSlugs,
       globalUserAccess: isGlobal,
+      platformDefaultUserAccess: retainPlatformDefaultGrant,
       // Sweep stale org-wide chat grants on team agents (including agents
       // demoted from global before reconcile carried delete flags).
       previousGlobalUserAccess: !isGlobal && !retainPlatformDefaultGrant,
@@ -1723,16 +1737,24 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
       // `can_use` tuple for non-global agents the admin granted directly, and
       // re-assert it if a prior visibility-driven delete removed it.
       unlinkedGrantIsExplicit: explicitAgentIds.has(agentId),
-      failClosed: false,
+      failClosed: true,
+      persistence: { collection: "dynamic_agents", id: agentId, previous: agent, set: {} },
+    }).catch((error: unknown) => {
+      if (!(error instanceof PermissionSaveConflictError)) throw error;
+      // Another writer owns this snapshot; do not let it starve unrelated
+      // agents later in the sweep. Its pending journal is recovered separately.
+      console.warn("[seed-config] Skipping agent permission snapshot conflict", { agentId });
+      return null;
     });
+    if (result !== null) processed++;
   }
 
   if (agents.length > 0) {
     console.log(
-      `[seed-config] Reconciled OpenFGA tuples for ${agents.length} dynamic agent(s)`,
+      `[seed-config] Processed permission recovery for ${processed} dynamic agent(s); skipped ${agents.length - processed}`,
     );
   }
-  return agents.length;
+  return processed;
 }
 
 /**

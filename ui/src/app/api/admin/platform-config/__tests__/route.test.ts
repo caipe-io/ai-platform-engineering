@@ -8,7 +8,7 @@ const mockWithAuth = jest.fn();
 const mockRequireAdmin = jest.fn();
 const mockRequireResourcePermission = jest.fn();
 const mockGetCollection = jest.fn();
-const mockWriteOpenFgaTuples = jest.fn();
+const mockPersistPermissionChange = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -42,8 +42,9 @@ jest.mock("@/lib/mongodb", () => ({
   getCollection: (...args: unknown[]) => mockGetCollection(...args),
 }));
 
-jest.mock("@/lib/rbac/openfga", () => ({
-  writeOpenFgaTuples: (...args: unknown[]) => mockWriteOpenFgaTuples(...args),
+jest.mock("@/lib/authz/permission-sync", () => ({
+  ...jest.requireActual("@/lib/authz/permission-sync"),
+  persistPermissionChange: (...args: unknown[]) => mockPersistPermissionChange(...args),
 }));
 
 function request(path: string, init?: RequestInit): NextRequest {
@@ -51,6 +52,23 @@ function request(path: string, init?: RequestInit): NextRequest {
 }
 
 describe("admin platform-config route", () => {
+  it("does not overwrite a concurrently changed default", async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 0, upsertedCount: 0 });
+    const snapshot = { _id: "platform_settings", default_agent_id: "agent-old", updated_at: "2026-01-01", authz_write_id: "first" };
+    mockGetCollection.mockImplementation(async (name: string) => name === "platform_config"
+      ? { findOne: jest.fn().mockResolvedValue(snapshot), updateOne }
+      : { findOne: jest.fn().mockResolvedValue({ visibility: "team" }) });
+    mockPersistPermissionChange.mockRejectedValueOnce(Object.assign(new Error("Reload before saving"), { code: "PLATFORM_CONFIG_SAVE_CONFLICT" }));
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request("/api/admin/platform-config", {
+      method: "PATCH", body: JSON.stringify({ default_agent_id: "agent-next", acknowledge_public_access: true }),
+    }))).rejects.toMatchObject({ code: "PLATFORM_CONFIG_SAVE_CONFLICT" });
+    expect(mockPersistPermissionChange).toHaveBeenCalledWith(
+      expect.objectContaining({ previous: snapshot, id: "platform_settings" }),
+      expect.any(Object), expect.any(Object),
+    );
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.DEFAULT_AGENT_ID;
@@ -69,7 +87,7 @@ describe("admin platform-config route", () => {
     });
     mockRequireAdmin.mockResolvedValue(undefined);
     mockRequireResourcePermission.mockResolvedValue(undefined);
-    mockWriteOpenFgaTuples.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
+    mockPersistPermissionChange.mockReset().mockResolvedValue(undefined);
   });
 
   it("requires system_config read access before returning platform config", async () => {
@@ -169,10 +187,10 @@ describe("admin platform-config route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+    expect(mockPersistPermissionChange).toHaveBeenCalledWith(expect.any(Object), {
       writes: [{ user: "user:*", relation: "user", object: "agent:agent-next" }],
       deletes: [{ user: "user:*", relation: "user", object: "agent:agent-old" }],
-    });
+    }, expect.any(Object));
   });
 
   it("rejects setting a new default agent without acknowledge_public_access", async () => {
@@ -195,7 +213,7 @@ describe("admin platform-config route", () => {
       /Setting a platform default agent makes it available to all signed-in users/,
     );
     await expect(call).rejects.toMatchObject({ code: "PUBLIC_ACCESS_NOT_ACKNOWLEDGED" });
-    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+    expect(mockPersistPermissionChange).not.toHaveBeenCalled();
     expect(collection.updateOne).not.toHaveBeenCalled();
   });
 
@@ -284,10 +302,72 @@ describe("admin platform-config route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+    expect(mockPersistPermissionChange).toHaveBeenCalledWith(expect.any(Object), {
       writes: [],
       deletes: [{ user: "user:*", relation: "user", object: "agent:agent-old" }],
-    });
+    }, expect.any(Object));
+  });
+
+  it.each(["agent-next", null])("retains the global grant when changing the default to %s", async (next) => {
+    const config = {
+      findOne: jest.fn().mockResolvedValue({ default_agent_id: "agent-old" }),
+      updateOne: jest.fn().mockResolvedValue({ acknowledged: true }),
+    };
+    mockGetCollection.mockImplementation(async (name: string) => name === "platform_config"
+      ? config
+      : { findOne: jest.fn().mockResolvedValue({ _id: "agent-old", visibility: "global" }) });
+    const { PATCH } = await import("../route");
+    await PATCH(request("/api/admin/platform-config", {
+      method: "PATCH",
+      body: JSON.stringify({ default_agent_id: next, acknowledge_public_access: true }),
+    }));
+    if (next) {
+      expect(mockPersistPermissionChange).toHaveBeenCalledWith(expect.any(Object), {
+        writes: [{ user: "user:*", relation: "user", object: "agent:agent-next" }], deletes: [],
+      }, expect.any(Object));
+    } else {
+      expect(mockPersistPermissionChange).toHaveBeenCalledWith(expect.any(Object), { writes: [], deletes: [] }, expect.any(Object));
+    }
+    expect(mockPersistPermissionChange).toHaveBeenCalledWith(expect.objectContaining({ collection: "platform_config" }), expect.any(Object), expect.any(Object));
+  });
+
+  it("restores the environment default when clearing the database override", async () => {
+    process.env.DEFAULT_AGENT_ID = "agent-env";
+    const config = {
+      findOne: jest.fn().mockResolvedValue({ default_agent_id: "agent-old" }),
+      updateOne: jest.fn().mockResolvedValue({ acknowledged: true }),
+    };
+    mockGetCollection.mockImplementation(async (name: string) => name === "platform_config"
+      ? config : { findOne: jest.fn().mockResolvedValue({ visibility: "team" }) });
+    const { PATCH } = await import("../route");
+    await PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ default_agent_id: null }) }));
+    expect(mockPersistPermissionChange).toHaveBeenCalledWith(expect.any(Object), {
+      writes: [{ user: "user:*", relation: "user", object: "agent:agent-env" }],
+      deletes: [{ user: "user:*", relation: "user", object: "agent:agent-old" }],
+    }, expect.any(Object));
+  });
+
+  it("propagates rejection before a save is staged", async () => {
+    const config = { findOne: jest.fn().mockResolvedValue(null), updateOne: jest.fn() };
+    mockGetCollection.mockResolvedValue(config);
+    mockPersistPermissionChange.mockRejectedValueOnce(new Error("Permission writes disabled"));
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request("/api/admin/platform-config", {
+      method: "PATCH", body: JSON.stringify({ default_agent_id: "agent-next", acknowledge_public_access: true }),
+    }))).rejects.toThrow("Permission writes disabled");
+    expect(config.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("does not revoke grants or save when the old agent cannot be read", async () => {
+    const config = { findOne: jest.fn().mockResolvedValue({ default_agent_id: "agent-old" }), updateOne: jest.fn() };
+    mockGetCollection.mockImplementation(async (name: string) => name === "platform_config"
+      ? config : { findOne: jest.fn().mockRejectedValue(new Error("Mongo unavailable")) });
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request("/api/admin/platform-config", {
+      method: "PATCH", body: JSON.stringify({ default_agent_id: null }),
+    }))).rejects.toThrow("Mongo unavailable");
+    expect(mockPersistPermissionChange).not.toHaveBeenCalled();
+    expect(config.updateOne).not.toHaveBeenCalled();
   });
 
   it("updates release notes config without clearing default agent", async () => {
@@ -563,7 +643,7 @@ describe("admin platform-config route", () => {
       }),
       { upsert: true },
     );
-    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+    expect(mockPersistPermissionChange).not.toHaveBeenCalled();
   });
 
   it("allows clearing the victorops agent with null", async () => {

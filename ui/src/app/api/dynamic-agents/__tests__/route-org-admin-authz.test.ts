@@ -115,6 +115,7 @@ jest.mock("@/lib/rbac/shareable-resource", () => ({
 
 jest.mock("@/lib/rbac/platform-default", () => ({
   isPlatformDefaultAgent: (...args: unknown[]) => mockIsPlatformDefaultAgent(...args),
+  getPlatformDefaultAgentId: async () => null,
 }));
 
 function request(path: string, init?: RequestInit): NextRequest {
@@ -144,7 +145,7 @@ describe("dynamic-agents PUT with real requireAgentPermission", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.CAIPE_ORG_KEY = "caipe";
-    mockReconcileAgentRelationships.mockResolvedValue(undefined);
+    mockReconcileAgentRelationships.mockImplementation(async (input: { persist?: () => Promise<void> }) => { await input.persist?.(); });
     mockIsPlatformDefaultAgent.mockResolvedValue(false);
   });
 
@@ -179,7 +180,11 @@ describe("dynamic-agents PUT with real requireAgentPermission", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(findOneAndUpdate).toHaveBeenCalled();
+    expect(mockReconcileAgentRelationships).toHaveBeenCalledWith(expect.objectContaining({
+      persistence: expect.objectContaining({
+        id: "hello-world", set: expect.objectContaining({ description: "Updated by org admin" }),
+      }),
+    }));
     expect(mockCheckOpenFgaTuple).toHaveBeenCalledWith({
       user: "user:admin-sub",
       relation: "can_manage",

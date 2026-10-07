@@ -7,7 +7,7 @@ import {
   type TeamBaselineProfileOverride,
 } from "@/lib/rbac/baseline-access";
 import { getRbacCollection } from "@/lib/rbac/mongo-collections";
-import { writeOpenFgaTuples, type OpenFgaTupleKey } from "@/lib/rbac/openfga";
+import { writeOpenFgaTuples } from "@/lib/rbac/openfga";
 import { SUPER_ADMINS_TEAM_SLUG } from "@/lib/rbac/super-admins-team";
 import {
   writeTeamMembershipTuples,
@@ -29,27 +29,6 @@ export interface LoginOpenFgaBootstrapInput {
   email?: string;
   isAuthorized: boolean;
   isAdmin: boolean;
-}
-
-const OPENFGA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
-
-function normalizeDefaultAgentId(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed && OPENFGA_ID_PATTERN.test(trimmed) ? trimmed : null;
-}
-
-async function defaultAgentTuple(): Promise<OpenFgaTupleKey[]> {
-  try {
-    const config = await getCollection<{ default_agent_id?: unknown }>("platform_config");
-    const doc = await config.findOne({ _id: "platform_settings" } as never);
-    const defaultAgentId =
-      normalizeDefaultAgentId(doc?.default_agent_id) ?? normalizeDefaultAgentId(process.env.DEFAULT_AGENT_ID);
-    return defaultAgentId ? [{ user: "user:*", relation: "user", object: `agent:${defaultAgentId}` }] : [];
-  } catch {
-    const defaultAgentId = normalizeDefaultAgentId(process.env.DEFAULT_AGENT_ID);
-    return defaultAgentId ? [{ user: "user:*", relation: "user", object: `agent:${defaultAgentId}` }] : [];
-  }
 }
 
 interface TeamDoc {
@@ -174,7 +153,8 @@ export async function reconcileLoginOpenFgaAccess(
     bundle,
     teamOverrides: await teamOverridesForLogin(input.email),
   });
-  writes.push(...(await defaultAgentTuple()));
+  // Agent/default lifecycle owns public grants. A login must not recreate a
+  // grant from a stale default snapshot while a permission update is pending.
 
   if (input.isAdmin) {
     await ensureSuperAdminTeamMembership(subject, input.email);

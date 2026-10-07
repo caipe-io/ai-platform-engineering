@@ -226,7 +226,6 @@ import {
   requireOwnership,
   requireAdmin,
   requireRbacPermission,
-  clearSessionAuthCacheForTests,
   _resetKeycloakSubMappingCacheForTests,
   getAuthFromBearerOrSession,
   getAuthenticatedUser,
@@ -234,7 +233,6 @@ import {
 } from '../api-middleware';
 
 beforeEach(() => {
-  clearSessionAuthCacheForTests();
   _resetKeycloakSubMappingCacheForTests();
 });
 
@@ -1149,7 +1147,17 @@ describe('getAuthenticatedUser', () => {
     expect(result.user.role).toBe('user');
   });
 
-  it('caches valid cookie sessions for repeated API calls', async () => {
+  it.each([
+    ['SessionExpired', 401, 'session_expired', 'sign_in'],
+    ['SessionUnavailable', 503, 'session_unavailable', 'retry'],
+  ])('rejects %s before identity bookkeeping or anonymous fallback', async (error, statusCode, reason, action) => {
+    mockGetServerSession.mockResolvedValue({ error, expires: 'later' });
+    await expect(getAuthenticatedUser(new Request('http://example.test/api/chat') as unknown as NextRequest, { allowAnonymous: true }))
+      .rejects.toMatchObject({ statusCode, reason, action });
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
+
+  it('resolves cookie sessions on every request while deduplicating identity bookkeeping', async () => {
     process.env.CAIPE_SESSION_AUTH_CACHE_TTL_MS = '10000';
     const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
     mockGetServerSession.mockResolvedValue({
@@ -1168,7 +1176,7 @@ describe('getAuthenticatedUser', () => {
     const second = await getAuthenticatedUser(makeRequest());
 
     expect(first.user).toEqual(second.user);
-    expect(mockGetServerSession).toHaveBeenCalledTimes(1);
+    expect(mockGetServerSession).toHaveBeenCalledTimes(2);
     expect(updateOne).toHaveBeenCalledTimes(1);
   });
 
@@ -1247,7 +1255,7 @@ describe('getAuthenticatedUser', () => {
     nowSpy.mockRestore();
   });
 
-  it('refreshes session auth after the cache ttl expires', async () => {
+  it('never uses the old cache TTL to skip session validation', async () => {
     process.env.CAIPE_SESSION_AUTH_CACHE_TTL_MS = '50';
     const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000);
     mockGetServerSession.mockResolvedValue({
@@ -1266,7 +1274,7 @@ describe('getAuthenticatedUser', () => {
     nowSpy.mockReturnValue(1051);
     await getAuthenticatedUser(makeRequest());
 
-    expect(mockGetServerSession).toHaveBeenCalledTimes(2);
+    expect(mockGetServerSession).toHaveBeenCalledTimes(3);
     nowSpy.mockRestore();
   });
 

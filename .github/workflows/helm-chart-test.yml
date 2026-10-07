@@ -8,7 +8,7 @@ on:
       - 'charts/**'
       - '.github/workflows/helm-chart-test.yml'
   pull_request:
-    branches: [ main, develop, 'release/**' ]
+    branches: [ main, develop, 'release/**', 'prebuild/feat/cas-authz' ]
     paths:
       - 'charts/**'
       - '.github/workflows/helm-chart-test.yml'

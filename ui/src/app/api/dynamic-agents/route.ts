@@ -14,6 +14,8 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { publicPermissionDocument } from "@/lib/authz/permission-sync";
+import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
 import {
   RAG_COLLECTION_ID_PATTERN,
   RAG_COLLECTIONS_COLLECTION,
@@ -255,7 +257,7 @@ function normalizeAgentDoc(
     if (!Array.isArray(doc.datasource_ids)) doc.datasource_ids = [];
     if (!Array.isArray(doc.rag_collection_ids)) doc.rag_collection_ids = [];
   }
-  return doc;
+  return publicPermissionDocument(doc);
 }
 
 /**
@@ -836,8 +838,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const unlinkedServiceAccountSub =
     visibility === "global" ? await resolveUnlinkedServiceAccountSub() : null;
 
-  await reconcileAgentRelationships({
+  const result = await reconcileAgentRelationships({
     agentId,
+    auditContext: {
+      ...createAuthzTraceContext(request.headers.get("traceparent")),
+      caller: { type: session.isServiceAccount === true ? "service_account" : "user", id: String(session.sub) },
+      source: "agent_create",
+    },
     previousAllowedTools: {},
     nextAllowedTools: doc.allowed_tools,
     ownerSubject: doc.owner_subject,
@@ -845,27 +852,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     ownerTeamSlug,
     nextSharedTeamSlugs: sharedTeamSlugs,
     previousSharedTeamSlugs: [],
-    // Encode `visibility === 'global'` as the wildcard `user:* user
-    // agent:<id>` grant so a freshly-created global agent is usable by
-    // every member without waiting for the list-time repair in
-    // available/route.ts. Fresh create has no previous state to revoke.
+    // Public grants are written with configuration, never by picker GET.
+    // Fresh create has no previous visibility state to revoke.
     globalUserAccess: visibility === "global",
+    platformDefaultUserAccess: (await getPlatformDefaultAgentId()) === agentId,
     unlinkedServiceAccountSub,
+    persistence: { collection: COLLECTION_NAME, id: agentId, previous: null, set: doc },
   });
 
-  try {
-    await collection.insertOne(doc);
-  } catch (error) {
-    await deleteAllAgentToolTuples(agentId).catch((cleanupError) => {
-      console.warn(
-        "[dynamic-agents] failed to clean up OpenFGA tuples after create failure:",
-        cleanupError,
-      );
-    });
-    throw error;
-  }
-
-  return successResponse(doc, 201);
+  return successResponse({ ...doc, permission_sync: result?.permissionSync }, result?.permissionSync?.state === "pending" ? 202 : 201);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -965,7 +960,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     !isTransferRequest
   ) {
     // No fields to update — return current state
-    return successResponse(agent);
+    return successResponse(publicPermissionDocument(agent));
   }
 
   // Subagent visibility validation (using merged final values)
@@ -1127,8 +1122,13 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       ? await resolveUnlinkedServiceAccountGrantState()
       : { sub: null, explicitAgentIds: new Set<string>() };
 
-  await reconcileAgentRelationships({
+  const result = await reconcileAgentRelationships({
     agentId: id,
+    auditContext: {
+      ...createAuthzTraceContext(request.headers.get("traceparent")),
+      caller: { type: session.isServiceAccount === true ? "service_account" : "user", id: String(session.sub) },
+      source: "agent_update",
+    },
     previousAllowedTools: allowedToolsFromAgent(agent),
     nextAllowedTools: finalAllowedTools,
     ownerSubject: agent.owner_subject ?? agent.owner_id,
@@ -1144,25 +1144,18 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     // `currentVisibility` may be the legacy 'private' value on old docs;
     // only an exact 'global' match counts as a previous wildcard grant.
     globalUserAccess: finalVisibility === "global",
+    platformDefaultUserAccess: (await getPlatformDefaultAgentId()) === id,
     previousGlobalUserAccess: currentVisibility === "global",
     unlinkedServiceAccountSub,
     unlinkedGrantIsExplicit: explicitAgentIds.has(id),
+    persistence: { collection: COLLECTION_NAME, id, previous: agent, set: updateData, unset: unsetData },
   });
 
-  const updated = await collection.findOneAndUpdate(
-    { _id: id },
-    Object.keys(unsetData).length > 0
-      ? { $set: updateData, $unset: unsetData }
-      : { $set: updateData },
-    { returnDocument: "after" },
-  );
-
-  if (!updated) {
-    throw new ApiError("Failed to update agent", 500);
-  }
-
+  const updated: Record<string, unknown> = { ...agent, ...updateData };
+  for (const field of Object.keys(unsetData)) delete updated[field];
   return successResponse(
-    normalizeAgentDoc(updated as unknown as Record<string, unknown>),
+    { ...normalizeAgentDoc(updated), permission_sync: result?.permissionSync },
+    result?.permissionSync?.state === "pending" ? 202 : 200,
   );
 });
 
@@ -1237,8 +1230,11 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
-  await deleteAllAgentToolTuples(id);
-  await collection.deleteOne({ _id: id });
+  const result = await deleteAllAgentToolTuples(id, {
+    ...createAuthzTraceContext(request.headers.get("traceparent")),
+    caller: { type: session.isServiceAccount === true ? "service_account" : "user", id: String(session.sub) },
+  }, undefined, { collection: COLLECTION_NAME, id, previous: agent, set: {}, deleteResource: true });
 
+  if (result?.permissionSync?.state === "pending") return successResponse({ deleted: null, permission_sync: result.permissionSync }, 202);
   return successResponse({ deleted: id });
 });

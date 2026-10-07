@@ -28,7 +28,8 @@ Open http://localhost:3000.
 | Variable | Default | Purpose |
 |---|---|---|
 | `DYNAMIC_AGENTS_URL` | `http://localhost:8100` in local dev, `http://dynamic-agents:8100` in production | Server-side Dynamic Agents runtime URL |
-| `MONGODB_URI` | unset | Enables MongoDB-backed conversations and admin state |
+| `MONGODB_URI` | unset | Required for SSO sessions; also enables conversations and admin state |
+| `MONGODB_DATABASE` | unset | Required with `MONGODB_URI` for SSO |
 | `PROMETHEUS_URL` | unset | Server-side Prometheus-compatible query URL for Admin metrics and health. In HA deployments, use a deduplicating query frontend such as Thanos rather than a load-balanced service over independent Prometheus replicas. |
 | `RAG_SERVER_URL` | unset | Server-side RAG API URL |
 | `NEXTAUTH_SECRET` | unset | Required for authenticated deployments |
@@ -37,6 +38,16 @@ Open http://localhost:3000.
 Browser chat traffic goes through the BFF routes under
 `/api/v1/chat/stream/*`; the browser does not call the Dynamic Agents service
 directly.
+
+SSO sessions use the shared `auth_sessions` collection, not process-local token
+caches. All BFF replicas need the same `NEXTAUTH_SECRET`. Session-format upgrades
+require a coordinated cutover and a fresh login; existing grants are unchanged.
+See [browser-session architecture and rollout](../docs/docs/security/browser-sessions.md).
+
+Browser fixtures must seed a session record through `e2e/rbac/_session-cookie.ts`.
+Self-contained cookies, including those from the older `mint-test-session.mjs`
+benchmark helper, are deliberately rejected. Benchmarks should use a real OIDC
+login session until that helper is migrated.
 
 ## Development Commands
 

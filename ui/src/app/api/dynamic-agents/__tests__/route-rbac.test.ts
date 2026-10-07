@@ -3,6 +3,8 @@
  */
 
 import { NextRequest } from "next/server";
+import { PermissionSaveConflictError, type PermissionPersistence } from "@/lib/authz/permission-sync";
+import { mutationSnapshotFilter } from "@/lib/rbac/mutation-snapshot";
 
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockRequireRbacPermission = jest.fn();
@@ -159,6 +161,24 @@ function request(path: string, init?: RequestInit): NextRequest {
 const session = { sub: "alice-sub", role: "admin" };
 const user = { email: "alice@example.com" };
 
+// Route tests verify the validated persistence command. The durable runner has
+// separate real-path tests for atomic staging, replay and dependency failures.
+async function mockPersistCommand(input: PermissionPersistence) {
+  const col = await mockGetCollection(input.collection);
+  if (input.deleteResource) {
+    const result = await col.deleteOne(mutationSnapshotFilter(input.id, input.previous));
+    if (!result.deletedCount) throw new PermissionSaveConflictError("AGENT_SAVE_CONFLICT");
+  } else if (!input.previous) {
+    await col.insertOne(input.set);
+  } else {
+    const result = await col.findOneAndUpdate(mutationSnapshotFilter(input.id, input.previous), {
+      $set: { ...input.set, authz_write_id: "example-write" },
+      ...(input.unset && Object.keys(input.unset).length ? { $unset: input.unset } : {}),
+    }, { returnDocument: "after" });
+    if (!result) throw new PermissionSaveConflictError("AGENT_SAVE_CONFLICT");
+  }
+}
+
 describe("dynamic agents RBAC routes", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -177,8 +197,8 @@ describe("dynamic agents RBAC routes", () => {
     mockRequireResourcePermission.mockResolvedValue(undefined);
     mockRequireAgentPermission.mockResolvedValue(undefined);
     mockCanTransferResourceOwnership.mockResolvedValue(true);
-    mockReconcileAgentRelationships.mockResolvedValue(undefined);
-    mockDeleteAllAgentToolTuples.mockResolvedValue(undefined);
+    mockReconcileAgentRelationships.mockImplementation(async (input: { persistence: PermissionPersistence }) => { await mockPersistCommand(input.persistence); });
+    mockDeleteAllAgentToolTuples.mockImplementation(async (_id: string, _context: unknown, _persist: unknown, persistence: PermissionPersistence) => { await mockPersistCommand(persistence); });
     mockCascadeDeleteAutonomousTasksForAgent.mockResolvedValue({ attempted: 0, deleted: 0 });
     mockWriteOpenFgaTuples.mockResolvedValue({
       enabled: true,
@@ -342,7 +362,7 @@ describe("dynamic agents RBAC routes", () => {
     ]);
   });
 
-  it("repairs the all-users default-agent OpenFGA grant before filtering chat-available agents", async () => {
+  it("does not repair default-agent grants while listing chat-available agents", async () => {
     const agents = [
       { _id: "agent-default", name: "Default Agent", enabled: true },
     ];
@@ -369,12 +389,7 @@ describe("dynamic agents RBAC routes", () => {
     const response = await GET(request("/api/dynamic-agents/available"));
 
     expect(response.status).toBe(200);
-    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
-      writes: [
-        { user: "user:*", relation: "user", object: "agent:agent-default" },
-      ],
-      deletes: [],
-    });
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
     expect(mockFilterResourcesByPermission).toHaveBeenCalledWith(
       session,
       agents,
@@ -382,7 +397,7 @@ describe("dynamic agents RBAC routes", () => {
     );
   });
 
-  it("repairs baseline member OpenFGA tuples before requiring chat-available agent view access", async () => {
+  it("does not bootstrap baseline permissions while listing chat-available agents", async () => {
     mockGetCollection.mockImplementation(async (name: string) => {
       if (name === "platform_config") {
         return {
@@ -404,21 +419,7 @@ describe("dynamic agents RBAC routes", () => {
     const response = await GET(request("/api/dynamic-agents/available"));
 
     expect(response.status).toBe(200);
-    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
-      writes: expect.arrayContaining([
-        {
-          user: "user:alice-sub",
-          relation: "member",
-          object: "organization:caipe",
-        },
-        {
-          user: "user:alice-sub",
-          relation: "reader",
-          object: "admin_surface:users",
-        },
-      ]),
-      deletes: [],
-    });
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
     expect(mockRequireRbacPermission).not.toHaveBeenCalledWith(
       session,
       "dynamic_agent",
@@ -426,7 +427,7 @@ describe("dynamic agents RBAC routes", () => {
     );
   });
 
-  it("repairs all-users grants for enabled global agents before chat availability filtering", async () => {
+  it("does not add or revoke public grants while filtering global and team agents", async () => {
     const agents = [
       {
         _id: "global-agent",
@@ -462,17 +463,7 @@ describe("dynamic agents RBAC routes", () => {
     const response = await GET(request("/api/dynamic-agents/available"));
 
     expect(response.status).toBe(200);
-    // Global agents get the wildcard written; non-global, non-default
-    // agents get any stale wildcard revoked (self-healing sweep for the
-    // global → team demote leak — spec 2026-06-04).
-    expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
-      writes: [
-        { user: "user:*", relation: "user", object: "agent:global-agent" },
-      ],
-      deletes: [
-        { user: "user:*", relation: "user", object: "agent:team-agent" },
-      ],
-    });
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
     expect(mockFilterResourcesByPermission).toHaveBeenCalledWith(
       session,
       agents,
@@ -518,22 +509,7 @@ describe("dynamic agents RBAC routes", () => {
     const response = await GET(request("/api/dynamic-agents/available"));
 
     expect(response.status).toBe(200);
-    // The platform default keeps its wildcard (written by the default-grant
-    // step) even though it is `team` visibility; only the *other* non-global
-    // agent is swept.
-    const sweepCall = mockWriteOpenFgaTuples.mock.calls.find(
-      ([arg]) =>
-        Array.isArray(arg?.deletes) &&
-        arg.deletes.some(
-          (t: { object?: string }) => t.object === "agent:team-other",
-        ),
-    );
-    expect(sweepCall).toBeDefined();
-    const deletedObjects = (
-      sweepCall![0].deletes as Array<{ object: string }>
-    ).map((t) => t.object);
-    expect(deletedObjects).toContain("agent:team-other");
-    expect(deletedObjects).not.toContain("agent:team-default");
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
   });
 
   it("filters agent editor LLM models through OpenFGA llm_model read checks", async () => {
@@ -673,6 +649,22 @@ describe("dynamic agents RBAC routes", () => {
         owner_subject: "alice-sub",
       }),
     );
+  });
+
+  it.each(["policy", "database"])("does not report a successful create after a %s failure", async failure => {
+    const insertOne = jest.fn().mockResolvedValue({ acknowledged: true });
+    mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue(null), insertOne });
+    if (failure === "policy") mockReconcileAgentRelationships.mockRejectedValueOnce(new Error("PDP unavailable"));
+    else insertOne.mockRejectedValueOnce(new Error("Mongo unavailable"));
+    const { POST } = await import("../route");
+    const response = await POST(request("/api/dynamic-agents", {
+      method: "POST",
+      body: JSON.stringify({ name: "Example Agent", system_prompt: "Example", model: { id: "example-model", provider: "example" }, visibility: "global" }),
+    }));
+    expect(response.status).toBe(500);
+    if (failure === "policy") expect(insertOne).not.toHaveBeenCalled();
+    // The compensating writer owns rollback; never sweep all grants for this ID.
+    expect(mockDeleteAllAgentToolTuples).not.toHaveBeenCalled();
   });
 
   it("creating a global agent resolves and grants the unlinked SA sub", async () => {
@@ -1059,7 +1051,7 @@ describe("dynamic agents RBAC routes", () => {
 
     expect(response.status).toBe(200);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-existing" },
+      { _id: "agent-existing", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
       {
         $set: expect.objectContaining({
           allowed_tools: { "knowledge-base": true },
@@ -1118,7 +1110,7 @@ describe("dynamic agents RBAC routes", () => {
 
     expect(response.status).toBe(200);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-existing" },
+      { _id: "agent-existing", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
       { $set: expect.objectContaining({ datasource_ids: [] }) },
       expect.any(Object),
     );
@@ -1174,7 +1166,7 @@ describe("dynamic agents RBAC routes", () => {
 
       expect(response.status).toBe(200);
       expect(findOneAndUpdate).toHaveBeenCalledWith(
-        { _id: "agent-existing" },
+        { _id: "agent-existing", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
         { $set: expect.any(Object), $unset: { [field]: "" } },
         expect.any(Object),
       );
@@ -1228,7 +1220,7 @@ describe("dynamic agents RBAC routes", () => {
 
     expect(response.status).toBe(200);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-existing" },
+      { _id: "agent-existing", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
       { $set: expect.any(Object), $unset: { datasource_ids: "" } },
       expect.any(Object),
     );
@@ -1298,7 +1290,7 @@ describe("dynamic agents RBAC routes", () => {
     );
     // The persisted shared_with_teams should be canonical slugs only.
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-shared-agent" },
+      { _id: "agent-shared-agent", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
       expect.objectContaining({
         $set: expect.objectContaining({ shared_with_teams: ["sre"] }),
       }),
@@ -1535,7 +1527,7 @@ describe("dynamic agents RBAC routes", () => {
     // The update document must not touch shared_with_teams since the
     // patch didn't include it — only `name` and `updated_at`.
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: "agent-shared-agent" },
+      { _id: "agent-shared-agent", updated_at: { $exists: false }, authz_write_id: { $exists: false } },
       expect.objectContaining({
         $set: expect.not.objectContaining({
           shared_with_teams: expect.anything(),
@@ -1885,7 +1877,7 @@ describe("dynamic agents RBAC routes", () => {
   });
 
   it("requires agent delete access before deleting an agent document", async () => {
-    const deleteOne = jest.fn();
+    const deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });
     mockGetCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue({
         _id: "agent-1",
@@ -1910,13 +1902,39 @@ describe("dynamic agents RBAC routes", () => {
     // OpenFGA tuples are removed, so a cascade failure (next test) can
     // safely abort with everything still intact.
     expect(mockCascadeDeleteAutonomousTasksForAgent).toHaveBeenCalledWith("agent-1");
-    expect(mockDeleteAllAgentToolTuples).toHaveBeenCalledWith("agent-1");
-    expect(deleteOne).toHaveBeenCalledWith({ _id: "agent-1" });
+    expect(mockDeleteAllAgentToolTuples).toHaveBeenCalledWith("agent-1", expect.objectContaining({
+      caller: { type: "user", id: "alice-sub" },
+    }), undefined, expect.objectContaining({ collection: "dynamic_agents", id: "agent-1", deleteResource: true }));
+    expect(deleteOne).toHaveBeenCalledWith({ _id: "agent-1", updated_at: { $exists: false }, authz_write_id: { $exists: false } });
     const cascadeOrder = mockCascadeDeleteAutonomousTasksForAgent.mock.invocationCallOrder[0];
     const tupleDeleteOrder = mockDeleteAllAgentToolTuples.mock.invocationCallOrder[0];
     const docDeleteOrder = deleteOne.mock.invocationCallOrder[0];
     expect(cascadeOrder).toBeLessThan(tupleDeleteOrder);
     expect(cascadeOrder).toBeLessThan(docDeleteOrder);
+  });
+
+  it("rejects an update after another writer replaces the loaded snapshot", async () => {
+    const snapshot = { _id: "agent-example", visibility: "team", owner_team_slug: "example", allowed_tools: {}, updated_at: "2026-01-01", authz_write_id: "first" };
+    const update = jest.fn().mockResolvedValue(null);
+    mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue(snapshot), findOneAndUpdate: update });
+    const { PUT } = await import("../route");
+    const response = await PUT(request("/api/dynamic-agents?id=agent-example", { method: "PUT", body: JSON.stringify({ name: "Changed" }) }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "AGENT_SAVE_CONFLICT" });
+    expect(update).toHaveBeenCalledWith(
+      { _id: snapshot._id, updated_at: snapshot.updated_at, authz_write_id: "first" },
+      { $set: expect.objectContaining({ authz_write_id: expect.any(String) }) },
+      { returnDocument: "after" },
+    );
+  });
+
+  it("rejects deletion when an agent changed after it was loaded", async () => {
+    const deleteOne = jest.fn().mockResolvedValue({ deletedCount: 0 });
+    mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue({ _id: "agent-example", authz_write_id: "first" }), deleteOne });
+    const { DELETE } = await import("../route");
+    const response = await DELETE(request("/api/dynamic-agents?id=agent-example", { method: "DELETE" }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "AGENT_SAVE_CONFLICT" });
   });
 
   it("aborts agent deletion when autonomous-task cascade cleanup fails", async () => {
