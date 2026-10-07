@@ -414,7 +414,7 @@ Node. This is explicit publication of an approved public OASF definition;
 existing runtime configuration and permissions remain in MongoDB.
 
 Architecture and trust limits: [Keycloak Agent Badges](../../docs/docs/architecture/keycloak-agent-badges.md),
-[Identity discussion #180](https://github.com/agntcy/identity/discussions/180).
+[CAIPE discussion #2902](https://github.com/orgs/caipe-io/discussions/2902).
 
 ### Operator enrollment
 
