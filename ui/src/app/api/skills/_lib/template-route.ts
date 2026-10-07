@@ -149,7 +149,7 @@ export function makeTemplateRouteHandler(
       return NextResponse.json({ error: "Skill database unavailable" }, { status: 503 });
     }
     if (!resolved) {
-      return NextResponse.json({ error: `A global ${cfg.routeId} skill is required. Import its packaged template in the Skills UI, or apply the catalog migration for an existing install.` }, { status: 404 });
+      return NextResponse.json({ error: `The ${cfg.routeId} gateway instructions are unavailable. Ask an administrator to check system skill initialization logs and restart the UI service with the packaged release assets.` }, { status: 404 });
     }
     const { template: canonicalTemplate, source } = resolved;
 

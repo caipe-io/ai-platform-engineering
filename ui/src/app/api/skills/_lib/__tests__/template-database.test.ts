@@ -26,12 +26,17 @@ it.each([["live-skills", live], ["update-skills", update]])(
   },
 );
 
-it("does not replace a missing system record with packaged files or environment", async () => {
+it.each([["live-skills", live], ["update-skills", update]])("points missing %s records to system initialization recovery", async (id, handler) => {
   const original = process.env.SKILLS_LIVE_SKILLS_TEMPLATE;
   process.env.SKILLS_LIVE_SKILLS_TEMPLATE = "A filesystem fallback";
   try {
     mockFind.mockResolvedValue(null);
-    expect((await live(new Request("https://app.example.com/api/skills/live-skills"))).status).toBe(404);
+    const response = await handler(new Request(`https://app.example.com/api/skills/${id}`));
+    expect(response.status).toBe(404);
+    const { error } = await response.json();
+    expect(error).toContain("system skill initialization");
+    expect(error).toContain("restart the UI service");
+    expect(error).not.toMatch(/import|catalog migration|app-config/i);
   } finally {
     if (original === undefined) delete process.env.SKILLS_LIVE_SKILLS_TEMPLATE;
     else process.env.SKILLS_LIVE_SKILLS_TEMPLATE = original;

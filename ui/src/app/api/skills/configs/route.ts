@@ -25,6 +25,7 @@ recordRevision,
 snapshotsDiffer,
 type SkillSnapshotInput,
 } from "@/lib/skill-revisions";
+import { withSkillConfigLease } from "@/lib/seed-skills";
 import { scanSkillContent as runSkillScan } from "@/lib/skill-scan";
 import { recordScanEvent } from "@/lib/skill-scan-history";
 import type {
@@ -133,6 +134,7 @@ async function updateAgentSkillInMongoDB(
   id: string,
   updates: Partial<AgentSkill>,
   user: { email: string; role?: string },
+  renew: () => Promise<void>,
 ): Promise<{ before: AgentSkill | null }> {
   console.log(`[MongoDB] ========== updateAgentSkillInMongoDB START ==========`);
   console.log(`[MongoDB] Config ID: ${id}`);
@@ -171,6 +173,7 @@ async function updateAgentSkillInMongoDB(
   }
 
   console.log(`[MongoDB] Executing updateOne...`);
+  await renew();
   const updateResult = await collection.updateOne(
     { id, config_driven: { $ne: true } },
     { $set: updatePayload, $unset: { shared_with_teams: "" } },
@@ -212,6 +215,7 @@ async function updateAgentSkillInMongoDB(
 
 async function deleteAgentSkillFromMongoDB(
   id: string,
+  renew: () => Promise<void>,
 ): Promise<void> {
   const collection = await getCollection<AgentSkill>("agent_skills");
 
@@ -223,11 +227,13 @@ async function deleteAgentSkillFromMongoDB(
     throw new ApiError("Config-driven skills cannot be deleted through the UI. Remove them from app-config.yaml.", 403);
   }
 
+  await renew();
   const result = await collection.deleteOne({ id, config_driven: { $ne: true } });
   if (!result.deletedCount) {
     throw new ApiError("Skill changed during the request. Reload; configured skills are managed in app-config.yaml.", 409);
   }
 
+  await renew();
   await syncSkillResource("delete", id, existing.name);
 }
 
@@ -332,55 +338,60 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       duration_ms: Date.now() - tCreate,
     });
 
-    await saveAgentSkillToMongoDB(stripSharedWithTeamsFromMongoFields(config) as AgentSkill);
-    // Capture revision #1 right after the row is persisted so the
-    // restore path always has a baseline to fall back to. We pass
-    // through the same content fields the caller saved, plus the
-    // freshly computed scan verdict — the workspace timeline shows
-    // both the snapshot and which scanner state it was created at.
-    await recordRevision({
-      skillId: id,
-      snapshot: extractSnapshot(config),
-      trigger: "create",
-      actor: user.email,
-    });
-    console.log(
-      `[AgentSkill] Created agent config "${body.name}" by ${user.email} (visibility: ${visibility}, scan_status: ${scanResult.scan_status})`,
-    );
-
-    await syncSkillResource("create", id, body.name, visibility);
-    // Reconcile owner + optional team-share grants. Without the owner tuple,
-    // the author can create/save via routes that skip per-skill FGA (POST) but
-    // later PUT/scan checks (`can_write`) fail with "You do not have permission
-    // to access this resource." Config (Mongo) is the source of truth, so an
-    // OpenFGA hiccup must not fail the create.
-    const ownerSubject =
-      typeof session?.sub === "string" && session.sub.trim() ? session.sub.trim() : null;
-    try {
-      await reconcileSkillTeamShares({
+    return await withSkillConfigLease(async (renew) => {
+      await renew();
+      await saveAgentSkillToMongoDB(stripSharedWithTeamsFromMongoFields(config) as AgentSkill);
+      // Capture revision #1 right after the row is persisted so the
+      // restore path always has a baseline to fall back to. We pass
+      // through the same content fields the caller saved, plus the
+      // freshly computed scan verdict — the workspace timeline shows
+      // both the snapshot and which scanner state it was created at.
+      await recordRevision({
         skillId: id,
-        ownerSubject,
-        previousTeamRefs: [],
-        nextTeamRefs: visibility === "team" ? body.shared_with_teams : [],
-        nextVisibility: visibility,
+        snapshot: extractSnapshot(config),
+        trigger: "create",
+        actor: user.email,
       });
-    } catch (error) {
-      console.warn(
-        "[AgentSkill] Failed to reconcile skill FGA grants on create:",
-        error instanceof Error ? error.message : String(error),
+      console.log(
+        `[AgentSkill] Created agent config "${body.name}" by ${user.email} (visibility: ${visibility}, scan_status: ${scanResult.scan_status})`,
       );
-    }
 
-    return successResponse(
-      {
-        id,
-        message: "Agent config created successfully",
-        scan_status: scanResult.scan_status,
-        scan_summary: scanResult.scan_summary,
-        ...(ancillaryCheck.warning ? { ancillary_warning: ancillaryCheck.warning } : {}),
-      },
-      201,
-    );
+      await renew();
+      await syncSkillResource("create", id, body.name, visibility);
+      // Reconcile owner + optional team-share grants. Without the owner tuple,
+      // the author can create/save via routes that skip per-skill FGA (POST) but
+      // later PUT/scan checks (`can_write`) fail with "You do not have permission
+      // to access this resource." Config (Mongo) is the source of truth, so an
+      // OpenFGA hiccup must not fail the create.
+      const ownerSubject =
+        typeof session?.sub === "string" && session.sub.trim() ? session.sub.trim() : null;
+      await renew();
+      try {
+        await reconcileSkillTeamShares({
+          skillId: id,
+          ownerSubject,
+          previousTeamRefs: [],
+          nextTeamRefs: visibility === "team" ? body.shared_with_teams : [],
+          nextVisibility: visibility,
+        });
+      } catch (error) {
+        console.warn(
+          "[AgentSkill] Failed to reconcile skill FGA grants on create:",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+
+      return successResponse(
+        {
+          id,
+          message: "Agent config created successfully",
+          scan_status: scanResult.scan_status,
+          scan_summary: scanResult.scan_summary,
+          ...(ancillaryCheck.warning ? { ancillary_warning: ancillaryCheck.warning } : {}),
+        },
+        201,
+      );
+    });
   });
 });
 
@@ -455,30 +466,33 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       throw new ApiError("At least one field must be provided for update", 400);
     }
 
-    const preUpdate = await getAgentSkillVisibleToUser(id);
-    if (preUpdate && preUpdate.owner_id === user.email) {
-      const healOwnerSubject =
-        typeof session?.sub === "string" && session.sub.trim() ? session.sub.trim() : null;
-      const healTeamRefs = await readSkillSharedTeamSlugsFromOpenFga(id);
-      if (healOwnerSubject) {
-        try {
-          await reconcileSkillTeamShares({
-            skillId: id,
-            ownerSubject: healOwnerSubject,
-            previousTeamRefs: healTeamRefs,
-            nextTeamRefs: healTeamRefs,
-            nextVisibility: preUpdate.visibility ?? "private",
-            previousVisibility: preUpdate.visibility ?? "private",
-          });
-        } catch (error) {
-          console.warn(
-            "[AgentSkill] Failed to reconcile owner FGA tuple before update:",
-            error instanceof Error ? error.message : String(error),
-          );
+    await withSkillConfigLease(async (renew) => {
+      const preUpdate = await getAgentSkillVisibleToUser(id);
+      if (preUpdate && !preUpdate.config_driven && preUpdate.owner_id === user.email) {
+        const healOwnerSubject =
+          typeof session?.sub === "string" && session.sub.trim() ? session.sub.trim() : null;
+        const healTeamRefs = await readSkillSharedTeamSlugsFromOpenFga(id);
+        if (healOwnerSubject) {
+          await renew();
+          try {
+            await reconcileSkillTeamShares({
+              skillId: id,
+              ownerSubject: healOwnerSubject,
+              previousTeamRefs: healTeamRefs,
+              nextTeamRefs: healTeamRefs,
+              nextVisibility: preUpdate.visibility ?? "private",
+              previousVisibility: preUpdate.visibility ?? "private",
+            });
+          } catch (error) {
+            console.warn(
+              "[AgentSkill] Failed to reconcile owner FGA tuple before update:",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
         }
       }
-    }
-    await requireSkillPermission(session, id, "write");
+      await requireSkillPermission(session, id, "write");
+    });
 
     if (body.visibility !== undefined) {
       if (!VALID_VISIBILITIES.includes(body.visibility)) {
@@ -535,82 +549,81 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       });
     }
 
-    console.log(`[API PUT] Calling updateAgentSkillInMongoDB...`);
-    // updateAgentSkillInMongoDB already reads the pre-update row for
-    // its permission check; have it hand the row back so we can build
-    // a `prev` snapshot for the no-op diff guard without burning a
-    // duplicate `findOne`.
-    const { before: beforeUpdate } = await updateAgentSkillInMongoDB(
-      id,
-      body,
-      user,
-    );
-    if (beforeUpdate) {
-      const merged: AgentSkill = { ...beforeUpdate, ...(body as Partial<AgentSkill>) };
-      const prev = extractSnapshot(beforeUpdate);
-      const next = extractSnapshot(merged);
-      if (snapshotsDiffer(prev, next)) {
-        await recordRevision({
-          skillId: id,
-          snapshot: next,
-          trigger: "update",
-          actor: user.email,
-        });
+    return await withSkillConfigLease(async (renew) => {
+      console.log(`[API PUT] Calling updateAgentSkillInMongoDB...`);
+      // updateAgentSkillInMongoDB already reads the pre-update row for
+      // its permission check; have it hand the row back so we can build
+      // a `prev` snapshot for the no-op diff guard without burning a
+      // duplicate `findOne`.
+      const { before: beforeUpdate } = await updateAgentSkillInMongoDB(
+        id,
+        body,
+        user,
+        renew,
+      );
+      if (beforeUpdate) {
+        const merged: AgentSkill = { ...beforeUpdate, ...(body as Partial<AgentSkill>) };
+        const prev = extractSnapshot(beforeUpdate);
+        const next = extractSnapshot(merged);
+        if (snapshotsDiffer(prev, next)) {
+          await recordRevision({
+            skillId: id,
+            snapshot: next,
+            trigger: "update",
+            actor: user.email,
+          });
+        }
       }
-    }
 
-    // Reconcile the skill's team-share grants on edit. Previously the update
-    // path wrote NOTHING to OpenFGA, so changing `shared_with_teams` (or
-    // demoting away from `team` visibility) updated Mongo but left the old
-    // `team:<slug>#member user skill:<id>` grants in place — un-shared teams
-    // kept access. Diffing previous → next through the shared reconciler now
-    // revokes dropped teams and grants newly added ones. Config is the source
-    // of truth, so an OpenFGA failure is logged but does not fail the update.
-    if (beforeUpdate) {
-      const previousVisibility = beforeUpdate.visibility ?? "private";
-      const nextVisibility =
-        body.visibility !== undefined ? body.visibility : previousVisibility;
-      const previousTeamRefs = await readSkillSharedTeamSlugsFromOpenFga(id);
-      let nextTeamRefs: string[];
-      if (nextVisibility !== "team") {
-        nextTeamRefs = [];
-      } else if (Object.prototype.hasOwnProperty.call(body, "shared_with_teams")) {
-        nextTeamRefs = normalizeTeamRefList(body.shared_with_teams);
-      } else {
-        nextTeamRefs = previousTeamRefs;
+      // The lease covers both persistence and grants so configuration adoption
+      // cannot interleave with permissions derived from this ordinary edit.
+      if (beforeUpdate) {
+        const previousVisibility = beforeUpdate.visibility ?? "private";
+        const nextVisibility =
+          body.visibility !== undefined ? body.visibility : previousVisibility;
+        const previousTeamRefs = await readSkillSharedTeamSlugsFromOpenFga(id);
+        let nextTeamRefs: string[];
+        if (nextVisibility !== "team") {
+          nextTeamRefs = [];
+        } else if (Object.prototype.hasOwnProperty.call(body, "shared_with_teams")) {
+          nextTeamRefs = normalizeTeamRefList(body.shared_with_teams);
+        } else {
+          nextTeamRefs = previousTeamRefs;
+        }
+        const ownerSubject =
+          beforeUpdate.owner_id === user.email &&
+          typeof session?.sub === "string" &&
+          session.sub.trim()
+            ? session.sub.trim()
+            : null;
+        await renew();
+        try {
+          await reconcileSkillTeamShares({
+            skillId: id,
+            ownerSubject,
+            previousTeamRefs,
+            nextTeamRefs,
+            nextVisibility,
+            previousVisibility,
+          });
+        } catch (error) {
+          console.warn(
+            "[AgentSkill] Failed to reconcile skill FGA grants on update:",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
       }
-      const ownerSubject =
-        beforeUpdate.owner_id === user.email &&
-        typeof session?.sub === "string" &&
-        session.sub.trim()
-          ? session.sub.trim()
-          : null;
-      try {
-        await reconcileSkillTeamShares({
-          skillId: id,
-          ownerSubject,
-          previousTeamRefs,
-          nextTeamRefs,
-          nextVisibility,
-          previousVisibility,
-        });
-      } catch (error) {
-        console.warn(
-          "[AgentSkill] Failed to reconcile skill FGA grants on update:",
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
-    console.log(`[AgentSkill] Updated agent config "${id}" by ${user.email}`);
-    console.log(`[API PUT] ============ UPDATE REQUEST END ============`);
+      console.log(`[AgentSkill] Updated agent config "${id}" by ${user.email}`);
+      console.log(`[API PUT] ============ UPDATE REQUEST END ============`);
 
-    const scanStatus = (body as Record<string, unknown>).scan_status as ScanStatus | undefined;
-    return successResponse({
-      id,
-      message: "Agent config updated successfully",
-      ...(scanStatus ? { scan_status: scanStatus } : {}),
-      ...(scanSummaryFromSave !== undefined ? { scan_summary: scanSummaryFromSave } : {}),
-      ...(ancillaryWarning ? { ancillary_warning: ancillaryWarning } : {}),
+      const scanStatus = (body as Record<string, unknown>).scan_status as ScanStatus | undefined;
+      return successResponse({
+        id,
+        message: "Agent config updated successfully",
+        ...(scanStatus ? { scan_status: scanStatus } : {}),
+        ...(scanSummaryFromSave !== undefined ? { scan_summary: scanSummaryFromSave } : {}),
+        ...(ancillaryWarning ? { ancillary_warning: ancillaryWarning } : {}),
+      });
     });
   });
 });
@@ -629,18 +642,20 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   }
 
   return await withAuth(request, async (req, user, session) => {
-    await requireSkillPermission(session, id, "delete");
-    await deleteAgentSkillFromMongoDB(id);
-    // Drop history rows for this skill so we don't leak orphaned
-    // revision documents that nobody can render. Best-effort: a
-    // failure here doesn't undo the delete (the skill is already
-    // gone from the user's perspective).
-    await deleteRevisionsForSkill(id);
-    console.log(`[AgentSkill] Deleted agent config "${id}" by ${user.email}`);
+    return await withSkillConfigLease(async (renew) => {
+      await requireSkillPermission(session, id, "delete");
+      await deleteAgentSkillFromMongoDB(id, renew);
+      // Drop history rows for this skill so we don't leak orphaned
+      // revision documents that nobody can render. Best-effort: a
+      // failure here doesn't undo the delete (the skill is already
+      // gone from the user's perspective).
+      await deleteRevisionsForSkill(id);
+      console.log(`[AgentSkill] Deleted agent config "${id}" by ${user.email}`);
 
-    return successResponse({
-      id,
-      message: "Agent config deleted successfully",
+      return successResponse({
+        id,
+        message: "Agent config deleted successfully",
+      });
     });
   });
 });

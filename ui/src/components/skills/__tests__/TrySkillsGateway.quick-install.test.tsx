@@ -244,6 +244,13 @@ it.each(["html", "null", "invalid"] as const)("shows a useful gateway error for 
   );
 });
 
+it("describes gateway instructions as release-managed with startup recovery", async () => {
+  const { TrySkillsGateway } = await import("../TrySkillsGateway");
+  render(<TrySkillsGateway />);
+  expect(await screen.findByText(/supplied by the installed release/)).toHaveTextContent("system skill initialization");
+  expect(screen.queryByText(/Configure the live-skills record in the Skills UI/)).not.toBeInTheDocument();
+});
+
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------

@@ -120,7 +120,7 @@ export function TrySkillsGateway() {
 
   // Per-agent rendered live-skills (fetched from
   // /api/skills/live-skills?agent=<id>&command_name=...&description=...).
-  // The server reads the gateway instruction from the skill catalog and renders it for the selected agent.
+  // The server renders the release's system skill for the selected agent.
   interface AgentMeta {
     id: string;
     label: string;
@@ -1518,7 +1518,7 @@ export function TrySkillsGateway() {
             <p className="text-[11px] text-muted-foreground mt-4 mb-2 leading-relaxed">
               Template source:{" "}
               <code>{liveSkillsError ? "unavailable" : liveSkillsTemplateSource ?? "loading…"}</code>
-              {". Configure the live-skills record in the Skills UI or seed it through app-config.yaml."}
+              {". The gateway instructions are supplied by the installed release. If unavailable, ask an administrator to check system skill initialization and restart the UI service."}
             </p>
             {liveSkillsError && <p role="alert" className="text-sm text-muted-foreground">{liveSkillsError}</p>}
 

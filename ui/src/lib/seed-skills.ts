@@ -22,7 +22,7 @@ interface SkillBootstrap {
 const BOOTSTRAP_ID = "skills";
 const LEASE_MS = 5 * 60 * 1000;
 
-/** Serialize complete configured-skill reconciliation, including grant changes and stale cleanup. */
+/** Serialize skill database and grant writes with configured-skill reconciliation and cleanup. */
 export async function withSkillConfigLease<T>(
   apply: (renew: () => Promise<void>) => Promise<T>,
 ): Promise<T> {
