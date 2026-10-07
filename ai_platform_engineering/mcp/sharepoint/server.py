@@ -17,6 +17,8 @@ from mcp_agent_auth.middleware import MCPAuthMiddleware
 from starlette.middleware import Middleware
 
 from api import SharePointGraphClient
+from api.document_routes import register_document_routes
+from api.documents import SharePointDocuments
 from models import SharePointConfig
 from tools import register_tools
 
@@ -30,7 +32,10 @@ def build_server(
 ) -> FastMCP:
     """Build a SharePoint MCP server with injectable HTTP transport for tests."""
     server = FastMCP(name="sharepoint_mcp")
-    register_tools(server, SharePointGraphClient(config, http_client=http_client))
+    client = SharePointGraphClient(config, http_client=http_client)
+    documents = SharePointDocuments(client)
+    register_tools(server, client, documents=documents)
+    register_document_routes(server, documents)
     return server
 
 
@@ -53,6 +58,9 @@ def main(verbose: int, transport: InputTransport, port: int, host: str) -> None:
         stream=sys.stderr,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # Microsoft download redirects contain temporary bearer-equivalent URLs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     logger = logging.getLogger(__name__)
 
     try:

@@ -21,6 +21,9 @@ class SharePointConfig(BaseModel):
     site_url: str
     request_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     max_download_bytes: int = Field(default=2_000_000, ge=1_024, le=10_000_000)
+    max_document_bytes: int = Field(default=2_147_483_648, ge=1_024, le=4_294_967_296)
+    max_rendered_pdf_bytes: int = Field(default=268_435_456, ge=1_024, le=1_073_741_824)
+    document_timeout_seconds: float = Field(default=600.0, gt=0, le=1800)
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -62,4 +65,7 @@ class SharePointConfig(BaseModel):
             **required,
             request_timeout_seconds=os.getenv("SHAREPOINT_REQUEST_TIMEOUT_SECONDS", "30"),
             max_download_bytes=os.getenv("SHAREPOINT_MAX_DOWNLOAD_BYTES", "2000000"),
+            max_document_bytes=os.getenv("SHAREPOINT_MAX_DOCUMENT_BYTES", "2147483648"),
+            max_rendered_pdf_bytes=os.getenv("SHAREPOINT_MAX_RENDERED_PDF_BYTES", "268435456"),
+            document_timeout_seconds=os.getenv("SHAREPOINT_DOCUMENT_TIMEOUT_SECONDS", "600"),
         )

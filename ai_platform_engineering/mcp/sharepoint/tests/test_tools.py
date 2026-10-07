@@ -39,6 +39,7 @@ def test_all_registered_tools_are_read_only() -> None:
 
     assert set(server.tools) == {
         "sharepoint_get_site",
+        "sharepoint_get_document_manifest",
         "sharepoint_get_drive_item",
         "sharepoint_list_document_libraries",
         "sharepoint_list_drive_items",

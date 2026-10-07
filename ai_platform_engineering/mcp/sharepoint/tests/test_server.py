@@ -24,6 +24,7 @@ async def test_real_fastmcp_server_exposes_read_only_tools() -> None:
 
     assert {tool.name for tool in tools} == {
         "sharepoint_get_site",
+        "sharepoint_get_document_manifest",
         "sharepoint_get_drive_item",
         "sharepoint_list_document_libraries",
         "sharepoint_list_drive_items",

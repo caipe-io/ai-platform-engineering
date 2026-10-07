@@ -286,7 +286,7 @@ class SharePointGraphClient:
             params=self._page_params(
                 limit,
                 cursor,
-                "id,name,size,webUrl,createdDateTime,lastModifiedDateTime,file,folder,parentReference",
+                "id,name,size,webUrl,createdDateTime,lastModifiedDateTime,file,folder,parentReference,remoteItem",
             ),
         )
         return self._page(payload)
@@ -298,7 +298,7 @@ class SharePointGraphClient:
             params=self._page_params(
                 limit,
                 cursor,
-                "id,name,size,webUrl,createdDateTime,lastModifiedDateTime,file,folder,parentReference",
+                "id,name,size,webUrl,createdDateTime,lastModifiedDateTime,file,folder,parentReference,remoteItem",
             ),
         )
         return self._page(payload)
