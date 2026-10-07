@@ -154,7 +154,7 @@ describe("createTicketViaAgent", () => {
     await createTicketViaAgent({
       request: {
         description: "something broke",
-        userEmail: "user@test.com",
+        userEmail: "user@example.com",
         contextUrl: "http://localhost/chat/abc",
       },
       accessToken: "tok-123",
@@ -172,7 +172,7 @@ describe("createTicketViaAgent", () => {
     await createTicketViaAgent({
       request: {
         description: "something broke",
-        userEmail: "user@test.com",
+        userEmail: "user@example.com",
         contextUrl: "http://localhost/chat/abc",
       },
       accessToken: "tok-123",
@@ -204,7 +204,7 @@ describe("createTicketViaAgent", () => {
     await createTicketViaAgent({
       request: {
         description: "something broke",
-        userEmail: "user@test.com",
+        userEmail: "user@example.com",
         contextUrl: "http://localhost/chat/abc",
       },
     });
@@ -213,7 +213,7 @@ describe("createTicketViaAgent", () => {
     expect(callArg.clientContext).toEqual(
       expect.objectContaining({
         source: "webui",
-        userEmail: "user@test.com",
+        userEmail: "user@example.com",
         ticketProvider: "jira",
       })
     );
