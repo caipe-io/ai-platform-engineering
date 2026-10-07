@@ -1,5 +1,6 @@
 name: "[Prebuild] Manual PR Fanout"
-description: "Manually run prebuild publishing for a prebuild/* PR head"
+description: >-
+  Manually run prebuild publishing for a prebuild/* PR head from this repository.
 
 run-name: "Manual prebuild for PR #${{ inputs.pr_number }} (${{ inputs.target }})"
 
@@ -7,7 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "Open prebuild/* PR number to build from"
+        description: >-
+          Open prebuild/* PR number to build from. Fork pull requests are not supported.
         required: true
         type: number
       target:
@@ -98,7 +100,7 @@ jobs:
             }
 
             if (pr.head.repo.full_name !== repoFullName) {
-              core.setFailed(`PR #${prNumber} head repo is ${pr.head.repo.full_name}; manual prebuild only supports same-repo PRs.`);
+              core.setFailed(`PR #${prNumber} is from a fork; prebuild images are only published for branches in ${repoFullName}.`);
               return;
             }
 
@@ -196,7 +198,7 @@ jobs:
       contents: write
       packages: write
       pull-requests: write
-    uses: ./.github/workflows/prebuild-mcp-agent.yml
+    uses: ./.github/workflows/prebuild-mcp-servers.yml
     with:
       pr_number: ${{ fromJSON(needs.resolve-pr.outputs.pr_number) }}
       head_ref: ${{ needs.resolve-pr.outputs.head_ref }}
@@ -370,7 +372,6 @@ jobs:
     uses: ./.github/workflows/prebuild-helm.yml
     with:
       pr_number: ${{ fromJSON(needs.resolve-pr.outputs.pr_number) }}
-      new_commit: false
       head_ref: ${{ needs.resolve-pr.outputs.head_ref }}
       head_sha: ${{ needs.resolve-pr.outputs.head_sha }}
       base_ref: ${{ needs.resolve-pr.outputs.base_ref }}

@@ -9,6 +9,10 @@ SkillWorkspace,
 type SkillWorkspaceTabId,
 } from "@/components/skills/workspace/SkillWorkspace";
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
+import {
+mapCatalogSkillToAgentSkill,
+type CatalogSkillForUi,
+} from "@/lib/catalog-skill-mapping";
 import { useAgentSkillsStore } from "@/store/agent-skills-store";
 import type { AgentSkill } from "@/types/agent-skill";
 
@@ -116,7 +120,7 @@ export default function SkillWorkspacePage({
       setReady(true);
       return;
     }
-    if (configs.length === 0) return;
+    if (isLoading) return;
     const found = getSkillById(id);
     if (found) {
 
@@ -145,19 +149,7 @@ export default function SkillWorkspacePage({
           return;
         }
         const data = (await res.json()) as {
-          skills?: Array<{
-            id: string;
-            name: string;
-            description?: string;
-            source: string;
-            source_id?: string | null;
-            content?: string | null;
-            metadata?: Record<string, unknown>;
-            visibility?: string;
-            scan_status?: "passed" | "flagged" | "unscanned";
-            scan_summary?: string;
-            scan_updated_at?: string;
-          }>;
+          skills?: CatalogSkillForUi[];
         };
         const wanted = id.startsWith("catalog-") ? id.slice("catalog-".length) : id;
         const match = data.skills?.find((s) => s.id === wanted || `catalog-${s.id}` === id);
@@ -168,37 +160,7 @@ export default function SkillWorkspacePage({
           }
           return;
         }
-        // Cast through `AgentSkill` because `metadata.catalog_source` /
-        // `catalog_source_id` are gallery-specific extensions to
-        // `AgentSkillMetadata` (same pattern used in SkillsGallery).
-        const mapped = {
-          id,
-          name: match.name,
-          description: match.description || "",
-          category: (match.metadata?.category as string) || "Custom",
-          tasks: [],
-          owner_id: "",
-          is_system: true,
-          is_quick_start: true,
-          created_at: new Date(),
-          updated_at: new Date(),
-          thumbnail: (match.metadata?.icon as string) || "Zap",
-          skill_content: match.content ?? undefined,
-          metadata: {
-            tags: (match.metadata?.tags as string[]) || [],
-            catalog_source: match.source,
-            catalog_source_id: match.source_id ?? null,
-            catalog_visibility: match.visibility,
-            hub_location: (match.metadata?.hub_location as string) || "",
-            hub_type: (match.metadata?.hub_type as string) || "",
-            hub_path: (match.metadata?.path as string) || "",
-          },
-          scan_status: match.scan_status,
-          scan_summary: match.scan_summary,
-          scan_updated_at: match.scan_updated_at
-            ? new Date(match.scan_updated_at)
-            : undefined,
-        } as AgentSkill;
+        const mapped = mapCatalogSkillToAgentSkill(match);
         if (!cancelled) {
           setSkill(mapped);
           setNotFound(false);
@@ -215,7 +177,7 @@ export default function SkillWorkspacePage({
       cancelled = true;
       controller.abort();
     };
-  }, [id, isNew, configs, getSkillById]);
+  }, [id, isNew, configs, getSkillById, isLoading]);
 
   // Built-in / hub skills are read-only — surface that explicitly. We
   // derive the source from the unified catalog metadata since `AgentSkill`
@@ -232,7 +194,6 @@ export default function SkillWorkspacePage({
       (skill.metadata as { catalog_source?: string } | undefined)
         ?.catalog_source;
     if (src === "hub" || src === "default") return true;
-    if (skill.id.startsWith("catalog-")) return true;
     if (skill.is_system) return true;
     return false;
   }, [skill]);

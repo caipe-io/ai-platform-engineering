@@ -45,6 +45,8 @@ describe("resolveCaller — fail closed", () => {
 
   it("returns null when there is no stable sub (catalog-key / local-skills token)", () => {
     expect(resolveCaller({ role: "user", catalogKey: "abc" })).toBeNull();
+    expect(resolveCaller({ sub: "owner-sub", principalType: "catalog_api_key" })).toBeNull();
+    expect(resolveCaller({ sub: "owner-sub", principalType: "skills_api_key" })).toBeNull();
     expect(resolveCaller({ sub: "" })).toBeNull();
     expect(resolveCaller({ sub: "   " })).toBeNull();
   });
@@ -117,6 +119,7 @@ describe("parsers", () => {
   });
   it("parseAction / parseResourceType validate membership", () => {
     expect(parseAction("use")).toBe("use");
+    expect(parseAction("automate")).toBe("automate");
     expect(() => parseAction("frobnicate")).toThrow(HttpAuthzError);
     expect(parseResourceType("task")).toBe("task");
     expect(() => parseResourceType("nope")).toThrow(HttpAuthzError);

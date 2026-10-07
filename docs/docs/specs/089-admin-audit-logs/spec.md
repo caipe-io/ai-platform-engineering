@@ -179,7 +179,7 @@ The feature introduces two types in `ui/src/types/mongodb.ts`:
 ## Related
 
 - ADR: [2026-03-03-admin-audit-logs](../076-admin-audit-logs/architecture.md)
-- PR: [#894](https://github.com/cnoe-io/ai-platform-engineering/pull/894) (initial implementation)
+- PR: [#894](https://github.com/caipe-io/ai-platform-engineering/pull/894) (initial implementation)
 - Tests: `ui/src/app/api/__tests__/admin-audit-logs.test.ts` (52 tests)
 - Tests: `ui/src/app/api/__tests__/admin-audit-access.test.ts` (8 tests)
 - Tests: `ui/src/lib/__tests__/config.test.ts` (4 `auditLogsEnabled` tests)

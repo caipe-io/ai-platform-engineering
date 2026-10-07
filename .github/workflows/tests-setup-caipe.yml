@@ -1,0 +1,49 @@
+name: "[Tests] Setup script"
+
+on:
+  pull_request:
+    paths:
+      - 'setup-caipe.sh'
+      - 'tests/integration/test_setup_caipe_sudo_consent.sh'
+      - '.github/workflows/tests-setup-caipe.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'setup-caipe.sh'
+      - 'tests/integration/test_setup_caipe_sudo_consent.sh'
+      - '.github/workflows/tests-setup-caipe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  setup-tests:
+    name: Setup tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        # Use the system Bash, including macOS's compatibility baseline.
+        shell: /bin/bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check shell syntax
+        run: |
+          /bin/bash -n setup-caipe.sh
+          /bin/bash -n tests/integration/test_setup_caipe_sudo_consent.sh
+
+      - name: Run sudo consent regression tests
+        run: /bin/bash tests/integration/test_setup_caipe_sudo_consent.sh

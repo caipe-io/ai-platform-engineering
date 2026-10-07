@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2.20.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -49,6 +49,10 @@ jobs:
       - name: Install dependencies
         working-directory: ui
         run: npm ci
+
+      - name: Test External App examples
+        working-directory: ui
+        run: npm run test:external-app-examples
 
       - name: Run Jest tests
         id: jest
@@ -144,7 +148,12 @@ jobs:
           rm -f "$out"
 
       - name: Comment test results on PR
-        if: github.event_name == 'pull_request' && always()
+        # Fork PRs receive a read-only token, so attempting to write a comment
+        # would turn an otherwise successful test job red.
+        if: >-
+          ${{ always() &&
+              github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -238,7 +247,6 @@ jobs:
 
             **Medium Priority:**
             - components/chat/ChatPanel.tsx - Main chat interface
-            - components/agent-builder/* - Agent builder UI
             - lib/mongodb.ts - MongoDB integration
 
             </details>
@@ -297,15 +305,11 @@ jobs:
       contents: read
       packages: read
     container:
-      # assisted-by Codex Codex-sonnet-4-6
-      image: ghcr.io/cnoe-io/playwright:v1.61.0-noble
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2.20.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -336,6 +340,10 @@ jobs:
         working-directory: ui
         env:
           WORKFLOWS_ENABLED: 'true'
+          # The mocked Settings regression opens the authenticated user menu.
+          # This public setting is compiled into the client bundle, so set it
+          # while building as well as when serving the app below.
+          NEXT_PUBLIC_SSO_ENABLED: 'true'
           # The specs mock every API, so no real database is contacted. But the
           # home page gates shared-conversation / insights UI on server-side
           # storage mode (getStorageMode reads MONGODB_URI + MONGODB_DATABASE at
@@ -343,14 +351,23 @@ jobs:
           # those components exist in the server markup for the mocks to drive.
           MONGODB_URI: 'mongodb://mock:27017'
           MONGODB_DATABASE: 'mock'
+          NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
+          CAIPE_UNSAFE_RBAC_BYPASS: 'true'
+          CAIPE_CREDENTIALS_ENABLED: 'true'
+          CAIPE_USER_CONNECTIONS_ENABLED: 'true'
         run: npm run build
 
       - name: Start CAIPE UI server
         working-directory: ui
         env:
           WORKFLOWS_ENABLED: 'true'
+          NEXT_PUBLIC_SSO_ENABLED: 'true'
           MONGODB_URI: 'mongodb://mock:27017'
           MONGODB_DATABASE: 'mock'
+          NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
+          CAIPE_UNSAFE_RBAC_BYPASS: 'true'
+          CAIPE_CREDENTIALS_ENABLED: 'true'
+          CAIPE_USER_CONNECTIONS_ENABLED: 'true'
         run: |
           # Run the production server, not `next dev`: React StrictMode
           # double-invokes effects only in dev, which breaks exact
@@ -381,6 +398,12 @@ jobs:
           RUN_RBAC_REGRESSION: '1'
           CAIPE_UI_BASE_URL: http://localhost:3000
           WORKFLOWS_ENABLED: 'true'
+          NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
+          # The mocked credentials specs exercise protected personal pages. In
+          # this isolated browser lane, use the explicit test-only bypass so
+          # they do not require a live OpenFGA service; authorization remains
+          # covered by the route mocks and the live RBAC lane.
+          CAIPE_UNSAFE_RBAC_BYPASS: 'true'
         run: |
           # Run every mocked-RBAC spec under e2e/rbac/, excluding the
           # *-live.spec.ts files (those need live Keycloak/OpenFGA infra and
@@ -396,7 +419,7 @@ jobs:
             exit 1
           fi
           echo "Running ${#specs[@]} mocked-RBAC spec files."
-          npx playwright test "${specs[@]}" --config=playwright.rbac.config.ts
+          npx playwright test "${specs[@]}" --config=playwright.rbac.config.ts --workers=1
 
       - name: Upload Playwright artifacts
         if: failure() && steps.playwright.outcome == 'failure'
@@ -428,7 +451,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2.20.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
         with:
           egress-policy: audit
 
@@ -452,4 +475,4 @@ jobs:
 
       - name: Run ESLint
         working-directory: ui
-        run: npm run lint
+        run: npm run lint -- --max-warnings 0

@@ -1,38 +1,27 @@
 /**
  * @jest-environment jsdom
- *
- * ServiceAccountSelect — unit tests (TEST-10 / TEST-9)
- *
- * Covers:
- *   - teamSlug absent → "No team assigned" empty state (no fetch fired)
- *   - teamSlug present + empty server response → "No active service accounts" empty state
- *   - fetch rejects → distinct error state + retry button re-triggers fetch
- *   - happy path → options render + onChange fires with (sa_sub, name)
- *   - search filters the option list by name
  */
 
 import React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ServiceAccountSelect } from "../ServiceAccountSelect";
 
-// Utility: build a minimal Response-shaped object
 function mockResponse(body: unknown, ok = true): Response {
   return {
     ok,
     status: ok ? 200 : 500,
     json: async () => body,
-    text: async () => JSON.stringify(body),
   } as Response;
 }
 
-// Server payload for two active service accounts
-function twoActiveAccounts() {
+function serviceAccountPayload() {
   return {
     success: true,
     data: {
       items: [
-        { id: "sub-alpha-001", name: "incident-bot", status: "active" },
-        { id: "sub-beta-002", name: "deploy-bot", status: "active" },
+        { id: "sub-primary", name: "example-bot", status: "active" },
+        { id: "sub-secondary", name: "secondary-bot", status: "active" },
+        { id: "sub-revoked", name: "revoked-bot", status: "revoked" },
       ],
     },
   };
@@ -42,11 +31,7 @@ beforeEach(() => {
   jest.resetAllMocks();
 });
 
-// ---------------------------------------------------------------------------
-// Empty / no-team states
-// ---------------------------------------------------------------------------
-
-it("shows 'No team assigned' empty state when teamSlug is absent — no fetch fired", () => {
+it("requires a team before loading service accounts", () => {
   global.fetch = jest.fn();
 
   render(
@@ -57,201 +42,161 @@ it("shows 'No team assigned' empty state when teamSlug is absent — no fetch fi
   expect(fetch).not.toHaveBeenCalled();
 });
 
-it("shows 'No active service accounts' when teamSlug is set but server returns empty list", async () => {
+it("shows non-interactive guidance when the team has no active accounts", async () => {
   global.fetch = jest.fn().mockResolvedValue(
-    mockResponse({ success: true, data: { items: [] } }),
+    mockResponse({
+      success: true,
+      data: {
+        items: [
+          { id: "sub-revoked", name: "revoked-bot", status: "revoked" },
+        ],
+      },
+    }),
   );
 
   render(
-    <ServiceAccountSelect value="" onChange={jest.fn()} teamSlug="platform-engineering" />,
+    <ServiceAccountSelect value="" onChange={jest.fn()} teamSlug="primary" />,
   );
 
-  expect(await screen.findByText(/no active service accounts/i)).toBeInTheDocument();
-  // Confirm it scoped the fetch to the right team
-  expect(fetch).toHaveBeenCalledWith(
-    expect.stringContaining("team=platform-engineering"),
+  await waitFor(() =>
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/admin/service-accounts?team=primary",
+    ),
   );
+  expect(
+    await screen.findByText(/no active service accounts found for team:primary/i),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("combobox", { name: "Service account" }),
+  ).not.toBeInTheDocument();
 });
 
-// ---------------------------------------------------------------------------
-// displayName fallback (caller lacks team membership but a value is saved)
-// ---------------------------------------------------------------------------
-
-it("shows the displayName fallback (not the empty-state message) when SA list is empty but value+displayName are set", async () => {
-  global.fetch = jest.fn().mockResolvedValue(
-    mockResponse({ success: true, data: { items: [] } }),
-  );
-
-  render(
-    <ServiceAccountSelect
-      value="sub-saved-999"
-      onChange={jest.fn()}
-      teamSlug="platform-engineering"
-      displayName="legacy-incident-bot"
-    />,
-  );
-
-  const trigger = await screen.findByRole("button", { name: "Service account" });
-  expect(trigger).toHaveTextContent("legacy-incident-bot");
-  expect(screen.queryByText(/no active service accounts/i)).not.toBeInTheDocument();
-});
-
-it("still shows the empty-state message when list is empty and neither value nor displayName is set", async () => {
-  global.fetch = jest.fn().mockResolvedValue(
-    mockResponse({ success: true, data: { items: [] } }),
-  );
-
-  render(
-    <ServiceAccountSelect value="" onChange={jest.fn()} teamSlug="platform-engineering" />,
-  );
-
-  expect(await screen.findByText(/no active service accounts/i)).toBeInTheDocument();
-});
-
-it("prefers the fetched SA's own name over displayName once the list loads and contains it", async () => {
-  global.fetch = jest.fn().mockResolvedValue(mockResponse(twoActiveAccounts()));
-
-  render(
-    <ServiceAccountSelect
-      value="sub-beta-002"
-      onChange={jest.fn()}
-      teamSlug="platform-engineering"
-      displayName="stale-cached-name"
-    />,
-  );
-
-  const trigger = await screen.findByRole("button", { name: "Service account" });
-  expect(trigger).toHaveTextContent("deploy-bot");
-  expect(trigger).not.toHaveTextContent("stale-cached-name");
-});
-
-// ---------------------------------------------------------------------------
-// TEST-9: fetch failure → distinct error state + retry
-// ---------------------------------------------------------------------------
-
-it("shows an error message and Retry button when the fetch rejects", async () => {
-  global.fetch = jest.fn().mockRejectedValue(new Error("network error"));
-
-  render(
-    <ServiceAccountSelect value="" onChange={jest.fn()} teamSlug="my-team" />,
-  );
-
-  expect(await screen.findByText(/failed to load service accounts/i)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
-  // Must NOT show the empty-SAs message (different state)
-  expect(screen.queryByText(/no active service accounts/i)).not.toBeInTheDocument();
-});
-
-it("retries the fetch when the Retry button is clicked", async () => {
-  // First call fails, second call succeeds
-  global.fetch = jest
-    .fn()
-    .mockRejectedValueOnce(new Error("timeout"))
-    .mockResolvedValueOnce(mockResponse(twoActiveAccounts()));
-
-  render(
-    <ServiceAccountSelect value="" onChange={jest.fn()} teamSlug="my-team" />,
-  );
-
-  // Error state appears
-  await screen.findByText(/failed to load service accounts/i);
-  const retryBtn = screen.getByRole("button", { name: /retry/i });
-
-  fireEvent.click(retryBtn);
-
-  // After retry the popover trigger should appear (list is non-empty)
-  expect(await screen.findByRole("button", { name: /service account/i })).toBeInTheDocument();
-  // Error message should be gone
-  expect(screen.queryByText(/failed to load service accounts/i)).not.toBeInTheDocument();
-  // fetch was called twice
-  expect(fetch).toHaveBeenCalledTimes(2);
-});
-
-// ---------------------------------------------------------------------------
-// Happy path: options render, onChange fires with sub + name
-// ---------------------------------------------------------------------------
-
-it("renders picker trigger and option list on success, fires onChange with sub and name", async () => {
-  global.fetch = jest.fn().mockResolvedValue(mockResponse(twoActiveAccounts()));
-
+it("loads active accounts for the team and maps the selected identity", async () => {
+  global.fetch = jest.fn().mockResolvedValue(mockResponse(serviceAccountPayload()));
   const onChange = jest.fn();
 
   render(
     <ServiceAccountSelect
       value=""
       onChange={onChange}
-      teamSlug="platform-engineering"
+      teamSlug="primary"
     />,
   );
 
-  // Trigger appears after load
-  const trigger = await screen.findByRole("button", { name: "Service account" });
-  fireEvent.click(trigger);
+  await waitFor(() =>
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/admin/service-accounts?team=primary",
+    ),
+  );
+  fireEvent.click(screen.getByRole("combobox", { name: "Service account" }));
 
-  // Both options are in the listbox
   const listbox = await screen.findByRole("listbox");
-  expect(within(listbox).getByText("incident-bot")).toBeInTheDocument();
-  expect(within(listbox).getByText("deploy-bot")).toBeInTheDocument();
+  expect(
+    within(listbox).getByRole("option", { name: "example-bot" }),
+  ).toBeInTheDocument();
+  expect(within(listbox).queryByText("revoked-bot")).not.toBeInTheDocument();
 
-  // Pick the first option
-  fireEvent.click(within(listbox).getByText("incident-bot").closest("[role='option']")!);
-
-  expect(onChange).toHaveBeenCalledWith("sub-alpha-001", "incident-bot");
+  fireEvent.click(within(listbox).getByRole("option", { name: "example-bot" }));
+  expect(onChange).toHaveBeenCalledWith("sub-primary", "example-bot");
 });
 
-it("pre-selects the option matching the current value prop", async () => {
-  global.fetch = jest.fn().mockResolvedValue(mockResponse(twoActiveAccounts()));
+it("keeps a saved selection available when it is outside the fetched team list", async () => {
+  global.fetch = jest.fn().mockResolvedValue(
+    mockResponse({ success: true, data: { items: [] } }),
+  );
 
   render(
     <ServiceAccountSelect
-      value="sub-beta-002"
+      value="sub-saved"
       onChange={jest.fn()}
-      teamSlug="platform-engineering"
+      teamSlug="primary"
+      displayName="saved-bot"
     />,
   );
 
-  // Trigger shows the selected SA name (not placeholder)
-  const trigger = await screen.findByRole("button", { name: "Service account" });
-  expect(trigger).toHaveTextContent("deploy-bot");
+  const picker = screen.getByRole("combobox", { name: "Service account" });
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  expect(picker).toHaveTextContent("saved-bot");
 });
 
-// ---------------------------------------------------------------------------
-// Search filtering
-// ---------------------------------------------------------------------------
-
-it("filters options by name when search query is typed", async () => {
-  global.fetch = jest.fn().mockResolvedValue(mockResponse(twoActiveAccounts()));
-
-  render(
-    <ServiceAccountSelect value="" onChange={jest.fn()} teamSlug="platform-engineering" />,
+it("keeps a saved display name when the legacy route has no subject", async () => {
+  global.fetch = jest.fn().mockResolvedValue(
+    mockResponse({ success: true, data: { items: [] } }),
   );
 
-  const trigger = await screen.findByRole("button", { name: "Service account" });
-  fireEvent.click(trigger);
+  render(
+    <ServiceAccountSelect
+      value=""
+      onChange={jest.fn()}
+      teamSlug="primary"
+      displayName="saved-bot"
+    />,
+  );
 
-  const searchInput = screen.getByRole("textbox", { name: /search service accounts/i });
-  fireEvent.change(searchInput, { target: { value: "incident" } });
-
-  const listbox = screen.getByRole("listbox");
-  await waitFor(() => {
-    expect(within(listbox).getByText("incident-bot")).toBeInTheDocument();
-    expect(within(listbox).queryByText("deploy-bot")).not.toBeInTheDocument();
-  });
+  const picker = screen.getByRole("combobox", { name: "Service account" });
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  expect(picker).toHaveTextContent("saved-bot");
+  expect(screen.queryByText(/no active service accounts/i)).not.toBeInTheDocument();
 });
 
-it("shows 'No service accounts match' when query matches nothing", async () => {
-  global.fetch = jest.fn().mockResolvedValue(mockResponse(twoActiveAccounts()));
+it("does not expose options loaded for a previous team while the next team loads", async () => {
+  let resolveSecondary: ((value: Response) => void) | undefined;
+  global.fetch = jest
+    .fn()
+    .mockResolvedValueOnce(mockResponse(serviceAccountPayload()))
+    .mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveSecondary = resolve;
+        }),
+    );
+
+  const { rerender } = render(
+    <ServiceAccountSelect value="" onChange={jest.fn()} teamSlug="primary" />,
+  );
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+  rerender(
+    <ServiceAccountSelect value="" onChange={jest.fn()} teamSlug="secondary" />,
+  );
+  fireEvent.click(screen.getByRole("combobox", { name: "Service account" }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading service accounts",
+  );
+  expect(screen.queryByRole("option", { name: "example-bot" })).not.toBeInTheDocument();
+
+  resolveSecondary?.(
+    mockResponse({
+      success: true,
+      data: {
+        items: [
+          { id: "sub-tertiary", name: "tertiary-bot", status: "active" },
+        ],
+      },
+    }),
+  );
+  expect(
+    await screen.findByRole("option", { name: "tertiary-bot" }),
+  ).toBeInTheDocument();
+});
+
+it("retries the team-scoped request after a load failure", async () => {
+  global.fetch = jest
+    .fn()
+    .mockRejectedValueOnce(new Error("timeout"))
+    .mockResolvedValueOnce(mockResponse(serviceAccountPayload()));
 
   render(
-    <ServiceAccountSelect value="" onChange={jest.fn()} teamSlug="platform-engineering" />,
+    <ServiceAccountSelect value="" onChange={jest.fn()} teamSlug="primary" />,
   );
 
-  const trigger = await screen.findByRole("button", { name: "Service account" });
-  fireEvent.click(trigger);
+  const picker = screen.getByRole("combobox", { name: "Service account" });
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  fireEvent.click(picker);
+  fireEvent.click(await screen.findByRole("button", { name: /retry/i }));
 
-  const searchInput = screen.getByRole("textbox", { name: /search service accounts/i });
-  fireEvent.change(searchInput, { target: { value: "zzznotabot" } });
-
-  const listbox = screen.getByRole("listbox");
-  expect(within(listbox).getByText(/no service accounts match/i)).toBeInTheDocument();
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(
+    await screen.findByRole("option", { name: "example-bot" }),
+  ).toBeInTheDocument();
 });

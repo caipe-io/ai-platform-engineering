@@ -47,6 +47,33 @@ routes:
         status: 403
         reason: DENY_NO_CAPABILITY
 
+  - id: ui-bff-post-api-skills-token
+    surface: ui_bff
+    method: POST
+    path: /api/skills/token
+    resource: skill
+    scope: invoke
+    migration_status: migrated
+    notes: >-
+      Cookie-backed user sessions require the member-level skill#invoke gate
+      before minting a caller-bound, read-only local skills token. Scoped
+      catalog credentials and service accounts cannot use this route.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 200
+      carol_kb_ingestor:
+        status: 200
+      dave_no_role:
+        status: 403
+        reason: DENY_NO_CAPABILITY
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: DENY_NO_CAPABILITY
+
   - id: ui-bff-post-api-chat-conversations-openfga-agent-use
     surface: ui_bff
     method: POST
@@ -58,6 +85,35 @@ routes:
     object_type: agent
     migration_status: migrated
     notes: OpenFGA user:<sub> can_use agent:<agent_id> gate when creating a conversation with a selected agent.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
+  - id: ui-bff-post-api-chat-conversations-id-rewind-openfga-agent-use
+    surface: ui_bff
+    method: POST
+    path: /api/chat/conversations/[id]/rewind
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: OpenFGA user:<sub> can_use agent:<agent_id> plus conversation owner and write gates before checkpoint rewind.
     expectations:
       alice_admin:
         status: 200

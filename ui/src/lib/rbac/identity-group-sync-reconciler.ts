@@ -38,6 +38,7 @@ export interface ApplyIdentityGroupSyncPlanResult {
   tupleDeletes: number;
   openFgaEnabled: boolean;
   teamsArchived: number;
+  teamsUnarchived: number;
 }
 
 /**
@@ -129,7 +130,46 @@ export async function applyIdentityGroupSyncPlan(
       deletes: input.plan.tuple_deletes,
     });
 
-    // ── Phase 3: archive orphaned identity-sync teams ──────────────────────
+    // ── Phase 3a: unarchive teams whose Okta group regained membership ─────
+    // The planner flags a team in `teams_to_unarchive` when it's currently
+    // `status: "archived"` but this run adds/refreshes an active managed
+    // member for it. Flipping status back to "active" is what makes the team
+    // reappear in the admin teams list (`status: { $ne: "archived" }` filter)
+    // and the Slack channel-onboarding picker. Failures here are logged but
+    // never thrown — the membership reconcile already succeeded.
+    //
+    // NOTE: this does NOT restore resource grants (agent/tool/etc. access)
+    // that were stripped when the team was archived. Those grants are read
+    // live from OpenFGA with no other durable record of what they were
+    // (the legacy `team.resources` Mongo array was intentionally dropped —
+    // see api/admin/teams/[id]/resources/route.ts), so there is nothing to
+    // replay them from. An admin must re-assign resources via the Team
+    // Resources UI after an unarchive if the team previously had explicit
+    // grants.
+    let teamsUnarchived = 0;
+    if (input.plan.teams_to_unarchive && input.plan.teams_to_unarchive.length > 0) {
+      try {
+        teamsUnarchived = await unarchiveSyncTeams({
+          slugs: input.plan.teams_to_unarchive,
+          actor: input.actor,
+          now: input.now,
+        });
+        if (teamsUnarchived > 0) {
+          console.log(
+            `[identity-group-sync] unarchived ${teamsUnarchived} team(s) whose Okta group regained ` +
+              "active membership (resource grants, if any were stripped at archive time, are not " +
+              "automatically restored)",
+          );
+        }
+      } catch (unarchiveErr) {
+        console.error(
+          "[identity-group-sync] phase 3a team unarchival failed; teams may remain archived",
+          unarchiveErr,
+        );
+      }
+    }
+
+    // ── Phase 3b: archive orphaned identity-sync teams ──────────────────────
     // After memberships are removed, any identity_group_sync team that the
     // planner flagged as "orphaned_team_membership" (no remaining managed
     // memberships) gets archived. We only do this for teams the sync owns
@@ -152,10 +192,13 @@ export async function applyIdentityGroupSyncPlan(
         // Archiving the Mongo doc is cosmetic on its own — OpenFGA never
         // consults team.status. Strip the team's resource-grant tuples so an
         // archived team stops granting `team:<slug>#member can_use ...`. Only
-        // strips teams we actually archived this run; the roster is kept so
-        // un-archiving can replay grants. Best-effort: the membership reconcile
-        // already committed, and the self-check can repair any grant that
-        // survives here.
+        // strips teams we actually archived this run. The membership roster
+        // (`user:<sub> member team:<slug>`) is left intact, but the resource
+        // grants themselves have no other durable record (see phase 3a above)
+        // — re-granting them after an unarchive is a manual, admin-driven
+        // step, not something this sync replays automatically. Best-effort:
+        // the membership reconcile already committed, and the self-check can
+        // repair any grant that survives here.
         if (teamsArchived > 0) {
           const strip = await stripArchivedTeamResourceGrants(orphanedSlugs);
           if (strip.tuplesDeleted > 0) {
@@ -182,6 +225,7 @@ export async function applyIdentityGroupSyncPlan(
       tupleDeletes: openFgaResult.deletes,
       openFgaEnabled: openFgaResult.enabled,
       teamsArchived,
+      teamsUnarchived,
     };
   } catch (err) {
     // Best-effort rollback. The Mongo team docs and membership-source
@@ -352,6 +396,28 @@ async function rollbackPhase1(input: {
   for (const slug of input.createdTeamSlugs) {
     await teams.deleteOne({ slug });
   }
+}
+
+/**
+ * Unarchive identity_group_sync teams the planner flagged as having regained
+ * an active managed membership. Only touches teams with source
+ * "identity_group_sync" and currently `status: "archived"`, mirroring
+ * `archiveOrphanedSyncTeams` below. Returns the count of teams actually
+ * updated. Does not touch OpenFGA — see the phase 3a note above for why
+ * stripped resource grants aren't replayed here.
+ */
+async function unarchiveSyncTeams(input: {
+  slugs: string[];
+  actor: string;
+  now: string;
+}): Promise<number> {
+  if (input.slugs.length === 0) return 0;
+  const teams = await getCollection<IdentitySyncTeam & Record<string, unknown>>("teams");
+  const result = await teams.updateMany(
+    { slug: { $in: input.slugs }, source: "identity_group_sync", status: "archived" },
+    { $set: { status: "active", updated_by: input.actor, updated_at: new Date(input.now) } },
+  );
+  return result.modifiedCount;
 }
 
 /**

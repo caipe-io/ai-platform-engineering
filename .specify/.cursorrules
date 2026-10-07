@@ -20,7 +20,7 @@ MCP Servers → External APIs
 
 | Component | Stack |
 |-----------|-------|
-| Agents | Python 3.11+, LangGraph, LangChain |
+| Agents | Python 3.14, LangGraph, LangChain |
 | MCP Servers | FastMCP, httpx |
 | Multi-Agent | A2A Protocol (Google), SSE streaming |
 | UI | Next.js 16, React 19, Tailwind CSS |

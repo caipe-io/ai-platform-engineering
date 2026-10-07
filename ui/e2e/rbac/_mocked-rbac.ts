@@ -1,5 +1,6 @@
 // assisted-by Codex Codex-sonnet-4-6
 
+import { encode } from "next-auth/jwt";
 import { type Page, type Route } from "@playwright/test";
 
 export const MOCK_RBAC_EMAIL = "non-manager@caipe.local";
@@ -98,6 +99,40 @@ export async function installMockedRbacApp(page: Page, options: MockedRbacOption
   const session = mockSessionBody({ ...options, isAdmin });
   const gates = { ...DEFAULT_ADMIN_GATES, ...(options.gates ?? {}) };
   const handlers = options.handlers ?? [];
+
+  // The application layout now verifies the session during SSR. Keep the
+  // browser API mock for client-side assertions, but also install a matching
+  // signed cookie so protected pages can render before those routes exist.
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (secret) {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const token = await encode({
+      secret,
+      maxAge: 60 * 60,
+      token: {
+        sub: `playwright-mocked-${session.role}`,
+        name: session.user.name,
+        email: session.user.email,
+        accessToken: "playwright-access-token",
+        expiresAt: nowSeconds + 60 * 60,
+        isAuthorized: true,
+        role: session.role,
+        canViewAdmin: session.canViewAdmin,
+        canAccessDynamicAgents: true,
+        org: process.env.CAIPE_ORG_KEY?.trim() || "caipe",
+      },
+    });
+    await page.context().addCookies([
+      {
+        name: "next-auth.session-token",
+        value: token,
+        url: process.env.CAIPE_UI_BASE_URL ?? "http://localhost:3000",
+        httpOnly: true,
+        sameSite: "Lax",
+        expires: nowSeconds + 2 * 60 * 60,
+      },
+    ]);
+  }
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();

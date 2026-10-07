@@ -19,6 +19,7 @@ import type { AgentSkill } from "@/types/agent-skill";
 // ---------------------------------------------------------------------------
 
 const mockRouterPush = jest.fn();
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockRouterPush }),
 }));

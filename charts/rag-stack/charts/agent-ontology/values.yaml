@@ -27,7 +27,7 @@ revisionHistoryLimit: 3
 # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
 image:
   # This sets the image repository for the corresponding agent.
-  repository: "ghcr.io/cnoe-io/caipe-rag-agent-ontology"
+  repository: "ghcr.io/caipe-io/caipe-rag-agent-ontology"
   # This sets the pull policy for images.
   pullPolicy: IfNotPresent
   # tag defaults to .Chart.AppVersion when not specified
@@ -44,7 +44,7 @@ serviceAccount:
   # Specifies whether a service account should be created
   create: true
   # Automatically mount a ServiceAccount's API credentials?
-  automount: true
+  automount: false
   # Annotations to add to the service account
   annotations: {}
   # The name of the service account to use.
@@ -176,11 +176,28 @@ volumeMounts: []
 #   mountPath: "/etc/foo"
 #   readOnly: true
 
+# Karpenter: to target the `rag` NodePool, set these values or use charts/ai-platform-engineering/values-karpenter.yaml.
+# nodeSelector:
+#   workload-type: rag
+# tolerations:
+#   - key: workload-type
+#     operator: Equal
+#     value: rag
+#     effect: NoSchedule
+
 nodeSelector: {}
 
 tolerations: []
 
 affinity: {}
+
+# PodDisruptionBudget: prevents simultaneous eviction of all replicas during voluntary disruptions.
+# Enable in production; leave disabled for local/single-node environments.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
+  annotations: {}
 
 # Secrets configuration for LLM providers
 secrets:

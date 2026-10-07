@@ -2,7 +2,21 @@
 {{- if not (has $requestedBackend (list "auto" "local" "s3")) -}}
 {{- fail "audit-service.storage.backend must be one of: auto, local, s3" -}}
 {{- end -}}
+{{- /*
+  Object storage resolution. A subchart-local storage.s3 value always wins;
+  when it is empty we fall back to the shared global.storage.s3 block so a
+  CAIPE sysadmin can set the bucket/region once for the whole platform.
+*/ -}}
+{{- $globalS3 := dict -}}
+{{- if and .Values.global .Values.global.storage .Values.global.storage.s3 -}}
+{{- $globalS3 = .Values.global.storage.s3 -}}
+{{- end -}}
 {{- $s3Bucket := trim (.Values.storage.s3.bucket | toString) -}}
+{{- if not $s3Bucket -}}{{- $s3Bucket = trim ((get $globalS3 "bucket") | default "" | toString) -}}{{- end -}}
+{{- $s3Region := trim (.Values.storage.s3.region | toString) -}}
+{{- if not $s3Region -}}{{- $s3Region = trim ((get $globalS3 "region") | default "" | toString) -}}{{- end -}}
+{{- $s3EndpointUrl := trim (.Values.storage.s3.endpointUrl | toString) -}}
+{{- if not $s3EndpointUrl -}}{{- $s3EndpointUrl = trim ((get $globalS3 "endpointUrl") | default "" | toString) -}}{{- end -}}
 {{- $s3SecretName := trim (.Values.storage.s3.existingSecret.name | toString) -}}
 {{- $hasServiceAccountAnnotations := gt (len (.Values.serviceAccount.annotations | default dict)) 0 -}}
 {{- $hasS3Credentials := or .Values.storage.s3.useAmbientCredentials $s3SecretName $hasServiceAccountAnnotations -}}
@@ -41,6 +55,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "audit-service.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -51,7 +66,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ include "audit-service.imageRepository" (dict "root" . "repository" .Values.image.repository) }}:{{ include "audit-service.appVersion" . }}"
+          image: "{{ .Values.image.repository }}:{{ include "audit-service.appVersion" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -67,14 +82,14 @@ spec:
             - name: AUDIT_SERVICE_LOCAL_RETENTION_DAYS
               value: {{ .Values.storage.local.retentionDays | quote }}
             - name: AUDIT_SERVICE_S3_BUCKET
-              value: {{ .Values.storage.s3.bucket | quote }}
+              value: {{ $s3Bucket | quote }}
             - name: AUDIT_SERVICE_S3_PREFIX
               value: {{ .Values.storage.s3.prefix | quote }}
             - name: AUDIT_SERVICE_S3_REGION
-              value: {{ .Values.storage.s3.region | quote }}
-            {{- if .Values.storage.s3.endpointUrl }}
+              value: {{ $s3Region | quote }}
+            {{- if $s3EndpointUrl }}
             - name: AUDIT_SERVICE_S3_ENDPOINT_URL
-              value: {{ .Values.storage.s3.endpointUrl | quote }}
+              value: {{ $s3EndpointUrl | quote }}
             {{- end }}
             - name: AUDIT_SERVICE_S3_RETENTION_DAYS
               value: {{ .Values.storage.s3.retentionDays | default 0 | quote }}
@@ -92,6 +107,10 @@ spec:
               value: {{ .Values.read.maxLimit | quote }}
             - name: AUDIT_SERVICE_READ_MAX_DAYS
               value: {{ .Values.read.maxDays | quote }}
+            - name: AUDIT_SERVICE_READ_MAX_CONCURRENT
+              value: {{ .Values.read.maxConcurrent | quote }}
+            - name: AUDIT_SERVICE_READ_TIMEOUT_SECONDS
+              value: {{ .Values.read.timeoutSeconds | quote }}
             {{- if .Values.storage.s3.existingSecret.name }}
             - name: AWS_ACCESS_KEY_ID
               valueFrom:

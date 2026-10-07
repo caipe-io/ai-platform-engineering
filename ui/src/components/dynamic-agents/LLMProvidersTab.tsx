@@ -6,11 +6,10 @@ import { AlertTriangle,CheckCircle2,KeyRound,Loader2,Settings } from "lucide-rea
 import React from "react";
 
 import { Button } from "@/components/ui/button";
+import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
-import { LLMModelsTab,type LLMModelsTabProps } from "./LLMModelsTab";
 
 type ProviderField = {
   id: string;
@@ -201,10 +200,7 @@ function ProviderCredentialDialog({
   );
 }
 
-export function LLMProvidersTab({
-  selectedModelId,
-  onSelectedModelChange,
-}: LLMModelsTabProps = {}) {
+export function LLMProvidersTab() {
   const [models, setModels] = React.useState<LlmModel[]>([]);
   const [secrets, setSecrets] = React.useState<SecretMetadata[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -246,22 +242,14 @@ export function LLMProvidersTab({
 
   return (
     <section className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <CardTitle>Model Providers</CardTitle>
-              <CardDescription>
-                Save the provider keys agents need to use each model.
-              </CardDescription>
-            </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Settings className="mr-2 h-4 w-4" />}
-              Refresh
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <WorkspacePageActions>
+        <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+          {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Settings className="mr-2 h-4 w-4" />}
+          Refresh
+        </Button>
+      </WorkspacePageActions>
+      <Card className="rounded-none border-0 bg-transparent shadow-none">
+        <CardContent className="space-y-4 px-0 pt-0">
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
               <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
@@ -314,11 +302,6 @@ export function LLMProvidersTab({
           </div>
         </CardContent>
       </Card>
-
-      <LLMModelsTab
-        selectedModelId={selectedModelId}
-        onSelectedModelChange={onSelectedModelChange}
-      />
 
       {editingProvider && (
         <ProviderCredentialDialog

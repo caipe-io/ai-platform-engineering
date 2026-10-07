@@ -15,7 +15,7 @@ permissions: read-all
 jobs:
   mark-stale:
     # Call reusable workflow file
-    uses: cnoe-io/ai-platform-engineering/.github/workflows/_stale.yml@0a15d640f9bc2d29ce1cac30de2c2ae12b974f69 # main
+    uses: caipe-io/ai-platform-engineering/.github/workflows/_stale.yml@4d85673fef558cbf8398eebb17c9433600de3375 # main
     permissions:
       contents: read
       issues: write

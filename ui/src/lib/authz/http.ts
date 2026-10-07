@@ -98,14 +98,21 @@ export interface Caller {
 }
 
 /**
- * Returns the verified caller identity, or null if no stable subject can be
- * established (catalog-key / local-skills tokens carry no `sub`). Callers
- * without a subject must be rejected with 401 — they are authenticated but
- * cannot be bound to a subject, so they may not evaluate per-subject decisions.
+ * Returns the verified caller identity, or null if no stable human/service
+ * subject can be established. Scoped catalog credentials remain distinct
+ * principals even when they carry their owner's `sub`, so they cannot be
+ * promoted into general per-subject authorization decisions.
  */
 export function resolveCaller(session: unknown): Caller | null {
   if (!session || typeof session !== "object") return null;
-  const s = session as { sub?: unknown; isServiceAccount?: unknown };
+  const s = session as {
+    sub?: unknown;
+    isServiceAccount?: unknown;
+    principalType?: unknown;
+  };
+  if (s.principalType === 'catalog_api_key' || s.principalType === 'skills_api_key') {
+    return null;
+  }
   const sub = typeof s.sub === "string" ? s.sub.trim() : "";
   if (!sub) return null;
   return { type: s.isServiceAccount === true ? "service_account" : "user", id: sub };

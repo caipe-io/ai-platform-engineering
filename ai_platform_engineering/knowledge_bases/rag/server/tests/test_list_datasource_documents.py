@@ -1,7 +1,14 @@
 """Unit tests for list_datasource_documents endpoint and datasource_id validation in server.restapi."""
 
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from fastapi import HTTPException
+from common.models.rbac import UserContext
+from common.models.server import DatasourceDocumentsResponse
+from server import doc_acl, restapi
+from server.query_service import VectorDBQueryService
 from server.restapi import _validate_datasource_id
 
 
@@ -28,6 +35,7 @@ class TestValidateDatasourceId:
       "ds1/../etc",
       "",
       "a" * 257,
+      "ds1\n",
     ]
     for ds_id in invalid_ids:
       with pytest.raises(HTTPException) as exc_info:
@@ -36,109 +44,116 @@ class TestValidateDatasourceId:
       assert "Invalid datasource_id" in exc_info.value.detail
 
 
-class TestListDatasourceDocuments:
-  """Unit tests for list_datasource_documents endpoint count logic."""
+@pytest.fixture
+def vector_db(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+  vector_db = MagicMock()
+  vector_db.client.query.return_value = []
+  vector_db.client.query_iterator.return_value.next.return_value = []
+  monkeypatch.setattr(restapi, "vector_db", vector_db)
+  monkeypatch.setattr(restapi, "vector_db_query_service", VectorDBQueryService(vector_db))
+  monkeypatch.setattr(restapi, "check_datasource_access", AsyncMock())
+  monkeypatch.setattr(restapi, "authorize_search", AsyncMock())
+  return vector_db
 
-  @pytest.mark.asyncio
-  async def test_list_datasource_documents_empty_result_returns_zero_counts(self, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Empty result list from Milvus returns total_documents = 0 and total_chunks = 0."""
-    from unittest.mock import AsyncMock, MagicMock
-    import server.restapi as restapi
-    from common.models.server import DatasourceDocumentsResponse
 
-    mock_vector_db = MagicMock()
-    mock_vector_db.client.query.return_value = []
-    monkeypatch.setattr(restapi, "vector_db", mock_vector_db)
-    monkeypatch.setattr(restapi, "check_datasource_access", AsyncMock())
+async def _list_documents(offset: int = 0, limit: int = 10) -> DatasourceDocumentsResponse:
+  return await restapi.list_datasource_documents(
+    request=MagicMock(), datasource_id="primary", offset=offset, limit=limit,
+    user=UserContext(subject="test-user", email="test-user@example.com", role="readonly", is_authenticated=True),
+  )
 
-    resp: DatasourceDocumentsResponse = await restapi.list_datasource_documents(
-      request=MagicMock(),
-      datasource_id="ds1",
-      offset=0,
-      limit=10,
-    )
 
-    assert resp.total_chunks == 0
-    assert resp.total_documents == 0
-    assert resp.documents == []
-    assert resp.has_more is False
+@pytest.mark.asyncio
+async def test_empty_datasource_returns_zero_counts(vector_db: MagicMock) -> None:
+  response = await _list_documents()
 
-  @pytest.mark.asyncio
-  async def test_list_datasource_documents_query_iterator_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Successful query_iterator streams and counts unique document IDs."""
-    from unittest.mock import AsyncMock, MagicMock
-    import server.restapi as restapi
-    from common.models.server import DatasourceDocumentsResponse
+  assert response.total_chunks == response.total_documents == 0
+  assert response.documents == []
+  assert response.has_more is False
+  vector_db.client.query_iterator.return_value.close.assert_called_once()
 
-    mock_vector_db = MagicMock()
-    # Mock chunks query
-    mock_vector_db.client.query.side_effect = [
-      # _fetch_chunks
-      [
-        {"chunk_id": "c1", "document_id": "doc1", "document_name": "doc1.txt"},
-        {"chunk_id": "c2", "document_id": "doc2", "document_name": "doc2.txt"},
-      ],
-      # _fetch_total_chunks
-      [{"count(*)": 2}],
-    ]
 
-    # Mock query_iterator
-    mock_iterator = MagicMock()
-    mock_iterator.next.side_effect = [
-      [{"document_id": "doc1"}, {"document_id": "doc2"}, {"document_id": "doc1"}],
-      [],
-    ]
-    mock_vector_db.client.query_iterator.return_value = mock_iterator
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offset", [0, 5, 100])
+async def test_counts_are_independent_of_page_and_share_acl_filter(vector_db: MagicMock, monkeypatch: pytest.MonkeyPatch, offset: int) -> None:
+  monkeypatch.setattr(doc_acl, "DOC_ACL_TAGS_ENABLED", True)
+  chunks = [{"id": f"chunk-{i}", "document_id": "document-1", "chunk_index": i} for i in range(3)]
 
-    monkeypatch.setattr(restapi, "vector_db", mock_vector_db)
-    monkeypatch.setattr(restapi, "check_datasource_access", AsyncMock())
+  def query(**kwargs: Any) -> list[dict[str, Any]]:
+    return [{"count(*)": 20}] if kwargs["output_fields"] == ["count(*)"] else chunks
 
-    resp: DatasourceDocumentsResponse = await restapi.list_datasource_documents(
-      request=MagicMock(),
-      datasource_id="ds1",
-      offset=0,
-      limit=10,
-    )
+  vector_db.client.query.side_effect = query
+  iterator = vector_db.client.query_iterator.return_value
+  iterator.next.side_effect = [[{"document_id": "document-1"}, {"document_id": "document-2"}], [{"document_id": "document-1"}, {"document_id": "document-3"}], []]
 
-    assert resp.total_chunks == 2
-    assert resp.total_documents == 2
-    assert len(resp.documents) == 2
-    mock_iterator.close.assert_called_once()
+  response = await _list_documents(offset=offset, limit=2)
 
-  @pytest.mark.asyncio
-  async def test_list_datasource_documents_milvus_error_graceful_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Exception during Milvus count query gracefully falls back to retrieved results."""
-    from unittest.mock import AsyncMock, MagicMock
-    import server.restapi as restapi
-    from common.models.server import DatasourceDocumentsResponse
+  assert response.total_chunks == 20
+  assert response.total_documents == 3
+  assert len(response.documents) == 1
+  assert len(response.documents[0].chunks) == 2
+  assert response.has_more is True
+  expected_filter = 'datasource_id == "primary" AND metadata["acl_tags"] in ["__public__"]'
+  for call in vector_db.client.query.call_args_list:
+    assert call.kwargs["filter"] == expected_filter
+  assert vector_db.client.query_iterator.call_args.kwargs["filter"] == expected_filter
+  iterator.close.assert_called_once()
+  page_call = next(call for call in vector_db.client.query.call_args_list if "offset" in call.kwargs)
+  assert page_call.kwargs["offset"] == offset
+  assert page_call.kwargs["limit"] == 3
 
-    mock_vector_db = MagicMock()
 
-    def query_side_effect(*args, **kwargs):
-      output_fields = kwargs.get("output_fields", [])
-      if "count(*)" in output_fields:
-        raise RuntimeError("Milvus chunk count failed")
-      if kwargs.get("group_by_field") == "document_id":
-        raise RuntimeError("Milvus doc count failed")
-      return [
-        {"chunk_id": "c1", "document_id": "doc1", "document_name": "doc1.txt"},
-      ]
+@pytest.mark.asyncio
+async def test_documents_above_milvus_query_window_are_counted(vector_db: MagicMock) -> None:
+  iterator = vector_db.client.query_iterator.return_value
+  iterator.next.side_effect = [[{"document_id": f"document-{i}"} for i in range(17000)], []]
+  vector_db.client.query.side_effect = lambda **kwargs: [{"count(*)": 17000}] if kwargs["output_fields"] == ["count(*)"] else []
 
-    mock_vector_db.client.query.side_effect = query_side_effect
-    del mock_vector_db.client.query_iterator
+  response = await _list_documents(offset=100)
 
-    monkeypatch.setattr(restapi, "vector_db", mock_vector_db)
-    monkeypatch.setattr(restapi, "check_datasource_access", AsyncMock())
+  assert response.total_documents == response.total_chunks == 17000
+  assert response.documents == []
+  assert response.has_more is False
 
-    resp: DatasourceDocumentsResponse = await restapi.list_datasource_documents(
-      request=MagicMock(),
-      datasource_id="ds1",
-      offset=0,
-      limit=10,
-    )
 
-    # When Milvus total counts fail, it gracefully falls back to chunk/doc counts from results
-    assert resp.total_chunks == 1
-    assert resp.total_documents == 1
-    assert len(resp.documents) == 1
-    assert resp.has_more is False
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["chunks", "documents"])
+async def test_count_failure_returns_error_instead_of_page_totals(vector_db: MagicMock, failure: str) -> None:
+  def query(**kwargs: Any) -> list[dict[str, Any]]:
+    if kwargs["output_fields"] == ["count(*)"]:
+      if failure == "chunks":
+        raise RuntimeError("chunk count failed")
+      return [{"count(*)": 20}]
+    return [{"id": "chunk-1", "document_id": "document-1"}]
+
+  vector_db.client.query.side_effect = query
+  iterator = vector_db.client.query_iterator.return_value
+  if failure == "documents":
+    iterator.next.side_effect = RuntimeError("document count failed")
+
+  with pytest.raises(HTTPException) as error:
+    await _list_documents()
+
+  assert error.value.status_code == 500
+  if failure == "documents":
+    iterator.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_invalid_datasource_skips_all_reads(vector_db: MagicMock) -> None:
+  with pytest.raises(HTTPException) as error:
+    await restapi.list_datasource_documents(request=MagicMock(), datasource_id="primary\n", offset=0, limit=10)
+
+  assert error.value.status_code == 400
+  vector_db.client.query.assert_not_called()
+  vector_db.client.query_iterator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pagination_boundary_rejected_before_reads(vector_db: MagicMock) -> None:
+  with pytest.raises(HTTPException) as error:
+    await _list_documents(offset=16374, limit=10)
+
+  assert error.value.status_code == 400
+  vector_db.client.query.assert_not_called()
+  vector_db.client.query_iterator.assert_not_called()

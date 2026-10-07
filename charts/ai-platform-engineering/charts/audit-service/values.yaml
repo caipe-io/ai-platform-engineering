@@ -8,7 +8,7 @@ replicaCount: 1
 revisionHistoryLimit: 3
 
 image:
-  repository: ghcr.io/cnoe-io/caipe-audit-service
+  repository: ghcr.io/caipe-io/caipe-audit-service
   tag: ""
   pullPolicy: IfNotPresent
 
@@ -32,9 +32,12 @@ storage:
     retentionDays: 1
 
   s3:
+    # bucket/region/endpointUrl fall back to global.storage.s3 when left empty,
+    # so a CAIPE sysadmin can set them once for the whole platform. A value set
+    # here always wins over the global.
     bucket: ""
     prefix: audit
-    region: us-east-1
+    region: ""
     endpointUrl: ""
     # retentionDays: Days before S3 objects expire via a lifecycle rule.
     # 0 means no lifecycle rule is applied (operator manages expiry externally).
@@ -78,6 +81,10 @@ read:
   defaultLimit: 1000
   maxLimit: 10000
   maxDays: 31
+  # -- Maximum simultaneous history scans per process; additional reads return HTTP 503.
+  maxConcurrent: 2
+  # -- History scan deadline in seconds; expired reads return HTTP 504 and stop scheduling storage work.
+  timeoutSeconds: 30
 
 existingSecret: ""
 extraEnv: []
@@ -120,9 +127,8 @@ readinessProbe:
 
 serviceAccount:
   create: true
-  # Keep this true by default so IRSA and other projected-token identity flows
-  # work without extra values.
-  automount: true
+  # IRSA and other workload-identity webhooks inject their own projected token.
+  automount: false
   annotations: {}
   name: ""
 
@@ -153,3 +159,11 @@ affinity: {}
 
 volumes: []
 volumeMounts: []
+
+# PodDisruptionBudget: prevents simultaneous eviction of all replicas during voluntary disruptions.
+# Enable in production; leave disabled for local/single-node environments.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
+  annotations: {}

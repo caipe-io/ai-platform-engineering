@@ -335,7 +335,7 @@ const _inflightRefreshes = new Map<string, Promise<ExchangeResult>>();
 // L2: MongoDB collection `auth_token_cache` — shared across all replicas,
 //     tokens AES-256-GCM encrypted at rest (key derived from NEXTAUTH_SECRET).
 //
-// See: https://github.com/cnoe-io/ai-platform-engineering/issues/1986
+// See: https://github.com/caipe-io/ai-platform-engineering/issues/1986
 import { getStoredTokens, storeTokens, resetTokenStore } from './auth-token-store';
 
 // Claim groups are only needed for in-process authorization checks and are
@@ -872,10 +872,16 @@ export const authOptions: NextAuthOptions = {
   jwt: {
     async encode({ token, secret, maxAge }) {
       if (token?.sub) {
-        await storeTokens(token.sub, {
+        // Token persistence is deliberately best-effort. The L1 cache is
+        // updated synchronously by storeTokens; waiting for a remote MongoDB
+        // write here would block SSR and App Router navigations when the
+        // database is temporarily unavailable.
+        void storeTokens(token.sub, {
           accessToken: token.accessToken as string | undefined,
           refreshToken: token.refreshToken as string | undefined,
           idToken: token.idToken as string | undefined,
+        }).catch((error) => {
+          console.error("[Auth] Failed to persist token metadata:", error);
         });
       }
       const slimToken = { ...(token ?? {}) } as Record<string, unknown>;
@@ -889,7 +895,16 @@ export const authOptions: NextAuthOptions = {
     async decode({ token, secret }) {
       const { decode } = await import("next-auth/jwt");
       const decoded = await decode({ token, secret });
-      if (decoded?.sub) {
+      // Test and short-lived local cookies may already carry the access token.
+      // Avoid an unnecessary MongoDB lookup in that case; production cookies
+      // created by the custom encoder omit these fields and still rehydrate
+      // from the server-side token store as before.
+      if (
+        decoded?.sub &&
+        !decoded.accessToken &&
+        !decoded.refreshToken &&
+        !decoded.idToken
+      ) {
         const stored = await getStoredTokens(decoded.sub);
         if (stored) {
           if (stored.accessToken) decoded.accessToken = stored.accessToken;
@@ -910,7 +925,15 @@ export const authOptions: NextAuthOptions = {
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: process.env.NODE_ENV === 'production',
+        // Mark the session cookie `Secure` only when the site is actually
+        // served over HTTPS. Keying this off NODE_ENV alone breaks local
+        // installs: the prod UI image runs NODE_ENV=production but is browsed
+        // over http://localhost, and browsers silently drop a `Secure` cookie
+        // on plain http — causing an infinite SSO sign-in loop. Prod
+        // deployments set NEXTAUTH_URL to their https URL, so this stays true.
+        secure:
+          process.env.NODE_ENV === 'production' &&
+          (process.env.NEXTAUTH_URL ?? '').startsWith('https://'),
         // Reduce session cookie size by not storing everything in cookie
         maxAge: 24 * 60 * 60, // 24 hours
       },

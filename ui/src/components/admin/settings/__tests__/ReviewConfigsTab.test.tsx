@@ -9,7 +9,7 @@ jest.mock("@/components/ui/toast", () => ({
 const replaceMock = jest.fn();
 let currentSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
-  usePathname: () => "/admin",
+  usePathname: () => "/admin/security/ai-review",
   useRouter: () => ({ replace: replaceMock }),
   useSearchParams: () => currentSearchParams,
 }));
@@ -68,6 +68,18 @@ beforeEach(() => {
         ],
       });
     }
+    if (href === "/api/admin/platform-config") {
+      return jsonResponse({
+        success: true,
+        data: {
+          platform_llm: {
+            id: "global.anthropic.claude-sonnet-4-6",
+            provider: "bedrock",
+          },
+          platform_llm_source: "db",
+        },
+      });
+    }
     if (href.startsWith("/api/review-configs/")) {
       return jsonResponse({
         data: reviewConfig(decodeURIComponent(href.split("/").pop() ?? "agent-system-prompt")),
@@ -83,9 +95,8 @@ it("keeps the AI Review save action in the page header row", async () => {
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/review-configs/agent-system-prompt"));
 
   const header = screen.getByRole("region", { name: "AI Review configurations header" });
-  expect(
-    within(header).getByRole("heading", { name: "AI Review configurations Admin" }),
-  ).toBeInTheDocument();
+  expect(within(header).getByRole("heading", { name: "AI Review configurations" })).toBeInTheDocument();
+  expect(within(header).queryByText("Admin")).not.toBeInTheDocument();
   const save = within(header).getByRole("button", { name: "Save" });
   expect(save).toBeInTheDocument();
 
@@ -113,10 +124,10 @@ it("writes the active target to the subtab URL param", async () => {
   render(<ReviewConfigsTab />);
 
   fireEvent.click(await screen.findByRole("tab", { name: "Skills" }));
-  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=skill-md", { scroll: false });
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin/security/ai-review?subtab=skill-md", { scroll: false });
 
   fireEvent.click(screen.getByRole("tab", { name: "Agents" }));
-  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=agent-system-prompt", { scroll: false });
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin/security/ai-review?subtab=agent-system-prompt", { scroll: false });
 });
 
 it("opens the target named by the subtab URL param on load", async () => {
@@ -125,4 +136,38 @@ it("opens the target named by the subtab URL param on load", async () => {
 
   expect(await screen.findByRole("tab", { name: "Skills" })).toHaveAttribute("aria-selected", "true");
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/review-configs/skill-md"));
+});
+
+it("clears a pinned model with an explicit null so the Platform LLM takes over", async () => {
+  render(<ReviewConfigsTab />);
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith("/api/review-configs/agent-system-prompt"),
+  );
+
+  // Defer this target to the Platform LLM rather than pinning a model.
+  const picker = await screen.findByRole("combobox", { name: "LLM Model" });
+  fireEvent.click(picker);
+  fireEvent.click(await screen.findByRole("option", { name: /Use Platform LLM/i }));
+
+  const header = screen.getByRole("region", { name: "AI Review configurations header" });
+  const save = within(header).getByRole("button", { name: "Save" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+
+  const putCall = await waitFor(() => {
+    const call = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        url === "/api/review-configs/agent-system-prompt" &&
+        (init as RequestInit | undefined)?.method === "PUT",
+    );
+    expect(call).toBeDefined();
+    return call as [string, RequestInit];
+  });
+
+  const payload = JSON.parse(String(putCall[1].body)) as Record<string, unknown>;
+  // `undefined` would be dropped by JSON.stringify and read as "leave it alone",
+  // which silently reverted the picker before this was fixed.
+  expect(payload.model).toBeNull();
+  expect("model" in payload).toBe(true);
 });

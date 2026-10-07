@@ -1,12 +1,20 @@
 import os
 import asyncio
+import inspect
 import time
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, Callable
+from urllib.parse import urlparse
 import aiohttp
+import tenacity
 from common.models.rag import DataSourceInfo, DocumentMetadata, StructuredEntity
-from common.models.server import DocumentIngestRequest, IngestorPingRequest, ExploreDataEntityRequest
+from common.models.server import AuthHeader, DocumentIngestRequest, IngestorPingRequest, ExploreDataEntityRequest
 from common.job_manager import JobStatus, JobInfo
-from common.constants import DEFAULT_RELOAD_INTERVAL, MIN_RELOAD_INTERVAL
+from common.constants import (
+  DATASOURCE_SCHEDULE_CHECK_INTERVAL,
+  MIN_RELOAD_INTERVAL,
+)
 from langchain_core.documents import Document
 import common.utils as utils
 import dotenv
@@ -15,6 +23,37 @@ import dotenv
 dotenv.load_dotenv()
 
 logger = utils.get_logger(__name__)
+
+# A preview's crawl budget is well under 2 minutes; a stalled credential
+# service must fail fast rather than absorb it.
+_CREDENTIAL_SERVICE_TIMEOUT = aiohttp.ClientTimeout(total=15)
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+  """True for a 429 from the RAG server, the only ingest failure this client retries in place."""
+  return isinstance(exc, aiohttp.ClientResponseError) and exc.status == 429
+
+
+_exponential_backoff = tenacity.wait_exponential(multiplier=1, min=1, max=30)
+
+
+def _wait_for_retry_after(retry_state: tenacity.RetryCallState) -> float:
+  """Honor the server's Retry-After on a 429 (seconds or an HTTP-date, capped at 60), else fall back to exponential backoff."""
+  exc = retry_state.outcome.exception() if retry_state.outcome else None
+  retry_after = (getattr(exc, "headers", None) or {}).get("Retry-After", "")
+  if retry_after.isascii() and retry_after.isdigit():
+    return min(float(retry_after), 60.0)
+  if retry_after:
+    try:
+      target = parsedate_to_datetime(retry_after)
+      if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+      delay = (target - datetime.now(timezone.utc)).total_seconds()
+    except (TypeError, ValueError):
+      delay = None
+    if delay is not None and delay > 0:
+      return min(delay, 60.0)
+  return _exponential_backoff(retry_state)
 
 
 class Client:
@@ -48,6 +87,13 @@ class Client:
     self.oidc_discovery_url = os.getenv("INGESTOR_OIDC_DISCOVERY_URL")
     # Scope is optional - if not set, don't send any scope (many providers don't need it for client credentials)
     self.oidc_scope = os.getenv("INGESTOR_OIDC_SCOPE", "")
+
+    # Credential service, used to resolve request headers that reference a stored
+    # credential. Derived from the platform API base so a deployment only has to
+    # say where CAIPE is; CREDENTIAL_API_URL overrides it for a split deployment.
+    caipe_api_url = os.getenv("CAIPE_API_URL", "").rstrip("/")
+    self.credential_api_url = os.getenv("CREDENTIAL_API_URL", "") or (f"{caipe_api_url}/api/credentials" if caipe_api_url else "")
+    self.credential_service_audience = os.getenv("CREDENTIAL_SERVICE_AUDIENCE", "caipe-credential-service")
 
     # Token cache
     self._access_token: Optional[str] = None
@@ -163,18 +209,24 @@ class Client:
         logger.warning(f"Ingestor '{self.ingestor_name}': Discovery from issuer failed: {e}")
         discovery_attempts.append(f"Constructed from issuer ({constructed_url}): {e}")
 
-        # All attempts failed
-        error_msg = "All OIDC discovery attempts failed:\n" + "\n".join(f"  - {attempt}" for attempt in discovery_attempts)
+    # All attempts failed. Build this outside the issuer branch because a
+    # discovery-URL-only deployment is valid (and is the default Helm wiring).
+    error_msg = "All OIDC discovery attempts failed:\n" + "\n".join(
+      f"  - {attempt}" for attempt in discovery_attempts
+    )
     logger.error(f"Ingestor '{self.ingestor_name}': {error_msg}")
 
     # Try Keycloak-style fallback if we have an issuer
     if self.oidc_issuer:
       logger.warning(f"Ingestor '{self.ingestor_name}': Using Keycloak-style fallback endpoint")
       issuer = self.oidc_issuer.rstrip("/")
-      self._token_endpoint = f"{issuer}/protocol/openid-connect/token"
-      return self._token_endpoint
+      # Do not cache a guessed endpoint. A transient startup/DNS failure must
+      # allow the next initialize retry to run discovery again; otherwise the
+      # client can remain pinned to an unreachable browser-facing issuer such
+      # as localhost even after the in-network provider becomes available.
+      return f"{issuer}/protocol/openid-connect/token"
 
-    raise Exception(f"OIDC discovery failed and no issuer available for fallback. {error_msg}")
+    raise RuntimeError(f"OIDC discovery failed and no issuer available for fallback. {error_msg}")
 
   async def _fetch_discovery(self, discovery_url: str) -> str:
     """
@@ -270,6 +322,71 @@ class Client:
     except Exception as e:
       logger.error(f"Ingestor '{self.ingestor_name}': ✗ Unexpected error fetching OAuth2 access token: {e}")
       raise
+
+  async def retrieve_secret(self, secret_ref: str, *, intended_use: str = "internal_service") -> str:
+    """
+    Resolve a credential store reference to its current value.
+
+    The credential service authorizes against this ingestor's own identity, so
+    the datasource owner must have granted it access to the referenced secret.
+    """
+    if not self.credential_api_url:
+      raise RuntimeError("CAIPE_API_URL (or CREDENTIAL_API_URL) must be configured to ingest sources that use stored credentials")
+
+    token = await self._get_access_token()
+    url = f"{self.credential_api_url.rstrip('/')}/retrieve"
+    headers = {
+      "Authorization": f"Bearer {token}",
+      "x-caipe-credential-caller": "internal_service",
+      "x-caipe-credential-audience": self.credential_service_audience,
+      "Content-Type": "application/json",
+    }
+
+    async with aiohttp.ClientSession(timeout=_CREDENTIAL_SERVICE_TIMEOUT) as session:
+      async with session.post(url, json={"secret_ref": secret_ref, "intended_use": intended_use}, headers=headers) as resp:
+        if resp.status in (401, 403):
+          raise PermissionError(f"Ingestor '{self.ingestor_name}' is not authorized to use credential '{secret_ref}'. Grant it access from the credential's sharing settings.")
+        resp.raise_for_status()
+        payload = await resp.json()
+
+    data = payload.get("data", payload)
+    credential = data.get("credential")
+    if not isinstance(credential, str) or not credential:
+      raise ValueError(f"Credential service returned no value for '{secret_ref}'")
+    return credential
+
+  async def resolve_auth_headers(self, url: str, auth_headers: Optional[List[AuthHeader]]) -> tuple[Dict[str, str], List[str]]:
+    """
+    Render configured request headers into concrete values.
+
+    Static headers pass through untouched; only those referencing a credential
+    reach the credential service. Returns the header map alongside the credential
+    references used, which are safe to log and let a failed crawl name the
+    credential without exposing its value.
+
+    Refuses to render any header for a non-HTTPS URL: the header goes out on
+    the crawl's very first request, not just on a redirect hop, so a plain-HTTP
+    target would put it on the wire in cleartext by design, not by accident.
+    """
+    if not auth_headers:
+      return {}, []
+
+    if urlparse(url).scheme.lower() != "https":
+      raise ValueError(f"Refusing to send configured request headers over a non-HTTPS URL: {url}")
+
+    rendered: Dict[str, str] = {}
+    labels: List[str] = []
+    for header in auth_headers:
+      if header.secret_ref:
+        rendered[header.header_name] = header.render(await self.retrieve_secret(header.secret_ref))
+        labels.append(header.secret_ref)
+      else:
+        rendered[header.header_name] = header.render()
+
+    if labels:
+      logger.info(f"Resolved {len(labels)} header(s) from credential(s): {', '.join(labels)}")
+    logger.info(f"Applying {len(rendered)} request header(s) to this crawl")
+    return rendered, labels
 
   async def _get_auth_headers(self) -> Dict[str, str]:
     """
@@ -435,6 +552,23 @@ class Client:
     # Fallback: Just the entity type
     return f"Structured Entity {entity.entity_type}"
 
+  @tenacity.retry(
+    retry=tenacity.retry_if_exception(_is_rate_limited),
+    wait=_wait_for_retry_after,
+    stop=tenacity.stop_after_attempt(5),
+    reraise=True,
+  )
+  async def _post_ingest_request(self, ingest_request: DocumentIngestRequest) -> Dict[str, Any]:
+    """
+    POST a single ingest request, retrying with exponential backoff on a 429 from the RAG server.
+    """
+    headers = await self._get_auth_headers()
+
+    async with aiohttp.ClientSession() as session:
+      async with session.post(url=f"{self.server_addr}/v1/ingest", headers=headers, json=ingest_request.model_dump()) as resp:
+        resp.raise_for_status()
+        return await resp.json()
+
   async def _ingest_documents_batch(self, job_id: str, datasource_id: str, documents: List[Document], fresh_until: int) -> Dict[str, Any]:
     """
     Internal method to ingest a single batch of documents
@@ -449,12 +583,17 @@ class Client:
     # Create DocumentIngestRequest using Pydantic model
     ingest_request = DocumentIngestRequest(datasource_id=datasource_id, job_id=job_id, ingestor_id=self.ingestor_id, documents=documents, fresh_until=fresh_until)
 
-    headers = await self._get_auth_headers()
-
-    async with aiohttp.ClientSession() as session:
-      async with session.post(url=f"{self.server_addr}/v1/ingest", headers=headers, json=ingest_request.model_dump()) as resp:
-        resp.raise_for_status()
-        return await resp.json()
+    try:
+      return await self._post_ingest_request(ingest_request)
+    except aiohttp.ClientResponseError as e:
+      # 413: the server rejected this batch as too large. Split it and retry as two
+      # smaller batches instead of aborting the whole ingestion job.
+      if e.status == 413 and len(documents) > 1:
+        logger.warning(f"Ingestor '{self.ingestor_name}': server rejected a {len(documents)}-document batch (413), retrying as two smaller batches")
+        mid = len(documents) // 2
+        await self._ingest_documents_batch(job_id, datasource_id, documents[:mid], fresh_until)
+        return await self._ingest_documents_batch(job_id, datasource_id, documents[mid:], fresh_until)
+      raise
 
   async def list_datasources(self, ingestor_id: Optional[str] = None) -> List[DataSourceInfo]:
     """
@@ -667,6 +806,8 @@ class IngestorBuilder:
     self._sync_function: Optional[Callable] = None
     self._startup_function: Optional[Callable] = None
     self._sync_interval = 0  # User-specified sync interval (how often data should be refreshed)
+    self._datasource_scheduled = False
+    self._schedule_check_only = False
     self._init_delay = 0  # Optional init delay
     self._last_sync_time: Optional[int] = None  # Track last sync completion time
 
@@ -704,6 +845,22 @@ class IngestorBuilder:
     """
     self._sync_interval = seconds
     return self
+
+  def schedule_from_datasources(self) -> "IngestorBuilder":
+    """Schedule reloads from each datasource's persisted reload interval.
+
+    The worker periodically re-reads datasource records so sources created or
+    edited through the application are discovered without a deployment-level
+    refresh interval.
+    """
+    self._datasource_scheduled = True
+    return self
+
+  def _schedule_fallback_interval(self) -> int:
+    """Return the retry interval when datasource scheduling is unavailable."""
+    if self._datasource_scheduled:
+      return DATASOURCE_SCHEDULE_CHECK_INTERVAL
+    return self._sync_interval
 
   def with_init_delay(self, seconds: int) -> "IngestorBuilder":
     """Set an optional initialization delay in seconds before starting sync"""
@@ -749,11 +906,17 @@ class IngestorBuilder:
     Returns:
         tuple[int, bool]: (seconds to sleep, has_datasources)
     """
+    self._schedule_check_only = False
     try:
       current_time = int(time.time())
 
       # Fetch all datasources for this ingestor
       datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
+
+      if self._datasource_scheduled and self._last_sync_time is None:
+        # Run once at worker startup so persisted sources perform their own due
+        # checks without waiting for the fallback interval.
+        return (0, bool(datasources))
 
       if not datasources:
         # No datasources yet - base scheduling on last sync time
@@ -762,9 +925,21 @@ class IngestorBuilder:
           logger.debug("No datasources found and never synced before, needs immediate sync")
           return (0, False)
 
+        if self._datasource_scheduled:
+          # Sources arrive through the command listener and create their
+          # datasource record, so an empty worker only needs to re-read
+          # schedule metadata.
+          self._schedule_check_only = True
+          logger.info(
+            "No datasources found, checking schedule metadata again in "
+            f"{DATASOURCE_SCHEDULE_CHECK_INTERVAL}s"
+          )
+          return (DATASOURCE_SCHEDULE_CHECK_INTERVAL, False)
+
         # Calculate time until next sync based on last sync time
         time_since_last_sync = current_time - self._last_sync_time
-        time_until_next_sync = self._sync_interval - time_since_last_sync
+        fallback_interval = self._schedule_fallback_interval()
+        time_until_next_sync = fallback_interval - time_since_last_sync
 
         if time_until_next_sync <= 0:
           # Overdue for next sync
@@ -772,11 +947,11 @@ class IngestorBuilder:
           return (0, False)
 
         # Schedule next sync based on interval
-        logger.info(f"No datasources found, next sync in {time_until_next_sync}s based on last sync time")
+        logger.info(f"No datasources found, checking again in {time_until_next_sync}s")
         return (int(time_until_next_sync), False)
 
       # Find the earliest datasource that will need reloading
-      min_time_until_reload = DEFAULT_RELOAD_INTERVAL
+      min_time_until_reload: int | None = None
 
       for ds in datasources:
         if ds.last_updated is None:
@@ -799,21 +974,39 @@ class IngestorBuilder:
           return (0, True)
 
         # Track the earliest reload time
-        if time_until_reload < min_time_until_reload:
+        if min_time_until_reload is None or time_until_reload < min_time_until_reload:
           min_time_until_reload = time_until_reload
           logger.debug(f"Datasource {ds.datasource_id} will need reload in {time_until_reload}s (interval: {ds_reload_interval}s)")
 
-      # Add a small minimum to avoid too-frequent checks (e.g., 1 minute)
-      MIN_SLEEP_TIME = 60  # 1 minute minimum
-      sleep_time = max(MIN_SLEEP_TIME, int(min_time_until_reload))
-
-      logger.info(f"Next sync in {sleep_time}s ({sleep_time / 3600:.1f}h) based on datasource schedules")
+      assert min_time_until_reload is not None
+      if (
+        self._datasource_scheduled
+        and min_time_until_reload > DATASOURCE_SCHEDULE_CHECK_INTERVAL
+      ):
+        # Only re-read metadata at this wake-up. Connector work remains asleep
+        # until a datasource is actually due.
+        self._schedule_check_only = True
+        sleep_time = DATASOURCE_SCHEDULE_CHECK_INTERVAL
+        logger.info(
+          f"Next datasource schedule check in {sleep_time}s; earliest refresh "
+          f"is due in {int(min_time_until_reload)}s"
+        )
+      else:
+        minimum_sleep = 1 if self._datasource_scheduled else MIN_RELOAD_INTERVAL
+        sleep_time = max(minimum_sleep, int(min_time_until_reload))
+        logger.info(
+          f"Next datasource refresh in {sleep_time}s "
+          f"({sleep_time / 3600:.1f}h)"
+        )
       return (sleep_time, True)
 
     except Exception as e:
-      # If we can't calculate, fall back to sync interval
-      logger.warning(f"Error calculating next sync time: {e}, using full sync_interval")
-      return (self._sync_interval, False)
+      fallback_interval = self._schedule_fallback_interval()
+      self._schedule_check_only = self._datasource_scheduled
+      logger.warning(
+        f"Error calculating next sync time: {e}, retrying in {fallback_interval}s"
+      )
+      return (fallback_interval, False)
 
   async def _run_ingestor(self):
     """Internal method to run the ingestor with proper async handling"""
@@ -827,26 +1020,45 @@ class IngestorBuilder:
     # Check if we should exit after first sync (for debugging and job mode)
     exit_after_first_sync = os.getenv("EXIT_AFTER_FIRST_SYNC", "false").lower() in ("true", "1", "yes")
 
-    logger.info(f"Starting ingestor: {self._name} (type: {self._type}, sync_interval: {self._sync_interval}s, init_delay: {self._init_delay}s, exit_after_first_sync: {exit_after_first_sync})")
+    schedule_mode = "datasource" if self._datasource_scheduled else "fixed"
+    logger.info(f"Starting ingestor: {self._name} (type: {self._type}, schedule: {schedule_mode}, sync_interval: {self._sync_interval}s, init_delay: {self._init_delay}s, exit_after_first_sync: {exit_after_first_sync})")
 
     # Create and initialize RAG client
     client = Client(self._name, self._type, self._description, self._metadata)
-    startup_task = None  # declared here so the finally block can always reference it
+    startup_task: asyncio.Task | None = None
+
+    async def ensure_startup_running() -> None:
+      if not startup_task or not startup_task.done():
+        return
+      try:
+        await startup_task
+      except asyncio.CancelledError:
+        raise RuntimeError("Ingestor startup task was cancelled unexpectedly") from None
+      raise RuntimeError("Ingestor startup task exited unexpectedly")
+
+    async def sleep_while_monitoring_startup(seconds: int) -> None:
+      if not startup_task:
+        await asyncio.sleep(seconds)
+        return
+      sleeper = asyncio.create_task(asyncio.sleep(seconds))
+      done, _ = await asyncio.wait(
+        {startup_task, sleeper},
+        return_when=asyncio.FIRST_COMPLETED,
+      )
+      if startup_task in done:
+        sleeper.cancel()
+        await asyncio.gather(sleeper, return_exceptions=True)
+        await ensure_startup_running()
 
     try:
       # Initialize client
       await client.initialize()
       logger.info(f"RAG client initialized: {self._name} ({self._type})")
 
-      # Optional initialization delay
-      if self._init_delay > 0:
-        logger.info(f"Waiting {self._init_delay} seconds before starting sync...")
-        await asyncio.sleep(self._init_delay)
-
       # Start optional startup function concurrently (e.g., server)
       if self._startup_function:
         logger.info("Starting user-provided startup function...")
-        if asyncio.iscoroutinefunction(self._startup_function):
+        if inspect.iscoroutinefunction(self._startup_function):
           startup_task = asyncio.create_task(self._startup_function(client))
         else:
           # Run sync function in executor to avoid blocking
@@ -860,12 +1072,20 @@ class IngestorBuilder:
           startup_task = asyncio.create_task(_run_sync_startup())
         logger.info("Startup function running concurrently")
 
-      if self._sync_interval <= 0:
+      # Delay only the periodic/env-driven synchronization. Long-lived
+      # startup services (including the shared on-demand command listener)
+      # start immediately so a UI-created source is ingested without waiting
+      # through SLACK/JIRA/WEBEX init delays.
+      if self._init_delay > 0:
+        logger.info(f"Waiting {self._init_delay} seconds before starting sync...")
+        await sleep_while_monitoring_startup(self._init_delay)
+
+      if self._sync_interval <= 0 and not self._datasource_scheduled:
         # Single run mode
         logger.info("Running single sync cycle...")
 
         # Call user's sync function with client (original signature)
-        if asyncio.iscoroutinefunction(self._sync_function):
+        if inspect.iscoroutinefunction(self._sync_function):
           await self._sync_function(client)
         else:
           self._sync_function(client)
@@ -877,6 +1097,7 @@ class IngestorBuilder:
       else:
         # Periodic mode with smart scheduling based on datasource timestamps
         while True:
+          await ensure_startup_running()
           # Calculate when next sync should happen based on datasource timestamps
           sleep_time, has_datasources = await self._calculate_next_sync_time(client)
 
@@ -890,21 +1111,30 @@ class IngestorBuilder:
           # Enforce minimum sleep to prevent tight loops from misconfiguration
           MIN_LOOP_SLEEP = 600  # 10 minute floor
           if sleep_time > 0:
-            # No datasources need syncing yet, sleep until next one is due
-            logger.info(f"Sleeping for {sleep_time}s before next sync")
-            await asyncio.sleep(sleep_time)
+            if self._schedule_check_only:
+              logger.info(
+                f"Sleeping for {sleep_time}s before rechecking datasource schedules"
+              )
+            else:
+              logger.info(f"Sleeping for {sleep_time}s before next sync")
+            await sleep_while_monitoring_startup(sleep_time)
+            if self._schedule_check_only:
+              continue
           elif self._last_sync_time is not None:
             time_since_last_sync = int(time.time()) - self._last_sync_time
-            if time_since_last_sync < MIN_LOOP_SLEEP:
-              backoff = MIN_LOOP_SLEEP - time_since_last_sync
+            minimum_loop_sleep = (
+              MIN_RELOAD_INTERVAL if self._datasource_scheduled else MIN_LOOP_SLEEP
+            )
+            if time_since_last_sync < minimum_loop_sleep:
+              backoff = minimum_loop_sleep - time_since_last_sync
               logger.warning(f"Sync returned sleep_time=0 but last sync was only {time_since_last_sync}s ago, backing off {backoff}s to prevent tight loop")
-              await asyncio.sleep(backoff)
+              await sleep_while_monitoring_startup(backoff)
 
           # Now run the sync (either immediately if overdue, or after sleeping)
           logger.info("Running sync cycle...")
 
           # Call user's sync function (original signature - no changes needed!)
-          if asyncio.iscoroutinefunction(self._sync_function):
+          if inspect.iscoroutinefunction(self._sync_function):
             await self._sync_function(client)
           else:
             self._sync_function(client)

@@ -3,13 +3,14 @@
 import { NextRequest } from "next/server";
 
 const mockCallWebexBotAdmin = jest.fn();
+const mockRequireResourcePermission = jest.fn();
+const mockActiveConnectorPublicationRequestsByItemId = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => ({
   getAuthFromBearerOrSession: jest.fn(async () => ({
     user: { email: "admin@example.com" },
-    session: { user: { email: "admin@example.com" } },
+    session: { sub: "admin-sub", user: { email: "admin@example.com" } },
   })),
-  requireRbacPermission: jest.fn(async () => undefined),
   successResponse: (data: unknown) => Response.json({ success: true, data }),
   withErrorHandler: (handler: (request: NextRequest) => Promise<Response>) => handler,
   ApiError: class ApiError extends Error {
@@ -22,12 +23,40 @@ jest.mock("@/lib/api-middleware", () => ({
   },
 }));
 
+jest.mock("@/lib/rbac/resource-authz", () => ({
+  requireResourcePermission: (...args: unknown[]) =>
+    mockRequireResourcePermission(...args),
+}));
+
 jest.mock("@/lib/webex-bot-admin", () => ({
   callWebexBotAdmin: (...args: unknown[]) => mockCallWebexBotAdmin(...args),
 }));
 
 jest.mock("@/lib/rbac/discovery-cache-config", () => ({
   getDiscoveryCacheTtlMs: jest.fn(async () => 3_600_000),
+}));
+
+jest.mock("@/lib/publication-approval.server", () => ({
+  activeConnectorPublicationRequestsByItemId: (...args: unknown[]) =>
+    mockActiveConnectorPublicationRequestsByItemId(...args),
+  publicationActorFromSession: (session: { sub?: string }) => ({
+    subject: session.sub ?? "",
+  }),
+  connectorPublicationRequestView: (
+    request: Record<string, unknown>,
+    actor: { subject: string },
+  ) => ({
+    id: request._id,
+    status: request.status,
+    requester: request.requester,
+    requester_is_viewer:
+      (request.requester as { subject: string }).subject === actor.subject,
+    team_slug: "team-primary",
+    agent_id: "agent-primary",
+    bot_id: "primary",
+    approver_team_slugs: ["reviewers"],
+    approver_user_subjects: [],
+  }),
 }));
 
 const bots = [
@@ -51,6 +80,8 @@ function runtimeSnapshot(botId: string, spaces: Array<Record<string, unknown>>) 
 describe("GET /api/admin/webex/available-spaces", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRequireResourcePermission.mockResolvedValue(undefined);
+    mockActiveConnectorPublicationRequestsByItemId.mockResolvedValue(new Map());
     mockCallWebexBotAdmin.mockImplementation(async (path: string) => {
       if (path === "/admin/webex/bots") return { bots };
       if (path === "/admin/webex/bots/primary/spaces") {
@@ -66,6 +97,18 @@ describe("GET /api/admin/webex/available-spaces", () => {
       }
       throw new Error(`Unexpected path: ${path}`);
     });
+  });
+
+  it("uses baseline Webex-surface read access for self-service discovery", async () => {
+    const { GET } = await import("../available-spaces/route");
+
+    await GET(new NextRequest("http://localhost/api/admin/webex/available-spaces"));
+
+    expect(mockRequireResourcePermission).toHaveBeenCalledWith(
+      { sub: "admin-sub", user: { email: "admin@example.com" } },
+      { type: "admin_surface", id: "webex", action: "read" },
+      { bypassForOrgAdmin: true },
+    );
   });
 
   it("asks the runtime to discover spaces for the selected bot", async () => {

@@ -2,7 +2,7 @@
 
 The Ontology Agent automatically discovers and validates relationships between entity types in the knowledge graph. Instead of manually defining schemas, the agent uses fuzzy matching and LLM evaluation to identify meaningful relationships.
 
-For configuration, implementation details, and the full architecture, see the [Ontology Agent README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/agent_ontology/README.md).
+For configuration, implementation details, and the full architecture, see the [Ontology Agent README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/agent_ontology/README.md).
 
 ## Why Automatic Ontology Discovery?
 
@@ -146,5 +146,5 @@ Each processing run creates a new version (UUID). This enables:
 
 ## Further Reading
 
-- [Ontology Agent README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/agent_ontology/README.md) - Configuration and architecture details
+- [Ontology Agent README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/agent_ontology/README.md) - Configuration and architecture details
 - [Architecture Overview](architecture.md) - System-level architecture

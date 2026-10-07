@@ -90,8 +90,38 @@ function resolveTimeRange(searchParams: URLSearchParams): {
   return { since, until, windowLabel: windowKey };
 }
 
-function increment(map: Map<string, number>, key: string | undefined): void {
-  map.set(key ?? "UNKNOWN", (map.get(key ?? "UNKNOWN") ?? 0) + 1);
+function increment(map: Map<string, number>, key: string | undefined, by = 1): void {
+  map.set(key ?? "UNKNOWN", (map.get(key ?? "UNKNOWN") ?? 0) + by);
+}
+
+/**
+ * Decisions per row. Routine allows are aggregated into periodic rollup rows
+ * carrying `count` (see lib/authz/audit.ts), so a row is not always one
+ * decision; denials are never aggregated and always carry no `count`.
+ */
+function decisionCount(row: Record<string, unknown>): number {
+  return typeof row.count === "number" && Number.isFinite(row.count) && row.count > 0 ? row.count : 1;
+}
+
+function numericField(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Denial reason → count for a bulk-evaluation row. Falls back to the row's own
+ * `reason_code` when the breakdown is absent, so the denials still land under a
+ * real reason rather than vanishing from `byReason`.
+ */
+function batchDeniedReasons(row: Record<string, unknown>): Record<string, number> {
+  const reasons = row.denied_reasons;
+  if (reasons && typeof reasons === "object" && !Array.isArray(reasons)) {
+    const entries = Object.entries(reasons as Record<string, unknown>)
+      .map(([key, value]) => [key, numericField(value)] as const)
+      .filter(([, value]) => value > 0);
+    if (entries.length > 0) return Object.fromEntries(entries);
+  }
+  const fallback = typeof row.reason_code === "string" ? row.reason_code : "NO_CAPABILITY";
+  return { [fallback]: numericField(row.denied_count) };
 }
 
 function topCounts(map: Map<string, number>, label: "reason" | "resource"): Record<string, string | number>[] {
@@ -136,18 +166,45 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   for (const row of rows) {
     const outcome = row.outcome;
     const reason = typeof row.reason_code === "string" ? row.reason_code : undefined;
-    if (outcome === "allow") allow += 1;
+
+    // A bulk evaluation or a list-objects lookup carries both sides of one
+    // filter/lookup, so read its own tallies instead of attributing the whole
+    // row to `outcome`. Counting a filter over N resources as a single
+    // decision — or worse, as N policy denials — is what made the deny rate
+    // meaningless. Both row shapes use the same evaluated/allowed/denied
+    // fields; only how they were computed (per-candidate check vs. one
+    // reverse lookup) differs.
+    if (row.batch === true || row.list_objects === true) {
+      const allowedCount = numericField(row.allowed_count);
+      const deniedCount = numericField(row.denied_count);
+      allow += allowedCount;
+      deny += deniedCount;
+      if (allowedCount > 0) increment(byReason, "OK", allowedCount);
+      if (deniedCount > 0) {
+        for (const [deniedReason, reasonCount] of Object.entries(batchDeniedReasons(row))) {
+          increment(byReason, deniedReason, reasonCount);
+          if (deniedReason === "AUTHZ_UNAVAILABLE") unavailable += reasonCount;
+        }
+      }
+      // Deliberately not in `topDenied`: a filter's resource_ref is the
+      // collection (`agent:*`), so it would crowd out the real per-resource
+      // denials that surface an actual access problem.
+      continue;
+    }
+
+    const count = decisionCount(row);
+    if (outcome === "allow") allow += count;
     if (outcome === "deny") {
-      deny += 1;
+      deny += count;
       if (reason !== "AUTHZ_UNAVAILABLE") {
-        increment(topDenied, typeof row.resource_ref === "string" ? row.resource_ref : undefined);
+        increment(topDenied, typeof row.resource_ref === "string" ? row.resource_ref : undefined, count);
       }
     }
-    if (reason === "AUTHZ_UNAVAILABLE") unavailable += 1;
-    increment(byReason, reason);
+    if (reason === "AUTHZ_UNAVAILABLE") unavailable += count;
+    increment(byReason, reason, count);
   }
 
-  const total = rows.length;
+  const total = allow + deny;
   const policyDeny = Math.max(0, deny - unavailable);
 
   return NextResponse.json(

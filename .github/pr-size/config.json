@@ -1,0 +1,24 @@
+{
+  "labelPrefix": "size/",
+  "buckets": [
+    { "name": "size/XS", "min": 0, "color": "009900", "description": "Changes 0-9 lines, generated files excluded." },
+    { "name": "size/S", "min": 10, "color": "77bb00", "description": "Changes 10-29 lines, generated files excluded." },
+    { "name": "size/M", "min": 30, "color": "eebb00", "description": "Changes 30-99 lines, generated files excluded." },
+    { "name": "size/L", "min": 100, "color": "ee9900", "description": "Changes 100-499 lines, generated files excluded." },
+    { "name": "size/XL", "min": 500, "color": "ee5500", "description": "Changes 500-999 lines, generated files excluded." },
+    { "name": "size/XXL", "min": 1000, "color": "ee0000", "description": "Changes 1000+ lines, generated files excluded." }
+  ],
+  "generated": [
+    "**/package-lock.json",
+    "**/yarn.lock",
+    "**/pnpm-lock.yaml",
+    "**/uv.lock",
+    "**/poetry.lock",
+    "**/Chart.lock",
+    "charts/*/README.md",
+    "charts/*/charts/*/README.md",
+    "docs/docs/installation/helm-charts/*/*.md",
+    "**/__snapshots__/**",
+    "**/*.snap"
+  ]
+}

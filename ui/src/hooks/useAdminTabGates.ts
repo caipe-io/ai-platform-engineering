@@ -26,6 +26,7 @@ const EMPTY_GATES: AdminTabGatesMap = {
   action_audit: false,
   openfga: false,
   migrations: false,
+  approvals: false,
   service_accounts: false,
 };
 

@@ -39,6 +39,16 @@ export interface Conversation {
     team_permissions?: Record<string, "view" | "comment">;
     share_link_enabled?: boolean;
   };
+  /**
+   * Origin of the conversation. 'autonomous' is set when a scheduled task run
+   * is surfaced as a chat conversation, while 'api' identifies direct API
+   * callers such as CLI skills. Undefined = legacy / human chat.
+   */
+  source?: 'web' | 'slack' | 'autonomous' | 'api';
+  /** Autonomous task identifier (only when source === 'autonomous') */
+  task_id?: string;
+  /** Autonomous run identifier (only when source === 'autonomous') */
+  run_id?: string;
   /** Server-side metadata for integrations such as scheduled runs. */
   metadata?: Record<string, unknown>;
 }
@@ -104,6 +114,12 @@ export interface ChatMessage {
   rawStreamContent?: string;
   /** Task ID from the backend — used for crash recovery (tasks/get polling) */
   taskId?: string;
+  /** Autonomous run represented by this persisted task-history message. */
+  autonomousRunId?: string;
+  /** Autonomous publisher message kind (for example, run_response). */
+  autonomousMessageKind?: string;
+  /** Isolated backend context used to continue this exact autonomous run. */
+  autonomousExecutionContextId?: string;
   /** True when streaming was interrupted by a crash/reload before completion */
   isInterrupted?: boolean;
   /**

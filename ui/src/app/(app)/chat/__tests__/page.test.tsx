@@ -175,6 +175,26 @@ describe("Chat Redirect Page", () => {
     expect(mockLoadConversationsFromServer).not.toHaveBeenCalled();
   });
 
+  it("does not start a second redirect while conversation loading is in progress", async () => {
+    let finishLoading: (() => void) | undefined;
+    mockLoadConversationsFromServer.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        finishLoading = resolve;
+      }),
+    );
+
+    const { rerender } = render(<Chat />);
+    await waitFor(() => expect(mockLoadConversationsFromServer).toHaveBeenCalledTimes(1));
+
+    mockSessionStatus = "unauthenticated";
+    rerender(<Chat />);
+    expect(mockLoadConversationsFromServer).toHaveBeenCalledTimes(1);
+
+    finishLoading?.();
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/chat/new-conv-id"));
+    expect(mockCreateConversation).toHaveBeenCalledTimes(1);
+  });
+
   it("does not create a new conversation when owned conversations already exist", async () => {
     mockConversations = [
       {

@@ -282,6 +282,15 @@ Once the server is running, view interactive API docs:
 - **Swagger UI**: http://localhost:9446/docs
 - **ReDoc**: http://localhost:9446/redoc
 
+### Metadata searches and document totals
+
+- An empty query with filters performs a scalar Milvus query without generating embeddings.
+- `GET /v1/datasource/{datasource_id}/documents` paginates chunks; `total_chunks` and
+  `total_documents` cover all matching records, regardless of `offset` and `limit`.
+- The page and totals use the same datasource permissions and document ACL filters.
+- Document totals stream distinct IDs beyond Milvus's query window. Count failures
+  return HTTP 500 instead of substituting page counts.
+
 ## MCP Tools
 
 The server exposes MCP (Model Context Protocol) tools for AI agents at `/mcp/*` endpoints.
@@ -301,12 +310,12 @@ The server is available in two image variants:
 
 **Pull the default image:**
 ```bash
-docker pull ghcr.io/cnoe-io/caipe-rag-server:latest
+docker pull ghcr.io/caipe-io/caipe-rag-server:latest
 ```
 
 **Pull the HuggingFace variant (if using local embeddings):**
 ```bash
-docker pull ghcr.io/cnoe-io/caipe-rag-server:latest-hf
+docker pull ghcr.io/caipe-io/caipe-rag-server:latest-hf
 ```
 
 Build the server image locally:
@@ -456,4 +465,3 @@ uv run pytest
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - Detailed architecture documentation
 - [Common Models](../common/README.md) - Shared data models
 - [Ingestors](../ingestors/README.md) - Building custom ingestors
-

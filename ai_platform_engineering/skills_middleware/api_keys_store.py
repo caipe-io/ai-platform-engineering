@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """MongoDB-backed catalog API keys (hashed secrets only) for FR-018 / T046.
 

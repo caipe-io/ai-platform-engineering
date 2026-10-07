@@ -21,7 +21,7 @@ Loader2,
 Pencil,
 X,
 } from "lucide-react";
-import Link from "next/link";
+import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import React,{ useCallback,useEffect,useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -280,7 +280,7 @@ export function SkillFolderViewer({
                   for editable skills, and visually distinct from the
                   read-only previewer chrome. */}
               {showEditLink && editHref && (
-                <Link
+                <NavigationProgressLink
                   href={editHref}
                   onClick={() => onOpenChange(false)}
                   className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold bg-primary text-primary-foreground shadow-sm shadow-primary/20 hover:bg-primary/90 transition-colors"
@@ -289,7 +289,7 @@ export function SkillFolderViewer({
                 >
                   <Pencil className="h-3.5 w-3.5" />
                   Open in editor
-                </Link>
+                </NavigationProgressLink>
               )}
             </div>
           </div>

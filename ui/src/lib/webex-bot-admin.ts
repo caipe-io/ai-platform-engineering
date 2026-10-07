@@ -18,7 +18,7 @@ function assertAllowedAdminPath(path: string): string {
 }
 
 function webexBotAdminBaseUrl(): string {
-  return (process.env.WEBEX_BOT_ADMIN_URL || "http://ai-platform-engineering-webex-bot:3002").replace(
+  return (process.env.WEBEX_BOT_ADMIN_URL || "http://webex-bot:3002").replace(
     /\/$/,
     ""
   );
@@ -34,7 +34,7 @@ function webexBotAdminTokenUrl(): string {
   return `${issuer}/protocol/openid-connect/token`;
 }
 
-async function getWebexBotAdminToken(): Promise<string> {
+async function getWebexBotAdminToken(signal?: AbortSignal): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   if (tokenCache && tokenCache.expiresAt > now + 30) {
     return tokenCache.accessToken;
@@ -67,6 +67,7 @@ async function getWebexBotAdminToken(): Promise<string> {
 
   const response = await fetch(webexBotAdminTokenUrl(), {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
@@ -90,10 +91,11 @@ export async function callWebexBotAdmin<T>(
     method?: "GET" | "POST";
     body?: unknown;
     query?: Record<string, string | number | boolean | undefined>;
+    signal?: AbortSignal;
   } = {}
 ): Promise<T> {
   const safePath = assertAllowedAdminPath(path);
-  const token = await getWebexBotAdminToken();
+  const token = await getWebexBotAdminToken(options.signal);
   const method = options.method ?? "GET";
   const url = new URL(`${webexBotAdminBaseUrl()}${safePath}`);
   for (const [key, value] of Object.entries(options.query ?? {})) {
@@ -101,6 +103,7 @@ export async function callWebexBotAdmin<T>(
   }
   const response = await fetch(url, {
     method,
+    signal: options.signal,
     headers: {
       Authorization: `Bearer ${token}`,
       ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),

@@ -22,6 +22,7 @@
     "netutils",
     "pagerduty",
     "scheduler",
+    "sharepoint",
     "splunk",
     "victorops",
     "webex",

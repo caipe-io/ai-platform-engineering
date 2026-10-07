@@ -1,6 +1,6 @@
 # Authentication Overview
 
-This page provides a conceptual overview of authentication and authorization in CAIPE RAG. For configuration details and environment variables, see the [Server README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/README.md).
+This page provides a conceptual overview of authentication and authorization in CAIPE RAG. For configuration details and environment variables, see the [Server README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/README.md).
 
 ## Authentication Methods
 
@@ -220,6 +220,6 @@ The first non-empty value is used. If all are empty, defaults to `"unknown"`.
 
 ## Further Reading
 
-- [Server README](https://github.com/cnoe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/README.md) - Configuration reference with all environment variables
+- [Server README](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/knowledge_bases/rag/server/README.md) - Configuration reference with all environment variables
 - [Ingestors](ingestors.md) - Ingestor authentication setup
 - [Architecture](architecture.md) - System architecture overview

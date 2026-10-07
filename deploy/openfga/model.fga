@@ -10,7 +10,12 @@
 #   team:<slug>#member can_call tool:<tool_prefix>
 #   slack_channel:<workspace_id>--<channel_id> can_call tool:<tool_prefix>
 #   webex_space:<workspace_id>--<space_id> can_call tool:<tool_prefix>
-#   team:<slug>#member can_read knowledge_base:<kb_id>
+#   team:<slug>#member can_manage knowledge_base:<kb_id>
+#   team:<slug>#member can_manage data_source:<data_source_id>
+#   team:<slug>#member can_manage rag_collection:<collection_id>
+#   team:<slug>#member can_manage mcp_tool:<tool_id>
+#   team:<slug>#member can_manage webex_space:<workspace_id>--<space_id>
+#   team:<slug>#member can_manage ingestion_source:<source_id>
 #
 # Team relation semantics:
 #   - `admin` is a raw relation written when a user is granted team admin.
@@ -89,12 +94,19 @@ type organization
     # per-tool `mcp_tool#can_call` and per-datasource `data_source#can_read`
     # checks; holding `can_call` alone does NOT grant search.
     # assisted-by Cursor claude-opus-4.8
-    define searcher: [team#member, team#admin]
+    # Service accounts receive this implementation-level baseline when their
+    # owner delegates at least one datasource. The datasource reader tuples
+    # remain the actual content boundary; users never manage this separately.
+    define searcher: [service_account, team#member, team#admin]
+    # Autonomous eligibility is a user capability inherited from membership in
+    # any enabled team. Agent access remains independently gated by can_use.
+    define automation_eligible: [team#member, team#admin]
     define can_use: member or admin
     define can_manage: admin
     define can_audit: auditor or admin
     define can_ingest: ingestor or admin
     define can_search: searcher or admin
+    define can_automate: automation_eligible or admin
     define can_read_self: member or admin
     define can_manage_self: member or admin
     define can_search_directory: member or admin
@@ -152,7 +164,7 @@ type webex_space
     define reader: [user, service_account, team#member, team#admin, external_group#member]
     define user: [user, service_account, team#member, team#admin, external_group#member]
     define writer: [user, service_account, team#member, team#admin, external_group#member]
-    define manager: [user, service_account, team#admin]
+    define manager: [user, service_account, team#member, team#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read
     define can_read: reader or can_use or can_manage or owner
@@ -259,14 +271,46 @@ type tool
 #   3. `can_manage` resolves through `manager` (team admin) and/or `owner`.
 #   4. The authored .fga and the chart JSON forms match for that type.
 # ───────────────────────────────────────────────────────────────────────────
+type rag_collection
+  relations
+    define creator: [user]
+    define owner: [user, service_account]
+    define reader: [user, user:*, service_account, team#member, team#admin, external_group#member, slack_channel, webex_space]
+    define publisher: [user, service_account, team#member, team#admin]
+    define manager: [user, service_account, team#member, team#admin, organization#admin]
+    define auditor: [user, service_account, team#admin]
+    # A collection is a saved filter over datasources the caller can already
+    # search, not an access grant: reader/can_read here controls who can use
+    # the collection as a query scope, but membership no longer widens what
+    # content a member's own permissions expose (see knowledge_base.can_read).
+    define can_discover: can_read or can_publish or can_manage
+    define can_read: reader
+    define can_use: can_read
+    define can_write: can_publish
+    define can_publish: publisher or can_manage or owner
+    define can_manage: manager or owner
+    define can_audit: auditor or can_manage
+
 type knowledge_base
   relations
     define creator: [user]
     define owner: [user, service_account]
     define reader: [user, user:*, service_account, team#member, team#admin, external_group#member, slack_channel, webex_space]
     define ingestor: [user, service_account, team#member, team#admin, external_group#member]
-    define manager: [user, service_account, team#admin, organization#admin]
+    define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
+    # A source may belong to several RAG collections. `parent_collection` is
+    # a curation edge only: it records that a source has been added to a
+    # collection so `collection_id` search filters can resolve to member
+    # source ids, but it deliberately grants NO access. A collection reader
+    # only ever sees results from member sources they can already read via
+    # their own reader/manager/owner grant (or a team/org grant) — adding a
+    # source to a collection never extends who can read that source's
+    # content. This lets adding-to-a-collection require only can_read on the
+    # source (rather than can_manage): search-only access to a source can
+    # never be amplified into search access for someone else via a shared
+    # collection.
+    define parent_collection: [rag_collection]
     define can_discover: can_read
     define can_read: reader or can_ingest or can_manage or owner
     define can_use: can_read
@@ -294,7 +338,7 @@ type data_source
     define owner: [user, service_account]
     define reader: [user, user:*, service_account, team#member, team#admin, external_group#member]
     define ingestor: [user, service_account, team#member, team#admin, external_group#member]
-    define manager: [user, service_account, team#admin, organization#admin]
+    define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read
     define can_read: reader or can_manage or owner or can_read from parent_kb
@@ -318,7 +362,7 @@ type mcp_tool
     define reader: [user, service_account, team#member, team#admin, external_group#member, organization#member]
     define user: [user, service_account, team#member, team#admin, external_group#member, organization#member]
     define caller: [user, service_account, team#member, team#admin, external_group#member, organization#member, agent]
-    define manager: [user, service_account, team#admin, organization#admin]
+    define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read
     define can_read: reader or can_use or can_manage or owner
@@ -339,7 +383,7 @@ type ingestion_source
     define creator: [user]
     define owner: [user, service_account]
     define reader: [user, user:*, service_account, team#member, team#admin, external_group#member]
-    define manager: [user, service_account, team#admin, organization#admin]
+    define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read
     define can_read: reader or can_manage or owner
@@ -424,7 +468,7 @@ type policy
   relations
     define reader: [user, service_account, team#admin]
     define writer: [user, service_account, team#admin]
-    define approver: [user, service_account, team#admin]
+    define approver: [user, service_account, team#member, team#admin]
     define manager: [user, service_account, team#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read

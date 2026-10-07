@@ -1,8 +1,8 @@
 "use client";
 
 import { cn,formatRelativeTimeCompact } from "@/lib/utils";
+import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import { Bot,Clock,MessageSquare,Users2 } from "lucide-react";
-import Link from "next/link";
 
 interface ConversationCardProps {
   id: string;
@@ -26,7 +26,7 @@ export function ConversationCard({
   teamName,
 }: ConversationCardProps) {
   return (
-    <Link
+    <NavigationProgressLink
       href={`/chat/${id}`}
       data-testid={`conversation-card-${id}`}
       className={cn(
@@ -76,6 +76,6 @@ export function ConversationCard({
           )}
         </div>
       </div>
-    </Link>
+    </NavigationProgressLink>
   );
 }

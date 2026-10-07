@@ -39,9 +39,8 @@ uv run pytest
 
 ## MCP Servers
 
-Packaged MCP servers live under `ai_platform_engineering/agents/<name>/mcp`
-where the integration still owns MCP implementation code. The Helm chart
-deploys them through `mcp-*` aliases.
+Packaged MCP servers live under `ai_platform_engineering/mcp/<name>/`. The
+Helm chart deploys them through `mcp-*` aliases.
 
 ## Quality Gates
 

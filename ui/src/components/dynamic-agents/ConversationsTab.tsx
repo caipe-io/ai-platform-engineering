@@ -2,7 +2,8 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
+import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
+import { Card,CardContent } from "@/components/ui/card";
 import {
 Dialog,
 DialogContent,
@@ -10,7 +11,10 @@ DialogHeader,
 DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { AgentPicker, type AgentPickerOption } from "@/components/ui/agent-picker";
 import { useToast } from "@/components/ui/toast";
+import { loadAllDynamicAgents } from "@/lib/dynamic-agent-list";
 import type { AgentUIConfig } from "@/types/dynamic-agent";
 import {
 AlertCircle,
@@ -92,23 +96,22 @@ export function ConversationsTab() {
   React.useEffect(() => {
     async function fetchAgents() {
       try {
-        const response = await fetch("/api/dynamic-agents?page_size=100");
-        const data = await response.json();
-        if (data.success && data.data?.items) {
-          const items = data.data.items as AgentInfo[];
-          const agentMap = new Map<string, AgentInfo>();
-          for (const agent of items) {
-            agentMap.set(agent._id, agent);
-          }
-          setAgents(agentMap);
-          setAgentsList(items);
-        }
+        const items = await loadAllDynamicAgents<AgentInfo>();
+        const agentMap = new Map<string, AgentInfo>();
+        for (const agent of items) agentMap.set(agent._id, agent);
+        setAgents(agentMap);
+        setAgentsList(items);
       } catch {
         // Silently fail - we'll just show agent IDs
       }
     }
     fetchAgents();
   }, []);
+
+  const agentOptions = React.useMemo<AgentPickerOption[]>(
+    () => agentsList.map((agent) => ({ value: agent._id, label: agent.name })),
+    [agentsList],
+  );
 
   const fetchConversations = React.useCallback(async () => {
     setLoading(true);
@@ -216,22 +219,15 @@ export function ConversationsTab() {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Conversations</CardTitle>
-            <CardDescription>
-              View and manage Dynamic Agent conversations. Clear checkpoint data to remove message history.
-            </CardDescription>
-          </div>
-          <Button variant="outline" size="sm" onClick={fetchConversations} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
+    <>
+      <WorkspacePageActions>
+        <Button variant="outline" size="sm" onClick={fetchConversations} disabled={loading}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </WorkspacePageActions>
+      <Card className="rounded-none border-0 bg-transparent shadow-none">
+        <CardContent className="px-0 pt-0">
         {/* Search and Filters */}
         <div className="flex items-center gap-4 mb-4">
           <form onSubmit={handleSearch} className="flex-1 flex gap-2">
@@ -244,21 +240,19 @@ export function ConversationsTab() {
                 className="pl-10"
               />
             </div>
-            <select
+            <AgentPicker
+              ariaLabel="Filter conversations by agent"
               value={agentFilter}
-              onChange={(e) => {
-                setAgentFilter(e.target.value);
+              onChange={(agentId) => {
+                setAgentFilter(agentId);
                 setPage(1);
               }}
-              className="h-9 text-sm rounded-md border border-input bg-background px-3 py-1 text-foreground"
-            >
-              <option value="">All Agents</option>
-              {agentsList.map((agent) => (
-                <option key={agent._id} value={agent._id}>
-                  {agent.name}
-                </option>
-              ))}
-            </select>
+              options={agentOptions}
+              placeholder="All agents"
+              searchPlaceholder="Search agents..."
+              emptyLabel="No agents match"
+              triggerClassName="h-9 min-w-56 py-1"
+            />
             <Button type="submit" variant="secondary" size="sm">
               Search
             </Button>
@@ -468,8 +462,10 @@ export function ConversationsTab() {
 
                 {/* Page size dropdown */}
                 <div className="flex items-center gap-2">
-                  <label className="text-sm text-muted-foreground whitespace-nowrap">Rows</label>
-                  <select
+                  <label className="text-sm text-muted-foreground whitespace-nowrap" htmlFor="conversation-page-size">Rows</label>
+                  <Select
+                    aria-label="Rows per page"
+                    id="conversation-page-size"
                     value={pageSize}
                     onChange={(e) => {
                       setPageSize(Number(e.target.value));
@@ -480,13 +476,13 @@ export function ConversationsTab() {
                     {[10, 20, 50, 100].map((size) => (
                       <option key={size} value={size}>{size}</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
             )}
           </>
         )}
-      </CardContent>
+        </CardContent>
 
       {/* Conversation Detail Modal */}
       <Dialog open={!!selectedConversation} onOpenChange={(open) => { if (!open) setSelectedConversation(null); }}>
@@ -679,6 +675,7 @@ export function ConversationsTab() {
           )}
         </DialogContent>
       </Dialog>
-    </Card>
+      </Card>
+    </>
   );
 }

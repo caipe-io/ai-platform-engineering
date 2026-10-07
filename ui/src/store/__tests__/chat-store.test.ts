@@ -27,6 +27,7 @@ jest.mock('@/lib/api-client', () => ({
     createConversation: jest.fn().mockResolvedValue({ conversation: { _id: 'server-generated-id' }, created: true }),
     deleteConversation: jest.fn().mockResolvedValue({ deleted: true }),
     updateConversation: jest.fn().mockResolvedValue({}),
+    rewindConversation: jest.fn().mockResolvedValue({}),
   },
 }));
 
@@ -46,6 +47,7 @@ jest.mock('@/lib/utils', () => ({
 
 import { getLastActiveConversationId, resolveChatNavigationPath, useChatStore } from '../chat-store';
 import { apiClient } from '@/lib/api-client';
+import { createStreamEvent } from '@/lib/streaming/types';
 import type { Conversation, ChatMessage } from '@/types/a2a';
 
 // Get typed mock references
@@ -84,6 +86,12 @@ function resetStore() {
     isStreaming: false,
     streamingConversations: new Map(),
     pendingMessage: null,
+    contextUsageByConversation: {},
+    conversationFilter: 'all',
+    conversationPage: 0,
+    conversationHasMore: false,
+    isLoadingMoreConversations: false,
+    messageHistory: {},
     unviewedConversations: new Set(),
     inputRequiredConversations: new Set(),
   });
@@ -102,9 +110,91 @@ describe('chat-store', () => {
     resetStore();
   });
 
+  describe('truncateConversationFromMessage', () => {
+    it('removes the selected message and every later message', () => {
+      const conversation = makeConversation({
+        id: 'rewind-conversation',
+        streamEvents: [{ id: 'event-1' } as never],
+        messages: [
+          makeMessage({ id: 'user-1', turnId: 'turn-1' }),
+          makeMessage({ id: 'assistant-1', role: 'assistant', turnId: 'turn-1' }),
+          makeMessage({ id: 'user-2', turnId: 'turn-2' }),
+          makeMessage({ id: 'assistant-2', role: 'assistant', turnId: 'turn-2' }),
+        ],
+      });
+      useChatStore.setState({ conversations: [conversation] });
+
+      useChatStore.getState().truncateConversationFromMessage(
+        'rewind-conversation',
+        'user-2',
+      );
+
+      const updated = useChatStore.getState().conversations[0];
+      expect(updated.messages.map((message) => message.id)).toEqual([
+        'user-1',
+        'assistant-1',
+      ]);
+      expect(updated.streamEvents).toEqual([]);
+    });
+
+    it('leaves the conversation unchanged when the message is missing', () => {
+      const conversation = makeConversation({
+        id: 'rewind-missing',
+        messages: [makeMessage({ id: 'user-1' })],
+      });
+      useChatStore.setState({ conversations: [conversation] });
+
+      useChatStore.getState().truncateConversationFromMessage(
+        'rewind-missing',
+        'unknown',
+      );
+
+      expect(useChatStore.getState().conversations[0]).toBe(conversation);
+    });
+  });
+
   afterEach(() => {
     jest.useRealTimers();
     window.localStorage.clear();
+  });
+
+  describe('context usage', () => {
+    const usage = {
+      used_tokens: 71_000,
+      compaction_threshold: 100_000,
+      remaining_tokens: 29_000,
+      remaining_percent: 29,
+    };
+
+    it('keeps usage in memory when turn stream events are cleared', () => {
+      const conv = makeConversation({ id: 'usage-conv' });
+      useChatStore.setState({ conversations: [conv] });
+
+      useChatStore.getState().setContextUsage('usage-conv',usage);
+
+      expect(useChatStore.getState().contextUsageByConversation['usage-conv']).toEqual(usage);
+      expect(useChatStore.getState().conversations[0].streamEvents).toEqual([]);
+
+      useChatStore.getState().clearStreamEvents('usage-conv');
+      expect(useChatStore.getState().contextUsageByConversation['usage-conv']).toEqual(usage);
+    });
+
+    it('excludes context usage events from MongoDB persistence', async () => {
+      const contextEvent = createStreamEvent('context_usage',usage);
+      const conv = makeConversation({
+        id: 'usage-persistence-conv',
+        messages: [makeMessage({ id: 'assistant-msg',role: 'assistant',isFinal: true })],
+        streamEvents: [contextEvent],
+      });
+      useChatStore.setState({ conversations: [conv] });
+
+      await useChatStore.getState().saveMessagesToServer('usage-persistence-conv');
+
+      expect(mockApiClient.addMessage).toHaveBeenCalledWith(
+        'usage-persistence-conv',
+        expect.objectContaining({ stream_events: undefined }),
+      );
+    });
   });
 
 
@@ -278,7 +368,11 @@ describe('chat-store', () => {
       await useChatStore.getState().loadMessagesFromServer('stubs-no-events');
 
       // API should have been called
-      expect(mockApiClient.getMessages).toHaveBeenCalledWith('stubs-no-events', { page_size: 100 });
+      expect(mockApiClient.getMessages).toHaveBeenCalledWith('stubs-no-events', {
+        page: 1,
+        page_size: 10,
+        order: 'latest',
+      });
 
       const updatedConv = useChatStore.getState().conversations.find(c => c.id === 'stubs-no-events');
       expect(updatedConv).toBeDefined();
@@ -771,7 +865,14 @@ describe('chat-store', () => {
             role: 'assistant',
             content: 'Here is the summary.',
             created_at: '2025-01-01T00:00:01Z',
-            metadata: { turn_id: 'turn-1', is_final: true },
+            metadata: {
+              turn_id: 'turn-1',
+              is_final: true,
+              task_id: 'task-1',
+              run_id: 'run-1',
+              kind: 'run_response',
+              execution_context_id: 'isolated-run-context',
+            },
           },
         ],
         total: 2,
@@ -784,7 +885,7 @@ describe('chat-store', () => {
 
       expect(mockApiClient.getMessages).toHaveBeenCalledWith(
         'conv-history',
-        { page_size: 100 },
+        { page: 1, page_size: 10, order: 'latest' },
       );
 
       const updatedConv = useChatStore.getState().conversations.find(
@@ -792,6 +893,85 @@ describe('chat-store', () => {
       );
       expect(updatedConv!.messages).toHaveLength(2);
       expect(updatedConv!.messages[1].content).toBe('Here is the summary.');
+      expect(updatedConv!.messages[1].autonomousRunId).toBe('run-1');
+      expect(updatedConv!.messages[1].autonomousMessageKind).toBe('run_response');
+      expect(updatedConv!.messages[1].autonomousExecutionContextId).toBe(
+        'isolated-run-context',
+      );
+    });
+
+    it('prepends the next 10-message page when older history is requested', async () => {
+      const conv = makeConversation({ id: 'paged-history' });
+      useChatStore.setState({ conversations: [conv] });
+      mockApiClient.getMessages
+        .mockResolvedValueOnce({
+          items: [
+            {
+              message_id: 'newer', conversation_id: 'paged-history', role: 'assistant',
+              content: 'Newest answer', created_at: '2025-01-02T00:00:00Z',
+              metadata: { turn_id: 'turn-2', is_final: true },
+            },
+          ],
+          total: 2, page: 1, page_size: 10, has_more: true,
+        })
+        .mockResolvedValueOnce({
+          items: [
+            {
+              message_id: 'older', conversation_id: 'paged-history', role: 'user',
+              content: 'Older question', created_at: '2025-01-01T00:00:00Z',
+              metadata: {
+                turn_id: 'turn-1', is_final: true, run_id: 'older-run',
+                kind: 'run_request', execution_context_id: 'older-context',
+              },
+            },
+          ],
+          total: 2, page: 2, page_size: 10, has_more: false,
+        });
+
+      await useChatStore.getState().loadMessagesFromServer('paged-history', { force: true });
+      await useChatStore.getState().loadOlderMessagesFromServer('paged-history');
+
+      expect(mockApiClient.getMessages).toHaveBeenNthCalledWith(2, 'paged-history', {
+        page: 2,
+        page_size: 10,
+        order: 'latest',
+      });
+      const messages = useChatStore.getState().conversations[0].messages;
+      expect(messages.map((message) => message.id)).toEqual(['older', 'newer']);
+      expect(messages[0]).toMatchObject({
+        autonomousRunId: 'older-run', autonomousMessageKind: 'run_request',
+        autonomousExecutionContextId: 'older-context',
+      });
+      expect(useChatStore.getState().messageHistory['paged-history']).toMatchObject({
+        nextPage: 3,
+        hasMore: false,
+        isLoadingOlder: false,
+      });
+    });
+  });
+
+  describe('saveMessagesToServer — queued batches', () => {
+    it('persists every user bubble sharing the latest assistant turn', async () => {
+      const turnId = 'turn-batch';
+      const conv = makeConversation({
+        id: 'queued-batch',
+        messages: [
+          makeMessage({ id: 'user-1', role: 'user', content: 'First', turnId }),
+          makeMessage({ id: 'user-2', role: 'user', content: 'Second', turnId }),
+          makeMessage({ id: 'user-3', role: 'user', content: 'Third', turnId }),
+          makeMessage({
+            id: 'assistant-1', role: 'assistant', content: 'Combined answer', turnId, isFinal: true,
+          }),
+        ],
+      });
+      useChatStore.setState({ conversations: [conv] });
+
+      await useChatStore.getState().saveMessagesToServer('queued-batch');
+
+      expect(mockApiClient.addMessage).toHaveBeenCalledTimes(4);
+      expect(mockApiClient.addMessage.mock.calls.map(([, message]) => message.message_id)).toEqual([
+        'user-1', 'user-2', 'user-3', 'assistant-1',
+      ]);
     });
   });
 
@@ -871,6 +1051,90 @@ describe('chat-store', () => {
         schedule_id: 'sched_123',
         schedule_title: 'Daily platform report',
       });
+    });
+
+    it('preserves autonomous provenance from the server conversation list', async () => {
+      mockApiClient.getConversations.mockResolvedValue({
+        items: [
+          {
+            _id: 'autonomous-conversation',
+            title: '[Autonomous] Review open pull requests',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            source: 'autonomous',
+            task_id: 'review-open-prs-a1b2',
+            metadata: { task_name: 'Review open pull requests' },
+          },
+        ],
+        total: 1,
+        page: 1,
+        page_size: 100,
+        has_more: false,
+      });
+
+      await useChatStore.getState().loadConversationsFromServer();
+
+      expect(useChatStore.getState().conversations[0]).toMatchObject({
+        source: 'autonomous',
+        task_id: 'review-open-prs-a1b2',
+        metadata: { task_name: 'Review open pull requests' },
+      });
+    });
+
+    it('loads API conversations in 30-item pages with an explicit filter', async () => {
+      mockApiClient.getConversations
+        .mockResolvedValueOnce({
+          items: [
+            {
+              _id: 'api-conversation-1',
+              title: 'First API Chat',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              source: 'api',
+            },
+          ],
+          total: 1,
+          page: 1,
+          page_size: 30,
+          has_more: true,
+        })
+        .mockResolvedValueOnce({
+          items: [
+            {
+              _id: 'api-conversation-2',
+              title: 'Second API Chat',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              source: 'api',
+            },
+          ],
+          total: 2,
+          page: 2,
+          page_size: 30,
+          has_more: false,
+        });
+
+      await useChatStore.getState().loadConversationsFromServer({ filter: 'api' });
+      await useChatStore.getState().loadConversationsFromServer({ filter: 'api', append: true });
+
+      expect(mockApiClient.getConversations).toHaveBeenNthCalledWith(1, {
+        page: 1,
+        page_size: 30,
+        source: 'api',
+        client_type: null,
+      });
+      expect(mockApiClient.getConversations).toHaveBeenNthCalledWith(2, {
+        page: 2,
+        page_size: 30,
+        source: 'api',
+        client_type: null,
+      });
+      expect(useChatStore.getState().conversations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'api-conversation-1', source: 'api' }),
+          expect.objectContaining({ id: 'api-conversation-2', source: 'api' }),
+        ]),
+      );
     });
 
     it('removes conversations that exist locally but not on server', async () => {
@@ -1330,6 +1594,49 @@ describe('chat-store', () => {
       ).resolves.toBeUndefined();
 
       // Local state should still be cleaned up
+      expect(useChatStore.getState().conversations).toHaveLength(0);
+    });
+
+    it('restores the conversation and rethrows when the server refuses the delete', async () => {
+      // A conversation shared with — but not owned by — the viewer: the server
+      // returns 403 and keeps the row, so hiding it locally would make it
+      // reappear on the next hydrate.
+      const forbidden = Object.assign(new Error('Forbidden'), { status: 403 });
+      mockApiClient.deleteConversation.mockRejectedValue(forbidden);
+
+      const conv1 = makeConversation({ id: 'keep-1' });
+      const conv2 = makeConversation({ id: 'shared-2' });
+      const conv3 = makeConversation({ id: 'keep-3' });
+
+      useChatStore.setState({
+        conversations: [conv1, conv2, conv3],
+        activeConversationId: 'shared-2',
+      });
+
+      await expect(
+        useChatStore.getState().deleteConversation('shared-2')
+      ).rejects.toThrow('Forbidden');
+
+      // Restored in place, active selection unchanged
+      expect(useChatStore.getState().conversations.map((c) => c.id)).toEqual([
+        'keep-1',
+        'shared-2',
+        'keep-3',
+      ]);
+      expect(useChatStore.getState().activeConversationId).toBe('shared-2');
+    });
+
+    it('treats a 404 status as an accepted delete even when the message differs', async () => {
+      mockApiClient.deleteConversation.mockRejectedValue(
+        Object.assign(new Error('Conversation unavailable'), { status: 404 })
+      );
+
+      const conv = makeConversation({ id: 'gone' });
+      useChatStore.setState({ conversations: [conv], activeConversationId: 'gone' });
+
+      await expect(
+        useChatStore.getState().deleteConversation('gone')
+      ).resolves.toBeUndefined();
       expect(useChatStore.getState().conversations).toHaveLength(0);
     });
   });

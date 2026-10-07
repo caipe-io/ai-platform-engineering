@@ -52,4 +52,4 @@ PDP calls for BFF-proxied UI requests.
 - [ ] Legacy `kb_reader:*` / `kb_ingestor:*` role parsing is removed or isolated as a temporary fallback.
 - [ ] Tests cover allowed and denied datasource access for UI, direct API, ingestor, and MCP flows.
 
-Tracked by [#1457](https://github.com/cnoe-io/ai-platform-engineering/issues/1457).
+Tracked by [#1457](https://github.com/caipe-io/ai-platform-engineering/issues/1457).

@@ -82,4 +82,12 @@ describe.each([
     await makeAdapter().streamMessage(base, noopCallbacks());
     expect(sentBody()).not.toHaveProperty("files");
   });
+
+  it("forwards the UI turn ID for checkpoint correlation", async () => {
+    await makeAdapter().streamMessage(
+      { ...base, turnId: "turn-1" },
+      noopCallbacks(),
+    );
+    expect(sentBody().turn_id).toBe("turn-1");
+  });
 });

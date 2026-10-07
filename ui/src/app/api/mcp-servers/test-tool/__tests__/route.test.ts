@@ -212,6 +212,60 @@ describe("POST /api/mcp-servers/test-tool", () => {
     });
   });
 
+  it("retries tool invocation while a new AgentGateway route is reconciling", async () => {
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "example-weather",
+        name: "Example Weather",
+        transport: "http",
+        endpoint: "http://agentgateway:4000/mcp/example-weather",
+        source: "agentgateway",
+        enabled: true,
+        credential_sources: [],
+      }),
+    });
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("route not found", {
+          status: 404,
+          headers: { "content-type": "text/plain" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: "initialize-2", result: {} }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "mcp-session-id": "mcp-session-2",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: "tools-call-1",
+            result: { content: [{ type: "text", text: "sunny" }] },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ) as unknown as typeof fetch;
+
+    const { POST } = await import("../route");
+    const response = await POST(
+      request({ serverId: "example-weather", toolName: "forecast", params: {} }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.success).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).method).toBe("initialize");
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[1][1].body).method).toBe("initialize");
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[2][1].body).method).toBe("tools/call");
+  });
+
   it("strips an accidental Bearer prefix before forwarding provider credentials through AgentGateway", async () => {
     mockRetrieve.mockResolvedValue({ credential: "Bearer argocd-provider-token" });
     mockGetCollection.mockResolvedValue({

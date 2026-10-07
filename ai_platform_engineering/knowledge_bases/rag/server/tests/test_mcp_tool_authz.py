@@ -48,14 +48,10 @@ def _openfga_configured(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_manage_allows_coarse_admin_without_pdp(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _explode(*_args, **_kwargs):  # pragma: no cover - must not run
-        raise AssertionError("coarse ADMIN must not hit the PDP")
-
-    monkeypatch.setattr(rbac, "_openfga_check_org_admin", _explode, raising=False)
-    monkeypatch.setattr(rbac, "_openfga_check_object", _explode, raising=False)
-
-    await rbac.authorize_mcp_tool_manage(_user(role=Role.ADMIN), "tool-x")
+async def test_manage_does_not_trust_coarse_admin_role() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await rbac.authorize_mcp_tool_manage(_user(role=Role.ADMIN), "tool-x")
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -122,14 +118,10 @@ async def test_manage_fails_closed_without_stable_subject() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_allows_coarse_admin_without_pdp(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _explode(*_args, **_kwargs):  # pragma: no cover - must not run
-        raise AssertionError("coarse ADMIN must not hit the PDP")
-
-    monkeypatch.setattr(rbac, "_openfga_check_org_admin", _explode, raising=False)
-    monkeypatch.setattr(rbac, "_openfga_check_object", _explode, raising=False)
-
-    await rbac.authorize_mcp_tool_create(_user(role=Role.ADMIN), "eti-sre-admins")
+async def test_create_does_not_trust_coarse_admin_role() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await rbac.authorize_mcp_tool_create(_user(role=Role.ADMIN), "primary")
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -148,18 +140,18 @@ async def test_create_allows_owner_team_member(monkeypatch: pytest.MonkeyPatch) 
 
     async def _check(user: UserContext, relation: str, object_type: str, object_id: str) -> bool:
         calls.append((relation, object_type, object_id))
-        return relation == "can_use" and object_type == "team" and object_id == "eti-sre-admins"
+        return relation == "can_use" and object_type == "team" and object_id == "primary"
 
     monkeypatch.setattr(rbac, "_openfga_check_object", _check, raising=False)
 
-    await rbac.authorize_mcp_tool_create(_user(), "  eti-sre-admins  ")
-    assert ("can_use", "team", "eti-sre-admins") in calls
+    await rbac.authorize_mcp_tool_create(_user(), "  primary  ")
+    assert ("can_use", "team", "primary") in calls
 
 
 @pytest.mark.asyncio
 async def test_create_denies_non_member() -> None:
     with pytest.raises(HTTPException) as exc:
-        await rbac.authorize_mcp_tool_create(_user(), "eti-sre-admins")
+        await rbac.authorize_mcp_tool_create(_user(), "primary")
     assert exc.value.status_code == 403
 
 
@@ -178,5 +170,5 @@ async def test_create_fails_closed_on_pdp_error(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(rbac, "_openfga_check_org_admin", _boom, raising=False)
 
     with pytest.raises(HTTPException) as exc:
-        await rbac.authorize_mcp_tool_create(_user(), "eti-sre-admins")
+        await rbac.authorize_mcp_tool_create(_user(), "primary")
     assert exc.value.status_code == 503

@@ -6,6 +6,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
+from threading import BoundedSemaphore, Event
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
@@ -13,7 +14,14 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from ai_platform_engineering.audit_service.config import Settings
 from ai_platform_engineering.audit_service.models import AuditEvent, IngestResponse, QueryResponse
 from ai_platform_engineering.audit_service.queue_service import AuditQueueService
-from ai_platform_engineering.audit_service.storage import AuditQuery, LocalAuditStore, S3AuditStore
+from ai_platform_engineering.audit_service.storage import (
+    AuditQuery,
+    AuditQueryCancelled,
+    LocalAuditStore,
+    QueryResult,
+    S3AuditStore,
+    S3RetentionError,
+)
 from ai_platform_engineering.audit_service.verbosity import (
     PRESET_DESCRIPTIONS,
     PRESET_LABELS,
@@ -34,6 +42,49 @@ _WINDOWS: dict[str, timedelta] = {
 _VALID_TIME_RESOLUTIONS = {"auto", "minute", "hour", "day"}
 _LOCAL_RETENTION_CLEANUP_INTERVAL_SECONDS = 60 * 60
 _logger = logging.getLogger(__name__)
+
+
+def _log_query_failure(task: asyncio.Task[QueryResult]) -> None:
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None and not isinstance(error, AuditQueryCancelled):
+        _logger.warning("audit history scan failed", exc_info=error)
+
+
+async def _query_events(
+    request: Request, store: LocalAuditStore | S3AuditStore, query: AuditQuery, timeout_seconds: float
+) -> QueryResult:
+    slots: BoundedSemaphore = request.app.state.audit_read_slots
+    if not slots.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="audit read capacity exhausted; retry later")
+    cancel_event = query.cancel_event
+    assert cancel_event is not None
+
+    def scan() -> QueryResult:
+        try:
+            return store.query(query)
+        finally:
+            # Cancelling an asyncio waiter cannot stop its thread. Capacity is
+            # available only after the underlying storage scan actually exits.
+            slots.release()
+
+    task = asyncio.create_task(asyncio.to_thread(scan))
+    task.add_done_callback(_log_query_failure)
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=0.1)
+            if done:
+                return task.result()
+            if await request.is_disconnected():
+                raise HTTPException(status_code=499, detail="audit read client disconnected")
+            if asyncio.get_running_loop().time() >= deadline:
+                raise HTTPException(status_code=504, detail="audit read timed out; use a shorter time range")
+    except AuditQueryCancelled as exc:
+        raise HTTPException(status_code=499, detail="audit read cancelled") from exc
+    finally:
+        cancel_event.set()
 
 
 async def _purge_local_retention(store: LocalAuditStore, retention_days: int) -> None:
@@ -181,6 +232,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await queue_service.stop()
 
     app = FastAPI(title="CAIPE Audit Service", version="0.1.0", lifespan=lifespan)
+    app.state.audit_read_slots = BoundedSemaphore(settings.read_max_concurrent)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -189,6 +241,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/readyz")
     async def readyz(request: Request) -> dict[str, Any]:
         service: AuditQueueService = request.app.state.audit_queue
+        if service.is_stopping:
+            # Fail readiness the instant shutdown starts, not only once the
+            # drain finishes — Service endpoint removal is what actually stops
+            # new traffic, and that only happens once the probe fails.
+            raise HTTPException(status_code=503, detail="audit-service is shutting down")
         try:
             service.store.readiness_check()
         except Exception:  # noqa: BLE001
@@ -287,8 +344,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             agent_name=agent_name,
             tool_name=tool_name,
             user_email=user_email,
+            cancel_event=Event(),
         )
-        result = await asyncio.to_thread(store.query, audit_query)
+        result = await _query_events(request, store, audit_query, current_settings.read_timeout_seconds)
         return QueryResponse(records=result.records, total=result.total, limit=query_limit, truncated=result.truncated)
 
     @app.get("/v1/audit/verbosity")
@@ -377,7 +435,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="days must be an integer") from exc
         if days < 0:
             raise HTTPException(status_code=400, detail="days must be >= 0 (use 0 to disable lifecycle rule)")
-        await asyncio.to_thread(store.set_s3_retention_days, days)
+        try:
+            await asyncio.to_thread(store.set_s3_retention_days, days)
+        except S3RetentionError as exc:
+            _logger.exception(
+                "failed to update S3 audit retention: bucket=%s days=%d", current_settings.s3_bucket, days
+            )
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         _logger.info("S3 audit retention updated: bucket=%s days=%d", current_settings.s3_bucket, days)
         return {
             "backend": "s3",

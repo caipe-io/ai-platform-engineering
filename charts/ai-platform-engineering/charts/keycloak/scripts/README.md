@@ -24,7 +24,7 @@ scripts. They are consumed by:
   - busybox `sed` requires explicit `\)` to close BRE capture groups; GNU
     sed auto-closes at end of pattern but busybox aborts with
     `bad regex: Missing ')'`.
-  - `python3` **is** available (~3.13) for richer JSON munging. Used by
+  - `python3` **is** available (~3.14) for richer JSON munging. Used by
     `init-idp.sh` to update the realm user profile with the
     `slack_user_id` attribute. Don't add other heavy runtime deps —
     `apk add` more packages in `build/Dockerfile.keycloak-init` if you

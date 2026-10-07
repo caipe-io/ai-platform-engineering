@@ -122,4 +122,79 @@ describe("buildAgentRelationshipTupleDiff: unlinkedServiceAccountSub", () => {
       { user: "service_account:sa-unlinked-123", relation: "user", object: "agent:agent-test" },
     ]);
   });
+
+  describe("explicit admin grants are durable across visibility demotion", () => {
+    it("preserves the unlinked SA grant on demotion when the grant is explicit", () => {
+      const diff = buildAgentRelationshipTupleDiff({
+        ...baseInput,
+        globalUserAccess: false,
+        previousGlobalUserAccess: true,
+        unlinkedServiceAccountSub: "sa-unlinked-123",
+        unlinkedGrantIsExplicit: true,
+      });
+
+      // user:* still revoked (no explicit equivalent), unlinked SA preserved.
+      expect(diff.deletes).toEqual(
+        expect.arrayContaining([{ user: "user:*", relation: "user", object: "agent:agent-test" }]),
+      );
+      expect(diff.deletes).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ user: "service_account:sa-unlinked-123" }),
+        ]),
+      );
+    });
+
+    it("re-asserts (self-heals) an explicit grant for a non-global agent", () => {
+      const diff = buildAgentRelationshipTupleDiff({
+        ...baseInput,
+        globalUserAccess: false,
+        previousGlobalUserAccess: false,
+        unlinkedServiceAccountSub: "sa-unlinked-123",
+        unlinkedGrantIsExplicit: true,
+      });
+
+      expect(diff.writes).toEqual(
+        expect.arrayContaining([
+          { user: "service_account:sa-unlinked-123", relation: "user", object: "agent:agent-test" },
+        ]),
+      );
+      // A non-global agent never writes user:*.
+      expect(diff.writes).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ user: "user:*" })]),
+      );
+    });
+
+    it("still deletes the unlinked SA grant on demotion when NOT explicit (demotion wins)", () => {
+      const diff = buildAgentRelationshipTupleDiff({
+        ...baseInput,
+        globalUserAccess: false,
+        previousGlobalUserAccess: true,
+        unlinkedServiceAccountSub: "sa-unlinked-123",
+        unlinkedGrantIsExplicit: false,
+      });
+
+      expect(diff.deletes).toEqual(
+        expect.arrayContaining([
+          { user: "user:*", relation: "user", object: "agent:agent-test" },
+          { user: "service_account:sa-unlinked-123", relation: "user", object: "agent:agent-test" },
+        ]),
+      );
+    });
+
+    it("does not self-heal an explicit grant when the sub is null", () => {
+      const diff = buildAgentRelationshipTupleDiff({
+        ...baseInput,
+        globalUserAccess: false,
+        previousGlobalUserAccess: false,
+        unlinkedServiceAccountSub: null,
+        unlinkedGrantIsExplicit: true,
+      });
+
+      expect(diff.writes).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ user: expect.stringMatching(/^service_account:/) }),
+        ]),
+      );
+    });
+  });
 });

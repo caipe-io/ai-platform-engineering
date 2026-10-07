@@ -9,7 +9,7 @@ const replace = jest.fn();
 let searchParams = new URLSearchParams();
 
 jest.mock("next/navigation", () => ({
-  usePathname: () => "/admin",
+  usePathname: () => "/admin/platform/credentials",
   useRouter: () => ({ replace }),
   useSearchParams: () => searchParams,
 }));
@@ -25,7 +25,7 @@ jest.mock("../AdminSecretsManager", () => ({
 describe("AdminCredentialManagementPanel", () => {
   beforeEach(() => {
     replace.mockClear();
-    searchParams = new URLSearchParams("tab=credentials");
+    searchParams = new URLSearchParams();
   });
 
   it("uses deep-linked admin credential tabs", async () => {
@@ -37,13 +37,13 @@ describe("AdminCredentialManagementPanel", () => {
     await user.click(screen.getByRole("tab", { name: /connected apps/i }));
 
     expect(replace).toHaveBeenCalledWith(
-      "/admin?tab=credentials&credentialsTab=oauth-providers",
+      "/admin/platform/credentials?credentialsTab=oauth-providers",
       { scroll: false },
     );
   });
 
   it("opens the deep-linked global secrets tab", () => {
-    searchParams = new URLSearchParams("tab=credentials&credentialsTab=secrets");
+    searchParams = new URLSearchParams("credentialsTab=secrets");
 
     render(<AdminCredentialManagementPanel />);
 
@@ -51,7 +51,7 @@ describe("AdminCredentialManagementPanel", () => {
   });
 
   it("falls back to secrets for legacy credential audit deep links", () => {
-    searchParams = new URLSearchParams("tab=credentials&credentialsTab=audit");
+    searchParams = new URLSearchParams("credentialsTab=audit");
 
     render(<AdminCredentialManagementPanel />);
 

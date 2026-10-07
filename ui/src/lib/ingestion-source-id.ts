@@ -17,7 +17,15 @@ import { createHash } from "crypto";
 /** Identity fields needed to derive a `source_id`, keyed by `source_type`. */
 export type IngestionSourceIdentity =
   | { source_type: "slack_channel"; channel_id: string }
-  | { source_type: "confluence_space"; confluence_url: string; space_key: string }
+  | {
+      source_type: "confluence_space";
+      confluence_url: string;
+      space_key: string;
+      /** Omitted for a whole-space source (legacy or newly created). */
+      content_id?: string;
+      /** Disambiguates `content_id` when present. Defaults to "page". */
+      content_kind?: "page" | "folder";
+    }
   | { source_type: "jira_project"; project_key: string; source_slug: string }
   | { source_type: "web_url"; url: string }
   | { source_type: "webex_space"; space_id: string };
@@ -36,9 +44,26 @@ function netloc(url: string): string {
   return url.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "").split(/[/?#]/)[0];
 }
 
-export function confluenceSpaceSourceId(confluenceUrl: string, spaceKey: string): string {
+function managedSourceId(rawId: string): string {
+  const sanitized = rawId.replace(/[^A-Za-z0-9._~@|*+=,/\-]/gu, "_");
+  if (sanitized.length <= 192) return sanitized;
+  const suffix = createHash("sha256").update(rawId).digest("hex").slice(0, 12);
+  return `${sanitized.slice(0, 179)}_${suffix}`;
+}
+
+export function confluenceSpaceSourceId(
+  confluenceUrl: string,
+  spaceKey: string,
+  contentId?: string,
+  contentKind: "page" | "folder" = "page",
+): string {
   const domain = netloc(confluenceUrl).replace(/[.-]/g, "_");
-  return `src_confluence___${domain}__${spaceKey}`;
+  const spaceId = `src_confluence___${domain}__${spaceKey}`;
+  // Preserve imported and newly-created whole-space datasource IDs. New
+  // page/folder-scoped sources must also be valid authorization resource IDs.
+  if (!contentId) return spaceId;
+  const infix = contentKind === "folder" ? "folder__" : "";
+  return managedSourceId(`${spaceId}__${infix}${contentId}`);
 }
 
 export function webUrlSourceId(url: string): string {
@@ -64,7 +89,12 @@ export function computeIngestionSourceId(source: IngestionSourceIdentity): strin
     case "slack_channel":
       return slackChannelSourceId(source.channel_id);
     case "confluence_space":
-      return confluenceSpaceSourceId(source.confluence_url, source.space_key);
+      return confluenceSpaceSourceId(
+        source.confluence_url,
+        source.space_key,
+        source.content_id,
+        source.content_kind ?? "page",
+      );
     case "web_url":
       return webUrlSourceId(source.url);
     case "webex_space":

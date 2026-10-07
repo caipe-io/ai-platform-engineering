@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { cn } from "@/lib/utils";
 import type { AgentSkill,ScanStatus } from "@/types/agent-skill";
 import {
@@ -337,36 +338,41 @@ export function SkillsSelector({ value, onChange, disabled, maxSkills = DEFAULT_
             disabled={disabled}
           />
           {categories.length > 1 && (
-            <select
-              value={categoryFilter || ""}
-              onChange={(e) => setCategoryFilter(e.target.value || null)}
-              className="h-7 text-xs rounded-md border border-input bg-background px-2"
-              disabled={disabled}
-            >
-              <option value="">All categories</option>
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </select>
+            <div className="w-40">
+              <SearchablePicker
+                options={categories}
+                selected={categoryFilter ?? undefined}
+                onSelect={setCategoryFilter}
+                getOptionKey={(category) => category}
+                getOptionLabel={(category) => category}
+                placeholder="All categories"
+                searchPlaceholder="Search categories..."
+                emptyLabel="No categories match"
+                ariaLabel="Skill category filter"
+                disabled={disabled}
+                onClear={() => setCategoryFilter(null)}
+                clearLabel="Clear category filter"
+                triggerClassName="h-7 px-2 text-xs"
+              />
+            </div>
           )}
           {tags.length > 0 && (
-            <select
-              value=""
-              onChange={(e) => {
-                if (e.target.value) {
-                  setTagFilters((prev) => new Set([...prev, e.target.value]));
+            <div className="w-40">
+              <SearchablePicker
+                options={tags.filter((tag) => !tagFilters.has(tag))}
+                onSelect={(tag) =>
+                  setTagFilters((previous) => new Set([...previous, tag]))
                 }
-              }}
-              className="h-7 text-xs rounded-md border border-input bg-background px-2"
-              disabled={disabled}
-            >
-              <option value="">Add tag filter...</option>
-              {tags
-                .filter((t) => !tagFilters.has(t))
-                .map((tag) => (
-                  <option key={tag} value={tag}>{tag}</option>
-                ))}
-            </select>
+                getOptionKey={(tag) => tag}
+                getOptionLabel={(tag) => tag}
+                placeholder="Add tag filter..."
+                searchPlaceholder="Search tags..."
+                emptyLabel="No more tags available"
+                ariaLabel="Add skill tag filter"
+                disabled={disabled}
+                triggerClassName="h-7 px-2 text-xs"
+              />
+            </div>
           )}
           {hasActiveFilters && (
             <Button

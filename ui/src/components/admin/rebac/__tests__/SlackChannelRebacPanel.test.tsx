@@ -14,7 +14,7 @@ jest.mock("@/components/ui/toast", () => ({
 const replaceMock = jest.fn();
 let currentSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
-  usePathname: () => "/admin",
+  usePathname: () => "/admin/integrations/slack",
   useRouter: () => ({ replace: replaceMock }),
   useSearchParams: () => currentSearchParams,
 }));
@@ -163,6 +163,9 @@ beforeEach(() => {
               is_private: false,
               is_member: true,
               num_members: 10,
+              configured: true,
+              configured_team_slug: "platform-engineering",
+              configured_team_name: "Platform Engineering",
             },
             {
               id: "CNEWMISSING",
@@ -291,6 +294,16 @@ it("scopes the configured channel list to the simulated user", async () => {
   });
 });
 
+it("fetches runtime status on mount since Slack's Advanced tab is not minimal", async () => {
+  render(<SlackChannelRebacPanel />);
+
+  await waitFor(() => {
+    expect(
+      fetchMock.mock.calls.some(([url]) => url === "/api/admin/slack/runtime/status"),
+    ).toBe(true);
+  });
+});
+
 it("shows a loading spinner while self-service channels load", async () => {
   let resolveChannels: ((value: Response) => void) | undefined;
   const channelsPromise = new Promise<Response>((resolve) => {
@@ -327,6 +340,81 @@ it("shows a loading spinner while self-service channels load", async () => {
   expect(
     screen.queryByTestId("connector-items-loading"),
   ).not.toBeInTheDocument();
+});
+
+it("shows channels configured by another team without allowing duplicate onboarding", async () => {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (
+      url === "/api/admin/slack/channels" ||
+      url === "/api/admin/slack/channels?health=1"
+    ) {
+      return response({ data: { channels: [] } });
+    }
+    if (url.startsWith("/api/dynamic-agents?enabled_only=true")) {
+      return response({ data: { items: [] } });
+    }
+    if (url === "/api/dynamic-agents/teams") {
+      return response({
+        success: true,
+        data: [{ _id: "team-1", slug: "primary", name: "Primary" }],
+      });
+    }
+    if (url === "/api/admin/slack/channels/defaults") {
+      return response({ data: { defaults: {} } });
+    }
+    if (url.startsWith("/api/admin/slack/available-channels")) {
+      return response({
+        data: {
+          channels: [
+            {
+              id: "CALREADY",
+              name: "already-set-up",
+              is_member: true,
+              num_members: 20,
+              configured: true,
+              configured_team_slug: "super-admins",
+              configured_team_name: "Super Admins",
+              configured_agent_id: "saved-agent",
+              configured_agent_name: "Saved Agent",
+            },
+          ],
+          total_matches: 1,
+          total_visible: 1,
+          next_cursor: null,
+          has_more: false,
+        },
+      });
+    }
+    return response({});
+  });
+
+  render(<SlackChannelRebacPanel selfService />);
+  await switchToTab("Onboard channels");
+  expect(
+    screen.queryByRole("region", {
+      name: "Apply team and agent to selected rows",
+    }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Find channels" }));
+
+  expect(
+    await screen.findByText("Configured by Super Admins"),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("checkbox", { name: "Import #already-set-up" }),
+  ).toBeDisabled();
+  expect(screen.getByLabelText("Team for #already-set-up")).toBeDisabled();
+  expect(screen.getByLabelText("Team for #already-set-up")).toHaveTextContent(
+    "Super Admins",
+  );
+  expect(
+    screen.getByLabelText("Dynamic Agent for #already-set-up"),
+  ).toBeDisabled();
+  expect(
+    screen.getByLabelText("Dynamic Agent for #already-set-up"),
+  ).toHaveTextContent("Saved Agent");
+  expect(screen.queryByText("Direct user routing")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Select all" })).toBeDisabled();
 });
 
 it("shows discovery loading while Find channels scans Slack", async () => {
@@ -775,12 +863,9 @@ it("edits and deletes Slack channel-agent associations with metadata warning", a
   const editor = screen.getByRole("dialog", {
     name: /edit agent:incident-agent/i,
   });
-  fireEvent.change(
-    within(editor).getAllByRole("combobox", { name: "Listen" })[0],
-    {
-      target: { value: "message" },
-    },
-  );
+  fireEvent.change(within(editor).getByLabelText("Listen"), {
+    target: { value: "message" },
+  });
   fireEvent.change(within(editor).getByLabelText("Priority"), {
     target: { value: "25" },
   });
@@ -872,7 +957,7 @@ it("discovers bot-member channels and applies defaults after admin consent", asy
   // Discovery no longer auto-selects rows.
   expect(
     screen.getByRole("checkbox", { name: /Import #incidents/i }),
-  ).not.toBeChecked();
+  ).toBeDisabled();
   expect(
     screen.getByRole("checkbox", { name: /Import #new-alerts/i }),
   ).not.toBeChecked();
@@ -880,26 +965,31 @@ it("discovers bot-member channels and applies defaults after admin consent", asy
     screen.getByRole("button", { name: "Refresh channels" }),
   ).toBeInTheDocument();
 
-  // Admin opts in to both rows, then fills out the second row's picks.
-  fireEvent.click(screen.getByRole("checkbox", { name: /Import #incidents/i }));
+  // Existing channels stay visible but cannot be onboarded again.
+  expect(screen.getByText("Configured by Platform Engineering")).toBeInTheDocument();
+  expect(screen.getByLabelText("Team for #incidents")).toBeDisabled();
+  expect(screen.getByLabelText("Team for #incidents")).toHaveTextContent(
+    "Platform Engineering",
+  );
+  expect(screen.getByLabelText("Dynamic Agent for #incidents")).toBeDisabled();
+  expect(screen.getByLabelText("Dynamic Agent for #incidents")).toHaveTextContent(
+    "Incident Agent",
+  );
+
+  // Admin opts in to the new row and chooses its team and agent.
   fireEvent.click(
     screen.getByRole("checkbox", { name: /Import #new-alerts/i }),
   );
-  await pickTeam("Team for #incidents", "platform-engineering");
-  await pickAgent("Dynamic Agent for #incidents", "incident-agent");
-  // #incidents is already in CAIPE with team + agent; onboard row shows Configured.
-  expect(screen.getAllByText("Configured").length).toBeGreaterThanOrEqual(1);
-  // Per-row pickers are TeamPicker / AgentPicker.
   await pickTeam("Team for #new-alerts", "security");
   await pickAgent("Dynamic Agent for #new-alerts", "test-april-2025");
   await waitFor(() => {
     expect(
-      screen.getByRole("button", { name: /^Set up 2 channels?$/ }),
+      screen.getByRole("button", { name: /^Submit 1 channel$/ }),
     ).toBeEnabled();
   });
 
   fireEvent.click(
-    screen.getByRole("button", { name: /^Set up \d+ channels?$/ }),
+    screen.getByRole("button", { name: /^Submit \d+ channels?$/ }),
   );
 
   await waitFor(() =>
@@ -923,18 +1013,13 @@ it("discovers bot-member channels and applies defaults after admin consent", asy
       body: expect.stringContaining('"id":"CNEWMISSING"'),
     }),
   );
-  expect(fetchMock).toHaveBeenCalledWith(
-    "/api/admin/slack/channels/defaults",
-    expect.objectContaining({
-      body: expect.stringContaining('"id":"C123456789"'),
-    }),
+  const onboardingBody = String(
+    fetchMock.mock.calls.find(
+      ([url, init]) =>
+        url === "/api/admin/slack/channels/defaults" && init?.method === "POST",
+    )?.[1]?.body ?? "",
   );
-  expect(fetchMock).toHaveBeenCalledWith(
-    "/api/admin/slack/channels/defaults",
-    expect.objectContaining({
-      body: expect.stringContaining('"team_slug":"platform-engineering"'),
-    }),
-  );
+  expect(onboardingBody).not.toContain("C123456789");
   expect(fetchMock).toHaveBeenCalledWith(
     "/api/admin/slack/channels/defaults",
     expect.objectContaining({
@@ -1053,12 +1138,6 @@ it("discovers Slack channels even when no onboarding default team is configured"
   expect(
     await screen.findByRole("status", { name: /Discovered: 1/i }),
   ).toBeInTheDocument();
-  // TeamPicker is a <button>, not a form control — assert the
-  // empty-state placeholder is rendered on the trigger instead of
-  // `.toHaveValue("")`.
-  expect(screen.getByLabelText("Team for #new-alerts")).toHaveTextContent(
-    /Select team/,
-  );
 });
 
 it("shows discovered channel setup feedback as a toast without shifting the action row", async () => {
@@ -1070,19 +1149,15 @@ it("shows discovered channel setup feedback as a toast without shifting the acti
   expect(
     await screen.findByRole("status", { name: /Discovered: 2/i }),
   ).toBeInTheDocument();
-  // Discovery no longer auto-selects rows — opt in explicitly before
-  // setting team and agent.
-  fireEvent.click(screen.getByRole("checkbox", { name: /Import #incidents/i }));
+  // Discovery no longer auto-selects rows — opt in to the new channel.
   fireEvent.click(
     screen.getByRole("checkbox", { name: /Import #new-alerts/i }),
   );
-  await pickTeam("Team for #incidents", "platform-engineering");
-  await pickAgent("Dynamic Agent for #incidents", "incident-agent");
   await pickTeam("Team for #new-alerts", "security");
   await pickAgent("Dynamic Agent for #new-alerts", "test-april-2025");
 
   const applyButton = screen.getByRole("button", {
-    name: /^Set up \d+ channels?$/,
+    name: /^Submit \d+ channels?$/,
   });
   fireEvent.click(applyButton);
 
@@ -1097,7 +1172,7 @@ it("shows discovered channel setup feedback as a toast without shifting the acti
   ).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
   expect(screen.queryByText("Ready to set up")).not.toBeInTheDocument();
-  expect(screen.getAllByText("Configured").length).toBeGreaterThanOrEqual(2);
+  expect(screen.getAllByText(/^Configured/).length).toBeGreaterThanOrEqual(2);
   expect(applyButton.parentElement).not.toHaveTextContent(
     /Channel setup applied/i,
   );
@@ -1186,10 +1261,12 @@ it("organizes Slack admin into Configured / Onboard / Advanced tabs", async () =
   expect(
     screen.getByRole("button", { name: "Find channels" }),
   ).toBeInTheDocument();
-  // assisted-by Codex Codex-sonnet-4-6
   expect(
-    screen.getByRole("button", { name: "Slack channels setup details" }),
-  ).toBeInTheDocument();
+    screen.queryByRole("button", { name: "Slack channels setup details" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Slack access details" }),
+  ).not.toBeInTheDocument();
   expect(
     screen.queryByText(
       /Members of the assigned team can update this Slack channel's bot routing/i,
@@ -1220,17 +1297,17 @@ it("writes the active sub-tab to the subtab URL param", async () => {
   await screen.findByRole("tab", { name: "Configured channels" });
 
   await switchToTab("Advanced");
-  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=advanced", {
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin/integrations/slack?subtab=advanced", {
     scroll: false,
   });
 
   await switchToTab("Onboard channels");
-  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=onboard", {
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin/integrations/slack?subtab=onboard", {
     scroll: false,
   });
 
   await switchToTab("Configured channels");
-  expect(replaceMock).toHaveBeenLastCalledWith("/admin?subtab=channels", {
+  expect(replaceMock).toHaveBeenLastCalledWith("/admin/integrations/slack?subtab=channels", {
     scroll: false,
   });
 });
@@ -1252,7 +1329,7 @@ it("opens the sub-tab named by the subtab URL param on load", async () => {
 
 it("deep-links and updates the configured channel search", async () => {
   currentSearchParams = new URLSearchParams(
-    "cat=integrations&tab=slack&subtab=channels&slackChannelSearch=incidents",
+    "subtab=channels&slackChannelSearch=incidents",
   );
   const { rerender } = render(<SlackChannelRebacPanel />);
 
@@ -1264,19 +1341,19 @@ it("deep-links and updates the configured channel search", async () => {
 
   fireEvent.change(searchInput, { target: { value: "platform-engineering" } });
   expect(replaceMock).toHaveBeenLastCalledWith(
-    "/admin?cat=integrations&tab=slack&subtab=channels&slackChannelSearch=platform-engineering",
+    "/admin/integrations/slack?subtab=channels&slackChannelSearch=platform-engineering",
     { scroll: false },
   );
 
   currentSearchParams = new URLSearchParams(
-    "cat=integrations&tab=slack&subtab=channels&slackChannelSearch=C123456789",
+    "subtab=channels&slackChannelSearch=C123456789",
   );
   rerender(<SlackChannelRebacPanel />);
   expect(searchInput).toHaveValue("C123456789");
 
   fireEvent.click(screen.getByRole("button", { name: "Clear" }));
   expect(replaceMock).toHaveBeenLastCalledWith(
-    "/admin?cat=integrations&tab=slack&subtab=channels",
+    "/admin/integrations/slack?subtab=channels",
     { scroll: false },
   );
 });
@@ -1372,5 +1449,5 @@ it("opens a runtime sync modal with preview progress and apply results", async (
   );
   expect(await screen.findByText("Apply complete")).toBeInTheDocument();
   expect(screen.getByText("1 route upserted")).toBeInTheDocument();
-  expect(screen.getByText("1 OpenFGA tuple written")).toBeInTheDocument();
+  expect(screen.getByText("1 access grant written")).toBeInTheDocument();
 });

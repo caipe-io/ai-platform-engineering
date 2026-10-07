@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 # assisted-by Codex Codex-sonnet-4-6
 
@@ -22,7 +22,6 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
-import sys
 import urllib.error
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -79,23 +78,14 @@ def test_helper_file_exists():
     )
 
 
-def test_helper_uses_only_stdlib(helper: Any):
+def test_helper_uses_only_stdlib() -> None:
     """No third-party deps — keeps `python3 ~/.config/caipe/caipe-skills.py` working anywhere."""
-    third_party = {
-        name
-        for name in sys.modules
-        if name.startswith(("requests", "httpx", "urllib3", "aiohttp"))
-    }
     # The helper itself imports nothing third-party; this is a safety net
     # against a future refactor accidentally adding a dep.
     forbidden_in_source = ("import requests", "import httpx", "import aiohttp")
     src = HELPER_PATH.read_text(encoding="utf-8")
     for needle in forbidden_in_source:
         assert needle not in src, f"helper imports forbidden dep: {needle}"
-    # Document the current third-party state so a regression is loud.
-    assert third_party == set() or all(
-        m in third_party for m in third_party
-    )  # tautology; placeholder to keep the assertion explicit
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,8 @@ class TestDataSourceInfoOwnership:
         assert ds.owner_subject is None
         assert ds.owner_team_slug is None
         assert ds.shared_with_teams == []
+        assert ds.search_with_teams == []
+        assert ds.search_with_users == []
 
     def test_round_trip_preserves_ownership(self):
         ds = _datasource(
@@ -49,6 +51,19 @@ class TestDataSourceInfoOwnership:
         )
         # owner removed (union semantics) + duplicate collapsed.
         assert ds.shared_with_teams == ["data-eng"]
+
+    def test_search_access_may_include_the_management_owner_team(self):
+        ds = _datasource(
+            owner_team_slug="platform",
+            search_with_teams=["platform", "data-eng", "platform"],
+        )
+        assert ds.search_with_teams == ["platform", "data-eng"]
+
+    def test_direct_user_search_access_is_normalized(self):
+        ds = _datasource(
+            search_with_users=["reader-sub", "reader-sub", "", "  "],
+        )
+        assert ds.search_with_users == ["reader-sub"]
 
     def test_blank_and_whitespace_shared_dropped(self):
         ds = _datasource(shared_with_teams=["", "  ", "data-eng"])

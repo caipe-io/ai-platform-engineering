@@ -80,7 +80,7 @@ if tool_name == "write_todos":
 
 ### User Query
 ```
-"show PRs in cnoe-io/ai-platform-engineering and tabulate status"
+"show PRs in caipe-io/ai-platform-engineering and tabulate status"
 ```
 
 ### Agent Response
@@ -107,7 +107,7 @@ write_todos(
 
 **Step 2: Execute first task**
 ```python
-github(query="list PRs in cnoe-io/ai-platform-engineering")
+github(query="list PRs in caipe-io/ai-platform-engineering")
 ```
 
 **Step 3: Update TODOs**

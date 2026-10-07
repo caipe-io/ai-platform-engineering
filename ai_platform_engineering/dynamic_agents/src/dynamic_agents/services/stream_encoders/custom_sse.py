@@ -20,8 +20,13 @@ import json
 import logging
 from typing import Any
 
+from dynamic_agents.services.context_usage import CONTEXT_USAGE_EVENT
 from dynamic_agents.services.stream_encoders import StreamEncoder
-from dynamic_agents.services.stream_encoders.langgraph_helpers import LangGraphStreamHelper, truncate_tool_result
+from dynamic_agents.services.stream_encoders.langgraph_helpers import (
+    LangGraphStreamHelper,
+    normalize_tool_message_content,
+    truncate_tool_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +89,23 @@ class CustomStreamEncoder(StreamEncoder):
         if mode == "updates":
             return self._handle_updates(data, correlated_ns)
 
+        if mode == "custom":
+            return self._handle_custom(data, correlated_ns)
+
         return []
+
+    def _handle_custom(
+        self,
+        data: Any,
+        namespace: tuple[str, ...],
+    ) -> list[str]:
+        """Encode transport-neutral runtime signals in the custom protocol."""
+        if not isinstance(data, dict) or data.get("type") != CONTEXT_USAGE_EVENT:
+            return []
+
+        payload = {key: item for key, item in data.items() if key != "type"}
+        payload["namespace"] = list(namespace)
+        return [_sse_frame(CONTEXT_USAGE_EVENT, payload)]
 
     def on_stream_end(self) -> list[str]:
         return []  # No state to flush in custom format
@@ -214,8 +235,8 @@ class CustomStreamEncoder(StreamEncoder):
             for msg in messages:
                 tc_id = getattr(msg, "tool_call_id", None)
                 if tc_id:
-                    content = getattr(msg, "content", "")
-                    if isinstance(content, str) and "rejected" in content.lower():
+                    content = normalize_tool_message_content(getattr(msg, "content", ""))
+                    if "rejected" in content.lower():
                         rejected_tool_call_ids.add(tc_id)
 
             for msg in messages:
@@ -257,18 +278,15 @@ class CustomStreamEncoder(StreamEncoder):
 
                     # Detect tool errors: wrap_tools_with_error_handling() returns
                     # "ERROR: ..." strings instead of raising exceptions.
-                    content = getattr(msg, "content", "")
-                    # MCP tools return content as list of blocks, e.g. [{"type": "text", "text": "..."}]
-                    if isinstance(content, list):
-                        text_parts = []
-                        for block in content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                text_parts.append(block.get("text", ""))
-                            elif isinstance(block, str):
-                                text_parts.append(block)
-                        content = "\n".join(p for p in text_parts if p)
+                    # ToolMessage.content can be str OR list[dict | str] (LangChain
+                    # >= 0.3) -- MCP tools that return TextContent items arrive as
+                    # the list shape. Normalise first so downstream artifact-text
+                    # scanners (e.g. the Webex thread map) see the tool's textual
+                    # response regardless of LLM transport.
+                    raw_content = getattr(msg, "content", "")
+                    content = normalize_tool_message_content(raw_content)
                     error = None
-                    if isinstance(content, str) and content.startswith("ERROR: "):
+                    if content.startswith("ERROR: "):
                         error = content
 
                     logger.debug(f"[sse:tool_end] id={tool_call_id[:8]}... ns={namespace} error={bool(error)}")
@@ -278,7 +296,7 @@ class CustomStreamEncoder(StreamEncoder):
                     }
                     if error:
                         tool_end_data["error"] = error
-                    elif isinstance(content, str) and content:
+                    elif content:
                         tool_end_data["result"] = truncate_tool_result(content)
                     results.append(_sse_frame("tool_end", tool_end_data))
 

@@ -2,10 +2,12 @@
 
 // assisted-by Codex Codex-sonnet-4-6
 
-import { ChevronDown, Eye, EyeOff, Info, RefreshCw, Share2, Trash2, X } from "lucide-react";
+import { Eye, EyeOff, Info, RefreshCw, Share2, Trash2, X } from "lucide-react";
 import React from "react";
 
 import { Button } from "@/components/ui/button";
+import { shortMaskedPreview } from "@/lib/credentials/masking";
+import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 
 import { principalLabel, SecretProtectionBadge } from "./SecretProtectionDetails";
 import { SecretSharingPanel } from "./SecretSharingPanel";
@@ -50,13 +52,7 @@ function formatDate(value?: string): string {
   return date.toLocaleString();
 }
 
-export function SecretsManager({
-  collapsed = false,
-  onToggle,
-}: {
-  collapsed?: boolean;
-  onToggle?: () => void;
-} = {}) {
+export function SecretsManager() {
   const [secrets, setSecrets] = React.useState<SecretMetadata[]>([]);
   const [name, setName] = React.useState("");
   const [secretValue, setSecretValue] = React.useState("");
@@ -227,30 +223,11 @@ export function SecretsManager({
 
   return (
     <section className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <button
-          type="button"
-          className="flex flex-1 items-start gap-3 text-left"
-          onClick={onToggle}
-          aria-expanded={!collapsed}
-        >
-          <ChevronDown
-            className={`mt-1 h-5 w-5 shrink-0 text-muted-foreground transition-transform duration-200 ${collapsed ? "-rotate-90" : ""}`}
-            aria-hidden="true"
-          />
-          <div>
-            <h2 className="text-xl font-semibold">Saved Secrets</h2>
-            <p className="text-sm text-muted-foreground">
-              Store secrets that agents and services can use without showing the value again.
-            </p>
-          </div>
-        </button>
-        {!collapsed && (
-          <Button type="button" onClick={() => setCreateOpen(true)}>
-            Add Secret
-          </Button>
-        )}
-      </div>
+      <WorkspacePageActions>
+        <Button type="button" onClick={() => setCreateOpen(true)}>
+          Add Secret
+        </Button>
+      </WorkspacePageActions>
 
       {createOpen && (
         <div
@@ -339,10 +316,8 @@ export function SecretsManager({
         </div>
       )}
 
-      {!collapsed && (
-        <>
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          {loading ? (
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {loading ? (
             <p className="text-sm text-muted-foreground">Loading secrets...</p>
           ) : (
             <div className="overflow-hidden rounded-xl border border-border bg-card/80 shadow-sm">
@@ -370,7 +345,7 @@ export function SecretsManager({
                       </p>
                     </div>
                     <code className="w-fit rounded bg-muted px-2 py-1 text-xs">
-                      Preview {secret.maskedPreview}
+                      Preview {shortMaskedPreview(secret.maskedPreview)}
                     </code>
                     <div className="flex items-center justify-end gap-1">
                       {pendingDeleteSecretId === secret.id ? (
@@ -566,9 +541,6 @@ export function SecretsManager({
                   Secret details
                 </p>
                 <h2 className="mt-1 text-lg font-semibold">{detailsSecret.name}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Details only. The saved value stays protected; this preview is masked.
-                </p>
               </div>
               <Button
                 type="button"
@@ -621,7 +593,7 @@ export function SecretsManager({
                     Masked preview
                   </p>
                   <code className="mt-1 inline-flex rounded bg-muted px-2 py-1 text-xs">
-                    {detailsSecret.maskedPreview}
+                    {shortMaskedPreview(detailsSecret.maskedPreview)}
                   </code>
                 </div>
                 <div>
@@ -662,9 +634,6 @@ export function SecretsManager({
           </div>
         </div>
       )}
-        </>
-      )}
-
     </section>
   );
 }

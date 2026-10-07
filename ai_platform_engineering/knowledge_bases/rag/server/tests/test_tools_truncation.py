@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -77,13 +77,20 @@ def _make_single_label_config(label: str = "semantic_results"):
 
 
 def _make_tools():
-  """Create an AgentTools instance with all I/O dependencies mocked out."""
+  """Create an authorized AgentTools instance with all I/O mocked out.
+
+  These tests isolate result formatting, not MCP authentication. The live
+  implementation deliberately fails closed when no middleware-provided caller
+  exists, so model that already-authorized boundary explicitly here.
+  """
   from server.tools import AgentTools
-  return AgentTools(
+  tools = AgentTools(
     redis_client=MagicMock(),
     vector_db_query_service=MagicMock(),
     metadata_storage=MagicMock(),
   )
+  tools._resolve_accessible_datasource_ids = AsyncMock(return_value=None)
+  return tools
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +119,7 @@ class TestTruncationMarkers:
       response = await search_fn(query="test query", limit=10, thought="test")
 
     out = response["semantic_results"]
-    marker_count = sum(1 for r in out if "[Content truncated. Use fetch_document" in r["text_content"])
+    marker_count = sum(1 for r in out if "[Content truncated. Use knowledge-base_fetch_document" in r["text_content"])
     assert marker_count == 5, (
       f"Expected one marker per truncated result (5), got {marker_count}. "
       "Old code with `truncation_markers_shown < 2` would return 2."
@@ -137,7 +144,7 @@ class TestTruncationMarkers:
       response = await search_fn(query="test", limit=20, thought="")
 
     out = response["semantic_results"]
-    marker_count = sum(1 for r in out if "[Content truncated. Use fetch_document" in r["text_content"])
+    marker_count = sum(1 for r in out if "[Content truncated. Use knowledge-base_fetch_document" in r["text_content"])
     assert marker_count == 10, (
       f"Expected 10 markers, got {marker_count}. "
       "Old code (truncation_markers_shown < 2) would return exactly 2."
@@ -181,7 +188,7 @@ class TestTruncationMarkers:
   @pytest.mark.asyncio
   async def test_marker_contains_correct_document_id(self):
     """The truncation marker embeds the exact document_id from result metadata."""
-    doc_id = "caipe-deployment-guide-v2"
+    doc_id = "example-deployment-guide-v2"
     at = _make_tools()
     at.vector_db_query_service.query = AsyncMock(return_value=[
       _make_result(_long(), document_id=doc_id),
@@ -214,7 +221,7 @@ class TestTruncationMarkers:
       response = await search_fn(query="test", limit=5, thought="")
 
     text = response["semantic_results"][0]["text_content"]
-    expected = "[Content truncated. Use fetch_document with document_id='my-doc-id' to get full content if needed.]"
+    expected = "[Content truncated. Use knowledge-base_fetch_document with document_id='my-doc-id' to get full content if needed.]"
     assert expected in text, (
       f"Exact marker format not found.\nExpected: {expected}\nGot (last 200 chars): {text[-200:]}"
     )

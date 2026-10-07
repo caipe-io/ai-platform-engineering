@@ -62,6 +62,205 @@ Same forwarding rules as the catch-all proxy, but each method is gated by enterp
 
 ---
 
+## RAG collections
+
+A RAG collection is a saved search-time filter over datasource IDs - a
+control-plane grouping, not an access grant. It does not copy chunks or
+create another Milvus collection, and it never widens who can read a member
+datasource's content: each member remains independently governed by its own
+`data_source`/`knowledge_base` grants. Datasource ingestion, scheduled
+reload, and stale-chunk replacement continue to operate on the original
+`datasource_id`.
+
+Collection authorization is intentionally split into the same two concepts the
+UI uses everywhere: **Owner** and **Search**. The API and OpenFGA model retain
+the internal relation names for compatibility:
+
+- Search (`reader`) lets the caller use the collection as a `collection_id`
+  query scope. It grants no access to member datasources — each one still
+  requires its own independent Search grant to actually appear in results.
+- Owner members (`publisher`) can add or remove member datasources.
+- Owner admins (`manager`) can edit collection settings.
+- Adding a datasource requires Search access to that datasource, not Owner
+  access. Because membership grants no one new access, a caller who can only
+  search a datasource can never turn that into access for someone else by
+  publishing it into a shared collection.
+- A new personal collection gives its owner a separate Search grant on the
+  collection itself. It may include only datasources that owner can already
+  search.
+- Only organization admins can delegate Owner teams. Collection Owners can
+  propose Search teams or global Search; publication policy decides whether
+  the change is immediate or remains pending for an approver.
+
+### GET `/api/rag/collections`
+
+**Auth:** Session or Bearer JWT. **Service:** UI Backend API → MongoDB + OpenFGA.
+
+Returns collections the caller may read, publish, or manage. Each row includes:
+
+```json
+{
+  "_id": "team-runbooks",
+  "name": "Team runbooks",
+  "source_ids": ["source-a", "source-b"],
+  "maintainer_team_slugs": ["knowledge-maintainers"],
+  "reader_team_slugs": ["all-users"],
+  "global_read": false,
+  "_permissions": {
+    "can_read": true,
+    "can_publish": false,
+    "can_manage": false,
+    "can_delegate": false
+  }
+}
+```
+
+### POST `/api/rag/collections`
+
+Creates a personal collection. Service-account callers are rejected.
+
+```json
+{
+  "name": "Team runbooks",
+  "description": "Curated operational knowledge"
+}
+```
+
+### GET|PATCH|DELETE `/api/rag/collections/{collectionId}`
+
+- `GET` requires collection discovery access.
+- `PATCH source_ids` requires collection publish access and Search access on
+  each datasource being added (not Owner/manage access — see above).
+- `PATCH name|description` requires collection management.
+- `PATCH maintainer_team_slugs` requires organization administration.
+- `PATCH reader_team_slugs|global_read` requires collection management. New
+  audiences and company-wide audience removals go through the
+  publication-approval policy. Current company-wide Search remains active
+  while removal is pending.
+- Adding a Search team also grants that team the coarse organization search
+  capability. Removing Search does not revoke a capability that may still be
+  used by another collection; datasource relationships remain authoritative.
+- `DELETE` requires collection management, preserves indexed data, and removes
+  stale agent references.
+
+### Agent and service-account behavior
+
+- Direct Search/API calls use every datasource for which the caller has Search
+  access.
+- An agent stores optional `datasource_ids` and `rag_collection_ids`.
+- Collection membership is expanded from MongoDB at each RAG tool call, then
+  unioned with direct datasource pins — this only affects the agent's
+  configured *scope* (which sources it's allowed to search), never who can
+  read those sources' content.
+- The RAG server intersects that union with the caller's current OpenFGA
+  datasource access. Agent configuration can narrow access; it never grants it.
+- Leaving both fields unset (not sent) is the intentional default: the agent
+  is unrestricted, searching whatever the calling user can already access
+  with no additional agent-level narrowing. An explicit empty array on either
+  field is a deliberate opt-out that disables that part of the agent's RAG
+  scope.
+- Service accounts can receive a collection or an individual datasource in the
+  existing scope editor. A collection scope grant mirrors the same semantics
+  as above: it lets the service account use the collection as a search-time
+  filter, but grants no access to its member datasources — grant datasources
+  directly for content access. Calls still require an assigned agent/tool as
+  applicable.
+
+### Admin RAG source management
+
+Admin → Settings → RAG has a superadmin tool for datasource-level access,
+bypassing the publication-approval workflow (immediate effect):
+
+- **Adopt App-Config RAG Sources** (`POST /api/admin/rag/sources/migrate-from-config`)
+  moves read-only, app-config-seeded sources into MongoDB as editable
+  records, setting a real Owner and, optionally, Search Access directly on
+  each adopted source. It never adds sources to a collection on the admin's
+  behalf — a collection grants no access, so there is nothing to gain by
+  defaulting one.
+
+### Self-service bulk edit
+
+Knowledge Bases → Ingest has a bulk-edit tool available to any user, not just
+superadmins: `POST /api/rag/sources/bulk-update` applies an Owner
+(overwrite) and/or Search Access (replace or additive) across every
+datasource the caller selects. A "select by collection" picker fills the
+selection from a collection's membership as a convenience — the collection
+itself grants nothing, it's only a starting point for picking sources.
+
+Unlike the admin tool above, this is not a bypass: each selected source is
+authorized and applied through the exact same logic
+`PATCH /api/rag/sources/{sourceId}` would apply to it alone — including
+publication approval when it's required. The endpoint literally invokes that
+route's handler once per source rather than re-implementing its logic, so a
+source that needs approval comes back `pending_approval` in the response
+instead of applying immediately, and a source the caller doesn't manage
+comes back `skipped`, exactly as a direct single-source PATCH would behave.
+
+---
+
+## Publication approvals
+
+The UI Backend API uses one durable approval workflow for broader RAG Search
+publication and self-service Slack or Webex onboarding.
+
+- Creating and ingesting a personal or Owner-team datasource remains immediate.
+- Search grants already in effect remain active while an expansion is pending.
+- Ordinary Search revocations take effect immediately. Removing a configured
+  company-wide audience requires approval, and its existing access remains
+  active until approval.
+- Removing a datasource from a company-wide collection follows the same rule.
+- Adding a person or team outside the Owner scope creates a pending request.
+- Material datasource changes require renewed approval while broad Search is
+  active. These include ownership, source identity, URL/domain, crawl scope,
+  and large estimated-size changes.
+- Slack channels and Webex spaces remain unavailable until their onboarding
+  request is approved and applied.
+- Each request stores requested and effective state, the resource revision,
+  risk facts, status, and append-only decision history, including the approver.
+- Approval application uses a short-lived OpenFGA capability bound to the exact
+  request and resource. A stale resource revision fails closed instead of
+  applying an obsolete decision.
+
+Approvers use **Admin → Security & Policy → Approvals**. RAG, Slack, and Webex
+have separate reviewer lists. Trusted publishers, company-wide audiences,
+self-approval, and team-specific reviewers apply only to RAG.
+
+### GET `/api/publication-requests`
+
+Lists requests visible to the caller. Delegated approvers see requests for
+their assigned target teams; organization admins see all requests.
+
+Optional query parameters:
+
+- `status`: comma-separated request statuses
+- `kind`: comma-separated resource kinds
+- `mine=true`: requests submitted by the caller
+- `limit`: bounded result count
+
+### POST `/api/publication-requests/{id}/approve`
+
+Atomically claims a pending request, verifies the live resource revision, and
+invokes the matching RAG, Slack, or Webex adapter. Organization-wide
+self-approval is denied by default.
+
+### POST `/api/publication-requests/{id}/reject`
+
+Rejects a pending request without changing its effective state. An optional
+JSON `note` is recorded in the audit history.
+
+### GET|PATCH `/api/publication-requests/settings`
+
+Reads or updates approval policy. Organization-administrator access is
+required.
+
+### GET `/api/publication-requests/summary`
+
+Returns the caller's pending count and whether they can approve requests or
+manage approval settings. The application header uses this endpoint for its
+approval alert.
+
+---
+
 ### GET `/api/rag/tools`
 
 **Auth:** Session + Keycloak AuthZ `rag#tool.view`. **Service:** CAIPE UI (MongoDB; not proxied to RAG).
@@ -185,11 +384,30 @@ Returns resolved identity baseline role and permission strings for UI gating.
 
 ## Datasource management
 
+RAG uses two independent resource graphs for each source ID:
+
+- `ingestion_source` controls who can read and manage connector configuration.
+- `data_source` / `knowledge_base` controls who can search indexed content.
+
+Trusted ingestion transports may hold a separate legacy `ingestor` grant.
+Selecting **Search** in the product writes only the `reader` relationship; it
+never grants ingestion, reload, or configuration access.
+
+Granting a person or team **Search** access does not let them change
+the URL, channel, query, crawl options, ownership, or deletion lifecycle.
+Source management does not implicitly make a team-owned source searchable, but
+Owners may administer which people and teams receive Search
+access. A personal owner retains access through the KB owner relation. Search
+also requires the organization-level search capability.
+
 ### POST `/v1/datasource`
 
-**Auth:** Bearer JWT — minimum role `ingestonly`. **Service:** RAG server.
+**Auth:** Bearer JWT — assigned trusted ingestor service, or organization admin. **Service:** RAG server.
 
-Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` is set, datasource access is checked for the `ingest` scope (`X-Tenant-Id`, `X-Team-Id`).
+Creates or replaces the full datasource metadata record in Redis. Human source
+managers use the narrow `PATCH /v1/datasource/{datasource_id}` endpoint instead.
+When a trusted ingestor updates an existing record, authorization ownership
+fields are preserved from storage.
 
 **Request body:**
 
@@ -202,8 +420,11 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
   "last_updated": 1711363200,
   "default_chunk_size": 10000,
   "default_chunk_overlap": 2000,
+  "owner_team_slug": "source-managers",
+  "search_with_teams": ["search-users"],
+  "search_with_users": ["example-reader-subject"],
   "metadata": {
-    "owner_team": "platform"
+    "config_managed": true
   }
 }
 ```
@@ -214,9 +435,39 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ---
 
+### PATCH `/v1/datasource/{datasource_id}`
+
+**Auth:** Bearer JWT + `ingestion_source#can_manage`; legacy records without an
+`ingestion_source` policy fall back to `data_source#can_manage`. **Service:** RAG server.
+
+Updates only the display, refresh, chunking, and connector fields valid for the
+source type. The datasource ID and authorization ownership fields are immutable
+through this endpoint.
+
+### PATCH `/v1/datasource/{datasource_id}/owner-team`
+
+**Auth:** Bearer JWT + `ingestion_source#can_manage`; legacy records may fall
+back to `knowledge_base#can_manage`. **Service:** RAG server.
+
+Persists access-policy metadata after the BFF reconciles OpenFGA. Ownership is
+either `owner_team_slug` or `owner_subject`. Search grants may contain both
+teams and individual user subjects. An explicit empty search list clears that
+grant kind. Enforcement remains in OpenFGA.
+
+```json
+{
+  "owner_team_slug": null,
+  "owner_subject": "example-owner-subject",
+  "search_with_teams": ["search-users"],
+  "search_with_users": ["example-reader-subject"]
+}
+```
+
+---
+
 ### DELETE `/v1/datasource`
 
-**Auth:** Bearer JWT — `admin`. **Service:** RAG server.
+**Auth:** Same datasource Owner policy as the narrow PATCH endpoint. **Service:** RAG server.
 
 **Query parameters:**
 
@@ -232,7 +483,12 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### GET `/v1/datasources`
 
-**Auth:** Bearer JWT — `readonly`. **Service:** RAG server.
+**Auth:** Bearer JWT. **Service:** RAG server.
+
+Returns the union of sources visible through content access and source-config
+access. Search-only callers receive catalog/status fields but not connector
+configuration. Each row includes `_permissions` flags for content Search,
+trusted-ingestor operations, and source-config read/management.
 
 **Query parameters:**
 
@@ -267,9 +523,12 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### GET `/v1/ingestors`
 
-**Auth:** Bearer JWT — `readonly`. **Service:** RAG server.
+**Auth:** Bearer JWT. **Service:** RAG server.
 
-**Response `200`:** Array of ingestor records (JSON encoded `IngestorInfo` list).
+**Response `200`:** Array of ingestor records. Connector type and health fields
+are available to source authors; deployment-specific `description` and
+`metadata` are returned only to organization admins. Other callers receive an
+empty description and `{}` metadata.
 
 ```json
 [
@@ -277,7 +536,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
     "ingestor_id": "webloader:webloader",
     "ingestor_type": "webloader",
     "ingestor_name": "webloader",
-    "description": "Default web ingestor",
+    "description": "",
     "metadata": {},
     "last_seen": 1711363200
   }
@@ -288,7 +547,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### POST `/v1/ingestor/heartbeat`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** Bearer JWT for a configured trusted ingestor service account. **Service:** RAG server.
 
 **Request body:**
 
@@ -296,8 +555,8 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 {
   "ingestor_type": "webloader",
   "ingestor_name": "worker-1",
-  "description": "Kubernetes pod webloader-7d4f9",
-  "metadata": {"region": "us-west-2"}
+  "description": "Example webloader worker",
+  "metadata": {"region": "primary"}
 }
 ```
 
@@ -315,7 +574,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### DELETE `/v1/ingestor/delete`
 
-**Auth:** Bearer JWT — `admin`. **Service:** RAG server.
+**Auth:** Bearer JWT + organization-admin grant. **Service:** RAG server.
 
 **Query parameters:**
 
@@ -332,7 +591,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### GET `/v1/job/{job_id}`
 
-**Auth:** Bearer JWT — `readonly`. **Service:** RAG server.
+**Auth:** Bearer JWT + either content read or source-config read access. **Service:** RAG server.
 
 **Response `200`:**
 
@@ -359,7 +618,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### GET `/v1/jobs/datasource/{datasource_id}`
 
-**Auth:** Bearer JWT — `readonly`. **Service:** RAG server.
+**Auth:** Bearer JWT + either content read or source-config read access. **Service:** RAG server.
 
 **Query parameters:**
 
@@ -374,7 +633,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### POST `/v1/jobs/batch`
 
-**Auth:** Bearer JWT — `readonly`. **Service:** RAG server.
+**Auth:** Bearer JWT; inaccessible datasource IDs are omitted. **Service:** RAG server.
 
 **Request body:**
 
@@ -404,7 +663,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### POST `/v1/job`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** Bearer JWT for the trusted ingestor assigned to the datasource. **Service:** RAG server.
 
 **Query parameters:**
 
@@ -430,7 +689,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### PATCH `/v1/job/{job_id}`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** Bearer JWT for the trusted ingestor assigned to the datasource. **Service:** RAG server.
 
 **Query parameters:** `job_status`, `message`, `total` (all optional but at least one typically set).
 
@@ -449,7 +708,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### POST `/v1/job/{job_id}/terminate`
 
-**Auth:** Bearer JWT — `admin`. **Service:** RAG server.
+**Auth:** Bearer JWT + datasource Owner access, or the trusted ingestor assigned to the datasource. **Service:** RAG server.
 
 **Response `200`:**
 
@@ -463,7 +722,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### POST `/v1/job/{job_id}/increment-progress`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** Bearer JWT for the trusted ingestor assigned to the datasource. **Service:** RAG server.
 
 **Query parameters:**
 
@@ -486,7 +745,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### POST `/v1/job/{job_id}/increment-failure`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** Bearer JWT for the trusted ingestor assigned to the datasource. **Service:** RAG server.
 
 **Query parameters:** `increment` (default `1`).
 
@@ -503,7 +762,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### POST `/v1/job/{job_id}/add-errors`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** Bearer JWT for the trusted ingestor assigned to the datasource. **Service:** RAG server.
 
 **Request body (JSON array):**
 
@@ -532,7 +791,7 @@ Creates or updates datasource metadata in Redis. When `RBAC_TEAM_SCOPE_ENABLED` 
 
 ### POST `/v1/query`
 
-**Auth:** Bearer JWT — `readonly`. **Service:** RAG server.
+**Auth:** Bearer JWT + organization search capability + readable datasource grant. **Service:** RAG server.
 
 Hybrid semantic + sparse (BM25) search over the unified Milvus collection. Optional metadata `filters` (e.g. `datasource_id`). With team/KB RBAC enabled, filters may be injected or the handler returns `[]` when the user has no accessible KBs.
 
@@ -578,7 +837,7 @@ Hybrid semantic + sparse (BM25) search over the unified Milvus collection. Optio
 
 ### POST `/v1/ingest`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** Bearer JWT for the trusted assigned ingestor, or `data_source#can_ingest`; the request must reference the exact active server-created job. **Service:** RAG server.
 
 Bulk document ingestion into Milvus (and graph when enabled). Requires an existing datasource and a job in `in_progress` (ingestors usually transition job state before posting chunks).
 
@@ -623,7 +882,7 @@ Bulk document ingestion into Milvus (and graph when enabled). Requires an existi
 
 ### POST `/v1/ingest/webloader/url`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** New source: organization author capability + selected Owner-team membership. Existing source: datasource Owner access. **Service:** RAG server.
 
 Queues a new URL crawl on the webloader Redis queue; creates datasource and pending job.
 
@@ -660,7 +919,7 @@ Queues a new URL crawl on the webloader Redis queue; creates datasource and pend
 
 ### POST `/v1/ingest/webloader/reload`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** Bearer JWT + datasource Owner access. Stored connector configuration is reused. **Service:** RAG server.
 
 **Request body:**
 
@@ -685,7 +944,7 @@ Queues a new URL crawl on the webloader Redis queue; creates datasource and pend
 
 ### POST `/v1/ingest/webloader/reload-all`
 
-**Auth:** Bearer JWT — `admin`. **Service:** RAG server.
+**Auth:** Bearer JWT + organization-admin grant. **Service:** RAG server.
 
 **Request body:** None.
 
@@ -701,14 +960,15 @@ Queues a new URL crawl on the webloader Redis queue; creates datasource and pend
 
 ### POST `/v1/ingest/confluence/page`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** New source: organization author capability + selected Owner-team membership. Existing source: datasource Owner access. **Service:** RAG server.
 
 **Request body:**
 
 ```json
 {
-  "url": "https://company.atlassian.net/wiki/spaces/ENG/pages/123456789/Runbook",
-  "description": "Engineering space",
+  "url": "https://example.atlassian.net/wiki/spaces/ENG/pages/123456789/Runbook",
+  "name": "Engineering runbooks",
+  "description": "Runbooks rooted at the selected page",
   "get_child_pages": true,
   "allowed_title_patterns": ["^Runbook.*"],
   "denied_title_patterns": ["Draft"]
@@ -719,25 +979,25 @@ Queues a new URL crawl on the webloader Redis queue; creates datasource and pend
 
 ```json
 {
-  "datasource_id": "src_confluence___company_atlassian_net__ENG",
+  "datasource_id": "src_confluence___example_atlassian_net__ENG__123456789",
   "job_id": "new-uuid",
   "message": "Confluence page ingestion request queued"
 }
 ```
 
-**Errors:** `400` invalid URL format or wrong Confluence host vs `CONFLUENCE_URL`; `400` if another job pending for that space datasource.
+**Errors:** `400` invalid URL format or wrong Confluence host vs `CONFLUENCE_URL`; `400` if another job is pending for that page-rooted datasource.
 
 ---
 
 ### POST `/v1/ingest/confluence/reload`
 
-**Auth:** Bearer JWT — `ingestonly`. **Service:** RAG server.
+**Auth:** Bearer JWT + datasource Owner access. Stored connector configuration is reused. **Service:** RAG server.
 
 **Request body:**
 
 ```json
 {
-  "datasource_id": "src_confluence___company_atlassian_net__ENG"
+  "datasource_id": "src_confluence___example_atlassian_net__ENG__123456789"
 }
 ```
 
@@ -747,7 +1007,7 @@ Queues a new URL crawl on the webloader Redis queue; creates datasource and pend
 
 ### POST `/v1/ingest/confluence/reload-all`
 
-**Auth:** Bearer JWT — `admin`. **Service:** RAG server.
+**Auth:** Bearer JWT + organization-admin grant. **Service:** RAG server.
 
 **Response `202`:**
 
@@ -761,11 +1021,13 @@ Queues a new URL crawl on the webloader Redis queue; creates datasource and pend
 
 ## Graph explore (entity & ontology)
 
-Requires `ENABLE_GRAPH_RAG=true` and Neo4j. All routes below need Bearer JWT — `readonly`.
+Requires `ENABLE_GRAPH_RAG=true`, Neo4j, a Bearer JWT, and the organization search capability. Data-graph responses are limited to datasources for which the caller has Search access. Entities without datasource provenance and relations whose endpoints are not both searchable are omitted.
+
+The ontology graph is deployment-global and does not yet carry datasource provenance. Its routes, including ontology-agent status, therefore require unrestricted datasource access. Bounded callers can use only the source-scoped data graph.
 
 ### GET `/v1/graph/explore/entity_type`
 
-Lists ontology entity types.
+Lists entity types visible to the caller. Unrestricted callers receive the ontology type list; bounded callers receive only types found in their readable portion of the data graph.
 
 **Response `200`:** JSON object/array as returned by the ontology graph driver.
 
@@ -838,7 +1100,7 @@ Lists ontology entity types.
 
 ### GET `/v1/graph/explore/ontology/entities/batch`
 
-Same contract as data entities batch, against the ontology graph.
+Same contract as data entities batch, against the ontology graph. Requires unrestricted datasource access.
 
 ---
 
@@ -868,7 +1130,7 @@ Ontology graph statistics.
 
 ### GET|POST|DELETE `/v1/graph/ontology/agent/{path}`
 
-**Auth:** Bearer JWT — `readonly` for `GET` **only** when path ends with `/status`; other methods/paths require `admin`. **Service:** RAG server (reverse proxy to `ONTOLOGY_AGENT_RESTAPI_ADDR`, default `http://localhost:8098`).
+**Auth:** Bearer JWT — unrestricted datasource access for `GET` **only** when path ends with `/status`; other methods/paths require organization admin. **Service:** RAG server (reverse proxy to `ONTOLOGY_AGENT_RESTAPI_ADDR`, default `http://localhost:8098`).
 
 Streams the ontology agent response (status and headers forwarded). **Errors:** `403` insufficient role; upstream errors pass through as received.
 

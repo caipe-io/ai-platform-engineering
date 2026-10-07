@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Webex identity linking."""
 
@@ -11,7 +11,6 @@ import pytest
 
 from ai_platform_engineering.integrations.webex_bot.utils import identity_linker as il
 from ai_platform_engineering.integrations.webex_bot.utils.identity_linker import (
-    UI_WEBEX_LINK_NONCES_COLLECTION,
     WebexIdentityLinker,
 )
 from ai_platform_engineering.integrations.webex_bot.utils.keycloak_admin import (
@@ -19,8 +18,7 @@ from ai_platform_engineering.integrations.webex_bot.utils.keycloak_admin import 
 )
 
 
-def test_ui_nonce_collection_and_attribute_names() -> None:
-    assert UI_WEBEX_LINK_NONCES_COLLECTION == "webex_link_nonces"
+def test_webex_user_attribute_name() -> None:
     assert WEBEX_USER_ATTRIBUTE == "webex_user_id"
 
 
@@ -69,3 +67,40 @@ def test_webex_identity_linker_protocol(
 
     monkeypatch.setattr(linker, "resolve", fake_resolve)
     assert asyncio.run(linker.resolve("person1234")) == "kc-1"
+
+
+def test_generate_linking_url_returns_oauth_start_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(il, "_LINK_BASE_URL", "https://caipe.example.com")
+    monkeypatch.delenv("NODE_ENV", raising=False)
+    url = asyncio.run(il.generate_linking_url("person1234"))
+    assert url == "https://caipe.example.com/api/auth/webex-link/start"
+
+
+def test_generate_linking_url_ignores_webex_user_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(il, "_LINK_BASE_URL", "https://caipe.example.com")
+    monkeypatch.delenv("NODE_ENV", raising=False)
+    url_a = asyncio.run(il.generate_linking_url("person1234"))
+    url_b = asyncio.run(il.generate_linking_url("someone-elses-person-id"))
+    assert url_a == url_b
+
+
+def test_generate_linking_url_rejects_non_https_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(il, "_LINK_BASE_URL", "http://localhost:3000")
+    monkeypatch.setenv("NODE_ENV", "production")
+    with pytest.raises(ValueError):
+        asyncio.run(il.generate_linking_url("person1234"))
+
+
+def test_generate_linking_url_allows_https_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(il, "_LINK_BASE_URL", "https://caipe.example.com")
+    monkeypatch.setenv("NODE_ENV", "production")
+    url = asyncio.run(il.generate_linking_url("person1234"))
+    assert url == "https://caipe.example.com/api/auth/webex-link/start"

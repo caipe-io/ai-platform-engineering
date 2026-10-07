@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import gzip
+import heapq
 import io
 import json
+import logging
 import os
 import re
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from itertools import islice
 from pathlib import Path
+from threading import Event
 from typing import Any, Iterable
 from uuid import uuid4
+
+_logger = logging.getLogger(__name__)
 
 _PARQUET_INDEX_FIELDS = (
     "ts",
@@ -35,6 +42,7 @@ _PARQUET_INDEX_FIELDS = (
 )
 _AUDIT_KEY_TS_RE = re.compile(r"audit-(\d{8}T\d{6}Z)-")
 _KEY_TIME_PRUNE_TOLERANCE = timedelta(minutes=2)
+_S3_IO_MAX_WORKERS = 16
 
 
 def _format_bytes(value: int) -> str:
@@ -180,6 +188,40 @@ class AuditQuery:
     agent_name: str | None = None
     tool_name: str | None = None
     user_email: str | None = None
+    cancel_event: Event | None = None
+
+
+class AuditQueryCancelled(Exception):
+    """A scan is no longer needed by its caller."""
+
+
+def _check_cancelled(cancel_event: Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise AuditQueryCancelled
+
+
+class _QueryMatches:
+    """Count every match while retaining only the newest requested records."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.total = 0
+        self.heap: list[tuple[datetime, int, dict[str, Any]]] = []
+
+    def add(self, record: dict[str, Any]) -> None:
+        self.total += 1
+        if self.limit <= 0:
+            return
+        # Earlier records win timestamp ties, preserving stable scan ordering.
+        entry = (_record_sort_key(record), -self.total, record)
+        if len(self.heap) < self.limit:
+            heapq.heappush(self.heap, entry)
+        elif entry[:2] > self.heap[0][:2]:
+            heapq.heapreplace(self.heap, entry)
+
+    def result(self) -> QueryResult:
+        records = [entry[2] for entry in sorted(self.heap, reverse=True)]
+        return QueryResult(records=records, total=self.total, truncated=self.total > self.limit)
 
 
 @dataclass(frozen=True)
@@ -277,16 +319,16 @@ class LocalAuditStore:
         return deleted
 
     def query(self, query: AuditQuery) -> QueryResult:
-        matches: list[dict[str, Any]] = []
+        _check_cancelled(query.cancel_event)
+        matches = _QueryMatches(query.limit)
         for file_path in self._files_for_range(query.since, query.until):
+            _check_cancelled(query.cancel_event)
             for record in self._read_file(file_path):
+                _check_cancelled(query.cancel_event)
                 if not _record_matches(record, query):
                     continue
-                matches.append(record)
-
-        matches.sort(key=_record_sort_key, reverse=True)
-        total = len(matches)
-        return QueryResult(records=matches[: query.limit], total=total, truncated=total > query.limit)
+                matches.add(record)
+        return matches.result()
 
     def _files_for_range(self, since: datetime, until: datetime) -> list[Path]:
         files: list[Path] = []
@@ -342,6 +384,10 @@ class LocalAuditStore:
                         yield record
         except OSError:
             return
+
+
+class S3RetentionError(Exception):
+    """Raised when an S3 lifecycle-rule update fails (e.g. missing IAM permissions)."""
 
 
 class S3AuditStore:
@@ -441,10 +487,17 @@ class S3AuditStore:
         except Exception:  # noqa: BLE001
             rules = []
         rules.append(new_rule)
-        self._client.put_bucket_lifecycle_configuration(
-            Bucket=self.bucket,
-            LifecycleConfiguration={"Rules": rules},
-        )
+        try:
+            self._client.put_bucket_lifecycle_configuration(
+                Bucket=self.bucket,
+                LifecycleConfiguration={"Rules": rules},
+            )
+        except Exception as exc:  # noqa: BLE001
+            reason = getattr(exc, "response", {}).get("Error", {}).get("Message") or str(exc)
+            raise S3RetentionError(
+                f"Failed to update S3 lifecycle rule (check S3 permissions, e.g. "
+                f"s3:PutLifecycleConfiguration on bucket {self.bucket}): {reason}"
+            ) from exc
 
     def storage_usage(self, *, max_objects: int = 10_000) -> dict[str, Any]:
         """Return approximate storage usage under this prefix.
@@ -501,28 +554,45 @@ class S3AuditStore:
         return f"s3://{self.bucket}/{key}"
 
     def query(self, query: AuditQuery) -> QueryResult:
-        matches: list[dict[str, Any]] = []
-        for key in self._keys_for_range(query.since, query.until, query.time_resolution):
-            if not self._key_may_overlap(key, query):
-                continue
-            for record in self._read_object(key):
-                if _record_matches(record, query):
-                    matches.append(record)
+        _check_cancelled(query.cancel_event)
+        keys = (
+            key
+            for key in self._keys_for_range(
+                query.since, query.until, query.time_resolution, cancel_event=query.cancel_event
+            )
+            if self._key_may_overlap(key, query)
+        )
+        matches = _QueryMatches(query.limit)
 
-        matches.sort(key=_record_sort_key, reverse=True)
-        total = len(matches)
-        return QueryResult(records=matches[: query.limit], total=total, truncated=total > query.limit)
+        def read_object(key: str) -> list[dict[str, Any]]:
+            return self._read_object(key, query)
 
-    def _keys_for_range(self, since: datetime, until: datetime, time_resolution: str = "auto") -> Iterable[str]:
+        with ThreadPoolExecutor(max_workers=_S3_IO_MAX_WORKERS) as executor:
+            # Executor.map otherwise queues the entire scan and retains completed
+            # results behind a slow object. One window bounds both kinds of work.
+            while key_batch := list(islice(keys, _S3_IO_MAX_WORKERS)):
+                _check_cancelled(query.cancel_event)
+                for records in executor.map(read_object, key_batch):
+                    _check_cancelled(query.cancel_event)
+                    for record in records:
+                        if _record_matches(record, query):
+                            matches.add(record)
+        return matches.result()
+
+    def _keys_for_range(
+        self,
+        since: datetime,
+        until: datetime,
+        time_resolution: str = "auto",
+        *,
+        cancel_event: Event | None = None,
+    ) -> Iterable[str]:
         resolution = self._resolve_time_resolution(since, until, time_resolution)
-        seen: set[str] = set()
-
+        # Prefixes are disjoint; stream S3 pages without retaining a global key
+        # list or submitting work for objects that the caller will never consume.
         for prefix, delimiter in self._prefixes_for_range(since, until, resolution):
-            for key in self._list_parquet_keys(prefix, delimiter=delimiter):
-                if key in seen:
-                    continue
-                seen.add(key)
-                yield key
+            _check_cancelled(cancel_event)
+            yield from self._list_parquet_keys(prefix, delimiter=delimiter, cancel_event=cancel_event)
 
     def _resolve_time_resolution(self, since: datetime, until: datetime, requested: str) -> str:
         value = requested.strip().lower()
@@ -551,6 +621,7 @@ class S3AuditStore:
         else:
             for day in _iter_days(since, until):
                 yield self._join_prefix(*_day_parts(day)), None
+            return
 
         # Legacy branch builds wrote directly under YYYY/MM/DD. Keep those
         # visible without recursively listing the newer HH/mm prefixes.
@@ -562,9 +633,12 @@ class S3AuditStore:
         prefix = "/".join(part for part in (self.prefix, *parts) if part)
         return f"{prefix}/" if prefix else ""
 
-    def _list_parquet_keys(self, prefix: str, *, delimiter: str | None = None) -> Iterable[str]:
+    def _list_parquet_keys(
+        self, prefix: str, *, delimiter: str | None = None, cancel_event: Event | None = None
+    ) -> Iterable[str]:
         token: str | None = None
         while True:
+            _check_cancelled(cancel_event)
             kwargs: dict[str, Any] = {"Bucket": self.bucket, "Prefix": prefix}
             if delimiter is not None:
                 kwargs["Delimiter"] = delimiter
@@ -572,8 +646,11 @@ class S3AuditStore:
                 kwargs["ContinuationToken"] = token
             response = self._client.list_objects_v2(**kwargs)
             for item in response.get("Contents", []):
+                _check_cancelled(cancel_event)
                 key = item.get("Key")
                 if isinstance(key, str) and key.endswith(".parquet"):
+                    if delimiter and delimiter in key.removeprefix(prefix):
+                        continue
                     yield key
             if not response.get("IsTruncated"):
                 break
@@ -591,14 +668,25 @@ class S3AuditStore:
             <= query.until + _KEY_TIME_PRUNE_TOLERANCE
         )
 
-    def _read_object(self, key: str) -> Iterable[dict[str, Any]]:
+    def _read_object(self, key: str, query: AuditQuery | None = None) -> list[dict[str, Any]]:
+        cancel_event = query.cancel_event if query else None
+        _check_cancelled(cancel_event)
         try:
             response = self._client.get_object(Bucket=self.bucket, Key=key)
-            body = response["Body"].read()
-            records = self._from_parquet_bytes(body)
+            with response["Body"] as stream:
+                body = stream.read()
+            _check_cancelled(cancel_event)
+            records = []
+            for record in self._from_parquet_bytes(body):
+                _check_cancelled(cancel_event)
+                if query is None or _record_matches(record, query):
+                    records.append(record)
+            return records
+        except AuditQueryCancelled:
+            raise
         except Exception:
-            return
-        yield from records
+            _logger.warning("Failed to read S3 audit object s3://%s/%s", self.bucket, key, exc_info=True)
+            raise
 
     def _to_parquet_bytes(self, records: list[dict[str, Any]]) -> bytes:
         import pyarrow as pa  # type: ignore[import-untyped]
@@ -621,8 +709,14 @@ class S3AuditStore:
     def _from_parquet_bytes(self, body: bytes) -> Iterable[dict[str, Any]]:
         import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
-        table = pq.read_table(io.BytesIO(body))
-        for row in table.to_pylist():
+        parquet = pq.ParquetFile(io.BytesIO(body))
+        # S3 fetches already run in parallel. Keep Arrow decoding within each
+        # worker and materialize a bounded number of rows at a time.
+        for batch in parquet.iter_batches(batch_size=512, use_threads=False):
+            yield from self._records_from_rows(batch.to_pylist())
+
+    def _records_from_rows(self, rows: Iterable[dict[str, Any]]) -> Iterable[dict[str, Any]]:
+        for row in rows:
             raw_record = row.get("record_json")
             if isinstance(raw_record, str):
                 try:

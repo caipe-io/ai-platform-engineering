@@ -11,8 +11,9 @@ withErrorHandler,
 import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
 import {
 resolveAuthorizedAdminSimulationScope,
-simulationSubjectCanAuditOrganization,
+simulationSubjectCanManageAdminSurface,
 } from '@/lib/rbac/admin-simulation-server';
+import { isEveryoneTeamSlug } from '@/lib/rbac/reserved-teams';
 import { isValidTeamSlug } from '@/lib/rbac/keycloak-admin';
 import { listOpenFgaObjects } from '@/lib/rbac/openfga';
 import { listTeamKbGrantsBatch, listTeamResourceIdsBatch, TEAM_TOOL_WILDCARD_SENTINEL_ID } from '@/lib/rbac/team-resource-listing';
@@ -91,8 +92,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   // admin. Failures resolving membership fail-closed so a transiently broken
   // PDP can't accidentally leak the full team list to a regular user.
   const hasAdminView = simulationScope
-    ? await simulationSubjectCanAuditOrganization(simulationScope)
-    : await requireRbacPermission(session, 'admin_ui', 'view').then(
+    ? await simulationSubjectCanManageAdminSurface(simulationScope, 'teams')
+    : await requireRbacPermission(session, 'admin_ui', 'admin').then(
         () => true,
         () => false
       );
@@ -254,7 +255,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       tool_count: toolCount,
       tool_wildcard: toolWildcard,
       idp_source_types: slug ? idpSourceTypes.get(slug) ?? [] : [],
-      can_manage: hasAdminView || (slug ? adminSlugs.has(slug) : false),
+      can_manage:
+        hasAdminView ||
+        (slug ? !isEveryoneTeamSlug(slug) && adminSlugs.has(slug) : false),
     };
   });
 

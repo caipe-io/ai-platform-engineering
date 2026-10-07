@@ -273,3 +273,34 @@ export async function resolveUnlinkedServiceAccountSub(): Promise<string | null>
     return null;
   }
 }
+
+/**
+ * The unlinked SA's `sa_sub` plus the set of agent ids an admin has EXPLICITLY
+ * granted it via the Unlinked Access panel, read from `scopes_snapshot`.
+ *
+ * An explicit grant is durable: it must survive an agent's visibility leaving
+ * `global` and survive the startup reconcile sweep. Only the panel's own DELETE
+ * may remove it. Callers use `explicitAgentIds` to decide whether a visibility
+ * demotion should delete the unlinked SA's `can_use` tuple — an explicit grant
+ * is owned by the admin, not by the agent's visibility, so it is preserved.
+ *
+ * Never throws — on any failure returns `sub: null` and an empty set so callers
+ * fall open (skip the grant/preserve nothing) instead of blocking the request.
+ */
+export async function resolveUnlinkedServiceAccountGrantState(): Promise<{
+  sub: string | null;
+  explicitAgentIds: Set<string>;
+}> {
+  try {
+    const sa = await getUnlinkedServiceAccount();
+    const explicitAgentIds = new Set(
+      (sa?.scopes_snapshot ?? [])
+        .filter((scope) => scope.type === "agent")
+        .map((scope) => scope.ref),
+    );
+    return { sub: sa?.sa_sub ?? null, explicitAgentIds };
+  } catch (error) {
+    console.warn("[unlinked-service-account] failed to resolve grant state:", error);
+    return { sub: null, explicitAgentIds: new Set() };
+  }
+}

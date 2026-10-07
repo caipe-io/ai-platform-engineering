@@ -1,0 +1,55 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: dev-eks-cluster
+  region: us-east-2
+
+# EKS Auto Mode manages all node provisioning via the built-in Karpenter controller.
+# After creating the cluster, apply the NodePool manifest in
+# deploy/eks/karpenter/ to configure the RAG workload tier.
+autoModeConfig:
+  enabled: true
+  nodePools: ["general-purpose", "system"]
+
+# Use IAM access entries (API auth mode) instead of aws-auth ConfigMap.
+accessConfig:
+  authenticationMode: API
+
+vpc:
+  # Enable private endpoint so in-cluster traffic stays off the public internet.
+  # Restrict public access to known CIDRs (replace with your VPN/office CIDR).
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: true
+  publicAccessCIDRs:
+    # TODO: REQUIRED -- restrict to your VPN/office egress CIDR before creating
+    # the cluster. The example below is a non-routable documentation range;
+    # applying as-is blocks public API access until you replace it.
+    # NEVER use 0.0.0.0/0, it exposes the control-plane API to the entire internet.
+    - "203.0.113.0/24"
+
+# Encrypt Kubernetes secrets at rest with a customer-managed KMS key.
+secretsEncryption:
+  keyARN: arn:aws:kms:us-east-2:ACCOUNT_ID:key/KEY_ID  # TODO: replace with your KMS key ARN
+
+# Audit and authenticator logs are needed for security posture; API logs add
+# visibility into control-plane calls without significant cost impact.
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["audit", "authenticator", "api"]
+
+# OIDC is required for IRSA.
+iam:
+  withOIDC: true
+  serviceAccounts:
+  - metadata:
+      name: external-dns
+      namespace: external-dns
+    wellKnownPolicies:
+      externalDNS: true
+  - metadata:
+      name: cert-manager
+      namespace: cert-manager
+    wellKnownPolicies:
+      certManager: true

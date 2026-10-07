@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent,render,screen } from "@testing-library/react";
+import { fireEvent,render,screen,within } from "@testing-library/react";
 
 // assisted-by Codex Codex-sonnet-4-6
 
@@ -27,57 +27,73 @@ jest.mock("@/components/auth-guard", () => ({
   AuthGuard: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-jest.mock("@/components/ui/scroll-area", () => ({
-  ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}));
-
 jest.mock("@/components/dynamic-agents/DynamicAgentsTab", () => ({
-  DynamicAgentsTab: ({
+  DynamicAgentsTab: function DynamicAgentsTabMock({
     selectedAgentId,
     initialStep,
     onSelectedAgentChange,
+    onSelectedAgentNameChange,
     onStepChange,
   }: {
     selectedAgentId?: string | null;
     initialStep?: string;
     onSelectedAgentChange?: (id: string | null) => void;
+    onSelectedAgentNameChange?: (name: string | null) => void;
     onStepChange?: (step: string) => void;
-  }) => (
-    <div
-      data-testid="dynamic-agents-tab"
-      data-selected-id={selectedAgentId ?? ""}
-      data-step={initialStep ?? ""}
-    >
-      DynamicAgentsTab
-      <button type="button" onClick={() => onStepChange?.("tools")}>
-        Open tools step
-      </button>
-      <button type="button" onClick={() => onSelectedAgentChange?.("agent-ops")}>
-        Open agent editor
-      </button>
-    </div>
-  ),
+  }) {
+    React.useEffect(() => {
+      onSelectedAgentNameChange?.(selectedAgentId ? "Example Agent" : null);
+    }, [onSelectedAgentNameChange, selectedAgentId]);
+
+    return (
+      <div
+        data-testid="dynamic-agents-tab"
+        data-selected-id={selectedAgentId ?? ""}
+        data-step={initialStep ?? ""}
+      >
+        DynamicAgentsTab
+        <button type="button" onClick={() => onStepChange?.("tools")}>
+          Open tools step
+        </button>
+        <button type="button" onClick={() => onSelectedAgentChange?.("agent-ops")}>
+          Open agent editor
+        </button>
+      </div>
+    );
+  },
 }));
 
 jest.mock("@/components/dynamic-agents/MCPServersTab", () => ({
-  MCPServersTab: ({
+  MCPServersTab: function MCPServersTabMock({
     selectedServerId,
     onSelectedServerChange,
+    onSelectedServerNameChange,
   }: {
     selectedServerId?: string | null;
     onSelectedServerChange?: (id: string | null) => void;
-  }) => (
-    <div data-testid="mcp-servers-tab" data-selected-id={selectedServerId ?? ""}>
-      MCPServersTab
-      <button type="button" onClick={() => onSelectedServerChange?.("mcp-jira")}>
-        Open server editor
-      </button>
-    </div>
-  ),
+    onSelectedServerNameChange?: (name: string | null) => void;
+  }) {
+    React.useEffect(() => {
+      onSelectedServerNameChange?.(selectedServerId ? "Example MCP Server" : null);
+    }, [onSelectedServerNameChange, selectedServerId]);
+
+    return (
+      <div data-testid="mcp-servers-tab" data-selected-id={selectedServerId ?? ""}>
+        MCPServersTab
+        <button type="button" onClick={() => onSelectedServerChange?.("mcp-jira")}>
+          Open server editor
+        </button>
+      </div>
+    );
+  },
 }));
 
 jest.mock("@/components/dynamic-agents/LLMProvidersTab", () => ({
-  LLMProvidersTab: ({
+  LLMProvidersTab: () => <div data-testid="model-providers-tab">LLMProvidersTab</div>,
+}));
+
+jest.mock("@/components/dynamic-agents/LLMModelsTab", () => ({
+  LLMModelsTab: ({
     selectedModelId,
     onSelectedModelChange,
   }: {
@@ -85,7 +101,7 @@ jest.mock("@/components/dynamic-agents/LLMProvidersTab", () => ({
     onSelectedModelChange?: (id: string | null) => void;
   }) => (
     <div data-testid="llm-models-tab" data-selected-id={selectedModelId ?? ""}>
-      LLMProvidersTab
+      LLMModelsTab
       <button type="button" onClick={() => onSelectedModelChange?.("openai/gpt-4o")}>
         Open model editor
       </button>
@@ -127,11 +143,26 @@ describe("DynamicAgentsPage", () => {
   it("renders the OpenFGA-filtered Agents surface for non-admin users", () => {
     render(<DynamicAgentsPage />);
 
-    expect(screen.getByRole("heading", { name: "Agents" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^Agents$/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^MCP Servers$/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /^LLM Models$/i })).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: /^Conversations$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1,name: "Agents" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Build agents and choose the instructions, tools, and model they use."),
+    ).toBeInTheDocument();
+    const breadcrumb = screen.getByRole("navigation",{ name: "Breadcrumb" });
+    expect(within(breadcrumb).getByRole("link",{ name: "Home" })).toHaveAttribute("href","/");
+    expect(within(breadcrumb).getByRole("link",{ name: "Agents" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    const navigation = screen.getByRole("navigation", { name: "Agent sections" });
+    expect(within(navigation).getByRole("button", { name: /Agents/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(navigation).getByRole("button", { name: /MCP Servers/i })).toBeInTheDocument();
+    expect(within(navigation).getByRole("button", { name: "Models" })).toBeInTheDocument();
+    expect(within(navigation).queryByRole("button", { name: /Conversations/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(screen.queryByTestId("conversations-tab")).not.toBeInTheDocument();
     expect(screen.queryByText("Access Denied")).not.toBeInTheDocument();
   });
@@ -151,7 +182,57 @@ describe("DynamicAgentsPage", () => {
 
     render(<DynamicAgentsPage />);
 
-    expect(screen.getByRole("tab", { name: /^Conversations$/i })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "Agent sections" })).getByRole(
+        "button",
+        { name: /Conversations/i },
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("discloses separate provider and model destinations without navigating", () => {
+    render(<DynamicAgentsPage />);
+
+    const navigation = screen.getByRole("navigation", { name: "Agent sections" });
+    const modelsDisclosure = within(navigation).getByRole("button", {
+      name: "Models",
+    });
+    expect(modelsDisclosure).toHaveAttribute("aria-expanded", "false");
+    expect(within(navigation).queryByRole("button", { name: /Model Providers/ })).not.toBeInTheDocument();
+
+    fireEvent.click(modelsDisclosure);
+
+    expect(modelsDisclosure).toHaveAttribute("aria-expanded", "true");
+    expect(within(navigation).getByRole("button", { name: /Model Providers/ })).toBeInTheDocument();
+    expect(within(navigation).getByRole("button", { name: "LLM Models" })).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("renders Model Providers as its own deep-linked view", () => {
+    mockSearchParams = new URLSearchParams("tab=model-providers");
+
+    render(<DynamicAgentsPage />);
+
+    expect(screen.getByTestId("model-providers-tab")).toBeInTheDocument();
+    expect(screen.queryByTestId("llm-models-tab")).not.toBeInTheDocument();
+    const navigation = screen.getByRole("navigation", { name: "Agent sections" });
+    expect(within(navigation).getByRole("button", { name: /Model Providers/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    const breadcrumb = screen.getByRole("navigation",{ name: "Breadcrumb" });
+    expect(within(breadcrumb).getByRole("link",{ name: "Agents" })).toHaveAttribute(
+      "href",
+      "/dynamic-agents?tab=agents",
+    );
+    expect(within(breadcrumb).getByRole("link",{ name: "Models" })).toHaveAttribute(
+      "href",
+      "/dynamic-agents?tab=model-providers",
+    );
+    expect(within(breadcrumb).getByRole("link",{ name: "Model Providers" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("allows OpenFGA-authorized users to deep link to Conversations", () => {
@@ -171,6 +252,30 @@ describe("DynamicAgentsPage", () => {
 
     expect(screen.getByTestId("dynamic-agents-tab")).toHaveAttribute("data-selected-id", "agent-ops");
     expect(screen.getByTestId("dynamic-agents-tab")).toHaveAttribute("data-step", "instructions");
+  });
+
+  it("includes the selected agent name in the breadcrumb", () => {
+    mockSearchParams = new URLSearchParams("tab=agents&agent=agent-ops&step=basic");
+
+    render(<DynamicAgentsPage />);
+
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getByRole("link", { name: "Example Agent" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("includes the selected MCP server name in the breadcrumb", () => {
+    mockSearchParams = new URLSearchParams("tab=mcp-servers&server=mcp-example");
+
+    render(<DynamicAgentsPage />);
+
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getByRole("link", { name: "Example MCP Server" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("updates the current agent setup step in the URL", () => {
@@ -213,10 +318,8 @@ describe("DynamicAgentsPage", () => {
     mockSearchParams = new URLSearchParams("tab=agents&agent=agent-ops&step=advanced");
     render(<DynamicAgentsPage />);
 
-    fireEvent.mouseDown(screen.getByRole("tab", { name: "MCP Servers" }), {
-      button: 0,
-      ctrlKey: false,
-    });
+    const navigation = screen.getByRole("navigation", { name: "Agent sections" });
+    fireEvent.click(within(navigation).getByRole("button", { name: /MCP Servers/i }));
 
     expect(mockPush).toHaveBeenCalledWith("/dynamic-agents?tab=mcp-servers");
   });

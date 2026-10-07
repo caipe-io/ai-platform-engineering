@@ -1,0 +1,304 @@
+/**
+ * @jest-environment jsdom
+ */
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
+
+import { DEFAULT_WEBHOOK_PROVIDER_OPTIONS, TaskFormDialog } from "@/components/autonomous/TaskFormDialog";
+import type { AutonomousTask } from "@/components/autonomous/types";
+
+function existingTask(): AutonomousTask {
+  return {
+    id: "daily-report-a3f9",
+    name: "Daily report",
+    enabled: true,
+    dynamic_agent_id: "agent-x",
+    prompt: "summarise",
+    trigger: { type: "cron", schedule: "0 9 * * *" },
+  } as AutonomousTask;
+}
+
+const saveTask = async (task: AutonomousTask) => ({ task });
+const saveSecret = async (task: AutonomousTask) => task;
+
+function renderDialog(props: Partial<ComponentProps<typeof TaskFormDialog>> = {}) {
+  return render(
+    <TaskFormDialog
+      open
+      onOpenChange={() => {}}
+      initialAgentId="agent-x"
+      onSubmit={saveTask}
+      onSaveWebhookSecret={saveSecret}
+      {...props}
+    />,
+  );
+}
+
+it("renders no ID input in create mode", () => {
+  renderDialog();
+  expect(screen.queryByLabelText(/^ID$/i)).not.toBeInTheDocument();
+});
+
+it("does not expose obsolete per-task timeout or retry controls", () => {
+  renderDialog();
+  expect(screen.queryByLabelText(/timeout/i)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/max retries/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/A2A_(TIMEOUT_SECONDS|MAX_RETRIES)/i)).not.toBeInTheDocument();
+});
+
+it("defaults cron schedules to UTC and offers daylight-saving-aware time zones", () => {
+  renderDialog();
+
+  expect(screen.getByLabelText("Time zone")).toHaveValue("UTC");
+  expect(screen.getByRole("option", { name: /London.*GMT\/BST.*UTC\+0\/\+1/i })).toHaveValue(
+    "Europe/London",
+  );
+  expect(screen.getByText(/UTC by default/i)).toBeInTheDocument();
+});
+
+it("shows the id as read-only text in edit mode", () => {
+  renderDialog({ task: existingTask() });
+  expect(screen.getByTestId("task-id-readonly")).toHaveTextContent("daily-report-a3f9");
+  expect(screen.queryByRole("textbox", { name: /^ID$/i })).not.toBeInTheDocument();
+});
+
+it("warns but does not block when the name duplicates another task", () => {
+  renderDialog({ existingNames: ["Daily report"] });
+
+  fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "daily REPORT" } });
+
+  expect(screen.getByTestId("duplicate-name-warning")).toBeInTheDocument();
+  // Non-blocking: the submit control stays enabled.
+  expect(screen.getByRole("button", { name: /create task/i })).toBeEnabled();
+});
+
+it("does not warn for a name that is unique", () => {
+  renderDialog({ existingNames: ["Something else"] });
+
+  fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Daily report" } });
+
+  expect(screen.queryByTestId("duplicate-name-warning")).not.toBeInTheDocument();
+});
+
+it("removes Generic HMAC and does not ask for a GitHub secret", () => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+
+  expect(screen.queryByRole("option", { name: /generic hmac/i })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("option")).toHaveLength(4);
+  expect(screen.queryByLabelText(/hmac secret/i)).not.toBeInTheDocument();
+  expect(screen.getByText(/generated automatically and shown once/i)).toBeInTheDocument();
+});
+
+it("configures safe header and payload filters", async () => {
+  const onSubmit = jest.fn(saveTask);
+  renderDialog({ onSubmit });
+  fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Closed PR task" } });
+  fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: "Summarize it" } });
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+
+  fireEvent.click(screen.getByLabelText(/only run the agent when all conditions match/i));
+  fireEvent.change(screen.getByLabelText("Filter 1 source"), {
+    target: { value: "header" },
+  });
+  fireEvent.change(screen.getByLabelText("Filter 1 field"), {
+    target: { value: "X-GitHub-Event" },
+  });
+  fireEvent.change(screen.getByLabelText("Filter 1 accepted values"), {
+    target: { value: "pull_request" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add condition" }));
+  fireEvent.change(screen.getByLabelText("Filter 2 field"), {
+    target: { value: "action" },
+  });
+  fireEvent.change(screen.getByLabelText("Filter 2 accepted values"), {
+    target: { value: "closed, reopened" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      trigger: expect.objectContaining({
+        filter: {
+          conditions: [
+            { source: "header", field: "X-GitHub-Event", values: ["pull_request"] },
+            { source: "payload", field: "action", values: ["closed", "reopened"] },
+          ],
+        },
+      }),
+    }),
+  ));
+});
+
+it.each(DEFAULT_WEBHOOK_PROVIDER_OPTIONS)("shows the JSON requirement before %s creation even with filtering off", (provider) => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: provider } });
+
+  expect(screen.getByLabelText(/only run the agent when all conditions match/i)).not.toBeChecked();
+  const notice = screen.getByRole("note", { name: "Webhook payload requirement" });
+  expect(notice).toHaveTextContent("Send webhook requests as application/json");
+  expect(notice).toHaveTextContent("application/x-www-form-urlencoded");
+  expect(notice).toHaveTextContent("payload filters will not match");
+  expect(notice).toHaveTextContent("status: accepted");
+  expect(notice).toHaveTextContent("reason: filter_mismatch");
+});
+
+it.each(DEFAULT_WEBHOOK_PROVIDER_OPTIONS)("shows the JSON requirement when editing an existing %s webhook", (provider) => {
+  renderDialog({ task: {
+    ...existingTask(),
+    trigger: { type: "webhook", provider, has_secret: true },
+  } });
+
+  expect(screen.getByRole("note", { name: "Webhook payload requirement" })).toBeVisible();
+});
+
+it.each(["jira", "slack", "pagerduty"])("does not show GitHub-specific guidance for %s", (provider) => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: provider } });
+
+  const notice = screen.getByRole("note", { name: "Webhook payload requirement" });
+  expect(notice).toBeVisible();
+  expect(notice).not.toHaveTextContent("In GitHub");
+});
+
+it.each(DEFAULT_WEBHOOK_PROVIDER_OPTIONS)("retains JSON guidance in the post-create %s setup step", async (provider) => {
+  const onSubmit = jest.fn(async (task: AutonomousTask) => ({
+    task: {
+      ...task,
+      id: "example-webhook",
+      trigger: { type: "webhook" as const, provider, has_secret: true },
+    },
+    webhookSetupRequired: true,
+  }));
+  renderDialog({ onSubmit });
+  fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Example webhook" } });
+  fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: "Summarize the event" } });
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: provider } });
+  fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+
+  expect(await screen.findByTestId("webhook-setup-step")).toBeInTheDocument();
+  expect(screen.getByRole("note", { name: "Webhook payload requirement" })).toHaveTextContent(
+    "Send webhook requests as application/json",
+  );
+});
+
+it("links GitHub webhook documentation and never accepts filter code", () => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.click(screen.getByLabelText(/only run the agent when all conditions match/i));
+  expect(screen.getByRole("link", { name: "GitHub event documentation" })).toHaveAttribute(
+    "href",
+    "https://docs.github.com/en/webhooks/webhook-events-and-payloads",
+  );
+
+  expect(screen.getByText(/no filter code is executed/i)).toBeInTheDocument();
+});
+
+it("supports filters for non-GitHub providers", () => {
+  renderDialog();
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  expect(screen.getByText("Filter deliveries")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "jira" } });
+  expect(screen.getByText("Filter deliveries")).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText(/only run the agent when all conditions match/i));
+  expect(screen.getByTestId("webhook-filter-condition").parentElement).toHaveTextContent(
+    "Payload webhookEvent = jira:issue_updated",
+  );
+});
+
+it("shows only webhook providers enabled by deployment values", () => {
+  renderDialog({ enabledWebhookProviders: ["github", "jira"] });
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+
+  expect(screen.getAllByRole("option")).toHaveLength(2);
+  expect(screen.getByRole("option", { name: "GitHub" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Jira" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "Slack" })).not.toBeInTheDocument();
+});
+
+it("stays open after GitHub creation and shows the full URL plus one-time secret", async () => {
+  const onOpenChange = jest.fn();
+  const onSubmit = jest.fn(async (task: AutonomousTask) => ({
+    task: {
+      ...task,
+      id: "daily-branch-summary-41a9",
+      trigger: { type: "webhook" as const, provider: "github", has_secret: true },
+    },
+    webhookSetupRequired: true,
+    webhookSetupSecret: "generated-secret-value",
+  }));
+
+  renderDialog({ onOpenChange, onSubmit });
+
+  fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Daily branch summary" } });
+  fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: "Summarize branches" } });
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+
+  expect(await screen.findByTestId("webhook-setup-step")).toBeInTheDocument();
+  expect(screen.getByRole("note", { name: "Webhook payload requirement" })).toHaveTextContent(
+    "set Content type to application/json",
+  );
+  expect(screen.getByTestId("webhook-url-value")).toHaveTextContent(
+    "http://localhost/api/v1/hooks/daily-branch-summary-41a9",
+  );
+  expect(screen.getByTestId("signing-secret-value")).not.toHaveTextContent("generated-secret-value");
+  fireEvent.click(screen.getByRole("button", { name: /show signing secret/i }));
+  expect(screen.getByTestId("signing-secret-value")).toHaveTextContent("generated-secret-value");
+  expect(screen.getByText(/will not be shown again/i)).toBeInTheDocument();
+  expect(onOpenChange).not.toHaveBeenCalledWith(false);
+});
+
+it("requires the provider-issued Slack secret after creation", async () => {
+  const onSaveWebhookSecret = jest.fn(async (task: AutonomousTask) => task);
+  const onSubmit = jest.fn(async (task: AutonomousTask) => ({
+    task: {
+      ...task,
+      id: "slack-task-41a9",
+      trigger: { type: "webhook" as const, provider: "slack", has_secret: true },
+    },
+    webhookSetupRequired: true,
+  }));
+  renderDialog({ onSubmit, onSaveWebhookSecret });
+
+  fireEvent.change(screen.getByLabelText(/name/i), { target: { value: "Slack task" } });
+  fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: "Handle Slack" } });
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "slack" } });
+  expect(screen.queryByLabelText(/signing secret/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+
+  const secretInput = await screen.findByLabelText("Slack signing secret");
+  expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+  fireEvent.change(secretInput, { target: { value: "slack-issued-secret" } });
+  fireEvent.click(screen.getByRole("button", { name: /save signing secret/i }));
+  await waitFor(() => expect(onSaveWebhookSecret).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "slack-task-41a9" }),
+    "slack-issued-secret",
+  ));
+  expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
+});
+
+it("continues into setup when an existing scheduled task becomes a webhook", async () => {
+  const onSubmit = jest.fn(async (task: AutonomousTask) => ({
+    task: {
+      ...task,
+      id: "daily-report-a3f9",
+      trigger: { type: "webhook" as const, provider: "github", has_secret: true },
+    },
+    webhookSetupRequired: true,
+    webhookSetupSecret: "transition-secret",
+  }));
+  renderDialog({ task: existingTask(), onSubmit });
+
+  fireEvent.click(screen.getByRole("button", { name: "webhook" }));
+  fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+  expect(await screen.findByTestId("webhook-setup-step")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /show signing secret/i }));
+  expect(screen.getByTestId("signing-secret-value")).toHaveTextContent("transition-secret");
+});

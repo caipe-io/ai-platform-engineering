@@ -1,5 +1,6 @@
 "use client";
 
+import { Switch } from "@/components/ui/switch";
 import { AlertCircle,CheckCircle2,Loader2,Search } from "lucide-react";
 import { useCallback,useEffect,useState } from "react";
 
@@ -20,6 +21,7 @@ import { useCallback,useEffect,useState } from "react";
 interface SearchCapabilityToggleProps {
   teamId: string;
   teamName: string;
+  readOnly?: boolean;
 }
 
 interface CapabilityState {
@@ -29,6 +31,7 @@ interface CapabilityState {
 export function SearchCapabilityToggle({
   teamId,
   teamName,
+  readOnly = false,
 }: SearchCapabilityToggleProps) {
   const [enabled, setEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -66,6 +69,7 @@ export function SearchCapabilityToggle({
   };
 
   const handleToggle = async () => {
+    if (readOnly) return;
     const next = !enabled;
     try {
       setSaving(true);
@@ -104,34 +108,23 @@ export function SearchCapabilityToggle({
           <div className="min-w-0">
             <h4 className="text-sm font-medium">Search knowledge bases</h4>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Allow <strong>{teamName}</strong> members to use Search — run
-              queries and invoke search tools (built-in and custom). This is
-              separate from sharing individual tools below; results are still
-              limited to the data sources each member can read.
+              Allow <strong>{teamName}</strong> members to search datasources
+              they can access, including through agents.
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          aria-label="Allow this team to search knowledge bases"
-          disabled={loading || saving}
-          onClick={handleToggle}
-          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 ${
-            enabled ? "bg-sky-500" : "bg-muted-foreground/30"
-          }`}
-        >
-          {loading || saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin mx-auto text-background" />
-          ) : (
-            <span
-              className={`inline-block h-5 w-5 transform rounded-full bg-background shadow transition-transform ${
-                enabled ? "translate-x-5" : "translate-x-0.5"
-              }`}
-            />
+        <div className="relative shrink-0">
+          <Switch
+            checked={enabled}
+            aria-label="Allow this team to search knowledge bases"
+            disabled={loading || saving || readOnly}
+            onCheckedChange={() => void handleToggle()}
+            className={enabled ? "bg-sky-500" : undefined}
+          />
+          {(loading || saving) && (
+            <Loader2 className="pointer-events-none absolute left-3.5 top-1.5 h-3 w-3 animate-spin text-foreground" />
           )}
-        </button>
+        </div>
       </div>
       {error && (
         <div className="flex items-start gap-2 px-4 pb-3 text-destructive text-xs">

@@ -21,7 +21,9 @@
 import { NextRequest } from "next/server";
 
 const mockGetAuthFromBearerOrSession = jest.fn();
-const mockRequireRbacPermission = jest.fn();
+const mockRequireResourcePermission = jest.fn();
+const mockConfiguredSlackChannelsById = jest.fn();
+const mockActiveConnectorPublicationRequestsByItemId = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   const actual = jest.requireActual("@/lib/api-middleware");
@@ -29,10 +31,40 @@ jest.mock("@/lib/api-middleware", () => {
     ...actual,
     getAuthFromBearerOrSession: (...args: unknown[]) =>
       mockGetAuthFromBearerOrSession(...args),
-    requireRbacPermission: (...args: unknown[]) =>
-      mockRequireRbacPermission(...args),
   };
 });
+
+jest.mock("@/lib/rbac/resource-authz", () => ({
+  requireResourcePermission: (...args: unknown[]) =>
+    mockRequireResourcePermission(...args),
+}));
+
+jest.mock("@/lib/rbac/slack-channel-configured-directory", () => ({
+  configuredSlackChannelsById: (...args: unknown[]) =>
+    mockConfiguredSlackChannelsById(...args),
+}));
+
+jest.mock("@/lib/publication-approval.server", () => ({
+  activeConnectorPublicationRequestsByItemId: (...args: unknown[]) =>
+    mockActiveConnectorPublicationRequestsByItemId(...args),
+  publicationActorFromSession: (session: { sub?: string }) => ({
+    subject: session.sub ?? "",
+  }),
+  connectorPublicationRequestView: (
+    request: Record<string, unknown>,
+    actor: { subject: string },
+  ) => ({
+    id: request._id,
+    status: request.status,
+    requester: request.requester,
+    requester_is_viewer:
+      (request.requester as { subject: string }).subject === actor.subject,
+    team_slug: "team-primary",
+    agent_id: "agent-primary",
+    approver_team_slugs: ["reviewers"],
+    approver_user_subjects: [],
+  }),
+}));
 
 interface SlackFetchCall {
   endpoint: string;
@@ -79,7 +111,9 @@ beforeEach(async () => {
     user: { email: "admin@example.com" },
     session: { sub: "admin-sub" },
   });
-  mockRequireRbacPermission.mockResolvedValue(undefined);
+  mockRequireResourcePermission.mockResolvedValue(undefined);
+  mockConfiguredSlackChannelsById.mockResolvedValue(new Map());
+  mockActiveConnectorPublicationRequestsByItemId.mockResolvedValue(new Map());
   process.env.SLACK_BOT_TOKEN = "xoxb-test-token-abcdefghijkl";
 
   // Reset the route's in-process cache so each test starts clean.
@@ -89,10 +123,22 @@ beforeEach(async () => {
   // toggling can't bleed into the next test.
   const cfg = await import("@/lib/rbac/discovery-cache-config");
   cfg.__resetDiscoveryCacheConfigForTests();
-  delete process.env.DISCOVERY_CACHE_TTL_MINUTES;
+  delete process.env.SLACK_DISCOVERY_CACHE_TTL_MINUTES;
 });
 
 describe("GET /api/admin/slack/available-channels", () => {
+  it("uses baseline Slack-surface read access for self-service discovery", async () => {
+    mockSlackFetch(() => ({ ok: true, channels: [] }));
+
+    await makeRequest("");
+
+    expect(mockRequireResourcePermission).toHaveBeenCalledWith(
+      { sub: "admin-sub" },
+      { type: "admin_surface", id: "slack", action: "read" },
+      { bypassForOrgAdmin: true },
+    );
+  });
+
   describe("issue #1506 — endpoint selection", () => {
     it("uses users.conversations when member_only=1 (default)", async () => {
       mockSlackFetch(() => ({
@@ -119,6 +165,101 @@ describe("GET /api/admin/slack/available-channels", () => {
             expect.objectContaining({ id: "C101", name: "alerts", is_member: true }),
             expect.objectContaining({ id: "C100", name: "incidents", is_member: true }),
           ],
+        },
+      });
+      expect(mockConfiguredSlackChannelsById).toHaveBeenCalledTimes(1);
+      expect(mockConfiguredSlackChannelsById).toHaveBeenCalledWith([
+        "C101",
+        "C100",
+      ]);
+    });
+
+    it("marks configured channels with the Owner team in one batched lookup", async () => {
+      mockConfiguredSlackChannelsById.mockResolvedValue(
+        new Map([
+          [
+            "C100",
+            {
+              channelId: "C100",
+              teamSlug: "platform",
+              teamName: "Platform",
+              agentId: "primary-agent",
+              agentName: "Primary Agent",
+            },
+          ],
+        ]),
+      );
+      mockSlackFetch(() => ({
+        ok: true,
+        channels: [
+          { id: "C100", name: "incidents" },
+          { id: "C101", name: "alerts" },
+        ],
+      }));
+
+      const body = (await makeRequest("member_only=1")) as {
+        data: {
+          channels: Array<{
+            id: string;
+            configured: boolean;
+            configured_team_slug?: string;
+            configured_team_name?: string;
+            configured_agent_id?: string;
+            configured_agent_name?: string;
+          }>;
+        };
+      };
+
+      expect(mockConfiguredSlackChannelsById).toHaveBeenCalledTimes(1);
+      expect(mockConfiguredSlackChannelsById).toHaveBeenCalledWith([
+        "C101",
+        "C100",
+      ]);
+      expect(body.data.channels).toEqual([
+        expect.objectContaining({ id: "C101", configured: false }),
+        expect.objectContaining({
+          id: "C100",
+          configured: true,
+          configured_team_slug: "platform",
+          configured_team_name: "Platform",
+          configured_agent_id: "primary-agent",
+          configured_agent_name: "Primary Agent",
+        }),
+      ]);
+    });
+
+    it("returns a persisted pending onboarding request with the discovered channel", async () => {
+      mockActiveConnectorPublicationRequestsByItemId.mockResolvedValue(new Map([
+        [
+          "C100",
+          {
+            _id: "request-primary",
+            status: "pending",
+            requester: { subject: "admin-sub", name: "Example User" },
+          },
+        ],
+      ]));
+      mockSlackFetch(() => ({
+        ok: true,
+        channels: [{ id: "C100", name: "incidents" }],
+      }));
+
+      const body = (await makeRequest("member_only=1")) as {
+        data: { channels: Array<Record<string, unknown>> };
+      };
+
+      expect(mockActiveConnectorPublicationRequestsByItemId).toHaveBeenCalledWith(
+        "slack_channel",
+        ["C100"],
+      );
+      expect(body.data.channels[0]).toMatchObject({
+        id: "C100",
+        configured: false,
+        pending_publication: {
+          id: "request-primary",
+          requester_is_viewer: true,
+          team_slug: "team-primary",
+          agent_id: "agent-primary",
         },
       });
     });
@@ -180,7 +321,7 @@ describe("GET /api/admin/slack/available-channels", () => {
       // Admin → Platform Settings. Every request should re-fetch from
       // Slack — this is the debug knob for the `#test-0525` scenario
       // where the bot was just added to a new channel.
-      process.env.DISCOVERY_CACHE_TTL_MINUTES = "0";
+      process.env.SLACK_DISCOVERY_CACHE_TTL_MINUTES = "0";
       const cfg = await import("@/lib/rbac/discovery-cache-config");
       cfg.__resetDiscoveryCacheConfigForTests();
 

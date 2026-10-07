@@ -9,13 +9,11 @@
  *   The cache snapshot belongs to the picker the admin is actively using.
  *   Forcing them to navigate to a separate Platform Settings tab just to
  *   drop a stale snapshot is the wrong UX — that's why we moved the
- *   single editing surface here. The TTL is platform-wide (one value
- *   governs both Slack and Webex), but the "Refresh from <provider> now" action is
- *   provider-scoped so we only invalidate what the admin is looking at.
+ *   single editing surface here. Each connector has its own TTL and refresh.
  *
  * Persistence:
  *   - GET/PATCH /api/admin/platform-config persist
- *     `discovery_cache_ttl_minutes` (range 0..1440; 0 disables caching).
+ *     the provider-specific TTL (range 0..1440; 0 disables caching).
  *   - Force refresh hits `/api/admin/<provider>/available-...` with
  *     `?refresh=1` so the next picker open sees a fresh snapshot.
  *
@@ -47,8 +45,7 @@ export type DiscoveryCacheProvider = "slack" | "webex";
 interface DiscoveryCacheControlsProps {
   /**
    * Which connector this control instance lives next to. Determines which
-   * discovery route the "Force refresh" button invalidates. The TTL value
-   * is platform-wide and applies to both providers.
+   * discovery route and TTL field this control manages.
    */
   provider: DiscoveryCacheProvider;
   /**
@@ -76,12 +73,19 @@ const LABEL_BY_PROVIDER: Record<DiscoveryCacheProvider, string> = {
   webex: "Webex",
 };
 
+const CONFIG_FIELD_BY_PROVIDER: Record<DiscoveryCacheProvider, string> = {
+  slack: "slack_discovery_cache_ttl_minutes",
+  webex: "webex_discovery_cache_ttl_minutes",
+};
+
 export function DiscoveryCacheControls({
   provider,
   isAdmin,
   onAfterRefresh,
   refreshQuery,
 }: DiscoveryCacheControlsProps) {
+  const providerLabel = LABEL_BY_PROVIDER[provider];
+  const configField = CONFIG_FIELD_BY_PROVIDER[provider];
   const [open, setOpen] = useState(false);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [ttlInput, setTtlInput] = useState<string>(String(DISCOVERY_TTL_DEFAULT));
@@ -104,7 +108,7 @@ export function DiscoveryCacheControls({
       .catch(() => ({ success: false }))
       .then((body) => {
         if (cancelled) return;
-        const live = Number(body?.data?.discovery_cache_ttl_minutes);
+        const live = Number(body?.data?.[configField]);
         if (Number.isFinite(live)) {
           setTtlInput(String(live));
           setSavedTtl(live);
@@ -116,10 +120,9 @@ export function DiscoveryCacheControls({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [configField, open]);
 
   const ttlDirty = String(savedTtl) !== ttlInput.trim();
-  const providerLabel = LABEL_BY_PROVIDER[provider];
 
   const handleSaveTtl = async () => {
     if (!isAdmin) return;
@@ -147,7 +150,7 @@ export function DiscoveryCacheControls({
       const res = await fetch("/api/admin/platform-config", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ discovery_cache_ttl_minutes: next }),
+        body: JSON.stringify({ [configField]: next }),
       });
       const data = await res.json();
       if (data.success) {
@@ -210,9 +213,8 @@ export function DiscoveryCacheControls({
         <div className="space-y-1">
           <div className="text-sm font-medium">Discovery cache</div>
           <p className="text-xs text-muted-foreground">
-            Snapshot of {providerLabel} {provider === "slack" ? "bot-member channels" : "spaces"} kept
-            in memory so the picker scrolls instantly without hammering {providerLabel}&apos;s rate
-            limits. The TTL is shared between Slack and Webex.
+            Stores the {providerLabel} {provider === "slack" ? "channel" : "space"} list briefly
+            so discovery is faster and uses fewer API calls.
           </p>
         </div>
 
@@ -279,9 +281,8 @@ export function DiscoveryCacheControls({
         {isAdmin && (
           <div className="space-y-2 border-t border-border/40 pt-3">
             <p className="text-xs text-muted-foreground">
-              Just invited the bot to a new {provider === "slack" ? "channel" : "space"} and the
-              picker still doesn&apos;t list it? Refresh from {providerLabel} now to ignore CAIPE&apos;s
-              cached snapshot and fetch a fresh list.
+              If a new {provider === "slack" ? "channel" : "space"} is missing,
+              refresh the list now.
             </p>
             <div className="flex items-center gap-2">
               <Button

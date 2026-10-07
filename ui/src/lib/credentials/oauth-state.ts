@@ -55,7 +55,16 @@ export function createOAuthStateCookie(input: {
   return `${encoded}.${sign(encoded, input.secret ?? stateSecret())}`;
 }
 
-export function parseOAuthStateCookie(value: string, secret = stateSecret()): OAuthStatePayload {
+// Matches the cookie's own Max-Age=600 (start/connect routes) so a state
+// value that outlives its cookie's intended lifetime — e.g. one recovered
+// from a log — doesn't still verify.
+const DEFAULT_MAX_AGE_MS = 10 * 60 * 1000;
+
+export function parseOAuthStateCookie(
+  value: string,
+  secret = stateSecret(),
+  options: { maxAgeMs?: number; nowMs?: number } = {}
+): OAuthStatePayload {
   const [encoded, signature] = value.split(".");
   if (!encoded || !signature) {
     throw new ApiError("Invalid OAuth state", 400, "INVALID_OAUTH_STATE");
@@ -67,7 +76,13 @@ export function parseOAuthStateCookie(value: string, secret = stateSecret()): OA
   ) {
     throw new ApiError("Invalid OAuth state", 400, "INVALID_OAUTH_STATE");
   }
-  return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as OAuthStatePayload;
+  const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as OAuthStatePayload;
+  const maxAgeMs = options.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
+  const nowMs = options.nowMs ?? Date.now();
+  if (nowMs - payload.issuedAt > maxAgeMs) {
+    throw new ApiError("Invalid OAuth state", 400, "INVALID_OAUTH_STATE");
+  }
+  return payload;
 }
 
 export function oauthStateCookieName(providerKey: string): string {

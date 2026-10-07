@@ -19,6 +19,7 @@ readOpenFgaTuples,
 type OpenFgaTupleKey,
 } from "@/lib/rbac/openfga";
 import type { TeamMembershipSource } from "@/types/identity-group-sync";
+import type { UserMembershipSourceInfo } from "@/types/admin-user-identity";
 import { type NextRequest } from "next/server";
 
 function normalizeAttributes(raw: unknown): Record<string, string[]> {
@@ -70,17 +71,34 @@ export const GET = withErrorHandler(
 
     const email = String(kcUser.email ?? "").trim().toLowerCase();
     const teams: Array<{ team_id: string; tenant_id: string }> = [];
+    const membershipSources: UserMembershipSourceInfo[] = [];
 
     if (isMongoDBConfigured && email) {
       const sources = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
       const rows = await sources
         .find({ user_email: email, status: "active" })
-        .project({ team_slug: 1, team_id: 1 })
+        .project({
+          team_slug: 1, team_id: 1, relationship: 1, source_type: 1,
+          provider_id: 1, external_group_id: 1, user_subject: 1,
+          last_seen_at: 1, last_applied_at: 1,
+        })
         .toArray();
       // Deduplicate by team_slug — a user may have multiple source rows per team.
       const seen = new Set<string>();
       for (const row of rows) {
         const slug = row.team_slug;
+        if (slug) {
+          membershipSources.push({
+            team: slug,
+            relationship: row.relationship,
+            source: row.source_type,
+            provider: row.provider_id,
+            externalGroup: row.external_group_id,
+            subject: row.user_subject,
+            lastSeenAt: row.last_seen_at,
+            lastAppliedAt: row.last_applied_at,
+          });
+        }
         if (!slug || seen.has(slug)) continue;
         seen.add(slug);
         teams.push({ team_id: slug, tenant_id: row.team_id ?? "" });
@@ -96,6 +114,7 @@ export const GET = withErrorHandler(
     return successResponse({
       user: {
         id: String(kcUser.id ?? id),
+        principalType: kcUser.serviceAccountClientId ? "service_account" : "user",
         username: String(kcUser.username ?? ""),
         email: String(kcUser.email ?? ""),
         firstName:
@@ -109,6 +128,8 @@ export const GET = withErrorHandler(
         enabled: kcUser.enabled !== false,
         createdAt,
         attributes,
+        membershipSources,
+        membershipSourcesAvailable: Boolean(isMongoDBConfigured && email),
         slackLinkStatus: slackLinkStatus(attributes),
         teams: teams.map((t) => ({
           team_id: t.team_id,

@@ -11,18 +11,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-_APP_PY = pathlib.Path(__file__).resolve().parents[1] / "app.py"
-_APP_DIR = _APP_PY.parent
+_APP_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
 
+from .handler_test_utils import load_handler_module  # noqa: E402
+
 _PNG = b"\x89PNG\r\n\x1a\nreal-image-bytes"
-
-
-class _HealthResponse:
-    ok = True
-    status_code = 200
-    text = "ok"
 
 
 class _SlackFileResponse:
@@ -48,21 +43,7 @@ class _Client:
 
 def _load_slack_app(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.syspath_prepend(str(_APP_DIR))
-    monkeypatch.setenv("SLACK_INTEGRATION_BOT_TOKEN", "xoxb-test-token")
-    monkeypatch.setenv("CAIPE_API_URL", "http://localhost:3000")
-    monkeypatch.setenv("CAIPE_CONNECT_RETRIES", "1")
-    monkeypatch.setenv("SLACK_RBAC_ENABLED", "false")
-    monkeypatch.setenv("SLACK_INTEGRATION_ENABLE_AUTH", "false")
-    monkeypatch.setattr(
-        "slack_sdk.web.client.WebClient.auth_test",
-        lambda _self, **_kwargs: {"ok": True, "user_id": "U-BOT"},
-    )
-    monkeypatch.setattr("requests.get", lambda *_args, **_kwargs: _HealthResponse())
-
-    for module_name in ("app", "utils.config", "utils.config_models"):
-        sys.modules.pop(module_name, None)
-
-    app_module = importlib.import_module("app")
+    app_module = load_handler_module("channel_routing")
     monkeypatch.setattr(app_module, "_bind_obo_for_handler", lambda _context: None)
     monkeypatch.setattr(
         app_module.utils,

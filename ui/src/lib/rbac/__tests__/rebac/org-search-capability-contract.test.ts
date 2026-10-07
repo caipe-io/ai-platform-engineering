@@ -7,9 +7,8 @@
  *
  * Locks the deployed OpenFGA authorization model so the org-level capability
  * cannot silently regress:
- *  - `organization#searcher` exists and is grantable to TEAMS ONLY
- *    (`team#member`, `team#admin`) — never to `user` or `service_account`,
- *    which would let an individual self-grant search.
+ *  - `organization#searcher` exists and is grantable to teams or explicitly
+ *    scoped service accounts — never directly to a user or external group.
  *  - `organization#can_search` is the union `searcher or admin`, so org admins
  *    search implicitly and opted-in teams search explicitly.
  *
@@ -49,20 +48,20 @@ function loadOrgType(): TypeDef {
 describe("organization search capability (contract)", () => {
   const org = loadOrgType();
 
-  it("defines a `searcher` relation grantable to teams only", () => {
+  it("defines a `searcher` relation grantable to teams and service accounts", () => {
     expect(org.relations.searcher).toBeDefined();
     const allowed = org.metadata?.relations?.searcher?.directly_related_user_types ?? [];
-    // Teams (member + admin) only.
+    // Teams and explicitly scoped service accounts can receive the capability.
     expect(allowed).toEqual(
       expect.arrayContaining([
+        { type: "service_account" },
         { type: "team", relation: "member" },
         { type: "team", relation: "admin" },
       ]),
     );
-    // CRITICAL: no individual self-grant.
+    // Individual users and externally asserted groups cannot self-grant it.
     const types = allowed.map((a) => a.type);
     expect(types).not.toContain("user");
-    expect(types).not.toContain("service_account");
     expect(types).not.toContain("external_group");
   });
 

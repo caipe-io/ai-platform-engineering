@@ -22,7 +22,7 @@
 // -------
 // We reuse the existing `platform_config` collection (single document
 // keyed by `_id: "platform_settings"`) that already holds
-// `default_agent_id`, `release_notes`, `discovery_cache_ttl_minutes`,
+// `default_agent_id`, `release_notes`, connector discovery cache TTLs,
 // etc. Adding two more named sub-objects keeps everything in one place
 // and avoids a new collection / migration.
 //

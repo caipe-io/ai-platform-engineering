@@ -4,7 +4,7 @@ import { SigmaContainer } from "@react-sigma/core";
 import { MultiDirectedGraph } from 'graphology';
 import forceAtlas2 from 'graphology-layout-forceatlas2';
 import { Loader2 } from 'lucide-react';
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/theme-provider";
 import { useCallback,useEffect,useMemo,useRef,useState } from 'react';
 import type Sigma from 'sigma';
 import { exploreEntityNeighborhood } from '../../api';

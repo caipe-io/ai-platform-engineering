@@ -69,6 +69,58 @@ class SSRFProtectionMiddleware:
     raise IgnoreRequest(error_msg)
 
 
+def _origin_key(url: str) -> tuple[str, str, int] | None:
+  """Scheme, hostname, and port as a comparable exact-origin key.
+
+  A missing port is resolved to the scheme's default so `https://h/` and
+  `https://h:443/` compare equal. An unrecognized scheme has no safe default,
+  so it never matches anything.
+  """
+  parsed = urlparse(url)
+  hostname = (parsed.hostname or "").lower()
+  scheme = (parsed.scheme or "").lower()
+  if not hostname or not scheme:
+    return None
+  default_port = {"http": 80, "https": 443}.get(scheme)
+  port = parsed.port or default_port
+  if port is None:
+    return None
+  return (scheme, hostname, port)
+
+
+class AuthHeaderMiddleware:
+  """Attach the datasource's credential headers to requests for its exact origin.
+
+  Origin means scheme, hostname, and port together, matched exactly — not a
+  subdomain, and not the same host on a different scheme or port. A crawl may
+  follow off-site links, and a login wall typically answers with a redirect to
+  a different host or downgrades to plain HTTP; exact-origin matching keeps the
+  credential from being replayed to either. Off-origin requests also have any
+  configured header actively stripped, not merely skipped, because Scrapy's own
+  RedirectMiddleware clones headers onto the redirected request and only knows
+  to drop `Authorization`/`Cookie` itself, not a custom header name.
+  """
+
+  def process_request(self, request: Request, spider):
+    headers = getattr(spider, "auth_headers", None)
+    origin = getattr(spider, "auth_origin", None)
+    if not headers or not origin:
+      return None
+    if _origin_key(request.url) != origin:
+      # A redirect off-origin reaches this middleware again on the same
+      # request object Scrapy's RedirectMiddleware built by cloning the
+      # original request, headers included — it only knows to strip
+      # `Authorization`/`Cookie` itself, not a custom header name. Strip
+      # every configured header rather than merely skip re-adding it, or a
+      # credential attached upstream would ride along to the redirect target.
+      for name in headers:
+        request.headers.pop(name, None)
+      return None
+    for name, value in headers.items():
+      request.headers[name] = value
+    return None
+
+
 class WorkerSpider(Spider):
   """
   Generic spider that handles all crawl modes.
@@ -99,18 +151,33 @@ class WorkerSpider(Spider):
     self.denied_patterns = request.denied_url_patterns or []
     self.allow_non_public_urls = request.allow_non_public_urls or False
 
+    self.auth_headers = request.resolved_auth_headers or {}
+    self.auth_credential_labels = list(request.auth_credential_labels or [])
+    # Deliberately the configured URL's origin, not `effective_domain`, which is
+    # reassigned to a redirect target and would carry credentials off-origin.
+    self.auth_origin = _origin_key(request.url)
+
     # Track the effective domain (may change after redirect for sitemap mode)
     self.effective_domain: str | None = None
 
     # Tracking
     self.pages_crawled = 0
     self.pages_failed = 0
+    # Pages that loaded (HTTP 200) but had no extractable content. A login
+    # wall commonly redirects to a 200 sign-in page rather than a 401/403,
+    # so this is the only signal available to tell that failure mode apart
+    # from a page that is genuinely empty.
+    self.pages_fetched_no_content = 0
+    # Statuses a rejected credential tends to produce. 404 belongs here because
+    # some sites hide protected paths rather than admitting they exist.
+    self.auth_denied_statuses: dict[int, int] = {}
     self.documents: List[dict] = []
     self.visited_urls: set = set()
     self.start_time = time.time()
 
     # Track filtering stats for better error messages
     self.urls_found_in_sitemap = 0
+    self.urls_matched_in_sitemap = 0
     self.urls_filtered_external = 0
     self.urls_filtered_pattern = 0
     self.urls_filtered_max_pages = 0
@@ -322,12 +389,20 @@ class WorkerSpider(Spider):
 
     self._log(logging.INFO, f"Found {len(urls)} URLs in sitemap")
 
-    # Track how many URLs we'll actually crawl
-    urls_to_crawl = []
-    for url in urls[: self.max_pages]:
-      if self._should_follow(url):
-        urls_to_crawl.append(url)
-        self.pending_urls.add(url)
+    # Apply URL filters to the complete sitemap before enforcing max_pages.
+    # Sitemaps are commonly sorted by route, so slicing first can exclude every
+    # matching URL when an allow pattern targets a route later in the file.
+    eligible_urls = [
+      url
+      for url in urls
+      if self._should_follow(url, enforce_page_limit=False)
+    ]
+    self.urls_matched_in_sitemap += len(eligible_urls)
+    already_queued = self.total_pages_to_crawl or 0
+    remaining_pages = max(0, self.max_pages - already_queued)
+    urls_to_crawl = eligible_urls[:remaining_pages]
+    self.urls_filtered_max_pages += len(eligible_urls) - len(urls_to_crawl)
+    self.pending_urls.update(urls_to_crawl)
 
     # Set total for progress tracking. Accumulate rather than overwrite:
     # a sitemap index fans out to multiple child sitemaps, each reaching
@@ -559,7 +634,7 @@ class WorkerSpider(Spider):
       return
     self.visited_urls.add(response.url)
 
-    # Update effective domain after following redirects (e.g., caipe.io -> cnoe-io.github.io)
+    # Update effective domain after following redirects (e.g., legacy.example.com -> docs.example.com)
     # This ensures that in recursive mode, we follow links on the actual domain we landed on
     if self.effective_domain is None:
       response_domain = urlparse(response.url).netloc
@@ -573,6 +648,8 @@ class WorkerSpider(Spider):
       error_msg = f"Ignoring non-200 response ({response.status}): {response.url}"
       self._log(logging.WARNING, error_msg)
       self.pages_failed += 1
+      if response.status in (401, 403, 404):
+        self.auth_denied_statuses[response.status] = self.auth_denied_statuses.get(response.status, 0) + 1
       if len(self.errors) < self.max_errors:
         self.errors.append(error_msg)
       return
@@ -619,6 +696,7 @@ class WorkerSpider(Spider):
       else:
         # Skip pages with no meaningful content (redirects, images, etc.)
         # This is not an error, just nothing to extract
+        self.pages_fetched_no_content += 1
         self._log(logging.DEBUG, f"Skipped page with no content: {response.url}")
 
     except Exception as e:
@@ -680,13 +758,20 @@ class WorkerSpider(Spider):
         return f"{exc_name}: {exc_msg}"
       return exc_name
 
-  def _should_follow(self, url: str, track_filtering: bool = True) -> bool:
+  def _should_follow(
+    self,
+    url: str,
+    track_filtering: bool = True,
+    enforce_page_limit: bool = True,
+  ) -> bool:
     """
     Check if a URL should be followed.
 
     Args:
         url: The URL to check
         track_filtering: If True, increment filtering counters when rejecting URLs
+        enforce_page_limit: If True, reject URLs after the crawl page limit is
+          reached. Sitemap parsing disables this until after URL filters run.
     """
     if url in self.visited_urls:
       return False
@@ -694,7 +779,7 @@ class WorkerSpider(Spider):
     if not self._is_safe_crawl_url(url, resolve_hostname=False):
       return False
 
-    if self.pages_crawled >= self.max_pages:
+    if enforce_page_limit and self.pages_crawled >= self.max_pages:
       if track_filtering:
         self.urls_filtered_max_pages += 1
       return False
@@ -860,6 +945,7 @@ class WorkerSpider(Spider):
       errors=self.errors,
       # Include filtering stats for debugging
       urls_found_in_sitemap=self.urls_found_in_sitemap,
+      urls_matched_in_sitemap=self.urls_matched_in_sitemap,
       urls_filtered_external=self.urls_filtered_external,
       urls_filtered_pattern=self.urls_filtered_pattern,
       urls_filtered_max_pages=self.urls_filtered_max_pages,
@@ -869,6 +955,16 @@ class WorkerSpider(Spider):
 
     self.result_queue.put(WorkerMessage.crawl_result(result).to_dict())
     self._log(logging.INFO, f"Spider closed: {reason}, crawled {self.pages_crawled} pages in {elapsed:.1f}s")
+
+  def _credential_hint(self) -> str:
+    """Explain a likely credential failure, naming the credential but never its value."""
+    names = ", ".join(f"'{label}'" for label in self.auth_credential_labels)
+    return (
+      f"This crawl authenticated with {names}. A credential that is invalid, expired, "
+      "or missing the scope needed to read this site often produces a sign-in page, "
+      "a 404, or an empty response rather than an explicit authentication error - "
+      "verify the credential and its permissions."
+    )
 
   def _build_failure_message(self) -> str:
     """Build a detailed message explaining why the crawl failed."""
@@ -915,6 +1011,33 @@ class WorkerSpider(Spider):
       if self.pages_failed > 0:
         parts.append(f"{self.pages_failed} requests failed.")
 
+    # At least one page returned 200 with nothing to extract. A login wall
+    # commonly redirects an unauthenticated request to a 200 sign-in page
+    # rather than a 401/403, so that's a signal worth naming even when other
+    # pages also failed outright - it can be the dominant cause when most
+    # pages are empty-200 and only a few hit a real error. Applies regardless
+    # of which branch above ran, including a sitemap crawl that found URLs
+    # and dispatched them to parse_page but scraped none of them.
+    if self.pages_fetched_no_content > 0:
+      if self.auth_credential_labels:
+        parts.append(
+          f"{self.pages_fetched_no_content} page(s) loaded successfully but had "
+          "no extractable content, which is what a sign-in page looks like to "
+          f"the crawler. {self._credential_hint()}"
+        )
+      else:
+        parts.append(
+          f"{self.pages_fetched_no_content} page(s) loaded successfully but had "
+          "no extractable content. If this site requires signing in, an "
+          "unauthenticated request commonly lands on a login page instead of "
+          "returning an error - confirm the URL is reachable without "
+          "authentication."
+        )
+
+    if self.auth_denied_statuses and self.auth_credential_labels:
+      status_summary = ", ".join(f"{count}x HTTP {status}" for status, count in sorted(self.auth_denied_statuses.items()))
+      parts.append(f"Requests were rejected ({status_summary}). {self._credential_hint()}")
+
     # Include collected error messages for more detail
     if self.errors:
       parts.append("Errors: " + "; ".join(self.errors[:5]))  # Show first 5 errors
@@ -946,6 +1069,8 @@ def build_spider_settings(request: CrawlRequest) -> dict:
   scrapy_settings = build_scrapy_settings(settings)
   downloader_middlewares = dict(scrapy_settings.get("DOWNLOADER_MIDDLEWARES", {}))
   downloader_middlewares["ingestors.webloader.loader.scrapy_worker.SSRFProtectionMiddleware"] = 543
+  # Below RedirectMiddleware (600) so requests re-issued by a redirect are seen.
+  downloader_middlewares["ingestors.webloader.loader.scrapy_worker.AuthHeaderMiddleware"] = 544
   scrapy_settings["DOWNLOADER_MIDDLEWARES"] = downloader_middlewares
   return scrapy_settings
 

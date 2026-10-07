@@ -10,14 +10,24 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import date
 from functools import lru_cache
+from threading import Lock
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+from llm_wrapper.build import LLMConfigError as WrapperConfigError
+
+from dynamic_agents.models import ReasoningEffort
+from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 
 logger = logging.getLogger(__name__)
 
 SHARE_CLIENTS = os.getenv("LLM_CLIENT_SHARING", "true").lower() != "false"
+_AZURE_RESPONSES_MIN_API_VERSION = "2025-03-01-preview"
+_AZURE_ENV_LOCK = Lock()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -74,6 +84,52 @@ def _get_httpx_client(endpoint: str) -> Any:
     return _create_httpx_client(endpoint)
 
 
+def _azure_responses_api_version(configured: str | None) -> str:
+    """Return an Azure API version that supports the Responses API."""
+    if not configured:
+        return _AZURE_RESPONSES_MIN_API_VERSION
+    try:
+        configured_date = date.fromisoformat(configured[:10])
+    except ValueError:
+        return configured
+    minimum_date = date.fromisoformat(_AZURE_RESPONSES_MIN_API_VERSION[:10])
+    if configured_date < minimum_date:
+        return _AZURE_RESPONSES_MIN_API_VERSION
+    return configured
+
+
+@contextmanager
+def _azure_responses_environment(enabled: bool) -> Iterator[None]:
+    """Force the Responses API and its minimum Azure API version during construction."""
+    if not enabled:
+        yield
+        return
+
+    with _AZURE_ENV_LOCK:
+        original_responses = os.environ.get("AZURE_OPENAI_USE_RESPONSES")
+        original_version = os.environ.get("AZURE_OPENAI_API_VERSION")
+        effective_version = _azure_responses_api_version(original_version)
+        os.environ["AZURE_OPENAI_USE_RESPONSES"] = "true"
+        os.environ["AZURE_OPENAI_API_VERSION"] = effective_version
+        if effective_version != original_version:
+            logger.warning(
+                "[llm] Azure Responses API requires api-version %s or later; using %s",
+                _AZURE_RESPONSES_MIN_API_VERSION,
+                effective_version,
+            )
+        try:
+            yield
+        finally:
+            if original_responses is None:
+                os.environ.pop("AZURE_OPENAI_USE_RESPONSES", None)
+            else:
+                os.environ["AZURE_OPENAI_USE_RESPONSES"] = original_responses
+            if original_version is None:
+                os.environ.pop("AZURE_OPENAI_API_VERSION", None)
+            else:
+                os.environ["AZURE_OPENAI_API_VERSION"] = original_version
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
@@ -82,7 +138,7 @@ def _get_httpx_client(endpoint: str) -> Any:
 class LLMConfigError(ValueError):
     """Raised when an agent has no usable LLM configuration.
 
-    Distinct from `LLMFactory`'s generic `ValueError` so callers (and the
+    Distinct from the wrapper's generic `ValueError` so callers (and the
     chat SSE wrapper) can map it to a user-actionable message instead of
     the misleading "Something went wrong - some tools or subagents may
     have timed out" fallback.
@@ -100,12 +156,12 @@ def _resolve_llm_defaults(provider: str | None, model_id: str | None) -> tuple[s
 
     Resolution order:
     - `provider`: agent value → `LLM_PROVIDER` env var
-    - `model_id`: agent value → `None` (LLMFactory then reads the
+    - `model_id`: agent value → `None` (`build_chat_model` then reads the
       provider-specific env var, e.g. `AWS_BEDROCK_MODEL_ID`,
       `OPENAI_MODEL_NAME`, `ANTHROPIC_MODEL_NAME`, etc.)
 
     Empty `model_id` is returned as `None` rather than `""` so the
-    downstream `model_override` check in LLMFactory falls through to
+    downstream `model_override` check in `build_chat_model` falls through to
     its env-based lookup.
     """
     resolved_provider = (provider or "").strip() or os.getenv("LLM_PROVIDER", "").strip()
@@ -120,7 +176,11 @@ def _resolve_llm_defaults(provider: str | None, model_id: str | None) -> tuple[s
     return resolved_provider, resolved_model
 
 
-def get_llm(provider: str, model_id: str) -> BaseChatModel:
+def get_llm(
+    provider: str,
+    model_id: str,
+    reasoning_effort: ReasoningEffort | None = None,
+) -> BaseChatModel:
     """Get a LangChain chat model for the given provider and model.
 
     Injects shared transport clients (boto3/httpx) when LLM_CLIENT_SHARING=true,
@@ -134,13 +194,31 @@ def get_llm(provider: str, model_id: str) -> BaseChatModel:
     `LLMConfigError` with an actionable message if neither agent nor env
     define a usable provider.
     """
-    from cnoe_agent_utils import LLMFactory
+    from llm_wrapper.build import build_chat_model
 
     resolved_provider, resolved_model = _resolve_llm_defaults(provider, model_id)
 
     kwargs: dict[str, Any] = {}
-    if resolved_model is not None:
-        kwargs["model"] = resolved_model
+    model_supports_effort = (
+        reasoning_effort is not None
+        and supports_reasoning_effort(resolved_model, reasoning_effort)
+    )
+    if reasoning_effort is not None and not model_supports_effort:
+        logger.warning(
+            "[llm] Model %s does not advertise configurable reasoning; using provider default",
+            resolved_model or "<from env>",
+        )
+
+    normalized_provider = resolved_provider.lower().replace("_", "-")
+    use_azure_responses = (
+        model_supports_effort
+        and normalized_provider == "azure-openai"
+        and resolved_model is not None
+        and resolved_model.lower().startswith(("gpt-5", "gpt-6"))
+    )
+    if model_supports_effort and normalized_provider in {"aws-bedrock", "bedrock"}:
+        # Anthropic accepts only its default temperature while thinking is enabled.
+        kwargs["temperature"] = 1.0
 
     if SHARE_CLIENTS:
         p = resolved_provider.lower().replace("-", "_")
@@ -157,11 +235,17 @@ def get_llm(provider: str, model_id: str) -> BaseChatModel:
         # google-gemini / google-vertex-ai: no shared client needed
 
     try:
-        llm = LLMFactory(provider=resolved_provider).get_llm(**kwargs)
+        with _azure_responses_environment(use_azure_responses):
+            if model_supports_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
+            llm = build_chat_model(resolved_provider, resolved_model, **kwargs)
+    except WrapperConfigError as exc:
+        # Re-raise as this module's LLMConfigError so the SSE chat wrapper can
+        # translate it into an actionable user message. Both are ValueError
+        # subclasses; the wrapper's is caught first because it already carries
+        # provider and model context.
+        raise LLMConfigError(str(exc)) from exc
     except ValueError as exc:
-        # LLMFactory raises ValueError for unknown providers OR missing
-        # provider-specific env vars. Re-raise as LLMConfigError so the
-        # SSE chat wrapper can translate to an actionable user message.
         raise LLMConfigError(
             f"Cannot initialize LLM (provider={resolved_provider!r}, "
             f"model={resolved_model!r}): {exc}"

@@ -1,5 +1,6 @@
 """Unit tests for VectorDBQueryService in server.query_service."""
 
+import json
 from typing import List
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -51,7 +52,7 @@ class TestVectorDBQueryService:
     mock_milvus.asimilarity_search_with_score.assert_not_called()
     mock_milvus.client.query.assert_called_once_with(
       collection_name="test_docs",
-      filter="datasource_id == 'ds1'",
+      filter='datasource_id == "ds1"',
       limit=10,
       output_fields=["*"],
     )
@@ -113,22 +114,37 @@ class TestVectorDBQueryService:
     assert results == []
 
   @pytest.mark.asyncio
-  async def test_scalar_path_invalid_datasource_id_raises_value_error(self, query_service: VectorDBQueryService) -> None:
-    """Unsafe datasource_id in filters raises ValueError during scalar query path."""
-    invalid_ids = ["ds1' OR '1'='1", "ds1; DROP TABLE docs;", "ds1 name", ""]
-    for ds_id in invalid_ids:
-      with pytest.raises(ValueError, match="Invalid datasource_id"):
-        await query_service.query("", filters={"datasource_id": ds_id})
-
-  @pytest.mark.asyncio
-  async def test_filter_string_values_are_escaped_against_injection(self, query_service: VectorDBQueryService, mock_milvus: MagicMock) -> None:
-    """Single quotes in metadata filter values are escaped before interpolation into the Milvus expression."""
+  @pytest.mark.parametrize("value", ["admin' OR '1'=='1", 'example\\" OR true', "example\nvalue"])
+  async def test_filter_string_values_are_escaped_against_injection(self, query_service: VectorDBQueryService, mock_milvus: MagicMock, value: str) -> None:
     mock_milvus.client.query.return_value = []
 
-    await query_service.query("", filters={"metadata.author": "admin' OR '1'=='1"})
+    await query_service.query("", filters={"metadata.author": value})
 
-    _, kwargs = mock_milvus.client.query.call_args
-    filter_expr: str = kwargs["filter"]
-    # Confirm the injected payload is present but with single quotes escaped —
-    # the resulting expression must not break out of the string literal
-    assert "admin\\' OR \\'1\\'==\\'1" in filter_expr, f"Expected escaped injection payload in filter expression, got: {filter_expr!r}"
+    assert mock_milvus.client.query.call_args.kwargs["filter"] == f'metadata["author"] == {json.dumps(value, ensure_ascii=False)}'
+
+  @pytest.mark.asyncio
+  async def test_datasource_list_and_prefix_filters_remain_supported(self, query_service: VectorDBQueryService, mock_milvus: MagicMock) -> None:
+    mock_milvus.client.query.return_value = []
+
+    await query_service.query("", filters={"datasource_id": ["primary", "secondary*"]})
+
+    assert mock_milvus.client.query.call_args.kwargs["filter"] == '(datasource_id in ["primary"] or datasource_id like "secondary%")'
+
+  @pytest.mark.asyncio
+  async def test_empty_datasource_list_remains_deny_filter(self, query_service: VectorDBQueryService, mock_milvus: MagicMock) -> None:
+    mock_milvus.client.query.return_value = []
+
+    await query_service.query("", filters={"datasource_id": []})
+
+    assert mock_milvus.client.query.call_args.kwargs["filter"] == 'datasource_id in ["__noresults__"]'
+    mock_milvus.asimilarity_search_with_score.assert_not_called()
+
+  @pytest.mark.asyncio
+  async def test_scalar_metadata_does_not_mutate_milvus_rows(self, query_service: VectorDBQueryService, mock_milvus: MagicMock) -> None:
+    metadata = {"source": "example"}
+    mock_milvus.client.query.return_value = [{"text": "content", "metadata": metadata, "datasource_id": "primary", "dense": [1.0], "sparse": {1: 1.0}}]
+
+    results = await query_service.query("", filters={"datasource_id": "primary"})
+
+    assert metadata == {"source": "example"}
+    assert results[0].document.metadata == {"source": "example", "datasource_id": "primary"}

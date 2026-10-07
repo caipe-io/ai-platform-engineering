@@ -165,6 +165,105 @@ class TestCaipeUiProbes:
 
 
 # ---------------------------------------------------------------------------
+# autonomous-agents subchart service authentication
+# ---------------------------------------------------------------------------
+
+def _env_by_name(container: dict) -> dict[str, dict]:
+    return {item["name"]: item for item in container.get("env", [])}
+
+
+class TestAutonomousAgentsDynamicAgentsAuth:
+    def test_umbrella_chart_enables_owner_token_exchange(self):
+        values = yaml.safe_load((CHARTS / "ai-platform-engineering/values.yaml").read_text())
+        auth = values["autonomous-agents"]["dynamicAgentsAuth"]
+
+        assert auth["enabled"] is True
+        assert auth["clientId"] == "caipe-scheduler-runner"
+        assert auth["audience"] == "caipe-platform"
+        assert auth["clientSecretRef"] == {
+            "name": "",
+            "key": "KC_SCHEDULER_CLIENT_SECRET",
+        }
+
+    def test_auth_is_opt_in_for_standalone_chart(self):
+        docs = _helm_template(CHARTS / "ai-platform-engineering/charts/autonomous-agents")
+        container = _main_container(_deployments(docs)[0])
+        assert _env_by_name(container) == {}
+
+    def test_auth_uses_default_in_release_token_url_and_secret_ref(self):
+        docs = _helm_template(
+            CHARTS / "ai-platform-engineering/charts/autonomous-agents",
+            {
+                "dynamicAgentsAuth.enabled": "true",
+            },
+        )
+        env = _env_by_name(_main_container(_deployments(docs)[0]))
+
+        assert env["DYNAMIC_AGENTS_OAUTH2_TOKEN_URL"]["value"] == (
+            "http://test-keycloak:8080/realms/caipe/protocol/openid-connect/token"
+        )
+        assert env["DYNAMIC_AGENTS_OAUTH2_CLIENT_ID"]["value"] == "caipe-scheduler-runner"
+        assert env["DYNAMIC_AGENTS_OAUTH2_AUDIENCE"]["value"] == "caipe-platform"
+        assert "DYNAMIC_AGENTS_OAUTH2_SCOPE" not in env
+        assert env["DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET"]["valueFrom"] == {
+            "secretKeyRef": {
+                "name": "test-keycloak-scheduler-runner",
+                "key": "KC_SCHEDULER_CLIENT_SECRET",
+            }
+        }
+
+    def test_auth_supports_external_identity_provider(self):
+        docs = _helm_template(
+            CHARTS / "ai-platform-engineering/charts/autonomous-agents",
+            {
+                "dynamicAgentsAuth.enabled": "true",
+                "dynamicAgentsAuth.tokenUrl": "https://sso.example.com/oauth/token",
+                "dynamicAgentsAuth.clientId": "autonomous-runner",
+                "dynamicAgentsAuth.audience": "platform-api",
+                "dynamicAgentsAuth.clientSecretRef.name": "autonomous-runner-secret",
+                "dynamicAgentsAuth.clientSecretRef.key": "client-secret",
+            },
+        )
+        env = _env_by_name(_main_container(_deployments(docs)[0]))
+
+        assert env["DYNAMIC_AGENTS_OAUTH2_TOKEN_URL"]["value"] == "https://sso.example.com/oauth/token"
+        assert env["DYNAMIC_AGENTS_OAUTH2_CLIENT_ID"]["value"] == "autonomous-runner"
+        assert env["DYNAMIC_AGENTS_OAUTH2_AUDIENCE"]["value"] == "platform-api"
+        assert env["DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET"]["valueFrom"] == {
+            "secretKeyRef": {"name": "autonomous-runner-secret", "key": "client-secret"}
+        }
+
+    def test_client_secret_is_not_rendered_in_configmap(self):
+        docs = _helm_template(
+            CHARTS / "ai-platform-engineering/charts/autonomous-agents",
+            {
+                "dynamicAgentsAuth.enabled": "true",
+                "dynamicAgentsAuth.clientSecretRef.name": "platform-client",
+            },
+        )
+        configmap = next(doc for doc in docs if doc.get("kind") == "ConfigMap")
+
+        assert "DYNAMIC_AGENTS_OAUTH2_CLIENT_SECRET" not in configmap["data"]
+
+    def test_owner_exchange_client_exists_when_standard_scheduler_is_disabled(self):
+        docs = _helm_template(
+            CHARTS / "ai-platform-engineering/charts/keycloak",
+            {
+                "global.scheduler.enabled": "false",
+                "admin.password": "test-only-password",
+            },
+        )
+
+        secret = next(
+            doc
+            for doc in docs
+            if doc.get("kind") == "Secret"
+            and doc.get("metadata", {}).get("name") == "test-keycloak-scheduler-runner"
+        )
+        assert "KC_SCHEDULER_CLIENT_SECRET" in secret["data"]
+
+
+# ---------------------------------------------------------------------------
 # rag-server subchart
 # ---------------------------------------------------------------------------
 
