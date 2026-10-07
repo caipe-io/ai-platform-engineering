@@ -81,6 +81,10 @@ read:
   defaultLimit: 1000
   maxLimit: 10000
   maxDays: 31
+  # -- Maximum simultaneous history scans per process; additional reads return HTTP 503.
+  maxConcurrent: 2
+  # -- History scan deadline in seconds; expired reads return HTTP 504 and stop scheduling storage work.
+  timeoutSeconds: 30
 
 existingSecret: ""
 extraEnv: []
