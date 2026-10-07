@@ -12,6 +12,8 @@ import {
 } from "@/components/ai-review";
 import { TeamOwnershipFields } from "@/components/rbac/TeamOwnershipFields";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
+import { PermissionSyncNotice } from "@/components/shared/PermissionSyncNotice";
+import type { PermissionSyncStatus } from "@/lib/authz/permission-sync-contract";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -539,6 +541,7 @@ export function DynamicAgentEditor({
   }, [builtinTools, hasRequestUserInputInterrupt]);
 
   const [loading, setLoading] = React.useState(false);
+  const [permissionSync, setPermissionSync] = React.useState<PermissionSyncStatus | undefined>(agent?.permission_sync);
   const [error, setError] = React.useState<string | null>(null);
   // Blocking-review message, kept separate from `error` so it only renders on
   // the Instructions step and can auto-clear the moment the review passes.
@@ -1087,6 +1090,7 @@ export function DynamicAgentEditor({
     opts?: { forceConfirmNotMember?: boolean },
   ) => {
     e?.preventDefault();
+    if (loading || permissionSync?.state === "pending") return;
     setLoading(true);
     setError(null);
     setTransferNeedsServerConfirm(false);
@@ -1176,6 +1180,7 @@ export function DynamicAgentEditor({
           ? { datasource_ids: null, rag_collection_ids: null }
           : {};
 
+      let savedPermissionSync: PermissionSyncStatus | undefined;
       if (isEditing) {
         // Update existing agent
         const updateData: DynamicAgentConfigUpdate & {
@@ -1227,6 +1232,7 @@ export function DynamicAgentEditor({
           }
           throw new Error(data.error || "Failed to update agent");
         }
+        savedPermissionSync = data.data?.permission_sync;
       } else {
         // Create new agent
         const createData: DynamicAgentConfigCreate = {
@@ -1260,6 +1266,7 @@ export function DynamicAgentEditor({
         if (!data.success) {
           throw new Error(data.error || "Failed to create agent");
         }
+        savedPermissionSync = data.data?.permission_sync;
       }
 
       // Clear unsaved-changes state BEFORE calling onSave(): the parent will
@@ -1270,6 +1277,8 @@ export function DynamicAgentEditor({
       resetSnapshot();
       useUnsavedChangesStore.getState().setUnsaved(false);
 
+      setPermissionSync(savedPermissionSync);
+      if (savedPermissionSync?.state === "pending") return;
       onSave();
     } catch (err) {
       if (
@@ -1433,7 +1442,9 @@ export function DynamicAgentEditor({
         </div>
       </CardHeader>
       <CardContent>
+        <PermissionSyncNotice status={permissionSync} onApplied={setPermissionSync} />
         <form onSubmit={handleSubmit} className="space-y-4">
+          <fieldset disabled={permissionSync?.state === "pending"} className="contents">
           {/* Step Indicator + title inline */}
           <div className="flex items-center gap-4 border-b pb-3 mt-2">
             <div className="shrink-0">
@@ -2514,6 +2525,7 @@ export function DynamicAgentEditor({
               <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
           </div>
+          </fieldset>
         </form>
       </CardContent>
 
@@ -2536,12 +2548,13 @@ export function DynamicAgentEditor({
           onClick={onCancel}
           disabled={loading}
         >
-          {readOnly ? "Close" : "Cancel"}
+          {readOnly || permissionSync ? "Close" : "Cancel"}
         </Button>
         {!readOnly && (
           <Button
             onClick={handleSubmit}
-            disabled={loading || !isValid}
+            disabled={loading || !isValid || permissionSync?.state === "pending" || (!isEditing && Boolean(permissionSync))}
+            aria-busy={loading}
             // Native-tooltip mirror of the inline hint above. Helps users who
             // hover the button looking for an explanation when they miss the
             // inline text (e.g. on narrow screens where the hint wraps).
@@ -2556,6 +2569,10 @@ export function DynamicAgentEditor({
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 {isEditing ? "Saving..." : "Creating..."}
               </>
+            ) : permissionSync?.state === "pending" ? (
+              "Permissions pending"
+            ) : !isEditing && permissionSync ? (
+              "Saved"
             ) : isEditing ? (
               "Save Changes"
             ) : (

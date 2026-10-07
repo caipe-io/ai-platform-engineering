@@ -384,6 +384,7 @@ function tupleKeysEqual(a: OpenFgaTupleKey, b: OpenFgaTupleKey): boolean {
 async function tupleExistsInStore(
   storeId: string,
   tuple: OpenFgaTupleKey,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const filter = tupleKeyFilter(tuple);
   if (!filter?.user || !filter.relation || !filter.object) {
@@ -392,6 +393,7 @@ async function tupleExistsInStore(
   const response = await requestOpenFga(`/stores/${storeId}/read`, {
     method: "POST",
     body: JSON.stringify({ tuple_key: filter, page_size: 1 }),
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");
@@ -645,6 +647,7 @@ interface OpenFgaChunkResult {
 async function postOpenFgaWriteChunk(
   storeId: string,
   chunk: TeamResourceTupleDiff,
+  signal?: AbortSignal,
 ): Promise<OpenFgaChunkResult> {
   if (chunk.writes.length === 0 && chunk.deletes.length === 0) {
     return { applied: { writes: [], deletes: [] } };
@@ -656,6 +659,7 @@ async function postOpenFgaWriteChunk(
   const response = await requestOpenFga(`/stores/${storeId}/write`, {
     method: "POST",
     body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");
@@ -940,20 +944,42 @@ export async function mapWithConcurrency<T, R>(
 
 async function filterTupleDiff(
   storeId: string,
-  diff: TeamResourceTupleDiff
+  diff: TeamResourceTupleDiff,
+  signal?: AbortSignal,
 ): Promise<TeamResourceTupleDiff> {
   const concurrency = openFgaReadConcurrency();
   const writes = (
     await mapWithConcurrency(diff.writes, concurrency, async (tuple) =>
-      (await tupleExistsInStore(storeId, tuple)) ? null : tuple,
+      (await tupleExistsInStore(storeId, tuple, signal)) ? null : tuple,
     )
   ).filter((tuple): tuple is OpenFgaTupleKey => tuple !== null);
   const deletes = (
     await mapWithConcurrency(diff.deletes, concurrency, async (tuple) =>
-      (await tupleExistsInStore(storeId, tuple)) ? tuple : null,
+      (await tupleExistsInStore(storeId, tuple, signal)) ? tuple : null,
     )
   ).filter((tuple): tuple is OpenFgaTupleKey => tuple !== null);
   return { writes, deletes };
+}
+
+/** Durable callers retry desired state, never invert a partially applied revocation. */
+export async function applyOpenFgaProjection(
+  diff: TeamResourceTupleDiff,
+  assertLease: () => Promise<void>,
+): Promise<OpenFgaReconcileResult> {
+  if (!isOpenFgaReconciliationEnabled()) throw new Error("Permission projection writes are disabled");
+  assertWritableRelations(diff);
+  const signal = AbortSignal.timeout(5_000);
+  const storeId = await getOpenFgaStoreId();
+  const filtered = await filterTupleDiff(storeId, diff, signal);
+  // Remove access before adding access. A failure leaves durable work pending.
+  for (const phase of [{ writes: [], deletes: filtered.deletes }, { writes: filtered.writes, deletes: [] }]) {
+    for (const chunk of chunkOpenFgaDiff(phase)) {
+      await assertLease();
+      signal.throwIfAborted();
+      await postOpenFgaWriteChunk(storeId, chunk, signal);
+    }
+  }
+  return { enabled: true, writes: filtered.writes.length, deletes: filtered.deletes.length };
 }
 
 export async function writeOpenFgaTupleDiff(diff: TeamResourceTupleDiff, persist?: () => Promise<void>): Promise<OpenFgaReconcileResult> {

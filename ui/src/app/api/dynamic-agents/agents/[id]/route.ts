@@ -12,6 +12,7 @@ successResponse,
 withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { publicPermissionDocument } from "@/lib/authz/permission-sync";
 import {
 agentRowPermissionsOrDefault,
 requireAgentPermission,
@@ -72,6 +73,6 @@ export const GET = withErrorHandler(
         permissions: agentRowPermissionsOrDefault(rows, resourceId),
       };
 
-      return successResponse(result);
+      return successResponse(publicPermissionDocument(result));
   }
 );

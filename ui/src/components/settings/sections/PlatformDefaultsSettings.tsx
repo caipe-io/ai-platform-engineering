@@ -2,6 +2,8 @@
 
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
+import { PermissionSyncNotice } from "@/components/shared/PermissionSyncNotice";
+import type { PermissionSyncStatus } from "@/lib/authz/permission-sync-contract";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -44,6 +46,7 @@ export function PlatformDefaultsSettings({
   const [loading,setLoading] = useState(true);
   const [loadError,setLoadError] = useState<string | null>(null);
   const [saveState,setSaveState] = useState<AutoSaveState>({ status: "idle" });
+  const [permissionSync,setPermissionSync] = useState<PermissionSyncStatus>();
   const [configSource,setConfigSource] = useState("fallback");
   const [selectedScheduleEditorAgentId,setSelectedScheduleEditorAgentId] = useState<string | null>(null);
   const [savedScheduleEditorAgentId,setSavedScheduleEditorAgentId] = useState<string | null>(null);
@@ -60,8 +63,7 @@ export function PlatformDefaultsSettings({
     let cancelled = false;
     void (async () => {
       try {
-        // Loading available agents first preserves the existing global-agent
-        // reconciliation side effect before the configured default is read.
+        // Discovery is read-only; grants are managed by the save/recovery path.
         const agentsResponse = await fetch("/api/dynamic-agents/available");
         const agentsData = await agentsResponse.json();
         if (!agentsResponse.ok) throw new Error(agentsData.error || "Could not load agents");
@@ -78,6 +80,7 @@ export function PlatformDefaultsSettings({
         setSelectedAgentId(value);
         setSavedAgentId(value);
         setConfigSource(configData.data.source || "fallback");
+        setPermissionSync(configData.data.permission_sync);
         const scheduleEditorValue = configData.data.schedule_editor_agent_id ?? null;
         setSelectedScheduleEditorAgentId(scheduleEditorValue);
         setSavedScheduleEditorAgentId(scheduleEditorValue);
@@ -135,6 +138,7 @@ export function PlatformDefaultsSettings({
   };
 
   const confirm = async () => {
+    if (saveState.status === "saving" || permissionSync?.state === "pending") return;
     setSaveState({ status: "saving" });
     try {
       const response = await fetch("/api/admin/platform-config",{
@@ -151,7 +155,8 @@ export function PlatformDefaultsSettings({
       }
       setSavedAgentId(selectedAgentId);
       setConfigSource("db");
-      setSaveState({ status: "saved" });
+      setPermissionSync(data.data?.permission_sync);
+      setSaveState({ status: data.data?.permission_sync?.state === "pending" ? "idle" : "saved" });
     } catch (reason) {
       setSelectedAgentId(savedAgentId);
       setSaveState({
@@ -297,7 +302,7 @@ export function PlatformDefaultsSettings({
               <div className="w-96 max-w-full">
                 <AgentPicker
                   ariaLabel="Platform default agent for new chats"
-                  disabled={readOnly}
+                  disabled={readOnly || saveState.status === "saving" || permissionSync?.state === "pending"}
                   emptyLabel="No agents match"
                   hideIdSuffix
                   id="platform-default-agent"
@@ -312,6 +317,7 @@ export function PlatformDefaultsSettings({
                 <p className="text-xs text-muted-foreground">Agent description: {selectedAgent.description}</p>
               ) : null}
               <AutoSaveStatus state={saveState} />
+              <PermissionSyncNotice status={permissionSync} onApplied={setPermissionSync} />
             </div>
           </div>
         )}

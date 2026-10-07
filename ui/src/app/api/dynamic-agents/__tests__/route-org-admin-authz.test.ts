@@ -180,7 +180,11 @@ describe("dynamic-agents PUT with real requireAgentPermission", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(findOneAndUpdate).toHaveBeenCalled();
+    expect(mockReconcileAgentRelationships).toHaveBeenCalledWith(expect.objectContaining({
+      persistence: expect.objectContaining({
+        id: "hello-world", set: expect.objectContaining({ description: "Updated by org admin" }),
+      }),
+    }));
     expect(mockCheckOpenFgaTuple).toHaveBeenCalledWith({
       user: "user:admin-sub",
       relation: "can_manage",

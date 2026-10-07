@@ -23,6 +23,7 @@ const mockCollection = {
   deleteOne: jest.fn(),
 };
 const mockReconcileAgentRelationships = jest.fn();
+const mockDeleteAgentPermissions = jest.fn();
 
 jest.mock("@/lib/mongodb", () => ({
   isMongoDBConfigured: true,
@@ -31,6 +32,7 @@ jest.mock("@/lib/mongodb", () => ({
 jest.mock("@/lib/rbac/openfga-agent-tools", () => ({
   reconcileAgentRelationships: (...args: unknown[]) =>
     mockReconcileAgentRelationships(...args),
+  deleteAllAgentToolTuples: (...args: unknown[]) => mockDeleteAgentPermissions(...args),
 }));
 jest.mock("@/lib/rbac/openfga", () => ({
   writeOpenFgaTuples: jest.fn(),
@@ -81,7 +83,8 @@ describe("cleanupStaleConfigDriven — config_import_adopted guard", () => {
 
     await cleanupStaleConfigDriven(new Set(), new Set(), new Set(), new Set(), new Set());
 
-    expect(mockCollection.deleteOne).toHaveBeenCalledWith({ _id: "stale-agent" });
+    expect(mockDeleteAgentPermissions).toHaveBeenCalledWith("stale-agent", expect.any(Object), undefined,
+      expect.objectContaining({ id: "stale-agent", deleteResource: true }));
   });
 });
 
@@ -105,18 +108,17 @@ describe("adoptConfigImportedAgents", () => {
     });
 
     expect(result).toEqual({ adopted: ["agent-1"], skipped: [] });
-    expect(mockCollection.updateOne).toHaveBeenCalledWith(
-      { _id: "agent-1" },
-      {
-        $set: expect.objectContaining({
+    expect(mockReconcileAgentRelationships).toHaveBeenCalledWith(expect.objectContaining({
+      persistence: expect.objectContaining({ id: "agent-1",
+        set: expect.objectContaining({
           config_driven: false,
           config_import_adopted: true,
           visibility: "team",
           owner_team_slug: "platform",
           shared_with_teams: ["sre"],
         }),
-      },
-    );
+      }),
+    }));
     expect(mockReconcileAgentRelationships).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: "agent-1",
@@ -187,7 +189,7 @@ describe("adoptConfigImportedAgents", () => {
     // never looked up or touched.
     expect(mockCollection.findOne).toHaveBeenCalledTimes(1);
     expect(mockCollection.findOne).toHaveBeenCalledWith({ _id: "agent-1" });
-    expect(mockCollection.updateOne).toHaveBeenCalledTimes(1);
+    expect(mockReconcileAgentRelationships).toHaveBeenCalledTimes(1);
   });
 
   it("drops the owner team from shared_with_teams to avoid a redundant grant", async () => {
@@ -204,14 +206,13 @@ describe("adoptConfigImportedAgents", () => {
       sharedTeamSlugs: ["platform", "sre"],
     });
 
-    expect(mockCollection.updateOne).toHaveBeenCalledWith(
-      { _id: "agent-1" },
-      {
-        $set: expect.objectContaining({
+    expect(mockReconcileAgentRelationships).toHaveBeenCalledWith(expect.objectContaining({
+      persistence: expect.objectContaining({ id: "agent-1",
+        set: expect.objectContaining({
           shared_with_teams: ["sre"],
         }),
-      },
-    );
+      }),
+    }));
   });
 
   it("leaves visibility unchanged when no owner team is supplied", async () => {
@@ -228,15 +229,14 @@ describe("adoptConfigImportedAgents", () => {
       sharedTeamSlugs: [],
     });
 
-    expect(mockCollection.updateOne).toHaveBeenCalledWith(
-      { _id: "agent-1" },
-      {
-        $set: expect.objectContaining({
+    expect(mockReconcileAgentRelationships).toHaveBeenCalledWith(expect.objectContaining({
+      persistence: expect.objectContaining({ id: "agent-1",
+        set: expect.objectContaining({
           visibility: "global",
           owner_team_slug: undefined,
           shared_with_teams: undefined,
         }),
-      },
-    );
+      }),
+    }));
   });
 });

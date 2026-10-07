@@ -5,8 +5,6 @@
  * The gateway owns all config writes — DA is a pure runtime reader.
  */
 
-import { randomUUID } from "crypto";
-
 import {
   ApiError,
   getAuthFromBearerOrSession,
@@ -16,7 +14,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
-import { mutationSnapshotFilter } from "@/lib/rbac/mutation-snapshot";
+import { publicPermissionDocument } from "@/lib/authz/permission-sync";
 import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
 import {
   RAG_COLLECTION_ID_PATTERN,
@@ -259,7 +257,7 @@ function normalizeAgentDoc(
     if (!Array.isArray(doc.datasource_ids)) doc.datasource_ids = [];
     if (!Array.isArray(doc.rag_collection_ids)) doc.rag_collection_ids = [];
   }
-  return doc;
+  return publicPermissionDocument(doc);
 }
 
 /**
@@ -840,7 +838,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const unlinkedServiceAccountSub =
     visibility === "global" ? await resolveUnlinkedServiceAccountSub() : null;
 
-  await reconcileAgentRelationships({
+  const result = await reconcileAgentRelationships({
     agentId,
     auditContext: {
       ...createAuthzTraceContext(request.headers.get("traceparent")),
@@ -859,10 +857,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     globalUserAccess: visibility === "global",
     platformDefaultUserAccess: (await getPlatformDefaultAgentId()) === agentId,
     unlinkedServiceAccountSub,
-    persist: async () => { await collection.insertOne(doc); },
+    persistence: { collection: COLLECTION_NAME, id: agentId, previous: null, set: doc },
   });
 
-  return successResponse(doc, 201);
+  return successResponse({ ...doc, permission_sync: result?.permissionSync }, result?.permissionSync?.state === "pending" ? 202 : 201);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -962,7 +960,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     !isTransferRequest
   ) {
     // No fields to update — return current state
-    return successResponse(agent);
+    return successResponse(publicPermissionDocument(agent));
   }
 
   // Subagent visibility validation (using merged final values)
@@ -1124,8 +1122,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       ? await resolveUnlinkedServiceAccountGrantState()
       : { sub: null, explicitAgentIds: new Set<string>() };
 
-  let updated: DynamicAgentConfig | null = null;
-  await reconcileAgentRelationships({
+  const result = await reconcileAgentRelationships({
     agentId: id,
     auditContext: {
       ...createAuthzTraceContext(request.headers.get("traceparent")),
@@ -1151,20 +1148,14 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     previousGlobalUserAccess: currentVisibility === "global",
     unlinkedServiceAccountSub,
     unlinkedGrantIsExplicit: explicitAgentIds.has(id),
-    persist: async () => {
-      updated = await collection.findOneAndUpdate(
-        mutationSnapshotFilter(id, agent) as never,
-        Object.keys(unsetData).length > 0
-          ? { $set: { ...updateData, authz_write_id: randomUUID() }, $unset: unsetData }
-          : { $set: { ...updateData, authz_write_id: randomUUID() } },
-        { returnDocument: "after" },
-      );
-      if (!updated) throw new ApiError("The agent changed during this save. Reload its settings and check access before retrying.", 409, "AGENT_SAVE_CONFLICT");
-    },
+    persistence: { collection: COLLECTION_NAME, id, previous: agent, set: updateData, unset: unsetData },
   });
 
+  const updated: Record<string, unknown> = { ...agent, ...updateData };
+  for (const field of Object.keys(unsetData)) delete updated[field];
   return successResponse(
-    normalizeAgentDoc(updated as unknown as Record<string, unknown>),
+    { ...normalizeAgentDoc(updated), permission_sync: result?.permissionSync },
+    result?.permissionSync?.state === "pending" ? 202 : 200,
   );
 });
 
@@ -1239,13 +1230,11 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
-  await deleteAllAgentToolTuples(id, {
+  const result = await deleteAllAgentToolTuples(id, {
     ...createAuthzTraceContext(request.headers.get("traceparent")),
     caller: { type: session.isServiceAccount === true ? "service_account" : "user", id: String(session.sub) },
-  }, async () => {
-    const result = await collection.deleteOne(mutationSnapshotFilter(id, agent) as never);
-    if (result.deletedCount === 0) throw new ApiError("The agent changed during deletion. Reload its settings and check access before retrying.", 409, "AGENT_SAVE_CONFLICT");
-  });
+  }, undefined, { collection: COLLECTION_NAME, id, previous: agent, set: {}, deleteResource: true });
 
+  if (result?.permissionSync?.state === "pending") return successResponse({ deleted: null, permission_sync: result.permissionSync }, 202);
   return successResponse({ deleted: id });
 });

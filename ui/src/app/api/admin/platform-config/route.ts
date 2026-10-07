@@ -3,10 +3,9 @@
 
 // assisted-by claude code claude-sonnet-4-6
 
-import { randomUUID } from 'crypto';
-
 import { ApiError,requireRbacPermission,withAuth,withErrorHandler } from '@/lib/api-middleware';
-import { mutationSnapshotFilter } from '@/lib/rbac/mutation-snapshot';
+import { persistPermissionChange, permissionSyncStatus, type PermissionPersistence } from '@/lib/authz/permission-sync';
+import type { PermissionSyncStatus } from '@/lib/authz/permission-sync-contract';
 import { getCollection } from '@/lib/mongodb';
 import {
 normalizePlatformDefaultAgentId,
@@ -20,7 +19,7 @@ MAX_DISCOVERY_CACHE_TTL_MINUTES,
 MIN_DISCOVERY_CACHE_TTL_MINUTES,
 normalizeDiscoveryCacheTtlMinutes,
 } from '@/lib/rbac/discovery-cache-config';
-import { reconcileTupleDiff, type TupleReconcileContext } from '@/lib/authz';
+import { type TupleReconcileContext } from '@/lib/authz';
 import { createAuthzTraceContext } from '@/lib/rbac/authz-tracing';
 import type { OpenFgaTupleKey } from '@/lib/rbac/openfga';
 import type { DynamicAgentConfig } from '@/types/dynamic-agent';
@@ -201,7 +200,7 @@ function defaultAgentTuple(agentId: string): OpenFgaTupleKey {
   return { user: 'user:*', relation: 'user', object: `agent:${agentId}` };
 }
 
-async function reconcileDefaultAgentGrant(previousAgentId: string | null, nextAgentId: string | null, context: TupleReconcileContext, persist: () => Promise<void>): Promise<void> {
+async function reconcileDefaultAgentGrant(previousAgentId: string | null, nextAgentId: string | null, context: TupleReconcileContext, persistence: PermissionPersistence): Promise<PermissionSyncStatus | undefined> {
   const writes = nextAgentId ? [defaultAgentTuple(nextAgentId)] : [];
   const deletes: OpenFgaTupleKey[] = [];
   if (previousAgentId && previousAgentId !== nextAgentId) {
@@ -211,11 +210,7 @@ async function reconcileDefaultAgentGrant(previousAgentId: string | null, nextAg
     // Removing one reason must not remove access justified by the other.
     if (previousAgent?.visibility !== 'global') deletes.push(defaultAgentTuple(previousAgentId));
   }
-  if (writes.length === 0 && deletes.length === 0) {
-    await persist();
-    return;
-  }
-  await reconcileTupleDiff({ writes, deletes }, { ...context, source: 'platform_default_agent' }, persist);
+  return persistPermissionChange(persistence, { writes, deletes }, { ...context, source: 'platform_default_agent' });
 }
 
 // Release notes is a single platform-wide on/off switch. The announcement
@@ -270,6 +265,7 @@ async function getPlatformConfig(request: NextRequest) {
       success: true,
       data: {
         default_agent_id: defaultAgentId ?? envFallback,
+        permission_sync: permissionSyncStatus(doc),
         source: defaultAgentId ? 'db' : (envFallback ? 'env' : 'fallback'),
         schedule_editor_agent_id: scheduleEditorAgentId ?? scheduleEditorEnvFallback,
         schedule_editor_agent_source: scheduleEditorAgentId
@@ -451,28 +447,12 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       }
     }
 
-    const persist = async () => {
-      if (!hasDefaultAgentUpdate) {
-        await col.updateOne({ _id: PLATFORM_CONFIG_ID } as never, { $set: update }, { upsert: true });
-        return;
-      }
-      // For a missing document, upsert uses the unique _id to reject a racing
-      // creation rather than replacing its settings. Existing saves must match
-      // the exact snapshot used to derive their grant changes.
-      const result = await col.updateOne(
-        mutationSnapshotFilter(PLATFORM_CONFIG_ID, previousDoc) as never,
-        { $set: { ...update, authz_write_id: randomUUID() } },
-        { upsert: previousDoc === null },
-      );
-      if (result.matchedCount === 0 && !result.upsertedCount) {
-        throw new ApiError('Platform settings changed during this save. Reload them and check access before retrying.', 409, 'PLATFORM_CONFIG_SAVE_CONFLICT');
-      }
-    };
+    let permissionSync: PermissionSyncStatus | undefined;
     if (hasDefaultAgentUpdate) {
-      await reconcileDefaultAgentGrant(previousDefaultAgentId, effectiveNextDefaultAgentId, {
+      permissionSync = await reconcileDefaultAgentGrant(previousDefaultAgentId, effectiveNextDefaultAgentId, {
         ...createAuthzTraceContext(request.headers.get('traceparent')),
         caller: { type: session.isServiceAccount === true ? 'service_account' : 'user', id: String(session.sub) },
-      }, persist);
+      }, { collection: 'platform_config', id: PLATFORM_CONFIG_ID, previous: previousDoc, set: update });
       if (defaultAgentChanged) {
         // Retain the configuration-change log; CAS separately audits the
         // relationship mutation with the canonical caller and trace.
@@ -487,7 +467,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
         );
       }
     } else {
-      await persist();
+      await col.updateOne({ _id: PLATFORM_CONFIG_ID } as never, { $set: update }, { upsert: true });
     }
     platformConfigCache.responses.clear();
     platformConfigCache.inflight.clear();
@@ -495,6 +475,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
     return NextResponse.json({
       success: true,
       data: {
+        permission_sync: permissionSync,
         ...(Object.prototype.hasOwnProperty.call(update, 'default_agent_id')
           ? { default_agent_id: update.default_agent_id }
           : {}),
@@ -535,6 +516,6 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
           ? { rag_ingestor_limits: update.rag_ingestor_limits }
           : {}),
       },
-    });
+    }, { status: permissionSync?.state === 'pending' ? 202 : 200 });
   });
 });

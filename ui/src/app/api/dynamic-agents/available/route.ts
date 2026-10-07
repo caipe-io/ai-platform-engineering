@@ -5,6 +5,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { publicPermissionDocument } from "@/lib/authz/permission-sync";
 import { filterAgentsByOwnershipScopeForSession } from "@/lib/rbac/agent-ownership-scope";
 import { getPlatformDefaultAgentId } from "@/lib/rbac/platform-default";
 import { filterResourcesByPermission } from "@/lib/rbac/resource-authz";
@@ -45,7 +46,7 @@ async function getAvailableAgents(request: NextRequest) {
       delete doc.model_id;
       delete doc.model_provider;
     }
-    return doc;
+    return publicPermissionDocument(doc);
   });
   return successResponse(normalizedAgents);
 }

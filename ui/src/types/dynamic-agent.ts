@@ -2,6 +2,8 @@
  * TypeScript types for Dynamic Agents feature.
  */
 
+import type { PermissionSyncStatus } from "@/lib/authz/permission-sync-contract";
+
 // =============================================================================
 // Enums
 // =============================================================================
@@ -409,6 +411,7 @@ export type ResumeData =
     };
 
 export interface DynamicAgentConfig {
+  permission_sync?: PermissionSyncStatus;
   _id: string;
   name: string;
   description?: string;

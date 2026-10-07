@@ -1,6 +1,8 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
+import { persistPermissionChange, type PermissionPersistence } from "@/lib/authz/permission-sync";
+import type { PermissionSyncStatus } from "@/lib/authz/permission-sync-contract";
 import { OpenFgaReconcileRequiredError, reconcileTupleDiff, type TupleReconcileContext } from "@/lib/authz";
 
 import {
@@ -106,6 +108,7 @@ export interface AgentToolTupleDiffInput {
 }
 
 export interface ReconcileAgentToolTuplesInput extends AgentToolTupleDiffInput {
+  persistence?: PermissionPersistence;
   failClosed?: boolean;
   auditContext?: TupleReconcileContext;
   persist?: () => Promise<void>;
@@ -341,13 +344,17 @@ export async function reconcileAgentToolTuples(
 
 export async function reconcileAgentRelationships(
   input: ReconcileAgentToolTuplesInput,
-): Promise<OpenFgaReconcileResult> {
+): Promise<OpenFgaReconcileResult & { permissionSync?: PermissionSyncStatus }> {
   const diff = buildAgentRelationshipTupleDiff(input);
   try {
     const context = { source: "agent_relationships", ...input.auditContext };
+    if (input.persistence) {
+      const permissionSync = await persistPermissionChange(input.persistence, diff, context);
+      return { enabled: isOpenFgaConfigured(), writes: 0, deletes: 0, permissionSync };
+    }
     return input.persist ? await reconcileTupleDiff(diff, context, input.persist) : await reconcileTupleDiff(diff, context);
   } catch (error) {
-    if (input.persist || (input.failClosed ?? true)) {
+    if (input.persistence || input.persist || (input.failClosed ?? true)) {
       throw error;
     }
     console.warn("[openfga-agent-tools] reconciliation failed:", error);
@@ -355,11 +362,15 @@ export async function reconcileAgentRelationships(
   }
 }
 
-export async function deleteAllAgentToolTuples(agentId: string, context: TupleReconcileContext = {}, persist?: () => Promise<void>): Promise<OpenFgaReconcileResult> {
+export async function deleteAllAgentToolTuples(agentId: string, context: TupleReconcileContext = {}, persist?: () => Promise<void>, persistence?: PermissionPersistence): Promise<OpenFgaReconcileResult & { permissionSync?: PermissionSyncStatus }> {
   if (!isValidOpenFgaId(agentId)) {
     throw new Error(`Invalid OpenFGA agent id: ${agentId}`);
   }
   if (!isOpenFgaReconciliationEnabled()) {
+    if (persistence) {
+      await persistPermissionChange(persistence, { writes: [], deletes: [] }, context);
+      return { enabled: false, writes: 0, deletes: 0 };
+    }
     if (persist && !isOpenFgaConfigured()) {
       await persist();
       return { enabled: false, writes: 0, deletes: 0 };
@@ -381,6 +392,10 @@ export async function deleteAllAgentToolTuples(agentId: string, context: TupleRe
     deletes: allTuples.filter((tuple) => tuple.user === `agent:${agentId}` || tuple.object === `agent:${agentId}`),
   };
   const auditContext = { source: "agent_delete", ...context };
+  if (persistence) {
+    const permissionSync = await persistPermissionChange(persistence, diff, auditContext);
+    return { enabled: true, writes: 0, deletes: 0, permissionSync };
+  }
   return persist ? reconcileTupleDiff(diff, auditContext, persist) : reconcileTupleDiff(diff, auditContext);
 }
 
