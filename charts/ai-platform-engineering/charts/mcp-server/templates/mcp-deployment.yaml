@@ -17,19 +17,21 @@ spec:
       app.kubernetes.io/component: mcp
   template:
     metadata:
-      annotations:
-        {{- $llmData := deepCopy (default (dict) .Values.global.llmSecrets.data) }}
-        {{- $llmEnabled := dig "litellm" "enabled" false (.Values.global.llmRouting | default (dict)) }}
+      {{- $llmEnabled := dig "litellm" "enabled" false (.Values.global.llmRouting | default (dict)) }}
+      {{- $podAnnotations := deepCopy (default (dict) .Values.podAnnotations) }}
+      {{- if $llmEnabled }}
         {{- $llmConfig := dict
-          "enabled" $llmEnabled
           "createSecret" .Values.global.createLlmSecret
           "secretName" .Values.global.llmSecrets.secretName
-          "data" $llmData
+          "data" .Values.global.llmSecrets.data
           "externalSecret" .Values.global.llmSecrets.externalSecrets
         }}
-        {{- $podAnnotations := deepCopy (default (dict) .Values.podAnnotations) }}
         {{- $_ := set $podAnnotations "checksum/llm-config" (toYaml $llmConfig | sha256sum) }}
+      {{- end }}
+      {{- if or $llmEnabled $podAnnotations }}
+      annotations:
         {{- toYaml $podAnnotations | nindent 8 }}
+      {{- end }}
       labels:
         {{- include "agent.labels" . | nindent 8 }}
         app.kubernetes.io/component: mcp

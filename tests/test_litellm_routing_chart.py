@@ -46,6 +46,10 @@ def test_litellm_is_disabled_by_default():
     assert not any(doc["metadata"]["name"] == "routing-litellm" for doc in docs)
     secret = _named(docs, "Secret", "llm-secret")
     assert "OPENAI_ENDPOINT" not in secret.get("data", {})
+    for name in ("routing-dynamic-agents", "routing-mcp-argocd-mcp"):
+        deployment = _named(docs, "Deployment", name)
+        annotations = deployment["spec"]["template"]["metadata"].get("annotations", {})
+        assert "checksum/llm-config" not in annotations
 
 
 def test_upstream_chart_routes_agents_and_uses_shared_secret():
@@ -84,7 +88,7 @@ def test_upstream_chart_routes_agents_and_uses_shared_secret():
     assert dynamic_env["LLM_PROVIDER"] == "openai"
     assert dynamic_env["OPENAI_ENDPOINT"] == "http://routing-litellm:4000/v1"
 
-    mcp = _named(docs, "Deployment", "routing-argocd-mcp")
+    mcp = _named(docs, "Deployment", "routing-mcp-argocd-mcp")
     mcp_env = {
         item["name"]: item.get("value")
         for item in mcp["spec"]["template"]["spec"]["containers"][0]["env"]

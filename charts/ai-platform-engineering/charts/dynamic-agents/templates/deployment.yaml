@@ -16,23 +16,26 @@ spec:
       {{- include "dynamic-agents.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      annotations:
+      {{- $llmEnabled := dig "litellm" "enabled" false (.Values.global.llmRouting | default (dict)) }}
+      {{- $podAnnotations := deepCopy (default (dict) .Values.podAnnotations) }}
+      {{- if $llmEnabled }}
         {{- $llmData := deepCopy (default (dict) .Values.global.llmSecrets.data) }}
-        {{- if and .Values.global.createLlmSecret (dig "litellm" "enabled" false (.Values.global.llmRouting | default (dict))) }}
+        {{- if .Values.global.createLlmSecret }}
           {{- if not (hasKey $llmData "LLM_PROVIDER") }}{{- $_ := set $llmData "LLM_PROVIDER" "openai" }}{{- end }}
           {{- if not (hasKey $llmData "OPENAI_ENDPOINT") }}{{- $_ := set $llmData "OPENAI_ENDPOINT" (printf "http://%s-litellm:4000/v1" .Release.Name) }}{{- end }}
         {{- end }}
-        {{- $llmEnabled := dig "litellm" "enabled" false (.Values.global.llmRouting | default (dict)) }}
         {{- $llmConfig := dict
-          "enabled" $llmEnabled
           "createSecret" .Values.global.createLlmSecret
           "secretName" .Values.global.llmSecrets.secretName
           "data" $llmData
           "externalSecret" .Values.global.llmSecrets.externalSecrets
         }}
-        {{- $podAnnotations := deepCopy (default (dict) .Values.podAnnotations) }}
         {{- $_ := set $podAnnotations "checksum/llm-config" (toYaml $llmConfig | sha256sum) }}
+      {{- end }}
+      {{- if or $llmEnabled $podAnnotations }}
+      annotations:
         {{- toYaml $podAnnotations | nindent 8 }}
+      {{- end }}
       labels:
         {{- include "dynamic-agents.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}
